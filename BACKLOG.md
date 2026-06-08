@@ -1,6 +1,6 @@
 # Backlog
 
-The parking lot. Anything that arrives during v1 build and isn't on the [v1 scope list](./docs/01-scope-v1.md) goes here. **No additions to v1 — only to this file.**
+The parking lot. Anything that arrives during v1 build and isn't on the [v1 scope list](./STABLE.md#scope-v1) goes here. **No additions to v1 — only to this file.**
 
 Reviewed after v1 ships and is in daily use for ≥ 2 weeks.
 

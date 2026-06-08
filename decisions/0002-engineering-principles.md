@@ -16,7 +16,7 @@ This ADR captures the trade-offs explicitly so they can be revisited with eviden
 
 ## Decision
 
-See [`docs/05-engineering-principles.md`](../05-engineering-principles.md) for the full ruleset. Headline choices:
+See [`STABLE.md → Engineering principles`](../STABLE.md#engineering-principles) for the full ruleset. Headline choices:
 
 1. **Interfaces only at real seams.** `INoteStore` is the only interface justified by current requirements. No `IService` for everything.
 2. **Unit tests on pure logic only.** `SrsEngine` and `RoutineGenerator` are tested exhaustively. No tests on SQLite, UI, or MAUI bootstrap.

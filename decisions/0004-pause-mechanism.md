@@ -23,7 +23,7 @@ Two pause types, both first-class features in v1:
 1. **Category pause** — freezes a single category's recall queue; no new-encounter slots offered for that category. Other categories continue. Pause is time-bounded (`paused_until: <date>`) or explicitly indefinite. Resume shifts due dates forward by the pause duration.
 2. **Loop pause** — freezes the entire app. All recall + new-encounter slots suppressed. Ritual slot pauses by default; user can opt to keep it. Resume shifts every recall item's `next_surface_date` forward by `pause_duration`. No FSRS recalculation, no lapses recorded, no penalty.
 
-Explicit non-features (rejected with reasoning in [`docs/06-methodology.md`](../06-methodology.md)):
+Explicit non-features (rejected with reasoning in [`STABLE.md → Pause mechanism`](../STABLE.md#pause-mechanism)):
 
 - **No item-level pause** — drop-button in disguise; violates Conviction #3.
 - **No retroactive pause** — past skipping was skipping.
