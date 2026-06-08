@@ -182,9 +182,53 @@ Adding local LLM support later is mechanical: implement `OllamaGrader`, change o
 - **SM-2** (in ADR 0001 and scope-v1) is replaced by **FSRS** for recitation and vocabulary categories. Literary narrative and concept/mechanism categories use their own algorithms (diminishing revisits, linked surfacing). ADR 0001 superseded in part — see ADR 0003.
 - **Single recall queue with one algorithm** is replaced by **per-category algorithms with interleaving**. The 15/day cap survives; the prioritization changes.
 - **`INoteStore`** unchanged. New seam `IGrader` added.
-- **Schema must carry**: category (foreign key), original-answer-per-encounter (the rubric), spend log table, per-category algorithm state.
+- **Schema must carry**: category (foreign key), original-answer-per-encounter (the rubric), spend log table, per-category algorithm state, pause state (per category + per app).
 
-## Open questions (settle from real use, not now)
+## Pause — the conviction-aligned escape valve
+
+A user's life is not uniformly available to the app. Vacations happen. Sickness happens. Phases happen where one category dominates and another rests. Without an honest way to declare this, two failures appear:
+
+1. Items accumulate as "overdue" during the absence — the user returns to a wall, which violates Conviction #1 (a daily encounter is no longer possible).
+2. The user silently skips, then internalizes the skipping as failure, eroding the daily-ritual habit that all subsequent learning rests on.
+
+Pause is the conviction-aligned escape. It is declared, visible, and time-bounded (or explicit about being indefinite). It is not a drop button.
+
+### Two pause types
+
+**Category pause** — applied to a single category.
+- The category's recall queue freezes. No new dues accrue.
+- No new-encounter slots for the category appear in the daily routine.
+- Other categories continue normally.
+- Resume: queue picks up where it left off; due dates are shifted forward by the pause duration so items aren't suddenly "overdue by 30 days."
+
+**Loop pause** — applied to the whole app.
+- All recall and new-encounter slots suppressed for the pause window.
+- Ritual slot also pauses by default (vacation means vacation). User can opt to keep ritual running.
+- Resume: every recall item's `next_surface_date` is shifted forward by the pause duration. A note that would have been due during the pause becomes due now, with its original interval intact. **No queue explosion. No penalty. No shame.**
+
+The math: `new_due_date = old_due_date + pause_duration`. No FSRS recalculation, no missed-recall lapses.
+
+### What pause does NOT allow
+
+- **No item-level pause.** "Pause this card" is the drop button in disguise — it lets the user privatize failure on a specific encounter. Rejected. The category or app-level escape is honest; the item-level escape hides.
+- **No retroactive pause.** "I forgot to set pause last week" is not a thing. Pause is declared forward, not backward. Past skipping was skipping.
+- **No silent pause.** Settings always shows the active pause status ("Loop paused until 2026-07-15", "Category 史记 paused indefinitely"). The pause is visible to the user themselves — there is no hidden mode.
+
+### Why this is conviction-aligned, not a conviction violation
+
+Conviction #1 reads: *"Daily encounter beats sporadic effort. Skipping is failure; shrinking is fine."* Pause is the most honest possible shrink — declared, time-bounded, with the algorithm adjusting to support the return. Without pause, every life-event forces a violation of Conviction #1 *on the day the user returns* (they cannot do a normal daily encounter against a wall of overdue items).
+
+A well-designed pause is what makes the difference between "I came back to my whetstone" and "I gave up on whetstone."
+
+## Decision boundary for future features
+
+When a future feature is proposed, judge it against the convictions:
+
+1. **A feature that helps the user *avoid* a conviction is rejected.** Drop-this-card violates #3 (forgetting is data, not failure — to be hidden). Hide-low-grades violates #5 (your past self is the rubric — to be confronted).
+2. **A feature that helps the user *fulfill* a conviction more easily is welcomed.** Pause serves #1 (makes daily encounter sustainable across life). Show-improvement serves #3 (makes growth visible).
+3. **When in doubt, name the conviction the feature touches.** If the feature exists to *bend* the conviction, reject. If it exists to *serve* the conviction, accept.
+
+
 
 - **Is reflection category needed?** Could become a separate tool. Drafted in for completeness.
 - **Admin UI for category authoring in v1?** Drafted as deferred. May surface as needed.

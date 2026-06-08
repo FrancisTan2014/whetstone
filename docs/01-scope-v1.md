@@ -1,8 +1,8 @@
-# v1 scope — locked 2026-06-08, methodology pivot 2026-06-08
+# v1 scope — locked 2026-06-08, methodology pivot 2026-06-08, pause added 2026-06-08
 
 The minimum that runs the full loop end-to-end on Windows. Ships before any other feature.
 
-> **Methodology pivot:** scope updated after [ADR 0003](./decisions/0003-learning-methodology.md). v1 now ships with five categories, four recall algorithms, and LLM grading by default.
+> **Updates:** scope amended after [ADR 0003](./decisions/0003-learning-methodology.md) (categories + per-category algorithms + LLM grading) and [ADR 0004](./decisions/0004-pause-mechanism.md) (pause mechanism).
 
 ## In v1
 
@@ -13,8 +13,9 @@ The minimum that runs the full loop end-to-end on Windows. Ships before any othe
 5. **Five default categories shipped**: literary narrative, recitation, vocabulary, concept/mechanism, reflection. Defined in code; admin UI for user-authored categories deferred.
 6. **`AnthropicGrader` + `SelfGrader`** implementations of `IGrader`. Anthropic API key configured in settings.
 7. **Cost controls**: daily budget cap (default $0.25), per-request token cap (2,000 input), visible spend log in settings.
-8. **Export everything** — Settings → "Download all notes as `.zip`". Files are real `.md` with frontmatter, one file per note. Spend log exported as CSV.
-9. **Local SQLite storage** behind an `INoteStore` interface. No auth. Single user.
+8. **Pause** — category-level and app-level pause, with date-shifting on resume. See [ADR 0004](./decisions/0004-pause-mechanism.md).
+9. **Export everything** — Settings → "Download all notes as `.zip`". Files are real `.md` with frontmatter, one file per note. Spend log exported as CSV.
+10. **Local SQLite storage** behind an `INoteStore` interface. No auth. Single user.
 
 ## Out of v1
 
