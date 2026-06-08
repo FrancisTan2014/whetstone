@@ -21,7 +21,9 @@ See [`docs/`](./docs) for the current design and [`BACKLOG.md`](./BACKLOG.md) fo
 
 ## Subjects this is being built for
 
-- CS / Operating Systems
-- 《史记》
-- English literature & vocabulary
-- 《笠翁对韵》(daily reading ritual)
+- CS / Operating Systems (concept/mechanism category)
+- 《史记》 (literary narrative category)
+- English literature & vocabulary (literary narrative + vocabulary categories)
+- 《笠翁对韵》 (daily reading ritual)
+
+See [`docs/06-methodology.md`](./docs/06-methodology.md) for the category model and per-category templates/algorithms.

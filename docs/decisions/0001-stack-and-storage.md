@@ -1,7 +1,7 @@
 # ADR 0001 — Stack, storage, and sequencing
 
 **Date:** 2026-06-08
-**Status:** Accepted
+**Status:** Accepted (recall-algorithm portion superseded by [ADR 0003](./0003-learning-methodology.md))
 
 ## Context
 
@@ -16,6 +16,7 @@ A personal learning app needs to run on phone and desktop, store notes durably, 
 5. **App-first, no transitional script.** Despite the risk of delayed first-recall-session, the user prefers a single codebase from day one.
 6. **Local-first storage chosen over cloud-from-day-one.** Eliminates Azure VM provisioning as a v1 blocker — first recall session happens weeks earlier.
 7. **Recall: SM-2 with hard daily cap (15 items).** Overflow defers by one day, sorted by `(days_overdue desc, ease asc)`. This is the anti-guilt-list mechanism.
+   > **Superseded by ADR 0003:** SM-2 replaced by per-category algorithms (FSRS / diminishing revisits / linked surfacing / none). The 15-item cap survives; interleaving by category replaces the single-queue prioritization.
 
 ## Alternatives considered
 
