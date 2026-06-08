@@ -1,0 +1,23 @@
+# .NET / MAUI
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Local SQLite (when implementation starts)
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal notes (in case dev seeds get committed by accident — real notes belong in a separate vault)
+/notes/
+/seeds/local-*.md
