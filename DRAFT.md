@@ -16,6 +16,81 @@ The methodology, voice scope, and curated materials are now locked in STABLE.md 
 
 ---
 
+## Open: content origin + configuration as server data + admin role
+
+> **For PM and Architect**: this is the next major design work. The decisions in §"Confirmed by user" below are locked input — do not re-litigate. The work is drafting ADRs that implement them.
+
+### Why this is here
+
+We had not answered: *where does the content the user reads actually come from?* And: *where do tunable things like prompt templates live as the user-and-the-app iterate?* Once posed, both questions point at the same answer — content and configuration are runtime data, not source-code constants — which is a meaningful expansion of what's already locked.
+
+ADR 0008 (system architecture) already added a server with Postgres. Content and configuration naturally live in that database; the sync protocol naturally extends to fetch them. The architectural cost is small; the iteration-loop unlock is large (especially for prompt tuning, which will be ongoing).
+
+### Confirmed by user (locked input — do not re-litigate)
+
+1. **Content and configuration live on the server as data**, edited via an admin surface, fetched by clients on sync and cached locally. Specifically:
+   - **Curated materials**: works, chapters, sections, encounter units. Hierarchical, per-subject.
+   - **Prompt templates**: one per LLM-touching moment. Versioned so the human can roll back a bad tune.
+   - **Category definitions**: templates, default weights, revisit-method bindings, slot-sizing defaults.
+   - **Default settings**: daily budget, cap size, ritual list, FSRS initial parameters.
+
+2. **Per-category material delivery** (hybrid by category):
+   - **史记 (literary narrative)**: text held by the server as the admin's curated data, fetched and cached on client. User reads inside whetstone.
+   - **Recitation (滕王阁序, 洛神赋, 笠翁对韵)**: text held by the server as the admin's curated data, fetched and cached on client. Required for recitation.
+   - **Orwell essays (prose-modeling)**: text held by the server as the admin's curated data, fetched and cached on client. Cite the public-domain source in each entry's metadata.
+   - **CS:APP (concept/mechanism)**: **reference only**. Server holds the chapter/section list and acceptance criteria; whetstone never holds the book's text. User reads externally; whetstone holds engagement notes and the revisit schedule.
+   - **Reflection (diary)**: user-authored, no material.
+
+3. **Admin role is human-only.** Agents do not edit materials, prompts, or category definitions. The human admin (= the user) is the only one who curates content and tunes prompts. This protects the convictions at the content layer specifically.
+
+4. **Admin UI lives inside the whetstone client**, gated by an admin scope on the bearer token. Same MAUI Blazor codebase, an `Admin/` folder of pages visible only to a session whose bearer token carries the admin scope. No separate admin webapp.
+
+5. **First-launch onboarding flow**: subject opt-in (with material-access checkboxes for the externally-read works) → Direction per opted-in subject → first encounter. The Direction-first sequencing means the user's first artifact in whetstone is their own declaration, not the app's recommendation. Honors Conviction #5 from the first moment.
+
+### Open for ADR-writing (Architect's judgment)
+
+These are the questions the ADRs need to answer:
+
+- **Postgres schema** for `materials`, `prompt_templates`, `categories`, `default_settings` tables. Relationships, versioning columns, soft-delete vs hard-delete.
+- **Sync protocol extension**: new endpoints (`GET /v1/sync/content`, `GET /v1/sync/prompts`, etc.) or a single `GET /v1/sync/everything?since=…` that returns notes + content + prompts in one envelope. Trade-offs: latency, payload size, polling cadence per content type.
+- **Client cache strategy**: how often does the client re-fetch content? Push-on-change (server notifies) vs pull-on-launch + interval. Initial lean: pull-on-launch is enough for v1.
+- **Prompt template structure**: pure string with `{placeholders}`? More structured (system + user blocks, with named slots)? Versioning model — every save is a new version, with `active_version` pointer per template?
+- **Admin authentication**: how the bearer token gains admin scope. Initial lean: the server's first-boot token is the admin token; user can issue scoped tokens for regular client use later.
+- **Admin UI surfaces in v1**: minimum is "edit materials, edit prompt templates, see versions, roll back." Anything else (preview, A/B test, diff between versions) is v2.
+- **First-launch UX**: what does the user see if they install a fresh client before any subjects are opted in? What does the Today screen look like during onboarding?
+- **Content updates after first install**: new 史记 chapter added by admin — does it appear in the user's queue automatically (LLM proposes it next), or does the user opt in per work?
+- **Bootstrap problem**: how does the very first server install have any content at all? Initial lean: server ships with an empty content table; user (as admin) populates via the admin UI. No seed data shipped in source.
+
+### Suggested ADR split
+
+Architect's call to confirm, but the natural split:
+
+- **ADR 0011 — Content and configuration as server-resident data.** Postgres schema, sync protocol extension, client cache, prompt template structure, content lifecycle. Includes amendment notes for ADR 0008 (Postgres now also holds these tables) and STABLE.md edits (Methodology → Categories section gets "material source: server-curated, cached on client"; new Methodology subsection "Prompt templates"; Stack section grows admin surface row; Scope (v1) adds the admin UI + content sync).
+- **ADR 0012 — Admin role, admin UI, first-launch onboarding.** Admin scope on bearer token, admin UI surfaces in v1, first-launch flow (subject opt-in → Direction → first encounter), bootstrap problem. STABLE.md edits adding admin role to "What whetstone is" (single user with admin and user roles, same human).
+
+Both touch STABLE.md → same-commit rule applies → STABLE.md updates land in the same commit as each ADR.
+
+### Affects existing artifacts
+
+When Architect picks this up, the following will need cross-reference updates:
+
+- **STABLE.md** — Categories (material source), Methodology (prompt templates), Stack (admin UI surface; Postgres tables), Scope v1 (admin UI, content sync, first-launch flow), Cross-references.
+- **ADR 0006** — superseded for the "audio never leaves device" claim (already done by ADR 0010); no further change needed here.
+- **ADR 0008** — minor amendment noting Postgres holds content/prompts/categories in addition to notes; sync protocol extends.
+- **AGENTS.md** — new hard stop for prompt/material/category editing (already added in this commit; Architect just references it).
+- **COWORK.md** — admin role row in the team table (already added in this commit; Architect references it).
+- **REVIEW_SPEC.md** — new reject pattern: "code that hard-codes a curated material, prompt template, or category definition that should be server-data" → reject; "agent-authored edit to materials/prompts/categories" → reject.
+- **WIREFRAMES.md** — UX needs first-launch onboarding screens and admin UI wireframes after the ADRs land. PM should create a UX issue.
+
+### Outputs when locked
+
+- ADR 0011, ADR 0012 (single commit each, paired with STABLE.md updates per same-commit rule).
+- STABLE.md gains the sections noted above.
+- This section deleted from DRAFT.md.
+- PM creates follow-up issues for: UX wireframes (onboarding + admin); Architect amendment to ADR 0008 (or notation that this ADR covers it); Developer scaffold work (once skeleton is requested).
+
+---
+
 ## Open: data model
 
 The schema serving the locked methodology. Lives here until designed; will move to STABLE.md when locked.

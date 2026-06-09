@@ -6,7 +6,7 @@ When this document conflicts with [STABLE.md](./STABLE.md) or [AGENTS.md](./AGEN
 
 ---
 
-## The five roles
+## The five roles (plus the human as Admin)
 
 | Role | File | Owns | Reviews | Default model |
 |---|---|---|---|---|
@@ -15,8 +15,11 @@ When this document conflicts with [STABLE.md](./STABLE.md) or [AGENTS.md](./AGEN
 | **Developer** | [`.claude/agents/developer.md`](./.claude/agents/developer.md) | Source code, unit tests | (Implementor, not reviewer; self-review against REVIEW_SPEC.md before opening PR) | Sonnet 4.5 |
 | **Tester** | [`.claude/agents/tester.md`](./.claude/agents/tester.md) | [TEST_PLAN.md](./TEST_PLAN.md), bug-report issues | PR user-visible-behavior verification | Sonnet 4.5 |
 | **UX designer** | [`.claude/agents/ux-designer.md`](./.claude/agents/ux-designer.md) | [WIREFRAMES.md](./WIREFRAMES.md), UI specs | PR UI/UX fit against wireframes | Sonnet 4.5 |
+| **Admin** | *(human only)* | Curated materials, prompt templates, category definitions, default settings, the bearer token | (Not a reviewer) | n/a |
 
-The human is the **orchestrator** and the **only** authority for: `git push`, `gh pr merge`, editing [AGENTS.md](./AGENTS.md) and this document, modifying [`.claude/approved-deps.txt`](./.claude/approved-deps.txt), and resolving role-level conflicts.
+The human is the **orchestrator**, the **Admin** (content curation, prompt tuning, category definitions), and the **only** authority for: `git push`, `gh pr merge`, editing [AGENTS.md](./AGENTS.md) and this document, modifying [`.claude/approved-deps.txt`](./.claude/approved-deps.txt), and resolving role-level conflicts.
+
+**Admin is explicitly not an agent role.** Agents do not edit curated materials, prompt templates, category definitions, or default settings — those are runtime data the human admin curates through the in-app admin UI (per ADRs 0011/0012 when written). This protects the convictions at the content layer: an agent tuning the prompt that judges user content creates a feedback loop the convictions cannot survive.
 
 ---
 
@@ -60,6 +63,10 @@ Each file in the repo has exactly one role that may edit it. Other roles may rea
 | [TEST_PLAN.md](./TEST_PLAN.md) | Tester | Tester only |
 | [WIREFRAMES.md](./WIREFRAMES.md) | UX designer | UX only |
 | UI specs (`ui/screens/*.md` when split) | UX designer | UX only |
+| Curated materials (server-data) | Admin (human) | Admin only — through the in-app admin UI |
+| Prompt templates (server-data) | Admin (human) | Admin only — through the in-app admin UI |
+| Category definitions and default settings (server-data) | Admin (human) | Admin only — through the in-app admin UI |
+| Bearer token | Admin (human) | Admin only — via SSH to MBP (per ADR 0008) |
 | [AGENTS.md](./AGENTS.md) | Human | Human only |
 | [COWORK.md](./COWORK.md) | Human | Human only |
 | [`.claude/agents/*.md`](./.claude/agents/) | Human | Human only |
