@@ -261,6 +261,81 @@ Real seams: exactly three — `INoteStore`, `IGrader`, `IAudioProcessor`. Any ne
 
 ---
 
+## System architecture
+
+How the stack above fits together as a system. Locked by [ADR 0008](./decisions/0008-system-architecture.md); read that ADR for the full reasoning and alternatives considered.
+
+### Runtime shape
+
+**One process, no server, no background work.** v1 is a single MAUI Blazor Hybrid application on the user's desktop (Windows + WebAssembly in v1; native mobile in v1.5+). Every dependency is in-process: SQLite on local disk, Whisper as a bundled native library, Anthropic API over outbound HTTPS. No backend service, no message broker, no scheduler daemon. Every action — routine generation, grading, transcription, encounter proposal — happens synchronously on a UI request. `async` is for I/O, not for background work.
+
+### Component inventory (v1)
+
+These are the components that exist. Adding, removing, merging, or splitting any of them requires an ADR.
+
+| Component | Kind | Responsibility |
+|---|---|---|
+| UI (Blazor pages + components) | Concrete | Renders Today, Revisit, Encounter, note editor, Echo, Settings. Never touches HTTP, filesystem, SQLite, or Whisper directly — only the components below. |
+| `RoutineGenerator` | Concrete, pure | Builds today's `DailyRoutine` from notes + subjects + pause + config. No I/O. |
+| `EchoComposer` | Concrete, pure | Builds the Echo variant (3–5 past/recent pairs) on Echo days. |
+| `EncounterProposer` | Concrete | Direction-aware prompt construction; calls `IGrader.ProposeAsync`. |
+| `FsrsScheduler` | Concrete, pure | Recitation + vocabulary due-date selection and state update. |
+| `DiminishingScheduler` | Concrete, pure | Literary narrative + prose-modeling + reflection due-date selection and state update. |
+| `LinkedSurfacingScheduler` | Concrete, pure | Concept/mechanism due-date selection (graph-driven, calendar safety net). |
+| `INoteStore` → `SqliteNoteStore` | Seam | Note + subject + pause-state persistence. EF Core lives only here. |
+| `IGrader` → `AnthropicGrader` + `SelfGrader` | Seam | `GradeAsync`, `MirrorAsync`, `ProposeAsync`. Self-grade is the fallback path when budget exhausted. |
+| `IAudioProcessor` → `WhisperAudioProcessor` | Seam | `RecordAsync`, `TranscribeAsync`. Audio bytes returned to caller for storage. |
+| `SpendTracker` | Concrete | Records per-call cost; reports today/month/30d; raises `BudgetExhaustedException` at the daily cap. |
+| `PauseState` | Value | Category + app pause status. Read by `RoutineGenerator`; mutated by Settings via `INoteStore`. |
+| `ExportService` | Concrete | Zips all notes + audio + `spend-log.csv`. |
+| `VocabularyCapture` | Concrete | One-tap word capture during reading; calls `IGrader.GenerateCardAsync`; saves to vocabulary FSRS queue. Cross-cuts every reading category. |
+
+Explicitly **not** components in v1: no `IScheduler` abstraction (the four schedulers are sibling classes called by name from `RoutineGenerator`), no `IClock` (callers pass `DateOnly today` directly), no `RoutineService` / `LearningEngine` god-class, no `ICostPolicy`, no `IExporter`, no event bus, no domain events, no `*Manager`, no `*Helper`. If one later proves real, that proof is an ADR.
+
+### Project layout — flat folders by feature
+
+Per [Engineering principles](#engineering-principles) ("no layered architecture folders"). Inside the single .NET project:
+
+```
+Notes/         Subjects/      Routine/       Echo/
+Grading/       Audio/         Spend/         Pause/
+Vocabulary/    Export/        Pages/         Components/
+```
+
+Each folder holds the concrete classes for one feature plus its seam if any. `Pages/` and `Components/` are MAUI Blazor convention, not a self-imposed layer.
+
+### Dependency wiring
+
+- **Constructor injection only.** No `IServiceProvider` passed around; no service locator. Pages use Blazor's `[Inject]`.
+- **All seams and singletons (`SpendTracker`) registered with `AddSingleton`.** Single user, single process.
+- **`SelfGrader` is wired as the fallback inside one `AnthropicGraderWithFallback` class**, not as a separate `IGrader` registration that callers choose between. The "primary or fallback" decision lives in exactly one place.
+- **`SqliteNoteStore` owns `DbContextOptions`** and constructs short-lived `DbContext` instances per operation. The UI never sees `DbContext`.
+- **No `IClock`.** `RoutineGenerator` and the schedulers take `DateOnly today` as a parameter.
+
+### Data-flow contracts
+
+- **Routine generation**: Today page → `INoteStore.LoadEverything` → `RoutineGenerator.Generate` (pure) → per active subject, `EncounterProposer.ProposeAsync` → `IGrader.ProposeAsync`. The only network call during routine load is the proposal. If budget exhausted, proposal falls back to "next unread in curated list" without a network call.
+- **A revisit**: UI captures user response (text or, via `IAudioProcessor`, transcribed voice) → branch on category: grade-based categories call `IGrader.GradeAsync`; mirror-based categories call `IGrader.MirrorAsync` → scheduler updates note state → `INoteStore.Save`. The two branches use different methods returning different types; Conviction #6 is structural, not flagged.
+- **A new encounter**: UI shows the `EncounterProposal` loaded with the routine → accept opens the category template editor; "not today" re-proposes with a lighter flag; "something else" lets the user type. On save, the note enters its category's revisit queue with initial scheduler state.
+- **Vocabulary capture**: highlight → `VocabularyCapture.CaptureAsync` → `IGrader.GenerateCardAsync` → UI confirm/edit → `INoteStore.Save` linked to source note id. Revisit fetches the source sentence as context via one `INoteStore` query.
+
+### Error and degradation policy
+
+- `IGrader` network failure: caught at the page; user offered self-grade. Same path as budget exhaustion.
+- `IAudioProcessor` transcription failure: audio is still saved; user prompted to type. Audio is the source of truth; transcript is the search/grade form.
+- `INoteStore` write failure: throw; MAUI surfaces an error toast. No `Result<T>` per anti-rules.
+- `SpendTracker` race on the daily cap: single-process check-then-call is sufficient; no locking in v1.
+
+### Forward-compatibility (no rework needed for these v1.5 / v2 moves)
+
+- **Mobile build**: MAUI handles the target; only the Whisper bundle size is platform-conditional.
+- **Cloud sync**: new `RemoteApiNoteStore : INoteStore`; DI swap. Nothing else changes.
+- **Ollama local grading**: new `OllamaGrader : IGrader`; chooser logic changes in `AnthropicGraderWithFallback` (or its successor) — ADR at that time.
+- **Pronunciation scoring**: extend `IAudioProcessor` with a new method; decorate Whisper with a new processor. Per ADR 0006, v2.
+- **User-authored categories**: requires `CuratedMaterials` to become editable and `Category` to become persisted — confined to `Subjects/`. v2 per [BACKLOG.md](./BACKLOG.md).
+
+---
+
 ## Scope (v1)
 
 The minimum that runs the full loop end-to-end on desktop (Windows + WebAssembly). Mobile build follows in v1.5 or v2.
@@ -353,6 +428,7 @@ The engineering principles get revisited after v1 has been used daily for ≥ 2 
 
 - **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history.
 - **What cognitive learning science says about whetstone's choices**: [`RESEARCH.md`](./RESEARCH.md).
+- **How code review works**: [`REVIEW_SPEC.md`](./REVIEW_SPEC.md) (owned by Architect). Stack-specific research notes that informed the SPEC: [`REVIEW_NOTES.md`](./REVIEW_NOTES.md).
 - **How the agent team operates**: [`COWORK.md`](./COWORK.md). Multi-agent architecture research that informed it: [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md).
 - **What's in motion right now**: [`DRAFT.md`](./DRAFT.md).
 - **What's deferred**: [`BACKLOG.md`](./BACKLOG.md).

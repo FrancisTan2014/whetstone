@@ -31,6 +31,8 @@ Every day whetstone produces a routine: a small set of revisits from past encoun
 | [`DRAFT.md`](./DRAFT.md) | What's in motion: open questions, next tasks. |
 | [`RESEARCH.md`](./RESEARCH.md) | Cognitive learning science literature review informing the design. |
 | [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md) | Multi-agent coding team research informing the team structure. |
+| [`REVIEW_NOTES.md`](./REVIEW_NOTES.md) | Stack-specific code-review research notes (MAUI Blazor / EF Core / SQLite / Anthropic / Whisper). |
+| [`REVIEW_SPEC.md`](./REVIEW_SPEC.md) | Concrete code-review checklist used by Architect on every PR. |
 | [`AGENTS.md`](./AGENTS.md) | Spec for AI agents working in this repo (applies to all roles). |
 | [`COWORK.md`](./COWORK.md) | Operating manual for the five-role agent team. |
 | [`TEST_PLAN.md`](./TEST_PLAN.md) | v1 black-box test strategy (owned by Tester). |

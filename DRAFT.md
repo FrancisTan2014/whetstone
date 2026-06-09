@@ -115,6 +115,7 @@ Returns:
 - ✅ Major revision: revisit terminology, Direction, mirror response, vocabulary as layer, curated materials, voice as first-class (ADRs 0005, 0006)
 - ✅ Multi-agent team architecture research (AGENT_TEAM_RESEARCH.md)
 - ✅ Five-role agent team deployed Phase 1 (architect/pm/developer/tester/ux-designer in .claude/agents/, COWORK.md operating manual, hooks enforcing hard stops, ADR 0007)
+- ✅ MAUI Blazor stack-specific code review research (REVIEW_NOTES.md) + REVIEW_SPEC.md + Architect's expanded scope (ADR 0008)
 
 ### Next
 

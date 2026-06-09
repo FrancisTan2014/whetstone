@@ -10,9 +10,9 @@ When this document conflicts with [STABLE.md](./STABLE.md) or [AGENTS.md](./AGEN
 
 | Role | File | Owns | Reviews | Default model |
 |---|---|---|---|---|
-| **Architect** | [`.claude/agents/architect.md`](./.claude/agents/architect.md) | [STABLE.md](./STABLE.md), [decisions/](./decisions/) | PR design correctness | Sonnet 4.5 |
+| **Architect** | [`.claude/agents/architect.md`](./.claude/agents/architect.md) | [STABLE.md](./STABLE.md), [decisions/](./decisions/), [REVIEW_SPEC.md](./REVIEW_SPEC.md) | PR design correctness AND PR code correctness (per REVIEW_SPEC.md) | Sonnet 4.5 |
 | **PM** | [`.claude/agents/pm.md`](./.claude/agents/pm.md) | [DRAFT.md](./DRAFT.md), [BACKLOG.md](./BACKLOG.md), GitHub issues, wiki | PR scope/acceptance alignment | Sonnet 4.5 |
-| **Developer** | [`.claude/agents/developer.md`](./.claude/agents/developer.md) | Source code, unit tests | (Implementor, not reviewer) | Sonnet 4.5 |
+| **Developer** | [`.claude/agents/developer.md`](./.claude/agents/developer.md) | Source code, unit tests | (Implementor, not reviewer; self-review against REVIEW_SPEC.md before opening PR) | Sonnet 4.5 |
 | **Tester** | [`.claude/agents/tester.md`](./.claude/agents/tester.md) | [TEST_PLAN.md](./TEST_PLAN.md), bug-report issues | PR user-visible-behavior verification | Sonnet 4.5 |
 | **UX designer** | [`.claude/agents/ux-designer.md`](./.claude/agents/ux-designer.md) | [WIREFRAMES.md](./WIREFRAMES.md), UI specs | PR UI/UX fit against wireframes | Sonnet 4.5 |
 
@@ -51,6 +51,7 @@ Each file in the repo has exactly one role that may edit it. Other roles may rea
 |---|---|---|
 | [STABLE.md](./STABLE.md) | Architect | Architect only |
 | [decisions/*.md](./decisions/) | Architect | Architect only |
+| [REVIEW_SPEC.md](./REVIEW_SPEC.md) | Architect | Architect only (with paired ADR per same-commit rule) |
 | [DRAFT.md](./DRAFT.md) | PM | PM only |
 | [BACKLOG.md](./BACKLOG.md) | PM | PM only |
 | GitHub issues | PM (creator/closer) | PM creates and closes; any role may comment |
@@ -66,7 +67,7 @@ Each file in the repo has exactly one role that may edit it. Other roles may rea
 | [`.claude/hooks/*`](./.claude/hooks/) | Human | Human only |
 | [`.claude/approved-deps.txt`](./.claude/approved-deps.txt) | Human | Human only |
 | [README.md](./README.md) | Human (with role consultation) | Architect or PM may propose edits via PR |
-| [RESEARCH.md](./RESEARCH.md), [AGENT_TEAM_RESEARCH.md](./AGENT_TEAM_RESEARCH.md) | Frozen reference docs | Append-only; supersede with a new research doc rather than edit |
+| [RESEARCH.md](./RESEARCH.md), [AGENT_TEAM_RESEARCH.md](./AGENT_TEAM_RESEARCH.md), [REVIEW_NOTES.md](./REVIEW_NOTES.md) | Frozen reference docs | Append-only; supersede with a new research doc rather than edit |
 
 **The principle**: when a role wants to edit a file it doesn't own, it instead leaves a comment for the owning role — usually on a GitHub issue, sometimes inline in a PR. The owning role considers and decides.
 
@@ -81,7 +82,7 @@ Each file in the repo has exactly one role that may edit it. Other roles may rea
 3. **Architect review (if tagged)** — Architect comments on the issue: endorse, modify, or reject. If reject, PM either reworks or escalates to human after two iterations.
 4. **Developer claim** — Developer reads issues labeled `ready-for-dev`, picks one (assigns to themselves), branches, implements, opens PR. PR description includes `Closes #N`, what changed, why, and a test plan.
 5. **Reviews** — three reviewers may comment on the PR, each in their own scope:
-   - **Architect**: design fit, conviction alignment, ADR pairing if STABLE.md touched.
+   - **Architect**: design fit, conviction alignment, ADR pairing if STABLE.md touched, AND code-level correctness per [REVIEW_SPEC.md](./REVIEW_SPEC.md) (see ADR 0009).
    - **PM**: scope, acceptance criteria, BACKLOG creep.
    - **Tester**: user-visible behavior, regressions, testability.
    - **UX (when UI touched)**: wireframe fit, interaction consistency.
