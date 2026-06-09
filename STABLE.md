@@ -8,126 +8,184 @@ When something is locked, it goes here. When it changes, this document is edited
 
 ## What whetstone is
 
-A personal learning app that turns daily reading, note-taking, and recall into a sustainable practice. Built on the principle that **short, daily, joyful practice beats long, sporadic, forced study.**
+A personal learning app and knowledge library that turns daily reading, listening, writing, speaking, and re-encounter into a sustainable practice. Built on the principle that **short, daily, joyful practice beats long, sporadic, forced study** — and that growth happens *between* encounters with the same material, not within any single one.
 
 > Growth through daily discipline.
 
 ### The loop
 
 ```
-read  →  note  →  speak (explain it back)  →  connect (link to what you know)
-                                                                ↓
-                                                          recall tomorrow
+read / listen  →  capture  →  re-express (write or speak it back)  →  connect
+                                                                          ↓
+                                                                 revisit later
 ```
 
-Every day whetstone produces a routine: a small set of recall items from past encounters and slots for new material across the user's active categories.
+Every day whetstone produces a routine: a small set of revisits from past encounters and slots for new material across the user's active categories.
 
 ### What whetstone is NOT
 
 To prevent drift, these negations are part of the spec:
 
-- **Not a flashcard app.** Flashcards (FSRS recall) are one of four recall algorithms, used only where they fit.
-- **Not a notes app with optional AI.** LLM grading is on the critical path of the daily loop.
+- **Not a flashcard app.** Flashcards (FSRS revisits) are one of several revisit methods, used only where they fit.
+- **Not a notes app with optional AI.** LLM grading and reflection are on the critical path of the daily loop.
 - **Not a sandbox for the user to define their own loop.** Whetstone is a guide-with-conviction. Defaults are strong; users adapt within the form.
-- **Not a productivity tracker.** No streaks, no stats, no gamification. The feedback is the routine itself.
+- **Not a productivity tracker.** No streaks, no stats, no gamification. The feedback is the routine itself, and the visible record of your own past writing.
 - **Not a knowledge graph.** Linking is one-direction, manual, intentional — not auto-generated.
 - **Not a multi-user / team product.** Personal app, single user, no auth in v1.
 
 ---
 
-## The five convictions
+## The six convictions
 
 These are rules the user cannot turn off. They are what makes whetstone *whetstone*.
 
 1. **Daily encounter beats sporadic effort.** The routine runs every day. Skipping is failure; shrinking is fine.
-2. **Joy is fuel, not a luxury.** Ritual slots are sacred — outside recall, never graded, never skipped.
-3. **Growth, not retention, is the goal.** Recall serves understanding; understanding serves becoming someone. Forgetting is data, not failure.
+2. **Joy is fuel, not a luxury.** Ritual slots are sacred — outside revisit queues, never graded, never skipped.
+3. **Growth, not retention, is the goal.** Revisiting serves understanding; understanding serves becoming someone. Forgetting is data, not failure.
 4. **Templates structure engagement; they do not quiz.** A scaffold for *your* writing, not a slot for the "right answer."
 5. **Your past self is the rubric.** What you wrote when you first understood something is the benchmark for whether it still lives in you. The LLM compares; the app does not prescribe truth.
+6. **Revisit is not testing; it is meeting your past self with your present mind.** What we resurface, we resurface to grow from — not to score. For some material that meeting looks like a quiz (recitation, vocabulary, mechanism); for other material it looks like reading what you wrote and writing again, with the LLM holding up a mirror to the difference.
 
 ### Decision boundary for future features
 
 When a future feature is proposed, judge it against the convictions:
 
-1. **A feature that helps the user *avoid* a conviction is rejected.** Drop-this-card violates #3. Hide-low-grades violates #5.
-2. **A feature that helps the user *fulfill* a conviction more easily is welcomed.** Pause serves #1. Show-improvement serves #3.
+1. **A feature that helps the user *avoid* a conviction is rejected.** Drop-this-card violates #3. Hide-low-grades violates #5. "Quiz me on my diary" violates #6.
+2. **A feature that helps the user *fulfill* a conviction more easily is welcomed.** Pause serves #1. Voice capture for diary serves #6 (lower friction → more honest record of past self).
 3. **When in doubt, name the conviction the feature touches.** If the feature exists to *bend* the conviction, reject. If it exists to *serve* the conviction, accept.
 
 ---
 
 ## Methodology
 
+### Direction — the identity anchor (per subject)
+
+Before the user's first encounter in a subject, they write **one or two sentences** declaring why they are studying it and what success looks like in 6-12 months. Not a SMART goal, not a curriculum — a declaration. Examples:
+
+- *"I want to know 史记 well enough to talk about the major figures without notes. Pace doesn't matter. The goal is intimate familiarity, not coverage."*
+- *"I want my English writing to feel sentence-rich. I'm studying Orwell because clarity is the foundation. Vocabulary is a means."*
+- *"I want to re-read CS:APP and understand it differently — to see how programs become processes become memory, as one mental model."*
+
+The Direction is the steering anchor for every later LLM proposal in that subject. The user reads it at the start of weekly Echo reviews. It is editable — a Direction can mature — but it is always present.
+
+**Why this is in STABLE**: identity-anchored goals (Sheldon self-concordance; Oyserman identity-based motivation) sustain practice across months better than outcome goals. The research backs this more strongly than most other choices in whetstone. See [`RESEARCH.md`](./RESEARCH.md) §6.
+
 ### Categories
 
-Each encounter belongs to exactly one category. A category bundles four things: a **template** (what to write when you encounter), a **recall algorithm** (when to revisit), a **grading style** (how the LLM judges recall), and a **default daily slot weight** (how much of the daily budget it gets).
+Each encounter belongs to exactly one category. A category bundles three things: a **template** (what to write or capture when you encounter), a **revisit method** (when and how the encounter is met again), and a **default daily slot weight** (how much of the daily budget it gets).
 
-Five default categories ship in v1. Users can author more later (deferred to v2; see [`BACKLOG.md`](./BACKLOG.md)).
+Five categories ship in v1, with curated material pre-chosen per category. Users can author additional categories and materials in v2 (deferred; see [`BACKLOG.md`](./BACKLOG.md)).
 
 #### 1. Literary narrative
-For stories with author, viewpoint, drama. Examples: 《史记》 biographies, novels, essays, narrative non-fiction.
+For stories with author, viewpoint, drama.
 
+- **v1 material**: 《史记》, in order: 本纪 → 世家 → 列传.
 - **Template**: (1) What's the story? (2) What's the author's view? (3) What do you think? (4) Gems worth taking?
-- **Recall**: diminishing revisits — 1d, 7d, 30d, 90d, then done.
-- **Grading**: LLM compares user's recalled summary against their original answer.
-- **Rationale**: Understanding doesn't decay infinitely. The 90-day cutoff prevents queue accumulation.
+- **Revisit method**: **diminishing schedule with mirror response** — re-encounters at 1d, 7d, 30d, 90d. Each revisit: the app shows the user's original answer; the user writes again on the same encounter ("what's changed for you?"); the LLM produces a mirror response (a paragraph naming the shift between past and present writing, not a grade).
+- **Rationale**: Long-form narrative engagement is about the slow deepening of a reader's relationship with the text. Quiz-style testing collapses this. The mirror response respects that growth is the point. The 90-day cap is a principled bet, not a research finding; expected to evolve from real use.
 
 #### 2. Recitation
-For passages meant to be memorized verbatim. Examples: 诗词, 名句, 《滕王阁序》, 《洛神赋》, English poetry.
+For passages meant to be memorized verbatim.
 
+- **v1 material**: 《滕王阁序》, 《洛神赋》, 《笠翁对韵》 (continuing past the first five).
 - **Template**: (1) Source (2) Passage (3) Context (4) Why this matters to you.
-- **Recall**: FSRS (modern spaced repetition).
-- **Grading**: LLM compares character-by-character. Tolerance for punctuation, strict on words.
-- **Rationale**: Verbatim retention is the well-studied SRS use case. FSRS over SM-2 because it adapts to per-user forgetting curves.
+- **Revisit method**: **FSRS with grade-based scoring**. User recalls the passage (written or spoken). LLM compares character-by-character (tolerance for punctuation; strict on words). Four grades: Forgot / Partial / Solid / Stronger.
+- **Rationale**: Verbatim retention is the well-studied SRS use case. FSRS over SM-2 because it adapts to per-user forgetting curves (open-spaced-repetition benchmark, ~10,000 users).
 
-#### 3. Vocabulary
-For words and phrases with meaning. Examples: English literature vocabulary, 古文 vocabulary, technical terminology.
+#### 3. Prose-modeling (deliberate imitation of writing craft)
+For learning to write in a target style by studying sentences from a chosen author.
 
-- **Template**: (1) Word/phrase (2) Meaning in your own words (3) Example sentence (4) Etymology or memorable hook.
-- **Recall**: FSRS.
-- **Grading**: LLM checks recalled meaning (paraphrase OK) + correct usage in example.
+- **v1 material**: Orwell's *Politics and the English Language*, paragraph by paragraph. Then *Shooting an Elephant*, then *Such, Such Were the Joys*, then other essays in chronological order. *Animal Farm* and other novels deferred — essays are the right unit for this method.
+- **Template**: (1) The sentence (or short passage) worth modeling. (2) What you notice — rhythm, word choice, structure. (3) Your rewrite of the same idea in your own words. (4) Where your version loses the music.
+- **Revisit method**: **Schedule plus generative revisit.** At 7d, 30d, 90d: the LLM shows the original sentence and the user's old attempt, then asks the user to write a new sentence in the same style about something they're currently thinking about. The LLM responds with a paragraph naming what carried over and what didn't.
+- **Rationale**: Writing is a skill domain. Deliberate practice (Ericsson) applies here. The method is how every prose writer has actually learned — Hemingway studying Twain, Baldwin studying James — adapted into a structured daily loop.
 
 #### 4. Concept / mechanism
-For logical structures: how something works. Examples: CS algorithms, OS mechanisms, networking concepts, math theorems.
+For logical structures: how something works.
 
+- **v1 material**: CS:APP (already read once by user; this is a re-read in whetstone, which is the strongest use of the revisit framing), front-to-back chapter order, supplemented optionally with one technical paper per month.
 - **Template**: (1) What problem does this solve? (2) How does it work? (3) When does it fail or degrade? (4) Trade-off vs alternatives.
-- **Recall**: linked surfacing — no clock. The concept surfaces when the user encounters related material. The graph drives surfacing, not the calendar.
-- **Grading**: LLM compares re-derivation of mechanism against original. Alternative valid derivations accepted.
-- **Rationale**: Concepts integrate with neighbors. Quizzing in isolation breaks them out of context.
+- **Revisit method**: **Linked surfacing with re-derivation.** No fixed clock. The concept surfaces when the user encounters related material in any category, and at sparse calendar checkpoints (90d, 365d) as a safety net. On revisit: user re-derives the mechanism from problem statement; LLM compares against the user's original explanation; alternative valid derivations accepted.
+- **Rationale**: Concepts integrate with neighbors. Quizzing in isolation breaks them out of context. This is a principled choice, not empirically validated against clock-based SRS for concepts. See [`RESEARCH.md`](./RESEARCH.md) §1 for the honest caveat.
 
-#### 5. Reflection
-For personal thoughts, diary, processing experiences.
+#### 5. Reflection (diary and free writing)
+For personal thoughts, daily journaling, processing experiences.
 
+- **v1 material**: free — user writes what they're thinking. Whetstone is the user's diary.
 - **Template**: free-form, no scaffold.
-- **Recall**: none.
-- **Grading**: none.
-- **Rationale**: Diary is for writing, not testing. Marked as a category to keep all encounters in one store.
+- **Revisit method**: **Mirror response on schedule.** At 30d, 60d, 90d, 180d, 365d: the LLM surfaces a past entry and asks "you wrote this 60 days ago — has your mind changed?" The user writes a response. The LLM produces a mirror paragraph naming what shifted. No grade.
+- **Rationale**: Reflection's purpose is the writing, but the writing's purpose is encountering one's own evolution. The mirror response is the cleanest expression of Conviction #6.
+
+### Vocabulary as a layer, not a category
+
+Vocabulary is not a top-level category in whetstone. It is a layer that exists *under* every reading category.
+
+**How vocabulary is captured**: while reading any material in whetstone (史记, Orwell, CS:APP, anything), the user can highlight a word or phrase with one tap. The LLM generates a vocabulary card on the spot — word, paraphrased meaning, the surrounding sentence (auto-captured as example), optional etymological hook. The user sees the card and either taps **"Looks right"** (saved) or **"Edit"** (fixes, saves). Median path: one tap to capture, one tap to confirm.
+
+**How vocabulary is revisited**: vocabulary cards flow into a single FSRS queue across all reading. Revisit asks the user to write the meaning in their own words (free recall — the desirable difficulty). LLM grades against the captured definition.
+
+**Why this is in STABLE**: requiring the user to author full cards is exactly the editing tax that breeds procrastination. The LLM does the heavy lifting; the user judges (cheap) rather than authors (expensive). This is the procrastination-defense mechanism for the vocabulary slice.
+
+### Voice as first-class
+
+Voice input is available anywhere text input is. Tap mic, speak, app records. Whisper (running locally on every client) transcribes. The transcript flows into LLM grading and is searchable; the original audio is preserved for playback.
+
+What voice is used for in v1:
+- **Diary entries** — speak your day; transcript saved with audio.
+- **Recall responses** — speak your answer to a revisit prompt.
+- **Recitation** — speak the passage. v1: character-match against the original via transcript; flags substitutions and omissions. v2: pronunciation quality scoring (stress, rhythm, phoneme accuracy).
+- **Prose reading aloud** — speak the Orwell paragraph. v1: transcript matched. v2: English pronunciation scoring.
+- **Reflection / mirror response** — speak the response if writing feels heavy.
+
+What voice does NOT do in v1:
+- No pronunciation-quality scoring for English (deferred to v2; OSS wav2vec2 + MFA stack documented in BACKLOG).
+- No literary-quality scoring for Chinese recitation (节奏, 情感, breath — research-thin area).
+- No TTS (app reading to you) in v1.
+- No real-time streaming transcription — record-then-process.
+
+**Local-only**: Whisper runs on the client. Audio never leaves the device. No server-side processing in v1. Privacy is a side effect of the architecture.
 
 ### Daily loop
 
 ```
 Today's routine
 ├── 🎯 Ritual    (笠翁对韵-style daily reading, ~10 min)
-│       └── Checkbox, no template, no grading. Sacred.
+│       └── Checkbox, no template, no grading. Sacred. Optional voice recording.
 │
-├── 🔁 Recall    (capped at 15 items/day, interleaved across categories)
-│       └── For each item:
-│           1. App shows template prompts
-│           2. User writes recalled answer in free form
-│           3. LLM grades vs original answer + source
-│           4. Category's algorithm updates next-surface date
+├── 🔁 Revisit   (capped at 15 items/day, interleaved across categories)
+│       └── For each item, the category's revisit method runs:
+│           – Recitation / Vocabulary: prompt → free recall → LLM grades (4 grades)
+│           – Concept: prompt → re-derive → LLM grades against original
+│           – Narrative / Reflection / Prose-modeling: show original → user writes again → LLM mirror response
 │
 ├── 📖 Encounter (new material, 1-2 slots per active category)
 │       └── For each slot:
-│           1. User reads source material
-│           2. User fills category's template
-│           3. Saved as a Note; enters recall queue per category
+│           1. App proposes the next encounter within the category's curated material,
+│              with a one-sentence rationale referencing the Direction.
+│           2. User accepts / "not today" (lighter alt) / "something else" (user types).
+│           3. User reads or listens; fills the category's template.
+│           4. Saved as a Note; enters category's revisit queue.
+│           5. While reading, one-tap vocabulary capture available.
 │
 └── 🔗 Connect   (1 manual link/day from new Note to existing Note)
+        └── Free-text "Related: see [[note-id]]" in body.
 ```
 
-### Recall queue selection (the cap mechanism)
+### Weekly Echo review (every 7th day replaces the standard routine)
 
-When the recall queue has more than 15 items eligible today:
+Once a week, the routine shifts:
+
+- **Read your Direction** for each active subject.
+- **Three to five past entries** surface from 30/60/90/180/365 days ago, paired where possible with a recent entry on a similar theme.
+- For each pair, the user writes a short reflection: *"what's the same? what's different? where am I now?"*
+- LLM responds with a mirror paragraph naming the drift.
+- No grading, no scheduling impact. The Echo's purpose is for the user to see their own evolution.
+
+**Why this is in STABLE despite thin research backing**: it is the cleanest operationalization of Conviction #6, and the cost of building it is small. If 4 weeks of real use show users skip it, it gets cut and revisited.
+
+### Revisit queue selection (the cap mechanism)
+
+When the revisit queue has more than 15 items eligible today:
 
 1. Bucket items by category.
 2. Round-robin across categories with eligible items, picking most-overdue first within each.
@@ -136,43 +194,38 @@ When the recall queue has more than 15 items eligible today:
 
 This prevents one category from dominating the day.
 
+**Honest caveat**: cross-category interleaving is operationally useful (engagement, balance) but the interleaving research (Brunmair & Richter 2019, g ≈ 0.42) is about discriminating similar items within a domain. Whetstone's cross-category interleaving is task-switching, not literature-backed for retention. See [`RESEARCH.md`](./RESEARCH.md) §4.
+
 ### New-encounter slot sizing
 
-Each category has a default weight. Daily time available for encounters (budget minus ritual minus recall) is split by weight.
+Each category has a default weight. Daily time available for encounters (budget minus ritual minus revisit) is split by weight. The five v1 categories:
 
 | Category | Weight | Typical session |
 |---|---|---|
-| Concept/mechanism | 3 | ~45 min weekday, ~90 min weekend |
-| Literary narrative | 2 | ~30 min weekday, ~60 min weekend |
-| Vocabulary | 1 | ~15 min |
+| Concept/mechanism (CS:APP) | 3 | ~45 min weekday, ~90 min weekend |
+| Literary narrative (史记) | 2 | ~30 min weekday, ~60 min weekend |
+| Prose-modeling (Orwell) | 2 | ~20-30 min |
 | Recitation | 1 | ~15 min |
-| Reflection | 0 (opt-in per day) | varies |
+| Reflection (diary) | 1 (always available) | varies |
 
-### LLM grading
+### LLM grading and proposal
 
-LLM judgement is on the critical path. Self-grading is the fallback when budget is exhausted, not the default.
+LLM is on the critical path twice: as **grader** (for revisits that take a grade) and as **proposer** (for daily encounter slots). Self-grading remains as fallback for grading when the budget is exhausted, never as default.
 
-**Four grades** (not three):
+**Four grades** (apply only to recitation, vocabulary, concept):
 - **Forgot** — couldn't recall or recalled wrong.
 - **Partial** — got the gist but missed key parts.
 - **Solid** — matched original understanding.
 - **Stronger** — recall is *better* than original (added nuance, clearer thinking). Signals integration.
 
+**Mirror response** (apply to narrative, reflection, prose-modeling): no grade. A paragraph from the LLM naming the delta between past and present writing.
+
 **Cost controls (all v1):**
-1. **Daily budget cap**: configurable, default **$0.25/day** (~150 graded items at Haiku 4.5 pricing). When exhausted, falls back to self-grade.
+1. **Daily budget cap**: configurable, default **$0.25/day** (~150 graded items at Haiku 4.5 pricing). When exhausted, grading falls back to self-grade; proposal falls back to round-robin through unread material.
 2. **Per-request token cap**: 2,000 input tokens. Long source truncated with notice.
 3. **Visible spend log**: settings shows today, this month, rolling 30-day average.
 
 **Model choice**: Haiku 4.5 default. Opus 4.7 only when user explicitly flags an item for deep review.
-
-**The `IGrader` seam:**
-
-```
-IGrader
-├── AnthropicGrader     (v1 — calls Anthropic API)
-├── OllamaGrader        (v1.5/v2 — calls local Ollama, desktop only)
-└── SelfGrader          (always — fallback when budget exhausted)
-```
 
 ### Pause mechanism
 
@@ -180,7 +233,7 @@ A user's life is not uniformly available. Pause is the conviction-aligned escape
 
 **Category pause** — applied to a single category. Queue freezes, no new dues accrue, no new-encounter slots offered. Other categories continue. Resume shifts due dates forward by pause duration.
 
-**Loop pause** — applied to the whole app. All recall + new-encounter slots suppressed. Ritual pauses by default; user can opt to keep it. Resume shifts every recall item's next-surface date forward by pause duration. **No FSRS recalculation, no lapses recorded, no penalty, no shame.**
+**Loop pause** — applied to the whole app. All revisits and new-encounter slots suppressed. Ritual pauses by default; user can opt to keep it. Resume shifts every revisit item's next-surface date forward by pause duration. **No FSRS recalculation, no lapses recorded, no penalty, no shame.**
 
 Math: `new_due_date = old_due_date + pause_duration`.
 
@@ -197,35 +250,40 @@ Math: `new_due_date = old_due_date + pause_duration`.
 |---|---|---|
 | Framework | **.NET MAUI Blazor Hybrid** | One codebase → PWA + native iOS/Android/Windows/Mac. Real native shell is a stated future goal. |
 | Storage (v1) | **SQLite via EF Core** | Local, zero-config, ships with MAUI. Survives offline. |
-| Storage abstraction | **`INoteStore` interface** | `SqliteNoteStore` now, `RemoteApiNoteStore` later. Swap is one line. |
-| Note format | **Markdown body + YAML frontmatter** | Plain text, human-readable, export = serialize → `.md` file. |
+| Audio | **Whisper (whisper.cpp / faster-whisper)**, model bundled with client | Local STT on every device; audio never leaves the device. Adds 100-500 MB to app size depending on model selected. |
+| Storage abstraction | **`INoteStore` interface** | `SqliteNoteStore` now, `RemoteApiNoteStore` later. |
 | Grader abstraction | **`IGrader` interface** | `AnthropicGrader` v1, `OllamaGrader` later, `SelfGrader` always. |
-| Sync | **None in v1** — export-zip is the migration path | Eliminates Azure as a v1 blocker. |
+| Audio abstraction | **`IAudioProcessor` interface** | `WhisperAudioProcessor` v1 (local STT). Pronunciation-scoring implementations deferred to v2. |
+| Note format | **Markdown body + YAML frontmatter** | Plain text, human-readable, export = serialize → `.md` file. Audio referenced by filename, stored alongside. |
+| Sync | **None in v1** — export-zip is the migration path | Eliminates Azure as a v1 blocker. Cloud sync v2. |
 
-Real seams: exactly two — `INoteStore` and `IGrader`. Any new interface needs an ADR.
+Real seams: exactly three — `INoteStore`, `IGrader`, `IAudioProcessor`. Any new interface needs an ADR.
 
 ---
 
 ## Scope (v1)
 
-The minimum that runs the full loop end-to-end on Windows. Ships before any other feature.
+The minimum that runs the full loop end-to-end on desktop (Windows + WebAssembly). Mobile build follows in v1.5 or v2.
 
 ### In v1
 
-1. **Today screen** — day's routine: recall items (capped 15, interleaved across categories), new-encounter slots per active category, daily ritual checkbox.
-2. **Recall an item** — app shows template prompts; user writes free-form recalled answer; LLM grades against original (Forgot/Partial/Solid/Stronger); category's algorithm advances next-surface date. Self-grade fallback when budget exhausted.
-3. **Create a new encounter** — pick category, fill template, save. Note enters its category's recall queue.
-4. **View / edit a note** — open from Today, see body, edit body, save.
-5. **Five default categories** shipped in code: literary narrative, recitation, vocabulary, concept/mechanism, reflection. Admin UI for user-authored categories deferred.
-6. **`AnthropicGrader` + `SelfGrader`** implementations of `IGrader`. Anthropic API key configured in settings.
-7. **Cost controls**: daily budget cap (default $0.25), per-request token cap (2,000 input), visible spend log.
-8. **Pause** — category-level and app-level, with date-shifting on resume.
-9. **Export everything** — Settings → "Download all notes as `.zip`". Files are real `.md` with frontmatter. Spend log exported as CSV.
-10. **Local SQLite storage** behind `INoteStore`. No auth. Single user.
+1. **Today screen** — day's routine: revisits (capped 15, interleaved), new-encounter slots per active category, daily ritual checkbox, weekly Echo review every 7th day.
+2. **Revisit an item** — per category's method (graded for recitation/vocab/concept; mirror response for narrative/reflection/prose-modeling). Self-grade fallback when budget exhausted.
+3. **Encounter — LLM proposes** the next encounter within curated material, with one-sentence rationale referencing the Direction. User accepts / "not today" / "something else." Encounter completed by filling the category's template.
+4. **Voice input everywhere** — tap mic anywhere text input is accepted; Whisper transcribes locally; audio stored with note.
+5. **One-tap vocabulary capture** — highlight a word during any reading → LLM generates card → user confirms or edits → saved to single FSRS vocabulary queue.
+6. **Direction per subject** — user writes 1-2 sentences when starting a subject; editable any time; LLM uses as proposal anchor; shown at start of Echo reviews.
+7. **Five default categories shipped in code with curated v1 material**: literary narrative (史记), recitation (滕王阁序/洛神赋/笠翁对韵), prose-modeling (Orwell essays in order), concept/mechanism (CS:APP), reflection (free diary). User-authored categories and materials deferred to v2.
+8. **`AnthropicGrader` + `SelfGrader` + `WhisperAudioProcessor`** are the v1 implementations. Anthropic API key configured in settings.
+9. **Cost controls**: daily budget cap (default $0.25), per-request token cap (2,000 input), visible spend log.
+10. **Pause** — category-level and app-level, with date-shifting on resume.
+11. **Weekly Echo review** — every 7th day, surfaces 3-5 past entries paired with recent ones; user reflects; LLM mirror response.
+12. **Export everything** — Settings → "Download all notes + audio + spend log as `.zip`". Files are real `.md` with frontmatter, audio in original format, spend log as CSV.
+13. **Local SQLite storage + local audio files** behind `INoteStore`. No auth. Single user. No server.
 
 ### Out of v1 — see [`BACKLOG.md`](./BACKLOG.md)
 
-Notable deferrals: cloud sync, local LLM (Ollama) grading, user-authored categories, native mobile build, tags/search, backlinks, voice memo, push notifications, themes.
+Notable deferrals: cloud sync, mobile build (native iOS/Android), pronunciation-quality scoring, Chinese recitation literary scoring, TTS, local LLM (Ollama) grading, user-authored categories and materials, tags/search, backlinks, push notifications, themes.
 
 ### Discipline rule
 
@@ -241,14 +299,14 @@ If during construction an idea arrives — *"I should also add X"* — it goes i
 - **Nullable reference types: on, warnings as errors.**
 - **Async all the way.** Any I/O method returns `Task<T>`. No `.Result`, no `.Wait()`.
 - **One class per file.** Filename matches type name.
-- **Class is the default. Interface is the exception.** Two real seams exist: `INoteStore`, `IGrader`. Any new interface needs an ADR.
+- **Class is the default. Interface is the exception.** Three real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor`. Any new interface needs an ADR.
 - **No factories, no abstract base classes, no `*Manager` / `*Helper` classes** in v1. Name classes for what they do.
 - **Comments answer *why*, not *what*.** If a comment paraphrases the code, delete the comment and rename the variable.
 
 ### Tests
 
-- **Unit tests on pure logic only.** Schedulers (FSRS, diminishing revisits, linked surfacing), `RoutineGenerator`, grading-result parsing.
-- **No tests on**: SQLite I/O, UI components, MAUI bootstrap, network calls.
+- **Unit tests on pure logic only.** Schedulers (FSRS, diminishing-schedule, linked-surfacing), `RoutineGenerator`, grading-result parsing, vocabulary-card generation prompts (offline structure tests).
+- **No tests on**: SQLite I/O, UI components, MAUI bootstrap, network calls, Whisper transcription quality.
 - **xUnit + FluentAssertions.**
 - **Test names**: `Method_Condition_Expected`.
 
@@ -279,8 +337,9 @@ If during construction an idea arrives — *"I should also add X"* — it goes i
 - ❌ No Result<T> / Either monad. Throw exceptions; let MAUI handle.
 - ❌ No layered architecture folders (Domain/Application/Infrastructure/Presentation). Flat folders by feature.
 - ❌ No AutoMapper. Hand-write the few mappings the app needs.
-- ❌ No background workers, no message queues, no caching layer.
+- ❌ No background workers, no message queues, no caching layer for grading.
 - ❌ No localization framework — v1 is English UI only. (Notes themselves are multilingual; the app chrome is not.)
+- ❌ No streaming audio. v1 is record-then-process.
 
 These are v1-scoped, not lifetime bans. Each is on the table for v2 if a real need surfaces.
 
@@ -293,6 +352,7 @@ The engineering principles get revisited after v1 has been used daily for ≥ 2 
 ## Cross-references
 
 - **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history.
+- **What cognitive learning science says about whetstone's choices**: [`RESEARCH.md`](./RESEARCH.md).
 - **What's in motion right now**: [`DRAFT.md`](./DRAFT.md).
 - **What's deferred**: [`BACKLOG.md`](./BACKLOG.md).
 - **Rules agents must follow**: [`AGENTS.md`](./AGENTS.md).

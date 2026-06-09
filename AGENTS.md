@@ -16,21 +16,23 @@ That's it. Three files, every session.
 
 ## Read on demand, when needed
 
+- **[RESEARCH.md](./RESEARCH.md)** — cognitive learning science literature review. Consult when designing or evaluating any learning-loop decision (revisit methods, scheduling, grading, motivation), or when judging whether a proposed feature is research-backed vs principled invention. Honest about its own gaps; read the "Limits of this review" section before quoting findings.
 - **[decisions/](./decisions/)** — append-only ADR history. Read when you need the *why* behind a current decision (e.g., considering a change that would reverse it).
 - **[BACKLOG.md](./BACKLOG.md)** — deferred features. Read when the user proposes something you suspect is already deferred.
 - **[README.md](./README.md)** — human-facing overview. Read only if you're updating it.
 
 ---
 
-## The five convictions (do not weaken)
+## The six convictions (do not weaken)
 
-(Full text in STABLE.md → "The five convictions." Summarized here for fast reference.)
+(Full text in STABLE.md → "The six convictions." Summarized here for fast reference.)
 
 1. **Daily encounter beats sporadic effort.** Skipping is failure; shrinking is fine.
-2. **Joy is fuel, not a luxury.** Ritual slots are sacred — outside recall, never graded, never skipped.
+2. **Joy is fuel, not a luxury.** Ritual slots are sacred — outside revisit queues, never graded, never skipped.
 3. **Growth, not retention, is the goal.** Forgetting is data, not failure.
 4. **Templates structure engagement; they do not quiz.** A scaffold for the user's writing, not a slot for the "right answer."
 5. **Your past self is the rubric.** The LLM compares; the app does not prescribe truth.
+6. **Revisit is not testing; it is meeting your past self with your present mind.** For some material that meeting is a grade; for other material it is a mirror.
 
 When evaluating any change, ask: *does this help the user fulfill a conviction, or avoid one?* Fulfill → accept. Avoid → reject. See STABLE.md → "Decision boundary for future features."
 
@@ -44,7 +46,7 @@ Do not, under any circumstance, do these without the user saying so in the curre
 - **Do not add a feature that is in [BACKLOG.md](./BACKLOG.md)** without moving it out of BACKLOG with user confirmation and (if substantive) an ADR.
 - **Do not weaken a conviction.** If you believe one needs weakening, write an ADR proposing it and stop. Do not implement around it.
 - **Do not weaken a rule from STABLE.md → "Engineering principles."** Same as above — propose via ADR, do not work around.
-- **Do not introduce a new interface** unless the seam is real. Today there are exactly two real seams: `INoteStore` and `IGrader`. Any new interface needs an ADR. (See STABLE.md → "Class is the default. Interface is the exception.")
+- **Do not introduce a new interface** unless the seam is real. Today there are exactly three real seams: `INoteStore`, `IGrader`, and `IAudioProcessor`. Any new interface needs an ADR. (See STABLE.md → "Class is the default. Interface is the exception.")
 - **Do not push to the remote.** Commit locally. The user runs `git push`.
 - **Do not run destructive git operations** (`reset --hard`, `push --force`, branch deletion, `clean -f`). If you find yourself wanting to, stop and ask.
 - **Do not skip pre-commit hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue.
@@ -52,6 +54,9 @@ Do not, under any circumstance, do these without the user saying so in the curre
 - **Do not bypass cost controls.** LLM-grading code must respect the daily budget cap, per-request token cap, and visible spend log defined in STABLE.md.
 - **Do not store credentials in code or commit them.** API keys live in user settings, never in source.
 - **Do not commit an ADR (or any locked-decision change) without updating STABLE.md in the same commit.** The same-commit rule keeps STABLE.md trustworthy.
+- **Do not implement voice features beyond the v1 scope in ADR 0006.** Pronunciation scoring, TTS, streaming audio, and Chinese literary-quality scoring are explicitly out of v1. If a user proposal touches these, propose a v1.5 / v2 ADR; do not slip them into v1.
+- **Do not propose adding "quiz mode" to narrative, reflection, or prose-modeling categories.** These use mirror response by Conviction #6. Adding grading to them violates the conviction directly.
+- **Do not change a Direction without the user editing it themselves.** The Direction is the user's identity-anchor; an agent rewriting it is the agent prescribing the user's values.
 
 ---
 
@@ -64,7 +69,7 @@ Do not, under any circumstance, do these without the user saying so in the curre
 - Nullable reference types: on, warnings as errors.
 - One class per file. Filename matches type name.
 - Async all the way. No `.Result`, no `.Wait()`.
-- Class is default; interface is exception (only `INoteStore` + `IGrader`).
+- Class is default; interface is exception (only `INoteStore`, `IGrader`, `IAudioProcessor`).
 - No `*Manager` / `*Helper` classes. No factories. No abstract base classes in v1.
 - Comments answer *why*, not *what*.
 

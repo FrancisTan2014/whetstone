@@ -4,13 +4,15 @@ What's in motion. Open questions. What comes next. Things that haven't earned a 
 
 When something here gets locked, it moves to STABLE.md (often via an ADR) and the section is removed from this file.
 
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-09
 
 ---
 
 ## Phase
 
 **Design.** No code exists yet. v1 implementation has not started.
+
+The methodology, voice scope, and curated materials are now locked in STABLE.md (see ADRs 0005 and 0006). What remains in design is the concrete schema and the routine-generation algorithm — both serving the now-stable methodology.
 
 ---
 
@@ -21,23 +23,29 @@ The schema serving the locked methodology. Lives here until designed; will move 
 ### Requirements (must satisfy)
 
 - Each note round-trips to a single `.md` file with YAML frontmatter (export-from-day-one rule).
-- Frontmatter records the **category** (foreign key to category definition) and the **original answer** the user wrote at first encounter — this is the rubric for LLM grading per Conviction #5.
-- Frontmatter holds per-category **algorithm state** (FSRS parameters, diminishing-revisits step, linked-surfacing graph edges).
+- Frontmatter records the **category**, the **subject's Direction** by reference, and the **original answer/entry** — the rubric for LLM grading and the prior-self for mirror response.
+- Audio files referenced by filename, stored alongside the `.md` files, included in export bundle.
+- Frontmatter holds per-category **algorithm state** (FSRS parameters for graded categories; diminishing-schedule step for narrative; linked-surfacing graph edges for concept; schedule offset for prose-modeling).
 - Body is plain markdown — no app-specific syntax.
 - Stable string `id` is the filename.
 - The `INoteStore` interface is the only contract for note persistence.
-- A separate **spend log** table records LLM grading costs.
-- `schema_version: 1` in frontmatter from day one.
+- Separate **spend log** table records LLM grading + proposal costs.
 - Schema must carry **pause state** (per category + per app).
+- Schema must carry **Direction per subject** (one paragraph, editable).
+- `schema_version: 1` in frontmatter from day one.
+- **Voice-specific**: audio filename, duration, transcription confidence; transcripts stored alongside.
+- **Vocabulary cards**: how does a card produced from any reading material reference its source? (subject? note id? quoted span?)
 
 ### Open questions
 
 - **Note ID scheme** — topic-prefix-date-slug? UUID? sequential? Trade-off: human-readability vs slug-rot.
-- **Category representation** — separate table with FK? string column with code-side registry? Trade-off: flexibility vs type-safety.
-- **Original-answer storage** — inline in body, separate frontmatter field, or separate table? Trade-off: export-readability vs queryability.
-- **Per-category algorithm state shape** — one column per algorithm? JSON blob? polymorphic table? Trade-off: schema simplicity vs algorithm independence.
-- **Spend log granularity** — one row per grading request, daily roll-up, both?
-- **Pause state schema** — fields on Category/App table? Separate Pause table for history?
+- **Subject vs Category vs Material relationship** — STABLE.md mentions all three. What's the data model? My current sketch: a Subject (e.g., "CS:APP re-read", "史记") owns a Direction; each Subject is bound to one Category; the Material is a structured list of encounter units (chapters, essays, passages) the LLM proposes from. Confirmable.
+- **Original-answer storage** — inline in body, separate frontmatter field, or separate table?
+- **Per-category algorithm state shape** — JSON blob? polymorphic table?
+- **Spend log granularity** — one row per request, daily roll-up, both?
+- **Pause state schema** — fields on Category/Subject/App table? Separate Pause table for history?
+- **Vocabulary card structure** — how is the source citation stored? How does revisit fetch the original sentence for context?
+- **Audio storage layout** — flat `audio/` folder with UUID filenames, or organized by date/subject?
 
 ### Outputs when locked
 
@@ -49,7 +57,7 @@ The schema serving the locked methodology. Lives here until designed; will move 
 
 ## Open: routine algorithm
 
-The interleaving logic that produces a daily routine. Lives here until designed; will move to STABLE.md when locked.
+The logic that produces a daily routine, including the weekly Echo. Lives here until designed; will move to STABLE.md when locked.
 
 ### Function shape (sketch)
 
@@ -57,30 +65,36 @@ The interleaving logic that produces a daily routine. Lives here until designed;
 DailyRoutine GenerateRoutine(
     DateOnly today,
     IReadOnlyList<Note> allNotes,
+    IReadOnlyList<Subject> subjects,
     IReadOnlyList<Category> categories,
     PauseState pauseState,
-    RoutineConfig config // cap, category weights, ritual list
+    RoutineConfig config // cap, category weights, ritual list, Echo cadence
 );
 ```
 
 Returns:
-- **Recall items** (≤ cap, interleaved across non-paused categories with eligible items via round-robin)
-- **Deferred overflow** (items whose due date was today but didn't make the cap — next-surface pushed +1 day)
-- **New-encounter slots** per active non-paused category (sized by category weight × available time)
-- **Ritual slot** for daily reading — outside any recall queue (suppressed only if app-level pause AND user opted to pause ritual)
+- **Mode**: standard or Echo.
+- **Revisit items** (≤ cap, interleaved across non-paused categories with eligible items).
+- **Deferred overflow** (items whose due date was today but didn't make the cap).
+- **New-encounter slots** per active non-paused subject (sized by category weight × available time), each with an LLM-generated proposal.
+- **Ritual slot** for daily reading.
+- **Echo pairs** (only if Echo day): 3-5 past/recent pairings from across subjects.
 
 ### Open questions
 
-- **Round-robin ordering** — alphabetical by category? Weighted by user's per-category weight? Random per day to avoid the same category always being "first"?
-- **Empty-day handling** — first weeks, before any category has due items: just show new-encounter slots, or suggest first encounter explicitly?
-- **New-encounter completion** — checkbox that creates an empty note, or required to create a populated note before being marked done?
-- **Minimum cap** — at what cap does the loop feel too quiet? Should the cap *floor* itself (always show at least N items if available)?
-- **Linked surfacing interaction with cap** — concept/mechanism items have no clock-due date; how do they compete for cap slots with date-due items from other categories?
-- **Pause skipping** — when iterating categories, paused ones are skipped entirely; should the slot allocation re-balance to give active categories more time, or stay fixed?
+- **Echo cadence**: every 7th day from app install, every Sunday, or user-pickable?
+- **Round-robin ordering** for revisits — alphabetical? Weighted? Random per day?
+- **Empty-day handling** — first weeks, before any category has due items.
+- **New-encounter completion** — checkbox that creates an empty note, or required to create a populated note before marked done?
+- **Minimum cap floor** — at what cap does the loop feel too quiet?
+- **Linked surfacing interaction with cap** — concept items have no clock-due date; how do they compete?
+- **Pause skipping** — re-balance slot allocation, or stay fixed?
+- **Proposal-and-Direction interaction** — how is the Direction text fed to the LLM proposal prompt? Always? Only on the day's first proposal?
+- **Mirror response generation prompt** — concrete prompt structure for the LLM. Probably a separate prompt-engineering doc when implementation starts.
 
 ### Outputs when locked
 
-- ADR documenting the interleaving algorithm.
+- ADR documenting the algorithm.
 - "Routine algorithm" section in STABLE.md.
 - This section deleted from DRAFT.md.
 
@@ -90,13 +104,15 @@ Returns:
 
 ### Completed
 
-- ✅ v1 scope locked
+- ✅ v1 scope locked (then amended by ADRs 0003, 0004, 0005, 0006)
 - ✅ Engineering principles
 - ✅ Stack
-- ✅ Learning methodology (convictions, categories, algorithms, grading)
+- ✅ Learning methodology (convictions, categories, revisit methods, grading)
 - ✅ Pause mechanism + decision-boundary framework
 - ✅ Agent-instruction files (AGENTS.md, CLAUDE.md)
 - ✅ Docs restructure (12 docs → STABLE + DRAFT + decisions/)
+- ✅ Cognitive learning science research (RESEARCH.md)
+- ✅ Major revision: revisit terminology, Direction, mirror response, vocabulary as layer, curated materials, voice as first-class (ADRs 0005, 0006)
 
 ### Next
 
@@ -106,13 +122,14 @@ Returns:
 
 - **Project skeleton + agent-control mechanics** (`.editorconfig`, `Directory.Build.props`, pre-commit hook, CI workflow). Blocked on data model and routine algorithm.
 - **Routine algorithm.** Blocked on data model.
-- **Implementation** (storage, schedulers, routine generator, UI, seeding). Blocked on skeleton.
+- **Implementation** (storage, schedulers, routine generator, voice pipeline, UI, seeding). Blocked on skeleton.
 
 ---
 
 ## Notes for the next agent
 
 - Read [`AGENTS.md`](./AGENTS.md) first, then [`STABLE.md`](./STABLE.md), then this file.
+- For research-backed reasoning about design choices, consult [`RESEARCH.md`](./RESEARCH.md).
 - All locked decisions are in STABLE.md. If you can't find a decision there, it isn't locked.
 - The user prefers to be asked when scope or taste decisions arise. Do not assume.
 - The user pushes commits manually. Do not push to remote.
