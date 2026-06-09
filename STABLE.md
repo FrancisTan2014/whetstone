@@ -353,6 +353,7 @@ The engineering principles get revisited after v1 has been used daily for ≥ 2 
 
 - **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history.
 - **What cognitive learning science says about whetstone's choices**: [`RESEARCH.md`](./RESEARCH.md).
+- **How the agent team operates**: [`COWORK.md`](./COWORK.md). Multi-agent architecture research that informed it: [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md).
 - **What's in motion right now**: [`DRAFT.md`](./DRAFT.md).
 - **What's deferred**: [`BACKLOG.md`](./BACKLOG.md).
 - **Rules agents must follow**: [`AGENTS.md`](./AGENTS.md).

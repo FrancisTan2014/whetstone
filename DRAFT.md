@@ -113,10 +113,18 @@ Returns:
 - ✅ Docs restructure (12 docs → STABLE + DRAFT + decisions/)
 - ✅ Cognitive learning science research (RESEARCH.md)
 - ✅ Major revision: revisit terminology, Direction, mirror response, vocabulary as layer, curated materials, voice as first-class (ADRs 0005, 0006)
+- ✅ Multi-agent team architecture research (AGENT_TEAM_RESEARCH.md)
+- ✅ Five-role agent team deployed Phase 1 (architect/pm/developer/tester/ux-designer in .claude/agents/, COWORK.md operating manual, hooks enforcing hard stops, ADR 0007)
 
 ### Next
 
-**Design data model** (this DRAFT.md section). Produces a new ADR and a "Data model" section in STABLE.md.
+The team is now active. Decide which role to start with for what:
+
+- **PM** — break the data-model and routine-algorithm design tasks into GitHub issues. Maintain DRAFT.md as items resolve.
+- **Architect** — review any conviction-touching scope as PM creates issues. Begin design audits.
+- **Tester** — draft TEST_PLAN.md (v1 test strategy) from STABLE.md.
+- **UX designer** — draft WIREFRAMES.md (v1 screen inventory and flows) from STABLE.md.
+- **Developer** — idle until project skeleton is requested by human (the skeleton task is human-gated per AGENTS.md).
 
 ### Blocked
 

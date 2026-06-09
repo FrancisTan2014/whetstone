@@ -30,6 +30,11 @@ Every day whetstone produces a routine: a small set of revisits from past encoun
 | [`STABLE.md`](./STABLE.md) | Every locked decision. What whetstone *is*. |
 | [`DRAFT.md`](./DRAFT.md) | What's in motion: open questions, next tasks. |
 | [`RESEARCH.md`](./RESEARCH.md) | Cognitive learning science literature review informing the design. |
-| [`AGENTS.md`](./AGENTS.md) | Spec for AI agents working in this repo. |
+| [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md) | Multi-agent coding team research informing the team structure. |
+| [`AGENTS.md`](./AGENTS.md) | Spec for AI agents working in this repo (applies to all roles). |
+| [`COWORK.md`](./COWORK.md) | Operating manual for the five-role agent team. |
+| [`TEST_PLAN.md`](./TEST_PLAN.md) | v1 black-box test strategy (owned by Tester). |
+| [`WIREFRAMES.md`](./WIREFRAMES.md) | v1 UI inventory and flows (owned by UX designer). |
 | [`BACKLOG.md`](./BACKLOG.md) | Deferred features. |
 | [`decisions/`](./decisions/) | Append-only ADR history. |
+| [`.claude/agents/`](./.claude/agents/) | Per-role agent definitions (architect, pm, developer, tester, ux-designer). |

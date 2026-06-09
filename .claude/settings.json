@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "WebFetch",
+      "WebSearch",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git rm:*)",
+      "Bash(git mv:*)",
+      "Bash(git worktree:*)",
+      "Bash(dotnet format:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue create:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh issue close:*)",
+      "Bash(gh issue edit:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr review:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(git clean -fd*)",
+      "Bash(git commit*--no-verify*)",
+      "Bash(git commit*--no-gpg-sign*)",
+      "Bash(gh pr merge*)",
+      "Bash(dotnet add package*)",
+      "Bash(dotnet add reference*)",
+      "Bash(npm install*)",
+      "Bash(npm i *)",
+      "Bash(yarn add*)",
+      "Bash(pnpm add*)",
+      "Bash(pip install*)",
+      "Bash(uv add*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/check-git-push.sh",
+            "description": "Block any git push by agents — only the human pushes"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/check-dependency-add.sh",
+            "description": "Block adding new dependencies without approved-deps allowlist"
+          }
+        ]
+      }
+    ]
+  }
+}

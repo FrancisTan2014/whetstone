@@ -4,19 +4,24 @@ You are working on **whetstone** — a personal learning app being designed for 
 
 The app does not exist yet as code. It exists as a body of locked design decisions and open questions. Your job is to extend the design or implement against it — never to substitute your judgement for what's already locked.
 
+**This repo is operated by a five-role agent team.** You are running as one of those roles. Your role-specific instructions live in `.claude/agents/<role-name>.md`; this file (`AGENTS.md`) defines the rules that apply to *all* roles. The team's operating manual is [COWORK.md](./COWORK.md) — read it for how roles interact, file-edit boundaries, and the work-flow.
+
 ---
 
 ## Read first, every session
 
-1. **This file** (AGENTS.md) — what you may and may not do.
-2. **[STABLE.md](./STABLE.md)** — every locked decision. The current state of whetstone. Your single source of truth for "what is the design."
-3. **[DRAFT.md](./DRAFT.md)** — what's in motion: open questions, next tasks, blocked work.
+1. **This file** (AGENTS.md) — what every role may and may not do.
+2. **[COWORK.md](./COWORK.md)** — the operating manual: roles, file-edit boundaries, hand-off flow.
+3. **[STABLE.md](./STABLE.md)** — every locked decision. The current state of whetstone. Your single source of truth for "what is the design."
+4. **[DRAFT.md](./DRAFT.md)** — what's in motion: open questions, next tasks, blocked work.
+5. **Your role file** — `.claude/agents/<your-role>.md` — defines what *you specifically* may edit and your role-specific hard stops.
 
-That's it. Three files, every session.
+That's it. Five files, every session. Most are short.
 
 ## Read on demand, when needed
 
 - **[RESEARCH.md](./RESEARCH.md)** — cognitive learning science literature review. Consult when designing or evaluating any learning-loop decision (revisit methods, scheduling, grading, motivation), or when judging whether a proposed feature is research-backed vs principled invention. Honest about its own gaps; read the "Limits of this review" section before quoting findings.
+- **[AGENT_TEAM_RESEARCH.md](./AGENT_TEAM_RESEARCH.md)** — multi-agent coding team research that informed the team shape. Consult when considering changes to the team structure itself.
 - **[decisions/](./decisions/)** — append-only ADR history. Read when you need the *why* behind a current decision (e.g., considering a change that would reverse it).
 - **[BACKLOG.md](./BACKLOG.md)** — deferred features. Read when the user proposes something you suspect is already deferred.
 - **[README.md](./README.md)** — human-facing overview. Read only if you're updating it.
@@ -40,16 +45,17 @@ When evaluating any change, ask: *does this help the user fulfill a conviction, 
 
 ## Hard stops (refuse without explicit user override)
 
-Do not, under any circumstance, do these without the user saying so in the current session:
+Do not, under any circumstance, do these without the user saying so in the current session. These apply to every role; your role file may add more.
 
-- **Do not introduce a new dependency** (NuGet package, npm package, anything). Propose it, explain why, wait.
+- **Do not introduce a new dependency** (NuGet package, npm package, anything). Propose it, explain why, wait. The `.claude/approved-deps.txt` allowlist + hook block this at the tool layer.
 - **Do not add a feature that is in [BACKLOG.md](./BACKLOG.md)** without moving it out of BACKLOG with user confirmation and (if substantive) an ADR.
 - **Do not weaken a conviction.** If you believe one needs weakening, write an ADR proposing it and stop. Do not implement around it.
 - **Do not weaken a rule from STABLE.md → "Engineering principles."** Same as above — propose via ADR, do not work around.
 - **Do not introduce a new interface** unless the seam is real. Today there are exactly three real seams: `INoteStore`, `IGrader`, and `IAudioProcessor`. Any new interface needs an ADR. (See STABLE.md → "Class is the default. Interface is the exception.")
-- **Do not push to the remote.** Commit locally. The user runs `git push`.
-- **Do not run destructive git operations** (`reset --hard`, `push --force`, branch deletion, `clean -f`). If you find yourself wanting to, stop and ask.
-- **Do not skip pre-commit hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue.
+- **Do not push to the remote.** Commit locally. The user runs `git push`. Hook blocks this at the tool layer.
+- **Do not merge PRs.** Approval is a comment; the user clicks merge. Hook blocks this at the tool layer.
+- **Do not run destructive git operations** (`reset --hard`, `push --force`, branch deletion, `clean -f`). If you find yourself wanting to, stop and ask. Hook blocks the worst of these.
+- **Do not skip pre-commit hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue. Hook blocks these at the tool layer.
 - **Do not scaffold code without explicit user request.** The project skeleton has not yet been built; do not run `dotnet new` until the user says so.
 - **Do not bypass cost controls.** LLM-grading code must respect the daily budget cap, per-request token cap, and visible spend log defined in STABLE.md.
 - **Do not store credentials in code or commit them.** API keys live in user settings, never in source.
@@ -57,6 +63,8 @@ Do not, under any circumstance, do these without the user saying so in the curre
 - **Do not implement voice features beyond the v1 scope in ADR 0006.** Pronunciation scoring, TTS, streaming audio, and Chinese literary-quality scoring are explicitly out of v1. If a user proposal touches these, propose a v1.5 / v2 ADR; do not slip them into v1.
 - **Do not propose adding "quiz mode" to narrative, reflection, or prose-modeling categories.** These use mirror response by Conviction #6. Adding grading to them violates the conviction directly.
 - **Do not change a Direction without the user editing it themselves.** The Direction is the user's identity-anchor; an agent rewriting it is the agent prescribing the user's values.
+- **Do not edit files outside your role's scope.** See [COWORK.md](./COWORK.md) for the file-edit boundary table. If you need a file outside your scope changed, comment to the owning role.
+- **Do not edit [AGENTS.md](./AGENTS.md), [COWORK.md](./COWORK.md), [`.claude/agents/*.md`](./.claude/agents/), [`.claude/settings.json`](./.claude/settings.json), or [`.claude/approved-deps.txt`](./.claude/approved-deps.txt).** These define the team itself; only the human edits them.
 
 ---
 
@@ -111,3 +119,5 @@ Do not, under any circumstance, do these without the user saying so in the curre
 ## When in doubt
 
 Ask the user. The cost of a clarification is one round-trip. The cost of a wrong assumption is a feature that has to be removed.
+
+If the question is about your role's scope or what to do next, see [COWORK.md](./COWORK.md) and your role file. If the answer isn't there, ask the user.
