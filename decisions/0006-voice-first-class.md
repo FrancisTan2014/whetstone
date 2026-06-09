@@ -1,7 +1,7 @@
 # ADR 0006 — Voice as first-class; local STT on every client; pronunciation scoring deferred
 
 **Date:** 2026-06-09
-**Status:** Accepted
+**Status:** Accepted (the "Audio never leaves the device" / "Local-only" privacy framing in Decision §2 superseded by [ADR 0010](./0010-audio-sync.md); voice-first-class, local Whisper STT, and the v1 in/out scope all stand)
 
 ## Context
 
@@ -22,6 +22,7 @@ The honest question was: how much of "voice support" can v1 ship without becomin
 1. **Voice input is first-class everywhere text input is**: diary, reflection, recall responses, recitation, prose-modeling notes. Tap mic, speak, audio recorded and stored alongside the encounter.
 
 2. **STT is local on every client**: Whisper (whisper.cpp or faster-whisper) bundled with the app. Audio never leaves the device. No server-side processing in v1. Privacy is a side effect of this architecture; cost is zero per minute forever.
+   > **Superseded by ADR 0010:** Whisper STT remains local on every client, but the original audio bytes are uploaded to the user's own server (MBP at home in v1, user-owned cloud later) so the recording is playable on every device. The privacy framing is updated from *"audio never leaves the device"* to *"audio never leaves user-controlled hardware."* STT remains zero-cost-per-minute; audio never reaches a third-party service.
 
 3. **The model is bundled**: app size increases by 100-500 MB depending on which Whisper variant is selected. Acceptable on modern phones per user.
 

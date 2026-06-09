@@ -143,7 +143,7 @@ What voice does NOT do in v1:
 - No TTS (app reading to you) in v1.
 - No real-time streaming transcription — record-then-process.
 
-**Local-only**: Whisper runs on the client. Audio never leaves the device. No server-side processing in v1. Privacy is a side effect of the architecture.
+**Local STT, server-stored audio**: Whisper runs on the client (audio is transcribed locally; transcripts never reach a third party). The original audio bytes are uploaded to the user's own server (MBP at home in v1, user-owned cloud later) over the encrypted Cloudflare Tunnel, so the same recording is playable on every device. Audio never reaches a third-party service. See [ADR 0010](./decisions/0010-audio-sync.md), which supersedes ADR 0006's "audio never leaves the device" stance with "audio never leaves user-controlled hardware."
 
 ### Daily loop
 
