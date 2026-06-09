@@ -72,7 +72,7 @@ Read on demand:
 
 Beyond what AGENTS.md already says, your role-specific hard stops:
 
-- **Do not introduce a new interface beyond `INoteStore`, `IGrader`, `IAudioProcessor`** without writing an ADR proposing it.
+- **Do not introduce a new interface beyond `INoteStore`, `IGrader`, `IAudioProcessor` (client) or `IAudioBlobStore` (server)** without writing an ADR proposing it.
 - **Do not weaken or remove a conviction** without writing an ADR proposing it and stopping until the human responds.
 - **Do not edit a Direction** (the per-subject identity anchor). Directions belong to the human.
 - **Do not approve a PR that touches STABLE.md without a paired ADR.**

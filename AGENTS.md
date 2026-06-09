@@ -51,7 +51,7 @@ Do not, under any circumstance, do these without the user saying so in the curre
 - **Do not add a feature that is in [BACKLOG.md](./BACKLOG.md)** without moving it out of BACKLOG with user confirmation and (if substantive) an ADR.
 - **Do not weaken a conviction.** If you believe one needs weakening, write an ADR proposing it and stop. Do not implement around it.
 - **Do not weaken a rule from STABLE.md → "Engineering principles."** Same as above — propose via ADR, do not work around.
-- **Do not introduce a new interface** unless the seam is real. Today there are exactly three real seams: `INoteStore`, `IGrader`, and `IAudioProcessor`. Any new interface needs an ADR. (See STABLE.md → "Class is the default. Interface is the exception.")
+- **Do not introduce a new interface** unless the seam is real. Today there are exactly four real seams: `INoteStore`, `IGrader`, `IAudioProcessor` (client), and `IAudioBlobStore` (server, added by [ADR 0008](./decisions/0008-system-architecture.md)). Any new interface needs an ADR. (See STABLE.md → "Class is the default. Interface is the exception.")
 - **Do not push to the remote.** Commit locally. The user runs `git push`. Hook blocks this at the tool layer.
 - **Do not merge PRs.** Approval is a comment; the user clicks merge. Hook blocks this at the tool layer.
 - **Do not run destructive git operations** (`reset --hard`, `push --force`, branch deletion, `clean -f`). If you find yourself wanting to, stop and ask. Hook blocks the worst of these.
@@ -77,7 +77,7 @@ Do not, under any circumstance, do these without the user saying so in the curre
 - Nullable reference types: on, warnings as errors.
 - One class per file. Filename matches type name.
 - Async all the way. No `.Result`, no `.Wait()`.
-- Class is default; interface is exception (only `INoteStore`, `IGrader`, `IAudioProcessor`).
+- Class is default; interface is exception (only `INoteStore`, `IGrader`, `IAudioProcessor` on the client; `IAudioBlobStore` on the server).
 - No `*Manager` / `*Helper` classes. No factories. No abstract base classes in v1.
 - Comments answer *why*, not *what*.
 

@@ -67,7 +67,7 @@ Read on demand:
 Beyond what AGENTS.md already says:
 
 - **Do not introduce a new dependency** (`dotnet add package`, `npm install`, anything) without an entry in `.claude/approved-deps.txt`. If the dependency is needed and isn't on the list, comment on the issue asking PM and Architect to approve, and stop.
-- **Do not introduce a new interface** beyond `INoteStore`, `IGrader`, `IAudioProcessor` without an ADR existing first. If you find yourself wanting to, stop and ask Architect.
+- **Do not introduce a new interface** beyond `INoteStore`, `IGrader`, `IAudioProcessor` (client) or `IAudioBlobStore` (server) without an ADR existing first. If you find yourself wanting to, stop and ask Architect.
 - **Do not edit STABLE.md or decisions/** to make your implementation easier. Comment on the issue or ask Architect.
 - **Do not scaffold the project** (`dotnet new maui-blazor`, similar) without an explicit human request. The project skeleton is its own task (DRAFT.md → blocked tasks).
 - **Do not push to remote.** The human pushes.
