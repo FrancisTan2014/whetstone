@@ -4,6 +4,7 @@
 **Status:** Accepted
 **Supersedes:** Parts of [ADR 0001](./0001-stack-and-storage.md) ("Local-first storage chosen over cloud-from-day-one"; "Sync: None in v1")
 **Partially superseded by (in same commit):** [ADR 0010](./0010-audio-sync.md) on audio sync semantics.
+**Amended by:** [ADR 0011](./0011-content-as-server-data.md) — Postgres also holds `materials`, `prompt_templates`, `categories`, and `default_settings` tables (in addition to notes + history). The sync protocol gains `GET /v1/sync/content` and `GET /v1/sync/prompts`. The `NoteDbContext` referenced below is now `WhetstoneDbContext` to reflect the broader scope. [ADR 0012](./0012-admin-role.md) adds admin-scoped bearer tokens and the `POST /v1/admin/...` write endpoints.
 
 ## Context
 

@@ -31,7 +31,7 @@ To prevent drift, these negations are part of the spec:
 - **Not a sandbox for the user to define their own loop.** Whetstone is a guide-with-conviction. Defaults are strong; users adapt within the form.
 - **Not a productivity tracker.** No streaks, no stats, no gamification. The feedback is the routine itself, and the visible record of your own past writing.
 - **Not a knowledge graph.** Linking is one-direction, manual, intentional — not auto-generated.
-- **Not a multi-user / team product.** Personal app, single user. The v1 auth model is a single shared bearer token across the user's own devices, not user accounts (see [ADR 0008](./decisions/0008-system-architecture.md)).
+- **Not a multi-user / team product.** Personal app, single user. The v1 auth model is a single shared bearer token across the user's own devices, not user accounts (see [ADR 0008](./decisions/0008-system-architecture.md)). The same human plays both *user* (daily routine) and *Admin* (curates content, tunes prompts, manages tokens) — Admin is a role inside the team table, not a separate person ([ADR 0012](./decisions/0012-admin-role.md)).
 
 ---
 
@@ -74,7 +74,15 @@ The Direction is the steering anchor for every later LLM proposal in that subjec
 
 Each encounter belongs to exactly one category. A category bundles three things: a **template** (what to write or capture when you encounter), a **revisit method** (when and how the encounter is met again), and a **default daily slot weight** (how much of the daily budget it gets).
 
-Five categories ship in v1, with curated material pre-chosen per category. Users can author additional categories and materials in v2 (deferred; see [`BACKLOG.md`](./BACKLOG.md)).
+Five categories ship in v1, with curated material per category. The materials, category definitions (template / weight / revisit-method binding), and default settings live as **server-resident data**, curated by the human Admin role via an in-app admin UI; clients fetch and cache them on sync. See [ADR 0011](./decisions/0011-content-as-server-data.md) for the storage and sync; [ADR 0012](./decisions/0012-admin-role.md) for the admin role and UI.
+
+**Material delivery is hybrid per category**:
+
+- **史记, recitation passages, Orwell essays**: text **held by the server** (admin-curated), fetched and cached on first encounter. User reads inside whetstone.
+- **CS:APP**: **reference only**. Server holds the chapter / section list and per-unit acceptance criteria; whetstone never holds the book's text. User reads externally; whetstone holds the engagement note and the revisit schedule.
+- **Reflection (diary)**: user-authored, no material.
+
+Users can author additional categories and materials in v2 (deferred; see [`BACKLOG.md`](./BACKLOG.md)). The agent team does not edit materials, prompts, or category definitions — that is Admin's surface, and Admin is human-only (see [`AGENTS.md`](./AGENTS.md) hard stop).
 
 #### 1. Literary narrative
 For stories with author, viewpoint, drama.
@@ -225,7 +233,20 @@ LLM is on the critical path twice: as **grader** (for revisits that take a grade
 2. **Per-request token cap**: 2,000 input tokens. Long source truncated with notice.
 3. **Visible spend log**: settings shows today, this month, rolling 30-day average.
 
-**Model choice**: Haiku 4.5 default. Opus 4.7 only when user explicitly flags an item for deep review.
+**Model choice**: Haiku 4.5 default. Opus 4.7 only when user explicitly flags an item for deep review. Per-template model selection lives in the prompt template (see [Prompt templates](#prompt-templates) below); the LLM-touching code reads model + max_tokens + temperature from the active template, never as in-source constants.
+
+### Prompt templates
+
+Every LLM-touching moment in whetstone uses an admin-curated prompt template stored as server-side data, never as a string constant in source. This is structural: the agents that implement the LLM-calling code do not get to author or tune the prompts that judge user content. See [ADR 0011](./decisions/0011-content-as-server-data.md) (storage + sync + versioning) and [ADR 0012](./decisions/0012-admin-role.md) (admin role + admin UI).
+
+**v1 catalog of prompt-template keys** (one template per moment, versioned, with rollback):
+
+- `grade.recitation`, `grade.concept`, `grade.vocabulary` — graded-revisit moments.
+- `mirror.narrative`, `mirror.reflection`, `mirror.prose` — mirror-response moments.
+- `propose.encounter` — encounter proposal, anchored on the subject's Direction.
+- `generate.vocabulary_card` — one-tap vocab capture turning word + sentence into a card.
+
+Each template stores `system`, `user`, `model`, `max_tokens`, `temperature`, and the list of allowed `placeholders`. New keys are added by methodology change (ADR), not by a Developer commit.
 
 ### Pause mechanism
 
@@ -258,7 +279,9 @@ Math: `new_due_date = old_due_date + pause_duration`.
 | Sync | **Server-mediated cross-device sync in v1** | Personal-knowledge-library promise requires phone↔desktop continuity. See [ADR 0008](./decisions/0008-system-architecture.md). |
 | Server runtime | **ASP.NET Core 8 in Podman, multi-arch OCI image** | Same image runs on MBP (Apple Silicon) and any cloud Linux host. Migration is config + data move. |
 | Server host (v1) | **User's MacBook Pro at home, exposed via Cloudflare Tunnel** | $0/month recurring; user-owned hardware preserves privacy posture. |
-| Server storage | **Postgres 16 + local disk for audio blobs** behind `IAudioBlobStore` | Postgres runs identically across hosts. `IAudioBlobStore` is the fourth seam, scoped to the server, swaps to S3-compatible on cloud migration. |
+| Server storage | **Postgres 16 + local disk for audio blobs** behind `IAudioBlobStore` | Postgres runs identically across hosts. `IAudioBlobStore` is the fourth seam, scoped to the server, swaps to S3-compatible on cloud migration. Holds notes + history + materials + prompt_templates + categories + default_settings + tokens (per [ADR 0011](./decisions/0011-content-as-server-data.md) / [ADR 0012](./decisions/0012-admin-role.md)). |
+| Admin surface | **Admin pages inside the same MAUI Blazor client**, gated by admin-scoped bearer token | One codebase for user + admin; no second app. Admin is human-only ([ADR 0012](./decisions/0012-admin-role.md)). |
+| Content + prompts | **Server-resident runtime data**, admin-edited via the in-app admin UI, fetched and cached on client sync | Prompt-tuning and content edits at iteration cadence, not build-ship cadence. See [ADR 0011](./decisions/0011-content-as-server-data.md). |
 | Auth | **Shared bearer token + network-layer trust (Cloudflare Tunnel)** | Two-layer defense in depth. Single user; token rotated via SSH. No accounts, no login UI. |
 
 Real seams: **four total** — `INoteStore`, `IGrader`, `IAudioProcessor` (client), and `IAudioBlobStore` (server). Any new interface needs an ADR.
@@ -315,7 +338,11 @@ In priority order:
 | **Last-write-wins by `edited_at`** | Server-side history table archives overwritten versions | No conflict UI to build for v1; recovery escape hatch exists for the rare silent overwrite. |
 | **Audio syncs across devices** | Original audio uploaded to user's own server | Supersedes "audio never leaves the device" (ADR 0006) — replaced with "audio never leaves user-controlled hardware" ([ADR 0010](./decisions/0010-audio-sync.md)). |
 | **Shared bearer token + tunnel auth** | Two-layer defense: Cloudflare verifies tunnel, server verifies token | No account system needed for single user. Rotate via SSH. |
+| **Token scopes: `admin` vs `user`** | Same token shape, scope on the server's `tokens` table | Admin scope unlocks the in-app admin UI and `POST /v1/admin/...` write endpoints. Per [ADR 0012](./decisions/0012-admin-role.md). |
 | **Server-side ops metrics + crash reports** | No usage analytics (Conviction #3) | Find bugs across devices. No vanity metrics, even self-hosted. |
+| **Content + prompts + categories + settings = server data** | Postgres tables, admin-edited, client-cached | Prompt-tuning at iteration cadence. Agents do not edit. See [ADR 0011](./decisions/0011-content-as-server-data.md). |
+| **Admin role: human-only** | Hard stop in AGENTS.md; admin UI in MAUI Blazor client gated by scope | Defends convictions at the prompt and content layer. See [ADR 0012](./decisions/0012-admin-role.md). |
+| **First-launch: subject opt-in → Direction → first encounter** | Required Direction at opt-in (no skip) | The user's first whetstone artifact is their own declaration. Conviction #5 from the first moment. See [ADR 0012](./decisions/0012-admin-role.md). |
 
 ### Component inventory
 
@@ -373,7 +400,7 @@ The minimum that runs the full loop end-to-end on desktop (Windows + WebAssembly
 4. **Voice input everywhere** — tap mic anywhere text input is accepted; Whisper transcribes locally; audio stored with note.
 5. **One-tap vocabulary capture** — highlight a word during any reading → LLM generates card → user confirms or edits → saved to single FSRS vocabulary queue.
 6. **Direction per subject** — user writes 1-2 sentences when starting a subject; editable any time; LLM uses as proposal anchor; shown at start of Echo reviews.
-7. **Five default categories shipped in code with curated v1 material**: literary narrative (史记), recitation (滕王阁序/洛神赋/笠翁对韵), prose-modeling (Orwell essays in order), concept/mechanism (CS:APP), reflection (free diary). User-authored categories and materials deferred to v2.
+7. **Five default categories** — literary narrative, recitation, prose-modeling, concept/mechanism (CS:APP, reference-only), reflection (diary). Category definitions, materials, and prompt templates are admin-curated server data ([ADR 0011](./decisions/0011-content-as-server-data.md)), not in source. v1 content is the existing curation: 史记, 滕王阁序 / 洛神赋 / 笠翁对韵, Orwell essays in order, CS:APP chapter list. User-authored categories and materials deferred to v2.
 8. **`AnthropicGrader` + `SelfGrader` + `WhisperAudioProcessor`** are the v1 implementations. Anthropic API key configured in settings.
 9. **Cost controls**: daily budget cap (default $0.25), per-request token cap (2,000 input), visible spend log.
 10. **Pause** — category-level and app-level, with date-shifting on resume.
@@ -381,6 +408,9 @@ The minimum that runs the full loop end-to-end on desktop (Windows + WebAssembly
 12. **Export everything** — Settings → "Download all notes + audio + spend log as `.zip`". Files are real `.md` with frontmatter, audio in original format, spend log as CSV.
 13. **Local-first client + server-mediated cross-device sync.** Each client holds a SQLite cache + pending-sync queue; app works fully offline. Server (ASP.NET Core in Podman on user's MBP at home, exposed via Cloudflare Tunnel) holds canonical Postgres + audio blobs. Notes + transcripts + audio + spend all sync. Last-write-wins by `edited_at`; server-side history archives overwritten versions. Shared bearer token auth. See [ADR 0008](./decisions/0008-system-architecture.md), [ADR 0010](./decisions/0010-audio-sync.md).
 14. **Server portability**: same OCI image runs on MBP today and on Ali Cloud / Azure / AWS later. Storage seams (`IAudioBlobStore` for audio; standard Postgres for data) make migration config + data move, no code change.
+15. **Admin UI inside the client**, gated by admin-scoped bearer token. Surfaces: content editor (works → chapters → sections → units), prompt template editor (versioned with one-click activate / rollback), category editor, settings editor, token manager, history viewer, server metrics viewer. Admin is human-only; no agent edits prompts, materials, or category definitions. See [ADR 0012](./decisions/0012-admin-role.md).
+16. **Content + prompt + category + settings sync.** New endpoints `GET /v1/sync/content` and `GET /v1/sync/prompts` extend the sync protocol. Clients cache aggressively; admin edits visible on next client sync (≤ 5 min foreground). See [ADR 0011](./decisions/0011-content-as-server-data.md).
+17. **First-launch onboarding**: subject opt-in (with material-access checkbox for CS:APP) → required Direction per subject → first encounter. Direction-first sequencing ensures the user's first whetstone artifact is their own declaration. See [ADR 0012](./decisions/0012-admin-role.md).
 
 ### Out of v1 — see [`BACKLOG.md`](./BACKLOG.md)
 
@@ -452,7 +482,7 @@ The engineering principles get revisited after v1 has been used daily for ≥ 2 
 
 ## Cross-references
 
-- **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history. The architecture-relevant ADRs: [0001 (stack)](./decisions/0001-stack-and-storage.md), [0002 (engineering principles)](./decisions/0002-engineering-principles.md), [0006 (voice)](./decisions/0006-voice-first-class.md), [0008 (system architecture)](./decisions/0008-system-architecture.md), [0010 (audio sync)](./decisions/0010-audio-sync.md).
+- **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history. The architecture-relevant ADRs: [0001 (stack)](./decisions/0001-stack-and-storage.md), [0002 (engineering principles)](./decisions/0002-engineering-principles.md), [0006 (voice)](./decisions/0006-voice-first-class.md), [0008 (system architecture)](./decisions/0008-system-architecture.md), [0010 (audio sync)](./decisions/0010-audio-sync.md), [0011 (content as server data)](./decisions/0011-content-as-server-data.md), [0012 (admin role + onboarding)](./decisions/0012-admin-role.md).
 - **What cognitive learning science says about whetstone's choices**: [`RESEARCH.md`](./RESEARCH.md).
 - **How code review works**: [`REVIEW_SPEC.md`](./REVIEW_SPEC.md) (owned by Architect). Stack-specific research notes that informed the SPEC: [`REVIEW_NOTES.md`](./REVIEW_NOTES.md).
 - **How the agent team operates**: [`COWORK.md`](./COWORK.md). Multi-agent architecture research that informed it: [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md).

@@ -15,7 +15,7 @@ This is a **review** spec, not a coding spec. Developer should know it (so PRs l
 
 Read in **review order**. The order is calibrated so the most-likely-to-reject things are checked first; you stop reviewing the moment you find a hard rejection and ask Developer to fix it before continuing.
 
-1. **Gates** (sections 1-4): the things that block merge regardless of code quality. Conviction fit, scope, real-seam rule, same-commit rule.
+1. **Gates** (sections 1-5): the things that block merge regardless of code quality. Conviction fit, scope, real-seam rule, content + admin-scope rule, same-commit rule.
 2. **Stack-critical** (sections 5-10): the things this stack gets wrong most often. MAUI lifecycle/threading, Blazor rendering, EF Core, SQLite, async, nullable.
 3. **Integration-specific** (sections 11-13): Anthropic, Whisper, cross-platform.
 4. **Discipline** (sections 14-16): tests, secrets, commits.
@@ -24,25 +24,26 @@ When reviewing a small PR, you can skim sections that don't apply. When reviewin
 
 ---
 
-## Quick-reference: top 15 review checks
+## Quick-reference: top 16 review checks
 
 If a PR is too big to walk the full SPEC, at minimum check these:
 
 1. Touches a conviction? If yes, must have ADR.
 2. Touches `STABLE.md`? If yes, must have paired ADR in same commit.
 3. Introduces new `interface`? Must be one of the four real seams — `INoteStore`, `IGrader`, `IAudioProcessor` (client), `IAudioBlobStore` (server) — or have an ADR.
-4. Introduces new dependency? Must be in `.claude/approved-deps.txt`.
-5. Implements a BACKLOG.md item? Issue must have moved it out first.
-6. `DbContext` field on a page / ViewModel / singleton? Bug.
-7. `StateHasChanged()` inside `OnInitializedAsync` / `OnParametersSetAsync` / `[Parameter]` handler? Wrong.
-8. External callback mutates component state without `InvokeAsync(...)`? Will crash.
-9. `IJSObjectReference` / `DotNetObjectReference<T>` not disposed? Memory leak.
-10. `new HttpClient()` at call site (vs singleton)? Wrong pattern.
-11. API key from anywhere other than `SecureStorage.Default`? Security bug.
-12. `Include` on two collection navigations without `AsSplitQuery()`? Cartesian explosion risk.
-13. `DateTimeOffset` on a SQLite-stored entity? Client evaluation; use `DateTime` UTC or `DateOnly`.
-14. `.Result` / `.Wait()` / `.GetAwaiter().GetResult()`? Banned.
-15. Test references `SqliteNoteStore`, `WhisperAudioProcessor`, `AnthropicGrader`, `HttpClient`, or a Blazor component? Violates test-scope rule.
+4. Adds a prompt template, curated material, category definition, or default-setting value as an in-source string / constant? Reject — these are admin-edited server data (ADRs 0011 / 0012).
+5. Introduces new dependency? Must be in `.claude/approved-deps.txt`.
+6. Implements a BACKLOG.md item? Issue must have moved it out first.
+7. `DbContext` field on a page / ViewModel / singleton? Bug.
+8. `StateHasChanged()` inside `OnInitializedAsync` / `OnParametersSetAsync` / `[Parameter]` handler? Wrong.
+9. External callback mutates component state without `InvokeAsync(...)`? Will crash.
+10. `IJSObjectReference` / `DotNetObjectReference<T>` not disposed? Memory leak.
+11. `new HttpClient()` at call site (vs singleton)? Wrong pattern.
+12. API key from anywhere other than `SecureStorage.Default`? Security bug.
+13. `Include` on two collection navigations without `AsSplitQuery()`? Cartesian explosion risk.
+14. `DateTimeOffset` on a SQLite-stored entity? Client evaluation; use `DateTime` UTC or `DateOnly`.
+15. `.Result` / `.Wait()` / `.GetAwaiter().GetResult()`? Banned.
+16. Test references `SqliteNoteStore`, `WhisperAudioProcessor`, `AnthropicGrader`, `HttpClient`, or a Blazor component? Violates test-scope rule.
 
 ---
 
@@ -84,7 +85,18 @@ Four real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor` (client), and 
 - Abstract base class introduced where a concrete class would do → reject.
 - Factory, manager, helper, mediator classes → reject (per STABLE.md anti-rules).
 
-### 4. Same-commit rule
+### 4. Content + admin-scope rule (no agent-edited prompts, materials, categories, or settings)
+
+Per [ADR 0011](./decisions/0011-content-as-server-data.md) and [ADR 0012](./decisions/0012-admin-role.md), curated materials / prompt templates / category definitions / default settings live as server-resident data, edited only by the human Admin. The hard stop in [AGENTS.md](./AGENTS.md) makes this binding on every agent. In code review:
+
+- **Reject any string literal in source that looks like a prompt template** — `system:` / `user:` style multi-line strings, `{placeholder}` strings near `IGrader` call sites, or anything that reads as a prompt body. Prompts live in the `prompt_templates` server table, fetched on sync, never in source.
+- **Reject any in-source list of curated materials** — chapter titles, passage texts, essay names, encounter unit catalogs. Materials live in the `materials` server table.
+- **Reject any in-source category definition** — category id strings hardcoded with templates, weights, or revisit-method bindings as constants. Category definitions live in the `categories` server table.
+- **Reject any in-source default setting that overrides the server value** — e.g., `const decimal DailyBudget = 0.25m` at a call site. Defaults live in `default_settings`.
+- **Reject any agent-authored edit to admin-owned files** (the four data kinds above). PR shows a diff to a materials / prompts / categories / settings *seed* file or migration → reject; admin populates via the in-app admin UI.
+- **The exception** is initial schema migrations that *create* the tables (`materials`, `prompt_templates`, `prompt_template_active`, `categories`, `default_settings`, `tokens`) — those are Developer's surface (code that defines the shape) and the inserts come later via the admin UI.
+
+### 5. Same-commit rule
 
 - If the diff touches `STABLE.md`, it must include a paired ADR in `decisions/` in the same commit. No exceptions.
 - If the diff supersedes a prior ADR, the prior ADR's status must be updated in the same commit.
@@ -96,7 +108,7 @@ Four real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor` (client), and 
 
 These are the patterns most likely to be wrong in a freshly-written PR. Read the relevant subsection when the diff touches that area.
 
-### 5. MAUI lifecycle and threading
+### 6. MAUI lifecycle and threading
 
 `MainThread`, `ConfigureAwait`, disposal, cross-thread state mutation.
 
@@ -112,7 +124,7 @@ These are the patterns most likely to be wrong in a freshly-written PR. Read the
 
 Source: REVIEW_NOTES.md §1.
 
-### 6. Blazor rendering and lifecycle
+### 7. Blazor rendering and lifecycle
 
 `StateHasChanged`, `EventCallback`, JS interop, `MarkupString`.
 
@@ -131,7 +143,7 @@ Source: REVIEW_NOTES.md §1.
 
 Source: REVIEW_NOTES.md §2.
 
-### 7. EF Core in `SqliteNoteStore`
+### 8. EF Core in `SqliteNoteStore`
 
 `DbContext` lifetime, queries, SQLite limitations.
 
@@ -154,7 +166,7 @@ Source: REVIEW_NOTES.md §2.
 
 Source: REVIEW_NOTES.md §3.
 
-### 8. SQLite configuration
+### 9. SQLite configuration
 
 Connection strings, WAL, pooling.
 
@@ -167,7 +179,7 @@ Connection strings, WAL, pooling.
 
 Source: REVIEW_NOTES.md §4.
 
-### 9. Async patterns
+### 10. Async patterns
 
 Beyond the locked "no `.Result`, no `.Wait()`" rule.
 
@@ -184,7 +196,7 @@ Beyond the locked "no `.Result`, no `.Wait()`" rule.
 
 Source: REVIEW_NOTES.md §5.
 
-### 10. Nullable reference types
+### 11. Nullable reference types
 
 Beyond the locked "warnings as errors" rule.
 
@@ -203,7 +215,7 @@ Source: REVIEW_NOTES.md §6.
 
 ## Integration-specific
 
-### 11. Anthropic API integration (`AnthropicGrader`)
+### 12. Anthropic API integration (`AnthropicGrader`)
 
 **Reject if you see:**
 
@@ -221,7 +233,7 @@ Source: REVIEW_NOTES.md §6.
 
 Source: REVIEW_NOTES.md §7.
 
-### 12. Whisper-local integration (`WhisperAudioProcessor`)
+### 13. Whisper-local integration (`WhisperAudioProcessor`)
 
 This is the thinnest-evidence area in the SPEC. Any Whisper-touching diff gets extra scrutiny.
 
@@ -240,14 +252,14 @@ This is the thinnest-evidence area in the SPEC. Any Whisper-touching diff gets e
 
 Source: REVIEW_NOTES.md §8.
 
-### 13. Cross-platform concerns
+### 14. Cross-platform concerns
 
 **Reject if you see:**
 
 - Hardcoded `"\\"` or `"/"` in a path — use `Path.Combine`.
 - `double.Parse(s)` / `decimal.Parse(s)` / `DateTime.Parse(s)` without `CultureInfo.InvariantCulture` for non-user-input. Spend log CSV, exports, frontmatter — all use invariant.
 - New `DateTime` field without explicit `Kind = DateTimeKind.Utc` handling. `Unspecified` is a portability bug per Microsoft docs.
-- New `DateTimeOffset` field on a SQLite entity — see §7.
+- New `DateTimeOffset` field on a SQLite entity — see §8.
 - Locale-sensitive comparison (`string.Equals(a, b)`) without `StringComparison.Ordinal` for identifier-like data.
 
 Source: REVIEW_NOTES.md §10.
@@ -256,7 +268,7 @@ Source: REVIEW_NOTES.md §10.
 
 ## Discipline
 
-### 14. Tests
+### 15. Tests
 
 STABLE.md locks "unit tests on pure logic only." Concretely:
 
@@ -287,7 +299,7 @@ STABLE.md locks "unit tests on pure logic only." Concretely:
 
 Source: REVIEW_NOTES.md §9.
 
-### 15. Secrets and approved dependencies
+### 16. Secrets and approved dependencies
 
 **Reject if you see:**
 
@@ -296,7 +308,7 @@ Source: REVIEW_NOTES.md §9.
 - Adding to `.claude/approved-deps.txt` in a PR — that file is human-only. Approved-deps additions are human-only, separate commit.
 - `using` directive added for a NuGet package not present in `.csproj` — implicit dependency.
 
-### 16. Commits
+### 17. Commits
 
 **Reject if you see:**
 
@@ -351,8 +363,8 @@ These fire at runtime when problematic queries execute — surfaces cartesian ex
 
 Match the gravity of the feedback to the gravity of the issue.
 
-- **Hard reject** (must fix before merge): conviction violation, scope creep, real-seam violation, same-commit violation, security bug, async deadlock vector, leak, banned anti-rule.
-- **Soft reject** (should fix, willing to discuss): stack-specific patterns from §5-13 that aren't catastrophic but are clearly worse than the alternative.
+- **Hard reject** (must fix before merge): conviction violation, scope creep, real-seam violation, content + admin-scope violation (agent-edited prompt / material / category / setting, or any of those four in-source as constants), same-commit violation, security bug, async deadlock vector, leak, banned anti-rule.
+- **Soft reject** (should fix, willing to discuss): stack-specific patterns from §6-14 that aren't catastrophic but are clearly worse than the alternative.
 - **Comment** (nice to fix, no merge block): naming, test-name format, minor formatting.
 
 Use evidence over assertion. When rejecting, cite the SPEC section, the source (Microsoft Learn URL, STABLE.md anchor), or the analyzer rule ID. "This is wrong" is not a review comment. "Per CA2016, every `CancellationToken` parameter should be forwarded; here `await foo.BarAsync()` should be `await foo.BarAsync(ct)`" is.
