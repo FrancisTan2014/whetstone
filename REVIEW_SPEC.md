@@ -30,7 +30,7 @@ If a PR is too big to walk the full SPEC, at minimum check these:
 
 1. Touches a conviction? If yes, must have ADR.
 2. Touches `STABLE.md`? If yes, must have paired ADR in same commit.
-3. Introduces new `interface`? Must be one of the three real seams (`INoteStore`, `IGrader`, `IAudioProcessor`), or have an ADR.
+3. Introduces new `interface`? Must be one of the four real seams — `INoteStore`, `IGrader`, `IAudioProcessor` (client), `IAudioBlobStore` (server) — or have an ADR.
 4. Introduces new dependency? Must be in `.claude/approved-deps.txt`.
 5. Implements a BACKLOG.md item? Issue must have moved it out first.
 6. `DbContext` field on a page / ViewModel / singleton? Bug.
@@ -77,7 +77,7 @@ If scope is wrong, PM should be the one rejecting it. Architect's job here is to
 
 ### 3. Real-seam rule (no new interfaces without ADR)
 
-Three real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor`. STABLE.md explicitly forbids new interfaces unless an ADR justifies a new real seam.
+Four real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor` (client), and `IAudioBlobStore` (server, added by [ADR 0008](./decisions/0008-system-architecture.md) for host-portable audio blob storage). STABLE.md explicitly forbids new interfaces unless an ADR justifies a new real seam.
 
 - Any new `public interface` declaration in the diff → reject unless an ADR is present.
 - `IFooService` style interface-per-class → reject. Class is the default.
@@ -279,7 +279,7 @@ STABLE.md locks "unit tests on pure logic only." Concretely:
 **Reject if you see:**
 
 - Test references `SqliteNoteStore`, `DbContext`, `HttpClient`, `WhisperAudioProcessor`, `AnthropicGrader`, or a MAUI page/component.
-- Test uses a mocking framework (Moq, NSubstitute, FakeItEasy). None are on approved-deps. Hand-written fakes for the three seams instead.
+- Test uses a mocking framework (Moq, NSubstitute, FakeItEasy). None are on approved-deps. Hand-written fakes for the four real seams instead.
 - Test asserts on `DateTime.UtcNow` rather than the passed `DateOnly today` (or equivalent injected time). Pure schedulers must be deterministic.
 - Test sleeps to wait for async (`Thread.Sleep`, `await Task.Delay`). Await tasks directly.
 - Test depends on network or filesystem.

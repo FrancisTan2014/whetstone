@@ -31,7 +31,7 @@ To prevent drift, these negations are part of the spec:
 - **Not a sandbox for the user to define their own loop.** Whetstone is a guide-with-conviction. Defaults are strong; users adapt within the form.
 - **Not a productivity tracker.** No streaks, no stats, no gamification. The feedback is the routine itself, and the visible record of your own past writing.
 - **Not a knowledge graph.** Linking is one-direction, manual, intentional — not auto-generated.
-- **Not a multi-user / team product.** Personal app, single user, no auth in v1.
+- **Not a multi-user / team product.** Personal app, single user. The v1 auth model is a single shared bearer token across the user's own devices, not user accounts (see [ADR 0008](./decisions/0008-system-architecture.md)).
 
 ---
 
@@ -249,90 +249,115 @@ Math: `new_due_date = old_due_date + pause_duration`.
 | Layer | Choice | Why |
 |---|---|---|
 | Framework | **.NET MAUI Blazor Hybrid** | One codebase → PWA + native iOS/Android/Windows/Mac. Real native shell is a stated future goal. |
-| Storage (v1) | **SQLite via EF Core** | Local, zero-config, ships with MAUI. Survives offline. |
-| Audio | **Whisper (whisper.cpp / faster-whisper)**, model bundled with client | Local STT on every device; audio never leaves the device. Adds 100-500 MB to app size depending on model selected. |
+| Storage (client) | **SQLite via EF Core, local cache + pending-sync queue** | Local-first; reads from cache, writes locally first then sync. Works fully offline. See [ADR 0008](./decisions/0008-system-architecture.md). |
+| Audio | **Whisper (whisper.cpp / faster-whisper)**, model bundled with client | Local STT on every device. Original audio uploaded to user's own server for cross-device playback (per [ADR 0010](./decisions/0010-audio-sync.md), superseding the "audio never leaves the device" claim in ADR 0006). Adds 100-500 MB to app size depending on model selected. |
 | Storage abstraction | **`INoteStore` interface** | `SqliteNoteStore` now, `RemoteApiNoteStore` later. |
 | Grader abstraction | **`IGrader` interface** | `AnthropicGrader` v1, `OllamaGrader` later, `SelfGrader` always. |
 | Audio abstraction | **`IAudioProcessor` interface** | `WhisperAudioProcessor` v1 (local STT). Pronunciation-scoring implementations deferred to v2. |
 | Note format | **Markdown body + YAML frontmatter** | Plain text, human-readable, export = serialize → `.md` file. Audio referenced by filename, stored alongside. |
-| Sync | **None in v1** — export-zip is the migration path | Eliminates Azure as a v1 blocker. Cloud sync v2. |
+| Sync | **Server-mediated cross-device sync in v1** | Personal-knowledge-library promise requires phone↔desktop continuity. See [ADR 0008](./decisions/0008-system-architecture.md). |
+| Server runtime | **ASP.NET Core 8 in Podman, multi-arch OCI image** | Same image runs on MBP (Apple Silicon) and any cloud Linux host. Migration is config + data move. |
+| Server host (v1) | **User's MacBook Pro at home, exposed via Cloudflare Tunnel** | $0/month recurring; user-owned hardware preserves privacy posture. |
+| Server storage | **Postgres 16 + local disk for audio blobs** behind `IAudioBlobStore` | Postgres runs identically across hosts. `IAudioBlobStore` is the fourth seam, scoped to the server, swaps to S3-compatible on cloud migration. |
+| Auth | **Shared bearer token + network-layer trust (Cloudflare Tunnel)** | Two-layer defense in depth. Single user; token rotated via SSH. No accounts, no login UI. |
 
-Real seams: exactly three — `INoteStore`, `IGrader`, `IAudioProcessor`. Any new interface needs an ADR.
+Real seams: **four total** — `INoteStore`, `IGrader`, `IAudioProcessor` (client), and `IAudioBlobStore` (server). Any new interface needs an ADR.
 
 ---
 
 ## System architecture
 
-How the stack above fits together as a system. Locked by [ADR 0008](./decisions/0008-system-architecture.md); read that ADR for the full reasoning and alternatives considered.
+The system in one picture. Full reasoning, diagrams (container view, component view, sequence diagrams, deployment view), trade-offs, and cross-cutting concerns are in [ADR 0008](./decisions/0008-system-architecture.md). This section is what the team holds in shared memory — the picture and the headline decisions.
 
-### Runtime shape
+### The system at a glance
 
-**One process, no server, no background work.** v1 is a single MAUI Blazor Hybrid application on the user's desktop (Windows + WebAssembly in v1; native mobile in v1.5+). Every dependency is in-process: SQLite on local disk, Whisper as a bundled native library, Anthropic API over outbound HTTPS. No backend service, no message broker, no scheduler daemon. Every action — routine generation, grading, transcription, encounter proposal — happens synchronously on a UI request. `async` is for I/O, not for background work.
+```mermaid
+C4Context
+    title whetstone v1 — System context
 
-### Component inventory (v1)
+    Person(user, "User", "Single user, multiple devices")
 
-These are the components that exist. Adding, removing, merging, or splitting any of them requires an ADR.
+    System_Boundary(ws, "whetstone") {
+      System(client, "whetstone Client", "MAUI Blazor Hybrid. Local SQLite cache, bundled Whisper, offline-capable. Runs on Windows / macOS / iOS / Android / Web.")
+      System(server, "whetstone Server", "ASP.NET Core in Podman. Runs on user's MacBook Pro at home (v1). Owns sync, conflict resolution, audio blobs, ops metrics.")
+    }
 
-| Component | Kind | Responsibility |
+    System_Ext(anthropic, "Anthropic API", "Grading, mirror responses, encounter proposals, vocabulary cards.")
+    System_Ext(cf, "Cloudflare Tunnel", "Public ingress to the home-hosted server. TLS. Hides home IP. No inbound ports open on the MBP.")
+
+    Rel(user, client, "uses", "tap / type / speak")
+    Rel(client, server, "syncs notes + audio + spend", "HTTPS via Cloudflare Tunnel")
+    Rel(client, anthropic, "LLM calls (direct, not via server)", "HTTPS, user's API key")
+    Rel(server, cf, "outbound-initiated reverse-proxy", "TCP from MBP")
+```
+
+### Architectural drivers (what we are optimizing for)
+
+In priority order:
+
+1. **Cross-device continuity** — phone, desktop, and web see the same notes within seconds.
+2. **Conviction #1 (daily encounter)** — works offline, on the subway, when the home server is rebooting. Offline is the common case.
+3. **Conviction #6 (revisit as meeting past-self)** — grade and mirror flows are structurally separate, not flagged variants.
+4. **Privacy** — notes and audio live on user-controlled hardware; never reach a third party.
+5. **Low recurring cost** — ~$0/mo at the host layer in v1 (MBP electricity + Cloudflare free + Anthropic per-use).
+6. **Portability** — host migration (MBP → cloud) is config + data move, no code change.
+7. **Operational simplicity** — one user can keep it running.
+
+### Headline decisions
+
+| Decision | What | Why |
 |---|---|---|
-| UI (Blazor pages + components) | Concrete | Renders Today, Revisit, Encounter, note editor, Echo, Settings. Never touches HTTP, filesystem, SQLite, or Whisper directly — only the components below. |
-| `RoutineGenerator` | Concrete, pure | Builds today's `DailyRoutine` from notes + subjects + pause + config. No I/O. |
-| `EchoComposer` | Concrete, pure | Builds the Echo variant (3–5 past/recent pairs) on Echo days. |
-| `EncounterProposer` | Concrete | Direction-aware prompt construction; calls `IGrader.ProposeAsync`. |
-| `FsrsScheduler` | Concrete, pure | Recitation + vocabulary due-date selection and state update. |
-| `DiminishingScheduler` | Concrete, pure | Literary narrative + prose-modeling + reflection due-date selection and state update. |
-| `LinkedSurfacingScheduler` | Concrete, pure | Concept/mechanism due-date selection (graph-driven, calendar safety net). |
-| `INoteStore` → `SqliteNoteStore` | Seam | Note + subject + pause-state persistence. EF Core lives only here. |
-| `IGrader` → `AnthropicGrader` + `SelfGrader` | Seam | `GradeAsync`, `MirrorAsync`, `ProposeAsync`. Self-grade is the fallback path when budget exhausted. |
-| `IAudioProcessor` → `WhisperAudioProcessor` | Seam | `RecordAsync`, `TranscribeAsync`. Audio bytes returned to caller for storage. |
-| `SpendTracker` | Concrete | Records per-call cost; reports today/month/30d; raises `BudgetExhaustedException` at the daily cap. |
-| `PauseState` | Value | Category + app pause status. Read by `RoutineGenerator`; mutated by Settings via `INoteStore`. |
-| `ExportService` | Concrete | Zips all notes + audio + `spend-log.csv`. |
-| `VocabularyCapture` | Concrete | One-tap word capture during reading; calls `IGrader.GenerateCardAsync`; saves to vocabulary FSRS queue. Cross-cuts every reading category. |
+| **Server in v1** | ASP.NET Core HTTP service on MBP at home | Personal-knowledge-library promise requires cross-device sync. Deferring fails the "open Windows app, see yesterday's phone diary" test. |
+| **Local-first client** | SQLite cache + pending-sync queue on every device | Conviction #1: app always works, never blocks on network or server. |
+| **Anthropic direct from client** | Server is not in the LLM critical path | Server outage cannot break grading. API key stays on user devices, no central custody. |
+| **MBP at home as v1 host** | Cloudflare Tunnel exposes a private port | $0/mo. User-owned hardware. Migrates cleanly to Ali Cloud / Azure / anywhere when MBP limits bite. |
+| **Podman OCI image** | Multi-arch build (linux/amd64 + linux/arm64) | Same image runs on MBP and any cloud host. Lower idle footprint than Docker. Rootless by default. |
+| **Last-write-wins by `edited_at`** | Server-side history table archives overwritten versions | No conflict UI to build for v1; recovery escape hatch exists for the rare silent overwrite. |
+| **Audio syncs across devices** | Original audio uploaded to user's own server | Supersedes "audio never leaves the device" (ADR 0006) — replaced with "audio never leaves user-controlled hardware" ([ADR 0010](./decisions/0010-audio-sync.md)). |
+| **Shared bearer token + tunnel auth** | Two-layer defense: Cloudflare verifies tunnel, server verifies token | No account system needed for single user. Rotate via SSH. |
+| **Server-side ops metrics + crash reports** | No usage analytics (Conviction #3) | Find bugs across devices. No vanity metrics, even self-hosted. |
 
-Explicitly **not** components in v1: no `IScheduler` abstraction (the four schedulers are sibling classes called by name from `RoutineGenerator`), no `IClock` (callers pass `DateOnly today` directly), no `RoutineService` / `LearningEngine` god-class, no `ICostPolicy`, no `IExporter`, no event bus, no domain events, no `*Manager`, no `*Helper`. If one later proves real, that proof is an ADR.
+### Component inventory
 
-### Project layout — flat folders by feature
+**Client** (14 components, full detail in [ADR 0008 §4](./decisions/0008-system-architecture.md)): UI, `RoutineGenerator`, `EchoComposer`, `EncounterProposer`, `FsrsScheduler`, `DiminishingScheduler`, `LinkedSurfacingScheduler`, `INoteStore`/`LocalNoteStore`, `IGrader`/`AnthropicGrader`+`SelfGrader`/`AnthropicGraderWithFallback`, `IAudioProcessor`/`WhisperAudioProcessor`, `SpendTracker`, `PauseState`, `VocabularyCapture`, `SyncEngine` (new), `ExportService`.
 
-Per [Engineering principles](#engineering-principles) ("no layered architecture folders"). Inside the single .NET project:
+**Server** (~10 components, full detail in [ADR 0008 §5](./decisions/0008-system-architecture.md)): `BearerTokenAuthMiddleware`, `SyncController`, `ConflictResolver`, `HistoryWriter`, `AudioBlobController`, `IAudioBlobStore`/`LocalDiskAudioBlobStore`, `MetricsRecorder`, `CrashReportReceiver`, `AdminEndpoints`, Postgres + EF Core.
+
+Explicitly **not** components: no `IScheduler` abstraction, no `IClock`, no `RoutineService`/`LearningEngine` god-class, no `ICostPolicy`, no `IExporter`, no event bus, no domain events, no `*Manager`, no `*Helper`. Adding any new component requires an ADR.
+
+### Failure modes (deployment view)
+
+| If this fails | Sync impact | LLM impact | App usable? |
+|---|---|---|---|
+| Home internet | sync stops | none (client → Anthropic direct) | yes, fully |
+| MBP asleep / off | sync stops | none | yes, fully |
+| Postgres on MBP | sync errors at server | none | yes, fully |
+| Cloudflare edge | sync stops | none | yes, fully |
+| Client device offline | sync stops on that device | grading offline → self-grade fallback | yes |
+| Anthropic API | none | grading offline → self-grade fallback | yes |
+
+**No single failure prevents the user from doing today's routine.** Strongest validation against Conviction #1.
+
+### Project layout — two .NET projects, flat folders by feature
 
 ```
-Notes/         Subjects/      Routine/       Echo/
-Grading/       Audio/         Spend/         Pause/
-Vocabulary/    Export/        Pages/         Components/
+whetstone.sln
+├── client/    ← MAUI Blazor Hybrid (Notes, Subjects, Routine, Echo, Grading, Audio,
+│                Spend, Pause, Vocabulary, Sync, Export, Pages, Components)
+├── server/    ← ASP.NET Core minimal API (Sync, Audio, Auth, Ops, Storage)
+├── shared/    ← Contracts (DTOs referenced by both)
+└── ops/       ← Containerfile, compose.yaml, CI workflows, MBP setup runbook
 ```
 
-Each folder holds the concrete classes for one feature plus its seam if any. `Pages/` and `Components/` are MAUI Blazor convention, not a self-imposed layer.
+Per [Engineering principles](#engineering-principles): no layered folders inside either project. `Pages/` and `Components/` are MAUI Blazor convention.
 
-### Dependency wiring
+### Forward-compatibility (these v1.5 / v2 moves require no code change)
 
-- **Constructor injection only.** No `IServiceProvider` passed around; no service locator. Pages use Blazor's `[Inject]`.
-- **All seams and singletons (`SpendTracker`) registered with `AddSingleton`.** Single user, single process.
-- **`SelfGrader` is wired as the fallback inside one `AnthropicGraderWithFallback` class**, not as a separate `IGrader` registration that callers choose between. The "primary or fallback" decision lives in exactly one place.
-- **`SqliteNoteStore` owns `DbContextOptions`** and constructs short-lived `DbContext` instances per operation. The UI never sees `DbContext`.
-- **No `IClock`.** `RoutineGenerator` and the schedulers take `DateOnly today` as a parameter.
-
-### Data-flow contracts
-
-- **Routine generation**: Today page → `INoteStore.LoadEverything` → `RoutineGenerator.Generate` (pure) → per active subject, `EncounterProposer.ProposeAsync` → `IGrader.ProposeAsync`. The only network call during routine load is the proposal. If budget exhausted, proposal falls back to "next unread in curated list" without a network call.
-- **A revisit**: UI captures user response (text or, via `IAudioProcessor`, transcribed voice) → branch on category: grade-based categories call `IGrader.GradeAsync`; mirror-based categories call `IGrader.MirrorAsync` → scheduler updates note state → `INoteStore.Save`. The two branches use different methods returning different types; Conviction #6 is structural, not flagged.
-- **A new encounter**: UI shows the `EncounterProposal` loaded with the routine → accept opens the category template editor; "not today" re-proposes with a lighter flag; "something else" lets the user type. On save, the note enters its category's revisit queue with initial scheduler state.
-- **Vocabulary capture**: highlight → `VocabularyCapture.CaptureAsync` → `IGrader.GenerateCardAsync` → UI confirm/edit → `INoteStore.Save` linked to source note id. Revisit fetches the source sentence as context via one `INoteStore` query.
-
-### Error and degradation policy
-
-- `IGrader` network failure: caught at the page; user offered self-grade. Same path as budget exhaustion.
-- `IAudioProcessor` transcription failure: audio is still saved; user prompted to type. Audio is the source of truth; transcript is the search/grade form.
-- `INoteStore` write failure: throw; MAUI surfaces an error toast. No `Result<T>` per anti-rules.
-- `SpendTracker` race on the daily cap: single-process check-then-call is sufficient; no locking in v1.
-
-### Forward-compatibility (no rework needed for these v1.5 / v2 moves)
-
-- **Mobile build**: MAUI handles the target; only the Whisper bundle size is platform-conditional.
-- **Cloud sync**: new `RemoteApiNoteStore : INoteStore`; DI swap. Nothing else changes.
-- **Ollama local grading**: new `OllamaGrader : IGrader`; chooser logic changes in `AnthropicGraderWithFallback` (or its successor) — ADR at that time.
-- **Pronunciation scoring**: extend `IAudioProcessor` with a new method; decorate Whisper with a new processor. Per ADR 0006, v2.
-- **User-authored categories**: requires `CuratedMaterials` to become editable and `Category` to become persisted — confined to `Subjects/`. v2 per [BACKLOG.md](./BACKLOG.md).
+- **Mobile build**: MAUI handles the target. Smaller Whisper bundle on mobile is the only platform-conditional concern.
+- **Cloud host migration** (MBP → Ali Cloud / Azure / AWS): swap the OCI image's deploy target, `pg_dump`/`pg_restore`, `rsync` audio blobs, swap `IAudioBlobStore` from local-disk to S3-compatible via config, repoint Cloudflare Tunnel. One day's work. See [ADR 0008 §12](./decisions/0008-system-architecture.md).
+- **Ollama local grading**: new `OllamaGrader : IGrader`. ADR at that time.
+- **Pronunciation scoring**: extend `IAudioProcessor`; decorate Whisper. v2 per [ADR 0006](./decisions/0006-voice-first-class.md).
+- **User-authored categories**: confined to `Subjects/` folder. v2 per [BACKLOG.md](./BACKLOG.md).
 
 ---
 
@@ -354,11 +379,12 @@ The minimum that runs the full loop end-to-end on desktop (Windows + WebAssembly
 10. **Pause** — category-level and app-level, with date-shifting on resume.
 11. **Weekly Echo review** — every 7th day, surfaces 3-5 past entries paired with recent ones; user reflects; LLM mirror response.
 12. **Export everything** — Settings → "Download all notes + audio + spend log as `.zip`". Files are real `.md` with frontmatter, audio in original format, spend log as CSV.
-13. **Local SQLite storage + local audio files** behind `INoteStore`. No auth. Single user. No server.
+13. **Local-first client + server-mediated cross-device sync.** Each client holds a SQLite cache + pending-sync queue; app works fully offline. Server (ASP.NET Core in Podman on user's MBP at home, exposed via Cloudflare Tunnel) holds canonical Postgres + audio blobs. Notes + transcripts + audio + spend all sync. Last-write-wins by `edited_at`; server-side history archives overwritten versions. Shared bearer token auth. See [ADR 0008](./decisions/0008-system-architecture.md), [ADR 0010](./decisions/0010-audio-sync.md).
+14. **Server portability**: same OCI image runs on MBP today and on Ali Cloud / Azure / AWS later. Storage seams (`IAudioBlobStore` for audio; standard Postgres for data) make migration config + data move, no code change.
 
 ### Out of v1 — see [`BACKLOG.md`](./BACKLOG.md)
 
-Notable deferrals: cloud sync, mobile build (native iOS/Android), pronunciation-quality scoring, Chinese recitation literary scoring, TTS, local LLM (Ollama) grading, user-authored categories and materials, tags/search, backlinks, push notifications, themes.
+Notable deferrals: cloud-hosted server (v1 ships MBP-at-home; cloud migration recipe in [ADR 0008 §12](./decisions/0008-system-architecture.md)), mobile build (native iOS/Android), pronunciation-quality scoring, Chinese recitation literary scoring, TTS, local LLM (Ollama) grading, user-authored categories and materials, tags/search, backlinks, push notifications, themes, multi-user / accounts, conflict-resolution UI, CRDT-based merge.
 
 ### Discipline rule
 
@@ -374,7 +400,7 @@ If during construction an idea arrives — *"I should also add X"* — it goes i
 - **Nullable reference types: on, warnings as errors.**
 - **Async all the way.** Any I/O method returns `Task<T>`. No `.Result`, no `.Wait()`.
 - **One class per file.** Filename matches type name.
-- **Class is the default. Interface is the exception.** Three real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor`. Any new interface needs an ADR.
+- **Class is the default. Interface is the exception.** Four real seams exist: `INoteStore`, `IGrader`, `IAudioProcessor` (client), and `IAudioBlobStore` (server, added by [ADR 0008](./decisions/0008-system-architecture.md) for host-portable audio blob storage). Any new interface needs an ADR.
 - **No factories, no abstract base classes, no `*Manager` / `*Helper` classes** in v1. Name classes for what they do.
 - **Comments answer *why*, not *what*.** If a comment paraphrases the code, delete the comment and rename the variable.
 
@@ -426,7 +452,7 @@ The engineering principles get revisited after v1 has been used daily for ≥ 2 
 
 ## Cross-references
 
-- **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history.
+- **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history. The architecture-relevant ADRs: [0001 (stack)](./decisions/0001-stack-and-storage.md), [0002 (engineering principles)](./decisions/0002-engineering-principles.md), [0006 (voice)](./decisions/0006-voice-first-class.md), [0008 (system architecture)](./decisions/0008-system-architecture.md), [0010 (audio sync)](./decisions/0010-audio-sync.md).
 - **What cognitive learning science says about whetstone's choices**: [`RESEARCH.md`](./RESEARCH.md).
 - **How code review works**: [`REVIEW_SPEC.md`](./REVIEW_SPEC.md) (owned by Architect). Stack-specific research notes that informed the SPEC: [`REVIEW_NOTES.md`](./REVIEW_NOTES.md).
 - **How the agent team operates**: [`COWORK.md`](./COWORK.md). Multi-agent architecture research that informed it: [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md).
