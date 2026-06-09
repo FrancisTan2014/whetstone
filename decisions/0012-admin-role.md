@@ -3,6 +3,7 @@
 **Date:** 2026-06-09
 **Status:** Accepted
 **Companion to:** [ADR 0011](./0011-content-as-server-data.md) — same commit; 0011 covers content + configuration storage and sync; 0012 covers who edits it and how the user first encounters whetstone.
+**Amended by:** [ADR 0013](./0013-daily-routine-semantics.md) — first-launch onboarding gains a "confirm primary timezone" step between subject opt-in and the per-subject Direction; defaults to the device's current IANA timezone.
 
 ## Context
 

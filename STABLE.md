@@ -151,6 +151,8 @@ What voice does NOT do in v1:
 - No TTS (app reading to you) in v1.
 - No real-time streaming transcription — record-then-process.
 
+**Per-category default input mode**: each category in the `categories` table (admin-curated server data per [ADR 0011](./decisions/0011-content-as-server-data.md)) carries a `default_input_mode` field — `voice` or `text` — chosen by the natural shape of the speech act in that category. The non-default mode is always one tap away; the default does not adapt to the user's previous-session choice. See [ADR 0013](./decisions/0013-daily-routine-semantics.md) for the schema column and the seeded v1 values; [`WIREFRAMES.md → Voice and input`](./WIREFRAMES.md#voice-and-input) for the per-category UX rationale and the press-and-hold vs tap-to-start gesture mapping.
+
 **Local STT, server-stored audio**: Whisper runs on the client (audio is transcribed locally; transcripts never reach a third party). The original audio bytes are uploaded to the user's own server (MBP at home in v1, user-owned cloud later) over the encrypted Cloudflare Tunnel, so the same recording is playable on every device. Audio never reaches a third-party service. See [ADR 0010](./decisions/0010-audio-sync.md), which supersedes ADR 0006's "audio never leaves the device" stance with "audio never leaves user-controlled hardware."
 
 ### Daily loop
@@ -178,6 +180,16 @@ Today's routine
 └── 🔗 Connect   (1 manual link/day from new Note to existing Note)
         └── Free-text "Related: see [[note-id]]" in body.
 ```
+
+### Daily routine semantics
+
+What a "day" *is* in whetstone, and what the user sees on the Today screen because of it. Locked here as much for what it refuses as for what it does. Full reasoning in [ADR 0013](./decisions/0013-daily-routine-semantics.md); the wireframes that depend on these rules are in [`WIREFRAMES.md → Today screen behavior`](./WIREFRAMES.md#today-screen-behavior).
+
+- **The day is fixed at 00:00 in the user's primary timezone.** `RoutineGenerator` produces the day's list once, at the day-anchor; that list is what the user has until the next anchor.
+- **No live updates during the day.** Items are not added, removed, or reordered after generation. Sync changes update underlying data; tomorrow's generator picks them up.
+- **Done items are muted in place, not dismissed.** Per the UX rule that "muted ink means this is no longer the active edge"; the list visually records the day's work as it advances.
+- **Items not done today are not "overdue."** Tomorrow's generator reconsiders them per their normal scheduling rules — no penalty, no carry-over banner, no shame. The cap-overflow rule below (which bumps schedule-state when the day's *generation* exceeds the cap) is distinct from the no-carry-over rule (which leaves schedule-state alone when the day's *engagement* falls short).
+- **The user's primary timezone is a single value across devices** (`primary_timezone` in `default_settings`, IANA timezone string per [ADR 0011](./decisions/0011-content-as-server-data.md) data + [ADR 0013](./decisions/0013-daily-routine-semantics.md) addition). All clients honor it. Captured at first-launch onboarding (defaulted to the device's current timezone, user can change); editable by admin later.
 
 ### Weekly Echo review (every 7th day replaces the standard routine)
 
@@ -282,6 +294,7 @@ Math: `new_due_date = old_due_date + pause_duration`.
 | Server storage | **Postgres 16 + local disk for audio blobs** behind `IAudioBlobStore` | Postgres runs identically across hosts. `IAudioBlobStore` is the fourth seam, scoped to the server, swaps to S3-compatible on cloud migration. Holds notes + history + materials + prompt_templates + categories + default_settings + tokens (per [ADR 0011](./decisions/0011-content-as-server-data.md) / [ADR 0012](./decisions/0012-admin-role.md)). |
 | Admin surface | **Admin pages inside the same MAUI Blazor client**, gated by admin-scoped bearer token | One codebase for user + admin; no second app. Admin is human-only ([ADR 0012](./decisions/0012-admin-role.md)). |
 | Content + prompts | **Server-resident runtime data**, admin-edited via the in-app admin UI, fetched and cached on client sync | Prompt-tuning and content edits at iteration cadence, not build-ship cadence. See [ADR 0011](./decisions/0011-content-as-server-data.md). |
+| Day anchor | **`primary_timezone` setting** (IANA name), shared across the user's devices | All clients agree on what "today" is; per [ADR 0013](./decisions/0013-daily-routine-semantics.md). |
 | Auth | **Shared bearer token + network-layer trust (Cloudflare Tunnel)** | Two-layer defense in depth. Single user; token rotated via SSH. No accounts, no login UI. |
 
 Real seams: **four total** — `INoteStore`, `IGrader`, `IAudioProcessor` (client), and `IAudioBlobStore` (server). Any new interface needs an ADR.
@@ -482,7 +495,7 @@ The engineering principles get revisited after v1 has been used daily for ≥ 2 
 
 ## Cross-references
 
-- **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history. The architecture-relevant ADRs: [0001 (stack)](./decisions/0001-stack-and-storage.md), [0002 (engineering principles)](./decisions/0002-engineering-principles.md), [0006 (voice)](./decisions/0006-voice-first-class.md), [0008 (system architecture)](./decisions/0008-system-architecture.md), [0010 (audio sync)](./decisions/0010-audio-sync.md), [0011 (content as server data)](./decisions/0011-content-as-server-data.md), [0012 (admin role + onboarding)](./decisions/0012-admin-role.md).
+- **Why decisions are what they are**: [`decisions/`](./decisions/) ADR history. The architecture-relevant ADRs: [0001 (stack)](./decisions/0001-stack-and-storage.md), [0002 (engineering principles)](./decisions/0002-engineering-principles.md), [0006 (voice)](./decisions/0006-voice-first-class.md), [0008 (system architecture)](./decisions/0008-system-architecture.md), [0010 (audio sync)](./decisions/0010-audio-sync.md), [0011 (content as server data)](./decisions/0011-content-as-server-data.md), [0012 (admin role + onboarding)](./decisions/0012-admin-role.md), [0013 (daily-routine semantics + per-category input mode)](./decisions/0013-daily-routine-semantics.md).
 - **What cognitive learning science says about whetstone's choices**: [`RESEARCH.md`](./RESEARCH.md).
 - **How code review works**: [`REVIEW_SPEC.md`](./REVIEW_SPEC.md) (owned by Architect). Stack-specific research notes that informed the SPEC: [`REVIEW_NOTES.md`](./REVIEW_NOTES.md).
 - **How the agent team operates**: [`COWORK.md`](./COWORK.md). Multi-agent architecture research that informed it: [`AGENT_TEAM_RESEARCH.md`](./AGENT_TEAM_RESEARCH.md).

@@ -3,6 +3,7 @@
 **Date:** 2026-06-09
 **Status:** Accepted
 **Amends:** [ADR 0008](./0008-system-architecture.md) — Postgres now also holds content, prompts, categories, and default-settings tables; the sync protocol extends.
+**Amended by:** [ADR 0013](./0013-daily-routine-semantics.md) — `categories` table gains a `default_input_mode` column (voice | text); `default_settings` table gains a `primary_timezone` key (IANA timezone name).
 
 ## Context
 
