@@ -27,11 +27,12 @@ The scheduled prompt processes at most one unit of work per tick.
 Locks live under `.agent-locks/`:
 
 - `status-sync.lock`: coordinator owns remote snapshot refresh.
-- `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time.
+- `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time. It contains `role.txt`, `pid.txt`, `startedAt.txt`, and `command.txt`.
+- `worker-failed.json`: last one-shot worker failed before completing cleanly. Coordinator will stop scheduling new workers until this file is inspected and removed.
 - `developer-claim.lock`: developer owns issue/PR selection and claim.
 - `reviewer-work.lock`: reviewer owns PR review/merge selection.
 
-Locks are directories so creation is atomic enough for local sessions. If a lock is stale, the owning prompt may remove it once and retry as described in `prompts/*.txt`.
+Locks are directories so creation is atomic enough for local sessions. If `worker.lock` remains after a PC restart or killed worker process, the coordinator checks the recorded PID and removes the stale lock before scheduling work. Other stale locks may be removed once by the owning prompt as described in `prompts/*.txt`.
 
 ## Labels
 
@@ -99,6 +100,8 @@ The coordinator:
 
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
 They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
+`start-coordinator.cmd` performs a stale `worker.lock` check before it registers the scheduled coordinator prompt.
+If a worker exits nonzero, the launcher writes `.agent-locks\worker-failed.json` and updates `.agent-status.local.json`. The coordinator treats that as a hard stop to avoid silent failure loops.
 
 ## Developer one-shot workflow
 
