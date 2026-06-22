@@ -10,15 +10,17 @@ Before choosing work:
 - Treat GitHub PR labels/comments as the source of truth; use .agent-status.local.json as a local lease/status log.
 
 Process at most one unit of reviewer work:
-1. Find one open non-draft PR that needs review, preferring label needs-review.
-2. Skip PRs labeled changes-requested until developer pushes fixes.
-3. Skip a PR if .agent-status.local.json or PR comments show reviewer-run-reviewed for the same head SHA.
-4. If no review work exists, update reviewer.lastResult to idle and stop until the next scheduled tick.
+1. First find one open non-draft PR labeled review-approved and check whether merge gates now pass.
+2. If no merge candidate exists, find one open non-draft PR that needs review, preferring label needs-review.
+3. Skip PRs labeled changes-requested until developer pushes fixes.
+4. Skip a PR if .agent-status.local.json or PR comments show reviewer-run-reviewed for the same head SHA, unless it is labeled review-approved and only needs merge-gate checking.
+5. If no review or merge work exists, update reviewer.lastResult to idle and stop until the next scheduled tick.
 
 When work is selected:
 - Update .agent-status.local.json with state, PR, head SHA, and start time.
 - Use a review subagent for detailed analysis when available. The subagent must not edit files.
 - If subagent delegation is unavailable, do the one review directly.
 - Post review feedback as specified in GUIDELINES.md and docs/LOCAL_AGENT_WORKFLOW.md.
+- If the PR is review-approved and merge gates pass, merge it using the repository default merge strategy. Do not merge if checks are failing/pending, the head SHA changed after review, merge conflicts exist, or GUIDELINES.md says to request changes.
 - Update GitHub labels and .agent-status.local.json with completion time/result.
 - Stop after this one PR.

@@ -12,7 +12,7 @@ Your job is to take one implementation issue at a time and turn it into a workin
 Coordinator responsibilities:
 
 - First look for open PRs labeled `changes-requested` or with unresolved reviewer feedback, and fix one before claiming a new issue.
-- If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer or human merge.
+- If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer review or reviewer merge.
 - Find and claim at most one dependency-ready `ready-for-dev` issue, choosing the lowest issue number first.
 - Create or choose the isolated worktree and branch for that issue.
 - Build a complete implementation prompt for a coding subagent, including issue number, issue URL, acceptance criteria, constraints, validation expectations, branch/worktree, and repository instructions.

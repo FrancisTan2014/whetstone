@@ -13,14 +13,14 @@ Use `GUIDELINES.md` as the review authority. Do not rely only on generic LLM cod
 
 Coordinator responsibilities:
 
-- Find at most one open PR that needs review.
+- Find at most one open PR that needs review or a merge-gate check.
 - Read the linked issue, PR description, changed files, and validation notes.
 - Build a complete review prompt for a review subagent, including PR number, PR URL, linked issue, acceptance criteria, changed files, validation notes, `PRODUCT.md`, and `GUIDELINES.md`.
 - Start a review subagent when available.
 - Wait for the subagent result.
 - Post the final GitHub PR review or concise review comment.
 - If changes are needed, label the PR `changes-requested` and remove `needs-review`.
-- If the PR is ready for human merge, label it `review-approved` and remove `needs-review` / `changes-requested`.
+- If the PR is ready, label it `review-approved`, remove `needs-review` / `changes-requested`, and merge it only when required checks are green and the reviewed head SHA still matches.
 - If subagent delegation is unavailable in the current CLI mode, review directly, but still process only one PR and then exit.
 
 Review priorities are defined in `GUIDELINES.md`.
@@ -31,4 +31,4 @@ Rules:
 - Do not comment on style preferences unless they affect readability or established repo conventions.
 - Do not request speculative abstractions or future-proofing.
 - Do not modify code unless explicitly asked to implement fixes.
-- Do not merge pull requests.
+- Merge only PRs that satisfy the merge gates in `GUIDELINES.md`; otherwise leave the PR open with the appropriate label/comment.

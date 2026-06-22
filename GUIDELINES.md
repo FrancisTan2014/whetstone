@@ -588,10 +588,24 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 Use one of:
 
 - **Request changes**: material issue blocks merge. Add label `changes-requested`, remove `needs-review`.
-- **Ready for human merge**: no material blockers. Add label `review-approved`, remove `needs-review` and `changes-requested`.
+- **Ready to merge**: no material blockers. Add label `review-approved`, remove `needs-review` and `changes-requested`.
 
 Every review must include marker:
 
 ```text
 reviewer-run-reviewed: <head-sha>
 ```
+
+### Merge gates
+
+Reviewer agents may merge PRs automatically only when all gates pass:
+
+- The PR has a `review-approved` label.
+- The PR does not have `needs-review` or `changes-requested`.
+- The latest PR head SHA matches the `reviewer-run-reviewed: <head-sha>` marker from the approving review.
+- Required checks are green. If checks are pending or failing, do not merge.
+- The PR has no merge conflicts.
+- The PR still links the intended issue.
+- The review found no unresolved material findings under this guide.
+
+If any gate fails, leave the PR open and update labels/comments instead of merging. Use the repository default merge strategy; delete the branch only if GitHub reports it is safe.

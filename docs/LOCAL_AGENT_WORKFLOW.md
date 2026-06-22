@@ -7,7 +7,7 @@ The stable model is **two scheduled Copilot sessions plus one local status track
 1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
 2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every 10 minutes, reads `.agent-status.local.json`, processes at most one `ready-for-dev` issue or `changes-requested` PR, delegates to a subagent when available, updates status, then waits for the next tick.
 3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every 10 minutes, reads `.agent-status.local.json`, reviews at most one PR, delegates to a subagent when available, updates status, then waits for the next tick.
-4. **Merge**: merge only after implementation and review are satisfactory.
+4. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
 
 The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
 
@@ -30,7 +30,7 @@ The scheduled prompt processes at most one unit of work per tick.
 - `needs-design`: blocked on requirements/design clarification.
 - `needs-review`: implementation is ready for reviewer attention.
 - `changes-requested`: reviewer found material feedback; developer run should fix this PR before claiming new issues.
-- `review-approved`: reviewer says the PR is ready for human merge.
+- `review-approved`: reviewer says the PR passed review and can be merged once checks are green.
 - `blocked`: blocked by an external dependency or unresolved decision.
 - `copilot`: intended for local Copilot agent work.
 
@@ -87,7 +87,7 @@ Goal: process at most one unit of developer work, then stop.
 Priority order:
 
 1. First handle one open PR labeled `changes-requested`.
-2. If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer or human merge.
+2. If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer review or reviewer merge.
 3. If no PR is waiting, find the lowest-numbered open issue in `FrancisTan2014/whetstone` labeled `ready-for-dev` and not labeled `in-progress`.
 4. If an issue body declares `Depends on: #N`, skip it until every dependency issue is closed.
 5. If no dependency-ready issue exists, stay idle and stop.
@@ -139,12 +139,12 @@ The launcher opens Copilot with `-i` and automatically submits the `/every 10m` 
 
 ### Reviewer coordinator workflow
 
-Goal: find one open non-draft PR in `FrancisTan2014/whetstone` that needs review. Prefer PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
+Goal: process at most one reviewer unit of work. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
 
 Avoid duplicate reviews:
 
 - Get the PR head SHA.
-- Skip the PR if it already has a reviewer-run comment or review marker for that same head SHA.
+- Skip the PR if it already has a reviewer-run comment or review marker for that same head SHA, unless the PR is labeled `review-approved` and only needs merge-gate checking.
 - Re-review if the PR head SHA changed since the last reviewer-run marker.
 
 When a PR needs review:
@@ -155,8 +155,10 @@ When a PR needs review:
 4. If subagent delegation is unavailable in the current CLI mode, review directly, but still process only this one PR.
 5. Leave a GitHub PR review with only material findings.
 6. If changes are needed, request changes or leave clear blocking comments, include marker `reviewer-run-reviewed: <head-sha>`, add label `changes-requested`, and remove `needs-review`.
-7. If ready, leave a concise approval-style comment saying it is ready for human merge, include marker `reviewer-run-reviewed: <head-sha>`, add label `review-approved`, and remove `needs-review` / `changes-requested`.
-8. Do not merge.
+7. If ready, leave a concise approval-style comment, include marker `reviewer-run-reviewed: <head-sha>`, add label `review-approved`, and remove `needs-review` / `changes-requested`.
+8. Before merging, verify the PR head SHA still matches the reviewed SHA, checks are green, there are no merge conflicts, and no `changes-requested` / `needs-review` labels remain.
+9. If merge gates pass, merge the PR using the repository default merge strategy and delete the branch if safe.
+10. If checks are pending/failing or the head SHA changed, do not merge; leave a comment/status and stop for the next tick.
 
 Merged PRs are ignored because the reviewer only scans open PRs. Closed issues are ignored because the developer only scans open `ready-for-dev` issues. Review feedback is closed by the `changes-requested` -> developer fix -> `needs-review` loop.
 
