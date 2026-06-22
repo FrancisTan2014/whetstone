@@ -11,8 +11,8 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "pnpm lint:eslint && pnpm format:check",
     "lint:eslint": "eslint . --max-warnings 0",
-    "format": "prettier --write \"apps/**/*.{ts,tsx,css,html,json}\" \"packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
-    "format:check": "prettier --check \"apps/**/*.{ts,tsx,css,html,json}\" \"packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
+    "format": "prettier --write \"src/apps/**/*.{ts,tsx,css,html,json}\" \"src/packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
+    "format:check": "prettier --check \"src/apps/**/*.{ts,tsx,css,html,json}\" \"src/packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
     "test": "vitest run --coverage",
     "build": "pnpm --filter @whetstone/domain build && pnpm --filter @whetstone/contracts build && pnpm --filter @whetstone/server build && pnpm --filter @whetstone/web build"
   },

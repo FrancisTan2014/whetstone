@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vitest/config";
 
-const domainSource = fileURLToPath(new URL("./packages/domain/src/index.ts", import.meta.url));
-const contractsSource = fileURLToPath(new URL("./packages/contracts/src/index.ts", import.meta.url));
+const domainSource = fileURLToPath(new URL("./src/packages/domain/src/index.ts", import.meta.url));
+const contractsSource = fileURLToPath(new URL("./src/packages/contracts/src/index.ts", import.meta.url));
 
 export default defineConfig({
   resolve: {
@@ -26,7 +26,7 @@ export default defineConfig({
         "**/src/**/*.types.ts",
         "**/src/vite-env.d.ts"
       ],
-      include: ["apps/*/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
+      include: ["src/apps/*/src/**/*.{ts,tsx}", "src/packages/*/src/**/*.{ts,tsx}"],
       provider: "v8",
       reporter: ["text", "json", "html"],
       thresholds: {
@@ -37,6 +37,6 @@ export default defineConfig({
       }
     },
     environment: "node",
-    include: ["apps/**/*.{test,spec}.{ts,tsx}", "packages/**/*.{test,spec}.{ts,tsx}"]
+    include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}"]
   }
 });

@@ -44,16 +44,17 @@ Those folders hide product responsibilities and encourage generic code. Instead,
 Default v0 shape:
 
 ```text
-apps/
-  web/        # React/Vite PWA client
-  server/     # Fastify API server
-  desktop/    # Tauri wrapper when desktop packaging starts
-packages/
-  domain/     # pure Entry/link/template/note-anchor logic
-  contracts/  # shared API schemas and DTOs
+src/
+  apps/
+    web/        # React/Vite PWA client
+    server/     # Fastify API server
+    desktop/    # Tauri wrapper when desktop packaging starts
+  packages/
+    domain/     # pure Entry/link/template/note-anchor logic
+    contracts/  # shared API schemas and DTOs
 ```
 
-Do not add `apps/mobile/` until a mobile wrapper issue exists. Capacitor is the intended mobile target, but not first scaffolding unless explicitly scoped.
+Do not add `src/apps/mobile/` until a mobile wrapper issue exists. Capacitor is the intended mobile target, but not first scaffolding unless explicitly scoped.
 
 ## Package manager and baseline tooling
 
@@ -95,7 +96,7 @@ The goal is not to recite SOLID as an acronym. The goal is to make code hard to 
 1. **Expose as little as possible.** A module should export the smallest API that another module needs. Everything else stays local.
 2. **Do not expose mutable internals.** If callers can mutate a module's arrays, maps, objects, caches, or state, bugs can be born outside the owning module.
 3. **Keep responsibilities cohesive.** A feature file or module should have one product reason to change.
-4. **Make boundaries explicit.** Cross-feature and client/server interactions go through `packages/domain`, `packages/contracts`, or an explicitly named shared module.
+4. **Make boundaries explicit.** Cross-feature and client/server interactions go through `src/packages/domain`, `src/packages/contracts`, or an explicitly named shared module.
 5. **Prefer composition and pure functions over inheritance.** Most v0 logic should be data + functions, not class hierarchies.
 6. **Depend inward.** Domain logic does not depend on UI, server, database, filesystem, or environment config.
 7. **Validate at boundaries, trust inside.** External input is validated once at the boundary, then passed inward as typed data.
@@ -142,7 +143,7 @@ Rules:
 - Optional values should normally be `undefined`, not `null`, unless PostgreSQL/API semantics require `null`.
 - Do not use boolean parameter traps for public functions. Prefer option objects with named fields.
 - Do not widen domain strings to `string` after validation. Preserve the narrowed domain type.
-- DTO types crossing client/server boundaries must be defined in `packages/contracts` or generated from contract schemas.
+- DTO types crossing client/server boundaries must be defined in `src/packages/contracts` or generated from contract schemas.
 
 ## Naming and file names
 
@@ -184,7 +185,7 @@ Code should be readable through names and structure first.
 Rules:
 
 - Comments explain why, not what.
-- Public exported functions in `packages/domain` and `packages/contracts` should have short comments when their behavior is not obvious from the name and type.
+- Public exported functions in `src/packages/domain` and `src/packages/contracts` should have short comments when their behavior is not obvious from the name and type.
 - Do not add noisy JSDoc to every function.
 - If a workaround is required for a library/platform quirk, comment with the reason and a link when useful.
 - Review comments should cite `PRODUCT.md`, this file, the issue acceptance criteria, or a concrete failing behavior.
@@ -194,7 +195,7 @@ Rules:
 Client feature example:
 
 ```text
-apps/web/src/features/reader/
+src/apps/web/src/features/reader/
   ReaderPage.tsx
   ReaderContent.tsx
   selectionAnchor.ts
@@ -206,7 +207,7 @@ apps/web/src/features/reader/
 Server feature example:
 
 ```text
-apps/server/src/features/entries/
+src/apps/server/src/features/entries/
   entryRoutes.ts
   entrySchemas.ts
   entryQueries.ts
@@ -218,7 +219,7 @@ apps/server/src/features/entries/
 Shared domain example:
 
 ```text
-packages/domain/src/
+src/packages/domain/src/
   entry.ts
   links.ts
   noteAnchor.ts
@@ -228,27 +229,27 @@ packages/domain/src/
 Rules:
 
 - Feature folders may contain UI, route, schema, command/query, and storage files for that feature.
-- Cross-feature reusable UI lives in `apps/web/src/shared/ui/`.
-- Cross-feature client API helpers live in `apps/web/src/shared/api/`.
-- Server infrastructure lives in `apps/server/src/db/`, `apps/server/src/files/`, `apps/server/src/config/`, and `apps/server/src/http/`.
-- Pure product rules live in `packages/domain`.
-- Request/response schemas live in `packages/contracts`.
+- Cross-feature reusable UI lives in `src/apps/web/src/shared/ui/`.
+- Cross-feature client API helpers live in `src/apps/web/src/shared/api/`.
+- Server infrastructure lives in `src/apps/server/src/db/`, `src/apps/server/src/files/`, `src/apps/server/src/config/`, and `src/apps/server/src/http/`.
+- Pure product rules live in `src/packages/domain`.
+- Request/response schemas live in `src/packages/contracts`.
 
 ## Dependency direction
 
 Allowed:
 
-- `apps/web` depends on `packages/domain` and `packages/contracts`.
-- `apps/server` depends on `packages/domain` and `packages/contracts`.
-- `packages/contracts` may depend on `packages/domain` only when needed.
-- `packages/domain` depends on no app, database, web, filesystem, or framework package.
+- `src/apps/web` depends on `src/packages/domain` and `src/packages/contracts`.
+- `src/apps/server` depends on `src/packages/domain` and `src/packages/contracts`.
+- `src/packages/contracts` may depend on `src/packages/domain` only when needed.
+- `src/packages/domain` depends on no app, database, web, filesystem, or framework package.
 
 Forbidden:
 
-- `packages/domain` importing React, Fastify, Drizzle, filesystem APIs, or environment config.
+- `src/packages/domain` importing React, Fastify, Drizzle, filesystem APIs, or environment config.
 - Client importing server internals.
 - Server importing client internals.
-- Feature code reaching directly into another feature's private files. Share through `packages/domain`, `packages/contracts`, or an explicit shared module.
+- Feature code reaching directly into another feature's private files. Share through `src/packages/domain`, `src/packages/contracts`, or an explicit shared module.
 
 ## State and immutability
 
@@ -261,7 +262,7 @@ Rules:
 - Do not expose internal mutable collections from classes/modules. Return readonly views or copies.
 - Do not expose mutable references to module-owned state, even if the current caller promises not to mutate them.
 - Do not mutate function arguments unless the function name and type make mutation explicit.
-- Prefer pure functions in `packages/domain`: input value -> output value, no hidden state.
+- Prefer pure functions in `src/packages/domain`: input value -> output value, no hidden state.
 - React state updates must be immutable. Do not mutate arrays/objects in place and then reuse the same reference.
 - Server request state must be request-scoped. Do not store request/user data in module-level mutable variables.
 - Caches, if introduced later, must have explicit ownership, invalidation rules, and tests. Do not add hidden mutable caches opportunistically.
@@ -312,7 +313,7 @@ Test-friendly code is a worthy concern when it comes from good design boundaries
 
 Rules:
 
-- Put pure product logic in `packages/domain` so it can be tested without React, Fastify, PostgreSQL, or filesystem setup.
+- Put pure product logic in `src/packages/domain` so it can be tested without React, Fastify, PostgreSQL, or filesystem setup.
 - Put server use cases in feature command/query functions that can be tested with explicit dependencies.
 - Keep Fastify route handlers thin so API behavior can be tested at route level and domain behavior can be tested separately.
 - Keep Markdown filesystem access behind the server file boundary so path safety and failure cases can be tested directly.
@@ -358,7 +359,7 @@ Recommended levels:
 All Markdown file access goes through one server filesystem boundary, such as:
 
 ```text
-apps/server/src/files/markdownStore.ts
+src/apps/server/src/files/markdownStore.ts
 ```
 
 Rules:
@@ -431,7 +432,7 @@ Coverage rules:
 
 Test the risky parts first:
 
-- Domain logic in `packages/domain`.
+- Domain logic in `src/packages/domain`.
 - Template validation/rendering.
 - Note-anchor creation.
 - Path traversal prevention in Markdown storage.
@@ -483,7 +484,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Server stores Markdown files under a data directory; PostgreSQL stores metadata, paths, indexes, templates, notes, and links.
 - Entry/link model is preserved; notes are entries, not ad-hoc child records that cannot participate in future links.
 - Templates are read from database seed data, not hard-coded in UI components.
-- Shared domain rules live in `packages/domain`; shared API contracts live in `packages/contracts`.
+- Shared domain rules live in `src/packages/domain`; shared API contracts live in `src/packages/contracts`.
 - Server routes stay thin and delegate to feature command/query/storage modules.
 
 ### TypeScript and state quality
