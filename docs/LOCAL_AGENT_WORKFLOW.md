@@ -50,16 +50,15 @@ Use the main checkout:
 
 ```powershell
 cd Q:\src\whetstone
-copilot
-```
-
-Shortcut:
-
-```powershell
 .\scripts\start-design.cmd
 ```
 
-Design output is a GitHub issue with:
+Design output is:
+
+- `PRODUCT.md` updates when decisions stabilize.
+- GitHub issues when a slice is implementation-ready.
+
+Each implementation issue includes:
 
 - outcome
 - acceptance criteria

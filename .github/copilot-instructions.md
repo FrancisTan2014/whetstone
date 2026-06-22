@@ -4,6 +4,7 @@ This repository is built through a design -> issue -> implementation -> review l
 
 ## Workflow
 
+- Treat `PRODUCT.md` as the durable product/design memory.
 - Treat GitHub issues as the source of truth for implementation work.
 - Only implement issues with clear acceptance criteria.
 - Keep changes scoped to the issue. Do not add extra features, frameworks, or large refactors.

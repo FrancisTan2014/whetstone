@@ -15,6 +15,7 @@ A simple personal reading app, starting from a sharp v0:
 5. Iterate, then merge when ready.
 
 See [docs/LOCAL_AGENT_WORKFLOW.md](./docs/LOCAL_AGENT_WORKFLOW.md).
+Current design lives in [PRODUCT.md](./PRODUCT.md).
 
 ## Local launchers
 
