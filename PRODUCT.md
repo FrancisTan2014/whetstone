@@ -10,13 +10,23 @@ whetstone is a simple personal reading app for turning source materials into con
 2. Reader pages display materials.
 3. Users click or tap words/phrases in the reader to create notes linked to the source text.
 
-## v0 material input
+## v0 content model
 
-- Source materials are entered as clean text units through admin pages.
-- For ebooks, v0 does not parse EPUB/PDF files. The admin pastes cleaned chapter or section text into the app.
-- Each material has a title, optional author/source, language, and body text.
-- Authors are relational entities: admin selects an existing author/source or creates one inline if not found.
-- Material content is stored as Markdown files as the source of truth. The database stores metadata and indexes.
+- Source content is organized as `Author/Source -> Work -> ReadingUnit`.
+- `Author/Source` is a relational entity selected from an existing list or created inline if not found.
+- `Work` represents a readable work such as a book, essay, blog post, or classical text.
+- `ReadingUnit` is an ordered unit within a work. Each reading unit is backed by one Markdown file.
+- For single-piece works such as an essay or blog post, the work may have one reading unit.
+- For books or classics, the work has many ordered reading units such as chapters, sections, or passages.
+- For ebooks, v0 does not parse EPUB/PDF files. The admin pastes cleaned chapter or section text into reading units.
+- Markdown files are the source of truth for content. The database stores metadata and indexes.
+
+Examples:
+
+- Charles Dickens -> A Tale of Two Cities -> chapters.
+- George Orwell -> Politics and the English Language -> one essay unit.
+- Paul Graham -> one blog post work -> one blog-post unit.
+- 司马迁 -> 史记 -> ordered chapters/passages.
 
 ## v0 reader
 
