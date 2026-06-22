@@ -69,6 +69,28 @@ Default v0 choices:
 
 Do not add a runtime dependency unless the issue needs it and the PR explains why. Prefer established OSS libraries for text selection, annotation, and Markdown rendering when those issues arrive.
 
+## Design principles
+
+The goal is not to recite SOLID as an acronym. The goal is to make code hard to misuse and easy to change. In whetstone, the practical principles are:
+
+1. **Expose as little as possible.** A module should export the smallest API that another module needs. Everything else stays local.
+2. **Do not expose mutable internals.** If callers can mutate a module's arrays, maps, objects, caches, or state, bugs can be born outside the owning module.
+3. **Keep responsibilities cohesive.** A feature file or module should have one product reason to change.
+4. **Make boundaries explicit.** Cross-feature and client/server interactions go through `packages/domain`, `packages/contracts`, or an explicitly named shared module.
+5. **Prefer composition and pure functions over inheritance.** Most v0 logic should be data + functions, not class hierarchies.
+6. **Depend inward.** Domain logic does not depend on UI, server, database, filesystem, or environment config.
+7. **Validate at boundaries, trust inside.** External input is validated once at the boundary, then passed inward as typed data.
+
+Practical SOLID mapping for this project:
+
+- **Single responsibility** -> one module has one product/technical reason to change. `buildNoteAnchor` should not also save notes or update React state.
+- **Open/closed** -> prefer data-driven extension points already in the design, such as DB-backed templates and typed links. Do not add abstract base classes or speculative plugin systems.
+- **Liskov substitution** -> avoid inheritance in v0. If a polymorphic shape is needed, prefer discriminated unions and exhaustive handling.
+- **Interface segregation** -> keep contracts small. Do not create broad interfaces with methods consumers do not use.
+- **Dependency inversion** -> keep pure domain code independent. Infrastructure depends on domain/contracts; domain does not depend on infrastructure. Do not create interfaces merely to satisfy the acronym.
+
+Reviewers should enforce these concrete rules, not generic SOLID phrasing.
+
 ## TypeScript source style
 
 Formatting is handled by Prettier. Do not debate formatting in review unless generated formatting is not applied.
@@ -85,6 +107,7 @@ Rules:
 - Do not create static container classes only for namespacing. Use module-level named exports.
 - Avoid barrel files until there is a clear package boundary need; they can hide dependency direction and create accidental cycles.
 - Keep exported module API small. If a symbol is only used inside a feature folder, do not export it outside that folder.
+- Do not export internal state objects. Export functions that perform intended operations or return immutable snapshots.
 
 ## Type design
 
@@ -216,6 +239,7 @@ Rules:
 - Domain objects should be plain immutable values where practical.
 - Use `readonly` properties and `ReadonlyArray<T>` for shared/domain data that should not be mutated by callers.
 - Do not expose internal mutable collections from classes/modules. Return readonly views or copies.
+- Do not expose mutable references to module-owned state, even if the current caller promises not to mutate them.
 - Do not mutate function arguments unless the function name and type make mutation explicit.
 - Prefer pure functions in `packages/domain`: input value -> output value, no hidden state.
 - React state updates must be immutable. Do not mutate arrays/objects in place and then reuse the same reference.
@@ -240,6 +264,11 @@ export function addLink(entry: Entry, link: EntryLink): Entry {
 // Bad: caller can mutate internal state
 export function getLinks(): EntryLink[] {
   return links;
+}
+
+// Better: caller receives an immutable snapshot
+export function getLinks(): ReadonlyArray<EntryLink> {
+  return [...links];
 }
 ```
 
@@ -398,6 +427,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 
 - Implementation follows this spec.
 - Project structure is feature-first, not traditional layer-first.
+- Module APIs expose the smallest useful surface and do not leak internal mutable state.
 - Web-core TypeScript direction is preserved.
 - Server-centered source of truth is preserved.
 - Server stores Markdown files under a data directory; PostgreSQL stores metadata, paths, indexes, templates, notes, and links.
@@ -416,6 +446,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Union/domain values use typed constants or literal unions, not scattered strings.
 - Public/domain objects that should be stable use `readonly` properties or immutable value types.
 - Public APIs do not expose internal mutable arrays, maps, sets, or objects that callers can mutate.
+- Modules do not export mutable state objects or broad grab-bag APIs.
 - Functions do not mutate arguments unless mutation is explicit in the name, type, and issue scope.
 - React state is updated immutably; no in-place mutation followed by setting the same reference.
 - Module-level mutable state is not used for request/user/session data.
