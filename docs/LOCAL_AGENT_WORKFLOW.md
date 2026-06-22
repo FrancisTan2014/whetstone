@@ -69,14 +69,14 @@ Apply `ready-for-dev` only when the issue is implementable without guessing.
 
 ## Developer scheduled session
 
-Start the developer session:
+Start the developer scheduled session:
 
 ```powershell
 cd Q:\src\whetstone
 .\scripts\start-developer.cmd
 ```
 
-The launcher copies `prompts\developer-schedule.txt` to the clipboard and opens Copilot. Paste the prompt into Copilot and press Enter once. Copilot's `/every` scheduler handles future ticks.
+The launcher opens Copilot with `-i` and automatically submits the `/every 10m` schedule prompt. No paste step is required.
 
 ### Developer coordinator workflow
 
@@ -123,14 +123,14 @@ You can run multiple developer watcher terminals, but each run must create its o
 
 ## Reviewer scheduled session
 
-Start the reviewer session:
+Start the reviewer scheduled session:
 
 ```powershell
 cd Q:\src\whetstone
 .\scripts\start-reviewer.cmd
 ```
 
-The launcher copies `prompts\reviewer-schedule.txt` to the clipboard and opens Copilot. Paste the prompt into Copilot and press Enter once. Copilot's `/every` scheduler handles future ticks.
+The launcher opens Copilot with `-i` and automatically submits the `/every 10m` schedule prompt. No paste step is required.
 
 ### Reviewer coordinator workflow
 
