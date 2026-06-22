@@ -58,8 +58,20 @@ if (worktree && existsSync(worktree)) {
   console.log(`Removing failed developer worktree: ${worktree}`);
   const result = run('git', ['worktree', 'remove', '--force', worktree]);
   if (result.status !== 0) {
-    console.error('Failed to remove worktree.');
-    process.exit(result.status ?? 1);
+    console.warn('git worktree remove failed; falling back to filesystem removal and worktree prune.');
+    rmSync(path.toNamespacedPath(worktree), {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 500
+    });
+
+    run('git', ['worktree', 'prune'], { stdio: 'ignore' });
+
+    if (existsSync(worktree)) {
+      console.error('Failed to remove worktree via fallback.');
+      process.exit(result.status ?? 1);
+    }
   }
 }
 
