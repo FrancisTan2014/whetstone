@@ -22,7 +22,7 @@ The coordinator is responsible for remote status refresh. On each tick it runs:
 git fetch origin --prune
 ```
 
-The scheduled prompt processes at most one unit of work per tick.
+The scheduled prompt processes at most one unit of work per tick. The default cadence is every five minutes.
 
 Locks live under `.agent-locks/`:
 
@@ -101,7 +101,7 @@ The coordinator:
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
 They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
 `start-coordinator.cmd` performs a stale `worker.lock` check before it registers the scheduled coordinator prompt.
-If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. The coordinator retries automatically after backoff. After three consecutive failures for the same role, it sets `coordinator.paused = true` so the failure is visible and the loop stops before causing repeated damage.
+If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the coordinator marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress. The coordinator retries recorded developer recovery work automatically after backoff before it scans for new ready issues. After three consecutive failures for the same role, it sets `coordinator.paused = true` so the failure is visible and the loop stops before causing repeated damage.
 
 Coordinator does not clean half-finished developer work. Developer owns recovery:
 

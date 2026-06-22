@@ -25,18 +25,23 @@ Scheduling decision:
    - If the recorded PID is still a running `cmd` process and the lock is not older than 12 hours, update coordinator.lastResult to worker_busy and stop until the next tick.
    - If the recorded PID is missing/dead, has been reused, or the lock is older than 12 hours, remove `.agent-locks/worker.lock` once and continue.
 3. If `.agent-locks/developer-claim.lock` or `.agent-locks/reviewer-work.lock` exists and is not stale, update coordinator.lastResult to worker_busy and stop until the next tick.
-4. If any PR in remote.pullRequests is labeled changes-requested:
+4. If there is no active worker lock but developer has recorded unfinished work:
+   - This applies when developer.state is `failed`, or when developer.state is `implementing` / `in_progress` with developer.worktree or developer.branch set and no PR was opened.
+   - For `implementing` / `in_progress` without a worker, update developer.state to `failed`, developer.resumeReason to `worker_missing_after_incomplete_run`, developer.lastResult to `process_incomplete_no_worker`, developer.lastFailureAt to now, and developer.nextRetryAfter to now if it is missing.
+   - If developer.nextRetryAfter exists and is in the future, update coordinator.lastResult to developer_backoff and stop.
+   - Otherwise invoke `.\scripts\start-developer.cmd` so the developer can resume the recorded worktree/branch, and stop.
+5. If any PR in remote.pullRequests is labeled changes-requested:
    - If developer.nextRetryAfter exists and is in the future, update coordinator.lastResult to developer_backoff and stop.
    - Otherwise invoke `.\\scripts\\start-developer.cmd` and stop.
-5. If any PR in remote.pullRequests is labeled needs-review or review-approved:
+6. If any PR in remote.pullRequests is labeled needs-review or review-approved:
    - If reviewer.nextRetryAfter exists and is in the future, update coordinator.lastResult to reviewer_backoff and stop.
    - Otherwise invoke `.\\scripts\\start-reviewer.cmd` and stop.
-6. If there is no waiting PR, find open ready-for-dev issues in remote.issues, sorted by lowest issue number.
-7. Skip issues labeled in-progress.
-8. If an issue declares `Depends on: #N`, skip it until every dependency issue is closed in the local snapshot.
-9. If a dependency-ready issue exists:
+7. If there is no waiting PR, find open ready-for-dev issues in remote.issues, sorted by lowest issue number.
+8. Skip issues labeled in-progress.
+9. If an issue declares `Depends on: #N`, skip it until every dependency issue is closed in the local snapshot.
+10. If a dependency-ready issue exists:
    - If developer.nextRetryAfter exists and is in the future, update coordinator.lastResult to developer_backoff and stop.
    - Otherwise invoke `.\\scripts\\start-developer.cmd` and stop.
-10. If no work exists, update coordinator.lastResult to idle and stop until the next tick.
+11. If no work exists, update coordinator.lastResult to idle and stop until the next tick.
 
 Each developer/reviewer invocation must be a one-shot session. Do not start a recurring developer/reviewer schedule.

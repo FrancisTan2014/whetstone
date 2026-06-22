@@ -12,7 +12,8 @@
   "locks": {
     "statusSync": null,
     "developerClaim": null,
-    "reviewerWork": null
+    "reviewerWork": null,
+    "worker": null
   },
   "coordinator": {
     "state": "idle",
