@@ -4,6 +4,25 @@ This is the single durable engineering and review guide for whetstone. It exists
 
 These guidelines are inspired by practical TypeScript style guides such as the Google TypeScript Style Guide, then adapted to whetstone's product, stack, and local-agent workflow. When a rule here conflicts with a generic external style guide, this file wins for this repository.
 
+## Authority and conflict resolution
+
+Use this order when rules appear to conflict:
+
+1. **Security, privacy, and data integrity win first.** Do not leak secrets/user content, allow path traversal, corrupt Markdown/database consistency, or hide operational failures to satisfy another rule.
+2. **`PRODUCT.md` defines product behavior.** If an issue contradicts `PRODUCT.md`, stop and move it back to design unless the issue explicitly includes a product-doc update.
+3. **`GUIDELINES.md` defines engineering and review rules.** If an issue needs to violate these rules, the issue must say why and include a guideline update or explicit human decision.
+4. **The linked issue defines scope.** Acceptance criteria decide what the PR should deliver, but only after fitting `PRODUCT.md` and this guide.
+5. **Existing code patterns are evidence, not authority.** Follow them when they match this guide; improve them only when the issue asks or the touched code requires it.
+
+Tie-breakers:
+
+- **Cohesive vertical feature/fix beats artificial small PRs.** Do not split by database/API/UI layers when one capability needs all of them.
+- **Simplicity beats generic architecture slogans.** Do not add interfaces, factories, abstract classes, inheritance, or dependency injection containers only to satisfy SOLID wording.
+- **Testability through boundaries beats test-only exposure.** Do not expose private mutable state or create fake abstractions only for tests.
+- **Meaningful coverage beats coverage gaming.** Keep 100% source coverage, but tests must assert behavior/invariants rather than merely executing lines.
+- **Safe observability beats verbose logs.** Log useful operational context, but never log secrets, full Markdown, note bodies, selected text snapshots, or template answers.
+- **Server source of truth beats client convenience.** Client storage/caches must not become v0's authority.
+
 ## Architecture style
 
 Use a **feature-first modular monolith**, not a traditional layer-first project.
@@ -67,7 +86,7 @@ Default v0 choices:
 - Runtime validation: Zod.
 - Tests: Vitest.
 
-Do not add a runtime dependency unless the issue needs it and the PR explains why. Prefer established OSS libraries for text selection, annotation, and Markdown rendering when those issues arrive.
+The baseline dependencies listed above are approved for the scaffold/foundation work that introduces them. After that, do not add a runtime dependency unless the issue needs it and the PR explains why. Prefer established OSS libraries for text selection, annotation, and Markdown rendering when those issues arrive.
 
 ## Design principles
 
@@ -100,7 +119,7 @@ Rules:
 
 - Source files are UTF-8.
 - Use ES modules. Do not use TypeScript `namespace`, triple-slash references, or CommonJS `require`.
-- Prefer named exports. Do not use default exports for app/domain code.
+- Prefer named exports. Do not use default exports for app/domain code unless a framework or tool requires one at a boundary; keep that exception local.
 - Use `import type` / `export type` for type-only imports/exports when appropriate.
 - Use `const` by default. Use `let` only when reassignment is required. Do not use `var`.
 - Use one variable per declaration.
@@ -117,7 +136,7 @@ Use TypeScript's type system to encode domain constraints.
 Rules:
 
 - Prefer precise literal unions for closed sets such as `WorkType`, `EntryType`, `LinkType`, and template field types.
-- Prefer `interface` for object shapes that model externally implemented contracts; prefer `type` for unions, branded ids, mapped types, and composed readonly values.
+- Prefer `interface` for TypeScript object shapes that model externally implemented contracts; prefer `type` for unions, branded ids, mapped types, and composed readonly values. This is about TypeScript shape syntax, not permission to create broad architectural interfaces.
 - Use branded string types for ids when practical, e.g. `EntryId`, `WorkId`, `TemplateId`, to avoid mixing ids accidentally.
 - Prefer `unknown` over `any` at external boundaries, then validate/narrow with Zod or explicit guards.
 - Optional values should normally be `undefined`, not `null`, unless PostgreSQL/API semantics require `null`.
