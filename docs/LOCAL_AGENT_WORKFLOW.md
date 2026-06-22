@@ -27,7 +27,7 @@ The scheduled prompt processes at most one unit of work per tick. The default ca
 Locks live under `.agent-locks/`:
 
 - `status-sync.lock`: coordinator owns remote snapshot refresh.
-- `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time. It contains `role.txt`, `pid.txt`, `startedAt.txt`, and `command.txt`.
+- `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time. It contains `role.txt`, the launched Copilot process `pid.txt`, `startedAt.txt`, and `command.txt`.
 - `worker-last-failure.json`: last one-shot worker failure for diagnosis. Coordinator retries with backoff using `.agent-status.local.json`.
 - `developer-claim.lock`: developer owns issue/PR selection and claim.
 - `reviewer-work.lock`: reviewer owns PR review/merge selection.
