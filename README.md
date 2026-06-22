@@ -11,12 +11,13 @@ This repository currently contains the TypeScript monorepo foundation only. User
 ## Monorepo layout
 
 ```text
-apps/
-  web/       React + Vite placeholder app
-  server/    Fastify API server with /health
-packages/
-  domain/    Pure domain placeholder exports
-  contracts/ Shared API contract placeholder exports
+src/
+  apps/
+    web/       React + Vite placeholder app
+    server/    Fastify API server with /health
+  packages/
+    domain/    Pure domain placeholder exports
+    contracts/ Shared API contract placeholder exports
 ```
 
 The workspace uses pnpm, strict TypeScript, ESLint, Prettier, Vitest, and 100% coverage thresholds for included source files.

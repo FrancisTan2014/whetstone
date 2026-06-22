@@ -36,7 +36,7 @@ importers:
         specifier: ^4.1.9
         version: 4.1.9(@types/node@26.0.0)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@26.0.0))
 
-  apps/server:
+  src/apps/server:
     dependencies:
       '@whetstone/contracts':
         specifier: workspace:*
@@ -45,7 +45,7 @@ importers:
         specifier: ^5.8.5
         version: 5.8.5
 
-  apps/web:
+  src/apps/web:
     dependencies:
       '@whetstone/contracts':
         specifier: workspace:*
@@ -73,7 +73,7 @@ importers:
         specifier: ^8.0.16
         version: 8.0.16(@types/node@26.0.0)
 
-  packages/contracts:
+  src/packages/contracts:
     dependencies:
       '@whetstone/domain':
         specifier: workspace:*
@@ -82,7 +82,7 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
-  packages/domain: {}
+  src/packages/domain: {}
 
 packages:
 
