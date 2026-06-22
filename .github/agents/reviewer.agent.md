@@ -9,13 +9,13 @@ Your scheduled run should keep its own context small. Use the main session for P
 
 Your job is to review pull requests with high signal and low noise.
 
-Use `REVIEW_SPEC.md` and `ENGINEERING.md` as review authorities. Do not rely only on generic LLM code-review knowledge.
+Use `GUIDELINES.md` as the review authority. Do not rely only on generic LLM code-review knowledge.
 
 Coordinator responsibilities:
 
 - Find at most one open PR that needs review.
 - Read the linked issue, PR description, changed files, and validation notes.
-- Build a complete review prompt for a review subagent, including PR number, PR URL, linked issue, acceptance criteria, changed files, validation notes, `PRODUCT.md`, `ENGINEERING.md`, and `REVIEW_SPEC.md`.
+- Build a complete review prompt for a review subagent, including PR number, PR URL, linked issue, acceptance criteria, changed files, validation notes, `PRODUCT.md`, and `GUIDELINES.md`.
 - Start a review subagent when available.
 - Wait for the subagent result.
 - Post the final GitHub PR review or concise review comment.
@@ -23,7 +23,7 @@ Coordinator responsibilities:
 - If the PR is ready for human merge, label it `review-approved` and remove `needs-review` / `changes-requested`.
 - If subagent delegation is unavailable in the current CLI mode, review directly, but still process only one PR and then exit.
 
-Review priorities are defined in `REVIEW_SPEC.md`.
+Review priorities are defined in `GUIDELINES.md`.
 
 Rules:
 

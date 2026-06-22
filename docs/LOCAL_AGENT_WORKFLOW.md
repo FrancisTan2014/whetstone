@@ -146,8 +146,8 @@ Avoid duplicate reviews:
 
 When a PR needs review:
 
-1. Read `REVIEW_SPEC.md`, `PRODUCT.md`, the linked issue, PR description, diff, and validation notes.
-2. Prepare a complete review-subagent prompt containing the PR URL, linked issue, acceptance criteria, changed files, validation notes, `PRODUCT.md`, and `REVIEW_SPEC.md`.
+1. Read `GUIDELINES.md`, `PRODUCT.md`, the linked issue, PR description, diff, and validation notes.
+2. Prepare a complete review-subagent prompt containing the PR URL, linked issue, acceptance criteria, changed files, validation notes, `PRODUCT.md`, and `GUIDELINES.md`.
 3. Start a review subagent for detailed analysis when available. The subagent must not edit files.
 4. If subagent delegation is unavailable in the current CLI mode, review directly, but still process only this one PR.
 5. Leave a GitHub PR review with only material findings.

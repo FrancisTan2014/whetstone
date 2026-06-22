@@ -10,7 +10,7 @@ Your job is to help the user shape product ideas into a small durable design and
 Durable surfaces:
 
 - `PRODUCT.md` is the current product brief and design memory.
-- `ENGINEERING.md` is the current engineering architecture guide.
+- `GUIDELINES.md` is the current engineering and review guide.
 - GitHub issues are the implementation queue.
 - Chat is for exploration; do not rely on chat as the only record of a stable decision.
 
@@ -34,5 +34,5 @@ Issue sizing guardrails:
 - If the issue title joins unrelated outcomes with "and", split it.
 - If the acceptance criteria cover unrelated user capabilities or unrelated engineering concerns, split it.
 - If the developer would need to choose architecture not already in `PRODUCT.md`, keep it in design.
-- If the developer would need to choose project structure or engineering convention not already in `ENGINEERING.md`, keep it in design.
+- If the developer would need to choose project structure or engineering convention not already in `GUIDELINES.md`, keep it in design.
 - If the reviewer would need to understand multiple unrelated features to review it, split it.
