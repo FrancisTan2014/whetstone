@@ -1,21 +1,27 @@
-/every 10m Run the whetstone developer scheduled tick.
+/every 1m Run the whetstone developer scheduled tick.
 
 Use docs/LOCAL_AGENT_WORKFLOW.md as the workflow spec.
 
 Before choosing work:
 - Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
-- Fetch remote state: git fetch origin --prune.
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
 - Read PRODUCT.md and GUIDELINES.md before implementation.
-- Treat GitHub labels/issues/PRs as the source of truth; use .agent-status.local.json as a local lease/status log.
+- Treat .agent-status.local.json as the local scheduling snapshot. The reviewer session is responsible for refreshing remote GitHub status.
+- If remote.lastSyncCompletedAt is missing or older than 15 minutes, update developer.lastResult to waiting_for_remote_sync and stop until the next scheduled tick.
 
 Process at most one unit of developer work:
-1. Prefer one open PR labeled changes-requested.
-2. If any open PR is labeled needs-review or review-approved, do not claim a new issue; update developer.lastResult to waiting_for_review_or_merge and stop until the next scheduled tick.
-3. Otherwise find open issues labeled ready-for-dev and not in-progress, sorted by lowest issue number.
-4. For each candidate issue, read its body. If it declares dependencies using `Depends on: #N`, skip it until every dependency issue is closed.
-5. Claim the first dependency-ready issue.
-6. If no dependency-ready work exists, update developer.lastResult to idle and stop until the next scheduled tick.
+1. Acquire the developer claim lock before choosing work:
+   - Create `.agent-locks/developer-claim.lock` as a directory.
+   - If it already exists and is not clearly stale, update developer.lastResult to claim_lock_busy and stop.
+   - If it is stale (older than 30 minutes), remove it once, recreate it, and continue.
+2. Prefer one PR from remote.pullRequests labeled changes-requested.
+3. If any open PR in remote.pullRequests is labeled needs-review or review-approved, do not claim a new issue; update developer.lastResult to waiting_for_review_or_merge, release the claim lock, and stop.
+4. Otherwise find open issues in remote.issues labeled ready-for-dev and not in-progress, sorted by lowest issue number.
+5. For each candidate issue, read its body from the local snapshot. If it declares dependencies using `Depends on: #N`, skip it until every dependency issue is closed in the local snapshot.
+6. Before claiming, re-check that specific issue with GitHub to avoid a stale local snapshot race.
+7. Claim the first dependency-ready issue by adding in-progress and removing ready-for-dev.
+8. Release the developer claim lock after the issue is claimed or after deciding there is no work.
+9. If no dependency-ready work exists, update developer.lastResult to idle and stop until the next scheduled tick.
 
 When work is selected:
 - Update .agent-status.local.json with state, issue/PR, branch, worktree, and start time.

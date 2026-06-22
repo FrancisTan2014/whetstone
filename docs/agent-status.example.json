@@ -2,6 +2,18 @@
   "version": 1,
   "repository": "FrancisTan2014/whetstone",
   "updatedAt": null,
+  "remote": {
+    "lastSyncStartedAt": null,
+    "lastSyncCompletedAt": null,
+    "lastSyncResult": null,
+    "issues": [],
+    "pullRequests": []
+  },
+  "locks": {
+    "statusSync": null,
+    "developerClaim": null,
+    "reviewerWork": null
+  },
   "developer": {
     "state": "idle",
     "currentIssue": null,

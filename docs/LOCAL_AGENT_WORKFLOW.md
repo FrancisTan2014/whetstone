@@ -5,23 +5,31 @@ This repository uses local Copilot CLI scheduled prompts instead of GitHub Copil
 The stable model is **two scheduled Copilot sessions plus one local status tracker**:
 
 1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
-2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every 10 minutes, reads `.agent-status.local.json`, processes at most one `ready-for-dev` issue or `changes-requested` PR, delegates to a subagent when available, updates status, then waits for the next tick.
-3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every 10 minutes, reads `.agent-status.local.json`, reviews at most one PR, delegates to a subagent when available, updates status, then waits for the next tick.
+2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every minute, reads `.agent-status.local.json`, processes at most one local-status work item, delegates to a subagent when available, updates status, then waits for the next tick.
+3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every minute, refreshes remote GitHub status when stale (about every 10 minutes), reviews/merges at most one PR, updates status, then waits for the next tick.
 4. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
 
 The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
 
-GitHub labels/issues/PRs remain the source of truth. The local tracker is only a lease/status log so scheduled agents know what they were doing last tick and avoid duplicating work.
+GitHub labels/issues/PRs remain the source of truth. The local tracker is the scheduling snapshot and lease/status log so scheduled agents know what they were doing last tick and avoid duplicating work.
 
 Developer/reviewer sessions use Copilot CLI's `--allow-all` mode by user preference. The scripts set the working directory to `Q:\src\whetstone` so the agent starts from the intended repository context.
 
-Each scheduled tick must fetch remote state before choosing work:
+The reviewer is responsible for remote status refresh. When `.agent-status.local.json` is stale, reviewer runs:
 
 ```text
 git fetch origin --prune
 ```
 
 The scheduled prompt processes at most one unit of work per tick.
+
+Locks live under `.agent-locks/`:
+
+- `status-sync.lock`: reviewer owns remote snapshot refresh.
+- `developer-claim.lock`: developer owns issue/PR selection and claim.
+- `reviewer-work.lock`: reviewer owns PR review/merge selection.
+
+Locks are directories so creation is atomic enough for local sessions. If a lock is stale, the owning prompt may remove it once and retry as described in `prompts/*.txt`.
 
 ## Labels
 
@@ -78,7 +86,7 @@ cd Q:\src\whetstone
 .\scripts\start-developer.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 10m` schedule prompt. No paste step is required.
+The launcher opens Copilot with `-i` and automatically submits the `/every 1m` schedule prompt. No paste step is required.
 
 ### Developer coordinator workflow
 
@@ -87,8 +95,8 @@ Goal: process at most one unit of developer work, then stop.
 Priority order:
 
 1. First handle one open PR labeled `changes-requested`.
-2. If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer review or reviewer merge.
-3. If no PR is waiting, find the lowest-numbered open issue in `FrancisTan2014/whetstone` labeled `ready-for-dev` and not labeled `in-progress`.
+2. If any open PR in local status is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer review or reviewer merge.
+3. If no PR is waiting, find the lowest-numbered open issue in local status labeled `ready-for-dev` and not labeled `in-progress`.
 4. If an issue body declares `Depends on: #N`, skip it until every dependency issue is closed.
 5. If no dependency-ready issue exists, stay idle and stop.
 
@@ -135,11 +143,11 @@ cd Q:\src\whetstone
 .\scripts\start-reviewer.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 10m` schedule prompt. No paste step is required.
+The launcher opens Copilot with `-i` and automatically submits the `/every 1m` schedule prompt. No paste step is required.
 
 ### Reviewer coordinator workflow
 
-Goal: process at most one reviewer unit of work. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
+Goal: refresh remote status when stale, then process at most one reviewer unit of work. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
 
 Avoid duplicate reviews:
 
