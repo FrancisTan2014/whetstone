@@ -21,3 +21,8 @@ Thumbs.db
 # Personal notes (in case dev seeds get committed by accident — real notes belong in a separate vault)
 /notes/
 /seeds/local-*.md
+
+# Local agent scheduler status
+.agent-status.local.json
+.agent-locks/
+*.log

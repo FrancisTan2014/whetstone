@@ -1,27 +1,27 @@
 # Local agent workflow
 
-This repository uses local Copilot CLI runs instead of GitHub Copilot cloud automation.
+This repository uses local Copilot CLI scheduled prompts instead of GitHub Copilot cloud automation.
 
-The stable model is **visible terminal loop, fresh Copilot session per unit of work**:
+The stable model is **two scheduled Copilot sessions plus one local status tracker**:
 
 1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
-2. **Developer watcher terminal**: a visible terminal loop starts a fresh Copilot CLI coordinator process, which claims at most one `ready-for-dev` issue or `changes-requested` PR, delegates to a subagent when available, pushes/opens/updates a PR, then exits.
-3. **Reviewer watcher terminal**: a visible terminal loop starts a fresh Copilot CLI coordinator process, which selects at most one open PR, delegates review to a subagent when available, posts feedback, then exits.
+2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every 10 minutes, reads `.agent-status.local.json`, processes at most one `ready-for-dev` issue or `changes-requested` PR, delegates to a subagent when available, updates status, then waits for the next tick.
+3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every 10 minutes, reads `.agent-status.local.json`, reviews at most one PR, delegates to a subagent when available, updates status, then waits for the next tick.
 4. **Merge**: merge only after implementation and review are satisfactory.
 
-The `.cmd` files are launchers only. They do not hide work in Windows Task Scheduler; the developer and reviewer watchers run in visible terminals that the user can stop with Ctrl+C.
+The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
 
-Do not use long-lived `/every` watcher sessions for implementation/review. Their context grows over time. The watcher `.cmd` files use `copilot -p "..."`, so every cycle starts with fresh context and exits after one unit of work.
+GitHub labels/issues/PRs remain the source of truth. The local tracker is only a lease/status log so scheduled agents know what they were doing last tick and avoid duplicating work.
 
-Developer/reviewer runs use Copilot CLI's `--allow-all` mode by user preference. The scripts set the working directory to `Q:\src\whetstone` so the agent starts from the intended repository context.
+Developer/reviewer sessions use Copilot CLI's `--allow-all` mode by user preference. The scripts set the working directory to `Q:\src\whetstone` so the agent starts from the intended repository context.
 
-The launchers fetch remote state before starting Copilot:
+Each scheduled tick must fetch remote state before choosing work:
 
 ```text
 git fetch origin --prune
 ```
 
-They also use a simple lock under `%TEMP%` so a new scheduled tick skips if the previous run is still active.
+The scheduled prompt processes at most one unit of work per tick.
 
 ## Labels
 
@@ -68,23 +68,16 @@ Design output is a GitHub issue with:
 
 Apply `ready-for-dev` only when the issue is implementable without guessing.
 
-## Developer watcher
+## Developer scheduled session
 
-Run once:
+Start the developer session:
 
 ```powershell
 cd Q:\src\whetstone
 .\scripts\start-developer.cmd
 ```
 
-Run continuously in a visible terminal:
-
-```powershell
-cd Q:\src\whetstone
-.\scripts\watch-developer.cmd
-```
-
-The watcher sleeps 10 minutes between one-shot developer coordinator runs. Press Ctrl+C to stop.
+The launcher copies `prompts\developer-schedule.txt` to the clipboard and opens Copilot. Paste the prompt into Copilot and press Enter once. Copilot's `/every` scheduler handles future ticks.
 
 ### Developer coordinator workflow
 
@@ -129,23 +122,16 @@ When an issue is found:
 
 You can run multiple developer watcher terminals, but each run must create its own issue worktree and claim only one issue at a time.
 
-## Reviewer watcher
+## Reviewer scheduled session
 
-Run once:
+Start the reviewer session:
 
 ```powershell
 cd Q:\src\whetstone
 .\scripts\start-reviewer.cmd
 ```
 
-Run continuously in a visible terminal:
-
-```powershell
-cd Q:\src\whetstone
-.\scripts\watch-reviewer.cmd
-```
-
-The reviewer watcher waits 5 minutes before its first run, then sleeps 10 minutes between one-shot reviewer coordinator runs. Press Ctrl+C to stop.
+The launcher copies `prompts\reviewer-schedule.txt` to the clipboard and opens Copilot. Paste the prompt into Copilot and press Enter once. Copilot's `/every` scheduler handles future ticks.
 
 ### Reviewer coordinator workflow
 
@@ -172,4 +158,4 @@ Merged PRs are ignored because the reviewer only scans open PRs. Closed issues a
 
 ## Operating rule
 
-The user only needs to provide product ideas. The design session turns stable ideas into issues; visible developer and reviewer watcher terminals repeatedly start fresh coordinator runs, delegate implementation/review to subagents when available, and exit after one unit of work.
+The user only needs to provide product ideas. The design session turns stable ideas into issues; scheduled developer and reviewer sessions read the local status tracker on each tick, delegate implementation/review to subagents when available, update GitHub and local status, then wait for the next tick.
