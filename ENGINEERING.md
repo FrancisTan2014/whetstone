@@ -142,6 +142,28 @@ Use a central server config module. Do not read `process.env` throughout feature
 
 Use a central error handler. Do not add broad catches that hide failures.
 
+## Logging
+
+Use structured logging. Fastify's Pino logger is the default server logger.
+
+Rules:
+
+- Do not use raw `console.log` / `console.error` in application code. Use the request logger or an injected/central logger.
+- Every server request should have a request id/correlation id.
+- Log events, not prose paragraphs. Prefer stable fields such as `entryId`, `workId`, `readingUnitId`, `templateId`, `linkType`, `route`, and `durationMs`.
+- Do not log secrets, tokens, passwords, full Markdown content, note bodies, selected text snapshots, or user-authored answers.
+- For expected validation failures, return typed errors and log at `debug` or not at all unless useful.
+- For operational failures, log at `error` with safe context and the exception.
+- Client logging is for development diagnostics only in v0. Do not add client telemetry/analytics.
+- If a PR adds a new failure mode around database writes, Markdown file writes, or note-anchor creation, add a useful server log at the boundary where the failure is handled.
+
+Recommended levels:
+
+- `debug`: development-only flow details.
+- `info`: server start/stop and successful administrative mutations when useful.
+- `warn`: recoverable operational issues.
+- `error`: failed operations requiring attention.
+
 ## Database rules
 
 - Drizzle schema is the database contract.

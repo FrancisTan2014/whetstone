@@ -72,6 +72,15 @@ Stop at the first hard blocker if it makes further review noisy. Otherwise leave
 - Server code does not trust client-provided paths, entry ids, offsets, template ids, or link types without validation.
 - API contracts used by client/server stay synchronized through shared types or generated/validated schemas.
 
+## 7a. Logging quality
+
+- Server logging follows `ENGINEERING.md`.
+- Server code uses Fastify/Pino structured logging, not raw `console.log` / `console.error`.
+- Logs include safe identifiers and operational context when useful.
+- Logs do not include secrets, tokens, full Markdown content, note bodies, selected text snapshots, or template answers.
+- Errors at database/filesystem/note-anchor boundaries are logged with safe context.
+- Client code does not add telemetry/analytics in v0.
+
 ## 8. PostgreSQL/data-model quality
 
 - Schema changes are represented by migrations or a documented repeatable setup path.
