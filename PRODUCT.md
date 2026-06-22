@@ -15,6 +15,12 @@ whetstone is a simple personal reading app for turning source materials into con
 - Source materials are entered as clean text units through admin pages.
 - For ebooks, v0 does not parse EPUB/PDF files. The admin pastes cleaned chapter or section text into the app.
 
+## v0 reader
+
+- The reader presents material as one continuous vertical scroll.
+- Backend storage may organize material into records/chunks/sections, but the frontend should not feel like a file manager.
+- Section or chapter boundaries appear as subtle headings inside the scroll.
+
 ## v0 non-goals
 
 - No spaced repetition.
