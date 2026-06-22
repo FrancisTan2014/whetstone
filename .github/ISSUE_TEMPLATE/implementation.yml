@@ -1,0 +1,43 @@
+name: Implementation task
+description: Create a task ready for local Copilot implementation
+title: "[Task] "
+labels: ["ready-for-dev"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What user-visible or developer-visible outcome should exist when this is done?
+      placeholder: "Example: Admin can create a reading material and open it in the reader."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete checks a developer and reviewer can use to decide whether the task is complete.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and non-goals
+      description: What should the implementation avoid or leave out?
+      placeholder: |
+        - Do not ...
+        - Leave ... for a later issue.
+    validations:
+      required: false
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Expected tests, build commands, or manual checks.
+      placeholder: |
+        - Run ...
+        - Verify ...
+    validations:
+      required: true
