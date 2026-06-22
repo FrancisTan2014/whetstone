@@ -5,8 +5,8 @@ This repository uses local Copilot CLI scheduled prompts instead of GitHub Copil
 The stable model is **two scheduled Copilot sessions plus one local status tracker**:
 
 1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
-2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every minute, reads `.agent-status.local.json`, processes at most one local-status work item, delegates to a subagent when available, updates status, then waits for the next tick.
-3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every minute, refreshes remote GitHub status when stale (about every 10 minutes), reviews/merges at most one PR, updates status, then waits for the next tick.
+2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every 5 minutes, reads `.agent-status.local.json`, processes at most one local-status work item, delegates to a subagent when available, updates status, then waits for the next tick.
+3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every 5 minutes, refreshes remote GitHub status when stale (about every 10 minutes), reviews/merges at most one PR, updates status, then waits for the next tick.
 4. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
 
 The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
@@ -86,7 +86,7 @@ cd Q:\src\whetstone
 .\scripts\start-developer.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 1m` schedule prompt. No paste step is required.
+The launcher opens Copilot with `-i` and automatically submits the `/every 5m` schedule prompt. No paste step is required.
 
 ### Developer coordinator workflow
 
@@ -143,7 +143,7 @@ cd Q:\src\whetstone
 .\scripts\start-reviewer.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 1m` schedule prompt. No paste step is required.
+The launcher opens Copilot with `-i` and automatically submits the `/every 5m` schedule prompt. No paste step is required.
 
 ### Reviewer coordinator workflow
 
