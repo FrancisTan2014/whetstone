@@ -27,6 +27,7 @@ The scheduled prompt processes at most one unit of work per tick.
 Locks live under `.agent-locks/`:
 
 - `status-sync.lock`: coordinator owns remote snapshot refresh.
+- `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time.
 - `developer-claim.lock`: developer owns issue/PR selection and claim.
 - `reviewer-work.lock`: reviewer owns PR review/merge selection.
 
@@ -97,6 +98,7 @@ The coordinator:
 4. invokes `scripts\start-reviewer.cmd` for review/merge work.
 
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
+They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
 
 ## Developer one-shot workflow
 

@@ -19,7 +19,7 @@ Remote status sync:
 - If after the sync attempt remote.lastSyncCompletedAt is still missing or older than 15 minutes, update coordinator.lastResult to remote_status_stale and do not invoke developer/reviewer this tick.
 
 Scheduling decision:
-1. If `.agent-locks/developer-claim.lock` or `.agent-locks/reviewer-work.lock` exists and is not stale, update coordinator.lastResult to worker_busy and stop until the next tick.
+1. If `.agent-locks/worker.lock`, `.agent-locks/developer-claim.lock`, or `.agent-locks/reviewer-work.lock` exists and is not stale, update coordinator.lastResult to worker_busy and stop until the next tick.
 2. If any PR in remote.pullRequests is labeled changes-requested, invoke `.\\scripts\\start-developer.cmd` and stop.
 3. If any PR in remote.pullRequests is labeled needs-review or review-approved, invoke `.\\scripts\\start-reviewer.cmd` and stop.
 4. If there is no waiting PR, find open ready-for-dev issues in remote.issues, sorted by lowest issue number.
