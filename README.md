@@ -23,3 +23,9 @@ See [docs/LOCAL_AGENT_WORKFLOW.md](./docs/LOCAL_AGENT_WORKFLOW.md).
 .\scripts\start-developer.cmd
 .\scripts\start-reviewer.cmd
 ```
+
+Install automatic scheduled runs:
+
+```powershell
+.\scripts\install-scheduled-tasks.cmd
+```

@@ -15,6 +15,14 @@ Do not use long-lived `/every` watcher sessions for implementation/review. Their
 
 Scheduled developer/reviewer runs use Copilot CLI's `--allow-all` mode by user preference. Keep each scheduled task's **Start in** directory set to `Q:\src\whetstone` so the agent starts from the intended repository context.
 
+The launchers fetch remote state before starting Copilot:
+
+```text
+git fetch origin --prune
+```
+
+They also use a simple lock under `%TEMP%` so a new scheduled tick skips if the previous run is still active.
+
 ## Labels
 
 - `ready-for-dev`: design is stable and a developer run may claim it.
@@ -136,6 +144,25 @@ External scheduler shape:
 - **Arguments:** none
 
 Set the scheduler to avoid overlapping instances. If a previous reviewer run is still active, skip the next tick.
+
+## Install scheduled tasks
+
+Install both local scheduled tasks:
+
+```powershell
+.\scripts\install-scheduled-tasks.cmd
+```
+
+This creates:
+
+- `whetstone-developer`: runs every 10 minutes.
+- `whetstone-reviewer`: runs every 10 minutes, offset by about 5 minutes.
+
+Remove them:
+
+```powershell
+.\scripts\uninstall-scheduled-tasks.cmd
+```
 
 ### Reviewer coordinator workflow
 
