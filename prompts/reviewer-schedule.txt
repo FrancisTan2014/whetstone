@@ -6,6 +6,7 @@ Before choosing work:
 - Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
 - Fetch remote state: git fetch origin --prune.
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
+- Read REVIEW_SPEC.md and use it as the review checklist.
 - Treat GitHub PR labels/comments as the source of truth; use .agent-status.local.json as a local lease/status log.
 
 Process at most one unit of reviewer work:
@@ -18,6 +19,6 @@ When work is selected:
 - Update .agent-status.local.json with state, PR, head SHA, and start time.
 - Use a review subagent for detailed analysis when available. The subagent must not edit files.
 - If subagent delegation is unavailable, do the one review directly.
-- Post review feedback as specified in docs/LOCAL_AGENT_WORKFLOW.md.
+- Post review feedback as specified in REVIEW_SPEC.md and docs/LOCAL_AGENT_WORKFLOW.md.
 - Update GitHub labels and .agent-status.local.json with completion time/result.
 - Stop after this one PR.
