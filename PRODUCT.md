@@ -14,6 +14,9 @@ whetstone is a simple personal reading app for turning source materials into con
 
 - Source materials are entered as clean text units through admin pages.
 - For ebooks, v0 does not parse EPUB/PDF files. The admin pastes cleaned chapter or section text into the app.
+- Each material has a title, optional author/source, language, and body text.
+- Authors are relational entities: admin selects an existing author/source or creates one inline if not found.
+- Material content is stored as Markdown files as the source of truth. The database stores metadata and indexes.
 
 ## v0 reader
 
@@ -39,7 +42,6 @@ whetstone is a simple personal reading app for turning source materials into con
 
 ## Current open questions
 
-- What fields define a source material in v0?
 - What app stack should v0 use?
 
 ## Glossary
