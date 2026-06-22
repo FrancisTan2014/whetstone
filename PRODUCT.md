@@ -61,6 +61,7 @@ Template storage:
 - Note entries store structured `answers_json` keyed by template field id.
 - Markdown note body is rendered from the template and answers for display/export.
 - The template JSON uses a small controlled shape, not arbitrary UI code, so future admin editing can add/remove fields safely.
+- v0 template field types are only `short_text` and `long_text`.
 
 Initial templates:
 
