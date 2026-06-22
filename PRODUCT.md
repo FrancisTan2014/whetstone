@@ -53,6 +53,15 @@ Examples:
 
 The note editor uses structured templates. After text selection, the editor shows a template selector. It may preselect a likely template, but the user can switch before saving.
 
+Templates are database-backed from v0. Built-in templates are seeded into the database; v0 does not include an admin template editor.
+
+Template storage:
+
+- Template rows store ordered `fields_json`.
+- Note entries store structured `answers_json` keyed by template field id.
+- Markdown note body is rendered from the template and answers for display/export.
+- The template JSON uses a small controlled shape, not arbitrary UI code, so future admin editing can add/remove fields safely.
+
 Initial templates:
 
 1. **Vocabulary**
