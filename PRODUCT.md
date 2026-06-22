@@ -21,6 +21,11 @@ whetstone is a simple personal reading app for turning source materials into con
 - Backend storage may organize material into records/chunks/sections, but the frontend should not feel like a file manager.
 - Section or chapter boundaries appear as subtle headings inside the scroll.
 
+## v0 note capture
+
+- Users can select any text range in the reader, including a single word or a phrase.
+- A note is linked to the selected source text and its material location.
+
 ## v0 non-goals
 
 - No spaced repetition.
@@ -34,7 +39,6 @@ whetstone is a simple personal reading app for turning source materials into con
 ## Current open questions
 
 - What fields define a source material in v0?
-- Should notes attach to a single word, selected phrase, or both?
 - What app stack should v0 use?
 
 ## Glossary
