@@ -6,6 +6,70 @@ A simple personal reading app, starting from a sharp v0:
 2. Reader pages display materials.
 3. Users click or tap words/phrases to create notes linked to the source text.
 
+This repository currently contains the TypeScript monorepo foundation only. User-facing admin, reader, and note features are intentionally deferred to later issues.
+
+## Monorepo layout
+
+```text
+apps/
+  web/       React + Vite placeholder app
+  server/    Fastify API server with /health
+packages/
+  domain/    Pure domain placeholder exports
+  contracts/ Shared API contract placeholder exports
+```
+
+The workspace uses pnpm, strict TypeScript, ESLint, Prettier, Vitest, and 100% coverage thresholds for included source files.
+
+## Local development
+
+Install dependencies:
+
+```powershell
+pnpm install
+```
+
+Run the placeholder web app:
+
+```powershell
+pnpm --filter @whetstone/web dev
+```
+
+Filtered app build/dev scripts compile referenced workspace packages first, so they work after a
+fresh install without running the full workspace build.
+
+Build the placeholder web app:
+
+```powershell
+pnpm --filter @whetstone/web build
+```
+
+Build and start the placeholder server:
+
+```powershell
+pnpm --filter @whetstone/server build
+pnpm --filter @whetstone/server start
+```
+
+The server exposes:
+
+```text
+GET /health
+```
+
+## Validation commands
+
+Run these commands before opening a pull request:
+
+```powershell
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+```
+
+`pnpm test` runs Vitest with coverage and enforces 100% statements, branches, functions, and lines for included app/package source. Generated output, config files, type-only files, test files, and framework bootstraps are excluded.
+
 ## Development workflow
 
 1. Stabilize a requirement in discussion.

@@ -1,0 +1,15 @@
+{
+  "name": "@whetstone/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@whetstone/contracts": "workspace:*",
+    "fastify": "^5.8.5"
+  }
+}
