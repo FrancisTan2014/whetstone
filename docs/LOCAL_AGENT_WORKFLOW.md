@@ -109,8 +109,10 @@ Recovery policy:
 
 - The coordinator retries recorded developer recovery work automatically after backoff.
 - After three developer failures with no PR, the coordinator runs `scripts\abandon-developer-attempt.cmd`.
-- That script removes the failed local worktree and local `dev/issue-*` branch, removes `in-progress`, restores `ready-for-dev`, and clears pause/backoff state.
-- The next coordinator tick starts a clean retry.
+- That script removes the failed local worktree and local `dev/issue-*` branch and clears pause/backoff state.
+- On the first abandon for an issue, it requeues the issue as `ready-for-dev` for one clean retry.
+- If the issue was already retried once and still fails, it parks the issue as `blocked` for human review instead of requeueing, so the queue keeps moving and never loops forever.
+- The next coordinator tick starts a clean retry of a requeued issue, or skips a parked `blocked` issue.
 - If a PR exists, the coordinator does not abandon the attempt; developer owns PR recovery.
 
 ## Developer one-shot workflow
