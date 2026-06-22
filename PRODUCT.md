@@ -47,17 +47,20 @@ Examples:
 - Selecting text opens the note editor as a side panel on desktop-width screens and as a bottom sheet on narrow screens.
 - A v0 note entry contains the selected text snapshot and a user-authored Markdown note body.
 - A note anchor stores the reading-unit entry id, start/end offsets, selected text snapshot, and containing paragraph/context snapshot.
+- Vocabulary notes are manual in v0; users write definitions, translations, or memory hints in the Markdown note body.
 
 ## Future direction protected by v0
 
 - The Entry/link model should support future rich connections between materials, notes, concepts, and review items.
 - Language-learning durability and memorization algorithms are expected future features, but not v0 behavior.
+- LLM-assisted vocabulary note drafting may use selected text plus context snapshot later, but is not v0 behavior.
 
 ## v0 non-goals
 
 - No spaced repetition.
 - No memorization scheduling algorithm.
 - No AI grading.
+- No LLM vocabulary note drafting.
 - No daily routine.
 - No voice features.
 - No sync or cloud hosting.
