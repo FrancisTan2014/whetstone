@@ -5,7 +5,7 @@ This repository uses local Copilot CLI scheduled prompts instead of GitHub Copil
 The stable model is **one scheduled coordinator plus one local status tracker**:
 
 1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
-2. **Coordinator scheduled session**: Copilot's `/every` prompt wakes up every minute, refreshes GitHub status into `.agent-status.local.json`, decides whether developer or reviewer should run, and invokes at most one one-shot role.
+2. **Coordinator scheduled session**: Copilot's `/every` prompt wakes up every 5 minutes, refreshes GitHub status into `.agent-status.local.json`, decides whether developer or reviewer should run, and invokes at most one one-shot role.
 3. **Developer one-shot session**: invoked by the coordinator when local status says development or review-fix work is ready.
 4. **Reviewer one-shot session**: invoked by the coordinator when local status says review or merge-gate work is ready.
 5. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
@@ -89,7 +89,7 @@ cd Q:\src\whetstone
 .\scripts\start-coordinator.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 1m` coordinator prompt. No paste step is required.
+The launcher opens Copilot with `-i` and automatically submits the `/every 5m` coordinator prompt. No paste step is required.
 
 The coordinator:
 

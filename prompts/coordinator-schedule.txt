@@ -1,4 +1,4 @@
-/every 1m Run one whetstone coordinator tick.
+/every 5m Run one whetstone coordinator tick.
 
 Use docs/LOCAL_AGENT_WORKFLOW.md as the workflow spec.
 
