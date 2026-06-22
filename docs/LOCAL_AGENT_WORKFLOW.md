@@ -103,6 +103,13 @@ They create `.agent-locks\worker.lock` while running, so the coordinator will no
 `start-coordinator.cmd` performs a stale `worker.lock` check before it registers the scheduled coordinator prompt.
 If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. The coordinator retries automatically after backoff. After three consecutive failures for the same role, it sets `coordinator.paused = true` so the failure is visible and the loop stops before causing repeated damage.
 
+Coordinator does not clean half-finished developer work. Developer owns recovery:
+
+- resume the recorded worktree/branch from `.agent-status.local.json`,
+- inspect dirty state,
+- continue/fix/update PR as appropriate,
+- preserve the worktree for human inspection if repeated failures pause the coordinator.
+
 ## Developer one-shot workflow
 
 ### Developer coordinator workflow

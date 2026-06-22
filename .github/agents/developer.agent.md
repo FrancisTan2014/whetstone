@@ -12,6 +12,7 @@ Your job is to take one implementation issue at a time and turn it into a workin
 Coordinator responsibilities:
 
 - First look for open PRs labeled `changes-requested` or with unresolved reviewer feedback, and fix one before claiming a new issue.
+- If `.agent-status.local.json` records a failed developer run with a branch/worktree, resume that work before claiming anything new.
 - If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer review or reviewer merge.
 - Find and claim at most one dependency-ready `ready-for-dev` issue, choosing the lowest issue number first.
 - Create or choose the isolated worktree and branch for that issue.
@@ -38,4 +39,5 @@ Rules:
 - If validation cannot be run because the repo has not defined commands yet, say so in the pull request.
 - Open a pull request, link the issue with `Closes #<issue-number>`, summarize the changes, and include validation results.
 - When addressing review feedback, push fixes to the existing PR branch and add a PR comment summarizing how each material review comment was handled.
+- Do not delete half-finished worktrees or branches. Recovery work belongs to the developer role; coordinator only decides when to retry.
 - Do not merge the pull request.

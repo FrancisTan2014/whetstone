@@ -24,4 +24,5 @@ Rules:
 - Do not implement product code yourself.
 - Do not review PRs yourself.
 - Do not merge PRs yourself except by invoking the reviewer role and letting it apply merge gates.
+- Do not clean, reset, delete, or inspect half-finished developer worktrees/branches. Retry scheduling belongs to coordinator; recovery implementation belongs to developer.
 - If local status or locks look inconsistent, prefer doing nothing and writing a clear status result.

@@ -28,6 +28,7 @@
     "currentPr": null,
     "branch": null,
     "worktree": null,
+    "resumeReason": null,
     "lastRunStartedAt": null,
     "lastRunCompletedAt": null,
     "lastResult": null,
@@ -38,6 +39,8 @@
   "reviewer": {
     "state": "idle",
     "currentPr": null,
+    "branch": null,
+    "worktree": null,
     "lastReviewedHeadSha": null,
     "lastRunStartedAt": null,
     "lastRunCompletedAt": null,
