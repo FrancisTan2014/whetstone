@@ -15,7 +15,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - Use a web-core TypeScript stack to maximize OSS leverage for text rendering, selection, annotation, Markdown editing, and future rich connections.
 - Browser target: PWA.
 - Mobile target: Capacitor wrapper around the web app for iOS and Android.
-- Desktop target: Tauri or Electron wrapper around the web app; exact wrapper choice remains open.
+- Desktop target: Tauri wrapper around the web app.
 
 ## v0 content model
 
@@ -109,10 +109,6 @@ Preselection rule:
 - No sync or cloud hosting.
 - No complicated settings.
 - No EPUB/PDF/ebook file parsing.
-
-## Current open questions
-
-- Should desktop packaging use Tauri or Electron?
 
 ## Glossary
 
