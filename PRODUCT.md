@@ -12,6 +12,9 @@ whetstone is a simple personal reading app for turning source materials into con
 
 ## v0 content model
 
+- The durable domain object is `Entry`.
+- Materials, reading units, and notes are all entries.
+- Relationships between entries are represented by typed links.
 - Source content is organized as `Author/Source -> Work -> ReadingUnit`.
 - `Author/Source` is a relational entity selected from an existing list or created inline if not found.
 - `Work` represents a readable work such as a book, essay, blog post, or classical text.
@@ -39,12 +42,18 @@ Examples:
 ## v0 note capture
 
 - Users can select any text range in the reader, including a single word or a phrase.
-- A note is linked to the selected source text and its material location.
+- A note is an entry linked to the selected source entry and source location.
 - Selecting text opens the note editor as a side panel on desktop-width screens and as a bottom sheet on narrow screens.
+
+## Future direction protected by v0
+
+- The Entry/link model should support future rich connections between materials, notes, concepts, and review items.
+- Language-learning durability and memorization algorithms are expected future features, but not v0 behavior.
 
 ## v0 non-goals
 
 - No spaced repetition.
+- No memorization scheduling algorithm.
 - No AI grading.
 - No daily routine.
 - No voice features.
