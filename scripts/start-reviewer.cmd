@@ -4,6 +4,7 @@ cd /d "%~dp0.."
 set "GH_CONFIG_DIR=%USERPROFILE%\.config\gh-personal"
 if not exist ".agent-status.local.json" copy "docs\agent-status.example.json" ".agent-status.local.json" >nul
 if not exist ".agent-locks" mkdir ".agent-locks" >nul
+call "%~dp0cleanup-agent-locks.cmd"
 mkdir ".agent-locks\worker.lock" 2>nul
 if errorlevel 1 (
   echo A whetstone worker is already running; reviewer one-shot skipped.
