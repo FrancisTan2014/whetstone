@@ -16,6 +16,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - Browser target: PWA.
 - Mobile target: Capacitor wrapper around the web app for iOS and Android.
 - Desktop target: Tauri wrapper around the web app.
+- Metadata and indexes use IndexedDB via Dexie, modeled with relational-style stores.
 
 ## v0 content model
 
