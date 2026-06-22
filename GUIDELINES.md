@@ -80,6 +80,7 @@ The goal is not to recite SOLID as an acronym. The goal is to make code hard to 
 5. **Prefer composition and pure functions over inheritance.** Most v0 logic should be data + functions, not class hierarchies.
 6. **Depend inward.** Domain logic does not depend on UI, server, database, filesystem, or environment config.
 7. **Validate at boundaries, trust inside.** External input is validated once at the boundary, then passed inward as typed data.
+8. **Design for testability through boundaries.** Important behavior should be reachable through pure functions, feature commands/queries, or API boundaries. Do not add fake abstractions only for tests.
 
 Practical SOLID mapping for this project:
 
@@ -286,6 +287,22 @@ Use a central server config module. Do not read `process.env` throughout feature
 
 Use a central error handler. Do not add broad catches that hide failures.
 
+## Testability
+
+Test-friendly code is a worthy concern when it comes from good design boundaries.
+
+Rules:
+
+- Put pure product logic in `packages/domain` so it can be tested without React, Fastify, PostgreSQL, or filesystem setup.
+- Put server use cases in feature command/query functions that can be tested with explicit dependencies.
+- Keep Fastify route handlers thin so API behavior can be tested at route level and domain behavior can be tested separately.
+- Keep Markdown filesystem access behind the server file boundary so path safety and failure cases can be tested directly.
+- Keep note-anchor creation separate from React components so text-range behavior can be tested without a browser when possible.
+- Prefer dependency parameters for real infrastructure boundaries such as database clients, file stores, clocks, and id generators when a test needs control.
+- Do not create interfaces, factories, or dependency injection containers merely to make tests easier.
+- Do not make private/internal module state public for tests. Test through public behavior, or extract pure logic into a module with a real product reason to exist.
+- If behavior is hard to test, first ask whether the module has too many responsibilities or is hiding an important boundary.
+
 ## Logging
 
 Use structured logging. Fastify's Pino logger is the default server logger.
@@ -392,6 +409,8 @@ Test the risky parts first:
 
 Avoid brittle tests that only assert component markup structure unless the issue is specifically UI rendering.
 
+Testing should validate behavior and invariants, not implementation trivia. Prefer a few meaningful tests over broad shallow snapshots.
+
 ## Pull request expectations
 
 Every PR must state:
@@ -451,6 +470,14 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - React state is updated immutably; no in-place mutation followed by setting the same reference.
 - Module-level mutable state is not used for request/user/session data.
 - Hidden caches are not introduced without explicit ownership, invalidation, and tests.
+
+### Testability quality
+
+- Important behavior is reachable through pure functions, feature commands/queries, API boundaries, or UI interactions.
+- Code does not expose private mutable state only for tests.
+- Code does not introduce fake interfaces, factories, or dependency injection containers only for tests.
+- Domain logic can be tested without React, Fastify, PostgreSQL, filesystem, or network setup.
+- File/database failure paths introduced by the PR have a practical test or documented validation path.
 
 ### Client/UI quality
 
