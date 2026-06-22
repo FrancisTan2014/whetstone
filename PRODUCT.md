@@ -20,6 +20,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - The server is the source of truth for Markdown files, metadata, indexes, templates, notes, and future memorization state.
 - Client storage is not the v0 source of truth. IndexedDB may be used later as a cache, not as primary storage.
 - Backend stack: Node.js TypeScript + Fastify + PostgreSQL.
+- Markdown source files live on the server filesystem under a data directory. PostgreSQL stores metadata, paths, indexes, templates, notes, and links.
 
 ## v0 content model
 
@@ -112,10 +113,6 @@ Preselection rule:
 - No voice features.
 - No complicated settings.
 - No EPUB/PDF/ebook file parsing.
-
-## Current open questions
-
-- How should the server store Markdown files: filesystem, object storage, or database blobs?
 
 ## Glossary
 
