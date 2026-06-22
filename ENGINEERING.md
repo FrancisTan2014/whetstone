@@ -257,4 +257,4 @@ Every PR must state:
 - what validation ran,
 - any validation that could not run and why.
 
-Prefer small PRs. If a PR mixes scaffolding, schema, API, and UI behavior without an issue explicitly requiring that vertical slice, request a split.
+Prefer cohesive vertical feature/fix PRs. A PR may include schema, API, server logic, and UI when those changes are all required to deliver one user-visible capability or one coherent fix. Request a split only when the PR mixes unrelated outcomes, unrelated refactors, or broad scaffolding with feature behavior.

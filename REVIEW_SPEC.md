@@ -12,7 +12,8 @@ Stop at the first hard blocker if it makes further review noisy. Otherwise leave
 - The linked issue has outcome, acceptance criteria, constraints/non-goals, and validation.
 - The PR satisfies all acceptance criteria.
 - The PR does not implement requirements outside the linked issue.
-- If the issue was too broad, comment that future work must be split; do not reward oversized PRs.
+- Do not request a split merely because the PR touches schema, API, server logic, and UI. Vertical feature/fix PRs are expected.
+- If the issue mixes unrelated outcomes or broad scaffolding with feature behavior, comment that future work must be split by coherent user capability or engineering concern.
 
 ## 2. Product/design fit
 

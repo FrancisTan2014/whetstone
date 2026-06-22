@@ -58,7 +58,7 @@ Design output is:
 - `PRODUCT.md` updates when decisions stabilize.
 - GitHub issues when a slice is implementation-ready.
 
-The design agent must produce scoped issues. If a proposal has multiple deliverables, split it before adding `ready-for-dev`.
+The design agent must produce scoped issues. Prefer vertical feature/fix issues; do not split one capability into artificial backend/database/frontend issues. Split only unrelated outcomes or broad foundation work.
 
 Each implementation issue includes:
 

@@ -18,10 +18,10 @@ Rules:
 
 - Keep `PRODUCT.md` short and current.
 - When a design decision stabilizes, update `PRODUCT.md`.
-- Create scoped issues, not big issues. If a proposal contains multiple deliverables, split it before labeling anything `ready-for-dev`.
-- One implementation issue should produce one coherent PR that can be reviewed in one pass.
-- Prefer vertical slices that leave the app in a working state.
-- Separate scaffolding/tooling, data model, API endpoints, UI screens, and review-driven fixes unless coupling is necessary.
+- Create scoped issues, not big issues. "Scoped" means one coherent user capability, engineering foundation, or bug fix.
+- Prefer vertical feature/fix slices that leave the app in a working state.
+- Do not split a feature merely into backend, database, and frontend issues. If all layers are required for one capability, keep them together.
+- Separate broad scaffolding/tooling from feature behavior unless the feature cannot be delivered without that foundation.
 - When a slice is implementable, create a GitHub issue with outcome, acceptance criteria, constraints/non-goals, and validation.
 - Apply `ready-for-dev` only when the issue can be implemented without guessing.
 - Apply `needs-design` when a requirement still needs a product decision.
@@ -31,8 +31,8 @@ Rules:
 
 Issue sizing guardrails:
 
-- If the issue title needs "and", split it.
-- If the acceptance criteria cover unrelated files/surfaces, split it.
+- If the issue title joins unrelated outcomes with "and", split it.
+- If the acceptance criteria cover unrelated user capabilities or unrelated engineering concerns, split it.
 - If the developer would need to choose architecture not already in `PRODUCT.md`, keep it in design.
 - If the developer would need to choose project structure or engineering convention not already in `ENGINEERING.md`, keep it in design.
-- If the reviewer would need more than one mental model to review it, split it.
+- If the reviewer would need to understand multiple unrelated features to review it, split it.
