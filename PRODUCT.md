@@ -25,6 +25,7 @@ whetstone is a simple personal reading app for turning source materials into con
 
 - Users can select any text range in the reader, including a single word or a phrase.
 - A note is linked to the selected source text and its material location.
+- Selecting text opens the note editor as a side panel on desktop-width screens and as a bottom sheet on narrow screens.
 
 ## v0 non-goals
 
