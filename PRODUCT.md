@@ -15,6 +15,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - Source content is organized as `Author/Source -> Work -> ReadingUnit`.
 - `Author/Source` is a relational entity selected from an existing list or created inline if not found.
 - `Work` represents a readable work such as a book, essay, blog post, or classical text.
+- `Work` has a v0 type: `book`, `essay`, `blog_post`, or `classical_text`.
 - `ReadingUnit` is an ordered unit within a work. Each reading unit is backed by one Markdown file.
 - For single-piece works such as an essay or blog post, the work may have one reading unit.
 - For books or classics, the work has many ordered reading units such as chapters, sections, or passages.
