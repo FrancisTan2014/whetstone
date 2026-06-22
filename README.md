@@ -35,6 +35,15 @@ Run the placeholder web app:
 pnpm --filter @whetstone/web dev
 ```
 
+Filtered app build/dev scripts compile referenced workspace packages first, so they work after a
+fresh install without running the full workspace build.
+
+Build the placeholder web app:
+
+```powershell
+pnpm --filter @whetstone/web build
+```
+
 Build and start the placeholder server:
 
 ```powershell
