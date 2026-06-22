@@ -10,6 +10,11 @@ whetstone is a simple personal reading app for turning source materials into con
 2. Reader pages display materials.
 3. Users click or tap words/phrases in the reader to create notes linked to the source text.
 
+## v0 material input
+
+- Source materials are entered as clean text units through admin pages.
+- For ebooks, v0 does not parse EPUB/PDF files. The admin pastes cleaned chapter or section text into the app.
+
 ## v0 non-goals
 
 - No spaced repetition.
@@ -18,6 +23,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - No voice features.
 - No sync or cloud hosting.
 - No complicated settings.
+- No EPUB/PDF/ebook file parsing.
 
 ## Current open questions
 
