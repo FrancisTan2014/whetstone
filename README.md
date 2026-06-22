@@ -24,8 +24,9 @@ See [docs/LOCAL_AGENT_WORKFLOW.md](./docs/LOCAL_AGENT_WORKFLOW.md).
 .\scripts\start-reviewer.cmd
 ```
 
-Install automatic scheduled runs:
+Run visible watcher loops:
 
 ```powershell
-.\scripts\install-scheduled-tasks.cmd
+.\scripts\watch-developer.cmd
+.\scripts\watch-reviewer.cmd
 ```
