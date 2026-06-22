@@ -11,9 +11,11 @@ Your job is to take one implementation issue at a time and turn it into a workin
 
 Coordinator responsibilities:
 
+- First look for open PRs labeled `changes-requested` or with unresolved reviewer feedback, and fix one before claiming a new issue.
 - Find and claim at most one `ready-for-dev` issue.
 - Create or choose the isolated worktree and branch for that issue.
 - Build a complete implementation prompt for a coding subagent, including issue number, issue URL, acceptance criteria, constraints, validation expectations, branch/worktree, and repository instructions.
+- For review-fix work, build a complete fix prompt for a coding subagent, including PR URL, head branch, review comments, linked issue, acceptance criteria, and validation expectations.
 - Start a coding subagent for the implementation work when available.
 - Wait for the subagent result.
 - Verify the resulting branch state, validation summary, commit, push, and PR.
@@ -31,4 +33,5 @@ Rules:
 - Run existing build, lint, and test commands before completing.
 - If validation cannot be run because the repo has not defined commands yet, say so in the pull request.
 - Open a pull request, link the issue with `Closes #<issue-number>`, summarize the changes, and include validation results.
+- When addressing review feedback, push fixes to the existing PR branch and add a PR comment summarizing how each material review comment was handled.
 - Do not merge the pull request.

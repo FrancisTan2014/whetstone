@@ -21,6 +21,8 @@ Scheduled developer/reviewer runs use Copilot CLI's `--allow-all` mode by user p
 - `in-progress`: a developer run has claimed it.
 - `needs-design`: blocked on requirements/design clarification.
 - `needs-review`: implementation is ready for reviewer attention.
+- `changes-requested`: reviewer found material feedback; developer run should fix this PR before claiming new issues.
+- `review-approved`: reviewer says the PR is ready for human merge.
 - `blocked`: blocked by an external dependency or unresolved decision.
 - `copilot`: intended for local Copilot agent work.
 
@@ -75,7 +77,30 @@ Set the scheduler to avoid overlapping instances. If a previous developer run is
 
 ### Developer coordinator workflow
 
-Goal: find one open issue in `FrancisTan2014/whetstone` labeled `ready-for-dev` and not labeled `in-progress`. If none exists, stay idle and stop.
+Goal: process at most one unit of developer work, then stop.
+
+Priority order:
+
+1. First handle one open PR labeled `changes-requested`.
+2. If none exists, find one open issue in `FrancisTan2014/whetstone` labeled `ready-for-dev` and not labeled `in-progress`.
+3. If neither exists, stay idle and stop.
+
+### Developer review-fix workflow
+
+When a PR with `changes-requested` is found:
+
+1. Read the PR, linked issue, acceptance criteria, review comments, failed checks if any, and current head branch.
+2. Check out the existing PR branch in its existing worktree if available; otherwise create/update an isolated worktree under `Q:\src\whetstone-worktrees\pr-<number>-fixes` from the PR head branch.
+3. Prepare a complete coding-subagent prompt containing PR URL, linked issue, acceptance criteria, review comments, validation expectations, branch name, worktree path, and repository instructions.
+4. Start a coding subagent for the fixes when available. The subagent must address only material review feedback and must not add unrelated changes.
+5. If subagent delegation is unavailable in the current CLI mode, fix directly, but still process only this one PR.
+6. Verify the worktree state and validation summary.
+7. Commit with a conventional commit message and push to the existing PR branch.
+8. Comment on the PR summarizing how each material review comment was addressed.
+9. Remove `changes-requested` and add `needs-review`.
+10. Do not merge.
+
+### Developer new-issue workflow
 
 When an issue is found:
 
@@ -116,7 +141,7 @@ Set the scheduler to avoid overlapping instances. If a previous reviewer run is 
 
 ### Reviewer coordinator workflow
 
-Goal: find one open non-draft PR in `FrancisTan2014/whetstone` that needs review. Prefer PRs labeled `needs-review`.
+Goal: find one open non-draft PR in `FrancisTan2014/whetstone` that needs review. Prefer PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
 
 Avoid duplicate reviews:
 
@@ -131,11 +156,11 @@ When a PR needs review:
 3. Start a review subagent for detailed analysis when available. The subagent must not edit files.
 4. If subagent delegation is unavailable in the current CLI mode, review directly, but still process only this one PR.
 5. Leave a GitHub PR review with only material findings.
-6. If changes are needed, request changes or leave clear blocking comments, and include marker `reviewer-run-reviewed: <head-sha>`.
-7. If ready, leave a concise approval-style comment saying it is ready for human merge, and include marker `reviewer-run-reviewed: <head-sha>`.
+6. If changes are needed, request changes or leave clear blocking comments, include marker `reviewer-run-reviewed: <head-sha>`, add label `changes-requested`, and remove `needs-review`.
+7. If ready, leave a concise approval-style comment saying it is ready for human merge, include marker `reviewer-run-reviewed: <head-sha>`, add label `review-approved`, and remove `needs-review` / `changes-requested`.
 8. Do not merge.
 
-Merged PRs are ignored because the reviewer only scans open PRs. Closed issues are ignored because the developer only scans open `ready-for-dev` issues.
+Merged PRs are ignored because the reviewer only scans open PRs. Closed issues are ignored because the developer only scans open `ready-for-dev` issues. Review feedback is closed by the `changes-requested` -> developer fix -> `needs-review` loop.
 
 ## Operating rule
 

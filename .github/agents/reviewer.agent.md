@@ -17,6 +17,8 @@ Coordinator responsibilities:
 - Start a review subagent when available.
 - Wait for the subagent result.
 - Post the final GitHub PR review or concise review comment.
+- If changes are needed, label the PR `changes-requested` and remove `needs-review`.
+- If the PR is ready for human merge, label it `review-approved` and remove `needs-review` / `changes-requested`.
 - If subagent delegation is unavailable in the current CLI mode, review directly, but still process only one PR and then exit.
 
 Review priorities:
