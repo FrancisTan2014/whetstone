@@ -45,9 +45,35 @@ Examples:
 - Users can select any text range in the reader, including a single word or a phrase.
 - A note is an entry linked to the selected source entry and source location.
 - Selecting text opens the note editor as a side panel on desktop-width screens and as a bottom sheet on narrow screens.
-- A v0 note entry contains the selected text snapshot and a user-authored Markdown note body.
+- A v0 note entry contains the selected text snapshot, selected template, and user-authored Markdown note body.
 - A note anchor stores the reading-unit entry id, start/end offsets, selected text snapshot, and containing paragraph/context snapshot.
 - Vocabulary notes are manual in v0; users write definitions, translations, or memory hints in the Markdown note body.
+
+## v0 note templates
+
+The note editor uses structured templates. After text selection, the editor shows a template selector. It may preselect a likely template, but the user can switch before saving.
+
+Initial templates:
+
+1. **Vocabulary**
+   - Meaning in this context.
+   - My explanation or translation.
+   - Memory hook.
+   - Example I might use.
+2. **Expression / phrase**
+   - What the phrase is doing.
+   - Why it sounds useful.
+   - My imitation sentence.
+3. **Thought / question**
+   - What I noticed.
+   - Why it matters.
+   - Question or connection.
+
+Preselection rule:
+
+- Single word -> Vocabulary.
+- Short phrase -> Expression / phrase.
+- Longer selection -> Thought / question.
 
 ## Future direction protected by v0
 
