@@ -14,6 +14,12 @@
     "developerClaim": null,
     "reviewerWork": null
   },
+  "coordinator": {
+    "state": "idle",
+    "lastRunStartedAt": null,
+    "lastRunCompletedAt": null,
+    "lastResult": null
+  },
   "developer": {
     "state": "idle",
     "currentIssue": null,

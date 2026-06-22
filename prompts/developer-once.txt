@@ -1,4 +1,4 @@
-/every 5m Run the whetstone developer scheduled tick.
+Run one whetstone developer tick.
 
 Use docs/LOCAL_AGENT_WORKFLOW.md as the workflow spec.
 
@@ -6,8 +6,8 @@ Before choosing work:
 - Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
 - Read PRODUCT.md and GUIDELINES.md before implementation.
-- Treat .agent-status.local.json as the local scheduling snapshot. The reviewer session is responsible for refreshing remote GitHub status.
-- If remote.lastSyncCompletedAt is missing or older than 15 minutes, update developer.lastResult to waiting_for_remote_sync and stop until the next scheduled tick.
+- Treat .agent-status.local.json as the local scheduling snapshot. The coordinator is responsible for refreshing remote GitHub status.
+- If remote.lastSyncCompletedAt is missing or older than 15 minutes, update developer.lastResult to waiting_for_remote_sync and stop; the coordinator will invoke developer again after sync.
 
 Process at most one unit of developer work:
 1. Acquire the developer claim lock before choosing work:
@@ -21,7 +21,7 @@ Process at most one unit of developer work:
 6. Before claiming, re-check that specific issue with GitHub to avoid a stale local snapshot race.
 7. Claim the first dependency-ready issue by adding in-progress and removing ready-for-dev.
 8. Release the developer claim lock after the issue is claimed or after deciding there is no work.
-9. If no dependency-ready work exists, update developer.lastResult to idle and stop until the next scheduled tick.
+9. If no dependency-ready work exists, update developer.lastResult to idle and stop.
 
 When work is selected:
 - Update .agent-status.local.json with state, issue/PR, branch, worktree, and start time.

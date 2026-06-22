@@ -1,0 +1,31 @@
+/every 1m Run one whetstone coordinator tick.
+
+Use docs/LOCAL_AGENT_WORKFLOW.md as the workflow spec.
+
+Before choosing work:
+- Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
+- Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
+- Read PRODUCT.md and GUIDELINES.md.
+
+Remote status sync:
+- Acquire `.agent-locks/status-sync.lock` before syncing.
+- If the lock exists and is not stale, skip sync and use the previous local snapshot.
+- If the lock is stale (older than 10 minutes), remove it once and retry.
+- Run `git fetch origin --prune`.
+- Snapshot open issues with labels, title, body, state, and URL into remote.issues.
+- Snapshot open PRs with labels, title, head SHA, review markers/comments when available, check status, mergeability/conflict state when available, linked issue, and URL into remote.pullRequests.
+- Update remote.lastSyncStartedAt, remote.lastSyncCompletedAt, remote.lastSyncResult, and updatedAt.
+- Release `.agent-locks/status-sync.lock`.
+- If after the sync attempt remote.lastSyncCompletedAt is still missing or older than 15 minutes, update coordinator.lastResult to remote_status_stale and do not invoke developer/reviewer this tick.
+
+Scheduling decision:
+1. If `.agent-locks/developer-claim.lock` or `.agent-locks/reviewer-work.lock` exists and is not stale, update coordinator.lastResult to worker_busy and stop until the next tick.
+2. If any PR in remote.pullRequests is labeled changes-requested, invoke `.\\scripts\\start-developer.cmd` and stop.
+3. If any PR in remote.pullRequests is labeled needs-review or review-approved, invoke `.\\scripts\\start-reviewer.cmd` and stop.
+4. If there is no waiting PR, find open ready-for-dev issues in remote.issues, sorted by lowest issue number.
+5. Skip issues labeled in-progress.
+6. If an issue declares `Depends on: #N`, skip it until every dependency issue is closed in the local snapshot.
+7. If a dependency-ready issue exists, invoke `.\\scripts\\start-developer.cmd` and stop.
+8. If no work exists, update coordinator.lastResult to idle and stop until the next tick.
+
+Each developer/reviewer invocation must be a one-shot session. Do not start a recurring developer/reviewer schedule.

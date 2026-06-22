@@ -86,6 +86,7 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 
 ```powershell
 .\scripts\start-design.cmd
+.\scripts\start-coordinator.cmd
 .\scripts\start-developer.cmd
 .\scripts\start-reviewer.cmd
 ```
@@ -93,6 +94,7 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 Start scheduled Copilot sessions:
 
 ```powershell
-.\scripts\start-developer.cmd
-.\scripts\start-reviewer.cmd
+.\scripts\start-coordinator.cmd
 ```
+
+The developer and reviewer scripts are one-shot helpers. The coordinator is the only scheduled role.

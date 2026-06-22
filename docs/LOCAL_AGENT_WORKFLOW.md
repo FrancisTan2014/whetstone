@@ -2,20 +2,21 @@
 
 This repository uses local Copilot CLI scheduled prompts instead of GitHub Copilot cloud automation.
 
-The stable model is **two scheduled Copilot sessions plus one local status tracker**:
+The stable model is **one scheduled coordinator plus one local status tracker**:
 
 1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
-2. **Developer scheduled session**: Copilot's `/every` prompt wakes up every 5 minutes, reads `.agent-status.local.json`, processes at most one local-status work item, delegates to a subagent when available, updates status, then waits for the next tick.
-3. **Reviewer scheduled session**: Copilot's `/every` prompt wakes up every 5 minutes, refreshes remote GitHub status when stale (about every 10 minutes), reviews/merges at most one PR, updates status, then waits for the next tick.
-4. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
+2. **Coordinator scheduled session**: Copilot's `/every` prompt wakes up every minute, refreshes GitHub status into `.agent-status.local.json`, decides whether developer or reviewer should run, and invokes at most one one-shot role.
+3. **Developer one-shot session**: invoked by the coordinator when local status says development or review-fix work is ready.
+4. **Reviewer one-shot session**: invoked by the coordinator when local status says review or merge-gate work is ready.
+5. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
 
 The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
 
-GitHub labels/issues/PRs remain the source of truth. The local tracker is the scheduling snapshot and lease/status log so scheduled agents know what they were doing last tick and avoid duplicating work.
+GitHub labels/issues/PRs remain the source of truth. The local tracker is the scheduling snapshot and lease/status log so agents know what they were doing last tick and avoid duplicating work.
 
-Developer/reviewer sessions use Copilot CLI's `--allow-all` mode by user preference. The scripts set the working directory to `Q:\src\whetstone` so the agent starts from the intended repository context.
+All local role sessions use Copilot CLI's `--allow-all` mode by user preference. The scripts set the working directory to `Q:\src\whetstone` so the agent starts from the intended repository context.
 
-The reviewer is responsible for remote status refresh. When `.agent-status.local.json` is stale, reviewer runs:
+The coordinator is responsible for remote status refresh. On each tick it runs:
 
 ```text
 git fetch origin --prune
@@ -25,7 +26,7 @@ The scheduled prompt processes at most one unit of work per tick.
 
 Locks live under `.agent-locks/`:
 
-- `status-sync.lock`: reviewer owns remote snapshot refresh.
+- `status-sync.lock`: coordinator owns remote snapshot refresh.
 - `developer-claim.lock`: developer owns issue/PR selection and claim.
 - `reviewer-work.lock`: reviewer owns PR review/merge selection.
 
@@ -77,16 +78,27 @@ Each implementation issue includes:
 
 Apply `ready-for-dev` only when the issue is implementable without guessing.
 
-## Developer scheduled session
+## Coordinator scheduled session
 
-Start the developer scheduled session:
+Start the coordinator scheduled session:
 
 ```powershell
 cd Q:\src\whetstone
-.\scripts\start-developer.cmd
+.\scripts\start-coordinator.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 5m` schedule prompt. No paste step is required.
+The launcher opens Copilot with `-i` and automatically submits the `/every 1m` coordinator prompt. No paste step is required.
+
+The coordinator:
+
+1. syncs remote GitHub issue/PR status into `.agent-status.local.json`,
+2. checks locks,
+3. invokes `scripts\start-developer.cmd` for development/review-fix work, or
+4. invokes `scripts\start-reviewer.cmd` for review/merge work.
+
+Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
+
+## Developer one-shot workflow
 
 ### Developer coordinator workflow
 
@@ -132,22 +144,22 @@ When an issue is found:
 11. Add label `needs-review` to the PR if possible.
 12. Do not merge.
 
-You can run multiple developer watcher terminals, but each run must create its own issue worktree and claim only one issue at a time.
+The developer script is one-shot. Run it manually only for debugging; the coordinator normally invokes it.
 
-## Reviewer scheduled session
+## Reviewer one-shot workflow
 
-Start the reviewer scheduled session:
+Manual reviewer one-shot:
 
 ```powershell
 cd Q:\src\whetstone
 .\scripts\start-reviewer.cmd
 ```
 
-The launcher opens Copilot with `-i` and automatically submits the `/every 5m` schedule prompt. No paste step is required.
+Normally the coordinator invokes this script.
 
 ### Reviewer coordinator workflow
 
-Goal: refresh remote status when stale, then process at most one reviewer unit of work. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
+Goal: process at most one reviewer unit of work from local status. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
 
 Avoid duplicate reviews:
 
@@ -172,4 +184,4 @@ Merged PRs are ignored because the reviewer only scans open PRs. Closed issues a
 
 ## Operating rule
 
-The user only needs to provide product ideas. The design session turns stable ideas into issues; scheduled developer and reviewer sessions read the local status tracker on each tick, delegate implementation/review to subagents when available, update GitHub and local status, then wait for the next tick.
+The user only needs to provide product ideas. The design session turns stable ideas into issues; the coordinator keeps local status fresh and invokes one-shot developer/reviewer sessions as needed.

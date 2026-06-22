@@ -1,4 +1,4 @@
-/every 5m Run the whetstone reviewer scheduled tick.
+Run one whetstone reviewer tick.
 
 Use docs/LOCAL_AGENT_WORKFLOW.md as the workflow spec.
 
@@ -7,14 +7,7 @@ Before choosing work:
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
 - Read GUIDELINES.md and use it as the review checklist.
 - Treat GitHub PR labels/comments as the source of truth; use .agent-status.local.json as a local lease/status log.
-- If remote.lastSyncCompletedAt is missing or older than 10 minutes, acquire `.agent-locks/status-sync.lock`, fetch remote state, and update .agent-status.local.json:
-  - Run `git fetch origin --prune`.
-  - Snapshot open issues with labels, title, body, state, and URL into remote.issues.
-  - Snapshot open PRs with labels, title, head SHA, review markers/comments when available, check status, mergeability/conflict state when available, linked issue, and URL into remote.pullRequests.
-  - Update remote.lastSyncStartedAt, remote.lastSyncCompletedAt, remote.lastSyncResult, and updatedAt.
-  - Release the status sync lock.
-  - If the status sync lock exists and is not stale, skip sync and continue using the last snapshot.
-  - If the status sync lock is stale (older than 10 minutes), remove it once and retry.
+- Do not perform the full remote status sync; the coordinator owns that.
 
 Process at most one unit of reviewer work:
 1. Acquire `.agent-locks/reviewer-work.lock` before selecting a PR.
@@ -22,7 +15,7 @@ Process at most one unit of reviewer work:
 3. If no merge candidate exists, find one open non-draft PR in remote.pullRequests that needs review, preferring label needs-review.
 4. Skip PRs labeled changes-requested until developer pushes fixes.
 5. Skip a PR if .agent-status.local.json or PR comments show reviewer-run-reviewed for the same head SHA, unless it is labeled review-approved and only needs merge-gate checking.
-6. If no review or merge work exists, update reviewer.lastResult to idle, release the reviewer work lock, and stop until the next scheduled tick.
+6. If no review or merge work exists, update reviewer.lastResult to idle, release the reviewer work lock, and stop.
 
 When work is selected:
 - Update .agent-status.local.json with state, PR, head SHA, and start time.
