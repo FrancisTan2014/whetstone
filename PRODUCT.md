@@ -16,7 +16,9 @@ whetstone is a simple personal reading app for turning source materials into con
 - Browser target: PWA.
 - Mobile target: Capacitor wrapper around the web app for iOS and Android.
 - Desktop target: Tauri wrapper around the web app.
-- Metadata and indexes use IndexedDB via Dexie, modeled with relational-style stores.
+- v0 is server-centered: thin clients talk to one server/data center.
+- The server is the source of truth for Markdown files, metadata, indexes, templates, notes, and future memorization state.
+- Client storage is not the v0 source of truth. IndexedDB may be used later as a cache, not as primary storage.
 
 ## v0 content model
 
@@ -33,7 +35,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - For single-piece works such as an essay or blog post, the work may have one reading unit.
 - For books or classics, the work has many ordered reading units such as chapters, sections, or passages.
 - For ebooks, v0 does not parse EPUB/PDF files. The admin pastes cleaned chapter or section text into reading units.
-- Markdown files are the source of truth for content. The database stores metadata and indexes.
+- Server-side Markdown files are the source of truth for content. The server database stores metadata and indexes.
 
 Examples:
 
@@ -107,9 +109,13 @@ Preselection rule:
 - No LLM vocabulary note drafting.
 - No daily routine.
 - No voice features.
-- No sync or cloud hosting.
 - No complicated settings.
 - No EPUB/PDF/ebook file parsing.
+
+## Current open questions
+
+- What server/backend stack should v0 use?
+- How should the server store Markdown files: filesystem, object storage, or database blobs?
 
 ## Glossary
 
