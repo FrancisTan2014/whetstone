@@ -25,6 +25,7 @@ Thumbs.db
 # Local agent scheduler status
 .agent-status.local.json
 .agent-locks/
+.agent-logs/
 *.log
 
 # Node / TypeScript

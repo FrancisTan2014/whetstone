@@ -11,6 +11,7 @@ The stable model is **one scheduled coordinator plus one local status tracker**:
 5. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
 
 The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
+Worker transcripts and stdout/stderr logs live under `.agent-logs/` and are ignored by Git.
 
 GitHub labels/issues/PRs remain the source of truth. The local tracker is the scheduling snapshot and lease/status log so agents know what they were doing last tick and avoid duplicating work.
 
@@ -100,6 +101,7 @@ The coordinator:
 
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
 They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
+They run with UTF-8-related environment variables and write stdout/stderr plus Copilot session transcripts under `.agent-logs/`.
 `scripts\cleanup-agent-locks.cmd` performs stale `worker.lock` cleanup. `start-coordinator.cmd` runs it before registering the scheduled coordinator prompt, and the coordinator prompt runs it at the start of every tick before reading lock state.
 If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the coordinator marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress.
 

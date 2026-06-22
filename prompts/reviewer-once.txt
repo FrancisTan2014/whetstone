@@ -4,6 +4,7 @@ Use docs/LOCAL_AGENT_WORKFLOW.md as the workflow spec.
 
 Before choosing work:
 - Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
+- Keep command output encoding-safe: redirect verbose command output to files under `.agent-logs/` and summarize results instead of streaming Unicode-heavy output.
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
 - Read GUIDELINES.md and use it as the review checklist.
 - Treat GitHub PR labels/comments as the source of truth; use .agent-status.local.json as a local lease/status log.
