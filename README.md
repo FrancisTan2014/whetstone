@@ -16,6 +16,7 @@ A simple personal reading app, starting from a sharp v0:
 
 See [docs/LOCAL_AGENT_WORKFLOW.md](./docs/LOCAL_AGENT_WORKFLOW.md).
 Current design lives in [PRODUCT.md](./PRODUCT.md).
+Engineering guidance lives in [ENGINEERING.md](./ENGINEERING.md).
 
 ## Local launchers
 

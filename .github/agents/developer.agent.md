@@ -24,10 +24,12 @@ Coordinator responsibilities:
 Rules:
 
 - Work only from the assigned or claimed issue.
+- Read `PRODUCT.md`, `ENGINEERING.md`, and the linked issue before implementing.
 - The issue must include the desired outcome, acceptance criteria, constraints/non-goals, and validation expectations.
 - If the issue is not clear enough to implement safely, comment on the issue with the missing questions, add `needs-design`, remove `ready-for-dev`, and stop.
 - Keep the pull request narrowly scoped to the issue.
 - Do not introduce unrelated architecture, frameworks, dependencies, or features.
+- Follow the feature-first modular monolith structure in `ENGINEERING.md`.
 - Reuse existing patterns once the codebase has them.
 - Add or update tests for behavior changes when test infrastructure exists.
 - Run existing build, lint, and test commands before completing.

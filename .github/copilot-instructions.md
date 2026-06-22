@@ -5,6 +5,7 @@ This repository is built through a design -> issue -> implementation -> review l
 ## Workflow
 
 - Treat `PRODUCT.md` as the durable product/design memory.
+- Treat `ENGINEERING.md` as the durable engineering architecture guide.
 - Treat `REVIEW_SPEC.md` as the durable review checklist.
 - Treat GitHub issues as the source of truth for implementation work.
 - Only implement issues with clear acceptance criteria.
@@ -16,6 +17,7 @@ This repository is built through a design -> issue -> implementation -> review l
 ## Implementation expectations
 
 - Prefer simple, maintainable code over speculative architecture.
+- Follow `ENGINEERING.md`; do not invent a different project structure.
 - Add or update tests for behavior changes when test infrastructure exists.
 - Run the repository's existing build, lint, and test commands before finishing.
 - If no build or test command exists yet, state that clearly in the pull request.

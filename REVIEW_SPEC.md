@@ -23,6 +23,8 @@ Stop at the first hard blocker if it makes further review noisy. Otherwise leave
 
 ## 3. Architecture fit
 
+- Implementation follows `ENGINEERING.md`.
+- Project structure is feature-first, not traditional layer-first.
 - Web-core TypeScript direction is preserved.
 - Server-centered source of truth is preserved.
 - Server stores Markdown files under a data directory; PostgreSQL stores metadata, paths, indexes, templates, notes, and links.
@@ -30,6 +32,8 @@ Stop at the first hard blocker if it makes further review noisy. Otherwise leave
 - Note anchors store reading-unit entry id, start/end offsets, selected text snapshot, and containing paragraph/context snapshot.
 - Templates are read from DB seed data, not hard-coded in UI components.
 - Template definitions use controlled JSON (`fields_json`), and note answers use `answers_json`.
+- Shared domain rules live in `packages/domain`; shared API contracts live in `packages/contracts`.
+- Server routes stay thin and delegate to feature command/query/storage modules.
 
 ## 4. Data safety
 

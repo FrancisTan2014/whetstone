@@ -6,6 +6,7 @@ Before choosing work:
 - Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
 - Fetch remote state: git fetch origin --prune.
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
+- Read ENGINEERING.md.
 - Read REVIEW_SPEC.md and use it as the review checklist.
 - Treat GitHub PR labels/comments as the source of truth; use .agent-status.local.json as a local lease/status log.
 
