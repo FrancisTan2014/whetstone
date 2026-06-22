@@ -15,6 +15,7 @@ whetstone is a simple personal reading app for turning source materials into con
 - The durable domain object is `Entry`.
 - Materials, reading units, and notes are all entries.
 - Relationships between entries are represented by typed links.
+- v0 link types are `contains`, `annotates`, `references`, and `related_to`.
 - Source content is organized as `Author/Source -> Work -> ReadingUnit`.
 - `Author/Source` is a relational entity selected from an existing list or created inline if not found.
 - `Work` represents a readable work such as a book, essay, blog post, or classical text.
