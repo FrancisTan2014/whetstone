@@ -45,6 +45,12 @@ cd Q:\src\whetstone
 copilot
 ```
 
+Shortcut:
+
+```powershell
+.\scripts\start-design.cmd
+```
+
 Design output is a GitHub issue with:
 
 - outcome
@@ -60,18 +66,14 @@ Manual one-shot run:
 
 ```powershell
 cd Q:\src\whetstone
-copilot --agent=whetstone-developer -p "Run the developer coordinator workflow in docs/LOCAL_AGENT_WORKFLOW.md. Process at most one ready issue. Use a coding subagent for implementation when available. Then stop." --no-ask-user --allow-all
+.\scripts\start-developer.cmd
 ```
 
 External scheduler shape:
 
-- **Program:** `copilot`
+- **Program:** `Q:\src\whetstone\scripts\start-developer.cmd`
 - **Start in:** `Q:\src\whetstone`
-- **Arguments:**
-
-```text
---agent=whetstone-developer -p "Run the developer coordinator workflow in docs/LOCAL_AGENT_WORKFLOW.md. Process at most one ready issue. Use a coding subagent for implementation when available. Then stop." --no-ask-user --allow-all
-```
+- **Arguments:** none
 
 Set the scheduler to avoid overlapping instances. If a previous developer run is still active, skip the next tick.
 
@@ -124,18 +126,14 @@ Manual one-shot run:
 
 ```powershell
 cd Q:\src\whetstone
-copilot --agent=whetstone-reviewer -p "Run the reviewer coordinator workflow in docs/LOCAL_AGENT_WORKFLOW.md. Review at most one PR. Use a review subagent for detailed analysis when available. Then stop." --no-ask-user --allow-all
+.\scripts\start-reviewer.cmd
 ```
 
 External scheduler shape:
 
-- **Program:** `copilot`
+- **Program:** `Q:\src\whetstone\scripts\start-reviewer.cmd`
 - **Start in:** `Q:\src\whetstone`
-- **Arguments:**
-
-```text
---agent=whetstone-reviewer -p "Run the reviewer coordinator workflow in docs/LOCAL_AGENT_WORKFLOW.md. Review at most one PR. Use a review subagent for detailed analysis when available. Then stop." --no-ask-user --allow-all
-```
+- **Arguments:** none
 
 Set the scheduler to avoid overlapping instances. If a previous reviewer run is still active, skip the next tick.
 
