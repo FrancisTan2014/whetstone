@@ -398,6 +398,18 @@ Prefer names that say what the code does:
 
 ## Tests
 
+Agent-built code should target **100% coverage for source code**. Maintaining tests is cheap for agents, and coverage is a useful guard against hallucinated behavior.
+
+Coverage rules:
+
+- CI should enforce 100% statements, branches, functions, and lines for app/package source once test tooling exists.
+- Exclude generated files, migration files, framework bootstrap files, type-only files, test files, and configuration files from coverage.
+- Do not lower thresholds to make a PR pass.
+- Do not add shallow tests that execute code without assertions just to increase coverage.
+- Do not rely on snapshots as the only test for behavior.
+- If a line is truly untestable, refactor toward a testable boundary before considering an exclusion.
+- Any coverage exclusion must be narrow, commented, and justified in the PR.
+
 Test the risky parts first:
 
 - Domain logic in `packages/domain`.
@@ -549,6 +561,8 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - If validation cannot run because tooling does not exist yet, the PR says so and the issue scope justifies it.
 - Behavior changed by the PR has tests when test infrastructure exists.
 - Data/file changes include at least one validation path for failure cases, not only happy paths.
+- Coverage thresholds remain at 100% for included source files once coverage tooling exists.
+- Coverage is meaningful: tests assert behavior/invariants and do not merely execute lines.
 
 ### Review output
 
