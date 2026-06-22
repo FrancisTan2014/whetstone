@@ -10,6 +10,13 @@ whetstone is a simple personal reading app for turning source materials into con
 2. Reader pages display materials.
 3. Users click or tap words/phrases in the reader to create notes linked to the source text.
 
+## v0 stack direction
+
+- Use a web-core TypeScript stack to maximize OSS leverage for text rendering, selection, annotation, Markdown editing, and future rich connections.
+- Browser target: PWA.
+- Mobile target: Capacitor wrapper around the web app for iOS and Android.
+- Desktop target: Tauri or Electron wrapper around the web app; exact wrapper choice remains open.
+
 ## v0 content model
 
 - The durable domain object is `Entry`.
@@ -105,7 +112,7 @@ Preselection rule:
 
 ## Current open questions
 
-- What app stack should v0 use?
+- Should desktop packaging use Tauri or Electron?
 
 ## Glossary
 
