@@ -28,7 +28,7 @@ Locks live under `.agent-locks/`:
 
 - `status-sync.lock`: coordinator owns remote snapshot refresh.
 - `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time. It contains `role.txt`, `pid.txt`, `startedAt.txt`, and `command.txt`.
-- `worker-failed.json`: last one-shot worker failed before completing cleanly. Coordinator will stop scheduling new workers until this file is inspected and removed.
+- `worker-last-failure.json`: last one-shot worker failure for diagnosis. Coordinator retries with backoff using `.agent-status.local.json`.
 - `developer-claim.lock`: developer owns issue/PR selection and claim.
 - `reviewer-work.lock`: reviewer owns PR review/merge selection.
 
@@ -101,7 +101,7 @@ The coordinator:
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
 They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
 `start-coordinator.cmd` performs a stale `worker.lock` check before it registers the scheduled coordinator prompt.
-If a worker exits nonzero, the launcher writes `.agent-locks\worker-failed.json` and updates `.agent-status.local.json`. The coordinator treats that as a hard stop to avoid silent failure loops.
+If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. The coordinator retries automatically after backoff. After three consecutive failures for the same role, it sets `coordinator.paused = true` so the failure is visible and the loop stops before causing repeated damage.
 
 ## Developer one-shot workflow
 

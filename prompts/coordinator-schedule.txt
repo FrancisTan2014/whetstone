@@ -6,7 +6,7 @@ Before choosing work:
 - Set GitHub CLI auth for this terminal: GH_CONFIG_DIR should be the personal config for FrancisTan2014.
 - Read .agent-status.local.json. If it does not exist, create it from docs/agent-status.example.json.
 - Read PRODUCT.md and GUIDELINES.md.
-- If `.agent-locks/worker-failed.json` exists, read it, update coordinator.lastResult to worker_failed, and do not invoke any worker until the failure is inspected and the file is removed.
+- If coordinator.paused is true, update coordinator.lastResult to paused and do not invoke any worker until the pause is cleared.
 
 Remote status sync:
 - Acquire `.agent-locks/status-sync.lock` before syncing.
@@ -20,17 +20,23 @@ Remote status sync:
 - If after the sync attempt remote.lastSyncCompletedAt is still missing or older than 15 minutes, update coordinator.lastResult to remote_status_stale and do not invoke developer/reviewer this tick.
 
 Scheduling decision:
-1. If `.agent-locks/worker-failed.json` exists, update coordinator.lastResult to worker_failed and stop until the next tick.
+1. If coordinator.paused is true, update coordinator.lastResult to paused and stop until the next tick.
 2. If `.agent-locks/worker.lock` exists, read its `pid.txt`, `role.txt`, and `startedAt.txt`.
    - If the recorded PID is still a running `cmd` process and the lock is not older than 12 hours, update coordinator.lastResult to worker_busy and stop until the next tick.
    - If the recorded PID is missing/dead, has been reused, or the lock is older than 12 hours, remove `.agent-locks/worker.lock` once and continue.
 3. If `.agent-locks/developer-claim.lock` or `.agent-locks/reviewer-work.lock` exists and is not stale, update coordinator.lastResult to worker_busy and stop until the next tick.
-4. If any PR in remote.pullRequests is labeled changes-requested, invoke `.\\scripts\\start-developer.cmd` and stop.
-5. If any PR in remote.pullRequests is labeled needs-review or review-approved, invoke `.\\scripts\\start-reviewer.cmd` and stop.
+4. If any PR in remote.pullRequests is labeled changes-requested:
+   - If developer.nextRetryAfter exists and is in the future, update coordinator.lastResult to developer_backoff and stop.
+   - Otherwise invoke `.\\scripts\\start-developer.cmd` and stop.
+5. If any PR in remote.pullRequests is labeled needs-review or review-approved:
+   - If reviewer.nextRetryAfter exists and is in the future, update coordinator.lastResult to reviewer_backoff and stop.
+   - Otherwise invoke `.\\scripts\\start-reviewer.cmd` and stop.
 6. If there is no waiting PR, find open ready-for-dev issues in remote.issues, sorted by lowest issue number.
 7. Skip issues labeled in-progress.
 8. If an issue declares `Depends on: #N`, skip it until every dependency issue is closed in the local snapshot.
-9. If a dependency-ready issue exists, invoke `.\\scripts\\start-developer.cmd` and stop.
+9. If a dependency-ready issue exists:
+   - If developer.nextRetryAfter exists and is in the future, update coordinator.lastResult to developer_backoff and stop.
+   - Otherwise invoke `.\\scripts\\start-developer.cmd` and stop.
 10. If no work exists, update coordinator.lastResult to idle and stop until the next tick.
 
 Each developer/reviewer invocation must be a one-shot session. Do not start a recurring developer/reviewer schedule.

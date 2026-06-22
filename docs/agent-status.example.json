@@ -18,7 +18,9 @@
     "state": "idle",
     "lastRunStartedAt": null,
     "lastRunCompletedAt": null,
-    "lastResult": null
+    "lastResult": null,
+    "paused": false,
+    "pauseReason": null
   },
   "developer": {
     "state": "idle",
@@ -28,7 +30,10 @@
     "worktree": null,
     "lastRunStartedAt": null,
     "lastRunCompletedAt": null,
-    "lastResult": null
+    "lastResult": null,
+    "failureCount": 0,
+    "lastFailureAt": null,
+    "nextRetryAfter": null
   },
   "reviewer": {
     "state": "idle",
@@ -36,7 +41,10 @@
     "lastReviewedHeadSha": null,
     "lastRunStartedAt": null,
     "lastRunCompletedAt": null,
-    "lastResult": null
+    "lastResult": null,
+    "failureCount": 0,
+    "lastFailureAt": null,
+    "nextRetryAfter": null
   },
   "handoffs": []
 }
