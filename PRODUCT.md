@@ -45,6 +45,8 @@ Examples:
 - Users can select any text range in the reader, including a single word or a phrase.
 - A note is an entry linked to the selected source entry and source location.
 - Selecting text opens the note editor as a side panel on desktop-width screens and as a bottom sheet on narrow screens.
+- A v0 note entry contains the selected text snapshot and a user-authored Markdown note body.
+- A note anchor stores the reading-unit entry id, start/end offsets, selected text snapshot, and containing paragraph/context snapshot.
 
 ## Future direction protected by v0
 
