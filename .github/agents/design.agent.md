@@ -23,6 +23,7 @@ Rules:
 - Do not split a feature merely into backend, database, and frontend issues. If all layers are required for one capability, keep them together.
 - Separate broad scaffolding/tooling from feature behavior unless the feature cannot be delivered without that foundation.
 - When a slice is implementable, create a GitHub issue with outcome, acceptance criteria, constraints/non-goals, and validation.
+- If an issue depends on another issue, include a clear `Depends on: #N` line in the issue body.
 - Apply `ready-for-dev` only when the issue can be implemented without guessing.
 - Apply `needs-design` when a requirement still needs a product decision.
 - Do not create implementation work from vague brainstorming.

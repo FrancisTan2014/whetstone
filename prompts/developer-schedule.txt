@@ -11,8 +11,11 @@ Before choosing work:
 
 Process at most one unit of developer work:
 1. Prefer one open PR labeled changes-requested.
-2. Otherwise claim one open issue labeled ready-for-dev and not in-progress.
-3. If no work exists, update developer.lastResult to idle and stop until the next scheduled tick.
+2. If any open PR is labeled needs-review or review-approved, do not claim a new issue; update developer.lastResult to waiting_for_review_or_merge and stop until the next scheduled tick.
+3. Otherwise find open issues labeled ready-for-dev and not in-progress, sorted by lowest issue number.
+4. For each candidate issue, read its body. If it declares dependencies using `Depends on: #N`, skip it until every dependency issue is closed.
+5. Claim the first dependency-ready issue.
+6. If no dependency-ready work exists, update developer.lastResult to idle and stop until the next scheduled tick.
 
 When work is selected:
 - Update .agent-status.local.json with state, issue/PR, branch, worktree, and start time.

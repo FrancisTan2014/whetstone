@@ -87,8 +87,10 @@ Goal: process at most one unit of developer work, then stop.
 Priority order:
 
 1. First handle one open PR labeled `changes-requested`.
-2. If none exists, find one open issue in `FrancisTan2014/whetstone` labeled `ready-for-dev` and not labeled `in-progress`.
-3. If neither exists, stay idle and stop.
+2. If any open PR is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer or human merge.
+3. If no PR is waiting, find the lowest-numbered open issue in `FrancisTan2014/whetstone` labeled `ready-for-dev` and not labeled `in-progress`.
+4. If an issue body declares `Depends on: #N`, skip it until every dependency issue is closed.
+5. If no dependency-ready issue exists, stay idle and stop.
 
 ### Developer review-fix workflow
 
@@ -110,16 +112,17 @@ When a PR with `changes-requested` is found:
 When an issue is found:
 
 1. Read the full issue and confirm it has outcome, acceptance criteria, constraints/non-goals, and validation.
-2. If the issue is ambiguous, add label `needs-design`, remove `ready-for-dev`, comment with the missing decisions, and stop.
-3. Claim it by adding `in-progress`, removing `ready-for-dev`, and commenting that it is claimed by the local developer run.
-4. Create an isolated git worktree under `Q:\src\whetstone-worktrees\issue-<number>-<short-slug>` from `origin/main`, on branch `dev/issue-<number>-<short-slug>`.
-5. Prepare a complete coding-subagent prompt containing the issue URL, issue body, acceptance criteria, constraints/non-goals, validation expectations, branch name, worktree path, and repository instructions.
-6. Start a coding subagent for implementation when available. The subagent must work only in the issue worktree, implement only the issue scope, run validation, and report what changed.
-7. If subagent delegation is unavailable in the current CLI mode, implement directly, but still process only this one issue.
-8. Verify the worktree state and validation summary.
-9. Commit with a conventional commit message, push the branch, and open a PR with `Closes #<issue-number>`.
-10. Add label `needs-review` to the PR if possible.
-11. Do not merge.
+2. If the issue declares dependencies using `Depends on: #N`, verify all dependency issues are closed before claiming.
+3. If the issue is ambiguous or dependencies are not closed, add label `needs-design` only for ambiguity; otherwise skip it and stop.
+4. Claim it by adding `in-progress`, removing `ready-for-dev`, and commenting that it is claimed by the local developer run.
+5. Create an isolated git worktree under `Q:\src\whetstone-worktrees\issue-<number>-<short-slug>` from `origin/main`, on branch `dev/issue-<number>-<short-slug>`.
+6. Prepare a complete coding-subagent prompt containing the issue URL, issue body, acceptance criteria, constraints/non-goals, validation expectations, branch name, worktree path, and repository instructions.
+7. Start a coding subagent for implementation when available. The subagent must work only in the issue worktree, implement only the issue scope, run validation, and report what changed.
+8. If subagent delegation is unavailable in the current CLI mode, implement directly, but still process only this one issue.
+9. Verify the worktree state and validation summary.
+10. Commit with a conventional commit message, push the branch, and open a PR with `Closes #<issue-number>`.
+11. Add label `needs-review` to the PR if possible.
+12. Do not merge.
 
 You can run multiple developer watcher terminals, but each run must create its own issue worktree and claim only one issue at a time.
 
