@@ -101,14 +101,15 @@ The coordinator:
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
 They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
 `scripts\cleanup-agent-locks.cmd` performs stale `worker.lock` cleanup. `start-coordinator.cmd` runs it before registering the scheduled coordinator prompt, and the coordinator prompt runs it at the start of every tick before reading lock state.
-If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the coordinator marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress. The coordinator retries recorded developer recovery work automatically after backoff before it scans for new ready issues. After three consecutive failures for the same role, it sets `coordinator.paused = true` so the failure is visible and the loop stops before causing repeated damage.
+If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the coordinator marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress.
 
-Coordinator does not clean half-finished developer work. Developer owns recovery:
+Recovery policy:
 
-- resume the recorded worktree/branch from `.agent-status.local.json`,
-- inspect dirty state,
-- continue/fix/update PR as appropriate,
-- preserve the worktree for human inspection if repeated failures pause the coordinator.
+- The coordinator retries recorded developer recovery work automatically after backoff.
+- After three developer failures with no PR, the coordinator runs `scripts\abandon-developer-attempt.cmd`.
+- That script removes the failed local worktree and local `dev/issue-*` branch, removes `in-progress`, restores `ready-for-dev`, and clears pause/backoff state.
+- The next coordinator tick starts a clean retry.
+- If a PR exists, the coordinator does not abandon the attempt; developer owns PR recovery.
 
 ## Developer one-shot workflow
 
