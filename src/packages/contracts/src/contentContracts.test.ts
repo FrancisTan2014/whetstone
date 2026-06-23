@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { ingestMarkdownRequestSchema, parseIngestMarkdownRequest } from "./contentContracts.js";
+import {
+  epubContentType,
+  ingestMarkdownRequestSchema,
+  parseIngestMarkdownRequest
+} from "./contentContracts.js";
 
 describe("parseIngestMarkdownRequest", () => {
   it("accepts a manual Markdown source", () => {
@@ -49,5 +53,11 @@ describe("parseIngestMarkdownRequest", () => {
     expect(() =>
       parseIngestMarkdownRequest({ extra: true, kind: "manual", markdown: "x" })
     ).toThrow();
+  });
+});
+
+describe("epubContentType", () => {
+  it("is the standard EPUB media type", () => {
+    expect(epubContentType).toBe("application/epub+zip");
   });
 });
