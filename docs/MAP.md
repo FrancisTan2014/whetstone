@@ -14,7 +14,10 @@ entry to a pointer.
 
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
 `src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
-Markdown into ordered, stable-id blocks), `blockMarkdown.ts` (serialize a block's mdast back to
+Markdown into ordered, stable-id blocks; exports the shared `blockFromMdastNode` mapper),
+`htmlBlocks.ts` (decompose one EPUB chapter's XHTML into a reading unit of blocks via
+`rehype-parse` + `rehype-remark`), `epubMetadata.ts` (normalize OPF title/author/language),
+`blockMarkdown.ts` (serialize a block's mdast back to
 Markdown for safe rendering), `author.ts`, `work.ts`, `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`. Tests
@@ -37,19 +40,25 @@ can navigate them from another package.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`). Routes stay thin; logic lives in
-  commands/queries. `notes/` serves note templates and creates, lists, edits, and deletes notes
+  commands/queries. `content/` ingests Markdown (`contentCommands.ts`) and EPUB uploads
+  (`epubCommands.ts`, which creates the Work from OPF metadata and is sha256-idempotent); both share
+  `blockWriter.ts` for reading-unit/block/link persistence. `notes/` serves note templates and
+  creates, lists, edits, and deletes notes
   (block-anchored, `annotates` link); templates are seeded from the domain on boot
   (`seedNoteTemplates`).
-- Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a
-  server-generated path with sha256 (path-traversal-guarded) for provenance only; blocks remain the
-  source of truth.
+- Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
+  `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
+  only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
+  (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
+  so commands test against a fake parser).
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
 
 - Entry: `src/main.tsx`; root `src/App.tsx`; styles `src/styles.css`.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`, `notes/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
+  `reader/`, `notes/`). `library/` is the admin: `AdminLibraryPage.tsx` adds authors/works and uploads
+  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
   with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them), and on a block selection (`blockSelection.ts`

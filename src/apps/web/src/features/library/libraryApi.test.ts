@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createAuthor, createWork, fetchAuthors, fetchWorks } from "./libraryApi";
+import { createAuthor, createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 
 function stubFetch(response: {
   ok: boolean;
@@ -87,5 +87,30 @@ describe("libraryApi", () => {
     stubFetch({ ok: false, status: 500, body: undefined });
 
     await expect(fetchAuthors()).rejects.toThrow("failed with status 500");
+  });
+
+  it("posts EPUB bytes to the epub endpoint and returns the result", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-1" },
+      work: {
+        authorId: "author-1",
+        entryId: "work-1",
+        language: "zh",
+        title: "史记选读",
+        workType: "book"
+      }
+    };
+    const fetchMock = stubFetch({ ok: true, body: result });
+    const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
+      type: "application/epub+zip"
+    });
+
+    await expect(ingestEpub(file)).resolves.toEqual(result);
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe("/api/works/epub");
+    expect(call[1].method).toBe("POST");
+    expect(call[1].headers).toEqual({ "content-type": "application/epub+zip" });
+    expect(new Uint8Array(call[1].body as Uint8Array)).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
