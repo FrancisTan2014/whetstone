@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,13 +8,34 @@ vi.mock("./readerApi", () => ({
   fetchWorks: vi.fn()
 }));
 
+vi.mock("../notes/notesApi", () => ({
+  createNote: vi.fn(),
+  fetchNoteTemplates: vi.fn()
+}));
+
+import { createNote, fetchNoteTemplates } from "../notes/notesApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { ReaderPage } from "./ReaderPage";
-import type { WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
+import type {
+  NoteDto,
+  NoteTemplateDto,
+  WorkContentDto,
+  WorkListItemDto
+} from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
+const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
+const mockedCreateNote = vi.mocked(createNote);
+
+const noteTemplates: ReadonlyArray<NoteTemplateDto> = [
+  {
+    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
+    id: "vocabulary",
+    name: "Vocabulary"
+  }
+];
 
 const author = { id: toAuthorId("author-1"), name: "George Orwell" };
 
@@ -121,9 +142,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
   mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
+  mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   cleanup();
 });
 
@@ -280,5 +303,100 @@ describe("ReaderPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Safe heading" })).toBeDefined();
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).not.toContain("__xssReader");
+  });
+
+  it("opens the note editor when text is selected in a block", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "Intro"
+    } as unknown as Selection);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    fireEvent.mouseUp(container.querySelector('[data-block-id="b-1"]') as HTMLElement);
+
+    expect(await screen.findByRole("heading", { name: "New note" })).toBeDefined();
+    expect(screen.getByText(/Selected: Intro/)).toBeDefined();
+  });
+
+  it("does not open the editor when there is no selection", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    vi.spyOn(window, "getSelection").mockReturnValue(null);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    fireEvent.mouseUp(container.querySelector('[data-block-id="b-1"]') as HTMLElement);
+
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("confirms and closes the editor after a note is saved", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "Intro"
+    } as unknown as Selection);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    fireEvent.mouseUp(container.querySelector('[data-block-id="b-1"]') as HTMLElement);
+
+    await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("closes the editor when cancelled", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "Intro"
+    } as unknown as Selection);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    fireEvent.mouseUp(container.querySelector('[data-block-id="b-1"]') as HTMLElement);
+    await screen.findByRole("heading", { name: "New note" });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("shows the unavailable editor when note templates fail to load", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedFetchNoteTemplates.mockRejectedValue(new Error("nope"));
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "Intro"
+    } as unknown as Selection);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    fireEvent.mouseUp(container.querySelector('[data-block-id="b-1"]') as HTMLElement);
+
+    expect(
+      await screen.findByText("Note templates are unavailable. Please try again.")
+    ).toBeDefined();
   });
 });

@@ -74,6 +74,7 @@ describe("buildReaderView", () => {
       "## Chapter One",
       "*emphasized*"
     ]);
+    expect(chapter?.blocks.map((block) => block.plaintext)).toEqual(["Chapter One", "emphasized"]);
     expect(view.units[0]?.blocks[0]?.markdown).toBe("Intro");
   });
 
