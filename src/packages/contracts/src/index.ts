@@ -25,3 +25,21 @@ export type {
 } from "./entryContracts.js";
 export { createHealthResponse, healthEndpointPath, healthResponseJsonSchema } from "./health.js";
 export type { HealthResponse } from "./health.js";
+export {
+  authorIdDtoSchema,
+  createAuthorRequestSchema,
+  createWorkRequestSchema,
+  parseCreateAuthorRequest,
+  parseCreateWorkRequest,
+  workAuthorSelectionSchema
+} from "./libraryContracts.js";
+export type {
+  AuthorDto,
+  AuthorListDto,
+  CreateAuthorRequest,
+  CreateWorkRequest,
+  WorkAuthorSelection,
+  WorkDto,
+  WorkListDto,
+  WorkListItemDto
+} from "./libraryContracts.js";
