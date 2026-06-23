@@ -1,3 +1,10 @@
+export { ingestMarkdownRequestSchema, parseIngestMarkdownRequest } from "./contentContracts.js";
+export type {
+  BlockDto,
+  IngestMarkdownRequest,
+  ReadingUnitDto,
+  WorkContentDto
+} from "./contentContracts.js";
 export {
   entryDtoSchema,
   entryIdDtoSchema,
