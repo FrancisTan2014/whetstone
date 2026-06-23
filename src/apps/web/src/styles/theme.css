@@ -1,0 +1,159 @@
+/*
+ * whetstone v0 design-system foundation.
+ *
+ * Implements PRODUCT.md -> "v0 design language (UX)" and GUIDELINES.md -> "UI rules":
+ * semantic tokens defined once here (never hard-coded in components), Day/Night as a
+ * token override via the `class` strategy, self-hosted typography, a language-aware
+ * reading stack, and tokenized motion. Existing `styles.css` is intentionally kept so
+ * current screens keep working; screens migrate to these tokens in their own slices.
+ *
+ * Colors are OKLCH with a hex fallback: each token declares hex first, then oklch. Older
+ * WebViews that do not understand `oklch()` discard that declaration and keep the hex.
+ */
+@import "tailwindcss";
+
+/* Dark mode is a token override driven by a `.dark` class on the root element. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Day (light) is the default theme. Semantic roles only — features never invent colors. */
+@theme {
+  --color-bg: #f5f4ef;
+  --color-bg: oklch(0.96 0.006 95);
+  --color-paper: #fbfaf6;
+  --color-paper: oklch(0.985 0.008 95);
+  --color-surface: #ffffff;
+  --color-surface: oklch(1 0 0);
+  --color-text: #1f1b16;
+  --color-text: oklch(0.26 0.012 75);
+  --color-text-muted: #6b6459;
+  --color-text-muted: oklch(0.53 0.018 80);
+  --color-border: #e3dfd4;
+  --color-border: oklch(0.9 0.01 90);
+  --color-accent: #4f46e5;
+  --color-accent: oklch(0.52 0.18 280);
+  --color-accent-hover: #4338ca;
+  --color-accent-hover: oklch(0.47 0.18 280);
+  --color-accent-fg: #ffffff;
+  --color-accent-fg: oklch(1 0 0);
+  --color-ring: #6366f1;
+  --color-ring: oklch(0.6 0.16 280);
+  --color-success: #2f855a;
+  --color-success: oklch(0.6 0.13 150);
+  --color-danger: #c0392b;
+  --color-danger: oklch(0.55 0.18 25);
+
+  /* Annotation hues mapped to the note templates (Vocabulary / Expression / Thought). */
+  --color-anno-vocab: #b45309;
+  --color-anno-vocab: oklch(0.58 0.13 65);
+  --color-anno-vocab-wash: #fef3c7;
+  --color-anno-vocab-wash: oklch(0.95 0.05 85);
+  --color-anno-expr: #0f766e;
+  --color-anno-expr: oklch(0.5 0.1 180);
+  --color-anno-expr-wash: #ccfbf1;
+  --color-anno-expr-wash: oklch(0.94 0.05 180);
+  --color-anno-thought: #6d28d9;
+  --color-anno-thought: oklch(0.5 0.18 295);
+  --color-anno-thought-wash: #ede9fe;
+  --color-anno-thought-wash: oklch(0.94 0.04 295);
+
+  /* Typography: Inter (UI) + Source Serif 4 (Latin reading), with a CJK serif fallback. */
+  --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
+  --font-reading: var(--font-serif), "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+}
+
+/* Night (dark) — a pure token override, never a second set of components. */
+.dark {
+  --color-bg: #14130f;
+  --color-bg: oklch(0.18 0.006 90);
+  --color-paper: #1b1a15;
+  --color-paper: oklch(0.22 0.008 90);
+  --color-surface: #232118;
+  --color-surface: oklch(0.26 0.008 85);
+  --color-text: #ece7da;
+  --color-text: oklch(0.92 0.01 90);
+  --color-text-muted: #a39b8b;
+  --color-text-muted: oklch(0.7 0.02 85);
+  --color-border: #34312a;
+  --color-border: oklch(0.34 0.01 85);
+  --color-accent: #818cf8;
+  --color-accent: oklch(0.72 0.13 280);
+  --color-accent-hover: #a5b4fc;
+  --color-accent-hover: oklch(0.8 0.1 280);
+  --color-accent-fg: #14130f;
+  --color-accent-fg: oklch(0.18 0.006 90);
+  --color-ring: #818cf8;
+  --color-ring: oklch(0.72 0.13 280);
+  --color-success: #6ee7b7;
+  --color-success: oklch(0.82 0.12 165);
+  --color-danger: #f1a59c;
+  --color-danger: oklch(0.78 0.1 25);
+  --color-anno-vocab: #fbbf24;
+  --color-anno-vocab: oklch(0.82 0.12 80);
+  --color-anno-vocab-wash: #3a2f12;
+  --color-anno-vocab-wash: oklch(0.3 0.04 80);
+  --color-anno-expr: #5eead4;
+  --color-anno-expr: oklch(0.82 0.1 180);
+  --color-anno-expr-wash: #103a36;
+  --color-anno-expr-wash: oklch(0.32 0.04 180);
+  --color-anno-thought: #c4b5fd;
+  --color-anno-thought: oklch(0.8 0.1 295);
+  --color-anno-thought-wash: #2a2342;
+  --color-anno-thought-wash: oklch(0.3 0.05 295);
+}
+
+/*
+ * Reading + motion variables. Reading measure is fixed per script (wide screens add
+ * margin, never wider text); reading size is user-adjustable. Motion durations/easings
+ * are named tokens; components animate only `transform`/`opacity` and honor reduced
+ * motion (the JS guard lives in shared/motion/motion.ts).
+ */
+:root {
+  --reading-measure: 66ch;
+  --reading-measure-cjk: 38em;
+  --reading-leading: 1.7;
+  --reading-leading-cjk: 1.9;
+  --reading-size: 1.125rem;
+
+  --text-scale-xs: 0.75rem;
+  --text-scale-sm: 0.875rem;
+  --text-scale-base: 1rem;
+  --text-scale-lg: 1.125rem;
+  --text-scale-xl: 1.375rem;
+  --text-scale-2xl: 1.75rem;
+  --text-scale-3xl: 2.25rem;
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* A language-aware reading surface utility used by the reader in its own slice. */
+.reading-surface {
+  background-color: var(--color-paper);
+  color: var(--color-text);
+  font-family: var(--font-reading);
+  font-size: var(--reading-size);
+  line-height: var(--reading-leading);
+  max-inline-size: var(--reading-measure);
+}
+
+.reading-surface:lang(zh),
+.reading-surface:lang(ja),
+.reading-surface:lang(ko) {
+  line-height: var(--reading-leading-cjk);
+  max-inline-size: var(--reading-measure-cjk);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

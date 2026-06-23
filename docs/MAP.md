@@ -61,7 +61,14 @@ can navigate them from another package.
 
 ### `src/apps/web/` — React + Vite PWA
 
-- Entry: `src/main.tsx`; root `src/App.tsx`; styles `src/styles.css`.
+- Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
+  reducedMotion="user">` and the `ThemeToggle`); root `src/App.tsx`.
+- Design system (PRODUCT.md "v0 design language"): `src/styles/theme.css` defines the Tailwind v4
+  `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
+  (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion
+  vars. `src/shared/theme/` is the theme controller (`theme.ts` pure rules, `useTheme.ts` applies the
+  `.dark` class + persists, `ThemeToggle.tsx`); `src/shared/motion/motion.ts` holds motion tokens +
+  the `withReducedMotion` guard. The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`). `library/` is the admin: `AdminLibraryPage.tsx` adds authors/works and uploads
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
