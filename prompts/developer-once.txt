@@ -10,16 +10,23 @@ Before choosing work:
 - Treat .agent-status.local.json as the local scheduling snapshot. The coordinator is responsible for refreshing remote GitHub status.
 - If remote.lastSyncCompletedAt is missing or older than 15 minutes, update developer.lastResult to waiting_for_remote_sync and stop; the coordinator will invoke developer again after sync.
 
+Crash resilience and durable progress (apply this throughout the tick):
+- A developer tick is a short-lived process that can be interrupted or crash at any time. Never leave progress only in memory or in uncommitted files.
+- Do implementation work synchronously in this process: run any coding subagent in foreground/blocking mode and wait for it to finish, or implement inline. Never launch a background or detached agent and then exit; background work is killed when this one-shot session ends.
+- Commit and push to the issue branch after each coherent step. Pushed commits are the durable record that survives a crash.
+- Maintain a progress file at `.agent-logs/issue-<number>-progress.md` in the main whetstone checkout (this path is gitignored). After each step record: issue number, branch, worktree, what is done, what remains, current validation status, and the next concrete action. Keep it short and current.
+- A large issue may take several ticks. Each tick must end with all progress committed and pushed and the progress file updated, then exit cleanly. Open the PR only when the work is complete.
+
 Process at most one unit of developer work:
 1. Acquire the developer claim lock before choosing work:
    - Create `.agent-locks/developer-claim.lock` as a directory.
    - If it already exists and is not clearly stale, update developer.lastResult to claim_lock_busy and stop.
    - If it is stale (older than 30 minutes), remove it once, recreate it, and continue.
-2. If developer.state is failed and developer.worktree or developer.branch is set, treat this as recovery work:
+2. Resume in-progress work before anything else. If developer.currentIssue is set with a recorded branch/worktree and that issue has no PR already labeled needs-review or review-approved (developer.state may be failed, in_progress, or implementing):
    - Do not choose a new issue or PR.
-   - Verify the recorded worktree/branch exists.
-   - Resume that worktree/branch and inspect its git status before changing files.
-   - Set developer.resumeReason to retry_after_failure.
+   - Verify the recorded worktree exists. If it is missing but the branch exists on origin, recreate the worktree from the remote branch. If neither exists, update developer.lastResult to recovery_worktree_missing and stop.
+   - Recover context before changing files: read `.agent-logs/issue-<number>-progress.md`, `git -C <worktree> log --oneline`, and `git -C <worktree> status`. The latest `.agent-logs/developer-*.session.md` transcript is an extra reference.
+   - Continue implementation from where the previous tick stopped and set developer.resumeReason to continue_in_progress.
 3. Otherwise prefer one PR from remote.pullRequests labeled changes-requested.
 4. If any open PR in remote.pullRequests is labeled needs-review or review-approved, do not claim a new issue; update developer.lastResult to waiting_for_review_or_merge, release the claim lock, and stop.
 5. Otherwise find open issues in remote.issues labeled ready-for-dev and not in-progress, sorted by lowest issue number.
@@ -31,10 +38,11 @@ Process at most one unit of developer work:
 
 When work is selected:
 - Update .agent-status.local.json with state, issue/PR, branch, worktree, and start time.
-- For retries, preserve and reuse the existing branch/worktree from .agent-status.local.json. Do not create a fresh worktree unless the recorded one is missing; if it is missing, update developer.lastResult to recovery_worktree_missing and stop.
-- Use a coding subagent for implementation/fixes when available.
-- If subagent delegation is unavailable, do the one unit directly.
-- Push changes and open/update the PR as specified in docs/LOCAL_AGENT_WORKFLOW.md.
+- For a new issue, create the isolated worktree/branch as specified in docs/LOCAL_AGENT_WORKFLOW.md. For resumed work, reuse the existing branch/worktree; only recreate it when the recorded worktree is missing and the branch is not on origin.
+- Implement synchronously (foreground subagent or inline). Commit and push after each coherent step and update `.agent-logs/issue-<number>-progress.md`.
+- Run the validation commands (typecheck, lint, test, build) before marking the work ready.
+- When the acceptance criteria are met and validation passes, open the PR with `Closes #<issue-number>` and add label needs-review.
+- If the unit is not finished this tick, leave it committed and pushed with an updated progress file and exit cleanly; the next tick resumes it. Do not open the PR or add needs-review until the work is complete.
 - Update GitHub labels and .agent-status.local.json with completion time/result.
-- Do not delete half-finished worktrees or branches. Repeated failures leave the worktree for human inspection after coordinator pause.
-- Stop after this one unit of work.
+- Do not delete worktrees or branches, and do not merge.
+- Stop after this tick.

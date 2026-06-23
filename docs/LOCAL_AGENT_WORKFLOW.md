@@ -117,6 +117,16 @@ Recovery policy:
 
 ## Developer one-shot workflow
 
+### Durable progress and crash resilience
+
+A developer tick is a short-lived process and may be interrupted or crash at any time, so it must never hold progress only in memory or in uncommitted files:
+
+- Implementation runs synchronously in the tick (foreground coding subagent or inline). A one-shot session must not launch a background or detached agent and then exit, because background work is killed when the session ends.
+- The developer commits and pushes to the issue branch after each coherent step. Pushed commits are the durable, crash-proof record of progress.
+- The developer maintains a gitignored progress file at `.agent-logs/issue-<number>-progress.md` recording what is done, what remains, validation status, and the next action, so a later tick can resume precisely.
+- A large issue may span several ticks. Each tick ends committed, pushed, and with the progress file updated. The PR is opened (and labeled needs-review) only when the acceptance criteria are met and validation passes.
+- Across ticks the coordinator keeps re-invoking the developer for the recorded in-progress issue (worktree/branch set, no needs-review PR) until the PR is opened, so an interrupted implementation is resumed rather than lost.
+
 ### Developer coordinator workflow
 
 Goal: process at most one unit of developer work, then stop.

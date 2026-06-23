@@ -20,8 +20,9 @@ Process at most one unit of reviewer work:
 
 When work is selected:
 - Update .agent-status.local.json with state, PR, head SHA, and start time.
-- Use a review subagent for detailed analysis when available. The subagent must not edit files.
+- Use a review subagent for detailed analysis when available, running it synchronously (foreground/blocking) and waiting for it to finish. The subagent must not edit files. Never launch a background or detached agent and then exit; background work is killed when this one-shot session ends.
 - If subagent delegation is unavailable, do the one review directly.
+- Complete the review and any merge decision within this tick before exiting. If the tick is interrupted, the next tick re-reviews the same head SHA.
 - Post review feedback as specified in GUIDELINES.md and docs/LOCAL_AGENT_WORKFLOW.md.
 - If the PR is review-approved and merge gates pass, merge it using the repository default merge strategy. Do not merge if checks are failing/pending, the head SHA changed after review, merge conflicts exist, or GUIDELINES.md says to request changes.
 - Update GitHub labels and .agent-status.local.json with completion time/result.
