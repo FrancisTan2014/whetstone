@@ -1,8 +1,4 @@
-import {
-  toAuthorId,
-  toEntryId,
-  type AuthorId
-} from "@whetstone/domain";
+import { toAuthorId, toEntryId, type AuthorId } from "@whetstone/domain";
 import type {
   AuthorDto,
   CreateAuthorRequest,
