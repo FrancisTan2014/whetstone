@@ -58,7 +58,11 @@ async function buildContext(): Promise<TestContext> {
   };
 }
 
-async function createWorkWithBlock(): Promise<{ blockEntryId: string; plaintext: string; workEntryId: string }> {
+async function createWorkWithBlock(): Promise<{
+  blockEntryId: string;
+  plaintext: string;
+  workEntryId: string;
+}> {
   const workResponse = await context.server.inject({
     method: "POST",
     payload: {
@@ -84,7 +88,11 @@ async function createWorkWithBlock(): Promise<{ blockEntryId: string; plaintext:
   const body = contentResponse.json() as WorkContentDto;
   const block = body.readingUnits[0]?.blocks[0];
 
-  return { blockEntryId: block?.entryId as string, plaintext: block?.plaintext as string, workEntryId };
+  return {
+    blockEntryId: block?.entryId as string,
+    plaintext: block?.plaintext as string,
+    workEntryId
+  };
 }
 
 function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
@@ -175,7 +183,9 @@ describe("create note route", () => {
       .select()
       .from(entryLinks)
       .where(eq(entryLinks.fromEntryId, note.entryId));
-    expect(links).toEqual([{ fromEntryId: note.entryId, toEntryId: blockEntryId, type: "annotates" }]);
+    expect(links).toEqual([
+      { fromEntryId: note.entryId, toEntryId: blockEntryId, type: "annotates" }
+    ]);
   });
 
   it("creates a whole-block note without an offset range", async () => {

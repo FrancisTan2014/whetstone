@@ -12,7 +12,15 @@ export type NoteAnchor = Readonly<{
   startOffset?: number;
 }>;
 
-export type CreateNoteAnchorInput = NoteAnchor;
+// The input tolerates explicit `undefined` offsets (e.g. from a Zod-parsed payload under
+// exactOptionalPropertyTypes); the constructed anchor omits them entirely.
+export type CreateNoteAnchorInput = Readonly<{
+  blockEntryId: EntryId;
+  contextSnapshot: string;
+  endOffset?: number | undefined;
+  selectedTextSnapshot: string;
+  startOffset?: number | undefined;
+}>;
 
 export function createNoteAnchor(input: CreateNoteAnchorInput): NoteAnchor {
   assertNonEmptySnapshot("selectedTextSnapshot", input.selectedTextSnapshot);
