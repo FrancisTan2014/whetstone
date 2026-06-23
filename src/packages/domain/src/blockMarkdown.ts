@@ -15,3 +15,12 @@ export function blockToMarkdown(node: unknown): string {
 
   return blockProcessor.stringify(root).trimEnd();
 }
+
+// Reconstruct a whole work's Markdown from its blocks' mdast nodes in reading order.
+// This is the export counterpart to ingestion's decomposition: serializing every
+// block node back into one document round-trips the work's structure.
+export function blocksToMarkdown(nodes: ReadonlyArray<unknown>): string {
+  const root: Root = { children: nodes.map((node) => node as RootContent), type: "root" };
+
+  return blockProcessor.stringify(root).trimEnd();
+}

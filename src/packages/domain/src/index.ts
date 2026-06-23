@@ -2,7 +2,9 @@ export { toAuthorId } from "./author.js";
 export type { AuthorId } from "./author.js";
 export { blockTypes } from "./block.js";
 export type { BlockType } from "./block.js";
-export { blockToMarkdown } from "./blockMarkdown.js";
+export { blockSimilarity, diffBlocks } from "./blockDiff.js";
+export type { BlockDiff, DiffNewBlock, DiffOldBlock } from "./blockDiff.js";
+export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,
   createEntry,

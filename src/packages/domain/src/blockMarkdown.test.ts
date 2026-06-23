@@ -1,7 +1,8 @@
 import type { Heading, Html, List, Paragraph } from "mdast";
 import { describe, expect, it } from "vitest";
 
-import { blockToMarkdown } from "./blockMarkdown.js";
+import { decomposeMarkdown } from "./markdownBlocks.js";
+import { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 
 describe("blockToMarkdown", () => {
   it("serializes a paragraph with inline emphasis", () => {
@@ -43,5 +44,25 @@ describe("blockToMarkdown", () => {
     const node: Html = { type: "html", value: "<script>danger()</script>" };
 
     expect(blockToMarkdown(node)).toBe("<script>danger()</script>");
+  });
+});
+
+describe("blocksToMarkdown", () => {
+  it("serializes an empty work to an empty string", () => {
+    expect(blocksToMarkdown([])).toBe("");
+  });
+
+  it("round-trips a work's structure through decompose -> serialize -> decompose", () => {
+    const source =
+      "Intro paragraph.\n\n# Chapter One\n\n- a\n- b\n\n> a quote\n\n## Section\n\nMore.";
+    const original = decomposeMarkdown(source);
+    const nodes = original.flatMap((unit) => unit.blocks.map((block) => block.mdast));
+
+    const reDecomposed = decomposeMarkdown(blocksToMarkdown(nodes));
+
+    expect(reDecomposed.flatMap((unit) => unit.blocks.map((block) => block.plaintext))).toEqual(
+      original.flatMap((unit) => unit.blocks.map((block) => block.plaintext))
+    );
+    expect(reDecomposed.map((unit) => unit.title)).toEqual([undefined, "Chapter One", "Section"]);
   });
 });
