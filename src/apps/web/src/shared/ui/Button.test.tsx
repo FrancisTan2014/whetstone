@@ -15,12 +15,16 @@ describe("buttonVariants", () => {
     expect(buttonVariants({ variant: "ghost" })).toContain("bg-transparent");
   });
 
-  it("maps each size to its classes and defaults to the medium primary", () => {
-    expect(buttonVariants({ size: "sm" })).toContain("h-9");
-    expect(buttonVariants({ size: "lg" })).toContain("h-12");
+  it("keeps every size at a >=44px touch target while varying the visual style", () => {
+    // min-h-11 = 44px is the floor for every size; lg raises it to min-h-12 (48px).
+    expect(buttonVariants({ size: "sm" })).toContain("min-h-11");
+    expect(buttonVariants({ size: "sm" })).toContain("text-sm");
+    expect(buttonVariants({ size: "md" })).toContain("min-h-11");
+    expect(buttonVariants({ size: "lg" })).toContain("min-h-12");
+    expect(buttonVariants({ size: "lg" })).toContain("text-lg");
     const fallback = buttonVariants({});
     expect(fallback).toContain("bg-accent");
-    expect(fallback).toContain("h-11");
+    expect(fallback).toContain("min-h-11");
   });
 
   it("appends caller-provided classes", () => {

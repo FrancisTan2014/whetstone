@@ -2,10 +2,12 @@ import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes } from "react";
 
 // Token-only button styles. Variants and sizes are the single source of truth for
-// interactive styling; features pick a variant rather than inventing colors. Sizes keep
-// a >=44px touch target (`h-11`/`h-12`). Focus is always visible via the `ring` token.
+// interactive styling; features pick a variant rather than inventing colors. Every size
+// keeps a >=44px touch target via the base `min-h-11` (44px) floor while varying padding
+// and text for the visual size (`lg` raises the floor to `min-h-12`). Focus is always
+// visible via the `ring` token.
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center rounded font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex min-h-11 items-center justify-center rounded font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
   {
     defaultVariants: {
       size: "md",
@@ -13,9 +15,9 @@ export const buttonVariants = cva(
     },
     variants: {
       size: {
-        sm: "h-9 px-3 text-sm",
-        md: "h-11 px-4 text-base",
-        lg: "h-12 px-6 text-lg"
+        sm: "px-3 text-sm",
+        md: "px-4 text-base",
+        lg: "min-h-12 px-6 text-lg"
       },
       variant: {
         ghost: "bg-transparent text-text hover:bg-bg",
