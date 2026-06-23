@@ -65,3 +65,68 @@ code {
   text-transform: uppercase;
   font-size: 0.75rem;
 }
+
+.readerShell {
+  display: block;
+  margin: 0 auto;
+  max-width: 60rem;
+  padding: 2rem;
+}
+
+.readerLayout {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: minmax(12rem, 16rem) 1fr;
+}
+
+.readerWorkList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.readerWorkList li {
+  margin-bottom: 0.5rem;
+}
+
+.readerWorkList button {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  width: 100%;
+}
+
+.readerWorkList button[aria-pressed="true"] {
+  border-color: #4f46e5;
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+/* A continuous reading column: subtle unit headings, generous block spacing, and
+   no chapter-manager chrome. */
+.reader {
+  margin: 0 auto;
+  max-width: 42rem;
+}
+
+.readerUnitTitle {
+  color: #6b7280;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 2.5rem 0 0.5rem;
+  text-transform: uppercase;
+}
+
+.readerBlock {
+  margin: 0 0 1.25rem;
+}
+
+@media (width <= 48rem) {
+  .readerLayout {
+    grid-template-columns: 1fr;
+  }
+}
