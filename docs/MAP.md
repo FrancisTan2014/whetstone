@@ -63,6 +63,7 @@ can navigate them from another package.
 ## Build, validate, run
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.
+- Run/use walkthrough: `docs/QUICK_START.md` (install, env/data config, run server + web, first note flow).
 - Gate: `pnpm validate` (= `typecheck && lint && test && build`); mirrors `.github/workflows/ci.yml`.
 - Workflow roles: `.github/agents/*.agent.md` (design, developer, reviewer). Operational quick-reference: the
   `whetstone-engineering` skill in `.github/skills/`.
