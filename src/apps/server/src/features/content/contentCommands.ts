@@ -1,11 +1,11 @@
-import { decomposeMarkdown, type BlockType, type EntryId } from "@whetstone/domain";
+import { blocksToMarkdown, decomposeMarkdown, diffBlocks, type EntryId } from "@whetstone/domain";
 import type { IngestMarkdownRequest, WorkContentDto } from "@whetstone/contracts";
-import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
-import { blocks, entries, entryLinks, readingUnits, workSources } from "../../db/schema.js";
-import { loadWorkContent, workExists } from "./contentQueries.js";
+import { workSources } from "../../db/schema.js";
+import { reconcileWorkBlocks } from "./blockReconciler.js";
+import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store) are
 // passed in so ingestion stays deterministic and testable.
@@ -27,6 +27,10 @@ type Provenance = Readonly<{
   sourceText: string | null;
 }>;
 
+// Ingesting Markdown replaces the work's content: a content-similarity diff preserves
+// stable block ids for matched/lightly-edited blocks (so note anchors stay valid),
+// assigns new ids to genuinely new blocks, and soft-deletes removed ones. Re-ingesting
+// an identical source is a no-op. The whole replacement runs in one transaction.
 export async function ingestMarkdown(
   dependencies: ContentDependencies,
   workEntryId: EntryId,
@@ -36,9 +40,33 @@ export async function ingestMarkdown(
     return { status: "work_not_found" };
   }
 
+  const decomposed = decomposeMarkdown(source.markdown);
+  const current = await loadWorkContent(dependencies.db, workEntryId);
+
+  const currentNodes = current.readingUnits.flatMap((unit) =>
+    unit.blocks.map((block) => block.mdast)
+  );
+  const newNodes = decomposed.flatMap((unit) => unit.blocks.map((block) => block.mdast));
+
+  if (
+    (await workHasSource(dependencies.db, workEntryId)) &&
+    blocksToMarkdown(currentNodes) === blocksToMarkdown(newNodes)
+  ) {
+    return { content: current, status: "ingested" };
+  }
+
   const sourceId = dependencies.createSourceId();
   const provenance = await buildProvenance(dependencies.sourceFileStore, sourceId, source);
-  const decomposed = decomposeMarkdown(source.markdown);
+
+  const oldBlocks = current.readingUnits.flatMap((unit) =>
+    unit.blocks.map((block) => ({ id: block.entryId, plaintext: block.plaintext }))
+  );
+  const newBlocks = decomposed.flatMap((unit) => unit.blocks);
+  const diff = diffBlocks(
+    oldBlocks,
+    newBlocks.map((block) => ({ plaintext: block.plaintext }))
+  );
+  const oldUnitIds = current.readingUnits.map((unit) => unit.entryId);
 
   await dependencies.db.transaction(async (tx) => {
     await tx.insert(workSources).values({
@@ -51,63 +79,14 @@ export async function ingestMarkdown(
       workEntryId
     });
 
-    if (decomposed.length === 0) {
-      return;
-    }
-
-    const existingUnits = await tx
-      .select({ entryId: readingUnits.entryId })
-      .from(readingUnits)
-      .where(eq(readingUnits.workEntryId, workEntryId));
-    const startOrder = existingUnits.length;
-
-    const entryRows: { id: string; type: "reading_unit" | "block" }[] = [];
-    const readingUnitRows: {
-      entryId: string;
-      orderIndex: number;
-      title: string | null;
-      workEntryId: EntryId;
-    }[] = [];
-    const blockRows: {
-      blockType: BlockType;
-      entryId: string;
-      mdastJson: unknown;
-      orderIndex: number;
-      plaintext: string;
-      readingUnitEntryId: string;
-    }[] = [];
-    const linkRows: { fromEntryId: string; toEntryId: string; type: "contains" }[] = [];
-
-    decomposed.forEach((unit, unitIndex) => {
-      const unitEntryId = dependencies.createEntryId();
-      entryRows.push({ id: unitEntryId, type: "reading_unit" });
-      readingUnitRows.push({
-        entryId: unitEntryId,
-        orderIndex: startOrder + unitIndex,
-        title: unit.title ?? null,
-        workEntryId
-      });
-      linkRows.push({ fromEntryId: workEntryId, toEntryId: unitEntryId, type: "contains" });
-
-      unit.blocks.forEach((block, blockIndex) => {
-        const blockEntryId = dependencies.createEntryId();
-        entryRows.push({ id: blockEntryId, type: "block" });
-        blockRows.push({
-          blockType: block.blockType,
-          entryId: blockEntryId,
-          mdastJson: block.mdast,
-          orderIndex: blockIndex,
-          plaintext: block.plaintext,
-          readingUnitEntryId: unitEntryId
-        });
-        linkRows.push({ fromEntryId: unitEntryId, toEntryId: blockEntryId, type: "contains" });
-      });
+    await reconcileWorkBlocks(tx, {
+      assignments: diff.assignments,
+      createEntryId: dependencies.createEntryId,
+      oldUnitIds,
+      removedIds: diff.removedIds,
+      units: decomposed,
+      workEntryId
     });
-
-    await tx.insert(entries).values(entryRows);
-    await tx.insert(readingUnits).values(readingUnitRows);
-    await tx.insert(blocks).values(blockRows);
-    await tx.insert(entryLinks).values(linkRows);
   });
 
   return { content: await loadWorkContent(dependencies.db, workEntryId), status: "ingested" };

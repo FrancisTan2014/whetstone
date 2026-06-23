@@ -1,5 +1,5 @@
 import { ingestMarkdownRequestSchema } from "@whetstone/contracts";
-import { toEntryId } from "@whetstone/domain";
+import { blocksToMarkdown, toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
 import { ingestMarkdown, type ContentDependencies } from "./contentCommands.js";
@@ -49,4 +49,22 @@ export function registerContentRoutes(
 
     return loadWorkContent(dependencies.db, workEntryId);
   });
+
+  server.get<{ Params: WorkParams }>(
+    "/api/works/:workEntryId/content/markdown",
+    async (request, reply) => {
+      const workEntryId = toEntryId(request.params.workEntryId);
+
+      if (!(await workExists(dependencies.db, workEntryId))) {
+        return reply.code(404).send(workNotFoundBody);
+      }
+
+      const content = await loadWorkContent(dependencies.db, workEntryId);
+      const markdown = blocksToMarkdown(
+        content.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.mdast))
+      );
+
+      return reply.type("text/markdown; charset=utf-8").send(markdown);
+    }
+  );
 }
