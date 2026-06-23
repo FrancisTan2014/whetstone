@@ -103,3 +103,45 @@ export const workSources = pgTable(
   },
   (table) => [index("work_sources_work_idx").on(table.workEntryId)]
 );
+
+// v0 note templates, seeded from the domain's canonical definitions. `fields_json`
+// stores the ordered field list (id, label, v0 field type); the note editor loads
+// these from the API rather than hard-coding them.
+export const noteTemplates = pgTable("note_templates", {
+  fieldsJson: jsonb("fields_json").notNull(),
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  orderIndex: integer("order_index").notNull()
+});
+
+// A note is an Entry annotating a source block. `answers_json` holds the structured
+// answers keyed by template field id; `markdown_body` is the rendered note body.
+export const notes = pgTable("notes", {
+  answersJson: jsonb("answers_json").notNull(),
+  entryId: text("entry_id")
+    .primaryKey()
+    .references(() => entries.id),
+  markdownBody: text("markdown_body").notNull(),
+  templateId: text("template_id")
+    .notNull()
+    .references(() => noteTemplates.id)
+});
+
+// The anchor binds a note to a stable block id, with an optional sub-block character
+// offset range and the selected-text / surrounding-context snapshots.
+export const noteAnchors = pgTable(
+  "note_anchors",
+  {
+    blockEntryId: text("block_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    contextSnapshot: text("context_snapshot").notNull(),
+    endOffset: integer("end_offset"),
+    noteEntryId: text("note_entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    selectedText: text("selected_text").notNull(),
+    startOffset: integer("start_offset")
+  },
+  (table) => [index("note_anchors_block_idx").on(table.blockEntryId)]
+);
