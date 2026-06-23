@@ -36,6 +36,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Local server data (retained source files / local database)
+.data/
+
 # Environment files
 .env
 .env.*

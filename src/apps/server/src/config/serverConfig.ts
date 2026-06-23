@@ -7,13 +7,15 @@ export type ServerConfig = Readonly<{
   host: string;
   logLevel: ServerLogLevel;
   port: number;
+  sourceFilesDir: string;
 }>;
 
 const defaultServerConfig: ServerConfig = {
   databaseDir: undefined,
   host: "127.0.0.1",
   logLevel: "info",
-  port: 3000
+  port: 3000,
+  sourceFilesDir: "./.data/sources"
 };
 
 const serverLogLevels = new Set<ServerLogLevel>([
@@ -34,7 +36,8 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
     host: env.HOST ?? defaultServerConfig.host,
     logLevel,
-    port
+    port,
+    sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir
   };
 }
 
