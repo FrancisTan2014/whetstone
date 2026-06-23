@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   createNoteRequestSchema,
   parseCreateNoteRequest,
-  parseNoteTemplateDto
+  parseNoteTemplateDto,
+  parseUpdateNoteRequest,
+  updateNoteRequestSchema
 } from "./noteContracts.js";
 
 const validTemplate = {
@@ -53,6 +55,28 @@ describe("createNoteRequestSchema", () => {
     expect(() => parseCreateNoteRequest({ ...validRequest, templateId: " " })).toThrow();
     expect(() => parseCreateNoteRequest({ ...validRequest, extra: true })).toThrow();
     expect(createNoteRequestSchema.safeParse({ answers: {}, templateId: "x" }).success).toBe(false);
+  });
+});
+
+describe("updateNoteRequestSchema", () => {
+  it("parses a well-formed update-note request", () => {
+    const parsed = parseUpdateNoteRequest({
+      answers: { meaning: "to give in" },
+      templateId: "vocabulary"
+    });
+
+    expect(parsed).toEqual({ answers: { meaning: "to give in" }, templateId: "vocabulary" });
+  });
+
+  it("rejects a blank template id and unexpected keys", () => {
+    expect(() => parseUpdateNoteRequest({ answers: { meaning: "x" }, templateId: " " })).toThrow();
+    expect(
+      updateNoteRequestSchema.safeParse({
+        answers: { meaning: "x" },
+        anchor: {},
+        templateId: "vocabulary"
+      }).success
+    ).toBe(false);
   });
 });
 

@@ -55,12 +55,16 @@ export {
   noteFieldTypeDtoSchema,
   noteTemplateDtoSchema,
   parseCreateNoteRequest,
-  parseNoteTemplateDto
+  parseNoteTemplateDto,
+  parseUpdateNoteRequest,
+  updateNoteRequestSchema
 } from "./noteContracts.js";
 export type {
   CreateNoteRequest,
   NoteDto,
+  NoteListDto,
   NoteTemplateDto,
   NoteTemplateFieldDto,
-  NoteTemplateListDto
+  NoteTemplateListDto,
+  UpdateNoteRequest
 } from "./noteContracts.js";
