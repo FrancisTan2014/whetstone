@@ -283,6 +283,25 @@ describe("create note route", () => {
     expect(response.json()).toEqual({ error: "anchor_out_of_range" });
   });
 
+  it("rejects a forged context snapshot absent from the block text", async () => {
+    const { blockEntryId, workEntryId } = await createWorkWithBlock();
+
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId,
+        contextSnapshot: "a sly brown fox from another tale",
+        endOffset: 19,
+        selectedTextSnapshot: "brown fox",
+        startOffset: 10
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
+
   it("rejects a whole-block selection absent from the block text", async () => {
     const { blockEntryId, workEntryId } = await createWorkWithBlock();
 

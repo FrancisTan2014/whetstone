@@ -104,9 +104,16 @@ export async function createNote(
   };
 }
 
-// Confirm the anchor matches the block's stored plaintext: a sub-block range must index
-// exactly the selected text, and a whole-block selection must appear within the block.
+// Confirm the anchor genuinely comes from the block's stored plaintext. The recorded
+// context snapshot must be part of the stored block, so a client cannot persist a valid
+// block id, offsets, and selected text alongside a forged surrounding context. A sub-block
+// range must then index exactly the selected text, and a whole-block selection must appear
+// within the block.
 function anchorFitsBlock(anchor: NoteAnchor, plaintext: string): boolean {
+  if (!plaintext.includes(anchor.contextSnapshot)) {
+    return false;
+  }
+
   const { endOffset, startOffset } = anchor;
 
   if (startOffset === undefined || endOffset === undefined) {
