@@ -37,8 +37,9 @@ can navigate them from another package.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`). Routes stay thin; logic lives in
-  commands/queries. `notes/` serves note templates and creates notes (block-anchored, `annotates`
-  link); templates are seeded from the domain on boot (`seedNoteTemplates`).
+  commands/queries. `notes/` serves note templates and creates, lists, edits, and deletes notes
+  (block-anchored, `annotates` link); templates are seeded from the domain on boot
+  (`seedNoteTemplates`).
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a
   server-generated path with sha256 (path-traversal-guarded) for provenance only; blocks remain the
   source of truth.
@@ -50,11 +51,12 @@ can navigate them from another package.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
-  with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, and on a block
-  selection (`blockSelection.ts` reads the selected text and its offset from the live Range) opens the
-  `notes/` editor. `notes/` is the note-capture feature: `noteCapture.ts` turns a
-  block selection into a draft, `NoteEditor.tsx` is the template-based editor (side panel / bottom
-  sheet), `notesApi.ts` calls the templates/notes endpoints.
+  with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, highlights blocks
+  that have notes (and lets the reader reopen them), and on a block selection (`blockSelection.ts`
+  reads the selected text and its offset from the live Range) opens the `notes/` editor; it also shows
+  a per-work note list. `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
+  draft, `NoteEditor.tsx` is the template-based create/edit editor (side panel / bottom sheet),
+  `NoteList.tsx` lists notes with edit/delete, `notesApi.ts` calls the templates/notes endpoints.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

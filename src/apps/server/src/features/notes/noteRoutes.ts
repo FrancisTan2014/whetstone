@@ -1,17 +1,23 @@
-import { createNoteRequestSchema } from "@whetstone/contracts";
+import { createNoteRequestSchema, updateNoteRequestSchema } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
-import { createNote, type NotesDependencies } from "./noteCommands.js";
-import { listNoteTemplates } from "./noteQueries.js";
+import { createNote, deleteNote, updateNote, type NotesDependencies } from "./noteCommands.js";
+import { listNoteTemplates, listNotesForWork } from "./noteQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 
 type WorkParams = Readonly<{ workEntryId: string }>;
 
+type NoteParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
+
 export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesDependencies): void {
   server.get("/api/note-templates", async () => ({
     templates: await listNoteTemplates(dependencies.db)
+  }));
+
+  server.get<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request) => ({
+    notes: await listNotesForWork(dependencies.db, toEntryId(request.params.workEntryId))
   }));
 
   server.post<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request, reply) => {
@@ -47,4 +53,63 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
         return reply.code(201).send(result.note);
     }
   });
+
+  server.patch<{ Params: NoteParams }>(
+    "/api/works/:workEntryId/notes/:noteEntryId",
+    async (request, reply) => {
+      const parsed = updateNoteRequestSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const workEntryId = toEntryId(request.params.workEntryId);
+      const noteEntryId = toEntryId(request.params.noteEntryId);
+      const result = await updateNote(dependencies, workEntryId, noteEntryId, parsed.data);
+
+      switch (result.status) {
+        case "note_not_found":
+          return reply.code(404).send({ error: "note_not_found" });
+        case "template_not_found":
+          return reply.code(400).send({ error: "template_not_found" });
+        case "invalid_answers":
+          return reply.code(400).send({ error: "invalid_answers", reason: result.reason });
+        case "updated":
+          request.log.info(
+            {
+              noteEntryId: result.note.entryId,
+              route: "PATCH /api/works/:workEntryId/notes/:noteEntryId",
+              workEntryId
+            },
+            "note_updated"
+          );
+
+          return reply.code(200).send(result.note);
+      }
+    }
+  );
+
+  server.delete<{ Params: NoteParams }>(
+    "/api/works/:workEntryId/notes/:noteEntryId",
+    async (request, reply) => {
+      const workEntryId = toEntryId(request.params.workEntryId);
+      const noteEntryId = toEntryId(request.params.noteEntryId);
+      const result = await deleteNote(dependencies, workEntryId, noteEntryId);
+
+      if (result.status === "note_not_found") {
+        return reply.code(404).send({ error: "note_not_found" });
+      }
+
+      request.log.info(
+        {
+          noteEntryId,
+          route: "DELETE /api/works/:workEntryId/notes/:noteEntryId",
+          workEntryId
+        },
+        "note_deleted"
+      );
+
+      return reply.code(204).send();
+    }
+  );
 }

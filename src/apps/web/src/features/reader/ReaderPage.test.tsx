@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,10 +10,19 @@ vi.mock("./readerApi", () => ({
 
 vi.mock("../notes/notesApi", () => ({
   createNote: vi.fn(),
-  fetchNoteTemplates: vi.fn()
+  deleteNote: vi.fn(),
+  fetchNoteTemplates: vi.fn(),
+  fetchNotes: vi.fn(),
+  updateNote: vi.fn()
 }));
 
-import { createNote, fetchNoteTemplates } from "../notes/notesApi";
+import {
+  createNote,
+  deleteNote,
+  fetchNoteTemplates,
+  fetchNotes,
+  updateNote
+} from "../notes/notesApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { ReaderPage } from "./ReaderPage";
 import type {
@@ -28,6 +37,9 @@ const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedCreateNote = vi.mocked(createNote);
+const mockedFetchNotes = vi.mocked(fetchNotes);
+const mockedUpdateNote = vi.mocked(updateNote);
+const mockedDeleteNote = vi.mocked(deleteNote);
 
 const noteTemplates: ReadonlyArray<NoteTemplateDto> = [
   {
@@ -199,6 +211,7 @@ beforeEach(() => {
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
   mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
   mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
+  mockedFetchNotes.mockResolvedValue({ notes: [] });
 });
 
 afterEach(() => {
@@ -279,7 +292,9 @@ describe("ReaderPage", () => {
     await screen.findByText("Intro paragraph.");
 
     expect(screen.queryByRole("heading", { name: "Untitled section" })).toBeNull();
-    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(2);
+    expect(
+      within(screen.getByRole("article", { name: "Reading" })).getAllByRole("heading", { level: 2 })
+    ).toHaveLength(2);
   });
 
   it("shows a loading state while a work's content loads", async () => {
@@ -497,5 +512,205 @@ describe("ReaderPage", () => {
     expect(
       await screen.findByText("Note templates are unavailable. Please try again.")
     ).toBeDefined();
+  });
+});
+
+function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
+  return {
+    anchor: {
+      blockEntryId: toEntryId("b-1"),
+      contextSnapshot: "Intro paragraph.",
+      selectedTextSnapshot: "Intro"
+    },
+    answers: { meaning: "the beginning" },
+    blockEntryId: toEntryId("b-1"),
+    entryId: toEntryId("note-1"),
+    markdown: "**Meaning in this context**\n\nthe beginning",
+    templateId: "vocabulary",
+    ...overrides
+  };
+}
+
+async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
+  mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+  mockedFetchNotes.mockResolvedValue({ notes });
+  const user = userEvent.setup();
+  const { container } = render(<ReaderPage />);
+
+  await user.click(
+    await screen.findByRole("button", { name: "Politics and the English Language" })
+  );
+  await screen.findByText("Intro paragraph.");
+
+  return container;
+}
+
+describe("ReaderPage note management", () => {
+  it("highlights blocks that have notes and labels the count", async () => {
+    const container = await openWorkWithNotes([makeNote()]);
+
+    const annotated = blockElement(container, "b-1");
+    expect(annotated.getAttribute("data-has-notes")).toBe("true");
+    expect(annotated.className).toContain("readerBlock--annotated");
+
+    const plain = blockElement(container, "b-2");
+    expect(plain.getAttribute("data-has-notes")).toBeNull();
+    expect(plain.className).not.toContain("readerBlock--annotated");
+
+    expect(screen.getByRole("button", { name: "View 1 note" })).toBeDefined();
+  });
+
+  it("lists a per-work note with its anchored snippet", async () => {
+    await openWorkWithNotes([makeNote()]);
+
+    const region = screen.getByRole("region", { name: "Your notes" });
+    expect(within(region).getByText(/Intro/)).toBeDefined();
+    expect(within(region).getByText("the beginning")).toBeDefined();
+  });
+
+  it("reopens a block's notes from its highlight and edits one", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
+    const updated = makeNote({ answers: { meaning: "a fresh start" } });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
+    mockedUpdateNote.mockResolvedValue(updated);
+    const user = userEvent.setup();
+    render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    await user.click(screen.getByRole("button", { name: "View 1 note" }));
+
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    await user.click(within(panel).getByRole("button", { name: "Edit note: Intro" }));
+
+    expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+    const field = screen.getByLabelText("Meaning in this context") as HTMLTextAreaElement;
+    expect(field.value).toBe("the beginning");
+
+    await user.clear(field);
+    await user.type(field, "a fresh start");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull();
+    expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
+      answers: { meaning: "a fresh start" },
+      templateId: "vocabulary"
+    });
+  });
+
+  it("lists multiple notes for a block and deletes one", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const first = makeNote({ entryId: toEntryId("note-1") });
+    const second = makeNote({
+      anchor: {
+        blockEntryId: toEntryId("b-1"),
+        contextSnapshot: "Intro paragraph.",
+        selectedTextSnapshot: "paragraph"
+      },
+      entryId: toEntryId("note-2")
+    });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [first, second] });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [second] });
+    mockedDeleteNote.mockResolvedValue();
+    const user = userEvent.setup();
+    render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    await user.click(screen.getByRole("button", { name: "View 2 notes" }));
+
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getAllByRole("button", { name: /^Edit note:/ })).toHaveLength(2);
+
+    await user.click(within(panel).getByRole("button", { name: "Delete note: Intro" }));
+
+    expect(await screen.findByText("Note deleted.")).toBeDefined();
+    expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "note-1");
+  });
+
+  it("closes the block notes panel", async () => {
+    await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "View 1 note" }));
+    await screen.findByRole("complementary", { name: "Block notes" });
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByRole("complementary", { name: "Block notes" })).toBeNull();
+  });
+
+  it("edits a note from the per-work note list", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
+    const updated = makeNote({ answers: { meaning: "edited" } });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
+    mockedUpdateNote.mockResolvedValue(updated);
+    const user = userEvent.setup();
+    render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    const region = screen.getByRole("region", { name: "Your notes" });
+    await user.click(within(region).getByRole("button", { name: "Edit note: Intro" }));
+
+    expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
+      answers: { meaning: "the beginning" },
+      templateId: "vocabulary"
+    });
+  });
+
+  it("deletes a note from the per-work note list", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
+    mockedDeleteNote.mockResolvedValue();
+    const user = userEvent.setup();
+    render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    const region = screen.getByRole("region", { name: "Your notes" });
+    await user.click(within(region).getByRole("button", { name: "Delete note: Intro" }));
+
+    expect(await screen.findByText("Note deleted.")).toBeDefined();
+    expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "note-1");
+    expect(screen.getByText("No notes yet. Select text in the reader to add one.")).toBeDefined();
+  });
+
+  it("shows an error when deleting a note fails", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedFetchNotes.mockResolvedValue({ notes: [makeNote()] });
+    mockedDeleteNote.mockRejectedValue(new Error("boom"));
+    const user = userEvent.setup();
+    render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    const region = screen.getByRole("region", { name: "Your notes" });
+    await user.click(within(region).getByRole("button", { name: "Delete note: Intro" }));
+
+    expect(await screen.findByText("Could not delete the note. Please try again.")).toBeDefined();
   });
 });

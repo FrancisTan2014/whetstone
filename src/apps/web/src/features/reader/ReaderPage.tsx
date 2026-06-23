@@ -3,11 +3,12 @@ import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
-import type { NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
+import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 
 import { NoteEditor } from "../notes/NoteEditor";
+import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
-import { fetchNoteTemplates } from "../notes/notesApi";
+import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { readBlockSelection } from "./blockSelection";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
@@ -16,10 +17,6 @@ import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } f
 // the reader never executes raw markup (no dangerouslySetInnerHTML).
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeSanitize];
-
-type SelectBlock = (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
-
-type PendingNote = Readonly<{ draft: NoteDraft; workEntryId: string }>;
 
 type ReadingState =
   | Readonly<{ status: "idle" }>
@@ -32,10 +29,34 @@ type ReaderState =
   | Readonly<{ status: "worksError" }>
   | Readonly<{ reading: ReadingState; status: "ready"; works: ReadonlyArray<WorkListItemDto> }>;
 
+// At most one note panel is open at a time: capturing a new note, editing an existing one, or
+// listing the notes anchored to a single block (reopened from its highlight).
+type NotePanel =
+  | Readonly<{ draft: NoteDraft; kind: "create"; workEntryId: string }>
+  | Readonly<{ kind: "edit"; note: NoteDto; workEntryId: string }>
+  | Readonly<{ blockEntryId: string; kind: "block"; workEntryId: string }>;
+
+type ReaderHandlers = Readonly<{
+  notes: ReadonlyArray<NoteDto>;
+  onDeleteNote: (workEntryId: string, note: NoteDto) => void;
+  onEditNote: (workEntryId: string, note: NoteDto) => void;
+  onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
+  onSelectBlock: (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
+  templates: ReadonlyArray<NoteTemplateDto>;
+}>;
+
+function notesForBlock(
+  notes: ReadonlyArray<NoteDto>,
+  blockEntryId: string
+): ReadonlyArray<NoteDto> {
+  return notes.filter((note) => note.blockEntryId === blockEntryId);
+}
+
 export function ReaderPage(): React.JSX.Element {
   const [state, setState] = useState<ReaderState>({ status: "loadingWorks" });
   const [templates, setTemplates] = useState<ReadonlyArray<NoteTemplateDto>>([]);
-  const [pendingNote, setPendingNote] = useState<PendingNote | undefined>(undefined);
+  const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
+  const [panel, setPanel] = useState<NotePanel | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -50,14 +71,23 @@ export function ReaderPage(): React.JSX.Element {
       .catch(() => setTemplates([]));
   }, []);
 
+  async function refreshNotes(workEntryId: string): Promise<void> {
+    const list = await fetchNotes(workEntryId);
+    setNotes(list.notes);
+  }
+
   async function openWork(
     works: ReadonlyArray<WorkListItemDto>,
     workEntryId: string
   ): Promise<void> {
     setState({ reading: { status: "loading", workEntryId }, status: "ready", works });
+    setPanel(undefined);
+    setNotice(undefined);
+    setNotes([]);
 
     try {
       const content = await fetchWorkContent(workEntryId);
+      await refreshNotes(workEntryId);
 
       setState({
         reading: { status: "viewing", view: buildReaderView(content), workEntryId },
@@ -85,9 +115,51 @@ export function ReaderPage(): React.JSX.Element {
 
     if (draft !== undefined) {
       setNotice(undefined);
-      setPendingNote({ draft, workEntryId });
+      setPanel({ draft, kind: "create", workEntryId });
     }
   }
+
+  function onOpenBlockNotes(blockEntryId: string, workEntryId: string): void {
+    setNotice(undefined);
+    setPanel({ blockEntryId, kind: "block", workEntryId });
+  }
+
+  function onEditNote(workEntryId: string, note: NoteDto): void {
+    setNotice(undefined);
+    setPanel({ kind: "edit", note, workEntryId });
+  }
+
+  async function onSavedNote(workEntryId: string): Promise<void> {
+    setPanel(undefined);
+    setNotice("Note saved.");
+    await refreshNotes(workEntryId);
+  }
+
+  async function onDeleteNote(workEntryId: string, note: NoteDto): Promise<void> {
+    try {
+      await deleteNote(workEntryId, note.entryId);
+    } catch {
+      setNotice("Could not delete the note. Please try again.");
+      return;
+    }
+
+    setPanel(undefined);
+    setNotice("Note deleted.");
+    await refreshNotes(workEntryId);
+  }
+
+  const handleDelete = (workEntryId: string, note: NoteDto): void =>
+    void onDeleteNote(workEntryId, note);
+  const handleSaved = (workEntryId: string): void => void onSavedNote(workEntryId);
+
+  const handlers: ReaderHandlers = {
+    notes,
+    onDeleteNote: handleDelete,
+    onEditNote,
+    onOpenBlockNotes,
+    onSelectBlock,
+    templates
+  };
 
   return (
     <section aria-labelledby="reader-heading" className="readerShell">
@@ -100,8 +172,8 @@ export function ReaderPage(): React.JSX.Element {
         ? renderReady(
             state.works,
             state.reading,
-            (workEntryId) => void openWork(state.works, workEntryId),
-            onSelectBlock
+            handlers,
+            (workEntryId) => void openWork(state.works, workEntryId)
           )
         : null}
 
@@ -111,18 +183,12 @@ export function ReaderPage(): React.JSX.Element {
         </p>
       )}
 
-      {pendingNote === undefined ? null : (
-        <NoteEditor
-          draft={pendingNote.draft}
-          onClose={() => setPendingNote(undefined)}
-          onSaved={() => {
-            setPendingNote(undefined);
-            setNotice("Note saved.");
-          }}
-          templates={templates}
-          workEntryId={pendingNote.workEntryId}
-        />
-      )}
+      {renderPanel(panel, notes, templates, {
+        onClose: () => setPanel(undefined),
+        onDeleteNote: handleDelete,
+        onEditNote,
+        onSavedNote: handleSaved
+      })}
     </section>
   );
 }
@@ -130,8 +196,8 @@ export function ReaderPage(): React.JSX.Element {
 function renderReady(
   works: ReadonlyArray<WorkListItemDto>,
   reading: ReadingState,
-  onOpen: (workEntryId: string) => void,
-  onSelectBlock: SelectBlock
+  handlers: ReaderHandlers,
+  onOpen: (workEntryId: string) => void
 ): React.JSX.Element {
   if (works.length === 0) {
     return <p>No works yet. Create one in the library admin.</p>;
@@ -157,12 +223,12 @@ function renderReady(
         </ul>
       </nav>
 
-      {renderReading(reading, onSelectBlock)}
+      {renderReading(reading, handlers)}
     </div>
   );
 }
 
-function renderReading(reading: ReadingState, onSelectBlock: SelectBlock): React.JSX.Element {
+function renderReading(reading: ReadingState, handlers: ReaderHandlers): React.JSX.Element {
   switch (reading.status) {
     case "idle":
       return <p className="readerHint">Select a work to start reading.</p>;
@@ -171,18 +237,44 @@ function renderReading(reading: ReadingState, onSelectBlock: SelectBlock): React
     case "error":
       return <p role="alert">Could not load this work. Please try again.</p>;
     case "viewing":
-      return renderReaderView(reading.view, onSelectBlock);
+      return renderViewing(reading.view, reading.workEntryId, handlers);
   }
 }
 
-function renderReaderView(view: ReaderView, onSelectBlock: SelectBlock): React.JSX.Element {
+function renderViewing(
+  view: ReaderView,
+  workEntryId: string,
+  handlers: ReaderHandlers
+): React.JSX.Element {
+  return (
+    <div className="readerReading">
+      {renderReaderView(view, workEntryId, handlers)}
+      <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
+        <h2 id="work-notes-heading">Your notes</h2>
+        <NoteList
+          emptyLabel="No notes yet. Select text in the reader to add one."
+          notes={handlers.notes}
+          onDelete={(note) => handlers.onDeleteNote(workEntryId, note)}
+          onEdit={(note) => handlers.onEditNote(workEntryId, note)}
+          templates={handlers.templates}
+        />
+      </section>
+    </div>
+  );
+}
+
+function renderReaderView(
+  view: ReaderView,
+  workEntryId: string,
+  handlers: ReaderHandlers
+): React.JSX.Element {
   if (view.units.length === 0) {
     return <p>This work has no content yet.</p>;
   }
 
   return (
     <article aria-label="Reading" className="reader">
-      {view.units.map((unit) => renderUnit(unit, view.workEntryId, onSelectBlock))}
+      {view.units.map((unit) => renderUnit(unit, workEntryId, handlers))}
     </article>
   );
 }
@@ -190,23 +282,101 @@ function renderReaderView(view: ReaderView, onSelectBlock: SelectBlock): React.J
 function renderUnit(
   unit: ReaderUnit,
   workEntryId: string,
-  onSelectBlock: SelectBlock
+  handlers: ReaderHandlers
 ): React.JSX.Element {
   return (
     <section className="readerUnit" key={unit.entryId}>
       {unit.title === undefined ? null : <h2 className="readerUnitTitle">{unit.title}</h2>}
-      {unit.blocks.map((block) => (
-        <div
-          className="readerBlock"
-          data-block-id={block.entryId}
-          key={block.entryId}
-          onMouseUp={(event) => onSelectBlock(event.currentTarget, block, workEntryId)}
-        >
-          <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
-            {block.markdown}
-          </Markdown>
-        </div>
-      ))}
+      {unit.blocks.map((block) => renderBlock(block, workEntryId, handlers))}
     </section>
+  );
+}
+
+function renderBlock(
+  block: ReaderBlock,
+  workEntryId: string,
+  handlers: ReaderHandlers
+): React.JSX.Element {
+  const blockNotes = notesForBlock(handlers.notes, block.entryId);
+  const annotated = blockNotes.length > 0;
+  const className = annotated ? "readerBlock readerBlock--annotated" : "readerBlock";
+
+  return (
+    <div
+      className={className}
+      data-block-id={block.entryId}
+      data-has-notes={annotated ? "true" : undefined}
+      key={block.entryId}
+      onMouseUp={(event) => handlers.onSelectBlock(event.currentTarget, block, workEntryId)}
+    >
+      <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
+        {block.markdown}
+      </Markdown>
+      {annotated ? (
+        <button
+          className="readerBlockNotes"
+          onClick={() => handlers.onOpenBlockNotes(block.entryId, workEntryId)}
+          onMouseUp={(event) => event.stopPropagation()}
+          type="button"
+        >
+          {blockNotes.length === 1 ? "View 1 note" : `View ${blockNotes.length} notes`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+type PanelHandlers = Readonly<{
+  onClose: () => void;
+  onDeleteNote: (workEntryId: string, note: NoteDto) => void;
+  onEditNote: (workEntryId: string, note: NoteDto) => void;
+  onSavedNote: (workEntryId: string) => void;
+}>;
+
+function renderPanel(
+  panel: NotePanel | undefined,
+  notes: ReadonlyArray<NoteDto>,
+  templates: ReadonlyArray<NoteTemplateDto>,
+  handlers: PanelHandlers
+): React.JSX.Element | null {
+  if (panel === undefined) {
+    return null;
+  }
+
+  if (panel.kind === "block") {
+    return (
+      <aside aria-label="Block notes" className="readerBlockNotesPanel">
+        <h2>Notes on this selection</h2>
+        <NoteList
+          emptyLabel="This block has no notes."
+          notes={notesForBlock(notes, panel.blockEntryId)}
+          onDelete={(note) => handlers.onDeleteNote(panel.workEntryId, note)}
+          onEdit={(note) => handlers.onEditNote(panel.workEntryId, note)}
+          templates={templates}
+        />
+        <button onClick={handlers.onClose} type="button">
+          Close
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <NoteEditor
+      key={
+        panel.kind === "create"
+          ? `create-${panel.draft.blockEntryId}`
+          : `edit-${panel.note.entryId}`
+      }
+      onClose={handlers.onClose}
+      onSaved={() => handlers.onSavedNote(panel.workEntryId)}
+      target={
+        panel.kind === "create"
+          ? { draft: panel.draft, kind: "create" }
+          : { kind: "edit", note: panel.note }
+      }
+      templates={templates}
+      workEntryId={panel.workEntryId}
+    />
   );
 }

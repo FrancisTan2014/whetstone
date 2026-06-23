@@ -5,11 +5,16 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { NoteDto, NoteTemplateListDto, WorkContentDto } from "@whetstone/contracts";
+import type {
+  NoteDto,
+  NoteListDto,
+  NoteTemplateListDto,
+  WorkContentDto
+} from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entryLinks, noteAnchors, notes } from "../../db/schema.js";
+import { entries, entryLinks, noteAnchors, notes } from "../../db/schema.js";
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { seedNoteTemplates, type NotesDependencies } from "./noteCommands.js";
@@ -100,6 +105,66 @@ function postNote(workEntryId: string, payload: unknown): ReturnType<typeof cont
     method: "POST",
     payload,
     url: `/api/works/${workEntryId}/notes`
+  });
+}
+
+async function createSubBlockNote(
+  workEntryId: string,
+  blockEntryId: string,
+  plaintext: string
+): Promise<NoteDto> {
+  const response = await postNote(workEntryId, {
+    answers: { meaning: "to outwit" },
+    anchor: {
+      blockEntryId,
+      contextSnapshot: plaintext,
+      endOffset: 19,
+      selectedTextSnapshot: "brown fox",
+      startOffset: 10
+    },
+    templateId: "vocabulary"
+  });
+
+  return response.json() as NoteDto;
+}
+
+async function createWholeBlockNote(
+  workEntryId: string,
+  blockEntryId: string,
+  plaintext: string
+): Promise<NoteDto> {
+  const response = await postNote(workEntryId, {
+    answers: { noticed: "A tidy aphorism." },
+    anchor: { blockEntryId, contextSnapshot: plaintext, selectedTextSnapshot: plaintext },
+    templateId: "thought"
+  });
+
+  return response.json() as NoteDto;
+}
+
+function listNotes(workEntryId: string): ReturnType<typeof context.server.inject> {
+  return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/notes` });
+}
+
+function patchNote(
+  workEntryId: string,
+  noteEntryId: string,
+  payload: unknown
+): ReturnType<typeof context.server.inject> {
+  return context.server.inject({
+    method: "PATCH",
+    payload,
+    url: `/api/works/${workEntryId}/notes/${noteEntryId}`
+  });
+}
+
+function deleteNoteRequest(
+  workEntryId: string,
+  noteEntryId: string
+): ReturnType<typeof context.server.inject> {
+  return context.server.inject({
+    method: "DELETE",
+    url: `/api/works/${workEntryId}/notes/${noteEntryId}`
   });
 }
 
@@ -326,5 +391,172 @@ describe("create note route", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+});
+
+describe("list notes route", () => {
+  it("returns an empty list for a work with no notes", async () => {
+    const { workEntryId } = await createWorkWithBlock();
+
+    const response = await listNotes(workEntryId);
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as NoteListDto).notes).toEqual([]);
+  });
+
+  it("returns whole-block and sub-block notes anchored to the work's blocks", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const subBlock = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+    const wholeBlock = await createWholeBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const response = await listNotes(workEntryId);
+    const body = response.json() as NoteListDto;
+
+    expect(body.notes.map((note) => note.entryId).sort()).toEqual(
+      [subBlock.entryId, wholeBlock.entryId].sort()
+    );
+
+    const sub = body.notes.find((note) => note.entryId === subBlock.entryId);
+    expect(sub?.anchor).toEqual({
+      blockEntryId,
+      contextSnapshot: plaintext,
+      endOffset: 19,
+      selectedTextSnapshot: "brown fox",
+      startOffset: 10
+    });
+    expect(sub?.markdown).toBe("**Meaning in this context**\n\nto outwit");
+
+    const whole = body.notes.find((note) => note.entryId === wholeBlock.entryId);
+    expect(whole?.anchor.startOffset).toBeUndefined();
+    expect(whole?.anchor.endOffset).toBeUndefined();
+    expect(whole?.templateId).toBe("thought");
+  });
+
+  it("does not list a note that belongs to another work", async () => {
+    const first = await createWorkWithBlock();
+    const note = await createSubBlockNote(first.workEntryId, first.blockEntryId, first.plaintext);
+    const second = await createWorkWithBlock();
+
+    const response = await listNotes(second.workEntryId);
+
+    expect((response.json() as NoteListDto).notes).toEqual([]);
+    expect(note.entryId).toBeDefined();
+  });
+});
+
+describe("update note route", () => {
+  it("updates a note's answers and template and re-renders its markdown", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const response = await patchNote(workEntryId, note.entryId, {
+      answers: { noticed: "Now a thought." },
+      templateId: "thought"
+    });
+
+    expect(response.statusCode).toBe(200);
+    const updated = response.json() as NoteDto;
+    expect(updated.templateId).toBe("thought");
+    expect(updated.answers).toEqual({ noticed: "Now a thought." });
+    expect(updated.markdown).toBe("**What I noticed**\n\nNow a thought.");
+    expect(updated.anchor).toEqual(note.anchor);
+
+    const rows = await context.db.select().from(notes).where(eq(notes.entryId, note.entryId));
+    expect(rows[0]?.templateId).toBe("thought");
+    expect(rows[0]?.markdownBody).toBe("**What I noticed**\n\nNow a thought.");
+
+    const listed = (await listNotes(workEntryId).then((r) => r.json())) as NoteListDto;
+    expect(listed.notes[0]?.templateId).toBe("thought");
+  });
+
+  it("returns 404 when the note does not belong to the work", async () => {
+    const first = await createWorkWithBlock();
+    const note = await createSubBlockNote(first.workEntryId, first.blockEntryId, first.plaintext);
+    const second = await createWorkWithBlock();
+
+    const response = await patchNote(second.workEntryId, note.entryId, {
+      answers: { noticed: "x" },
+      templateId: "thought"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "note_not_found" });
+  });
+
+  it("rejects an unknown template", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const response = await patchNote(workEntryId, note.entryId, {
+      answers: { meaning: "x" },
+      templateId: "missing"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "template_not_found" });
+  });
+
+  it("rejects answers with no non-blank value", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const response = await patchNote(workEntryId, note.entryId, {
+      answers: { meaning: "  " },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_answers", reason: "empty" });
+  });
+
+  it("rejects a malformed update body at the boundary", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const response = await patchNote(workEntryId, note.entryId, { answers: { meaning: "x" } });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+});
+
+describe("delete note route", () => {
+  it("deletes the note, its anchor, its link, and its entry", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const response = await deleteNoteRequest(workEntryId, note.entryId);
+
+    expect(response.statusCode).toBe(204);
+    expect(response.body).toBe("");
+
+    expect(await context.db.select().from(notes).where(eq(notes.entryId, note.entryId))).toEqual(
+      []
+    );
+    expect(
+      await context.db.select().from(noteAnchors).where(eq(noteAnchors.noteEntryId, note.entryId))
+    ).toEqual([]);
+    expect(
+      await context.db.select().from(entryLinks).where(eq(entryLinks.fromEntryId, note.entryId))
+    ).toEqual([]);
+    expect(await context.db.select().from(entries).where(eq(entries.id, note.entryId))).toEqual([]);
+
+    const listed = (await listNotes(workEntryId).then((r) => r.json())) as NoteListDto;
+    expect(listed.notes).toEqual([]);
+  });
+
+  it("returns 404 when the note does not belong to the work", async () => {
+    const first = await createWorkWithBlock();
+    const note = await createSubBlockNote(first.workEntryId, first.blockEntryId, first.plaintext);
+    const second = await createWorkWithBlock();
+
+    const response = await deleteNoteRequest(second.workEntryId, note.entryId);
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "note_not_found" });
+
+    expect(
+      await context.db.select().from(notes).where(eq(notes.entryId, note.entryId))
+    ).toHaveLength(1);
   });
 });

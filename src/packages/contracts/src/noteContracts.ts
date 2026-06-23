@@ -46,6 +46,17 @@ export const createNoteRequestSchema = z
 
 export type CreateNoteRequest = z.infer<typeof createNoteRequestSchema>;
 
+// Editing a note changes its template and answers; the anchor (which block and where) is
+// fixed at capture time, so it is not part of the update.
+export const updateNoteRequestSchema = z
+  .object({
+    answers: z.record(z.string(), z.string()),
+    templateId: z.string().refine(isNonBlank, { message: "templateId must be non-empty." })
+  })
+  .strict();
+
+export type UpdateNoteRequest = z.infer<typeof updateNoteRequestSchema>;
+
 export type NoteDto = Readonly<{
   anchor: NoteAnchorDto;
   answers: Readonly<Record<string, string>>;
@@ -55,12 +66,20 @@ export type NoteDto = Readonly<{
   templateId: string;
 }>;
 
+export type NoteListDto = Readonly<{
+  notes: ReadonlyArray<NoteDto>;
+}>;
+
 export type NoteTemplateListDto = Readonly<{
   templates: ReadonlyArray<NoteTemplateDto>;
 }>;
 
 export function parseCreateNoteRequest(value: unknown): CreateNoteRequest {
   return createNoteRequestSchema.parse(value);
+}
+
+export function parseUpdateNoteRequest(value: unknown): UpdateNoteRequest {
+  return updateNoteRequestSchema.parse(value);
 }
 
 export function parseNoteTemplateDto(value: unknown): NoteTemplateDto {
