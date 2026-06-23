@@ -20,6 +20,21 @@ addressable atomic units, attach notes to specific passages, and connect ideas a
 Manual input remains a first-class v0 path; file upload exists because manually typing a whole work
 (e.g. 《史记》) is infeasible.
 
+### Usable v0 first (walking skeleton)
+
+The first milestone is a **thin but complete, usable end-to-end loop** — not a set of polished
+features. Build this whole thread before thickening any single part:
+
+1. Create or select a Work.
+2. Add content (manual Markdown or `.md` upload) -> blocks.
+3. Read it in the reader.
+4. Select text -> write a note.
+5. See your notes.
+
+Defer until the loop is usable end-to-end: EPUB/PDF ingestion, re-ingestion with stable-id
+preservation, Markdown export, reader highlights and rich note management, search polish, and any
+template breadth beyond the seeded set. A usable app beats a complete feature.
+
 ## v0 stack direction
 
 - Web-core TypeScript stack, to maximize OSS leverage for parsing, rendering, selection, annotation,
