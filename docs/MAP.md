@@ -12,14 +12,15 @@ entry to a pointer.
 
 ### `src/packages/domain/` — pure logic
 
-Entry/link/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
-`src/index.ts`. Current units: `entry.ts`, `links.ts`, `author.ts`, `work.ts`, `noteAnchor.ts`,
+Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
+`src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
+Markdown into ordered, stable-id blocks), `author.ts`, `work.ts`, `noteAnchor.ts`,
 `productIdentity.ts`. Tests are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
 
 Zod request/response contracts shared by client and server. Public surface is `src/index.ts`.
-Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `health.ts`. Tests colocated.
+Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`, `health.ts`. Tests colocated.
 Invariant: types resolve through built `dist` — run `pnpm build` (or `tsc -b`) before VS Code/tsc
 can navigate them from another package.
 
@@ -31,13 +32,16 @@ can navigate them from another package.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
-  `*Queries.ts` (current: `library/`). Routes stay thin; logic lives in commands/queries.
+  `*Queries.ts` (current: `library/`, `content/`). Routes stay thin; logic lives in commands/queries.
+- Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a
+  server-generated path with sha256 (path-traversal-guarded) for provenance only; blocks remain the
+  source of truth.
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
 
 - Entry: `src/main.tsx`; root `src/App.tsx`; styles `src/styles.css`.
-- Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`).
+- Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 
