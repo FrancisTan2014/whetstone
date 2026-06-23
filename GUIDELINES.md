@@ -23,6 +23,16 @@ Tie-breakers:
 - **Safe observability beats verbose logs.** Log useful operational context, but never log secrets, full Markdown, note bodies, selected text snapshots, or template answers.
 - **Server source of truth beats client convenience.** Client storage/caches must not become v0's authority.
 
+## Knowledge surfaces and onboarding cost
+
+Whetstone must stay fast to pick up as it grows. An agent should reach the code a task touches by reading a bounded set of durable surfaces, never the whole repository.
+
+- **The always-read tier is bounded and edited in place.** `PRODUCT.md`, `GUIDELINES.md`, and the `whetstone-engineering` skill are the constitution. Keep them current by editing, not by appending change logs; net growth in this tier is a review smell, and new detail belongs in a lower tier.
+- **Growth goes into a read-on-demand map.** `docs/MAP.md` indexes subsystems to their locations — pointers and invariants, never restated code behavior. An agent reads the constitution, then the map, then only the one feature slice it needs.
+- **Area docs are lazy, pointer-only, and event-driven.** A folder gets its own colocated `AGENTS.md` only when it outgrows a single `docs/MAP.md` entry; never seed one per folder up front. Maps and area docs are updated by the same PR that changes an area's *shape* — what it owns, its entry points, or an invariant — not on every change and never as a separate documentation pass. A fix or test inside an existing module touches no doc. A surface that restates code (and so rots) is worse than none; delete it when upkeep outweighs the reading it saves.
+- **Capture each fact in one home.** Route it: product/scope to `PRODUCT.md`; engineering or review rule to `GUIDELINES.md`; how-to-act summary to the skill; where-things-live to `docs/MAP.md` or an area doc; cross-cutting gotchas to agent memory; the what/why of a single change to its PR, issue, and git history. Other surfaces point; they do not copy.
+- **Navigate, do not linear-read.** Reach the slice through the map and targeted search; reading unrelated code is waste, not diligence.
+
 ## Architecture style
 
 Use a **feature-first modular monolith**, not a traditional layer-first project.
@@ -582,6 +592,12 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Prefer established OSS libraries for text selection/annotation/Markdown only when the issue needs them.
 - Lockfile changes match dependency changes and do not include unrelated upgrades.
 - Tooling changes preserve strict TypeScript, lint, format, build, and test commands once introduced.
+
+### Durable-surface upkeep
+
+- A PR that changes an area's shape — what it owns, its entry points, an invariant, or where a subsystem lives — updates the matching surface (`docs/MAP.md`, the relevant `AGENTS.md`, or the constitution) in the same PR, as a concise pointer-level edit.
+- A PR that does not change an area's shape touches no doc; do not request busywork documentation.
+- The always-read tier (`PRODUCT.md`, `GUIDELINES.md`, skill) stays bounded; net growth must be justified, not incidental.
 
 ### Validation
 

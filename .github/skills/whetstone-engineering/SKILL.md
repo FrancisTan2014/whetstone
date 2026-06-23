@@ -28,6 +28,10 @@ review subagent needs in order to act; it never overrides those documents.
 
 Organize by feature first. Do not add `src/apps/mobile/` or `src/apps/desktop/` until an issue scopes it.
 
+For where a specific subsystem or file currently lives, read `docs/MAP.md` (the navigational index);
+this skill stays high-level. Read the constitution and the map, then the one feature slice — do not
+linear-read the repository.
+
 ## Tech stack (v0)
 
 React + Vite, Fastify, PostgreSQL + Drizzle, Zod, Vitest. Do not add a runtime dependency unless
@@ -77,3 +81,6 @@ Never lower coverage thresholds or skip steps to make validation pass.
 - Open with `Closes #<issue-number>`. The PR body must state: linked issue, what changed, what
   validation ran, and any validation that could not run and why.
 - Developers do not merge. Reviewers merge only when the `GUIDELINES.md` merge gates pass.
+- If your PR changes what an area owns, its entry points, or where a subsystem lives, update
+  `docs/MAP.md` (or the relevant `AGENTS.md`) in the same PR — a concise pointer-level edit, not a
+  change log. A PR that does not change an area's shape touches no doc.

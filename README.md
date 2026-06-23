@@ -80,7 +80,7 @@ coordinator: you decide what runs and when, and each role does one unit of work 
 2. Trigger the developer role to implement one ready issue end to end on a clean branch and open a PR.
 3. Trigger the reviewer role to review that PR and merge it when the gates pass.
 
-See [docs/LOCAL_AGENT_WORKFLOW.md](./docs/LOCAL_AGENT_WORKFLOW.md).
+Role definitions live in [.github/agents/](./.github/agents/).
 Current design lives in [PRODUCT.md](./PRODUCT.md).
 Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 
