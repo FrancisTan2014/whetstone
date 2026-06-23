@@ -22,11 +22,14 @@ Process at most one unit of developer work:
    - Create `.agent-locks/developer-claim.lock` as a directory.
    - If it already exists and is not clearly stale, update developer.lastResult to claim_lock_busy and stop.
    - If it is stale (older than 30 minutes), remove it once, recreate it, and continue.
-2. Resume in-progress work before anything else. If developer.currentIssue is set with a recorded branch/worktree and that issue has no PR already labeled needs-review or review-approved (developer.state may be failed, in_progress, or implementing):
-   - Do not choose a new issue or PR.
-   - Verify the recorded worktree exists. If it is missing but the branch exists on origin, recreate the worktree from the remote branch. If neither exists, update developer.lastResult to recovery_worktree_missing and stop.
-   - Recover context before changing files: read `.agent-logs/issue-<number>-progress.md`, `git -C <worktree> log --oneline`, and `git -C <worktree> status`. The latest `.agent-logs/developer-*.session.md` transcript is an extra reference.
-   - Continue implementation from where the previous tick stopped and set developer.resumeReason to continue_in_progress.
+2. Resume in-progress work before anything else, anchored on the GitHub source of truth.
+   - Determine the resume target: developer.currentIssue if it is recorded; otherwise the lowest-numbered open issue labeled in-progress in the snapshot. (The local record may be missing if a previous worker crashed after claiming the issue on GitHub but before writing .agent-status.local.json.)
+   - If a resume target exists and that issue has no PR already labeled needs-review or review-approved, resume it (developer.state may be failed, in_progress, implementing, or unset):
+     - Do not choose a new issue or PR.
+     - Recover the branch/worktree: use the recorded branch/worktree if present; otherwise the issue branch is `dev/issue-<number>-<slug>` on origin — find it with `git ls-remote --heads origin "dev/issue-<number>-*"` and check out a worktree under `Q:\src\whetstone-worktrees\issue-<number>-<slug>` from that remote branch. If neither a recorded worktree nor an origin branch exists, the claim is empty (no work was pushed): record currentIssue/state in .agent-status.local.json, set developer.lastResult to recovery_branch_missing, and stop so the coordinator's failure/abandon path can act.
+     - Immediately re-record the claim in .agent-status.local.json (state in_progress, currentIssue, branch, worktree, start time) so a further crash this tick is still resumable.
+     - Recover context before changing files: read `.agent-logs/issue-<number>-progress.md`, `git -C <worktree> log --oneline`, and `git -C <worktree> status`. The latest `.agent-logs/developer-*.session.md` transcript is an extra reference.
+     - Continue implementation from where the previous tick stopped and set developer.resumeReason to continue_in_progress.
 3. Otherwise prefer one PR from remote.pullRequests labeled changes-requested.
 4. If any open PR in remote.pullRequests is labeled needs-review or review-approved, do not claim a new issue; update developer.lastResult to waiting_for_review_or_merge, release the claim lock, and stop.
 5. Otherwise find open issues in remote.issues labeled ready-for-dev and not in-progress, sorted by lowest issue number.
@@ -37,7 +40,7 @@ Process at most one unit of developer work:
 10. If no dependency-ready work exists, update developer.lastResult to idle and stop.
 
 When work is selected:
-- Update .agent-status.local.json with state, issue/PR, branch, worktree, and start time.
+- Immediately after claiming on GitHub (and before creating the worktree or doing any implementation), update .agent-status.local.json with state, issue/PR, branch, worktree, and start time, so a crash right after the GitHub claim still leaves a locally resumable record. Keep it current as work progresses.
 - For a new issue, create the isolated worktree/branch as specified in docs/LOCAL_AGENT_WORKFLOW.md. For resumed work, reuse the existing branch/worktree; only recreate it when the recorded worktree is missing and the branch is not on origin.
 - Implement synchronously (foreground subagent or inline). When delegating, give the subagent the dynamic task context and tell it to invoke the `whetstone-engineering` skill and read `PRODUCT.md`/`GUIDELINES.md` for standards rather than pasting them. Commit and push after each coherent step and update `.agent-logs/issue-<number>-progress.md`.
 - Run `pnpm validate` (typecheck, lint, test, build; or `.github/skills/whetstone-engineering/validate.ps1`) before marking the work ready.

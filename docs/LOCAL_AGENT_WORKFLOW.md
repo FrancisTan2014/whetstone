@@ -116,11 +116,12 @@ Developer and reviewer scripts are one-shot. They do not register their own `/ev
 They create `.agent-locks\worker.lock` while running, so the tick will not start a second worker before the current one exits.
 They run with UTF-8-related environment variables and write stdout/stderr plus Copilot session transcripts under `.agent-logs/`.
 `scripts\cleanup-agent-locks.cmd` performs stale `worker.lock` cleanup. `start-coordinator.cmd` runs it before registering the scheduled prompt, and `coordinator-tick.mjs` runs it at the start of every tick before reading lock state.
-If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the tick marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress.
+If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the tick marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress. If a worker crashed after claiming an issue on GitHub but before recording it locally, the tick still recovers it: an issue labelled `in-progress` with no open PR and no live worker is re-dispatched to the developer (anchored on the `in-progress` label, which is the source of truth), and the developer resumes it from the issue branch and progress file.
 
 Recovery policy:
 
 - The coordinator retries recorded developer recovery work automatically after backoff.
+- An issue labelled `in-progress` with no open PR and no running worker is treated as an orphaned claim and re-dispatched to the developer for resume, even when the local snapshot has no record of it (`decide()` reason `developer_resume_in_progress_issue_<n>`).
 - After three developer failures with no PR, the coordinator runs `scripts\abandon-developer-attempt.cmd`.
 - That script removes the failed local worktree and local `dev/issue-*` branch and clears pause/backoff state.
 - On the first abandon for an issue, it requeues the issue as `ready-for-dev` for one clean retry.
@@ -138,7 +139,7 @@ A developer tick is a short-lived process and may be interrupted or crash at any
 - The developer commits and pushes to the issue branch after each coherent step. Pushed commits are the durable, crash-proof record of progress.
 - The developer maintains a gitignored progress file at `.agent-logs/issue-<number>-progress.md` recording what is done, what remains, validation status, and the next action, so a later tick can resume precisely.
 - A large issue may span several ticks. Each tick ends committed, pushed, and with the progress file updated. The PR is opened (and labeled needs-review) only when the acceptance criteria are met and validation passes.
-- Across ticks the coordinator keeps re-invoking the developer for the recorded in-progress issue (worktree/branch set, no needs-review PR) until the PR is opened, so an interrupted implementation is resumed rather than lost.
+- Across ticks the coordinator keeps re-invoking the developer for the in-progress issue (recorded locally, or detected from the GitHub `in-progress` label when the local record is missing; no needs-review PR) until the PR is opened, so an interrupted implementation is resumed rather than lost.
 
 ### Developer coordinator workflow
 

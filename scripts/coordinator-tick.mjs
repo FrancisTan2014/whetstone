@@ -130,6 +130,30 @@ export function decide(status, locks, now = new Date()) {
     return { action: 'start_reviewer', reason: `reviewer_pr_${reviewable.number}`, patch: {} };
   }
 
+  // 8.5 Orphaned in-progress recovery (anchored on the GitHub source of truth).
+  // We only reach here with no live worker (steps 4/5) and no PR-driven work. An issue
+  // labelled in-progress with no open PR is a claim whose worker exited without finishing
+  // or opening a PR. The local snapshot may not record it — a worker can die after adding
+  // the in-progress label but before writing .agent-status.local.json — so recovery is
+  // anchored on the label (the source of truth) rather than only on local state. The
+  // developer is re-invoked to resume it (reusing the issue branch and progress file).
+  const branchMatchesIssue = (ref, n) => new RegExp(`(^|\\D)issue-${n}(\\D|$)`).test(ref ?? '');
+  const hasOpenPrForIssue = (n) => prs.some((p) => branchMatchesIssue(p.headRefName, n));
+  const orphanedInProgress = issues
+    .filter((i) => labelsOf(i).includes('in-progress'))
+    .filter((i) => !hasOpenPrForIssue(i.number))
+    .sort((a, b) => a.number - b.number)[0];
+  if (orphanedInProgress) {
+    if (inFuture(dev.nextRetryAfter)) {
+      return { action: 'developer_backoff', reason: 'developer_backoff', patch: {} };
+    }
+    return {
+      action: 'start_developer',
+      reason: `developer_resume_in_progress_issue_${orphanedInProgress.number}`,
+      patch: {}
+    };
+  }
+
   // 9-12. the lowest-numbered dependency-ready ready-for-dev issue
   const openIssueNumbers = new Set(issues.map((i) => i.number));
   const dependencyClosed = (n) => !openIssueNumbers.has(n);
@@ -234,7 +258,7 @@ function snapshotRemote(status, now) {
     ]);
     const prsRes = run('gh', [
       'pr', 'list', '--repo', REPO, '--state', 'open', '--limit', '200',
-      '--json', 'number,title,labels,headRefOid,url,isDraft,statusCheckRollup,mergeable,reviewDecision'
+      '--json', 'number,title,labels,headRefName,headRefOid,url,isDraft,statusCheckRollup,mergeable,reviewDecision'
     ]);
 
     const okIssues = issuesRes.status === 0;

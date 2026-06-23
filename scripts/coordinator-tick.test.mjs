@@ -27,7 +27,7 @@ function baseStatus(overrides = {}) {
 }
 
 const issue = (number, labels, body = '') => ({ number, labels, body });
-const pr = (number, labels) => ({ number, labels });
+const pr = (number, labels, headRefName = '') => ({ number, labels, headRefName });
 
 const cases = [];
 const test = (name, fn) => cases.push({ name, fn });
@@ -174,27 +174,93 @@ test('issue with an open dependency is skipped', () => {
   assert.equal(d.reason, 'developer_new_issue_3');
 });
 
-test('in-progress issue is skipped', () => {
+test('in-progress issue with no PR is resumed (orphan recovery)', () => {
+  // A claim labelled in-progress with no PR and no live worker is an orphan: resume it
+  // (anchored on the GitHub label, even when the local snapshot has no record).
   const s = baseStatus({
     remote: {
       lastSyncCompletedAt: NOW.toISOString(),
-      issues: [issue(3, ['ready-for-dev', 'in-progress'], '')],
+      issues: [issue(3, ['in-progress'], '')],
       pullRequests: []
+    }
+  });
+  const d = decide(s, noLocks, NOW);
+  assert.equal(d.action, 'start_developer');
+  assert.equal(d.reason, 'developer_resume_in_progress_issue_3');
+});
+
+test('orphaned in-progress yields to a live worker', () => {
+  const s = baseStatus({
+    remote: { lastSyncCompletedAt: NOW.toISOString(), issues: [issue(3, ['in-progress'], '')], pullRequests: [] }
+  });
+  const d = decide(s, { ...noLocks, worker: true }, NOW);
+  assert.equal(d.action, 'worker_busy');
+});
+
+test('lowest-numbered orphaned in-progress issue is chosen', () => {
+  const s = baseStatus({
+    remote: {
+      lastSyncCompletedAt: NOW.toISOString(),
+      issues: [issue(12, ['in-progress'], ''), issue(11, ['in-progress'], '')],
+      pullRequests: []
+    }
+  });
+  const d = decide(s, noLocks, NOW);
+  assert.equal(d.reason, 'developer_resume_in_progress_issue_11');
+});
+
+test('in-progress issue with its own open PR is not orphan-resumed', () => {
+  const s = baseStatus({
+    remote: {
+      lastSyncCompletedAt: NOW.toISOString(),
+      issues: [issue(11, ['in-progress'], '')],
+      pullRequests: [pr(20, [], 'dev/issue-11-admin-author-work')]
     }
   });
   const d = decide(s, noLocks, NOW);
   assert.equal(d.action, 'idle');
 });
 
-test('issue whose dependency is still open yields idle', () => {
+test('needs-review PR for an in-progress issue still routes to reviewer', () => {
   const s = baseStatus({
     remote: {
       lastSyncCompletedAt: NOW.toISOString(),
-      issues: [issue(4, ['ready-for-dev'], 'Depends on: #3'), issue(3, ['ready-for-dev', 'in-progress'], '')],
+      issues: [issue(11, ['in-progress'], '')],
+      pullRequests: [pr(20, ['needs-review'], 'dev/issue-11-admin-author-work')]
+    }
+  });
+  const d = decide(s, noLocks, NOW);
+  assert.equal(d.action, 'start_reviewer');
+});
+
+test('orphaned in-progress respects developer backoff', () => {
+  const s = baseStatus({
+    developer: { state: 'idle', currentIssue: null, currentPr: null, failureCount: 0, nextRetryAfter: future },
+    remote: { lastSyncCompletedAt: NOW.toISOString(), issues: [issue(11, ['in-progress'], '')], pullRequests: [] }
+  });
+  const d = decide(s, noLocks, NOW);
+  assert.equal(d.action, 'developer_backoff');
+});
+
+test('recorded unfinished local work beats orphan-label resume', () => {
+  const s = baseStatus({
+    developer: { state: 'failed', currentIssue: 3, currentPr: null, branch: 'dev/issue-3', worktree: 'w', nextRetryAfter: past },
+    remote: { lastSyncCompletedAt: NOW.toISOString(), issues: [issue(11, ['in-progress'], '')], pullRequests: [] }
+  });
+  const d = decide(s, noLocks, NOW);
+  assert.equal(d.reason, 'resume_developer_recovery');
+});
+
+test('issue whose dependency is still open yields idle', () => {
+  // #3 is blocked (not ready, not in-progress) and still open, so #4's dependency is
+  // unmet and nothing is dispatchable.
+  const s = baseStatus({
+    remote: {
+      lastSyncCompletedAt: NOW.toISOString(),
+      issues: [issue(4, ['ready-for-dev'], 'Depends on: #3'), issue(3, ['blocked'], '')],
       pullRequests: []
     }
   });
-  // #3 is in-progress (skipped), #4 depends on still-open #3 -> idle
   const d = decide(s, noLocks, NOW);
   assert.equal(d.action, 'idle');
 });
