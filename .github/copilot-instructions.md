@@ -7,7 +7,7 @@ This repository is built through a design -> issue -> implementation -> review l
 - Treat `PRODUCT.md` as the durable product/design memory.
 - Treat `GUIDELINES.md` as the durable engineering and review guide.
 - Treat GitHub issues as the source of truth for implementation work.
-- The local coordinator is the only scheduled automation role; developer and reviewer roles are one-shot workers invoked by the coordinator.
+- There is no scheduled automation. The human maintainer is the coordinator and manually triggers the developer and reviewer roles, one unit of work at a time.
 - Only implement issues with clear acceptance criteria.
 - Keep issues and PRs small. Split broad work before implementation.
 - Keep changes scoped to the issue. Do not add extra features, frameworks, or large refactors.

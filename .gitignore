@@ -22,9 +22,7 @@ Thumbs.db
 /notes/
 /seeds/local-*.md
 
-# Local agent scheduler status
-.agent-status.local.json
-.agent-locks/
+# Local agent run logs
 .agent-logs/
 *.log
 

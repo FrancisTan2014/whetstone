@@ -73,11 +73,12 @@ pnpm build
 
 ## Development workflow
 
-1. Stabilize a requirement in discussion.
-2. Create a GitHub issue with acceptance criteria.
-3. Let the scheduled local Copilot developer session claim the issue, delegate implementation to a subagent when available, and open a PR.
-4. Let the scheduled local Copilot reviewer session delegate detailed review to a subagent when available and post PR feedback.
-5. Iterate, then merge when ready.
+This repo is built by **manually-triggered** Copilot CLI roles. You (the maintainer) act as the
+coordinator: you decide what runs and when, and each role does one unit of work and then stops.
+
+1. Stabilize a requirement, then create a GitHub issue with acceptance criteria (the design role helps).
+2. Trigger the developer role to implement one ready issue end to end on a clean branch and open a PR.
+3. Trigger the reviewer role to review that PR and merge it when the gates pass.
 
 See [docs/LOCAL_AGENT_WORKFLOW.md](./docs/LOCAL_AGENT_WORKFLOW.md).
 Current design lives in [PRODUCT.md](./PRODUCT.md).
@@ -86,16 +87,9 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 ## Local launchers
 
 ```powershell
-.\scripts\start-design.cmd
-.\scripts\start-coordinator.cmd
-.\scripts\start-developer.cmd
-.\scripts\start-reviewer.cmd
+.\scripts\run-design.cmd            # shape ideas into PRODUCT.md + issues (interactive)
+.\scripts\run-developer.cmd 12      # implement issue #12 (omit the number to pick the next ready issue)
+.\scripts\run-reviewer.cmd 17       # review PR #17 (omit the number to pick the oldest needs-review PR)
 ```
 
-Start scheduled Copilot sessions:
-
-```powershell
-.\scripts\start-coordinator.cmd
-```
-
-The developer and reviewer scripts are one-shot helpers. The coordinator is the only scheduled role.
+There is no scheduled or background automation; you trigger each role yourself, one at a time.

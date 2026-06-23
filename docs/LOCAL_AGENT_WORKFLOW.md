@@ -1,238 +1,55 @@
 # Local agent workflow
 
-This repository uses local Copilot CLI scheduled prompts instead of GitHub Copilot cloud automation.
+Whetstone is built by **manually-triggered** Copilot CLI roles. There is no scheduler, no background
+loop, and no shared status file. You (the maintainer) are the coordinator: you decide what runs and
+when, and each role does exactly one unit of work and then stops.
 
-The stable model is **one scheduled coordinator plus one local status tracker**:
+## Roles
 
-1. **Design session**: the user provides product ideas; the design agent turns stable requirements into GitHub issues.
-2. **Coordinator scheduled session**: Copilot's `/every` prompt wakes up every 5 minutes, refreshes GitHub status into `.agent-status.local.json`, decides whether developer or reviewer should run, and invokes at most one one-shot role.
-3. **Developer one-shot session**: invoked by the coordinator when local status says development or review-fix work is ready.
-4. **Reviewer one-shot session**: invoked by the coordinator when local status says review or merge-gate work is ready.
-5. **Merge**: reviewer merges automatically only after implementation, review, and checks are satisfactory.
+- **Design** (`whetstone-design`): turns stable ideas into `PRODUCT.md` decisions and
+  implementation-ready GitHub issues. Interactive.
+- **Developer** (`whetstone-developer`): implements one `ready-for-dev` issue end to end on a clean
+  branch and opens one scoped pull request, then stops. Does not merge.
+- **Reviewer** (`whetstone-reviewer`): reviews one pull request against `GUIDELINES.md`, posts
+  high-signal feedback, and merges only when the merge gates pass, then stops.
 
-The local status tracker is `.agent-status.local.json`. It is ignored by Git. If it does not exist, the agents create it from `docs/agent-status.example.json`.
-Worker transcripts and stdout/stderr logs live under `.agent-logs/` and are ignored by Git.
+The full role definitions live in `.github/agents/*.agent.md`. Shared engineering standards and the
+`pnpm validate` gate live in the `whetstone-engineering` skill (`.github/skills/`). `PRODUCT.md` and
+`GUIDELINES.md` remain the source of truth.
 
-GitHub labels/issues/PRs remain the source of truth. The local tracker is the scheduling snapshot and lease/status log so agents know what they were doing last tick and avoid duplicating work.
+## How to run
 
-All local role sessions use Copilot CLI's `--allow-all` mode by user preference. The scripts set the working directory to `Q:\src\whetstone` so the agent starts from the intended repository context.
-
-The coordinator is responsible for remote status refresh. On each tick it runs:
-
-```text
-git fetch origin --prune
+```powershell
+cd Q:\src\whetstone
+.\scripts\run-design.cmd            # interactive design session
+.\scripts\run-developer.cmd 12      # implement issue #12 (omit the number to pick the next ready issue)
+.\scripts\run-reviewer.cmd 17       # review PR #17 (omit the number to pick the oldest needs-review PR)
 ```
 
-The scheduled prompt processes at most one unit of work per tick. The default cadence is every five minutes.
+Each launcher sets `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) and runs Copilot in the
+foreground with `--allow-all`, so you can watch the run and answer if the role needs a decision.
 
-Locks live under `.agent-locks/`:
+## Clean-start guarantee
 
-- `status-sync.lock`: coordinator owns remote snapshot refresh.
-- `worker.lock`: exactly one developer or reviewer one-shot worker may run at a time. It contains `role.txt`, the launched Copilot process `pid.txt`, `startedAt.txt`, and `command.txt`.
-- `worker-last-failure.json`: last one-shot worker failure for diagnosis. Coordinator retries with backoff using `.agent-status.local.json`.
-- `developer-claim.lock`: developer owns issue/PR selection and claim.
-- `reviewer-work.lock`: reviewer owns PR review/merge selection.
+The developer role always branches fresh from `origin/main` and **never resumes a leftover branch or
+worktree** from a previous attempt. Abandoned attempts are disposable: if a `dev/issue-<n>-*` branch
+exists, the developer deletes and recreates it from `origin/main`, re-deriving everything from the
+issue and `PRODUCT.md`. This is what keeps stale or wrong-model work from leaking into a new attempt.
 
-Locks are directories so creation is atomic enough for local sessions. If `worker.lock` remains after a PC restart or killed worker process, the coordinator checks the recorded PID and removes the stale lock before scheduling work. Other stale locks may be removed once by the owning prompt as described in `prompts/*.txt`.
+## One unit at a time
+
+The backlog is a dependency chain; issues carry `Depends on: #N`. Run the developer on the lowest
+ready issue, then review and merge its PR, then run the developer again. Running more than one
+developer session against this repo at the same time corrupts shared git state — trigger one role at
+a time.
 
 ## Labels
 
-- `ready-for-dev`: design is stable and a developer run may claim it.
-- `in-progress`: a developer run has claimed it.
-- `needs-design`: blocked on requirements/design clarification.
-- `needs-review`: implementation is ready for reviewer attention.
-- `changes-requested`: reviewer found material feedback; developer run should fix this PR before claiming new issues.
-- `review-approved`: reviewer says the PR passed review and can be merged once checks are green.
-- `blocked`: blocked by an external dependency or unresolved decision.
-- `copilot`: intended for local Copilot agent work.
-
-## Product starting point
-
-Begin from the simplest v0 reading app:
-
-- Admin pages input source reading materials.
-- Reader pages display materials.
-- Users click or tap words/phrases in the reader to create notes linked to that source text.
-
-Do not reintroduce older complex scope unless a later issue explicitly asks for it.
-
-## Shared engineering context
-
-Engineering standards, the repository map, testability rules, and the validation gate are packaged
-as the `whetstone-engineering` skill in `.github/skills/`. `GUIDELINES.md` and `PRODUCT.md` remain
-the source of truth the skill points to. Developer and reviewer runs pass their subagents the dynamic
-task context and tell them to invoke that skill and read the canonical docs, instead of pasting
-standards into every prompt. The validation gate is `pnpm validate` (typecheck, lint, test, build),
-which mirrors CI; the skill bundles `validate.ps1` for encoding-safe logging on Windows workers.
-
-## Design session
-
-Use the main checkout:
-
-```powershell
-cd Q:\src\whetstone
-.\scripts\start-design.cmd
-```
-
-Design output is:
-
-- `PRODUCT.md` updates when decisions stabilize.
-- GitHub issues when a slice is implementation-ready.
-
-The design agent must produce scoped issues. Prefer vertical feature/fix issues; do not split one capability into artificial backend/database/frontend issues. Split only unrelated outcomes or broad foundation work.
-
-Size each issue to land completely — a passing PR at 100% coverage — within about one to two developer runs. When a single coherent capability is too large to finish and fully test in that window, split it into thinner vertical slices by sub-capability (each still a full feature: UI, API, persistence, and tests), ordered with `Depends on: #N`. Never split into separate backend/frontend/database issues.
-
-Each implementation issue includes:
-
-- outcome
-- acceptance criteria
-- constraints / non-goals
-- validation expectations
-
-Apply `ready-for-dev` only when the issue is implementable without guessing.
-
-## Coordinator scheduled session
-
-Start the coordinator scheduled session:
-
-```powershell
-cd Q:\src\whetstone
-.\scripts\start-coordinator.cmd
-```
-
-The launcher opens Copilot with `-i` and automatically submits the `/every 5m` coordinator prompt. No paste step is required.
-
-The coordinator's scheduling decision is **deterministic and implemented in code**, not re-reasoned by the LLM each tick. The scheduled session is a thin runner: every tick it runs `scripts\coordinator-tick.cmd` and reports the result. That script:
-
-1. cleans stale locks (`cleanup-agent-locks.cmd`),
-2. syncs remote GitHub issue/PR status into `.agent-status.local.json` (under `status-sync.lock`),
-3. evaluates the full decision tree, and
-4. invokes at most one one-shot worker — `scripts\start-developer.cmd` for development/review-fix work or `scripts\start-reviewer.cmd` for review/merge work.
-
-The routing logic is the pure `decide()` function in `scripts/coordinator-tick.mjs`, covered branch-by-branch by `scripts/coordinator-tick.test.mjs` (run `node scripts/coordinator-tick.test.mjs`). `coordinator-tick.mjs --dry-run` prints the decision with no side effects. Because the decision is code, it is fast, deterministic, and testable instead of being re-derived from prose every five minutes.
-
-Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
-They create `.agent-locks\worker.lock` while running, so the tick will not start a second worker before the current one exits.
-They run with UTF-8-related environment variables and write stdout/stderr plus Copilot session transcripts under `.agent-logs/`.
-`scripts\cleanup-agent-locks.cmd` performs stale `worker.lock` cleanup. `start-coordinator.cmd` runs it before registering the scheduled prompt, and `coordinator-tick.mjs` runs it at the start of every tick before reading lock state.
-If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the tick marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress. If a worker crashed after claiming an issue on GitHub but before recording it locally, the tick still recovers it: an issue labelled `in-progress` with no open PR and no live worker is re-dispatched to the developer (anchored on the `in-progress` label, which is the source of truth), and the developer resumes it from the issue branch and progress file.
-
-Recovery policy:
-
-- The coordinator retries recorded developer recovery work automatically after backoff.
-- An issue labelled `in-progress` with no open PR and no running worker is treated as an orphaned claim and re-dispatched to the developer for resume, even when the local snapshot has no record of it (`decide()` reason `developer_resume_in_progress_issue_<n>`).
-- After three developer failures with no PR, the coordinator runs `scripts\abandon-developer-attempt.cmd`.
-- That script removes the failed local worktree and local `dev/issue-*` branch and clears pause/backoff state.
-- On the first abandon for an issue, it requeues the issue as `ready-for-dev` for one clean retry.
-- If the issue was already retried once and still fails, it parks the issue as `blocked` for human review instead of requeueing, so the queue keeps moving and never loops forever.
-- The next coordinator tick starts a clean retry of a requeued issue, or skips a parked `blocked` issue.
-- If a PR exists, the coordinator does not abandon the attempt; developer owns PR recovery.
-
-## Developer one-shot workflow
-
-### Durable progress and crash resilience
-
-A developer tick is a short-lived process and may be interrupted or crash at any time, so it must never hold progress only in memory or in uncommitted files:
-
-- Implementation runs synchronously in the tick (foreground coding subagent or inline). A one-shot session must not launch a background or detached agent and then exit, because background work is killed when the session ends.
-- The developer commits and pushes to the issue branch after each coherent step. Pushed commits are the durable, crash-proof record of progress.
-- The developer maintains a gitignored progress file at `.agent-logs/issue-<number>-progress.md` recording what is done, what remains, validation status, and the next action, so a later tick can resume precisely.
-- A large issue may span several ticks. Each tick ends committed, pushed, and with the progress file updated. The PR is opened (and labeled needs-review) only when the acceptance criteria are met and validation passes.
-- Across ticks the coordinator keeps re-invoking the developer for the in-progress issue (recorded locally, or detected from the GitHub `in-progress` label when the local record is missing; no needs-review PR) until the PR is opened, so an interrupted implementation is resumed rather than lost.
-
-### Developer coordinator workflow
-
-Goal: process at most one unit of developer work, then stop.
-
-Priority order:
-
-1. First handle one open PR labeled `changes-requested`.
-2. If any open PR in local status is labeled `needs-review` or `review-approved`, do not claim a new issue; wait for reviewer review or reviewer merge.
-3. If no PR is waiting, find the lowest-numbered open issue in local status labeled `ready-for-dev` and not labeled `in-progress`.
-4. If an issue body declares `Depends on: #N`, skip it until every dependency issue is closed.
-5. If no dependency-ready issue exists, stay idle and stop.
-
-### Developer review-fix workflow
-
-When a PR with `changes-requested` is found:
-
-1. Read the PR, linked issue, acceptance criteria, review comments, failed checks if any, and current head branch.
-2. Check out the existing PR branch in its existing worktree if available; otherwise create/update an isolated worktree under `Q:\src\whetstone-worktrees\pr-<number>-fixes` from the PR head branch.
-3. Prepare a focused coding-subagent prompt containing the dynamic context — PR URL, linked issue, acceptance criteria, review comments, branch name, and worktree path — and instruct the subagent to invoke the `whetstone-engineering` skill and read `GUIDELINES.md` for standards and the `pnpm validate` gate, rather than pasting them.
-4. Start a coding subagent for the fixes when available. The subagent must address only material review feedback and must not add unrelated changes.
-5. If subagent delegation is unavailable in the current CLI mode, fix directly, but still process only this one PR.
-6. Verify the worktree state and validation summary.
-7. Commit with a conventional commit message and push to the existing PR branch.
-8. Comment on the PR summarizing how each material review comment was addressed.
-9. Remove `changes-requested` and add `needs-review`.
-10. Do not merge.
-
-### Developer new-issue workflow
-
-When an issue is found:
-
-1. Read the full issue and confirm it has outcome, acceptance criteria, constraints/non-goals, and validation.
-2. If the issue declares dependencies using `Depends on: #N`, verify all dependency issues are closed before claiming.
-3. If the issue is ambiguous or dependencies are not closed, add label `needs-design` only for ambiguity; otherwise skip it and stop.
-4. Claim it by adding `in-progress`, removing `ready-for-dev`, and commenting that it is claimed by the local developer run.
-5. Create an isolated git worktree under `Q:\src\whetstone-worktrees\issue-<number>-<short-slug>` from `origin/main`, on branch `dev/issue-<number>-<short-slug>`.
-6. Prepare a focused coding-subagent prompt containing the dynamic context — issue URL, issue body, acceptance criteria, constraints/non-goals, branch name, and worktree path — and instruct the subagent to invoke the `whetstone-engineering` skill and read `PRODUCT.md`/`GUIDELINES.md` for standards and the `pnpm validate` gate, rather than pasting them.
-7. Start a coding subagent for implementation when available. The subagent must work only in the issue worktree, implement only the issue scope, run validation, and report what changed.
-8. If subagent delegation is unavailable in the current CLI mode, implement directly, but still process only this one issue.
-9. Verify the worktree state and validation summary.
-10. Commit with a conventional commit message, push the branch, and open a PR with `Closes #<issue-number>`.
-11. Add label `needs-review` to the PR if possible.
-12. Do not merge.
-
-The developer script is one-shot. Run it manually only for debugging; the coordinator normally invokes it.
-
-## Reviewer one-shot workflow
-
-Manual reviewer one-shot:
-
-```powershell
-cd Q:\src\whetstone
-.\scripts\start-reviewer.cmd
-```
-
-Normally the coordinator invokes this script.
-
-### Durable outcome and crash resilience
-
-A reviewer tick is a short-lived process that can be interrupted, so it must reach a durable, idempotent outcome:
-
-- Analysis runs synchronously in the tick (foreground review subagent or inline); the run must not launch a background or detached agent and then exit.
-- The durable outcome is a posted GitHub review carrying the `reviewer-run-reviewed: <head-sha>` marker plus the correct label, or — for an already-approved PR — a merge-gate decision.
-- Outcome steps run in a safe order: post the review, then update labels, then merge. Labels and the marker are written only once the review is complete, so an interruption never leaves partial label changes.
-- The `reviewer-run-reviewed: <head-sha>` marker is the dedupe key: a PR already reviewed at its current head SHA is skipped (unless it only needs a merge-gate recheck), and the PR is re-reviewed when its head SHA changes.
-- A review is single-shot, so there is no worktree to resume; recovery from an interrupted tick is simply re-review on the next tick while the PR still carries `needs-review`.
-
-### Reviewer coordinator workflow
-
-Goal: process at most one reviewer unit of work from local status. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
-
-Avoid duplicate reviews:
-
-- Get the PR head SHA.
-- Skip the PR if it already has a reviewer-run comment or review marker for that same head SHA, unless the PR is labeled `review-approved` and only needs merge-gate checking.
-- Re-review if the PR head SHA changed since the last reviewer-run marker.
-
-When a PR needs review:
-
-1. Read `GUIDELINES.md`, `PRODUCT.md`, the linked issue, PR description, diff, and validation notes.
-2. Prepare a focused review-subagent prompt containing the dynamic context — PR URL, linked issue, acceptance criteria, changed files, and validation notes — and instruct the subagent to invoke the `whetstone-engineering` skill and use `GUIDELINES.md`/`PRODUCT.md` as the authority instead of pasting them.
-3. Start a review subagent for detailed analysis when available. The subagent must not edit files.
-4. If subagent delegation is unavailable in the current CLI mode, review directly, but still process only this one PR.
-5. Leave a GitHub PR review with only material findings.
-6. If changes are needed, request changes or leave clear blocking comments, include marker `reviewer-run-reviewed: <head-sha>`, add label `changes-requested`, and remove `needs-review`.
-7. If ready, leave a concise approval-style comment, include marker `reviewer-run-reviewed: <head-sha>`, add label `review-approved`, and remove `needs-review` / `changes-requested`.
-8. Before merging, verify the PR head SHA still matches the reviewed SHA, checks are green, there are no merge conflicts, and no `changes-requested` / `needs-review` labels remain.
-9. If merge gates pass, merge the PR using the repository default merge strategy and delete the branch if safe.
-10. If checks are still pending or the head SHA changed, do not merge; leave a status comment and stop for the next tick. If required checks have failed, do not keep waiting: post the failure summary, add `changes-requested`, and remove `review-approved`/`needs-review` so the developer loop fixes it.
-
-Merged PRs are ignored because the reviewer only scans open PRs. Closed issues are ignored because the developer only scans open `ready-for-dev` issues. Review feedback is closed by the `changes-requested` -> developer fix -> `needs-review` loop.
-
-## Operating rule
-
-The user only needs to provide product ideas. The design session turns stable ideas into issues; the coordinator keeps local status fresh and invokes one-shot developer/reviewer sessions as needed.
+- `ready-for-dev` — design is stable; the developer may implement it.
+- `in-progress` — a developer run has claimed it.
+- `needs-design` — blocked on a product/requirements decision.
+- `needs-review` — a PR is ready for the reviewer.
+- `changes-requested` — the reviewer found material feedback; the developer fixes the PR.
+- `review-approved` — the PR passed review and can merge once checks are green.
+- `blocked` — blocked by an external dependency or unresolved decision.
+- `copilot` — intended for local Copilot agent work.

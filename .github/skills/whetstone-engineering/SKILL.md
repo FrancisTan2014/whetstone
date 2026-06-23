@@ -19,10 +19,12 @@ review subagent needs in order to act; it never overrides those documents.
 
 - `src/apps/web/` — React + Vite PWA client.
 - `src/apps/server/` — Fastify API server.
-- `src/packages/domain/` — pure Entry/link/template/note-anchor logic (no React, Fastify, DB, or fs).
+- `src/packages/domain/` — pure Entry/link/block/template/note-anchor logic (no React, Fastify, DB, or fs).
 - `src/packages/contracts/` — shared API schemas and DTOs (Zod).
-- Markdown source files live on the server filesystem under the configured data directory.
-  PostgreSQL (via Drizzle) stores metadata, paths, indexes, templates, notes, and links.
+- Content is stored as **Block rows** in PostgreSQL via Drizzle (mdast JSON + plaintext per block),
+  not as files. Markdown and EPUB are import/export formats; an uploaded source file is kept on disk
+  for provenance only. PostgreSQL stores works, reading units, blocks, templates, notes, links, and
+  search indexes.
 
 Organize by feature first. Do not add `src/apps/mobile/` or `src/apps/desktop/` until an issue scopes it.
 
@@ -46,13 +48,15 @@ the issue needs it and the PR explains why.
 ## Testability and tests
 
 - Put pure product logic in `src/packages/domain` so it tests without React, Fastify, PostgreSQL, or fs.
-- Keep Fastify handlers thin, keep Markdown fs access behind the server file boundary, and keep
-  note-anchor creation out of React components so each is testable in isolation.
+- Keep Fastify handlers thin, keep file ingestion and provenance-file access behind the server file
+  boundary, and keep block and note-anchor creation out of React components so each is testable in
+  isolation.
 - Target 100% coverage (statements, branches, functions, lines) for included source. Any exclusion
   must be narrow, commented, and justified in the PR. Do not lower thresholds or add assertion-free
   tests to inflate coverage.
-- Test the risky parts first: domain logic, template validation/rendering, note-anchor creation,
-  Markdown path-traversal prevention, and server command/query writes.
+- Test the risky parts first: domain logic, Markdown/EPUB parsing into blocks, template
+  validation/rendering, block and note-anchor creation, upload path-traversal prevention, and server
+  command/query writes.
 
 ## Validate before marking work ready
 
