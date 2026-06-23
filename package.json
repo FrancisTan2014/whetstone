@@ -15,14 +15,20 @@
     "format:check": "prettier --check \"src/apps/**/*.{ts,tsx,css,html,json}\" \"src/packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
     "test": "vitest run --coverage",
     "build": "pnpm --filter @whetstone/domain build && pnpm --filter @whetstone/contracts build && pnpm --filter @whetstone/server build && pnpm --filter @whetstone/web build",
-    "validate": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+    "validate": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "db:generate": "drizzle-kit generate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^10.5.0",
     "globals": "^17.6.0",
+    "jsdom": "^26.0.0",
     "prettier": "^3.8.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1",
