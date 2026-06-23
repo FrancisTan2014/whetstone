@@ -19,9 +19,10 @@ This repository is built through a design -> issue -> implementation -> review l
 - Prefer simple, maintainable code over speculative architecture.
 - Follow `GUIDELINES.md`; do not invent a different project structure.
 - Add or update tests for behavior changes when test infrastructure exists.
-- Run the repository's existing build, lint, and test commands before finishing.
-- If no build or test command exists yet, state that clearly in the pull request.
+- Run `pnpm validate` (typecheck, lint, test, build) before finishing.
+- If a command does not exist yet, state that clearly in the pull request.
 - Do not commit secrets, tokens, or machine-specific paths.
+- Engineering standards and the validation gate are operationalized by the `whetstone-engineering` skill in `.github/skills/`; `GUIDELINES.md` and `PRODUCT.md` remain the source of truth.
 
 ## Product direction
 

@@ -10,6 +10,12 @@ Before choosing work:
 - Treat GitHub PR labels/comments as the source of truth; use .agent-status.local.json as a local lease/status log.
 - Do not perform the full remote status sync; the coordinator owns that.
 
+Crash resilience and durable outcome (apply this throughout the tick):
+- A reviewer tick is a short-lived process that can be interrupted or crash at any time. Do the analysis synchronously in this process (foreground subagent or inline); never launch a background or detached agent and then exit.
+- Reach a durable outcome before exiting: a posted GitHub review carrying the `reviewer-run-reviewed: <head-sha>` marker plus the correct label, or — for an already-approved PR — a recorded merge-gate decision (merge, or a clear reason not to).
+- Order outcome steps safely: post the review first, then update labels, then merge. Do not change labels or write the marker until the review is complete, so an interruption never leaves partial label changes.
+- The `reviewer-run-reviewed: <head-sha>` marker is the dedupe key. Skip a PR already reviewed at its current head SHA (unless it is review-approved and only needs a merge-gate recheck); re-review only when the head SHA changed.
+
 Process at most one unit of reviewer work:
 1. Acquire `.agent-locks/reviewer-work.lock` before selecting a PR.
 2. First find one open non-draft PR in remote.pullRequests labeled review-approved and check whether merge gates now pass.
@@ -21,10 +27,12 @@ Process at most one unit of reviewer work:
 When work is selected:
 - Update .agent-status.local.json with state, PR, head SHA, and start time.
 - Use a review subagent for detailed analysis when available, running it synchronously (foreground/blocking) and waiting for it to finish. The subagent must not edit files. Never launch a background or detached agent and then exit; background work is killed when this one-shot session ends.
+- Give the subagent the dynamic PR context (PR URL, linked issue, acceptance criteria, changed files, validation notes) and have it invoke the `whetstone-engineering` skill and use `GUIDELINES.md`/`PRODUCT.md` as the authority, rather than pasting those documents.
 - If subagent delegation is unavailable, do the one review directly.
 - Complete the review and any merge decision within this tick before exiting. If the tick is interrupted, the next tick re-reviews the same head SHA.
 - Post review feedback as specified in GUIDELINES.md and docs/LOCAL_AGENT_WORKFLOW.md.
-- If the PR is review-approved and merge gates pass, merge it using the repository default merge strategy. Do not merge if checks are failing/pending, the head SHA changed after review, merge conflicts exist, or GUIDELINES.md says to request changes.
+- If the PR is review-approved and all merge gates pass, merge it using the repository default merge strategy. Do not merge when the head SHA changed after review, merge conflicts exist, or GUIDELINES.md says to request changes.
+- Handle checks explicitly: while required checks are still pending, leave the PR review-approved and stop for the next tick; if required checks have failed, do not keep waiting — post the failure summary, add changes-requested, and remove review-approved/needs-review so the developer loop fixes it.
 - Update GitHub labels and .agent-status.local.json with completion time/result.
 - Release the reviewer work lock.
 - Stop after this one PR.

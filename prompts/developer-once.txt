@@ -39,8 +39,8 @@ Process at most one unit of developer work:
 When work is selected:
 - Update .agent-status.local.json with state, issue/PR, branch, worktree, and start time.
 - For a new issue, create the isolated worktree/branch as specified in docs/LOCAL_AGENT_WORKFLOW.md. For resumed work, reuse the existing branch/worktree; only recreate it when the recorded worktree is missing and the branch is not on origin.
-- Implement synchronously (foreground subagent or inline). Commit and push after each coherent step and update `.agent-logs/issue-<number>-progress.md`.
-- Run the validation commands (typecheck, lint, test, build) before marking the work ready.
+- Implement synchronously (foreground subagent or inline). When delegating, give the subagent the dynamic task context and tell it to invoke the `whetstone-engineering` skill and read `PRODUCT.md`/`GUIDELINES.md` for standards rather than pasting them. Commit and push after each coherent step and update `.agent-logs/issue-<number>-progress.md`.
+- Run `pnpm validate` (typecheck, lint, test, build; or `.github/skills/whetstone-engineering/validate.ps1`) before marking the work ready.
 - When the acceptance criteria are met and validation passes, open the PR with `Closes #<issue-number>` and add label needs-review.
 - If the unit is not finished this tick, leave it committed and pushed with an updated progress file and exit cleanly; the next tick resumes it. Do not open the PR or add needs-review until the work is complete.
 - Update GitHub labels and .agent-status.local.json with completion time/result.

@@ -76,6 +76,8 @@ pnpm test
 pnpm build
 ```
 
+Run all four together with `pnpm validate`; CI (`.github/workflows/ci.yml`) runs the same steps. The `whetstone-engineering` skill bundles a `validate.ps1` wrapper that logs output and reports PASS/FAIL.
+
 ## Dependency choices
 
 Default v0 choices:
@@ -577,7 +579,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 ### Validation
 
 - PR body lists the commands run.
-- Existing build/lint/test commands pass.
+- Existing build/lint/test commands pass (`pnpm validate` runs all four).
 - If validation cannot run because tooling does not exist yet, the PR says so and the issue scope justifies it.
 - Behavior changed by the PR has tests when test infrastructure exists.
 - Data/file changes include at least one validation path for failure cases, not only happy paths.

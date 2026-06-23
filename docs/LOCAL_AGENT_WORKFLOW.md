@@ -56,6 +56,15 @@ Begin from the simplest v0 reading app:
 
 Do not reintroduce older complex scope unless a later issue explicitly asks for it.
 
+## Shared engineering context
+
+Engineering standards, the repository map, testability rules, and the validation gate are packaged
+as the `whetstone-engineering` skill in `.github/skills/`. `GUIDELINES.md` and `PRODUCT.md` remain
+the source of truth the skill points to. Developer and reviewer runs pass their subagents the dynamic
+task context and tell them to invoke that skill and read the canonical docs, instead of pasting
+standards into every prompt. The validation gate is `pnpm validate` (typecheck, lint, test, build),
+which mirrors CI; the skill bundles `validate.ps1` for encoding-safe logging on Windows workers.
+
 ## Design session
 
 Use the main checkout:
@@ -145,7 +154,7 @@ When a PR with `changes-requested` is found:
 
 1. Read the PR, linked issue, acceptance criteria, review comments, failed checks if any, and current head branch.
 2. Check out the existing PR branch in its existing worktree if available; otherwise create/update an isolated worktree under `Q:\src\whetstone-worktrees\pr-<number>-fixes` from the PR head branch.
-3. Prepare a complete coding-subagent prompt containing PR URL, linked issue, acceptance criteria, review comments, validation expectations, branch name, worktree path, and repository instructions.
+3. Prepare a focused coding-subagent prompt containing the dynamic context — PR URL, linked issue, acceptance criteria, review comments, branch name, and worktree path — and instruct the subagent to invoke the `whetstone-engineering` skill and read `GUIDELINES.md` for standards and the `pnpm validate` gate, rather than pasting them.
 4. Start a coding subagent for the fixes when available. The subagent must address only material review feedback and must not add unrelated changes.
 5. If subagent delegation is unavailable in the current CLI mode, fix directly, but still process only this one PR.
 6. Verify the worktree state and validation summary.
@@ -163,7 +172,7 @@ When an issue is found:
 3. If the issue is ambiguous or dependencies are not closed, add label `needs-design` only for ambiguity; otherwise skip it and stop.
 4. Claim it by adding `in-progress`, removing `ready-for-dev`, and commenting that it is claimed by the local developer run.
 5. Create an isolated git worktree under `Q:\src\whetstone-worktrees\issue-<number>-<short-slug>` from `origin/main`, on branch `dev/issue-<number>-<short-slug>`.
-6. Prepare a complete coding-subagent prompt containing the issue URL, issue body, acceptance criteria, constraints/non-goals, validation expectations, branch name, worktree path, and repository instructions.
+6. Prepare a focused coding-subagent prompt containing the dynamic context — issue URL, issue body, acceptance criteria, constraints/non-goals, branch name, and worktree path — and instruct the subagent to invoke the `whetstone-engineering` skill and read `PRODUCT.md`/`GUIDELINES.md` for standards and the `pnpm validate` gate, rather than pasting them.
 7. Start a coding subagent for implementation when available. The subagent must work only in the issue worktree, implement only the issue scope, run validation, and report what changed.
 8. If subagent delegation is unavailable in the current CLI mode, implement directly, but still process only this one issue.
 9. Verify the worktree state and validation summary.
@@ -184,6 +193,16 @@ cd Q:\src\whetstone
 
 Normally the coordinator invokes this script.
 
+### Durable outcome and crash resilience
+
+A reviewer tick is a short-lived process that can be interrupted, so it must reach a durable, idempotent outcome:
+
+- Analysis runs synchronously in the tick (foreground review subagent or inline); the run must not launch a background or detached agent and then exit.
+- The durable outcome is a posted GitHub review carrying the `reviewer-run-reviewed: <head-sha>` marker plus the correct label, or — for an already-approved PR — a merge-gate decision.
+- Outcome steps run in a safe order: post the review, then update labels, then merge. Labels and the marker are written only once the review is complete, so an interruption never leaves partial label changes.
+- The `reviewer-run-reviewed: <head-sha>` marker is the dedupe key: a PR already reviewed at its current head SHA is skipped (unless it only needs a merge-gate recheck), and the PR is re-reviewed when its head SHA changes.
+- A review is single-shot, so there is no worktree to resume; recovery from an interrupted tick is simply re-review on the next tick while the PR still carries `needs-review`.
+
 ### Reviewer coordinator workflow
 
 Goal: process at most one reviewer unit of work from local status. First check open non-draft PRs labeled `review-approved` for merge eligibility. If none are mergeable, find one open non-draft PR that needs review, preferring PRs labeled `needs-review`; skip PRs labeled `changes-requested` until a developer run pushes fixes.
@@ -197,7 +216,7 @@ Avoid duplicate reviews:
 When a PR needs review:
 
 1. Read `GUIDELINES.md`, `PRODUCT.md`, the linked issue, PR description, diff, and validation notes.
-2. Prepare a complete review-subagent prompt containing the PR URL, linked issue, acceptance criteria, changed files, validation notes, `PRODUCT.md`, and `GUIDELINES.md`.
+2. Prepare a focused review-subagent prompt containing the dynamic context — PR URL, linked issue, acceptance criteria, changed files, and validation notes — and instruct the subagent to invoke the `whetstone-engineering` skill and use `GUIDELINES.md`/`PRODUCT.md` as the authority instead of pasting them.
 3. Start a review subagent for detailed analysis when available. The subagent must not edit files.
 4. If subagent delegation is unavailable in the current CLI mode, review directly, but still process only this one PR.
 5. Leave a GitHub PR review with only material findings.
@@ -205,7 +224,7 @@ When a PR needs review:
 7. If ready, leave a concise approval-style comment, include marker `reviewer-run-reviewed: <head-sha>`, add label `review-approved`, and remove `needs-review` / `changes-requested`.
 8. Before merging, verify the PR head SHA still matches the reviewed SHA, checks are green, there are no merge conflicts, and no `changes-requested` / `needs-review` labels remain.
 9. If merge gates pass, merge the PR using the repository default merge strategy and delete the branch if safe.
-10. If checks are pending/failing or the head SHA changed, do not merge; leave a comment/status and stop for the next tick.
+10. If checks are still pending or the head SHA changed, do not merge; leave a status comment and stop for the next tick. If required checks have failed, do not keep waiting: post the failure summary, add `changes-requested`, and remove `review-approved`/`needs-review` so the developer loop fixes it.
 
 Merged PRs are ignored because the reviewer only scans open PRs. Closed issues are ignored because the developer only scans open `ready-for-dev` issues. Review feedback is closed by the `changes-requested` -> developer fix -> `needs-review` loop.
 
