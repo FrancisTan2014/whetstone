@@ -356,34 +356,40 @@ Recommended levels:
 - JSON columns are allowed for designed flexible shapes only: `fields_json` and `answers_json`.
 - JSON is validated with Zod at boundaries.
 
-## Markdown file storage
+## Content and file storage
 
-All Markdown file access goes through one server filesystem boundary, such as:
+Content is stored as discrete `Block` rows in PostgreSQL (the source of truth). Markdown is an
+import/export format, not the stored form. The original uploaded file is retained for provenance.
 
-```text
-src/apps/server/src/files/markdownStore.ts
-```
+Block storage rules:
 
-Rules:
+- Each `Block` is a row: stable id, owning `ReadingUnit`, order, block type, plaintext (for search),
+  and the block's mdast node (JSON) for rendering/export.
+- Block ids are stable (UUIDv7/cuid2) and preserved across re-ingestion via a content-similarity diff;
+  removed blocks are soft-deleted so note anchors stay valid.
+- Multi-step writes (Work + ReadingUnits + Blocks) that must stay consistent use transactions.
+- Markdown export reassembles blocks via `remark-stringify`.
 
-- Markdown files live under the configured server data directory.
-- Server code generates file paths.
-- User input is never used directly as a path.
-- Normalize and verify paths cannot escape the data directory.
-- Prefer write-temp-then-rename for content writes.
-- Keep database metadata and file writes consistent; return explicit failure if consistency cannot be preserved.
+Original-file storage rules:
+
+- The uploaded source file (`.md`/`.epub`/later `.pdf`) is stored under the configured server data
+  directory / object storage, addressed by server-generated path plus content sha256.
+- User input is never used directly as a path; normalize and verify paths cannot escape the data
+  directory; prefer write-temp-then-rename.
+- Keep database rows and any retained file consistent, or return an explicit failure.
 
 ## Entry/link model
 
 The Entry/link model is core. Do not bypass it for convenience.
 
-- Materials are entries.
-- Reading units are entries.
-- Notes are entries.
-- Relationships are typed links.
-- v0 link types: `contains`, `annotates`, `references`, `related_to`.
+- Materials, reading units, **blocks**, and notes are all entries.
+- `Block` is the atomic, stably-identified content unit (one Markdown block); notes anchor to blocks
+  and search returns blocks.
+- Relationships are typed links. v0 link types: `contains`, `annotates`, `references`, `related_to`.
+- Containment runs `Work -> ReadingUnit -> Block` via `contains`.
 
-Do not create note-only tables or material-only structures that prevent notes/materials from participating in future links.
+Do not create note-only tables or material-only structures that prevent notes/materials/blocks from
+participating in future links.
 
 ## Templates and notes
 
@@ -483,8 +489,8 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Module APIs expose the smallest useful surface and do not leak internal mutable state.
 - Web-core TypeScript direction is preserved.
 - Server-centered source of truth is preserved.
-- Server stores Markdown files under a data directory; PostgreSQL stores metadata, paths, indexes, templates, notes, and links.
-- Entry/link model is preserved; notes are entries, not ad-hoc child records that cannot participate in future links.
+- PostgreSQL is the content source of truth: content is stored as `Block` rows; Markdown is import/export. Original uploaded files are retained for provenance (path + sha256), not as the content store.
+- Entry/link model is preserved; notes and blocks are entries, not ad-hoc child records that cannot participate in future links.
 - Templates are read from database seed data, not hard-coded in UI components.
 - Shared domain rules live in `src/packages/domain`; shared API contracts live in `src/packages/contracts`.
 - Server routes stay thin and delegate to feature command/query/storage modules.
@@ -550,12 +556,13 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Indexes exist for lookups introduced by the PR, especially entry links, work reading-unit ordering, template lookup, and note anchors.
 - JSON columns are used only for designed flexible shapes (`fields_json`, `answers_json`) and are validated at read/write boundaries.
 
-### Server filesystem Markdown quality
+### Block storage and original-file quality
 
-- Markdown file paths are generated or normalized by server code and cannot escape the configured data directory.
-- User input is never used directly as a filesystem path.
+- Block rows carry a stable id, order, type, plaintext, and mdast content; multi-step Work/ReadingUnit/Block writes use transactions.
+- Stable block ids are preserved across re-ingestion (content-similarity diff); removed blocks are soft-deleted so note anchors stay valid.
+- Retained original-file paths are generated or normalized by server code and cannot escape the configured data directory; user input is never used directly as a filesystem path.
 - Writes are safe against partial files where practical: write temp file then rename, or document why the simpler write is acceptable for v0.
-- Database metadata and Markdown file writes stay consistent; if one side fails, the PR handles cleanup or returns an explicit failure.
+- Database rows and any retained file stay consistent; if one side fails, the PR handles cleanup or returns an explicit failure.
 - File reads/writes are asynchronous.
 - File deletion or replacement is scoped to the intended reading unit only.
 - Tests or validation cover path traversal attempts when file-write code is added.
