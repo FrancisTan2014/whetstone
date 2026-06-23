@@ -3,13 +3,19 @@ import { useState } from "react";
 import type { CreateNoteRequest, NoteDto, NoteTemplateDto } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
-import { createNote } from "./notesApi";
+import { createNote, updateNote } from "./notesApi";
 import type { NoteDraft } from "./noteCapture";
 
+// The editor opens either to capture a new note from a reader selection, or to edit an
+// existing note reopened from a highlight or the note list.
+export type NoteEditorTarget =
+  | Readonly<{ draft: NoteDraft; kind: "create" }>
+  | Readonly<{ kind: "edit"; note: NoteDto }>;
+
 type NoteEditorProps = Readonly<{
-  draft: NoteDraft;
   onClose: () => void;
   onSaved: (note: NoteDto) => void;
+  target: NoteEditorTarget;
   templates: ReadonlyArray<NoteTemplateDto>;
   workEntryId: string;
 }>;
@@ -23,7 +29,7 @@ function initialTemplateId(
   return preselected?.id ?? templates[0]?.id;
 }
 
-function buildRequest(
+function buildCreateRequest(
   draft: NoteDraft,
   templateId: string,
   answers: Record<string, string>
@@ -55,25 +61,40 @@ function buildRequest(
   };
 }
 
-// The editor opens after a reader selection. On desktop widths it is a side panel and on
-// narrow widths a bottom sheet (see styles.css); the markup is the same either way. The
-// active template is derived from the current `templates` prop each render (falling back
-// to the size-based preselection) so templates that load after the editor opens are used;
-// an explicit choice, once made, takes precedence.
+function preselectionFor(target: NoteEditorTarget): string {
+  return target.kind === "create" ? target.draft.preselectedTemplateId : target.note.templateId;
+}
+
+function selectionTextFor(target: NoteEditorTarget): string {
+  return target.kind === "create"
+    ? target.draft.selectedText
+    : target.note.anchor.selectedTextSnapshot;
+}
+
+function initialAnswersFor(target: NoteEditorTarget): Record<string, string> {
+  return target.kind === "create" ? {} : { ...target.note.answers };
+}
+
+// On desktop widths the editor is a side panel and on narrow widths a bottom sheet (see
+// styles.css); the markup is the same either way. The active template is derived from the
+// current `templates` prop each render (falling back to the size-based preselection for a new
+// note, or the note's own template when editing) so templates that load after the editor opens
+// are used; an explicit choice, once made, takes precedence.
 export function NoteEditor({
-  draft,
   onClose,
   onSaved,
+  target,
   templates,
   workEntryId
 }: NoteEditorProps): React.JSX.Element {
   const [chosenTemplateId, setChosenTemplateId] = useState<string | undefined>(undefined);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>(() => initialAnswersFor(target));
   const [error, setError] = useState<string | undefined>(undefined);
 
   const activeTemplateId =
-    chosenTemplateId ?? initialTemplateId(templates, draft.preselectedTemplateId);
+    chosenTemplateId ?? initialTemplateId(templates, preselectionFor(target));
   const template = templates.find((candidate) => candidate.id === activeTemplateId);
+  const heading = target.kind === "create" ? "New note" : "Edit note";
 
   if (template === undefined) {
     return (
@@ -90,7 +111,7 @@ export function NoteEditor({
     setAnswers((previous) => ({ ...previous, [fieldId]: value }));
   }
 
-  async function onSave(currentTemplate: NoteTemplateDto): Promise<void> {
+  async function persist(currentTemplate: NoteTemplateDto): Promise<NoteDto> {
     const filled: Record<string, string> = {};
 
     for (const field of currentTemplate.fields) {
@@ -98,22 +119,40 @@ export function NoteEditor({
     }
 
     if (!Object.values(filled).some((value) => value.trim().length > 0)) {
-      setError("Add at least one answer before saving.");
+      throw new Error("empty");
+    }
+
+    if (target.kind === "create") {
+      return createNote(workEntryId, buildCreateRequest(target.draft, currentTemplate.id, filled));
+    }
+
+    return updateNote(workEntryId, target.note.entryId, {
+      answers: filled,
+      templateId: currentTemplate.id
+    });
+  }
+
+  async function onSave(currentTemplate: NoteTemplateDto): Promise<void> {
+    let saved: NoteDto;
+
+    try {
+      saved = await persist(currentTemplate);
+    } catch (caught) {
+      setError(
+        caught instanceof Error && caught.message === "empty"
+          ? "Add at least one answer before saving."
+          : "Could not save the note. Please try again."
+      );
       return;
     }
 
-    try {
-      const note = await createNote(workEntryId, buildRequest(draft, currentTemplate.id, filled));
-      onSaved(note);
-    } catch {
-      setError("Could not save the note. Please try again.");
-    }
+    onSaved(saved);
   }
 
   return (
     <aside aria-label="Note editor" className="noteEditor">
-      <h2>New note</h2>
-      <p className="noteEditorSelection">Selected: {draft.selectedText}</p>
+      <h2>{heading}</h2>
+      <p className="noteEditorSelection">Selected: {selectionTextFor(target)}</p>
 
       <label htmlFor="note-template">Template</label>
       <select

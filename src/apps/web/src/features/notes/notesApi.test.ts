@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CreateNoteRequest } from "@whetstone/contracts";
+import type { CreateNoteRequest, UpdateNoteRequest } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
-import { createNote, fetchNoteTemplates } from "./notesApi";
+import { createNote, deleteNote, fetchNoteTemplates, fetchNotes, updateNote } from "./notesApi";
 
 function stubFetch(response: {
   ok: boolean;
@@ -57,5 +57,43 @@ describe("notesApi", () => {
     stubFetch({ ok: false, status: 400 });
 
     await expect(fetchNoteTemplates()).rejects.toThrow("failed with status 400");
+  });
+
+  it("fetches the notes for a work", async () => {
+    const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
+
+    await expect(fetchNotes("work 1")).resolves.toEqual({ notes: [] });
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes", undefined);
+  });
+
+  it("patches a note on the note's endpoint", async () => {
+    const note = { entryId: "note-1" };
+    const fetchMock = stubFetch({ body: note, ok: true });
+    const request: UpdateNoteRequest = {
+      answers: { meaning: "to give in" },
+      templateId: "vocabulary"
+    };
+
+    await expect(updateNote("work 1", "note 1", request)).resolves.toEqual(note);
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes/note%201", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "PATCH"
+    });
+  });
+
+  it("deletes a note on the note's endpoint", async () => {
+    const fetchMock = stubFetch({ ok: true });
+
+    await expect(deleteNote("work 1", "note 1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes/note%201", {
+      method: "DELETE"
+    });
+  });
+
+  it("throws when a delete responds with a non-ok status", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(deleteNote("work 1", "note 1")).rejects.toThrow("failed with status 404");
   });
 });
