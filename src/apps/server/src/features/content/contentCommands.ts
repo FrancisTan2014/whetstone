@@ -1,18 +1,22 @@
-import { decomposeMarkdown, type BlockType, type EntryId } from "@whetstone/domain";
+import { decomposeMarkdown, type EntryId } from "@whetstone/domain";
 import type { IngestMarkdownRequest, WorkContentDto } from "@whetstone/contracts";
 import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
+import type { EpubParser } from "../../files/epubSource.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
-import { blocks, entries, entryLinks, readingUnits, workSources } from "../../db/schema.js";
+import { readingUnits, workSources } from "../../db/schema.js";
+import { writeReadingUnits } from "./blockWriter.js";
 import { loadWorkContent, workExists } from "./contentQueries.js";
 
-// Real infrastructure boundaries (database, id generation, source file store) are
-// passed in so ingestion stays deterministic and testable.
+// Real infrastructure boundaries (database, id generation, source file store, EPUB
+// parser) are passed in so ingestion stays deterministic and testable.
 export type ContentDependencies = Readonly<{
+  createAuthorId: () => string;
   createEntryId: () => string;
   createSourceId: () => string;
   db: DbClient;
+  epubParser: EpubParser;
   sourceFileStore: SourceFileStore;
 }>;
 
@@ -51,63 +55,17 @@ export async function ingestMarkdown(
       workEntryId
     });
 
-    if (decomposed.length === 0) {
-      return;
-    }
-
     const existingUnits = await tx
       .select({ entryId: readingUnits.entryId })
       .from(readingUnits)
       .where(eq(readingUnits.workEntryId, workEntryId));
-    const startOrder = existingUnits.length;
 
-    const entryRows: { id: string; type: "reading_unit" | "block" }[] = [];
-    const readingUnitRows: {
-      entryId: string;
-      orderIndex: number;
-      title: string | null;
-      workEntryId: EntryId;
-    }[] = [];
-    const blockRows: {
-      blockType: BlockType;
-      entryId: string;
-      mdastJson: unknown;
-      orderIndex: number;
-      plaintext: string;
-      readingUnitEntryId: string;
-    }[] = [];
-    const linkRows: { fromEntryId: string; toEntryId: string; type: "contains" }[] = [];
-
-    decomposed.forEach((unit, unitIndex) => {
-      const unitEntryId = dependencies.createEntryId();
-      entryRows.push({ id: unitEntryId, type: "reading_unit" });
-      readingUnitRows.push({
-        entryId: unitEntryId,
-        orderIndex: startOrder + unitIndex,
-        title: unit.title ?? null,
-        workEntryId
-      });
-      linkRows.push({ fromEntryId: workEntryId, toEntryId: unitEntryId, type: "contains" });
-
-      unit.blocks.forEach((block, blockIndex) => {
-        const blockEntryId = dependencies.createEntryId();
-        entryRows.push({ id: blockEntryId, type: "block" });
-        blockRows.push({
-          blockType: block.blockType,
-          entryId: blockEntryId,
-          mdastJson: block.mdast,
-          orderIndex: blockIndex,
-          plaintext: block.plaintext,
-          readingUnitEntryId: unitEntryId
-        });
-        linkRows.push({ fromEntryId: unitEntryId, toEntryId: blockEntryId, type: "contains" });
-      });
+    await writeReadingUnits(tx, {
+      createEntryId: dependencies.createEntryId,
+      startOrder: existingUnits.length,
+      units: decomposed,
+      workEntryId
     });
-
-    await tx.insert(entries).values(entryRows);
-    await tx.insert(readingUnits).values(readingUnitRows);
-    await tx.insert(blocks).values(blockRows);
-    await tx.insert(entryLinks).values(linkRows);
   });
 
   return { content: await loadWorkContent(dependencies.db, workEntryId), status: "ingested" };

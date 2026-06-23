@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.3",
+    "@lingo-reader/epub-parser": "^0.4.6",
     "@whetstone/contracts": "workspace:*",
     "@whetstone/domain": "workspace:*",
     "drizzle-orm": "^0.45.2",
