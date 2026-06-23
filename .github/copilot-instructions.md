@@ -12,7 +12,7 @@ This repository is built through a design -> issue -> implementation -> review l
 - Keep issues and PRs small. Split broad work before implementation.
 - Keep changes scoped to the issue. Do not add extra features, frameworks, or large refactors.
 - Open a pull request for completed work and link the issue it resolves.
-- Developer agents do not merge pull requests. Reviewer agents may merge only when `GUIDELINES.md` merge gates are satisfied.
+- Developer agents do not merge pull requests. The reviewer records a verdict; a deterministic merge step merges only when `GUIDELINES.md` merge gates are satisfied.
 
 ## Implementation expectations
 

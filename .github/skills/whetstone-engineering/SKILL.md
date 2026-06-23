@@ -82,7 +82,7 @@ Never lower coverage thresholds or skip steps to make validation pass.
 - Prefer cohesive vertical slices (schema + API + server + UI for one capability is fine).
 - Open with `Closes #<issue-number>`. The PR body must state: linked issue, what changed, what
   validation ran, and any validation that could not run and why.
-- Developers do not merge. Reviewers merge only when the `GUIDELINES.md` merge gates pass.
+- Developers do not merge. The reviewer records a verdict; a deterministic step (`scripts/merge-approved-prs.mjs`) merges only when the `GUIDELINES.md` merge gates pass.
 - If your PR changes what an area owns, its entry points, or where a subsystem lives, update
   `docs/MAP.md` (or the relevant `AGENTS.md`) in the same PR — a concise pointer-level edit, not a
   change log. A PR that does not change an area's shape touches no doc.

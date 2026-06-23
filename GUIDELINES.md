@@ -645,14 +645,18 @@ reviewer-run-reviewed: <head-sha>
 
 ### Merge gates
 
-Reviewer agents may merge PRs automatically only when all gates pass:
+The reviewer records its verdict (labels + the `reviewer-run-reviewed` marker); a **deterministic merge
+step** (`scripts/merge-approved-prs.mjs`, run by the reviewer launcher) — not an LLM session's
+discretion — merges a PR only when **every** gate below passes. The reviewer agent itself does not merge.
 
 - The PR has a `review-approved` label.
 - The PR does not have `needs-review` or `changes-requested`.
 - The latest PR head SHA matches the `reviewer-run-reviewed: <head-sha>` marker from the approving review.
 - Required checks are green. If checks are pending or failing, do not merge.
-- The PR has no merge conflicts.
+- The PR has no merge conflicts (`mergeable` is `MERGEABLE` and the merge state is `CLEAN`).
 - The PR still links the intended issue.
-- The review found no unresolved material findings under this guide.
+- The review found no unresolved material findings under this guide (encoded by `review-approved`
+  without `changes-requested`).
 
-If any gate fails, leave the PR open and update labels/comments instead of merging. Use the repository default merge strategy; delete the branch only if GitHub reports it is safe.
+If any gate fails, the step leaves the PR open and reports the failing gate instead of merging. It uses
+the repository default merge strategy (merge commit) and deletes the branch when GitHub reports it is safe.
