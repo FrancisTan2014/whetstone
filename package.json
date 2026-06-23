@@ -27,6 +27,7 @@
     "@vitest/coverage-v8": "^4.1.9",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.5.0",
+    "fflate": "^0.8.3",
     "globals": "^17.6.0",
     "jsdom": "^26.0.0",
     "prettier": "^3.8.4",
