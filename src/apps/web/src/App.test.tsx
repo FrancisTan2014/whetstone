@@ -11,6 +11,7 @@ describe("App", () => {
     expect(markup).toContain("Loading the library");
     expect(markup).toContain("Work content");
     expect(markup).toContain("Loading works");
+    expect(markup).toContain("Reader");
     expect(markup).not.toContain("Foundation scaffold");
   });
 });

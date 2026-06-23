@@ -14,7 +14,8 @@ entry to a pointer.
 
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
 `src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
-Markdown into ordered, stable-id blocks), `author.ts`, `work.ts`, `noteAnchor.ts`,
+Markdown into ordered, stable-id blocks), `blockMarkdown.ts` (serialize a block's mdast back to
+Markdown for safe rendering), `author.ts`, `work.ts`, `noteAnchor.ts`,
 `productIdentity.ts`. Tests are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
@@ -41,7 +42,10 @@ can navigate them from another package.
 ### `src/apps/web/` — React + Vite PWA
 
 - Entry: `src/main.tsx`; root `src/App.tsx`; styles `src/styles.css`.
-- Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`).
+- Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
+  `reader/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders units/blocks
+  and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely with
+  `react-markdown` + `rehype-sanitize` and tags each block with `data-block-id`.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 
