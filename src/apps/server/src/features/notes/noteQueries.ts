@@ -1,9 +1,9 @@
-import { parseNoteTemplateDto, type NoteTemplateDto } from "@whetstone/contracts";
-import type { EntryId } from "@whetstone/domain";
+import { parseNoteTemplateDto, type NoteDto, type NoteTemplateDto } from "@whetstone/contracts";
+import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, noteTemplates, readingUnits } from "../../db/schema.js";
+import { blocks, noteAnchors, noteTemplates, notes, readingUnits } from "../../db/schema.js";
 
 type TemplateRow = Readonly<{
   fieldsJson: unknown;
@@ -58,4 +58,91 @@ export async function findBlockInWork(
   const row = rows[0];
 
   return row === undefined ? undefined : { plaintext: row.plaintext };
+}
+
+type NoteRow = Readonly<{
+  answersJson: unknown;
+  blockEntryId: string;
+  contextSnapshot: string;
+  endOffset: number | null;
+  entryId: string;
+  markdownBody: string;
+  selectedText: string;
+  startOffset: number | null;
+  templateId: string;
+}>;
+
+const noteColumns = {
+  answersJson: notes.answersJson,
+  blockEntryId: noteAnchors.blockEntryId,
+  contextSnapshot: noteAnchors.contextSnapshot,
+  endOffset: noteAnchors.endOffset,
+  entryId: notes.entryId,
+  markdownBody: notes.markdownBody,
+  selectedText: noteAnchors.selectedText,
+  startOffset: noteAnchors.startOffset,
+  templateId: notes.templateId
+} as const;
+
+function toNoteAnchor(row: NoteRow): NoteAnchor {
+  const base = {
+    blockEntryId: toEntryId(row.blockEntryId),
+    contextSnapshot: row.contextSnapshot,
+    selectedTextSnapshot: row.selectedText
+  };
+
+  if (row.startOffset === null || row.endOffset === null) {
+    return base;
+  }
+
+  return { ...base, endOffset: row.endOffset, startOffset: row.startOffset };
+}
+
+function toNoteDto(row: NoteRow): NoteDto {
+  return {
+    anchor: toNoteAnchor(row),
+    answers: row.answersJson as Record<string, string>,
+    blockEntryId: toEntryId(row.blockEntryId),
+    entryId: toEntryId(row.entryId),
+    markdown: row.markdownBody,
+    templateId: row.templateId
+  };
+}
+
+// All notes anchored to a block within the work, joined to their anchor. Ordered by note id
+// for a deterministic list; the client groups them by block for reader highlights.
+export async function listNotesForWork(
+  db: DbClient,
+  workEntryId: EntryId
+): Promise<ReadonlyArray<NoteDto>> {
+  const rows = await db
+    .select(noteColumns)
+    .from(notes)
+    .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
+    .innerJoin(readingUnits, eq(readingUnits.entryId, blocks.readingUnitEntryId))
+    .where(eq(readingUnits.workEntryId, workEntryId))
+    .orderBy(asc(notes.entryId));
+
+  return rows.map(toNoteDto);
+}
+
+// A single note scoped to the work, used to authorize edits and deletes against a forged or
+// cross-work note id.
+export async function getNoteForWork(
+  db: DbClient,
+  workEntryId: EntryId,
+  noteEntryId: EntryId
+): Promise<NoteDto | undefined> {
+  const rows = await db
+    .select(noteColumns)
+    .from(notes)
+    .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
+    .innerJoin(readingUnits, eq(readingUnits.entryId, blocks.readingUnitEntryId))
+    .where(and(eq(notes.entryId, noteEntryId), eq(readingUnits.workEntryId, workEntryId)))
+    .limit(1);
+  const row = rows[0];
+
+  return row === undefined ? undefined : toNoteDto(row);
 }
