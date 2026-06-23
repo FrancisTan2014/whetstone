@@ -17,7 +17,7 @@ import {
 
 describe("entry/link vocabulary", () => {
   it("recognizes the v0 entry, link, and work types", () => {
-    expect(entryTypes).toEqual(["work", "reading_unit", "note"]);
+    expect(entryTypes).toEqual(["work", "reading_unit", "block", "note"]);
     expect(linkTypes).toEqual(["contains", "annotates", "references", "related_to"]);
     expect(workTypes).toEqual(["book", "essay", "blog_post", "classical_text"]);
     expect(isEntryType("reading_unit")).toBe(true);
