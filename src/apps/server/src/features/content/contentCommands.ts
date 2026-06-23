@@ -17,6 +17,7 @@ export type ContentDependencies = Readonly<{
   createSourceId: () => string;
   db: DbClient;
   epubParser: EpubParser;
+  epubUploadLimitBytes: number;
   sourceFileStore: SourceFileStore;
 }>;
 

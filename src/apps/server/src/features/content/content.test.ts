@@ -28,6 +28,7 @@ type TestContext = Readonly<{
 
 let context: TestContext;
 let epubResponder: (bytes: Uint8Array) => Promise<ParsedEpub>;
+let epubUploadLimitBytes: number;
 
 function twoChapterEpub(): ParsedEpub {
   return {
@@ -61,6 +62,7 @@ async function buildContext(): Promise<TestContext> {
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
     epubParser: (bytes) => epubResponder(bytes),
+    epubUploadLimitBytes,
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
@@ -111,6 +113,7 @@ async function createAuthorNamed(name: string): Promise<string> {
 
 beforeEach(async () => {
   epubResponder = async () => twoChapterEpub();
+  epubUploadLimitBytes = 50 * 1024 * 1024;
   context = await buildContext();
 });
 
@@ -390,5 +393,54 @@ describe("EPUB ingestion routes", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("skips EPUB chapters that decompose to zero supported blocks", async () => {
+    epubResponder = async () => ({
+      chapters: [{ html: "<hr>" }, { html: "<h1>Real</h1><p>Body.</p>" }],
+      metadata: { author: "Anon", language: "en", title: "Mixed" }
+    });
+
+    const response = await ingestEpub(Buffer.from("epub-mixed-empty"));
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as IngestEpubResultDto;
+    expect(body.content.readingUnits.map((unit) => unit.title)).toEqual(["Real"]);
+    expect(body.content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual([
+      "heading",
+      "paragraph"
+    ]);
+  });
+
+  it("creates a work without a 500 when every chapter lacks supported blocks", async () => {
+    epubResponder = async () => ({
+      chapters: [{ html: "<hr>" }, { html: "<hr>" }],
+      metadata: { author: "Anon", language: "en", title: "All empty" }
+    });
+
+    const response = await ingestEpub(Buffer.from("epub-all-empty"));
+
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as IngestEpubResultDto).content.readingUnits).toEqual([]);
+    // The .epub is retained (written before the transaction); the empty-block path must
+    // not throw and orphan that file.
+    expect(await context.db.select().from(workSources)).toHaveLength(1);
+  });
+
+  it("accepts an EPUB upload larger than Fastify's default 1 MiB body limit", async () => {
+    const largeUpload = Buffer.alloc(2 * 1024 * 1024, 7);
+
+    const response = await ingestEpub(largeUpload);
+
+    expect(response.statusCode).toBe(201);
+  });
+
+  it("rejects an EPUB upload that exceeds the configured size limit", async () => {
+    epubUploadLimitBytes = 64;
+    context = await buildContext();
+
+    const response = await ingestEpub(Buffer.alloc(128, 1));
+
+    expect(response.statusCode).toBe(413);
   });
 });

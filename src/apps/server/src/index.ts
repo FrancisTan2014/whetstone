@@ -25,6 +25,7 @@ const server = createServer({
     createSourceId: () => randomUUID(),
     db,
     epubParser,
+    epubUploadLimitBytes: config.epubUploadLimitBytes,
     sourceFileStore
   },
   library: {

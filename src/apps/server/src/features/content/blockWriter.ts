@@ -15,11 +15,16 @@ export type WriteReadingUnitsInput = Readonly<{
 // Persist decomposed reading units and their blocks for a work, in a single batch,
 // continuing the work's reading-unit ordering from `startOrder`. Shared by every
 // format adapter (Markdown, EPUB) so block/link/entry creation has one owner.
+// Reading units that decompose to zero supported blocks (e.g. an EPUB image-only or
+// empty title page) carry no readable content, so they are skipped entirely rather
+// than persisted as empty units or sent to an empty `values()` insert.
 export async function writeReadingUnits(
   tx: Transaction,
   input: WriteReadingUnitsInput
 ): Promise<void> {
-  if (input.units.length === 0) {
+  const units = input.units.filter((unit) => unit.blocks.length > 0);
+
+  if (units.length === 0) {
     return;
   }
 
@@ -40,7 +45,7 @@ export async function writeReadingUnits(
   }[] = [];
   const linkRows: { fromEntryId: string; toEntryId: string; type: "contains" }[] = [];
 
-  input.units.forEach((unit, unitIndex) => {
+  units.forEach((unit, unitIndex) => {
     const unitEntryId = input.createEntryId();
     entryRows.push({ id: unitEntryId, type: "reading_unit" });
     readingUnitRows.push({
