@@ -30,7 +30,9 @@ Organize by feature first. Do not add `src/apps/mobile/` or `src/apps/desktop/` 
 
 For where a specific subsystem or file currently lives, read `docs/MAP.md` (the navigational index);
 this skill stays high-level. Read the constitution and the map, then the one feature slice — do not
-linear-read the repository.
+linear-read the repository. Keep your live context bounded for the whole run: run the gate quietly
+and read only failures, and delegate bulky or exploratory reading to a subagent that returns
+conclusions — a runaway context is the main reason a run gets slow.
 
 ## Tech stack (v0)
 
