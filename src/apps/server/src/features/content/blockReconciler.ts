@@ -30,6 +30,7 @@ type BlockRow = {
   orderIndex: number;
   plaintext: string;
   readingUnitEntryId: string;
+  workEntryId: EntryId;
 };
 type LinkRow = { fromEntryId: string; toEntryId: string; type: "contains" };
 type PreservedUpdate = {
@@ -80,7 +81,8 @@ export async function reconcileWorkBlocks(tx: Transaction, input: ReconcileInput
           mdastJson: block.mdast,
           orderIndex: blockIndex,
           plaintext: block.plaintext,
-          readingUnitEntryId: unitId
+          readingUnitEntryId: unitId,
+          workEntryId: input.workEntryId
         });
       } else {
         preservedUpdates.push({

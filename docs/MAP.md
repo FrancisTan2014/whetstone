@@ -42,9 +42,10 @@ can navigate them from another package.
   commands/queries. `content/` ingests Markdown and re-ingestion REPLACES a work's content via the
   domain block diff (`blockReconciler.ts` preserves matched block ids, inserts new, soft-deletes
   removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical source is a no-op.
+  Blocks also carry `work_entry_id`, so notes on soft-deleted (unit-detached) blocks stay addressable.
   It also exports a work's Markdown (`GET /api/works/:id/content/markdown`). `notes/` serves note
-  templates and creates, lists, edits, and deletes notes
-  (block-anchored, `annotates` link); templates are seeded from the domain on boot
+  templates and creates, lists, edits, and deletes notes (block-anchored, `annotates` link; scoped to
+  a work through `blocks.work_entry_id`); templates are seeded from the domain on boot
   (`seedNoteTemplates`).
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a
   server-generated path with sha256 (path-traversal-guarded) for provenance only; blocks remain the

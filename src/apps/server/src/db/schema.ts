@@ -52,7 +52,9 @@ export const readingUnits = pgTable(
 // node for safe rendering/export; `plaintext` backs search. A re-ingestion content
 // diff preserves `entry_id` for matched blocks; removed blocks are soft-deleted
 // (`deleted_at` set, detached from their reading unit) so existing note anchors stay
-// valid while the block is excluded from the reader, search, and export.
+// valid while the block is excluded from the reader, search, and export. `work_entry_id`
+// records the owning work directly so notes anchored to a soft-deleted (unit-detached)
+// block remain addressable for that work.
 export const blocks = pgTable(
   "blocks",
   {
@@ -66,9 +68,15 @@ export const blocks = pgTable(
     mdastJson: jsonb("mdast_json").notNull(),
     orderIndex: integer("order_index").notNull(),
     plaintext: text("plaintext").notNull(),
-    readingUnitEntryId: text("reading_unit_entry_id").references(() => entries.id)
+    readingUnitEntryId: text("reading_unit_entry_id").references(() => entries.id),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id)
   },
-  (table) => [index("blocks_reading_unit_idx").on(table.readingUnitEntryId)]
+  (table) => [
+    index("blocks_reading_unit_idx").on(table.readingUnitEntryId),
+    index("blocks_work_idx").on(table.workEntryId)
+  ]
 );
 
 // Typed containment graph between entries (work -> reading unit -> block in v0).
