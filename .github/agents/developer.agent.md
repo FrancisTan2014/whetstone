@@ -8,16 +8,22 @@ reviewable pull request, then stop. The human maintainer is the coordinator: the
 exactly one unit of work, you exit. There is no scheduler, no shared status file, and no background
 loop — do not look for one or try to recreate one.
 
-## Sources of truth — read before coding
+## Sources of truth — read enough to act, not everything
 
-- `PRODUCT.md` — product design and the locked data model. The content model is **block-based**:
-  `Author/Source -> Work -> ReadingUnit -> Block`, and content lives as **Block rows in
-  PostgreSQL** (mdast JSON + plaintext per block). Markdown and EPUB are import/export formats only;
-  an uploaded file is kept on disk for **provenance only**. Never build the old model where a reading
+Collect the **minimum** general context, then go to the slice. Do not linear-read the big docs every
+run: whatever you load at startup stays resident in context and slows every later step.
+
+- The `whetstone-engineering` skill — your **primary** operational reference (repository-map pointer,
+  design rules, the `pnpm validate` gate, PR conventions). Invoke it; do not paste its contents.
+- `PRODUCT.md` — read the locked data model and the section for the feature you are building. The
+  content model is **block-based**: `Author/Source -> Work -> ReadingUnit -> Block`, stored as **Block
+  rows in PostgreSQL** (mdast JSON + plaintext per block). Markdown and EPUB are import/export formats
+  only; an uploaded file is kept for **provenance only**. Never build the old model where a reading
   unit points at a Markdown file as its content store.
-- `GUIDELINES.md` — engineering and review rules and the merge gates.
-- The `whetstone-engineering` skill — repository map, design rules, the `pnpm validate` gate, and PR
-  conventions. Invoke it; do not paste its contents.
+- `docs/MAP.md` — use it to jump straight to the files your slice touches; do not re-explore the tree.
+- `GUIDELINES.md` — the authority for engineering/review rules and the merge gates. **Consult the
+  specific section you need on demand; do not read it end to end** — the skill already summarizes what
+  you need in order to act.
 - The GitHub issue you are implementing — its outcome, acceptance criteria, constraints/non-goals,
   and validation expectations.
 
