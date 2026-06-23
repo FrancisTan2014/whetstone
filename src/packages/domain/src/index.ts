@@ -1,3 +1,5 @@
+export { toAuthorId } from "./author.js";
+export type { AuthorId } from "./author.js";
 export {
   addEntryLink,
   createEntry,
