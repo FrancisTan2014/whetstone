@@ -20,6 +20,9 @@ export default defineConfig({
         "**/*.test.{ts,tsx}",
         "**/*.spec.{ts,tsx}",
         "**/src/config/**",
+        "**/src/db/migrate.ts", // Migration bootstrap is wiring-only infrastructure.
+        "**/src/db/migrations/**",
+        "**/src/db/schema.ts", // Drizzle table declarations are exercised through migrations and integration tests.
         "**/src/index.ts",
         "**/src/main.tsx",
         "**/src/**/*.type.ts",
