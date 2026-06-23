@@ -157,3 +157,51 @@
     transition-duration: 0.001ms !important;
   }
 }
+
+/*
+ * App shell + primitives layout. The SafeArea primitive uses dynamic/small viewport
+ * units (never 100vh) and the safe-area insets so the shell fits notched and
+ * keyboard-aware WebViews. The Sheet docks right on desktop and bottom on mobile.
+ */
+.app-safe-area {
+  min-block-size: 100svh;
+  min-block-size: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background-color: rgb(0 0 0 / 0.4);
+}
+
+.sheet-panel {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.2);
+}
+
+.sheet-panel-right {
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: min(28rem, 100%);
+}
+
+.sheet-panel-bottom {
+  inset-inline: 0;
+  inset-block-end: 0;
+  max-block-size: 85svh;
+  border-start-start-radius: 1rem;
+  border-start-end-radius: 1rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
