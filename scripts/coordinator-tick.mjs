@@ -296,7 +296,7 @@ function main() {
   // 1. clear stale worker locks before reading lock state
   if (!dryRun) run('cmd', ['/c', path.join(scriptDir, 'cleanup-agent-locks.cmd')], { stdio: 'ignore' });
 
-  const status = readStatus();
+  let status = readStatus();
   status.coordinator = status.coordinator ?? {};
   status.coordinator.state = 'running';
   status.coordinator.lastRunStartedAt = now.toISOString();
@@ -330,12 +330,23 @@ function main() {
   const decision = decide(status, lockState(now), now);
   applyPatch(status, decision.patch);
 
-  if (!noInvoke) {
-    if (decision.action === 'start_developer') {
-      run('cmd', ['/c', path.join(scriptDir, 'start-developer.cmd')], { stdio: 'inherit' });
-    } else if (decision.action === 'start_reviewer') {
-      run('cmd', ['/c', path.join(scriptDir, 'start-reviewer.cmd')], { stdio: 'inherit' });
-    }
+  const willInvokeWorker =
+    !noInvoke && (decision.action === 'start_developer' || decision.action === 'start_reviewer');
+
+  if (willInvokeWorker) {
+    // Persist the fresh remote snapshot and decision to disk BEFORE launching the worker.
+    // The one-shot worker reads .agent-status.local.json from disk on startup; if we only
+    // wrote at finish() (after the worker exits) it would see the previous tick's snapshot
+    // and could bail at the remote-sync freshness gate.
+    if (!dryRun) writeStatus(status);
+
+    const script = decision.action === 'start_developer' ? 'start-developer.cmd' : 'start-reviewer.cmd';
+    run('cmd', ['/c', path.join(scriptDir, script)], { stdio: 'inherit' });
+
+    // The worker updates its own developer/reviewer fields on disk while it runs. Re-read so
+    // finish() overlays only the coordinator fields instead of clobbering the worker's
+    // updates with our pre-invoke in-memory copy.
+    if (!dryRun) status = readStatus();
   }
 
   return finish(status, decision.reason, dryRun);
