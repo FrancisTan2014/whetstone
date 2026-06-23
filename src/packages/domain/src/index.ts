@@ -16,8 +16,18 @@ export { createEntryLink, isLinkType, linkTypes } from "./links.js";
 export type { EntryLink, LinkType } from "./links.js";
 export { decomposeMarkdown } from "./markdownBlocks.js";
 export type { DecomposedBlock, DecomposedReadingUnit } from "./markdownBlocks.js";
+export { renderNoteMarkdown, validateNoteAnswers } from "./noteAnswers.js";
+export type { NoteAnswers, NoteAnswerValidation } from "./noteAnswers.js";
 export { createNoteAnchor } from "./noteAnchor.js";
 export type { CreateNoteAnchorInput, NoteAnchor } from "./noteAnchor.js";
+export {
+  getNoteTemplate,
+  isNoteFieldType,
+  noteFieldTypes,
+  noteTemplates,
+  preselectTemplateId
+} from "./noteTemplate.js";
+export type { NoteFieldType, NoteTemplate, NoteTemplateField } from "./noteTemplate.js";
 export { formatProductHeading, productIdentity } from "./productIdentity.js";
 export type { ProductIdentity } from "./productIdentity.js";
 export { isWorkType, workTypes } from "./work.js";

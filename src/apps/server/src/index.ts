@@ -5,12 +5,14 @@ import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js"
 import { createDbClient } from "./db/dbClient.js";
 import { runMigrations } from "./db/migrate.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
+import { seedNoteTemplates } from "./features/notes/noteCommands.js";
 import { createServer } from "./http/createServer.js";
 
 const config = readServerConfig();
 const pglite = new PGlite(config.databaseDir);
 await runMigrations(pglite);
 const db = createDbClient(pglite);
+await seedNoteTemplates(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
 
 const server = createServer({
@@ -25,7 +27,11 @@ const server = createServer({
     createEntryId: () => randomUUID(),
     db
   },
-  logger: createLoggerOptions(config.logLevel)
+  logger: createLoggerOptions(config.logLevel),
+  notes: {
+    createEntryId: () => randomUUID(),
+    db
+  }
 });
 
 try {

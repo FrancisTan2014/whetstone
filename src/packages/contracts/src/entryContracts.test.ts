@@ -17,9 +17,9 @@ const validLinkDto = {
 } as const;
 
 const validAnchorDto = {
+  blockEntryId: "block-1",
   contextSnapshot: "The quick brown fox jumps over the lazy dog.",
   endOffset: 19,
-  readingUnitEntryId: "reading-unit-1",
   selectedTextSnapshot: "brown fox",
   startOffset: 10
 } as const;
@@ -61,9 +61,24 @@ describe("entry contract schemas", () => {
     ).toThrow();
   });
 
+  it("parses a whole-block anchor without an offset range", () => {
+    const anchor = parseNoteAnchorDto({
+      blockEntryId: "block-1",
+      contextSnapshot: "brown fox",
+      selectedTextSnapshot: "brown fox"
+    });
+
+    expect(anchor).toEqual({
+      blockEntryId: "block-1",
+      contextSnapshot: "brown fox",
+      selectedTextSnapshot: "brown fox"
+    });
+  });
+
   it("rejects invalid note anchors at the boundary", () => {
     expect(() => parseNoteAnchorDto({ ...validAnchorDto, startOffset: 10.5 })).toThrow();
     expect(() => parseNoteAnchorDto({ ...validAnchorDto, endOffset: 10 })).toThrow();
+    expect(() => parseNoteAnchorDto({ ...validAnchorDto, endOffset: undefined })).toThrow();
     expect(() => parseNoteAnchorDto({ ...validAnchorDto, selectedTextSnapshot: " " })).toThrow();
     expect(() => parseNoteAnchorDto({ ...validAnchorDto, contextSnapshot: " " })).toThrow();
     expect(() =>

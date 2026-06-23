@@ -7,6 +7,7 @@ import { blockToMarkdown } from "@whetstone/domain";
 export type ReaderBlock = Readonly<{
   entryId: string;
   markdown: string;
+  plaintext: string;
 }>;
 
 export type ReaderUnit = Readonly<{
@@ -25,7 +26,11 @@ function byOrderIndex(first: { orderIndex: number }, second: { orderIndex: numbe
 }
 
 function toReaderBlock(block: BlockDto): ReaderBlock {
-  return { entryId: block.entryId, markdown: blockToMarkdown(block.mdast) };
+  return {
+    entryId: block.entryId,
+    markdown: blockToMarkdown(block.mdast),
+    plaintext: block.plaintext
+  };
 }
 
 function toReaderUnit(unit: ReadingUnitDto): ReaderUnit {

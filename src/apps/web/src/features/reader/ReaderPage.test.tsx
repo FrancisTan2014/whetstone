@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,13 +8,34 @@ vi.mock("./readerApi", () => ({
   fetchWorks: vi.fn()
 }));
 
+vi.mock("../notes/notesApi", () => ({
+  createNote: vi.fn(),
+  fetchNoteTemplates: vi.fn()
+}));
+
+import { createNote, fetchNoteTemplates } from "../notes/notesApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { ReaderPage } from "./ReaderPage";
-import type { WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
+import type {
+  NoteDto,
+  NoteTemplateDto,
+  WorkContentDto,
+  WorkListItemDto
+} from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
+const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
+const mockedCreateNote = vi.mocked(createNote);
+
+const noteTemplates: ReadonlyArray<NoteTemplateDto> = [
+  {
+    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
+    id: "vocabulary",
+    name: "Vocabulary"
+  }
+];
 
 const author = { id: toAuthorId("author-1"), name: "George Orwell" };
 
@@ -91,6 +112,30 @@ const multiUnitContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A block whose plaintext repeats a word, so selecting the second occurrence must anchor
+// to that occurrence rather than the first match.
+const repeatedContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-rep"),
+          mdast: {
+            children: [{ type: "text", value: "the cat sat on the mat" }],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          plaintext: "the cat sat on the mat"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 const unsafeContent: WorkContentDto = {
   readingUnits: [
     {
@@ -117,13 +162,47 @@ const unsafeContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+function firstTextNode(blockElement: HTMLElement): Text {
+  const walker = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
+  const node = walker.nextNode();
+
+  if (node === null) {
+    throw new Error("block has no text node");
+  }
+
+  return node as Text;
+}
+
+function selectRangeIn(node: Node, start: number, end: number): void {
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+
+  const selection = window.getSelection() as Selection;
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function selectText(blockElement: HTMLElement, text: string): void {
+  const node = firstTextNode(blockElement);
+  const start = (node.textContent ?? "").indexOf(text);
+  selectRangeIn(node, start, start + text.length);
+}
+
+function blockElement(container: HTMLElement, blockId: string): HTMLElement {
+  return container.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  window.getSelection()?.removeAllRanges();
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
   mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
+  mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   cleanup();
 });
 
@@ -280,5 +359,143 @@ describe("ReaderPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Safe heading" })).toBeDefined();
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).not.toContain("__xssReader");
+  });
+
+  it("opens the note editor when text is selected in a block", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    expect(await screen.findByRole("heading", { name: "New note" })).toBeDefined();
+    expect(screen.getByText(/Selected: Intro/)).toBeDefined();
+  });
+
+  it("anchors a note to the selected occurrence of repeated text", async () => {
+    mockedFetchWorkContent.mockResolvedValue(repeatedContent);
+    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    const block = await screen.findByText("the cat sat on the mat");
+    // Select the second "the" (offset 15-18), not the first match at offset 0.
+    selectRangeIn(firstTextNode(block as HTMLElement), 15, 18);
+    fireEvent.mouseUp(blockElement(container, "b-rep"));
+
+    await user.type(await screen.findByLabelText("Meaning in this context"), "definite article");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
+      answers: { meaning: "definite article" },
+      anchor: {
+        blockEntryId: "b-rep",
+        contextSnapshot: "the cat sat on the mat",
+        endOffset: 18,
+        selectedTextSnapshot: "the",
+        startOffset: 15
+      },
+      templateId: "vocabulary"
+    });
+  });
+
+  it("does not open the editor when there is no selection", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    window.getSelection()?.removeAllRanges();
+    fireEvent.mouseUp(blockElement(container, "b-1"));
+
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("does not open the editor for a whitespace-only selection", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    const block = await screen.findByText("Intro paragraph.");
+    // "Intro paragraph." has a space at index 5.
+    selectRangeIn(firstTextNode(block as HTMLElement), 5, 6);
+    fireEvent.mouseUp(blockElement(container, "b-1"));
+
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("confirms and closes the editor after a note is saved", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("closes the editor when cancelled", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await screen.findByRole("heading", { name: "New note" });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("shows the unavailable editor when note templates fail to load", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    mockedFetchNoteTemplates.mockRejectedValue(new Error("nope"));
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    expect(
+      await screen.findByText("Note templates are unavailable. Please try again.")
+    ).toBeDefined();
   });
 });

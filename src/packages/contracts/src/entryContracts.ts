@@ -46,21 +46,31 @@ export const entryLinkDtoSchema = z
 
 export const noteAnchorDtoSchema = z
   .object({
+    blockEntryId: entryIdDtoSchema,
     contextSnapshot: z
       .string()
       .refine(isNonBlank, { message: "contextSnapshot must be non-empty." }),
-    endOffset: z.number().int().nonnegative(),
-    readingUnitEntryId: entryIdDtoSchema,
+    endOffset: z.number().int().nonnegative().optional(),
     selectedTextSnapshot: z
       .string()
       .refine(isNonBlank, { message: "selectedTextSnapshot must be non-empty." }),
-    startOffset: z.number().int().nonnegative()
+    startOffset: z.number().int().nonnegative().optional()
   })
   .strict()
-  .refine((anchor) => anchor.endOffset > anchor.startOffset, {
-    message: "endOffset must be greater than startOffset.",
-    path: ["endOffset"]
+  .refine((anchor) => (anchor.startOffset === undefined) === (anchor.endOffset === undefined), {
+    message: "startOffset and endOffset must be provided together.",
+    path: ["startOffset"]
   })
+  .refine(
+    (anchor) =>
+      anchor.startOffset === undefined ||
+      anchor.endOffset === undefined ||
+      anchor.endOffset > anchor.startOffset,
+    {
+      message: "endOffset must be greater than startOffset.",
+      path: ["endOffset"]
+    }
+  )
   .refine((anchor) => anchor.contextSnapshot.includes(anchor.selectedTextSnapshot), {
     message: "contextSnapshot must contain selectedTextSnapshot.",
     path: ["contextSnapshot"]

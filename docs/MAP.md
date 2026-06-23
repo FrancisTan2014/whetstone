@@ -15,13 +15,16 @@ entry to a pointer.
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
 `src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
 Markdown into ordered, stable-id blocks), `blockMarkdown.ts` (serialize a block's mdast back to
-Markdown for safe rendering), `author.ts`, `work.ts`, `noteAnchor.ts`,
-`productIdentity.ts`. Tests are colocated `*.test.ts`. Invariant: depends on nothing outward.
+Markdown for safe rendering), `author.ts`, `work.ts`, `noteTemplate.ts` (v0 note templates +
+size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
+(anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`. Tests
+are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
 
 Zod request/response contracts shared by client and server. Public surface is `src/index.ts`.
-Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`, `health.ts`. Tests colocated.
+Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`,
+`noteContracts.ts`, `health.ts`. Tests colocated.
 Invariant: types resolve through built `dist` — run `pnpm build` (or `tsc -b`) before VS Code/tsc
 can navigate them from another package.
 
@@ -33,7 +36,9 @@ can navigate them from another package.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
-  `*Queries.ts` (current: `library/`, `content/`). Routes stay thin; logic lives in commands/queries.
+  `*Queries.ts` (current: `library/`, `content/`, `notes/`). Routes stay thin; logic lives in
+  commands/queries. `notes/` serves note templates and creates notes (block-anchored, `annotates`
+  link); templates are seeded from the domain on boot (`seedNoteTemplates`).
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a
   server-generated path with sha256 (path-traversal-guarded) for provenance only; blocks remain the
   source of truth.
@@ -43,9 +48,13 @@ can navigate them from another package.
 
 - Entry: `src/main.tsx`; root `src/App.tsx`; styles `src/styles.css`.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders units/blocks
-  and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely with
-  `react-markdown` + `rehype-sanitize` and tags each block with `data-block-id`.
+  `reader/`, `notes/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
+  units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
+  with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, and on a block
+  selection (`blockSelection.ts` reads the selected text and its offset from the live Range) opens the
+  `notes/` editor. `notes/` is the note-capture feature: `noteCapture.ts` turns a
+  block selection into a draft, `NoteEditor.tsx` is the template-based editor (side panel / bottom
+  sheet), `notesApi.ts` calls the templates/notes endpoints.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 
