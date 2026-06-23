@@ -419,6 +419,24 @@ participating in future links.
 - User/server Markdown must be rendered safely.
 - Critical actions must be keyboard usable.
 
+See `PRODUCT.md` -> "v0 design language (UX)" for the product-level look and feel. The engineering
+rules that implement it:
+
+- **Style with Tailwind v4 and semantic design tokens.** Define tokens once in the Tailwind theme
+  (`@theme`, OKLCH with hex/rgb fallbacks) as semantic roles — `bg`, `paper`, `surface`, `text`,
+  `text-muted`, `border`, `accent`/`accent-fg`, `ring`, and the three `anno-*` annotation hues.
+  Components use semantic utilities only; never hard-code hex or raw colors in components.
+- **Dark mode is a token override** (`class` strategy), not a second set of components.
+- **Motion is tokenized.** Durations/easings/springs are named tokens; animate only `transform` and
+  `opacity` for WebView-safe 60fps; all motion honors `prefers-reduced-motion`. Use Framer Motion for
+  interactive/spring/shared-element motion and Tailwind transitions for CSS micro-interactions.
+- **One reading measure** at every breakpoint; wide screens add margin/rails, never wider text.
+- **Cross-platform layout:** use `100dvh`/`100svh` and `env(safe-area-inset-*)` through a shared
+  `SafeArea` primitive (no `100vh`); the bottom sheet docks above the on-screen keyboard.
+- **Consistency:** spacing, radius, type, and color come only from the token scales; features do not
+  invent one-off colors. Add UI dependencies (Framer Motion, Radix/Headless UI, cva, lucide) only
+  when an issue needs them, per "Dependency choices".
+
 ## Naming
 
 Avoid vague names:
@@ -461,6 +479,8 @@ Test the risky parts first:
 Avoid brittle tests that only assert component markup structure unless the issue is specifically UI rendering.
 
 Testing should validate behavior and invariants, not implementation trivia. Prefer a few meaningful tests over broad shallow snapshots.
+
+Testing styled/animated UI: do not assert pixels, colors, fonts, or animation frames (jsdom does not render CSS). Test the style-affecting behavior and logic instead — rendered roles/labels/states, interactions, variant-to-class output (e.g. `cva`), the theme toggle setting `.dark` and persisting, and reduced-motion taking the non-animated path. Visual correctness and animation smoothness are verified manually in a browser and a real WebView, not in unit tests.
 
 ## Pull request expectations
 

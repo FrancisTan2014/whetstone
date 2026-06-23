@@ -49,6 +49,35 @@ template breadth beyond the seeded set. A usable app beats a complete feature.
   object storage for provenance and re-ingestion (path + sha256 recorded in the database). It is not
   the source of truth; the decomposed blocks are.
 
+## v0 design language (UX)
+
+The product feel is **calm, focused, scholarly** — sharpen your mind against the text. One coherent
+design system, built for cross-platform from the start (web-core -> Capacitor -> Tauri). Detailed
+tokens live in code (the Tailwind theme) once built; this section records the durable decisions.
+
+- **Identity:** a warm "paper" reading surface framed by a quiet app shell; a single **ink-indigo**
+  accent for all interactive elements; **three muted annotation hues** mapped to the note templates —
+  Vocabulary (amber), Expression/phrase (teal-green), Thought/question (violet).
+- **Typography:** **serif** reading body (Latin: Source Serif 4; CJK: a Song/Serif stack for
+  classical texts) with **sans (Inter)** for UI; language-aware font stacks; a fixed reading measure
+  (~66ch Latin, narrower and looser-leading for CJK); user-adjustable reading text size.
+- **Themes:** ship **Day (light)** and **Night (dark)**; Day is the default with a Night toggle. Dark
+  mode is a token override, never a second set of components.
+- **Information architecture:** one unified single-user app with four modes — **Library, Reader,
+  Notes, Search**. Ingest is contextual (add or upload from a Work), not a separate "admin" site;
+  "admin" and "reader" remain one person in different modes.
+- **Navigation:** a left sidebar on desktop/tablet and a bottom tab bar on mobile; the reader is
+  immersive (chrome recedes while reading).
+- **Motion (first-class):** the app should feel **lively** — purposeful, spring-based motion in the
+  chrome, transitions, and the moment of annotation (a note's highlight is "born" on save) — while the
+  **reading surface stays calm**. Motion is tokenized and honors reduced-motion.
+- **Cross-platform:** responsive and adaptive by capability; safe-area- and `dvh`-aware layout;
+  gestures work for touch, mouse, pen, and keyboard; color tokens ship with fallbacks for older
+  WebViews; the active theme drives native chrome. The server stays the source of truth (no offline
+  authority in v0).
+- **Always:** explicit empty/loading/error states, AA+ contrast, visible focus, and >=44px touch
+  targets.
+
 ## v0 content model
 
 - The durable domain object is `Entry`. Materials, reading units, blocks, and notes are all entries.
