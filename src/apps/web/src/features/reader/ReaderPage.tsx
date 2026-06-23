@@ -8,6 +8,7 @@ import type { NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 import { NoteEditor } from "../notes/NoteEditor";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { fetchNoteTemplates } from "../notes/notesApi";
+import { readBlockSelection } from "./blockSelection";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
 
@@ -16,7 +17,7 @@ import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } f
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeSanitize];
 
-type SelectBlock = (block: ReaderBlock, workEntryId: string) => void;
+type SelectBlock = (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
 
 type PendingNote = Readonly<{ draft: NoteDraft; workEntryId: string }>;
 
@@ -68,10 +69,19 @@ export function ReaderPage(): React.JSX.Element {
     }
   }
 
-  function onSelectBlock(block: ReaderBlock, workEntryId: string): void {
-    const selection = window.getSelection();
-    const selectedText = selection === null ? "" : selection.toString();
-    const draft = captureBlockSelection(block.entryId, block.plaintext, selectedText);
+  function onSelectBlock(blockElement: HTMLElement, block: ReaderBlock, workEntryId: string): void {
+    const selection = readBlockSelection(blockElement, window.getSelection());
+
+    if (selection === undefined) {
+      return;
+    }
+
+    const draft = captureBlockSelection(
+      block.entryId,
+      block.plaintext,
+      selection.selectedText,
+      selection.startOffset
+    );
 
     if (draft !== undefined) {
       setNotice(undefined);
@@ -190,7 +200,7 @@ function renderUnit(
           className="readerBlock"
           data-block-id={block.entryId}
           key={block.entryId}
-          onMouseUp={() => onSelectBlock(block, workEntryId)}
+          onMouseUp={(event) => onSelectBlock(event.currentTarget, block, workEntryId)}
         >
           <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
             {block.markdown}

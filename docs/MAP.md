@@ -51,7 +51,8 @@ can navigate them from another package.
   `reader/`, `notes/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
   with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, and on a block
-  selection opens the `notes/` editor. `notes/` is the note-capture feature: `noteCapture.ts` turns a
+  selection (`blockSelection.ts` reads the selected text and its offset from the live Range) opens the
+  `notes/` editor. `notes/` is the note-capture feature: `noteCapture.ts` turns a
   block selection into a draft, `NoteEditor.tsx` is the template-based editor (side panel / bottom
   sheet), `notesApi.ts` calls the templates/notes endpoints.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when

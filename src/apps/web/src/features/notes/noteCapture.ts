@@ -13,20 +13,24 @@ export type NoteDraft = Readonly<{
 }>;
 
 // Build a note draft from a selection inside a single block. The block's plaintext is the
-// context; offsets are derived from it. Returns undefined for an empty selection or one
-// that is not contained in this block (v0 anchors to a single block).
+// context and `startOffset` is the selection's start within it, taken from the actual
+// reader Range so repeated text anchors to the occurrence the user selected (not the
+// first match). Returns undefined for an empty selection or one whose offset does not
+// line up with the block's plaintext (v0 anchors to a single block).
 export function captureBlockSelection(
   blockEntryId: string,
   blockText: string,
-  selectedText: string
+  selectedText: string,
+  startOffset: number
 ): NoteDraft | undefined {
   if (selectedText.trim().length === 0) {
     return undefined;
   }
 
-  const startOffset = blockText.indexOf(selectedText);
-
-  if (startOffset < 0) {
+  if (
+    startOffset < 0 ||
+    blockText.slice(startOffset, startOffset + selectedText.length) !== selectedText
+  ) {
     return undefined;
   }
 
