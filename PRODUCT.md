@@ -89,7 +89,7 @@ tokens live in code (the Tailwind theme) once built; this section records the du
     automatically from uploaded file metadata.)
   - `Work` is a readable work; v0 type is `book`, `essay`, `blog_post`, or `classical_text`; it has a
     language field inherited by its units. v0 supports three languages, stored as fixed codes chosen
-    from a dropdown (no free-text): Simplified Chinese (`zh-Hans`), Traditional Chinese (`zh-Hant`),
+    from a dropdown (no free-text): Simplified Chinese (`zh-CN`), Traditional Chinese (`zh-TW`),
     and English (`en`). EPUB metadata languages are normalized into this set on ingestion.
   - `ReadingUnit` is an ordered unit within a work (chapter/section/essay). It is a container/ordering
     entry, linked from the Work via `contains`.
