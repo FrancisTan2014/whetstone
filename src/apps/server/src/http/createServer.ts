@@ -11,7 +11,11 @@ import {
   type HealthResponse
 } from "@whetstone/contracts";
 
+import { registerLibraryRoutes } from "../features/library/libraryRoutes.js";
+import type { LibraryDependencies } from "../features/library/libraryCommands.js";
+
 export type CreateServerOptions = Readonly<{
+  library?: LibraryDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
 }>;
 
@@ -32,6 +36,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     },
     async (): Promise<HealthResponse> => createHealthResponse()
   );
+
+  if (options.library !== undefined) {
+    registerLibraryRoutes(server, options.library);
+  }
 
   return server;
 }

@@ -3,12 +3,14 @@ import type { FastifyServerOptions } from "fastify";
 export type ServerLogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
 
 export type ServerConfig = Readonly<{
+  databaseDir: string | undefined;
   host: string;
   logLevel: ServerLogLevel;
   port: number;
 }>;
 
 const defaultServerConfig: ServerConfig = {
+  databaseDir: undefined,
   host: "127.0.0.1",
   logLevel: "info",
   port: 3000
@@ -29,6 +31,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   const logLevel = parseLogLevel(env.LOG_LEVEL);
 
   return {
+    databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
     host: env.HOST ?? defaultServerConfig.host,
     logLevel,
     port

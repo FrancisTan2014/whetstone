@@ -4,13 +4,11 @@ import { describe, expect, it } from "vitest";
 import { App } from "./App";
 
 describe("App", () => {
-  it("renders a foundation placeholder without reader or admin features", () => {
+  it("renders the library admin page", () => {
     const markup = renderToStaticMarkup(<App />);
 
-    expect(markup).toContain("Foundation scaffold");
-    expect(markup).toContain("whetstone foundation");
-    expect(markup).toContain("/health");
-    expect(markup).not.toContain("Create note");
-    expect(markup).not.toContain("Admin material");
+    expect(markup).toContain("Library admin");
+    expect(markup).toContain("Loading the library");
+    expect(markup).not.toContain("Foundation scaffold");
   });
 });

@@ -3,3 +3,4 @@ node_modules
 **/dist
 **/*.tsbuildinfo
 pnpm-lock.yaml
+**/src/db/migrations
