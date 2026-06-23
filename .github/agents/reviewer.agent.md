@@ -23,6 +23,9 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 
 - If the maintainer named a PR, review it. Otherwise pick the **oldest open non-draft PR labeled
   `needs-review`**. Skip PRs labeled `changes-requested` — they are waiting on the developer.
+- Keep the handoff honest: if a label is **stale or wrong** — a `needs-review` PR already merged or
+  closed, or state left over from a dead run — correct it to reality before proceeding, so the queue
+  stays trustworthy.
 
 ## Check status first
 
@@ -49,7 +52,8 @@ Do not comment on style, formatting, or speculative future-proofing.
 
 ## Decide
 
-- If material changes are needed: leave a concise review listing them, add `changes-requested`,
+- If material changes are needed: leave a concise review listing them — this is your **handoff to the
+  developer**, so state the concrete required changes and nothing more — add `changes-requested`,
   remove `needs-review`, and stop.
 - If it passes review: leave a concise approval comment, add `review-approved`, remove `needs-review`.
 - Merge **only** when every `GUIDELINES.md` merge gate passes: required checks green, acceptance

@@ -25,8 +25,17 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 
 ## Pick the work
 
-- If the maintainer named an issue, use it. Otherwise pick the **lowest-numbered open issue labeled
-  `ready-for-dev`** whose `Depends on: #N` dependencies are all closed.
+- If the maintainer named an issue, use it. Otherwise select in **one pass**: fetch all open
+  `ready-for-dev` issues with `number`, `title`, `labels`, and `body` in a single `gh` query, then
+  pick the **lowest-numbered** one whose `Depends on: #N` issues are all closed. Trust the labels as
+  the queue — do not open issues one by one or re-derive the backlog by searching.
+- Catch up from GitHub, which is the handoff and the source of truth: the **labels** are the queue
+  state, the **issue** is the spec, and the reviewer's **review comment** on a PR is their handoff to
+  you. Read the one relevant item; do not keep or consult a separate work-log — clean-start distrusts
+  local leftovers, and an ever-growing log is exactly the context bloat that slows a run.
+- Keep the handoff honest: if you find label/queue state that is **stale or wrong** — e.g. an
+  `in-progress` label with no open PR or live run, or a label that contradicts the issue/PR — correct
+  it to the true state as part of catching up, so the next run can trust it.
 - If the issue is too ambiguous to implement without guessing, comment the specific open questions,
   add `needs-design`, remove `ready-for-dev`, and stop. Do not guess.
 - Claim it: add the `in-progress` label and remove `ready-for-dev`.
@@ -64,8 +73,9 @@ Previous attempts and other sessions leave branches, worktrees, and progress not
   `.github/skills/whetstone-engineering/validate.ps1` on Windows. Never lower thresholds, skip steps,
   or add assertion-free tests to inflate coverage.
 - Open exactly **one** pull request: title scoped to the issue; body opens with `Closes #<n>` and
-  states what changed, what validation ran, and anything that could not run and why. Add the
-  `needs-review` label.
+  states what changed, what validation ran, and anything that could not run and why. Keep the body a
+  tight, skimmable **handoff to the reviewer** — enough to catch up from the PR alone, not an essay.
+  Add the `needs-review` label.
 
 ## Stop
 
