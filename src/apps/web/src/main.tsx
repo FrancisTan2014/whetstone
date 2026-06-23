@@ -4,6 +4,7 @@ import "@fontsource-variable/source-serif-4";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MotionConfig } from "framer-motion";
+import { HashRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { ThemeToggle } from "./shared/theme/ThemeToggle";
@@ -17,12 +18,14 @@ if (rootElement === null) {
 }
 
 // `reducedMotion="user"` makes every Framer Motion animation honor the OS preference
-// globally; the JS guard in shared/motion/motion.ts covers manual transition configs.
+// globally. HashRouter keeps routing origin-independent (file / capacitor:// / tauri://).
 createRoot(rootElement).render(
   <StrictMode>
     <MotionConfig reducedMotion="user">
-      <ThemeToggle />
-      <App />
+      <HashRouter>
+        <ThemeToggle />
+        <App />
+      </HashRouter>
     </MotionConfig>
   </StrictMode>
 );
