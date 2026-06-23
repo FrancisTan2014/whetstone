@@ -1,9 +1,9 @@
 import { parseNoteTemplateDto, type NoteDto, type NoteTemplateDto } from "@whetstone/contracts";
 import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, noteAnchors, noteTemplates, notes, readingUnits } from "../../db/schema.js";
+import { blocks, noteAnchors, noteTemplates, notes } from "../../db/schema.js";
 
 type TemplateRow = Readonly<{
   fieldsJson: unknown;
@@ -42,8 +42,9 @@ export async function getNoteTemplateById(
 
 export type BlockInWork = Readonly<{ plaintext: string }>;
 
-// A note may only annotate a block that belongs to the named work; this single lookup
-// both confirms the block exists and scopes it to the work.
+// A note may only annotate an active block that belongs to the named work; this single
+// lookup both confirms the block exists (and is not soft-deleted) and scopes it to the
+// work via the block's own `work_entry_id`.
 export async function findBlockInWork(
   db: DbClient,
   workEntryId: EntryId,
@@ -52,8 +53,13 @@ export async function findBlockInWork(
   const rows = await db
     .select({ plaintext: blocks.plaintext })
     .from(blocks)
-    .innerJoin(readingUnits, eq(blocks.readingUnitEntryId, readingUnits.entryId))
-    .where(and(eq(blocks.entryId, blockEntryId), eq(readingUnits.workEntryId, workEntryId)))
+    .where(
+      and(
+        eq(blocks.entryId, blockEntryId),
+        eq(blocks.workEntryId, workEntryId),
+        isNull(blocks.deletedAt)
+      )
+    )
     .limit(1);
   const row = rows[0];
 
@@ -109,8 +115,9 @@ function toNoteDto(row: NoteRow): NoteDto {
   };
 }
 
-// All notes anchored to a block within the work, joined to their anchor. Ordered by note id
-// for a deterministic list; the client groups them by block for reader highlights.
+// All notes anchored to a block within the work, joined to their anchor. Scoped through
+// the block's `work_entry_id` so notes on soft-deleted (unit-detached) blocks remain
+// listed. Ordered by note id for a deterministic list; the client groups them by block.
 export async function listNotesForWork(
   db: DbClient,
   workEntryId: EntryId
@@ -120,15 +127,15 @@ export async function listNotesForWork(
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
     .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
-    .innerJoin(readingUnits, eq(readingUnits.entryId, blocks.readingUnitEntryId))
-    .where(eq(readingUnits.workEntryId, workEntryId))
+    .where(eq(blocks.workEntryId, workEntryId))
     .orderBy(asc(notes.entryId));
 
   return rows.map(toNoteDto);
 }
 
 // A single note scoped to the work, used to authorize edits and deletes against a forged or
-// cross-work note id.
+// cross-work note id. Scoped through the block's `work_entry_id` so a note on a soft-deleted
+// block stays editable/deletable for its work.
 export async function getNoteForWork(
   db: DbClient,
   workEntryId: EntryId,
@@ -139,8 +146,7 @@ export async function getNoteForWork(
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
     .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
-    .innerJoin(readingUnits, eq(readingUnits.entryId, blocks.readingUnitEntryId))
-    .where(and(eq(notes.entryId, noteEntryId), eq(readingUnits.workEntryId, workEntryId)))
+    .where(and(eq(notes.entryId, noteEntryId), eq(blocks.workEntryId, workEntryId)))
     .limit(1);
   const row = rows[0];
 

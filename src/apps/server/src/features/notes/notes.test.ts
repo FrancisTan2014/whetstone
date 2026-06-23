@@ -146,6 +146,15 @@ function listNotes(workEntryId: string): ReturnType<typeof context.server.inject
   return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/notes` });
 }
 
+async function listContent(workEntryId: string): Promise<WorkContentDto> {
+  const response = await context.server.inject({
+    method: "GET",
+    url: `/api/works/${workEntryId}/content`
+  });
+
+  return response.json() as WorkContentDto;
+}
+
 function patchNote(
   workEntryId: string,
   noteEntryId: string,
@@ -558,5 +567,53 @@ describe("delete note route", () => {
     expect(
       await context.db.select().from(notes).where(eq(notes.entryId, note.entryId))
     ).toHaveLength(1);
+  });
+});
+
+describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
+  function reingest(
+    workEntryId: string,
+    markdown: string
+  ): ReturnType<typeof context.server.inject> {
+    return context.server.inject({
+      method: "POST",
+      payload: { kind: "manual", markdown },
+      url: `/api/works/${workEntryId}/content`
+    });
+  }
+
+  it("keeps a note listed, editable, and deletable after re-ingestion removes its block", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createWholeBlockNote(workEntryId, blockEntryId, plaintext);
+
+    // Re-ingest unrelated content so the anchored block is removed (soft-deleted).
+    await reingest(workEntryId, "An entirely unrelated closing statement.");
+
+    // The reader excludes the removed block.
+    const content = (await listContent(workEntryId)) as WorkContentDto;
+    expect(
+      content.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.entryId))
+    ).not.toContain(blockEntryId);
+
+    // The note is still returned for the work.
+    const listed = (await listNotes(workEntryId).then((response) =>
+      response.json()
+    )) as NoteListDto;
+    expect(listed.notes.map((each) => each.entryId)).toContain(note.entryId);
+
+    // The note is still editable.
+    const patched = await patchNote(workEntryId, note.entryId, {
+      answers: { noticed: "Still addressable." },
+      templateId: "thought"
+    });
+    expect(patched.statusCode).toBe(200);
+
+    // The note is still deletable.
+    const deleted = await deleteNoteRequest(workEntryId, note.entryId);
+    expect(deleted.statusCode).toBe(204);
+    const afterDelete = (await listNotes(workEntryId).then((response) =>
+      response.json()
+    )) as NoteListDto;
+    expect(afterDelete.notes).toEqual([]);
   });
 });

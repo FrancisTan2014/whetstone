@@ -42,6 +42,7 @@ export async function writeReadingUnits(
     orderIndex: number;
     plaintext: string;
     readingUnitEntryId: string;
+    workEntryId: EntryId;
   }[] = [];
   const linkRows: { fromEntryId: string; toEntryId: string; type: "contains" }[] = [];
 
@@ -65,7 +66,8 @@ export async function writeReadingUnits(
         mdastJson: block.mdast,
         orderIndex: blockIndex,
         plaintext: block.plaintext,
-        readingUnitEntryId: unitEntryId
+        readingUnitEntryId: unitEntryId,
+        workEntryId: input.workEntryId
       });
       linkRows.push({ fromEntryId: unitEntryId, toEntryId: blockEntryId, type: "contains" });
     });

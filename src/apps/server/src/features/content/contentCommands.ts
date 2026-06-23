@@ -1,13 +1,12 @@
-import { decomposeMarkdown, type EntryId } from "@whetstone/domain";
+import { blocksToMarkdown, decomposeMarkdown, diffBlocks, type EntryId } from "@whetstone/domain";
 import type { IngestMarkdownRequest, WorkContentDto } from "@whetstone/contracts";
-import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import type { EpubParser } from "../../files/epubSource.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
-import { readingUnits, workSources } from "../../db/schema.js";
-import { writeReadingUnits } from "./blockWriter.js";
-import { loadWorkContent, workExists } from "./contentQueries.js";
+import { workSources } from "../../db/schema.js";
+import { reconcileWorkBlocks } from "./blockReconciler.js";
+import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store, EPUB
 // parser) are passed in so ingestion stays deterministic and testable.
@@ -32,6 +31,10 @@ type Provenance = Readonly<{
   sourceText: string | null;
 }>;
 
+// Ingesting Markdown replaces the work's content: a content-similarity diff preserves
+// stable block ids for matched/lightly-edited blocks (so note anchors stay valid),
+// assigns new ids to genuinely new blocks, and soft-deletes removed ones. Re-ingesting
+// an identical source is a no-op. The whole replacement runs in one transaction.
 export async function ingestMarkdown(
   dependencies: ContentDependencies,
   workEntryId: EntryId,
@@ -41,9 +44,33 @@ export async function ingestMarkdown(
     return { status: "work_not_found" };
   }
 
+  const decomposed = decomposeMarkdown(source.markdown);
+  const current = await loadWorkContent(dependencies.db, workEntryId);
+
+  const currentNodes = current.readingUnits.flatMap((unit) =>
+    unit.blocks.map((block) => block.mdast)
+  );
+  const newNodes = decomposed.flatMap((unit) => unit.blocks.map((block) => block.mdast));
+
+  if (
+    (await workHasSource(dependencies.db, workEntryId)) &&
+    blocksToMarkdown(currentNodes) === blocksToMarkdown(newNodes)
+  ) {
+    return { content: current, status: "ingested" };
+  }
+
   const sourceId = dependencies.createSourceId();
   const provenance = await buildProvenance(dependencies.sourceFileStore, sourceId, source);
-  const decomposed = decomposeMarkdown(source.markdown);
+
+  const oldBlocks = current.readingUnits.flatMap((unit) =>
+    unit.blocks.map((block) => ({ id: block.entryId, plaintext: block.plaintext }))
+  );
+  const newBlocks = decomposed.flatMap((unit) => unit.blocks);
+  const diff = diffBlocks(
+    oldBlocks,
+    newBlocks.map((block) => ({ plaintext: block.plaintext }))
+  );
+  const oldUnitIds = current.readingUnits.map((unit) => unit.entryId);
 
   await dependencies.db.transaction(async (tx) => {
     await tx.insert(workSources).values({
@@ -56,14 +83,11 @@ export async function ingestMarkdown(
       workEntryId
     });
 
-    const existingUnits = await tx
-      .select({ entryId: readingUnits.entryId })
-      .from(readingUnits)
-      .where(eq(readingUnits.workEntryId, workEntryId));
-
-    await writeReadingUnits(tx, {
+    await reconcileWorkBlocks(tx, {
+      assignments: diff.assignments,
       createEntryId: dependencies.createEntryId,
-      startOrder: existingUnits.length,
+      oldUnitIds,
+      removedIds: diff.removedIds,
       units: decomposed,
       workEntryId
     });
