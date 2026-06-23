@@ -1,23 +1,20 @@
 import type { EntryId } from "./entry.js";
 
+// A note anchors to a stable block id so it survives edits and re-imports. For
+// sub-block selections it also records a character offset range within that block;
+// whole-block selections omit the offsets. The selected-text and surrounding-context
+// snapshots keep the note legible even if the underlying block later changes.
 export type NoteAnchor = Readonly<{
+  blockEntryId: EntryId;
   contextSnapshot: string;
-  endOffset: number;
-  readingUnitEntryId: EntryId;
+  endOffset?: number;
   selectedTextSnapshot: string;
-  startOffset: number;
+  startOffset?: number;
 }>;
 
 export type CreateNoteAnchorInput = NoteAnchor;
 
 export function createNoteAnchor(input: CreateNoteAnchorInput): NoteAnchor {
-  assertNonNegativeInteger("startOffset", input.startOffset);
-  assertNonNegativeInteger("endOffset", input.endOffset);
-
-  if (input.endOffset <= input.startOffset) {
-    throw new Error("NoteAnchor endOffset must be greater than startOffset.");
-  }
-
   assertNonEmptySnapshot("selectedTextSnapshot", input.selectedTextSnapshot);
   assertNonEmptySnapshot("contextSnapshot", input.contextSnapshot);
 
@@ -25,12 +22,33 @@ export function createNoteAnchor(input: CreateNoteAnchorInput): NoteAnchor {
     throw new Error("NoteAnchor contextSnapshot must contain selectedTextSnapshot.");
   }
 
+  const { endOffset, startOffset } = input;
+
+  if ((startOffset === undefined) !== (endOffset === undefined)) {
+    throw new Error("NoteAnchor startOffset and endOffset must be provided together.");
+  }
+
+  if (startOffset === undefined || endOffset === undefined) {
+    return Object.freeze({
+      blockEntryId: input.blockEntryId,
+      contextSnapshot: input.contextSnapshot,
+      selectedTextSnapshot: input.selectedTextSnapshot
+    });
+  }
+
+  assertNonNegativeInteger("startOffset", startOffset);
+  assertNonNegativeInteger("endOffset", endOffset);
+
+  if (endOffset <= startOffset) {
+    throw new Error("NoteAnchor endOffset must be greater than startOffset.");
+  }
+
   return Object.freeze({
+    blockEntryId: input.blockEntryId,
     contextSnapshot: input.contextSnapshot,
-    endOffset: input.endOffset,
-    readingUnitEntryId: input.readingUnitEntryId,
+    endOffset,
     selectedTextSnapshot: input.selectedTextSnapshot,
-    startOffset: input.startOffset
+    startOffset
   });
 }
 
