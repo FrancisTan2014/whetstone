@@ -201,7 +201,13 @@ export function AdminLibraryPage(): React.JSX.Element {
                 {works.map((item) => (
                   <li key={item.work.entryId}>
                     {item.work.title} — {item.author.name} ({formatWorkType(item.work.workType)},{" "}
-                    {item.work.language})
+                    {item.work.language}){" "}
+                    <a
+                      download={`${item.work.title}.md`}
+                      href={`/api/works/${item.work.entryId}/content/markdown`}
+                    >
+                      Export Markdown
+                    </a>
                   </li>
                 ))}
               </ul>

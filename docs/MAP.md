@@ -14,8 +14,10 @@ entry to a pointer.
 
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
 `src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
-Markdown into ordered, stable-id blocks), `blockMarkdown.ts` (serialize a block's mdast back to
-Markdown for safe rendering), `author.ts`, `work.ts`, `noteTemplate.ts` (v0 note templates +
+Markdown into ordered, stable-id blocks), `blockDiff.ts` (content-similarity diff matching new blocks
+to existing ones — Dice-bigram LCS — to preserve stable ids on re-ingestion), `blockMarkdown.ts`
+(serialize a block's mdast back to Markdown for safe rendering; `blocksToMarkdown` reconstructs a whole
+work for export), `author.ts`, `work.ts`, `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`. Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
@@ -37,7 +39,11 @@ can navigate them from another package.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`). Routes stay thin; logic lives in
-  commands/queries. `notes/` serves note templates and creates, lists, edits, and deletes notes
+  commands/queries. `content/` ingests Markdown and re-ingestion REPLACES a work's content via the
+  domain block diff (`blockReconciler.ts` preserves matched block ids, inserts new, soft-deletes
+  removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical source is a no-op.
+  It also exports a work's Markdown (`GET /api/works/:id/content/markdown`). `notes/` serves note
+  templates and creates, lists, edits, and deletes notes
   (block-anchored, `annotates` link); templates are seeded from the domain on boot
   (`seedNoteTemplates`).
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a

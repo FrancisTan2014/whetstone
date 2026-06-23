@@ -169,6 +169,8 @@ describe("AdminLibraryPage", () => {
     expect(
       await screen.findByText("A Tale of Two Cities — Charles Dickens (book, en)")
     ).toBeDefined();
+    const exportLink = screen.getByRole("link", { name: "Export Markdown" });
+    expect(exportLink.getAttribute("href")).toBe("/api/works/work-9/content/markdown");
     expect(mockedCreateWork).toHaveBeenCalledWith({
       author: { authorId: dickens.id, mode: "existing" },
       language: "en",
