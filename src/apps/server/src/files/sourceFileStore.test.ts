@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertSafeSourceId,
   createSourceFileStore,
+  hashBytes,
   hashMarkdown,
   resolveWithinDirectory
 } from "./sourceFileStore.js";
@@ -28,6 +29,15 @@ describe("hashMarkdown", () => {
 
     expect(digest).toBe(createHash("sha256").update("# Title", "utf8").digest("hex"));
     expect(digest).toBe(hashMarkdown("# Title"));
+  });
+});
+
+describe("hashBytes", () => {
+  it("computes a stable sha256 hex digest over raw bytes", () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+
+    expect(hashBytes(bytes)).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(hashBytes(bytes)).toBe(hashBytes(new Uint8Array([1, 2, 3, 4])));
   });
 });
 
@@ -67,5 +77,24 @@ describe("createSourceFileStore", () => {
     const store = createSourceFileStore(directory);
 
     await expect(store.writeMarkdownSource({ id: "../evil", markdown: "x" })).rejects.toThrow();
+  });
+
+  it("writes EPUB bytes to a server-generated path and reports its sha256", async () => {
+    const store = createSourceFileStore(directory);
+    const bytes = new Uint8Array([0, 1, 2, 250, 255]);
+
+    const written = await store.writeEpubSource({ bytes, id: "source-2" });
+
+    expect(written.path).toBe("source-2.epub");
+    expect(written.sha256).toBe(hashBytes(bytes));
+    expect(new Uint8Array(await readFile(join(directory, "source-2.epub")))).toEqual(bytes);
+  });
+
+  it("rejects an unsafe source id before writing an EPUB", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(
+      store.writeEpubSource({ bytes: new Uint8Array([1]), id: "../evil" })
+    ).rejects.toThrow();
   });
 });

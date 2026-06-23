@@ -1,8 +1,10 @@
+import { epubContentType } from "@whetstone/contracts";
 import type {
   AuthorDto,
   AuthorListDto,
   CreateAuthorRequest,
   CreateWorkRequest,
+  IngestEpubResultDto,
   WorkListDto,
   WorkListItemDto
 } from "@whetstone/contracts";
@@ -39,6 +41,16 @@ export async function createWork(request: CreateWorkRequest): Promise<WorkListIt
   return requestJson<WorkListItemDto>("/api/works", {
     body: JSON.stringify(request),
     headers: jsonHeaders,
+    method: "POST"
+  });
+}
+
+export async function ingestEpub(file: File): Promise<IngestEpubResultDto> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  return requestJson<IngestEpubResultDto>("/api/works/epub", {
+    body: bytes,
+    headers: { "content-type": epubContentType },
     method: "POST"
   });
 }

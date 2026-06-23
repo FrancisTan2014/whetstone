@@ -7,13 +7,22 @@ export type WriteMarkdownSourceInput = Readonly<{
   markdown: string;
 }>;
 
+export type WriteEpubSourceInput = Readonly<{
+  bytes: Uint8Array;
+  id: string;
+}>;
+
 export type WrittenMarkdownSource = Readonly<{
   path: string;
   sha256: string;
 }>;
 
+export type WrittenEpubSource = WrittenMarkdownSource;
+
 export type SourceFileStore = Readonly<{
+  hashBytes: (bytes: Uint8Array) => string;
   hashMarkdown: (markdown: string) => string;
+  writeEpubSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
   writeMarkdownSource: (input: WriteMarkdownSourceInput) => Promise<WrittenMarkdownSource>;
 }>;
 
@@ -22,6 +31,10 @@ const safeSourceIdPattern = /^[A-Za-z0-9_-]+$/;
 
 export function hashMarkdown(markdown: string): string {
   return createHash("sha256").update(markdown, "utf8").digest("hex");
+}
+
+export function hashBytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 export function assertSafeSourceId(id: string): void {
@@ -42,19 +55,35 @@ export function resolveWithinDirectory(baseDir: string, relativePath: string): s
 }
 
 export function createSourceFileStore(sourceFilesDir: string): SourceFileStore {
-  async function writeMarkdownSource(
-    input: WriteMarkdownSourceInput
-  ): Promise<WrittenMarkdownSource> {
-    assertSafeSourceId(input.id);
-    const relativePath = `${input.id}.md`;
+  async function writeSourceFile(
+    id: string,
+    extension: string,
+    data: Uint8Array | string
+  ): Promise<string> {
+    assertSafeSourceId(id);
+    const relativePath = `${id}.${extension}`;
     const target = resolveWithinDirectory(sourceFilesDir, relativePath);
     await mkdir(dirname(target), { recursive: true });
     const tempPath = `${target}.tmp`;
-    await writeFile(tempPath, input.markdown, "utf8");
+    await writeFile(tempPath, data);
     await rename(tempPath, target);
 
-    return Object.freeze({ path: relativePath, sha256: hashMarkdown(input.markdown) });
+    return relativePath;
   }
 
-  return Object.freeze({ hashMarkdown, writeMarkdownSource });
+  async function writeMarkdownSource(
+    input: WriteMarkdownSourceInput
+  ): Promise<WrittenMarkdownSource> {
+    const path = await writeSourceFile(input.id, "md", input.markdown);
+
+    return Object.freeze({ path, sha256: hashMarkdown(input.markdown) });
+  }
+
+  async function writeEpubSource(input: WriteEpubSourceInput): Promise<WrittenEpubSource> {
+    const path = await writeSourceFile(input.id, "epub", input.bytes);
+
+    return Object.freeze({ path, sha256: hashBytes(input.bytes) });
+  }
+
+  return Object.freeze({ hashBytes, hashMarkdown, writeEpubSource, writeMarkdownSource });
 }

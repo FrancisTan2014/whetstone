@@ -35,6 +35,23 @@ const blockTypeByNodeType = new Map<string, BlockType>([
 
 const markdownProcessor = unified().use(remarkParse).use(remarkGfm);
 
+// Map a single top-level mdast node to a decomposed block, keeping the mdast node
+// (for safe rendering/export) plus its plaintext projection (for search). Nodes
+// outside the supported block types map to `undefined` and are skipped by callers.
+export function blockFromMdastNode(node: RootContent): DecomposedBlock | undefined {
+  const blockType = blockTypeByNodeType.get(node.type);
+
+  if (blockType === undefined) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    blockType,
+    mdast: node,
+    plaintext: mdastToString(node)
+  });
+}
+
 // Decompose Markdown into ordered reading units of ordered blocks. A new reading
 // unit starts at each heading; content before the first heading forms a leading
 // unit, and a document without headings maps to a single reading unit. Top-level
@@ -46,17 +63,11 @@ export function decomposeMarkdown(markdown: string): ReadonlyArray<DecomposedRea
   let current: ReadingUnitAccumulator | undefined;
 
   for (const node of root.children) {
-    const blockType = blockTypeByNodeType.get(node.type);
+    const block = blockFromMdastNode(node);
 
-    if (blockType === undefined) {
+    if (block === undefined) {
       continue;
     }
-
-    const block: DecomposedBlock = Object.freeze({
-      blockType,
-      mdast: node,
-      plaintext: mdastToString(node)
-    });
 
     if (node.type === "heading") {
       current = { blocks: [block], title: headingTitle(node) };

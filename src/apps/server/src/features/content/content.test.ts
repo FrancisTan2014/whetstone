@@ -5,12 +5,17 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { WorkContentDto } from "@whetstone/contracts";
+import {
+  epubContentType,
+  type IngestEpubResultDto,
+  type WorkContentDto
+} from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { workSources } from "../../db/schema.js";
-import { createSourceFileStore, hashMarkdown } from "../../files/sourceFileStore.js";
+import { authors, workSources } from "../../db/schema.js";
+import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
+import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
@@ -22,6 +27,18 @@ type TestContext = Readonly<{
 }>;
 
 let context: TestContext;
+let epubResponder: (bytes: Uint8Array) => Promise<ParsedEpub>;
+let epubUploadLimitBytes: number;
+
+function twoChapterEpub(): ParsedEpub {
+  return {
+    chapters: [
+      { html: "<h1>Chapter One</h1><p>First.</p>" },
+      { html: "<h1>本纪</h1><p>黄帝者。</p>" }
+    ],
+    metadata: { author: "司马迁", language: "zh", title: "史记选读" }
+  };
+}
 
 async function buildContext(): Promise<TestContext> {
   const pglite = new PGlite();
@@ -33,15 +50,19 @@ async function buildContext(): Promise<TestContext> {
   let workSequence = 0;
   let entrySequence = 0;
   let sourceSequence = 0;
+  let contentAuthorSequence = 0;
   const library: LibraryDependencies = {
     createAuthorId: () => `author-${(authorSequence += 1)}`,
     createEntryId: () => `work-${(workSequence += 1)}`,
     db
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `epub-author-${(contentAuthorSequence += 1)}`,
     createEntryId: () => `entry-${(entrySequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
+    epubParser: (bytes) => epubResponder(bytes),
+    epubUploadLimitBytes,
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
@@ -71,7 +92,28 @@ function ingest(workEntryId: string, payload: unknown): ReturnType<typeof contex
   });
 }
 
+function ingestEpub(bytes: Buffer): ReturnType<typeof context.server.inject> {
+  return context.server.inject({
+    headers: { "content-type": epubContentType },
+    method: "POST",
+    payload: bytes,
+    url: "/api/works/epub"
+  });
+}
+
+async function createAuthorNamed(name: string): Promise<string> {
+  const response = await context.server.inject({
+    method: "POST",
+    payload: { name },
+    url: "/api/authors"
+  });
+
+  return response.json().id as string;
+}
+
 beforeEach(async () => {
+  epubResponder = async () => twoChapterEpub();
+  epubUploadLimitBytes = 50 * 1024 * 1024;
   context = await buildContext();
 });
 
@@ -234,5 +276,171 @@ describe("content routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ readingUnits: [], workEntryId });
+  });
+});
+
+describe("EPUB ingestion routes", () => {
+  it("creates a work whose chapters become ordered reading units of blocks", async () => {
+    const bytes = Buffer.from("epub-bytes-1");
+
+    const response = await ingestEpub(bytes);
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as IngestEpubResultDto;
+    expect(body.work).toMatchObject({ language: "zh", title: "史记选读", workType: "book" });
+    expect(body.content.workEntryId).toBe(body.work.entryId);
+    expect(body.content.readingUnits.map((unit) => [unit.title, unit.orderIndex])).toEqual([
+      ["Chapter One", 0],
+      ["本纪", 1]
+    ]);
+    expect(
+      body.content.readingUnits.map((unit) => unit.blocks.map((block) => block.blockType))
+    ).toEqual([
+      ["heading", "paragraph"],
+      ["heading", "paragraph"]
+    ]);
+
+    const createdAuthors = await context.db.select().from(authors);
+    expect(createdAuthors.map((author) => author.name)).toEqual(["司马迁"]);
+    expect(body.work.authorId).toBe(createdAuthors[0]?.id);
+  });
+
+  it("retains the uploaded .epub on disk with its path and sha256", async () => {
+    const bytes = Buffer.from("epub-bytes-provenance");
+
+    const response = await ingestEpub(bytes);
+    const body = response.json() as IngestEpubResultDto;
+
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, body.work.entryId));
+    const source = sources[0];
+    expect(source?.kind).toBe("upload");
+    expect(source?.fileName).toBeNull();
+    expect(source?.sourceText).toBeNull();
+    expect(source?.filePath).toBe("source-1.epub");
+
+    const onDisk = await readFile(join(context.sourcesDir, "source-1.epub"));
+    expect(source?.sha256).toBe(hashBytes(new Uint8Array(bytes)));
+    expect(new Uint8Array(onDisk)).toEqual(new Uint8Array(bytes));
+  });
+
+  it("matches an existing author by name instead of creating a duplicate", async () => {
+    const existingAuthorId = await createAuthorNamed("司马迁");
+
+    const response = await ingestEpub(Buffer.from("epub-match-author"));
+    const body = response.json() as IngestEpubResultDto;
+
+    expect(body.work.authorId).toBe(existingAuthorId);
+    const allAuthors = await context.db.select().from(authors);
+    expect(allAuthors).toHaveLength(1);
+  });
+
+  it("is idempotent: re-uploading identical bytes returns the existing work", async () => {
+    const bytes = Buffer.from("epub-idempotent");
+
+    const first = await ingestEpub(bytes);
+    const firstBody = first.json() as IngestEpubResultDto;
+
+    const second = await ingestEpub(bytes);
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json() as IngestEpubResultDto;
+
+    expect(secondBody.work.entryId).toBe(firstBody.work.entryId);
+    expect(secondBody.content.readingUnits).toHaveLength(2);
+    const sources = await context.db.select().from(workSources);
+    expect(sources).toHaveLength(1);
+  });
+
+  it("creates a work with no reading units for an EPUB without supported blocks", async () => {
+    epubResponder = async () => ({
+      chapters: [],
+      metadata: { author: "Anon", language: "en", title: "Empty" }
+    });
+
+    const response = await ingestEpub(Buffer.from("epub-empty"));
+
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as IngestEpubResultDto).content.readingUnits).toEqual([]);
+  });
+
+  it("returns 422 when the EPUB cannot be parsed", async () => {
+    epubResponder = async () => {
+      throw new Error("corrupt epub");
+    };
+
+    const response = await ingestEpub(Buffer.from("not-an-epub"));
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "invalid_epub" });
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+  });
+
+  it("rejects an empty EPUB body", async () => {
+    const response = await ingestEpub(Buffer.alloc(0));
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects a non-binary body for the EPUB endpoint", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { not: "epub" },
+      url: "/api/works/epub"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("skips EPUB chapters that decompose to zero supported blocks", async () => {
+    epubResponder = async () => ({
+      chapters: [{ html: "<hr>" }, { html: "<h1>Real</h1><p>Body.</p>" }],
+      metadata: { author: "Anon", language: "en", title: "Mixed" }
+    });
+
+    const response = await ingestEpub(Buffer.from("epub-mixed-empty"));
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as IngestEpubResultDto;
+    expect(body.content.readingUnits.map((unit) => unit.title)).toEqual(["Real"]);
+    expect(body.content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual([
+      "heading",
+      "paragraph"
+    ]);
+  });
+
+  it("creates a work without a 500 when every chapter lacks supported blocks", async () => {
+    epubResponder = async () => ({
+      chapters: [{ html: "<hr>" }, { html: "<hr>" }],
+      metadata: { author: "Anon", language: "en", title: "All empty" }
+    });
+
+    const response = await ingestEpub(Buffer.from("epub-all-empty"));
+
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as IngestEpubResultDto).content.readingUnits).toEqual([]);
+    // The .epub is retained (written before the transaction); the empty-block path must
+    // not throw and orphan that file.
+    expect(await context.db.select().from(workSources)).toHaveLength(1);
+  });
+
+  it("accepts an EPUB upload larger than Fastify's default 1 MiB body limit", async () => {
+    const largeUpload = Buffer.alloc(2 * 1024 * 1024, 7);
+
+    const response = await ingestEpub(largeUpload);
+
+    expect(response.statusCode).toBe(201);
+  });
+
+  it("rejects an EPUB upload that exceeds the configured size limit", async () => {
+    epubUploadLimitBytes = 64;
+    context = await buildContext();
+
+    const response = await ingestEpub(Buffer.alloc(128, 1));
+
+    expect(response.statusCode).toBe(413);
   });
 });

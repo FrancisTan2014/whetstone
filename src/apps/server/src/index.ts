@@ -1,9 +1,11 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js";
 import { createDbClient } from "./db/dbClient.js";
 import { runMigrations } from "./db/migrate.js";
+import { createEpubParser } from "./files/epubSource.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
 import { seedNoteTemplates } from "./features/notes/noteCommands.js";
 import { createServer } from "./http/createServer.js";
@@ -14,12 +16,16 @@ await runMigrations(pglite);
 const db = createDbClient(pglite);
 await seedNoteTemplates(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
+const epubParser = createEpubParser(join(config.sourceFilesDir, "epub-resources"));
 
 const server = createServer({
   content: {
+    createAuthorId: () => randomUUID(),
     createEntryId: () => randomUUID(),
     createSourceId: () => randomUUID(),
     db,
+    epubParser,
+    epubUploadLimitBytes: config.epubUploadLimitBytes,
     sourceFileStore
   },
   library: {
