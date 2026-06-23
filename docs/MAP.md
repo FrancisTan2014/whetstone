@@ -14,10 +14,13 @@ entry to a pointer.
 
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
 `src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
-Markdown into ordered, stable-id blocks), `blockDiff.ts` (content-similarity diff matching new blocks
-to existing ones — Dice-bigram LCS — to preserve stable ids on re-ingestion), `blockMarkdown.ts`
-(serialize a block's mdast back to Markdown for safe rendering; `blocksToMarkdown` reconstructs a whole
-work for export), `author.ts`, `work.ts`, `noteTemplate.ts` (v0 note templates +
+Markdown into ordered, stable-id blocks; exports the shared `blockFromMdastNode` mapper),
+`blockDiff.ts` (content-similarity diff matching new blocks to existing ones — Dice-bigram alignment —
+to preserve stable ids on re-ingestion), `htmlBlocks.ts` (decompose one EPUB chapter's XHTML into a
+reading unit of blocks via `rehype-parse` + `rehype-remark`), `epubMetadata.ts` (normalize OPF
+title/author/language), `blockMarkdown.ts` (serialize a block's mdast back to Markdown for safe
+rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`, `work.ts`,
+`noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`. Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
@@ -39,24 +42,29 @@ can navigate them from another package.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`). Routes stay thin; logic lives in
-  commands/queries. `content/` ingests Markdown and re-ingestion REPLACES a work's content via the
-  domain block diff (`blockReconciler.ts` preserves matched block ids, inserts new, soft-deletes
-  removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical source is a no-op.
-  Blocks also carry `work_entry_id`, so notes on soft-deleted (unit-detached) blocks stay addressable.
-  It also exports a work's Markdown (`GET /api/works/:id/content/markdown`). `notes/` serves note
-  templates and creates, lists, edits, and deletes notes (block-anchored, `annotates` link; scoped to
-  a work through `blocks.work_entry_id`); templates are seeded from the domain on boot
+  commands/queries. `content/` ingests Markdown and EPUB uploads. Markdown re-ingestion REPLACES a
+  work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
+  new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical
+  source is a no-op. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
+  sha256-idempotent, persisting via `blockWriter.ts`. Blocks carry `work_entry_id`, so notes on
+  soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
+  (`GET /api/works/:id/content/markdown`). `notes/` serves note templates and creates, lists, edits,
+  and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`);
+  templates are seeded from the domain on boot
   (`seedNoteTemplates`).
-- Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown under a
-  server-generated path with sha256 (path-traversal-guarded) for provenance only; blocks remain the
-  source of truth.
+- Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
+  `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
+  only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
+  (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
+  so commands test against a fake parser).
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
 
 - Entry: `src/main.tsx`; root `src/App.tsx`; styles `src/styles.css`.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`, `notes/`). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
+  `reader/`, `notes/`). `library/` is the admin: `AdminLibraryPage.tsx` adds authors/works and uploads
+  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
   with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them), and on a block selection (`blockSelection.ts`

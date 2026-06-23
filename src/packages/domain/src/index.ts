@@ -14,9 +14,12 @@ export {
   toEntryId
 } from "./entry.js";
 export type { CreateEntryInput, Entry, EntryId, EntryType } from "./entry.js";
+export { normalizeEpubMetadata } from "./epubMetadata.js";
+export type { NormalizedEpubMetadata, RawEpubCreator, RawEpubMetadata } from "./epubMetadata.js";
+export { decomposeHtmlChapter } from "./htmlBlocks.js";
 export { createEntryLink, isLinkType, linkTypes } from "./links.js";
 export type { EntryLink, LinkType } from "./links.js";
-export { decomposeMarkdown } from "./markdownBlocks.js";
+export { blockFromMdastNode, decomposeMarkdown } from "./markdownBlocks.js";
 export type { DecomposedBlock, DecomposedReadingUnit } from "./markdownBlocks.js";
 export { renderNoteMarkdown, validateNoteAnswers } from "./noteAnswers.js";
 export type { NoteAnswers, NoteAnswerValidation } from "./noteAnswers.js";

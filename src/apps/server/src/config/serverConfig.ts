@@ -4,6 +4,7 @@ export type ServerLogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "tr
 
 export type ServerConfig = Readonly<{
   databaseDir: string | undefined;
+  epubUploadLimitBytes: number;
   host: string;
   logLevel: ServerLogLevel;
   port: number;
@@ -12,6 +13,7 @@ export type ServerConfig = Readonly<{
 
 const defaultServerConfig: ServerConfig = {
   databaseDir: undefined,
+  epubUploadLimitBytes: 50 * 1024 * 1024,
   host: "127.0.0.1",
   logLevel: "info",
   port: 3000,
@@ -31,9 +33,11 @@ const serverLogLevels = new Set<ServerLogLevel>([
 export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const port = parsePort(env.PORT);
   const logLevel = parseLogLevel(env.LOG_LEVEL);
+  const epubUploadLimitBytes = parseEpubUploadLimit(env.EPUB_UPLOAD_LIMIT_BYTES);
 
   return {
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
+    epubUploadLimitBytes,
     host: env.HOST ?? defaultServerConfig.host,
     logLevel,
     port,
@@ -74,4 +78,18 @@ function parseLogLevel(rawLogLevel: string | undefined): ServerLogLevel {
   }
 
   return rawLogLevel as ServerLogLevel;
+}
+
+function parseEpubUploadLimit(rawLimit: string | undefined): number {
+  if (rawLimit === undefined) {
+    return defaultServerConfig.epubUploadLimitBytes;
+  }
+
+  const limit = Number.parseInt(rawLimit, 10);
+
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("EPUB_UPLOAD_LIMIT_BYTES must be a positive integer number of bytes.");
+  }
+
+  return limit;
 }

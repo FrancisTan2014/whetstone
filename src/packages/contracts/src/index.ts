@@ -1,6 +1,11 @@
-export { ingestMarkdownRequestSchema, parseIngestMarkdownRequest } from "./contentContracts.js";
+export {
+  epubContentType,
+  ingestMarkdownRequestSchema,
+  parseIngestMarkdownRequest
+} from "./contentContracts.js";
 export type {
   BlockDto,
+  IngestEpubResultDto,
   IngestMarkdownRequest,
   ReadingUnitDto,
   WorkContentDto

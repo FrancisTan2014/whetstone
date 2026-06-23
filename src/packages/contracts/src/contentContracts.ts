@@ -1,6 +1,8 @@
 import type { BlockType, EntryId } from "@whetstone/domain";
 import { z } from "zod";
 
+import type { WorkDto } from "./libraryContracts.js";
+
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
 }
@@ -58,4 +60,15 @@ export type ReadingUnitDto = Readonly<{
 export type WorkContentDto = Readonly<{
   readingUnits: ReadonlyArray<ReadingUnitDto>;
   workEntryId: EntryId;
+}>;
+
+// EPUB uploads are sent as the raw file bytes under this media type; the owning work
+// is created from the EPUB's own OPF metadata, so there is no JSON request body.
+export const epubContentType = "application/epub+zip";
+
+// Ingesting an EPUB creates a Work and its content in one step, so the result returns
+// both the created/matched work and its decomposed content.
+export type IngestEpubResultDto = Readonly<{
+  content: WorkContentDto;
+  work: WorkDto;
 }>;

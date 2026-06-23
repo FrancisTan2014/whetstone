@@ -1,11 +1,13 @@
-import { ingestMarkdownRequestSchema } from "@whetstone/contracts";
+import { epubContentType, ingestMarkdownRequestSchema } from "@whetstone/contracts";
 import { blocksToMarkdown, toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
 import { ingestMarkdown, type ContentDependencies } from "./contentCommands.js";
+import { ingestEpub } from "./epubCommands.js";
 import { loadWorkContent, workExists } from "./contentQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
+const invalidEpubBody = { error: "invalid_epub" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 
 type WorkParams = Readonly<{ workEntryId: string }>;
@@ -14,6 +16,40 @@ export function registerContentRoutes(
   server: FastifyInstance,
   dependencies: ContentDependencies
 ): void {
+  server.addContentTypeParser(epubContentType, { parseAs: "buffer" }, (_request, body, done) =>
+    done(null, body)
+  );
+
+  server.post(
+    "/api/works/epub",
+    { bodyLimit: dependencies.epubUploadLimitBytes },
+    async (request, reply) => {
+      const body = request.body;
+
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const result = await ingestEpub(dependencies, new Uint8Array(body));
+
+      if (result.status === "invalid_epub") {
+        return reply.code(422).send(invalidEpubBody);
+      }
+
+      request.log.info(
+        {
+          readingUnitCount: result.result.content.readingUnits.length,
+          route: "POST /api/works/epub",
+          status: result.status,
+          workEntryId: result.result.work.entryId
+        },
+        "work_epub_ingested"
+      );
+
+      return reply.code(result.status === "duplicate" ? 200 : 201).send(result.result);
+    }
+  );
+
   server.post<{ Params: WorkParams }>("/api/works/:workEntryId/content", async (request, reply) => {
     const parsed = ingestMarkdownRequestSchema.safeParse(request.body);
 

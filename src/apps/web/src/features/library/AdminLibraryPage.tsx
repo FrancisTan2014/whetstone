@@ -1,9 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import type { AuthorDto, CreateWorkRequest, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, workTypes, type WorkType } from "@whetstone/domain";
 
-import { createAuthor, createWork, fetchAuthors, fetchWorks } from "./libraryApi";
+import { createAuthor, createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 
 const newAuthorOption = "new-author-or-source";
 
@@ -27,6 +27,9 @@ export function AdminLibraryPage(): React.JSX.Element {
   const [authorChoice, setAuthorChoice] = useState<string>(newAuthorOption);
   const [inlineAuthorName, setInlineAuthorName] = useState("");
   const [workError, setWorkError] = useState<string | undefined>(undefined);
+
+  const [epubError, setEpubError] = useState<string | undefined>(undefined);
+  const [epubBusy, setEpubBusy] = useState(false);
 
   async function reload(): Promise<void> {
     const [authorList, workList] = await Promise.all([fetchAuthors(), fetchWorks()]);
@@ -103,6 +106,27 @@ export function AdminLibraryPage(): React.JSX.Element {
     }
   }
 
+  async function onUploadEpub(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+
+    if (file === undefined) {
+      return;
+    }
+
+    setEpubBusy(true);
+
+    try {
+      await ingestEpub(file);
+      setEpubError(undefined);
+      await reload();
+    } catch {
+      setEpubError("Could not ingest the EPUB. Please try again.");
+    } finally {
+      setEpubBusy(false);
+    }
+  }
+
   return (
     <main className="appShell">
       <h1>Library admin</h1>
@@ -137,6 +161,20 @@ export function AdminLibraryPage(): React.JSX.Element {
 
           <section aria-labelledby="works-heading" className="card">
             <h2 id="works-heading">Works</h2>
+
+            <div className="epubUpload">
+              <label htmlFor="epub-upload">Upload an EPUB</label>
+              <input
+                accept=".epub,application/epub+zip"
+                disabled={epubBusy}
+                id="epub-upload"
+                onChange={(event) => void onUploadEpub(event)}
+                type="file"
+              />
+              {epubBusy ? <p>Ingesting the EPUB…</p> : null}
+              {epubError !== undefined ? <p role="alert">{epubError}</p> : null}
+            </div>
+
             <form onSubmit={(event) => void onSubmitWork(event)}>
               <label htmlFor="work-title">Title</label>
               <input

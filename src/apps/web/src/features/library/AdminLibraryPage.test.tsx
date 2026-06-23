@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,10 +7,11 @@ vi.mock("./libraryApi", () => ({
   createAuthor: vi.fn(),
   createWork: vi.fn(),
   fetchAuthors: vi.fn(),
-  fetchWorks: vi.fn()
+  fetchWorks: vi.fn(),
+  ingestEpub: vi.fn()
 }));
 
-import { createAuthor, createWork, fetchAuthors, fetchWorks } from "./libraryApi";
+import { createAuthor, createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import type { AuthorDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
@@ -19,6 +20,7 @@ const mockedFetchAuthors = vi.mocked(fetchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedCreateAuthor = vi.mocked(createAuthor);
 const mockedCreateWork = vi.mocked(createWork);
+const mockedIngestEpub = vi.mocked(ingestEpub);
 
 const orwell: AuthorDto = { id: toAuthorId("author-1"), name: "George Orwell" };
 const dickens: AuthorDto = { id: toAuthorId("author-1"), name: "Charles Dickens" };
@@ -189,5 +191,51 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     expect(await screen.findByText("Could not save the work. Please try again.")).toBeDefined();
+  });
+
+  it("ingests an EPUB upload and refreshes the work list", async () => {
+    const user = await renderReady();
+    const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
+    const epubWork: WorkListItemDto = {
+      author: epubAuthor,
+      work: {
+        authorId: epubAuthor.id,
+        entryId: toEntryId("work-epub"),
+        language: "zh",
+        title: "史记选读",
+        workType: "book"
+      }
+    };
+    mockedIngestEpub.mockResolvedValue({
+      content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+      work: epubWork.work
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload an EPUB"), file);
+
+    expect(await screen.findByText("史记选读 — 司马迁 (book, zh)")).toBeDefined();
+    expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error when the EPUB ingestion fails", async () => {
+    const user = await renderReady();
+    mockedIngestEpub.mockRejectedValue(new Error("boom"));
+
+    const file = new File([new Uint8Array([1])], "bad.epub", { type: "application/epub+zip" });
+    await user.upload(screen.getByLabelText("Upload an EPUB"), file);
+
+    expect(await screen.findByText("Could not ingest the EPUB. Please try again.")).toBeDefined();
+  });
+
+  it("ignores an upload with no file selected", async () => {
+    await renderReady();
+
+    fireEvent.change(screen.getByLabelText("Upload an EPUB"), { target: { files: [] } });
+
+    expect(mockedIngestEpub).not.toHaveBeenCalled();
   });
 });
