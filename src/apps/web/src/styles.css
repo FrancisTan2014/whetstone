@@ -57,3 +57,11 @@ code {
   color: #3730a3;
   padding: 0.15rem 0.35rem;
 }
+
+.contentPanel .blockType {
+  color: #4f46e5;
+  font-weight: 700;
+  margin-right: 0.5rem;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
