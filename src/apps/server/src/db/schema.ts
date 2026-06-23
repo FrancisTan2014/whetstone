@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, primaryKey, text } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 
 // The Drizzle schema is the database contract. Enum literals mirror the domain
 // model (`entryTypes`, `workTypes`, `blockTypes`, `linkTypes`); they are duplicated
@@ -49,22 +49,24 @@ export const readingUnits = pgTable(
 );
 
 // Atomic, stably-identified content blocks. `mdast_json` stores the block's mdast
-// node for safe rendering/export; `plaintext` backs search.
+// node for safe rendering/export; `plaintext` backs search. A re-ingestion content
+// diff preserves `entry_id` for matched blocks; removed blocks are soft-deleted
+// (`deleted_at` set, detached from their reading unit) so existing note anchors stay
+// valid while the block is excluded from the reader, search, and export.
 export const blocks = pgTable(
   "blocks",
   {
     blockType: text("block_type", {
       enum: ["paragraph", "heading", "list", "blockquote", "code"] as const
     }).notNull(),
+    deletedAt: timestamp("deleted_at", { mode: "date", withTimezone: true }),
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),
     mdastJson: jsonb("mdast_json").notNull(),
     orderIndex: integer("order_index").notNull(),
     plaintext: text("plaintext").notNull(),
-    readingUnitEntryId: text("reading_unit_entry_id")
-      .notNull()
-      .references(() => entries.id)
+    readingUnitEntryId: text("reading_unit_entry_id").references(() => entries.id)
   },
   (table) => [index("blocks_reading_unit_idx").on(table.readingUnitEntryId)]
 );
