@@ -7,5 +7,6 @@ set "PYTHONIOENCODING=utf-8"
 set "NO_COLOR=1"
 if not exist ".agent-status.local.json" copy "docs\agent-status.example.json" ".agent-status.local.json" >nul
 if not exist ".agent-locks" mkdir ".agent-locks" >nul
-call "%~dp0cleanup-agent-locks.cmd"
-copilot --experimental --agent=whetstone-coordinator --allow-all -i "/every 5m Run one whetstone coordinator tick. Follow prompts/coordinator-schedule.txt exactly: run scripts\coordinator-tick.cmd and report its result line. Do not make scheduling decisions yourself."
+if not exist ".agent-logs" mkdir ".agent-logs" >nul
+node "%~dp0coordinator-tick.mjs" %*
+exit /b %ERRORLEVEL%

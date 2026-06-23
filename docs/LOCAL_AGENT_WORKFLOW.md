@@ -101,18 +101,20 @@ cd Q:\src\whetstone
 
 The launcher opens Copilot with `-i` and automatically submits the `/every 5m` coordinator prompt. No paste step is required.
 
-The coordinator:
+The coordinator's scheduling decision is **deterministic and implemented in code**, not re-reasoned by the LLM each tick. The scheduled session is a thin runner: every tick it runs `scripts\coordinator-tick.cmd` and reports the result. That script:
 
-1. syncs remote GitHub issue/PR status into `.agent-status.local.json`,
-2. checks locks,
-3. invokes `scripts\start-developer.cmd` for development/review-fix work, or
-4. invokes `scripts\start-reviewer.cmd` for review/merge work.
+1. cleans stale locks (`cleanup-agent-locks.cmd`),
+2. syncs remote GitHub issue/PR status into `.agent-status.local.json` (under `status-sync.lock`),
+3. evaluates the full decision tree, and
+4. invokes at most one one-shot worker — `scripts\start-developer.cmd` for development/review-fix work or `scripts\start-reviewer.cmd` for review/merge work.
+
+The routing logic is the pure `decide()` function in `scripts/coordinator-tick.mjs`, covered branch-by-branch by `scripts/coordinator-tick.test.mjs` (run `node scripts/coordinator-tick.test.mjs`). `coordinator-tick.mjs --dry-run` prints the decision with no side effects. Because the decision is code, it is fast, deterministic, and testable instead of being re-derived from prose every five minutes.
 
 Developer and reviewer scripts are one-shot. They do not register their own `/every` schedules.
-They create `.agent-locks\worker.lock` while running, so the coordinator will not start a second worker before the current one exits.
+They create `.agent-locks\worker.lock` while running, so the tick will not start a second worker before the current one exits.
 They run with UTF-8-related environment variables and write stdout/stderr plus Copilot session transcripts under `.agent-logs/`.
-`scripts\cleanup-agent-locks.cmd` performs stale `worker.lock` cleanup. `start-coordinator.cmd` runs it before registering the scheduled coordinator prompt, and the coordinator prompt runs it at the start of every tick before reading lock state.
-If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the coordinator marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress.
+`scripts\cleanup-agent-locks.cmd` performs stale `worker.lock` cleanup. `start-coordinator.cmd` runs it before registering the scheduled prompt, and `coordinator-tick.mjs` runs it at the start of every tick before reading lock state.
+If a worker exits nonzero, the launcher writes `.agent-locks\worker-last-failure.json` and updates failure counters in `.agent-status.local.json`. If a worker disappears without leaving a PR or final status, the tick marks the recorded developer work as failed recovery work instead of treating the issue as permanently in-progress.
 
 Recovery policy:
 
