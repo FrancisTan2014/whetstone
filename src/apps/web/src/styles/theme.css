@@ -164,6 +164,8 @@
  * keyboard-aware WebViews. The Sheet docks right on desktop and bottom on mobile.
  */
 .app-safe-area {
+  display: flex;
+  flex-direction: column;
   min-block-size: 100svh;
   min-block-size: 100dvh;
   padding-top: env(safe-area-inset-top);

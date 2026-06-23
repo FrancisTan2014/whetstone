@@ -19,7 +19,7 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
 export function AppShell(): React.JSX.Element {
   return (
     <SafeArea>
-      <div className="flex min-h-full flex-col bg-bg text-text md:flex-row">
+      <div className="flex flex-1 flex-col bg-bg text-text md:flex-row">
         <nav
           aria-label="Primary"
           className="order-last flex shrink-0 gap-1 border-t border-border bg-surface p-2 md:order-first md:w-56 md:flex-col md:border-t-0 md:border-r"
