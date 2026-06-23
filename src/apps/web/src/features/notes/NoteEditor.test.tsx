@@ -197,4 +197,31 @@ describe("NoteEditor", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("recovers when templates load after the editor opens", () => {
+    const { rerender } = render(
+      <NoteEditor
+        draft={subBlockDraft}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        templates={[]}
+        workEntryId="work-1"
+      />
+    );
+
+    expect(screen.getByText("Note templates are unavailable. Please try again.")).toBeDefined();
+
+    rerender(
+      <NoteEditor
+        draft={subBlockDraft}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        templates={templates}
+        workEntryId="work-1"
+      />
+    );
+
+    expect((screen.getByLabelText("Template") as HTMLSelectElement).value).toBe("vocabulary");
+    expect(screen.queryByText("Note templates are unavailable. Please try again.")).toBeNull();
+  });
 });

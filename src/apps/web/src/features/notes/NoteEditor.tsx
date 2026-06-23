@@ -56,7 +56,10 @@ function buildRequest(
 }
 
 // The editor opens after a reader selection. On desktop widths it is a side panel and on
-// narrow widths a bottom sheet (see styles.css); the markup is the same either way.
+// narrow widths a bottom sheet (see styles.css); the markup is the same either way. The
+// active template is derived from the current `templates` prop each render (falling back
+// to the size-based preselection) so templates that load after the editor opens are used;
+// an explicit choice, once made, takes precedence.
 export function NoteEditor({
   draft,
   onClose,
@@ -64,13 +67,13 @@ export function NoteEditor({
   templates,
   workEntryId
 }: NoteEditorProps): React.JSX.Element {
-  const [templateId, setTemplateId] = useState<string | undefined>(() =>
-    initialTemplateId(templates, draft.preselectedTemplateId)
-  );
+  const [chosenTemplateId, setChosenTemplateId] = useState<string | undefined>(undefined);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | undefined>(undefined);
 
-  const template = templates.find((candidate) => candidate.id === templateId);
+  const activeTemplateId =
+    chosenTemplateId ?? initialTemplateId(templates, draft.preselectedTemplateId);
+  const template = templates.find((candidate) => candidate.id === activeTemplateId);
 
   if (template === undefined) {
     return (
@@ -115,7 +118,7 @@ export function NoteEditor({
       <label htmlFor="note-template">Template</label>
       <select
         id="note-template"
-        onChange={(event) => setTemplateId(event.currentTarget.value)}
+        onChange={(event) => setChosenTemplateId(event.currentTarget.value)}
         value={template.id}
       >
         {templates.map((candidate) => (
