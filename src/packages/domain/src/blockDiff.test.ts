@@ -81,6 +81,21 @@ describe("diffBlocks", () => {
     expect(diff.removedIds).toEqual(["b1"]);
   });
 
+  it("prefers the exact survivor over an earlier similar block in ambiguous cases", () => {
+    // Regression: an earlier block that is merely similar must not steal the id of the
+    // later unchanged block. Old b2 is the exact survivor; b1 must be soft-deleted.
+    const diff = diffBlocks(
+      [
+        { id: "b1", plaintext: "The quick brown fox jumps over the lazy dog." },
+        { id: "b2", plaintext: "The quick brown fox jumps over the lazy cat." }
+      ],
+      [{ plaintext: "The quick brown fox jumps over the lazy cat." }]
+    );
+
+    expect(diff.assignments).toEqual(["b2"]);
+    expect(diff.removedIds).toEqual(["b1"]);
+  });
+
   it("matches everything new when there are no existing blocks", () => {
     const diff = diffBlocks([], [{ plaintext: "Alpha" }, { plaintext: "Beta" }]);
 

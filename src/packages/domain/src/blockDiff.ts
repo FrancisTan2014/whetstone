@@ -66,8 +66,12 @@ export function blockSimilarity(a: string, b: string): number {
   return (2 * shared) / (left.length - 1 + (right.length - 1));
 }
 
-function matches(oldBlock: DiffOldBlock, newBlock: DiffNewBlock): boolean {
-  return blockSimilarity(oldBlock.plaintext, newBlock.plaintext) >= similarityThreshold;
+// Gated similarity: a pair may only be treated as the same block at or above the
+// threshold; below it the pair contributes nothing and the blocks are unrelated.
+function matchScore(oldBlock: DiffOldBlock, newBlock: DiffNewBlock): number {
+  const similarity = blockSimilarity(oldBlock.plaintext, newBlock.plaintext);
+
+  return similarity >= similarityThreshold ? similarity : 0;
 }
 
 export function diffBlocks(
@@ -77,16 +81,20 @@ export function diffBlocks(
   const oldCount = oldBlocks.length;
   const newCount = newBlocks.length;
   const width = newCount + 1;
-  const lengths = new Int32Array((oldCount + 1) * width);
+  const scores = new Float64Array((oldCount + 1) * width);
   const oldAt = (index: number): DiffOldBlock => oldBlocks[index] as DiffOldBlock;
   const newAt = (index: number): DiffNewBlock => newBlocks[index] as DiffNewBlock;
-  const lengthAt = (a: number, b: number): number => lengths[a * width + b] as number;
+  const scoreAt = (a: number, b: number): number => scores[a * width + b] as number;
 
+  // Order-preserving alignment that maximizes total matched similarity. Because the
+  // score table looks ahead, an exact survivor is always preferred over an earlier
+  // merely-similar block (the latter is reported as removed), avoiding the greedy
+  // first-fuzzy-match mistake where a later unchanged block would lose its id.
   for (let i = oldCount - 1; i >= 0; i -= 1) {
     for (let j = newCount - 1; j >= 0; j -= 1) {
-      lengths[i * width + j] = matches(oldAt(i), newAt(j))
-        ? lengthAt(i + 1, j + 1) + 1
-        : Math.max(lengthAt(i + 1, j), lengthAt(i, j + 1));
+      const pairScore = matchScore(oldAt(i), newAt(j));
+      const matched = pairScore > 0 ? pairScore + scoreAt(i + 1, j + 1) : 0;
+      scores[i * width + j] = Math.max(matched, scoreAt(i + 1, j), scoreAt(i, j + 1));
     }
   }
 
@@ -96,12 +104,17 @@ export function diffBlocks(
   let j = 0;
 
   while (i < oldCount && j < newCount) {
-    if (matches(oldAt(i), newAt(j))) {
+    const pairScore = matchScore(oldAt(i), newAt(j));
+    const matched = pairScore > 0 ? pairScore + scoreAt(i + 1, j + 1) : 0;
+    const skipOld = scoreAt(i + 1, j);
+    const skipNew = scoreAt(i, j + 1);
+
+    if (pairScore > 0 && matched >= skipOld && matched >= skipNew) {
       assignments[j] = oldAt(i).id;
       matchedOld.add(i);
       i += 1;
       j += 1;
-    } else if (lengthAt(i + 1, j) >= lengthAt(i, j + 1)) {
+    } else if (skipOld >= skipNew) {
       i += 1;
     } else {
       j += 1;
