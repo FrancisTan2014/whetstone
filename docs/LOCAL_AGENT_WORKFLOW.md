@@ -81,6 +81,8 @@ Design output is:
 
 The design agent must produce scoped issues. Prefer vertical feature/fix issues; do not split one capability into artificial backend/database/frontend issues. Split only unrelated outcomes or broad foundation work.
 
+Size each issue to land completely — a passing PR at 100% coverage — within about one to two developer runs. When a single coherent capability is too large to finish and fully test in that window, split it into thinner vertical slices by sub-capability (each still a full feature: UI, API, persistence, and tests), ordered with `Depends on: #N`. Never split into separate backend/frontend/database issues.
+
 Each implementation issue includes:
 
 - outcome

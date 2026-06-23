@@ -34,6 +34,9 @@ Issue sizing guardrails:
 
 - If the issue title joins unrelated outcomes with "and", split it.
 - If the acceptance criteria cover unrelated user capabilities or unrelated engineering concerns, split it.
+- Size each issue to **land completely** — a passing PR at 100% coverage — within about one to two developer runs. A single coherent capability that is too large to finish and fully test in that window is still too big, even though its parts are related.
+- When a capability is too large to land, split it into thinner **vertical** slices by sub-capability. Each slice still delivers a full feature (UI, API, persistence, and tests for one smaller user-visible step) and leaves the app working. Never split into separate backend, database, or frontend issues.
+- Order the thinner slices with `Depends on: #N` so each builds on the last.
 - If the developer would need to choose architecture not already in `PRODUCT.md`, keep it in design.
 - If the developer would need to choose project structure or engineering convention not already in `GUIDELINES.md`, keep it in design.
 - If the reviewer would need to understand multiple unrelated features to review it, split it.
