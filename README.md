@@ -6,23 +6,27 @@ A simple personal reading app, starting from a sharp v0:
 2. Reader pages display materials.
 3. Users click or tap words/phrases to create notes linked to the source text.
 
-This repository currently contains the TypeScript monorepo foundation only. User-facing admin, reader, and note features are intentionally deferred to later issues.
+The v0 admin, reader, and note-capture flows are implemented. To run the app and walk through the
+first author → work → reader → note flow, see the [quick start guide](./docs/QUICK_START.md).
 
 ## Monorepo layout
 
 ```text
 src/
   apps/
-    web/       React + Vite placeholder app
-    server/    Fastify API server with /health
+    web/       React + Vite PWA client (library admin, reader, note capture)
+    server/    Fastify API server (library, content, notes, /health)
   packages/
-    domain/    Pure domain placeholder exports
-    contracts/ Shared API contract placeholder exports
+    domain/    Pure Entry/link/block/template/note-anchor logic
+    contracts/ Shared API schemas and DTOs (Zod)
 ```
 
 The workspace uses pnpm, strict TypeScript, ESLint, Prettier, Vitest, and 100% coverage thresholds for included source files.
 
 ## Local development
+
+For the full run-and-use walkthrough, see the [quick start guide](./docs/QUICK_START.md). The
+essentials:
 
 Install dependencies:
 
@@ -30,7 +34,7 @@ Install dependencies:
 pnpm install
 ```
 
-Run the placeholder web app:
+Run the web app:
 
 ```powershell
 pnpm --filter @whetstone/web dev
@@ -39,20 +43,20 @@ pnpm --filter @whetstone/web dev
 Filtered app build/dev scripts compile referenced workspace packages first, so they work after a
 fresh install without running the full workspace build.
 
-Build the placeholder web app:
+Build the web app:
 
 ```powershell
 pnpm --filter @whetstone/web build
 ```
 
-Build and start the placeholder server:
+Build and start the server:
 
 ```powershell
 pnpm --filter @whetstone/server build
 pnpm --filter @whetstone/server start
 ```
 
-The server exposes:
+The server exposes a health check alongside the library, content, and notes APIs:
 
 ```text
 GET /health
