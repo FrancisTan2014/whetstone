@@ -17,3 +17,16 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
     writable: true
   });
 }
+
+// jsdom does not implement ResizeObserver, which Radix's popper (the lookup popover's
+// anchored positioning) constructs on mount. Provide an inert stub so popover-based
+// components render in jsdom; positioning math is not exercised in unit tests.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class ResizeObserverStub {
+    public disconnect(): void {}
+    public observe(): void {}
+    public unobserve(): void {}
+  }
+
+  globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+}

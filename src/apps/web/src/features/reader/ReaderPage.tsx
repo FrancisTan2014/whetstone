@@ -174,7 +174,7 @@ type ReaderPageProps = Readonly<{
 
 // A view-only vocabulary lookup driven from the selection toolbar: the selected term and
 // its fetch state. Lookup never creates, pre-fills, or edits a note.
-type LookupView = Readonly<{ state: LookupState; term: string }>;
+type LookupView = Readonly<{ anchorRect?: DOMRect | undefined; state: LookupState; term: string }>;
 
 export function ReaderPage({
   initialBlockEntryId,
@@ -361,19 +361,21 @@ export function ReaderPage({
 
   function lookupSelection(active: SelectionCapture): void {
     const term = active.draft.selectedText;
+    const anchorRect = active.anchorRect;
     setCapture(undefined);
-    setLookup({ state: { status: "loading" }, term });
+    setLookup({ anchorRect, state: { status: "loading" }, term });
 
     lookupTerm(term, active.language)
       .then((response) => {
         setLookup({
+          anchorRect,
           state: response.found
             ? { attribution: response.attribution, entry: response.entry, status: "loaded" }
             : { status: "empty" },
           term
         });
       })
-      .catch(() => setLookup({ state: { status: "error" }, term }));
+      .catch(() => setLookup({ anchorRect, state: { status: "error" }, term }));
   }
 
   function onOpenBlockNotes(blockEntryId: string, workEntryId: string): void {
@@ -456,6 +458,7 @@ export function ReaderPage({
 
       {lookup === undefined ? null : (
         <LookupPanel
+          anchorRect={lookup.anchorRect}
           onOpenChange={() => setLookup(undefined)}
           open={true}
           state={lookup.state}

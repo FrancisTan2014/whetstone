@@ -318,6 +318,43 @@ code {
   font-size: 0.875rem;
 }
 
+/*
+ * Lookup popover (#66): the desktop/tablet definition surface is a compact card anchored
+ * near the selection (Radix positions/flips it), sized to its content with an internal
+ * scroll for long entries — never the full-height side Sheet. The invisible anchor mirrors
+ * the selection's rect. On narrow screens lookup falls back to the shared bottom Sheet.
+ */
+.lookupAnchor {
+  pointer-events: none;
+}
+
+.lookupPopover {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  box-shadow: 0 0.75rem 2rem rgb(15 23 42 / 18%);
+  color: var(--color-text, #111827);
+  max-height: min(22rem, 60vh);
+  max-width: min(22rem, calc(100vw - 1.5rem));
+  overflow-y: auto;
+  padding: 0.5rem 0.875rem 0.875rem;
+  z-index: 60;
+}
+
+.lookupPopoverChrome {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.lookupClose {
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
 .noteEditorField {
   display: flex;
   flex-direction: column;
