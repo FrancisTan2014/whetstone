@@ -1,3 +1,4 @@
+import { workLanguages } from "@whetstone/domain";
 import { z } from "zod";
 
 // A single normalized sense: the shared, source-agnostic shape the reader renders. Both
@@ -45,11 +46,12 @@ export function parseLookupResponse(value: unknown): LookupResponse {
   return lookupResponseSchema.parse(value);
 }
 
-// The lookup route query: a non-empty (trimmed) term and, for now, English only. The term
-// is trimmed in-place so callers downstream receive the cleaned value.
+// The lookup route query: a non-empty (trimmed) term and a supported work language (English
+// or Chinese), so Chinese selections route to the CC-CEDICT provider. The term is trimmed
+// in-place so callers downstream receive the cleaned value.
 export const lookupRequestSchema = z
   .object({
-    language: z.literal("en"),
+    language: z.enum(workLanguages),
     term: z.string().trim().min(1, { message: "term must be non-empty." })
   })
   .strict();

@@ -79,6 +79,36 @@ const workB: WorkListItemDto = {
   }
 };
 
+const chineseWork: WorkListItemDto = {
+  author,
+  work: {
+    authorId: author.id,
+    entryId: toEntryId("work-zh"),
+    language: "zh-CN",
+    title: "中文测试",
+    workType: "essay"
+  }
+};
+
+const chineseContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-zh"),
+          mdast: { children: [{ type: "text", value: "你好世界" }], type: "paragraph" },
+          orderIndex: 0,
+          plaintext: "你好世界"
+        }
+      ],
+      entryId: toEntryId("u-zh"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-zh")
+};
+
 function emptyContent(workEntryId: string): WorkContentDto {
   return { readingUnits: [], workEntryId: toEntryId(workEntryId) };
 }
@@ -1051,6 +1081,29 @@ describe("ReaderPage vocabulary lookup", () => {
     await selectAndLookup();
 
     expect(await screen.findByRole("alert")).toBeDefined();
+  });
+
+  it("routes a Chinese work's selection to the work's language", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
+    mockedFetchWorkContent.mockResolvedValue(chineseContent);
+    mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
+    mockedLookupTerm.mockResolvedValue({
+      attribution: "Definitions from CC-CEDICT (CC BY-SA 4.0).",
+      entry: { headword: "你好", pronunciation: "ni3 hao3", senses: [{ gloss: "hello; hi" }] },
+      found: true
+    });
+
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+    await user.click(await screen.findByRole("button", { name: "中文测试" }));
+    const block = blockElement(container, "b-zh");
+
+    selectText(block, "你好");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
+
+    expect(await screen.findByText("hello; hi")).toBeDefined();
+    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN");
   });
 
   it("dismisses the lookup panel when closed", async () => {

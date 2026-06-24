@@ -18,7 +18,18 @@ describe("parseLookupRequest", () => {
     expect(() => parseLookupRequest({ language: "en", term: "   " })).toThrow();
   });
 
-  it("rejects a non-English language", () => {
+  it("accepts the Chinese work languages", () => {
+    expect(parseLookupRequest({ language: "zh-CN", term: "你好" })).toEqual({
+      language: "zh-CN",
+      term: "你好"
+    });
+    expect(parseLookupRequest({ language: "zh-TW", term: "中國" })).toEqual({
+      language: "zh-TW",
+      term: "中國"
+    });
+  });
+
+  it("rejects an unsupported language", () => {
     expect(() => parseLookupRequest({ language: "fr", term: "bonjour" })).toThrow();
   });
 

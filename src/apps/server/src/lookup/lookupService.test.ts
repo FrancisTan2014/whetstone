@@ -30,16 +30,17 @@ function provider(entry: NormalizedEntry | null): CountingProvider {
   };
 }
 
-// The three-link chain the composition root builds: Learner's, Collegiate, Free Dictionary.
+// The three-link chain the composition root builds: Learner's, Collegiate, Free Dictionary —
+// all serving English.
 function chain(
   learners: CountingProvider,
   collegiate: CountingProvider,
   free: CountingProvider
 ): LookupSource[] {
   return [
-    { attribution: learnersAttribution, provider: learners },
-    { attribution: collegiateAttribution, provider: collegiate },
-    { provider: free }
+    { attribution: learnersAttribution, languages: ["en"], provider: learners },
+    { attribution: collegiateAttribution, languages: ["en"], provider: collegiate },
+    { languages: ["en"], provider: free }
   ];
 }
 
@@ -98,7 +99,7 @@ describe("createLookupService", () => {
     const free = provider(freeEntry);
     const service = createLookupService({
       cache: createInMemoryLookupCache(),
-      sources: [{ provider: free }]
+      sources: [{ languages: ["en"], provider: free }]
     });
 
     expect(await service.lookup("word", "en")).toEqual({ entry: freeEntry, found: true });
@@ -113,6 +114,30 @@ describe("createLookupService", () => {
     expect(await service.lookup("absent", "en")).toEqual({ found: false });
   });
 
+  it("routes by language: a Chinese lookup skips the English sources and hits the zh source", async () => {
+    const learners = provider(learnersEntry);
+    const collegiate = provider(collegiateEntry);
+    const free = provider(freeEntry);
+    const cedict = provider(freeEntry);
+    const service = createLookupService({
+      cache: createInMemoryLookupCache(),
+      sources: [
+        ...chain(learners, collegiate, free),
+        { attribution: "CC-CEDICT.", languages: ["zh-CN", "zh-TW"], provider: cedict }
+      ]
+    });
+
+    expect(await service.lookup("你好", "zh-CN")).toEqual({
+      attribution: "CC-CEDICT.",
+      entry: freeEntry,
+      found: true
+    });
+    expect(learners.calls).toBe(0);
+    expect(collegiate.calls).toBe(0);
+    expect(free.calls).toBe(0);
+    expect(cedict.calls).toBe(1);
+  });
+
   it("caches a result by language:term and serves repeats from the cache", async () => {
     const free = provider(freeEntry);
     const setSpy = vi.fn();
@@ -124,7 +149,10 @@ describe("createLookupService", () => {
         inner.set(key, value, ttlMs);
       }
     };
-    const service = createLookupService({ cache, sources: [{ provider: free }] });
+    const service = createLookupService({
+      cache,
+      sources: [{ languages: ["en"], provider: free }]
+    });
 
     await service.lookup("word", "en");
     const second = await service.lookup("word", "en");

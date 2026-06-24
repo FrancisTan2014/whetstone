@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b tsconfig.json && node -e \"require('node:fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
+    "build": "tsc -b tsconfig.json && node -e \"const fs=require('node:fs');fs.cpSync('src/db/migrations','dist/db/migrations',{recursive:true});fs.cpSync('src/lookup/data','dist/lookup/data',{recursive:true})\"",
     "start": "node --env-file-if-exists=../../../.env dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
