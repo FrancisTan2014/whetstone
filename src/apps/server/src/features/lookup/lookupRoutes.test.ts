@@ -48,7 +48,24 @@ describe("GET /api/lookup", () => {
     }
   });
 
-  it("rejects a non-English language with 400", async () => {
+  it("accepts a Chinese language and routes it to the service", async () => {
+    const lookup = vi.fn().mockResolvedValue(foundResponse);
+    const server = buildServer(lookup);
+
+    try {
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/lookup?term=%E4%BD%A0%E5%A5%BD&language=zh-CN"
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(lookup).toHaveBeenCalledWith("你好", "zh-CN");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects an unsupported language with 400", async () => {
     const lookup = vi.fn().mockResolvedValue(foundResponse);
     const server = buildServer(lookup);
 

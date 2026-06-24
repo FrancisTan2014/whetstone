@@ -62,10 +62,12 @@ type NotePanel =
 
 // A pending capture: a selection has been made and the floating toolbar is offering its
 // size-preselected (but switchable) template before the editor opens. `anchorRect` is the
-// selection's rect (for positioning) and `selectedTemplateId` tracks the toolbar choice.
+// selection's rect (for positioning), `language` is the open work's language (so a Chinese
+// selection routes to CC-CEDICT), and `selectedTemplateId` tracks the toolbar choice.
 type SelectionCapture = Readonly<{
   anchorRect?: DOMRect | undefined;
   draft: NoteDraft;
+  language: string;
   selectedTemplateId: string;
   workEntryId: string;
 }>;
@@ -73,7 +75,12 @@ type SelectionCapture = Readonly<{
 type ReaderHandlers = Readonly<{
   bornBlockEntryId?: string | undefined;
   notes: ReadonlyArray<NoteDto>;
-  onCaptureSelection: (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
+  onCaptureSelection: (
+    blockElement: HTMLElement,
+    block: ReaderBlock,
+    workEntryId: string,
+    language: string
+  ) => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
   onJumpToBlock: (note: NoteDto) => void;
@@ -173,7 +180,8 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   function onCaptureSelection(
     blockElement: HTMLElement,
     block: ReaderBlock,
-    workEntryId: string
+    workEntryId: string,
+    language: string
   ): void {
     const selection = window.getSelection();
     const blockSelection = readBlockSelection(blockElement, selection);
@@ -197,6 +205,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     setCapture({
       anchorRect: selectionRect(selection),
       draft,
+      language,
       selectedTemplateId: draft.preselectedTemplateId,
       workEntryId
     });
@@ -217,7 +226,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     setNotice(undefined);
     setLookup({ state: { status: "loading" }, term });
 
-    lookupTerm(term, "en")
+    lookupTerm(term, active.language)
       .then((response) => {
         setLookup({
           state: response.found
@@ -422,7 +431,7 @@ function renderViewing(
           lang={chrome.language}
           style={{ "--reading-size": readingSizeToRem(chrome.size) } as React.CSSProperties}
         >
-          {renderReaderView(view, workEntryId, handlers)}
+          {renderReaderView(view, workEntryId, handlers, chrome.language)}
         </div>
       </motion.div>
       <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
@@ -443,7 +452,8 @@ function renderViewing(
 function renderReaderView(
   view: ReaderView,
   workEntryId: string,
-  handlers: ReaderHandlers
+  handlers: ReaderHandlers,
+  language: string
 ): React.JSX.Element {
   if (view.units.length === 0) {
     return <p>This work has no content yet.</p>;
@@ -451,7 +461,7 @@ function renderReaderView(
 
   return (
     <article aria-label="Reading" className="reader">
-      {view.units.map((unit) => renderUnit(unit, workEntryId, handlers))}
+      {view.units.map((unit) => renderUnit(unit, workEntryId, handlers, language))}
     </article>
   );
 }
@@ -459,12 +469,13 @@ function renderReaderView(
 function renderUnit(
   unit: ReaderUnit,
   workEntryId: string,
-  handlers: ReaderHandlers
+  handlers: ReaderHandlers,
+  language: string
 ): React.JSX.Element {
   return (
     <section className="readerUnit" key={unit.entryId}>
       {unit.title === undefined ? null : <h2 className="readerUnitTitle">{unit.title}</h2>}
-      {unit.blocks.map((block) => renderBlock(block, workEntryId, handlers))}
+      {unit.blocks.map((block) => renderBlock(block, workEntryId, handlers, language))}
     </section>
   );
 }
@@ -472,7 +483,8 @@ function renderUnit(
 function renderBlock(
   block: ReaderBlock,
   workEntryId: string,
-  handlers: ReaderHandlers
+  handlers: ReaderHandlers,
+  language: string
 ): React.JSX.Element {
   const blockNotes = notesForBlock(handlers.notes, block.entryId);
   const annotated = blockNotes.length > 0;
@@ -487,7 +499,7 @@ function renderBlock(
   // Keyboard and touch open the editor too, not just the mouse: a selection inside a
   // focusable block is captured on key-up and touch-end as well as mouse-up.
   const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
-    handlers.onCaptureSelection(event.currentTarget, block, workEntryId);
+    handlers.onCaptureSelection(event.currentTarget, block, workEntryId, language);
 
   return (
     <motion.div

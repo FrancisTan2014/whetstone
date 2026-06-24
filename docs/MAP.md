@@ -68,13 +68,22 @@ can navigate them from another package.
   Merriam-Webster provider/adapter parameterized by reference path + key — Learner's and Collegiate
   share the same JSON shape; reads keys `MERRIAM_WEBSTER_LEARNERS_KEY`/`MERRIAM_WEBSTER_COLLEGIATE_KEY`
   server-side; surfaces each reference's required attribution) and `freeDictionaryProvider.ts` (no-key
-  dictionaryapi.dev fallback). `lookupService.ts` orchestrates an ordered provider chain (Learner's →
-  Collegiate → Free Dictionary; absent MW keys omit their source, first match wins) and caches by
-  `language:term`. Adapters cap senses at 3 and are pure (tested against canned JSON via the fake
-  transport). Keys load from a root `.env` via Node's `--env-file-if-exists=.env` (no dotenv dependency;
-  the chain still falls through to Free Dictionary with no keys set).
-  The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=en`,
-  thin: validates the query contract, delegates to the service; the key never reaches the client).
+  dictionaryapi.dev fallback). For Chinese, `cedict.ts` is a pure, bundled CC-CEDICT provider: it
+  parses the dataset text into an in-memory `Map` keyed by both Simplified and Traditional headwords
+  and normalizes matches into `NormalizedEntry` (pinyin as pronunciation, capped glosses as senses).
+  The 8MB dataset lives in `src/lookup/data/` (`cedict.u8.gz` + a `README.md` recording CC BY-SA 4.0
+  attribution); the composition root (`src/index.ts`) reads + gunzips it via `node:zlib` (resolved
+  from `import.meta.url`) and `pnpm build` copies `src/lookup/data` into `dist/lookup/data`. Each
+  `LookupSource` declares the `languages` it serves; `lookupService.ts` orchestrates the ordered
+  chain — only trying sources that serve the requested language (English: Learner's → Collegiate →
+  Free Dictionary; Chinese `zh-CN`/`zh-TW`: CC-CEDICT) — first match wins, and caches by
+  `language:term`. Adapters cap senses (MW/Free at 3, CC-CEDICT at 5) and are pure (tested against
+  canned data via the fake transport / sample text). Keys load from a root `.env` via Node's
+  `--env-file-if-exists=.env` (no dotenv dependency; the chain still falls through to Free Dictionary
+  with no keys set).
+  The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
+  language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service; the
+  key never reaches the client).
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
@@ -124,7 +133,8 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
   reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
   text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the headword,
   pronunciation, senses, and attribution in the shared `Sheet` with explicit loading/empty/error
-  states, and `lookupApi.ts` calls `GET /api/lookup`. Lookup never creates, pre-fills, or edits a note.
+  states, and `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open work's language so
+  Chinese selections route to CC-CEDICT automatically. Lookup never creates, pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,
