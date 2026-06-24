@@ -7,7 +7,6 @@ import { MotionConfig } from "framer-motion";
 import { HashRouter } from "react-router-dom";
 
 import { App } from "./App";
-import { ThemeToggle } from "./shared/theme/ThemeToggle";
 import "./styles/theme.css";
 import "./styles.css";
 
@@ -23,7 +22,6 @@ createRoot(rootElement).render(
   <StrictMode>
     <MotionConfig reducedMotion="user">
       <HashRouter>
-        <ThemeToggle />
         <App />
       </HashRouter>
     </MotionConfig>

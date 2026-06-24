@@ -268,7 +268,7 @@ describe("AdminLibraryPage", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
       type: "application/epub+zip"
     });
-    await user.upload(screen.getByLabelText("Upload an EPUB"), file);
+    await user.upload(screen.getByLabelText("Upload EPUB"), file);
 
     expect(await screen.findByRole("heading", { name: "史记选读" })).toBeDefined();
     expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
@@ -279,7 +279,7 @@ describe("AdminLibraryPage", () => {
     mockedIngestEpub.mockRejectedValue(new Error("boom"));
 
     const file = new File([new Uint8Array([1])], "bad.epub", { type: "application/epub+zip" });
-    await user.upload(screen.getByLabelText("Upload an EPUB"), file);
+    await user.upload(screen.getByLabelText("Upload EPUB"), file);
 
     expect(await screen.findByText("Could not ingest the EPUB. Please try again.")).toBeDefined();
   });
@@ -287,7 +287,7 @@ describe("AdminLibraryPage", () => {
   it("ignores an upload with no file selected", async () => {
     await renderReady();
 
-    fireEvent.change(screen.getByLabelText("Upload an EPUB"), { target: { files: [] } });
+    fireEvent.change(screen.getByLabelText("Upload EPUB"), { target: { files: [] } });
 
     expect(mockedIngestEpub).not.toHaveBeenCalled();
   });

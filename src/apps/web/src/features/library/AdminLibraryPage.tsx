@@ -11,7 +11,7 @@ import {
   type WorkType
 } from "@whetstone/domain";
 
-import { Button } from "../../shared/ui/Button";
+import { Button, buttonVariants } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
 import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
@@ -136,12 +136,16 @@ export function AdminLibraryPage(): React.JSX.Element {
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold text-text">Library</h1>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-text-muted" htmlFor="epub-upload">
-            Upload an EPUB
+          <label
+            className={`${buttonVariants({ variant: "secondary" })} cursor-pointer focus-within:ring-2 focus-within:ring-ring focus-within:outline-none ${
+              epubBusy ? "pointer-events-none opacity-50" : ""
+            }`}
+          >
+            Upload EPUB
             <input
               accept=".epub,application/epub+zip"
+              className="sr-only"
               disabled={epubBusy}
-              id="epub-upload"
               onChange={(event) => void onUploadEpub(event)}
               type="file"
             />
