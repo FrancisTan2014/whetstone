@@ -254,6 +254,28 @@ describe("ReaderPage", () => {
     expect(openButton.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("opens the requested work on arrival when given an initial work entry id", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+
+    render(<ReaderPage initialWorkEntryId="work-2" />);
+
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-2");
+    expect(
+      screen.getByRole("button", { name: "A Tale of Two Cities" }).getAttribute("aria-pressed")
+    ).toBe("true");
+  });
+
+  it("falls back to the work picker when the initial work entry id is unknown", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
+
+    render(<ReaderPage initialWorkEntryId="missing-work" />);
+
+    expect(await screen.findByText("Select a work to start reading.")).toBeDefined();
+    expect(mockedFetchWorkContent).not.toHaveBeenCalled();
+  });
+
   it("opens a work and renders its units and blocks as one continuous scroll", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();

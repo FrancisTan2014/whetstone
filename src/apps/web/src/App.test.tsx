@@ -33,7 +33,7 @@ describe("App shell and routes", () => {
   it("mounts the existing Library screens at the index route", () => {
     const markup = renderAt("/");
 
-    expect(markup).toContain("Library admin");
+    expect(markup).toContain(">Library<");
     expect(markup).toContain('id="content-heading"');
   });
 
@@ -42,6 +42,12 @@ describe("App shell and routes", () => {
 
     expect(markup).toContain('id="reader-heading"');
     expect(markup).not.toContain('id="content-heading"');
+  });
+
+  it("resolves the reader route with a work query param to the reader page", () => {
+    const markup = renderAt("/reader?work=work-1");
+
+    expect(markup).toContain('id="reader-heading"');
   });
 
   it("resolves the notes route to its placeholder region", () => {

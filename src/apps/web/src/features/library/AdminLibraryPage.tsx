@@ -1,4 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { motion, type Variants } from "framer-motion";
 
 import type { AuthorDto, CreateWorkRequest, WorkListItemDto } from "@whetstone/contracts";
 import {
@@ -10,7 +11,10 @@ import {
   type WorkType
 } from "@whetstone/domain";
 
-import { createAuthor, createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
+import { Button } from "../../shared/ui/Button";
+import { Sheet } from "../../shared/ui/Sheet";
+import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
+import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 
 const newAuthorOption = "new-author-or-source";
 
@@ -20,14 +24,16 @@ function formatWorkType(workType: WorkType): string {
   return workType.replace("_", " ");
 }
 
+function workCountLabel(count: number): string {
+  return count === 1 ? "1 work" : `${count} works`;
+}
+
 export function AdminLibraryPage(): React.JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [authors, setAuthors] = useState<ReadonlyArray<AuthorDto>>([]);
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
 
-  const [authorName, setAuthorName] = useState("");
-  const [authorError, setAuthorError] = useState<string | undefined>(undefined);
-
+  const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState<WorkLanguage>("en");
   const [workType, setWorkType] = useState<WorkType>("book");
@@ -37,6 +43,12 @@ export function AdminLibraryPage(): React.JSX.Element {
 
   const [epubError, setEpubError] = useState<string | undefined>(undefined);
   const [epubBusy, setEpubBusy] = useState(false);
+
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
 
   async function reload(): Promise<void> {
     const [authorList, workList] = await Promise.all([fetchAuthors(), fetchWorks()]);
@@ -49,26 +61,6 @@ export function AdminLibraryPage(): React.JSX.Element {
       .then(() => setLoadState("ready"))
       .catch(() => setLoadState("error"));
   }, []);
-
-  async function onSubmitAuthor(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    const trimmed = authorName.trim();
-
-    if (trimmed.length === 0) {
-      setAuthorError("Enter an author or source name.");
-      return;
-    }
-
-    try {
-      const created = await createAuthor({ name: trimmed });
-      setAuthorName("");
-      setAuthorError(undefined);
-      await reload();
-      setAuthorChoice(created.id);
-    } catch {
-      setAuthorError("Could not save the author or source. Please try again.");
-    }
-  }
 
   function buildAuthorSelection(): CreateWorkRequest["author"] | undefined {
     if (authorChoice === newAuthorOption) {
@@ -101,6 +93,7 @@ export function AdminLibraryPage(): React.JSX.Element {
       setTitle("");
       setInlineAuthorName("");
       setWorkError(undefined);
+      setAddOpen(false);
       await reload();
     } catch {
       setWorkError("Could not save the work. Please try again.");
@@ -128,64 +121,66 @@ export function AdminLibraryPage(): React.JSX.Element {
     }
   }
 
-  return (
-    <main className="appShell">
-      <h1>Library admin</h1>
+  const listVariants: Variants = {
+    hidden: {},
+    visible: { transition: { staggerChildren: prefersReducedMotion ? 0 : 0.05 } }
+  };
+  const cardVariants: Variants = prefersReducedMotion
+    ? { hidden: { opacity: 1 }, visible: { opacity: 1 } }
+    : { hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } };
 
-      {loadState === "loading" ? <p>Loading the library…</p> : null}
+  const groups = groupWorksByAuthor(works);
+
+  return (
+    <main className="mx-auto max-w-5xl p-4">
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-3xl font-semibold text-text">Library</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-text-muted" htmlFor="epub-upload">
+            Upload an EPUB
+            <input
+              accept=".epub,application/epub+zip"
+              disabled={epubBusy}
+              id="epub-upload"
+              onChange={(event) => void onUploadEpub(event)}
+              type="file"
+            />
+          </label>
+          <Button onClick={() => setAddOpen(true)} type="button">
+            Add work
+          </Button>
+        </div>
+      </header>
+
+      {epubBusy ? <p className="text-text-muted">Ingesting the EPUB…</p> : null}
+      {epubError !== undefined ? (
+        <p className="text-danger" role="alert">
+          {epubError}
+        </p>
+      ) : null}
+
+      {loadState === "loading" ? <p className="text-text-muted">Loading the library…</p> : null}
       {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
 
-      {loadState === "ready" ? (
-        <div className="adminGrid">
-          <section aria-labelledby="authors-heading" className="card">
-            <h2 id="authors-heading">Authors and sources</h2>
-            <form onSubmit={(event) => void onSubmitAuthor(event)}>
-              <label htmlFor="author-name">Name</label>
-              <input
-                id="author-name"
-                onChange={(event) => setAuthorName(event.currentTarget.value)}
-                value={authorName}
-              />
-              <button type="submit">Add author or source</button>
-              {authorError !== undefined ? <p role="alert">{authorError}</p> : null}
-            </form>
-            {authors.length === 0 ? (
-              <p>No authors or sources yet.</p>
-            ) : (
-              <ul aria-label="Existing authors and sources">
-                {authors.map((author) => (
-                  <li key={author.id}>{author.name}</li>
-                ))}
-              </ul>
-            )}
-          </section>
+      {loadState === "ready" ? renderLibrary(groups, listVariants, cardVariants) : null}
 
-          <section aria-labelledby="works-heading" className="card">
-            <h2 id="works-heading">Works</h2>
-
-            <div className="epubUpload">
-              <label htmlFor="epub-upload">Upload an EPUB</label>
+      {addOpen ? (
+        <Sheet onOpenChange={setAddOpen} open title="Add work">
+          <form className="flex flex-col gap-3" onSubmit={(event) => void onSubmitWork(event)}>
+            <label className="flex flex-col gap-1" htmlFor="work-title">
+              Title
               <input
-                accept=".epub,application/epub+zip"
-                disabled={epubBusy}
-                id="epub-upload"
-                onChange={(event) => void onUploadEpub(event)}
-                type="file"
-              />
-              {epubBusy ? <p>Ingesting the EPUB…</p> : null}
-              {epubError !== undefined ? <p role="alert">{epubError}</p> : null}
-            </div>
-
-            <form onSubmit={(event) => void onSubmitWork(event)}>
-              <label htmlFor="work-title">Title</label>
-              <input
+                className="rounded border border-border bg-surface px-3 py-2"
                 id="work-title"
                 onChange={(event) => setTitle(event.currentTarget.value)}
                 value={title}
               />
+            </label>
 
-              <label htmlFor="work-type">Type</label>
+            <label className="flex flex-col gap-1" htmlFor="work-type">
+              Type
               <select
+                className="rounded border border-border bg-surface px-3 py-2"
                 id="work-type"
                 onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
                 value={workType}
@@ -196,9 +191,12 @@ export function AdminLibraryPage(): React.JSX.Element {
                   </option>
                 ))}
               </select>
+            </label>
 
-              <label htmlFor="work-language">Language</label>
+            <label className="flex flex-col gap-1" htmlFor="work-language">
+              Language
               <select
+                className="rounded border border-border bg-surface px-3 py-2"
                 id="work-language"
                 onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
                 value={language}
@@ -209,9 +207,12 @@ export function AdminLibraryPage(): React.JSX.Element {
                   </option>
                 ))}
               </select>
+            </label>
 
-              <label htmlFor="work-author">Author or source</label>
+            <label className="flex flex-col gap-1" htmlFor="work-author">
+              Author or source
               <select
+                className="rounded border border-border bg-surface px-3 py-2"
                 id="work-author"
                 onChange={(event) => setAuthorChoice(event.currentTarget.value)}
                 value={authorChoice}
@@ -223,43 +224,92 @@ export function AdminLibraryPage(): React.JSX.Element {
                   </option>
                 ))}
               </select>
+            </label>
 
-              {authorChoice === newAuthorOption ? (
-                <>
-                  <label htmlFor="inline-author-name">New author or source name</label>
-                  <input
-                    id="inline-author-name"
-                    onChange={(event) => setInlineAuthorName(event.currentTarget.value)}
-                    value={inlineAuthorName}
-                  />
-                </>
-              ) : null}
+            {authorChoice === newAuthorOption ? (
+              <label className="flex flex-col gap-1" htmlFor="inline-author-name">
+                New author or source name
+                <input
+                  className="rounded border border-border bg-surface px-3 py-2"
+                  id="inline-author-name"
+                  onChange={(event) => setInlineAuthorName(event.currentTarget.value)}
+                  value={inlineAuthorName}
+                />
+              </label>
+            ) : null}
 
-              <button type="submit">Create work</button>
-              {workError !== undefined ? <p role="alert">{workError}</p> : null}
-            </form>
-
-            {works.length === 0 ? (
-              <p>No works yet.</p>
-            ) : (
-              <ul aria-label="Created works">
-                {works.map((item) => (
-                  <li key={item.work.entryId}>
-                    {item.work.title} — {item.author.name} ({formatWorkType(item.work.workType)},{" "}
-                    {workLanguageLabels[item.work.language]}){" "}
-                    <a
-                      download={`${item.work.title}.md`}
-                      href={`/api/works/${item.work.entryId}/content/markdown`}
-                    >
-                      Export Markdown
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
+            <Button type="submit">Create work</Button>
+            {workError !== undefined ? (
+              <p className="text-danger" role="alert">
+                {workError}
+              </p>
+            ) : null}
+          </form>
+        </Sheet>
       ) : null}
     </main>
+  );
+}
+
+function renderLibrary(
+  groups: ReadonlyArray<AuthorWorks>,
+  listVariants: Variants,
+  cardVariants: Variants
+): React.JSX.Element {
+  if (groups.length === 0) {
+    return (
+      <p className="rounded border border-border bg-surface p-6 text-text-muted">
+        No works yet. Add a work or upload an EPUB to start your library.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-8">
+      {groups.map((group) => (
+        <section aria-labelledby={`author-${group.author.id}`} key={group.author.id}>
+          <h2 className="mb-3 flex items-baseline gap-2 text-xl font-semibold text-text">
+            <span id={`author-${group.author.id}`}>{group.author.name}</span>
+            <span className="text-sm font-normal text-text-muted">
+              {workCountLabel(group.works.length)}
+            </span>
+          </h2>
+          <motion.ul
+            animate="visible"
+            className="grid gap-3 sm:grid-cols-2"
+            initial="hidden"
+            variants={listVariants}
+          >
+            {group.works.map((item) => (
+              <motion.li
+                className="flex flex-col gap-2 rounded border border-border bg-surface p-4"
+                key={item.work.entryId}
+                variants={cardVariants}
+              >
+                <h3 className="font-serif text-lg text-text">{item.work.title}</h3>
+                <p className="text-sm text-text-muted">
+                  {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
+                </p>
+                <div className="mt-auto flex gap-4 text-sm">
+                  <a
+                    className="text-accent hover:text-accent-hover"
+                    href={`#/reader?work=${encodeURIComponent(item.work.entryId)}`}
+                  >
+                    Continue reading
+                  </a>
+                  <a
+                    className="text-accent hover:text-accent-hover"
+                    download={`${item.work.title}.md`}
+                    href={`/api/works/${item.work.entryId}/content/markdown`}
+                  >
+                    Export Markdown
+                  </a>
+                </div>
+              </motion.li>
+            ))}
+          </motion.ul>
+        </section>
+      ))}
+    </div>
   );
 }
