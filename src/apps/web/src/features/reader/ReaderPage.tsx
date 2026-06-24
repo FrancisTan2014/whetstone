@@ -52,7 +52,11 @@ function notesForBlock(
   return notes.filter((note) => note.blockEntryId === blockEntryId);
 }
 
-export function ReaderPage(): React.JSX.Element {
+// The library "Continue reading" link routes to `#/reader?work=<entryId>`; the route reads that
+// query param and passes it here so the page opens straight into the requested work on arrival.
+type ReaderPageProps = Readonly<{ initialWorkEntryId?: string | undefined }>;
+
+export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.Element {
   const [state, setState] = useState<ReaderState>({ status: "loadingWorks" });
   const [templates, setTemplates] = useState<ReadonlyArray<NoteTemplateDto>>([]);
   const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
@@ -61,9 +65,22 @@ export function ReaderPage(): React.JSX.Element {
 
   useEffect(() => {
     fetchWorks()
-      .then((list) => setState({ reading: { status: "idle" }, status: "ready", works: list.works }))
+      .then((list) => {
+        const works = list.works;
+        const requested =
+          initialWorkEntryId === undefined
+            ? undefined
+            : works.find((item) => item.work.entryId === initialWorkEntryId);
+
+        if (requested === undefined) {
+          setState({ reading: { status: "idle" }, status: "ready", works });
+          return;
+        }
+
+        void openWork(works, requested.work.entryId);
+      })
       .catch(() => setState({ status: "worksError" }));
-  }, []);
+  }, [initialWorkEntryId]);
 
   useEffect(() => {
     fetchNoteTemplates()

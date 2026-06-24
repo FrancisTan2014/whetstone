@@ -83,9 +83,10 @@ can navigate them from another package.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
-  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
+  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
+  reading" deep-links to `#/reader?work=<entryId>`. `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
-  with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, highlights blocks
+  with `react-markdown` + `rehype-sanitize` (opening the `?work=` work on arrival via `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them), and on a block selection (`blockSelection.ts`
   reads the selected text and its offset from the live Range) opens the `notes/` editor; it also shows
   a per-work note list. `notes/` is the note feature: `noteCapture.ts` turns a block selection into a

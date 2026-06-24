@@ -44,6 +44,12 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain('id="content-heading"');
   });
 
+  it("resolves the reader route with a work query param to the reader page", () => {
+    const markup = renderAt("/reader?work=work-1");
+
+    expect(markup).toContain('id="reader-heading"');
+  });
+
   it("resolves the notes route to its placeholder region", () => {
     const markup = renderAt("/notes");
 

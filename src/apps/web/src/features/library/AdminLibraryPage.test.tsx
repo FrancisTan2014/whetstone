@@ -123,7 +123,7 @@ describe("AdminLibraryPage", () => {
     expect(within(group).getByText("essay · English")).toBeDefined();
 
     const continueLinks = within(group).getAllByRole("link", { name: "Continue reading" });
-    expect(continueLinks[0]?.getAttribute("href")).toBe("#/reader");
+    expect(continueLinks[0]?.getAttribute("href")).toBe("#/reader?work=work-1");
 
     const exportLinks = within(group).getAllByRole("link", { name: "Export Markdown" });
     expect(exportLinks[0]?.getAttribute("href")).toBe("/api/works/work-1/content/markdown");

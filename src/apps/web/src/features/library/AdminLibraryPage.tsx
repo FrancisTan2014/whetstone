@@ -291,7 +291,10 @@ function renderLibrary(
                   {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
                 </p>
                 <div className="mt-auto flex gap-4 text-sm">
-                  <a className="text-accent hover:text-accent-hover" href="#/reader">
+                  <a
+                    className="text-accent hover:text-accent-hover"
+                    href={`#/reader?work=${encodeURIComponent(item.work.entryId)}`}
+                  >
                     Continue reading
                   </a>
                   <a
