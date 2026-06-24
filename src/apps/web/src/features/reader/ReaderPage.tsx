@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import Markdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
+import Markdown, { type Options } from "react-markdown";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
@@ -27,9 +27,15 @@ import { selectionRect } from "./selectionRect";
 import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
 
 // remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so
-// the reader never executes raw markup (no dangerouslySetInnerHTML).
+// the reader never executes raw markup (no dangerouslySetInnerHTML). We further disallow
+// `img` (v0 is text blocks only) so no external image is ever fetched or rendered, even
+// from manually entered Markdown.
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: (defaultSchema.tagNames as string[]).filter((tagName) => tagName !== "img")
+};
 const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeSanitize];
+const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [[rehypeSanitize, sanitizeSchema]];
 
 // Immersive-reader chrome state shared with the reading view: the language-aware paper
 // surface, the text-size control, the auto-hiding header, and the entrance motion.
