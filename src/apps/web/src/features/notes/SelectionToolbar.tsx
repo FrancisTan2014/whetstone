@@ -9,6 +9,7 @@ export type SelectionToolbarProps = Readonly<{
   anchorRect?: DOMRect | undefined;
   onClose: () => void;
   onConfirm: () => void;
+  onLookup: () => void;
   onSelectTemplate: (templateId: string) => void;
   prefersReducedMotion: boolean;
   selectedTemplateId: string;
@@ -16,13 +17,14 @@ export type SelectionToolbarProps = Readonly<{
 }>;
 
 // A floating toolbar anchored to the current selection. It surfaces the size-preselected
-// template and a quick switch among the hued templates, then a confirm that opens the
-// editor. Positioned from a rect captured off the selection Range; springs in and honors
-// reduced motion.
+// template and a quick switch among the hued templates, a "Look up" action that opens the
+// view-only definition panel, then a confirm that opens the note editor. Positioned from a
+// rect captured off the selection Range; springs in and honors reduced motion.
 export function SelectionToolbar({
   anchorRect,
   onClose,
   onConfirm,
+  onLookup,
   onSelectTemplate,
   prefersReducedMotion,
   selectedTemplateId,
@@ -57,6 +59,9 @@ export function SelectionToolbar({
       </div>
       <button className="selectionToolbarConfirm" onClick={onConfirm} type="button">
         Add note
+      </button>
+      <button className="selectionToolbarLookup" onClick={onLookup} type="button">
+        Look up
       </button>
       <button
         aria-label="Dismiss"

@@ -16,6 +16,10 @@ vi.mock("../notes/notesApi", () => ({
   updateNote: vi.fn()
 }));
 
+vi.mock("../lookup/lookupApi", () => ({
+  lookupTerm: vi.fn()
+}));
+
 import {
   createNote,
   deleteNote,
@@ -23,6 +27,7 @@ import {
   fetchNotes,
   updateNote
 } from "../notes/notesApi";
+import { lookupTerm } from "../lookup/lookupApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { ReaderPage } from "./ReaderPage";
 import type {
@@ -40,6 +45,7 @@ const mockedCreateNote = vi.mocked(createNote);
 const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedUpdateNote = vi.mocked(updateNote);
 const mockedDeleteNote = vi.mocked(deleteNote);
+const mockedLookupTerm = vi.mocked(lookupTerm);
 
 const noteTemplates: ReadonlyArray<NoteTemplateDto> = [
   {
@@ -996,5 +1002,67 @@ describe("ReaderPage reading controls", () => {
     } finally {
       window.matchMedia = original;
     }
+  });
+});
+
+describe("ReaderPage vocabulary lookup", () => {
+  async function selectAndLookup(): Promise<ReturnType<typeof userEvent.setup>> {
+    const { container, user } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
+
+    return user;
+  }
+
+  it("opens the view-only panel with the definition and never creates a note", async () => {
+    mockedLookupTerm.mockResolvedValue({
+      attribution: "From a source.",
+      entry: {
+        headword: "intro",
+        pronunciation: "/ˈɪntroʊ/",
+        senses: [{ example: "a short intro", gloss: "an introduction", partOfSpeech: "noun" }]
+      },
+      found: true
+    });
+
+    await selectAndLookup();
+
+    expect(await screen.findByText("an introduction")).toBeDefined();
+    expect(screen.getByText("From a source.")).toBeDefined();
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en");
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+    expect(mockedCreateNote).not.toHaveBeenCalled();
+  });
+
+  it("shows an empty state when no definition is found", async () => {
+    mockedLookupTerm.mockResolvedValue({ found: false });
+
+    await selectAndLookup();
+
+    expect(await screen.findByText("No definition found.")).toBeDefined();
+  });
+
+  it("shows an error state when the lookup request fails", async () => {
+    mockedLookupTerm.mockRejectedValue(new Error("network"));
+
+    await selectAndLookup();
+
+    expect(await screen.findByRole("alert")).toBeDefined();
+  });
+
+  it("dismisses the lookup panel when closed", async () => {
+    mockedLookupTerm.mockResolvedValue({
+      entry: { headword: "intro", senses: [{ gloss: "an introduction" }] },
+      found: true
+    });
+
+    const user = await selectAndLookup();
+    await screen.findByText("an introduction");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByText("an introduction")).toBeNull();
   });
 });

@@ -41,6 +41,20 @@ export type {
 export { createHealthResponse, healthEndpointPath, healthResponseJsonSchema } from "./health.js";
 export type { HealthResponse } from "./health.js";
 export {
+  lookupRequestSchema,
+  lookupResponseSchema,
+  normalizedEntrySchema,
+  normalizedSenseSchema,
+  parseLookupRequest,
+  parseLookupResponse
+} from "./lookupContracts.js";
+export type {
+  LookupRequest,
+  LookupResponse,
+  NormalizedEntry,
+  NormalizedSense
+} from "./lookupContracts.js";
+export {
   authorIdDtoSchema,
   createAuthorRequestSchema,
   createWorkRequestSchema,
