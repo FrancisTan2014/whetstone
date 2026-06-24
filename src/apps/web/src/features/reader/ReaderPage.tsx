@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Markdown, { type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -21,13 +21,9 @@ import { readBlockSelection } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
-import {
-  clampUnitIndex,
-  initialUnitIndex,
-  targetUnitForBlock,
-  unitTocLabel,
-  workProgress
-} from "./readerNavigation";
+import { clampUnitIndex, targetUnitForBlock, unitTocLabel, workProgress } from "./readerNavigation";
+import { createLocalStoragePositionStore, resolveOpening } from "./readingPosition";
+import { useReadingPositionWriter } from "./useReadingPositionWriter";
 import { ReaderToc } from "./ReaderToc";
 import { ReadingHeader } from "./ReadingHeader";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
@@ -104,6 +100,25 @@ export function applyUnitForBlock(state: ReaderState, blockEntryId: string): Rea
   return { ...state, reading: { ...state.reading, activeUnitIndex: target } };
 }
 
+// The work + active reading unit currently being read, or undefined when not viewing a unit
+// (idle/loading/error, or a work with no units). Drives where the reading position is saved.
+// Pure and exported so it tests without the component.
+export function viewingPosition(
+  state: ReaderState
+): Readonly<{ unitEntryId: string; workEntryId: string }> | undefined {
+  if (state.status !== "ready" || state.reading.status !== "viewing") {
+    return undefined;
+  }
+
+  const unit = state.reading.view.units[state.reading.activeUnitIndex];
+
+  if (unit === undefined) {
+    return undefined;
+  }
+
+  return { unitEntryId: unit.entryId, workEntryId: state.reading.workEntryId };
+}
+
 // At most one note panel is open at a time: capturing a new note, editing an existing one, or
 // listing the notes anchored to a single block (reopened from its highlight).
 type NotePanel =
@@ -174,10 +189,14 @@ export function ReaderPage({
   const [pendingScrollBlockEntryId, setPendingScrollBlockEntryId] = useState<string | undefined>(
     undefined
   );
+  const [pendingScrollOffset, setPendingScrollOffset] = useState<number | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const scroll = useReaderScroll();
   const toast = useToast();
+  // localStorage-backed per-work reading position; created once so its identity is stable.
+  const positionStore = useMemo(() => createLocalStoragePositionStore(window.localStorage), []);
+  useReadingPositionWriter(positionStore, viewingPosition(state));
 
   useEffect(() => {
     setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -193,6 +212,16 @@ export function ReaderPage({
     scrollToBlock(pendingScrollBlockEntryId);
     setPendingScrollBlockEntryId(undefined);
   }, [pendingScrollBlockEntryId]);
+
+  // After the saved unit renders, restore its best-effort scroll offset.
+  useEffect(() => {
+    if (pendingScrollOffset === undefined) {
+      return;
+    }
+
+    window.scrollTo(0, pendingScrollOffset);
+    setPendingScrollOffset(undefined);
+  }, [pendingScrollOffset]);
 
   useEffect(() => {
     fetchWorks()
@@ -240,10 +269,15 @@ export function ReaderPage({
       const content = await fetchWorkContent(workEntryId);
       await refreshNotes(workEntryId);
       const view = buildReaderView(content);
+      const savedPosition = positionStore.read(workEntryId);
+      const plan = resolveOpening(view, {
+        ...(deepLinkBlockEntryId === undefined ? {} : { deepLinkBlockEntryId }),
+        ...(savedPosition === undefined ? {} : { savedPosition })
+      });
 
       setState({
         reading: {
-          activeUnitIndex: initialUnitIndex(view, deepLinkBlockEntryId),
+          activeUnitIndex: plan.unitIndex,
           status: "viewing",
           view,
           workEntryId
@@ -252,8 +286,12 @@ export function ReaderPage({
         works
       });
 
-      if (deepLinkBlockEntryId !== undefined) {
-        setPendingScrollBlockEntryId(deepLinkBlockEntryId);
+      if (plan.scrollBlockEntryId !== undefined) {
+        setPendingScrollBlockEntryId(plan.scrollBlockEntryId);
+      }
+
+      if (plan.scrollOffset !== undefined) {
+        setPendingScrollOffset(plan.scrollOffset);
       }
     } catch {
       setState({ reading: { status: "error", workEntryId }, status: "ready", works });
