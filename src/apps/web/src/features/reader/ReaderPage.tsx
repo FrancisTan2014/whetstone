@@ -1,22 +1,39 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 
+import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
+import { annotationHueClass } from "./annotationHue";
 import { readBlockSelection } from "./blockSelection";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
+import { ReadingHeader } from "./ReadingHeader";
+import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
+import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
 
 // remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so
 // the reader never executes raw markup (no dangerouslySetInnerHTML).
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeSanitize];
+
+// Immersive-reader chrome state shared with the reading view: the language-aware paper
+// surface, the text-size control, the auto-hiding header, and the entrance motion.
+type ReaderChrome = Readonly<{
+  language: string;
+  onSizeChange: (size: ReadingSize) => void;
+  prefersReducedMotion: boolean;
+  scroll: ReaderScroll;
+  size: ReadingSize;
+  title: string;
+}>;
 
 type ReadingState =
   | Readonly<{ status: "idle" }>
@@ -58,6 +75,13 @@ export function ReaderPage(): React.JSX.Element {
   const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
   const [panel, setPanel] = useState<NotePanel | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const scroll = useReaderScroll();
+
+  useEffect(() => {
+    setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
 
   useEffect(() => {
     fetchWorks()
@@ -173,7 +197,8 @@ export function ReaderPage(): React.JSX.Element {
             state.works,
             state.reading,
             handlers,
-            (workEntryId) => void openWork(state.works, workEntryId)
+            (workEntryId) => void openWork(state.works, workEntryId),
+            { onSizeChange: setSize, prefersReducedMotion, scroll, size }
           )
         : null}
 
@@ -193,17 +218,26 @@ export function ReaderPage(): React.JSX.Element {
   );
 }
 
+type ReaderChromeBase = Omit<ReaderChrome, "language" | "title">;
+
 function renderReady(
   works: ReadonlyArray<WorkListItemDto>,
   reading: ReadingState,
   handlers: ReaderHandlers,
-  onOpen: (workEntryId: string) => void
+  onOpen: (workEntryId: string) => void,
+  chromeBase: ReaderChromeBase
 ): React.JSX.Element {
   if (works.length === 0) {
     return <p>No works yet. Create one in the library admin.</p>;
   }
 
   const openWorkEntryId = reading.status === "idle" ? undefined : reading.workEntryId;
+  const openWork = works.find((item) => item.work.entryId === openWorkEntryId);
+  const chrome: ReaderChrome = {
+    ...chromeBase,
+    language: openWork?.work.language ?? "en",
+    title: openWork?.work.title ?? ""
+  };
 
   return (
     <div className="readerLayout">
@@ -223,12 +257,16 @@ function renderReady(
         </ul>
       </nav>
 
-      {renderReading(reading, handlers)}
+      {renderReading(reading, handlers, chrome)}
     </div>
   );
 }
 
-function renderReading(reading: ReadingState, handlers: ReaderHandlers): React.JSX.Element {
+function renderReading(
+  reading: ReadingState,
+  handlers: ReaderHandlers,
+  chrome: ReaderChrome
+): React.JSX.Element {
   switch (reading.status) {
     case "idle":
       return <p className="readerHint">Select a work to start reading.</p>;
@@ -237,18 +275,42 @@ function renderReading(reading: ReadingState, handlers: ReaderHandlers): React.J
     case "error":
       return <p role="alert">Could not load this work. Please try again.</p>;
     case "viewing":
-      return renderViewing(reading.view, reading.workEntryId, handlers);
+      return renderViewing(reading.view, reading.workEntryId, handlers, chrome);
   }
 }
 
 function renderViewing(
   view: ReaderView,
   workEntryId: string,
-  handlers: ReaderHandlers
+  handlers: ReaderHandlers,
+  chrome: ReaderChrome
 ): React.JSX.Element {
+  const entrance = withReducedMotion(motionSprings.gentle, chrome.prefersReducedMotion);
+
   return (
     <div className="readerReading">
-      {renderReaderView(view, workEntryId, handlers)}
+      <ReadingHeader
+        hidden={chrome.scroll.headerHidden}
+        onSizeChange={chrome.onSizeChange}
+        progress={chrome.scroll.progress}
+        size={chrome.size}
+        title={chrome.title}
+      />
+      <motion.div
+        animate={{ opacity: 1, y: 0 }}
+        className="readerEntrance"
+        initial={{ opacity: 0, y: 8 }}
+        key={workEntryId}
+        transition={entrance}
+      >
+        <div
+          className="reading-surface readerPaper"
+          lang={chrome.language}
+          style={{ "--reading-size": readingSizeToRem(chrome.size) } as React.CSSProperties}
+        >
+          {renderReaderView(view, workEntryId, handlers)}
+        </div>
+      </motion.div>
       <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
         <h2 id="work-notes-heading">Your notes</h2>
         <NoteList
@@ -299,7 +361,9 @@ function renderBlock(
 ): React.JSX.Element {
   const blockNotes = notesForBlock(handlers.notes, block.entryId);
   const annotated = blockNotes.length > 0;
-  const className = annotated ? "readerBlock readerBlock--annotated" : "readerBlock";
+  const className = annotated
+    ? `readerBlock readerBlock--annotated ${annotationHueClass((blockNotes[0] as NoteDto).templateId)}`
+    : "readerBlock";
 
   return (
     <div
