@@ -201,6 +201,31 @@ Search runs over block text at block granularity (results point to the exact blo
 
 Storing blocks as rows makes search easier and richer than files would (granular, indexed, ACID).
 
+## v0 vocabulary lookup
+
+While reading, the user can select a single word (or short phrase) and look up its meaning in place —
+a fast, **view-only** glance that never auto-creates or edits a note. Note-taking stays a deliberate,
+manual act (the effortful encoding is the point); lookup only removes the friction of finding a meaning.
+
+- **Boundary first.** Every lookup goes through a `DictionaryProvider` interface
+  (`lookup(term, language) -> NormalizedEntry`) that hides each source's format, transport, and caching.
+  Providers are pluggable; the reader UI is identical across them.
+- **Normalize and trim.** Raw dictionary results are long and messy, so each provider has an adapter
+  that normalizes to a compact shape — headword, optional pronunciation, and a few concise senses
+  (part of speech, gloss, optional example) — capped so the popover stays scannable.
+- **English source:** Merriam-Webster's **Learner's Dictionary API** (server-side key, attribution,
+  non-commercial), with the no-key **Free Dictionary API** (Wiktionary-sourced) as a fallback.
+- **Chinese source:** the openly licensed **CC-CEDICT** (pinyin + gloss); for classical depth, the
+  **public-domain** source dictionaries (《康熙字典》, 《说文解字》) may be added as further providers.
+  Copyrighted sites with no open license or API (e.g. Oxford, Longman, 汉典/zdic) are not scraped.
+- **Surface:** a popover on desktop-width screens and a bottom sheet on narrow screens, consistent with
+  the note editor.
+- **Server-centered:** the API key stays on the server; results are cached to respect rate limits.
+
+A future **LLM provider** behind the same interface can give context-aware meanings (and classical
+Chinese, where dictionaries are weak) and, separately, draft a note the user must edit — both remain
+future, not v0. Lookup does not change the "No LLM note drafting" non-goal.
+
 ## v0 technology choices (locked)
 
 - Markdown parsing / serialization: `remark-parse` + `remark-gfm` + `remark-stringify` (mdast).

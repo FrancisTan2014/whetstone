@@ -22,6 +22,7 @@ Rules:
 - Prefer vertical feature/fix slices that leave the app in a working state.
 - Do not split a feature merely into backend, database, and frontend issues. If all layers are required for one capability, keep them together.
 - Separate broad scaffolding/tooling from feature behavior unless the feature cannot be delivered without that foundation.
+- A **foundation issue** is a valid exception, distinct from a layer split: a reusable engineering capability (e.g. an outbound HTTP client, a cache, a shared provider interface) may be its own issue when an imminent, named feature needs it. Gate it strictly — it must sit behind a stable interface that hides details, be fully unit-tested at its boundary (fakes, no real I/O) so the app still builds and stays green with no UI yet, and have its first consumer queued as a following `Depends on: #N` feature issue. It is a horizontal capability reused across features, never one feature sliced by layer, and never speculative architecture without a named consumer.
 - When a slice is implementable, create a GitHub issue with outcome, acceptance criteria, constraints/non-goals, and validation.
 - If an issue depends on another issue, include a clear `Depends on: #N` line in the issue body.
 - Apply `ready-for-dev` only when the issue can be implemented without guessing.

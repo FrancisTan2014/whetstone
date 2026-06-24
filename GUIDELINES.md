@@ -493,6 +493,8 @@ Every PR must state:
 
 Prefer cohesive vertical feature/fix PRs. A PR may include schema, API, server logic, and UI when those changes are all required to deliver one user-visible capability or one coherent fix. Request a split only when the PR mixes unrelated outcomes, unrelated refactors, or broad scaffolding with feature behavior.
 
+A **foundation PR** is the one allowed exception to vertical-only: it may deliver reusable infrastructure behind a stable interface with no UI, provided it is fully unit-tested at its boundary (fakes, no real I/O), keeps the app building and green, and its linked foundation issue names the imminent consumer it unblocks (a following `Depends on:` issue). Do not flag such a PR as scaffolding mixed with features — it deliberately contains no feature behavior.
+
 ## Review gates
 
 Reviewer agents enforce this same spec. Review comments should be high-signal: only material issues that affect correctness, safety, maintainability, product fit, or validation.
