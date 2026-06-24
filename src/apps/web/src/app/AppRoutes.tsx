@@ -18,11 +18,17 @@ function LibraryMode(): React.JSX.Element {
 }
 
 // The reader route opens straight into a work when the library passes `?work=<entryId>`;
-// without the param it falls back to the reader's own work picker.
+// an optional `?block=<entryId>` deep-links to a specific block. Without the params it falls
+// back to the reader's own work picker.
 function ReaderRoute(): React.JSX.Element {
   const [searchParams] = useSearchParams();
 
-  return <ReaderPage initialWorkEntryId={searchParams.get("work") ?? undefined} />;
+  return (
+    <ReaderPage
+      initialBlockEntryId={searchParams.get("block") ?? undefined}
+      initialWorkEntryId={searchParams.get("work") ?? undefined}
+    />
+  );
 }
 
 // Routes for the four navigation modes, all nested under the shell layout. Hash/memory

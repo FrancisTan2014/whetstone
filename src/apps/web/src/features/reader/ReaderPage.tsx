@@ -21,6 +21,14 @@ import { readBlockSelection } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
+import {
+  clampUnitIndex,
+  initialUnitIndex,
+  targetUnitForBlock,
+  unitTocLabel,
+  workProgress
+} from "./readerNavigation";
+import { ReaderToc } from "./ReaderToc";
 import { ReadingHeader } from "./ReadingHeader";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
 import { scrollToBlock } from "./scrollToBlock";
@@ -53,12 +61,48 @@ type ReadingState =
   | Readonly<{ status: "idle" }>
   | Readonly<{ status: "loading"; workEntryId: string }>
   | Readonly<{ status: "error"; workEntryId: string }>
-  | Readonly<{ status: "viewing"; view: ReaderView; workEntryId: string }>;
+  | Readonly<{
+      activeUnitIndex: number;
+      status: "viewing";
+      view: ReaderView;
+      workEntryId: string;
+    }>;
 
 type ReaderState =
   | Readonly<{ status: "loadingWorks" }>
   | Readonly<{ status: "worksError" }>
   | Readonly<{ reading: ReadingState; status: "ready"; works: ReadonlyArray<WorkListItemDto> }>;
+
+// Switching the open unit to a TOC selection: clamp the index into range and keep the rest
+// of the viewing state. A no-op for any non-viewing state so the reducer is total. Pure and
+// exported so the unit-selection logic tests without the component.
+export function applyUnitSelection(state: ReaderState, index: number): ReaderState {
+  if (state.status !== "ready" || state.reading.status !== "viewing") {
+    return state;
+  }
+
+  return {
+    ...state,
+    reading: { ...state.reading, activeUnitIndex: clampUnitIndex(state.reading.view, index) }
+  };
+}
+
+// Switching the open unit to the one that holds a block (jumping to a note or highlight).
+// Falls back to the current unit when the block is not in the work, and is a no-op for any
+// non-viewing state. Pure and exported so the jump-across-units logic tests in isolation.
+export function applyUnitForBlock(state: ReaderState, blockEntryId: string): ReaderState {
+  if (state.status !== "ready" || state.reading.status !== "viewing") {
+    return state;
+  }
+
+  const target = targetUnitForBlock(
+    state.reading.view,
+    blockEntryId,
+    state.reading.activeUnitIndex
+  );
+
+  return { ...state, reading: { ...state.reading, activeUnitIndex: target } };
+}
 
 // At most one note panel is open at a time: capturing a new note, editing an existing one, or
 // listing the notes anchored to a single block (reopened from its highlight).
@@ -105,13 +149,21 @@ function notesForBlock(
 
 // The library "Continue reading" link routes to `#/reader?work=<entryId>`; the route reads that
 // query param and passes it here so the page opens straight into the requested work on arrival.
-type ReaderPageProps = Readonly<{ initialWorkEntryId?: string | undefined }>;
+// An optional `?block=<entryId>` deep-links to a specific block: the reader opens the unit that
+// holds it and scrolls there.
+type ReaderPageProps = Readonly<{
+  initialBlockEntryId?: string | undefined;
+  initialWorkEntryId?: string | undefined;
+}>;
 
 // A view-only vocabulary lookup driven from the selection toolbar: the selected term and
 // its fetch state. Lookup never creates, pre-fills, or edits a note.
 type LookupView = Readonly<{ state: LookupState; term: string }>;
 
-export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.Element {
+export function ReaderPage({
+  initialBlockEntryId,
+  initialWorkEntryId
+}: ReaderPageProps): React.JSX.Element {
   const [state, setState] = useState<ReaderState>({ status: "loadingWorks" });
   const [templates, setTemplates] = useState<ReadonlyArray<NoteTemplateDto>>([]);
   const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
@@ -119,6 +171,9 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
   const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
   const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
+  const [pendingScrollBlockEntryId, setPendingScrollBlockEntryId] = useState<string | undefined>(
+    undefined
+  );
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const scroll = useReaderScroll();
@@ -127,6 +182,17 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   useEffect(() => {
     setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }, []);
+
+  // After the active unit renders, scroll to a requested block (a deep link, or a jump to a
+  // note/highlight in another unit). The block is in the DOM by the time this effect runs.
+  useEffect(() => {
+    if (pendingScrollBlockEntryId === undefined) {
+      return;
+    }
+
+    scrollToBlock(pendingScrollBlockEntryId);
+    setPendingScrollBlockEntryId(undefined);
+  }, [pendingScrollBlockEntryId]);
 
   useEffect(() => {
     fetchWorks()
@@ -142,10 +208,10 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
           return;
         }
 
-        void openWork(works, requested.work.entryId);
+        void openWork(works, requested.work.entryId, initialBlockEntryId);
       })
       .catch(() => setState({ status: "worksError" }));
-  }, [initialWorkEntryId]);
+  }, [initialBlockEntryId, initialWorkEntryId]);
 
   useEffect(() => {
     fetchNoteTemplates()
@@ -160,7 +226,8 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
 
   async function openWork(
     works: ReadonlyArray<WorkListItemDto>,
-    workEntryId: string
+    workEntryId: string,
+    deepLinkBlockEntryId?: string
   ): Promise<void> {
     setState({ reading: { status: "loading", workEntryId }, status: "ready", works });
     setPanel(undefined);
@@ -172,15 +239,43 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     try {
       const content = await fetchWorkContent(workEntryId);
       await refreshNotes(workEntryId);
+      const view = buildReaderView(content);
 
       setState({
-        reading: { status: "viewing", view: buildReaderView(content), workEntryId },
+        reading: {
+          activeUnitIndex: initialUnitIndex(view, deepLinkBlockEntryId),
+          status: "viewing",
+          view,
+          workEntryId
+        },
         status: "ready",
         works
       });
+
+      if (deepLinkBlockEntryId !== undefined) {
+        setPendingScrollBlockEntryId(deepLinkBlockEntryId);
+      }
     } catch {
       setState({ reading: { status: "error", workEntryId }, status: "ready", works });
     }
+  }
+
+  // Open a reading unit from the 目录: switch the active unit and close any open overlays so
+  // the chapter swap is clean.
+  function selectUnit(index: number): void {
+    setState((current) => applyUnitSelection(current, index));
+    setPanel(undefined);
+    setCapture(undefined);
+    setLookup(undefined);
+  }
+
+  // Jump to a block (a note card or a highlight): load the unit that holds it when it differs
+  // from the open one, then scroll to it once rendered. Same-unit jumps scroll immediately via
+  // the same pending-scroll effect.
+  function jumpToBlock(blockEntryId: string): void {
+    setState((current) => applyUnitForBlock(current, blockEntryId));
+    setPanel(undefined);
+    setPendingScrollBlockEntryId(blockEntryId);
   }
 
   function onCaptureSelection(
@@ -281,7 +376,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     onCaptureSelection,
     onDeleteNote: handleDelete,
     onEditNote,
-    onJumpToBlock: (note) => scrollToBlock(note.blockEntryId),
+    onJumpToBlock: (note) => jumpToBlock(note.blockEntryId),
     onOpenBlockNotes,
     prefersReducedMotion,
     templates
@@ -300,6 +395,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
             state.reading,
             handlers,
             (workEntryId) => void openWork(state.works, workEntryId),
+            selectUnit,
             { onSizeChange: setSize, prefersReducedMotion, scroll, size }
           )
         : null}
@@ -332,7 +428,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
         onClose: () => setPanel(undefined),
         onDeleteNote: handleDelete,
         onEditNote,
-        onJumpToBlock: (note) => scrollToBlock(note.blockEntryId),
+        onJumpToBlock: (note) => jumpToBlock(note.blockEntryId),
         onSavedNote: handleSaved
       })}
     </section>
@@ -346,6 +442,7 @@ function renderReady(
   reading: ReadingState,
   handlers: ReaderHandlers,
   onOpen: (workEntryId: string) => void,
+  onSelectUnit: (index: number) => void,
   chromeBase: ReaderChromeBase
 ): React.JSX.Element {
   if (works.length === 0) {
@@ -378,7 +475,7 @@ function renderReady(
         </ul>
       </nav>
 
-      {renderReading(reading, handlers, chrome)}
+      {renderReading(reading, handlers, onSelectUnit, chrome)}
     </div>
   );
 }
@@ -386,6 +483,7 @@ function renderReady(
 function renderReading(
   reading: ReadingState,
   handlers: ReaderHandlers,
+  onSelectUnit: (index: number) => void,
   chrome: ReaderChrome
 ): React.JSX.Element {
   switch (reading.status) {
@@ -396,24 +494,47 @@ function renderReading(
     case "error":
       return <p role="alert">Could not load this work. Please try again.</p>;
     case "viewing":
-      return renderViewing(reading.view, reading.workEntryId, handlers, chrome);
+      return renderViewing(
+        reading.view,
+        reading.workEntryId,
+        reading.activeUnitIndex,
+        onSelectUnit,
+        handlers,
+        chrome
+      );
   }
 }
 
 function renderViewing(
   view: ReaderView,
   workEntryId: string,
+  activeUnitIndex: number,
+  onSelectUnit: (index: number) => void,
   handlers: ReaderHandlers,
   chrome: ReaderChrome
 ): React.JSX.Element {
   const entrance = withReducedMotion(motionSprings.gentle, chrome.prefersReducedMotion);
+  const units = view.units;
+  // A multi-unit work navigates by its 目录; a single-unit work (an essay) reads without it.
+  const toc =
+    units.length > 1 ? (
+      <ReaderToc
+        activeIndex={activeUnitIndex}
+        items={units.map((unit, index) => ({
+          entryId: unit.entryId,
+          label: unitTocLabel(unit, index)
+        }))}
+        onSelect={onSelectUnit}
+      />
+    ) : null;
 
   return (
     <div className="readerReading">
+      {toc}
       <ReadingHeader
         hidden={chrome.scroll.headerHidden}
         onSizeChange={chrome.onSizeChange}
-        progress={chrome.scroll.progress}
+        progress={workProgress(activeUnitIndex, units.length, chrome.scroll.progress)}
         size={chrome.size}
         title={chrome.title}
       />
@@ -421,7 +542,7 @@ function renderViewing(
         animate={{ opacity: 1, y: 0 }}
         className="readerEntrance"
         initial={{ opacity: 0, y: 8 }}
-        key={workEntryId}
+        key={`${workEntryId}-${activeUnitIndex}`}
         transition={entrance}
       >
         <div
@@ -429,7 +550,7 @@ function renderViewing(
           lang={chrome.language}
           style={{ "--reading-size": readingSizeToRem(chrome.size) } as React.CSSProperties}
         >
-          {renderReaderView(view, workEntryId, handlers, chrome.language)}
+          {renderReaderView(units[activeUnitIndex], workEntryId, handlers, chrome.language)}
         </div>
       </motion.div>
       <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
@@ -448,18 +569,19 @@ function renderViewing(
 }
 
 function renderReaderView(
-  view: ReaderView,
+  unit: ReaderUnit | undefined,
   workEntryId: string,
   handlers: ReaderHandlers,
   language: string
 ): React.JSX.Element {
-  if (view.units.length === 0) {
+  if (unit === undefined) {
     return <p>This work has no content yet.</p>;
   }
 
+  // Only the current reading unit is rendered, so a whole book never mounts at once.
   return (
     <article aria-label="Reading" className="reader">
-      {view.units.map((unit) => renderUnit(unit, workEntryId, handlers, language))}
+      {renderUnit(unit, workEntryId, handlers, language)}
     </article>
   );
 }

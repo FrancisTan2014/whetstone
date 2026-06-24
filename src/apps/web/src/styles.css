@@ -119,6 +119,71 @@ code {
   }
 }
 
+/* The 目录 (table of contents): a persistent sidebar on desktop/tablet, a collapsible
+   drawer on mobile. The toggle is hidden on wide screens (the list is always shown); on
+   narrow screens the list collapses behind the toggle until opened. */
+.readerToc {
+  margin-bottom: 1.5rem;
+}
+
+.readerTocToggle {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  display: none;
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+}
+
+.readerTocNav {
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 1rem;
+}
+
+.readerTocList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.readerTocList li {
+  margin-bottom: 0.25rem;
+}
+
+.readerTocItem {
+  background: transparent;
+  border: none;
+  border-radius: 0.375rem;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  width: 100%;
+}
+
+.readerTocItem[aria-current="true"] {
+  background: #eef2ff;
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+@media (width <= 48rem) {
+  .readerTocToggle {
+    display: inline-block;
+  }
+
+  .readerTocNav {
+    display: none;
+  }
+
+  .readerTocNav--open {
+    display: block;
+    margin-top: 0.75rem;
+  }
+}
+
 .readerNotice {
   color: #047857;
   font-weight: 600;

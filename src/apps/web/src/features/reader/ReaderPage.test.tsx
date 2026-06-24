@@ -48,7 +48,7 @@ import {
 } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
-import { ReaderPage } from "./ReaderPage";
+import { applyUnitForBlock, applyUnitSelection, ReaderPage } from "./ReaderPage";
 import type {
   NoteDto,
   NoteTemplateDto,
@@ -356,6 +356,18 @@ describe("ReaderPage", () => {
     ).toBe("true");
   });
 
+  it("opens the unit deep-linked by a block param and scrolls to that block", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const { container } = render(
+      <ReaderPage initialBlockEntryId="b-2" initialWorkEntryId="work-1" />
+    );
+
+    // b-2 lives in the second unit, so the reader opens straight into that unit.
+    expect(await screen.findByText("Heading text")).toBeDefined();
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+    expect(blockElement(container, "b-2")?.scrollIntoView).toHaveBeenCalled();
+  });
+
   it("falls back to the work picker when the initial work entry id is unknown", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
 
@@ -374,7 +386,7 @@ describe("ReaderPage", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
-  it("opens a work and renders its units and blocks as one continuous scroll", async () => {
+  it("renders only the active reading unit and switches units via the 目录", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage />);
@@ -383,15 +395,27 @@ describe("ReaderPage", () => {
       await screen.findByRole("button", { name: "Politics and the English Language" })
     );
 
+    // The first unit opens by default; the second unit's blocks are not mounted yet.
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
-    expect(screen.getByRole("heading", { level: 2, name: "Section Two" })).toBeDefined();
-    expect(screen.getByRole("heading", { level: 2, name: "Heading text" })).toBeDefined();
-    expect(container.querySelector("em")?.textContent).toBe("emphasized word");
+    expect(screen.queryByRole("heading", { level: 2, name: "Heading text" })).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll("[data-block-id]")).map((element) =>
+        element.getAttribute("data-block-id")
+      )
+    ).toEqual(["b-1"]);
 
-    const blockIds = Array.from(container.querySelectorAll("[data-block-id]")).map((element) =>
-      element.getAttribute("data-block-id")
-    );
-    expect(blockIds).toEqual(["b-1", "b-2", "b-3"]);
+    // Selecting the second unit in the 目录 swaps the rendered content.
+    const toc = screen.getByRole("navigation", { name: "目录" });
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Heading text" })).toBeDefined();
+    expect(container.querySelector("em")?.textContent).toBe("emphasized word");
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll("[data-block-id]")).map((element) =>
+        element.getAttribute("data-block-id")
+      )
+    ).toEqual(["b-2", "b-3"]);
 
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-1");
     expect(
@@ -401,7 +425,19 @@ describe("ReaderPage", () => {
     ).toBe("true");
   });
 
-  it("shows the untitled unit without a heading", async () => {
+  it("reads a single-unit work without a 目录", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
+    mockedFetchWorkContent.mockResolvedValue(chineseContent);
+    const user = userEvent.setup();
+    render(<ReaderPage />);
+
+    await user.click(await screen.findByRole("button", { name: "中文测试" }));
+
+    expect(await screen.findByText("你好世界")).toBeDefined();
+    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+  });
+
+  it("shows the untitled active unit without a heading", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
     render(<ReaderPage />);
@@ -411,9 +447,23 @@ describe("ReaderPage", () => {
     );
     await screen.findByText("Intro paragraph.");
 
-    expect(screen.queryByRole("heading", { name: "Untitled section" })).toBeNull();
+    // The first unit is untitled, so the reading article renders no chapter heading.
     expect(
-      within(screen.getByRole("article", { name: "Reading" })).getAllByRole("heading", { level: 2 })
+      within(screen.getByRole("article", { name: "Reading" })).queryAllByRole("heading", {
+        level: 2
+      })
+    ).toHaveLength(0);
+
+    // Switching to the titled unit shows its title heading plus its content heading.
+    await user.click(
+      within(screen.getByRole("navigation", { name: "目录" })).getByRole("button", {
+        name: "Section Two"
+      })
+    );
+    expect(
+      within(await screen.findByRole("article", { name: "Reading" })).getAllByRole("heading", {
+        level: 2
+      })
     ).toHaveLength(2);
   });
 
@@ -827,16 +877,23 @@ async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLEle
 describe("ReaderPage note management", () => {
   it("highlights blocks that have notes and labels the count", async () => {
     const container = await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
 
     const annotated = blockElement(container, "b-1");
     expect(annotated.getAttribute("data-has-notes")).toBe("true");
     expect(annotated.className).toContain("readerBlock--annotated");
+    expect(screen.getByRole("button", { name: "View 1 note" })).toBeDefined();
 
+    // A block in another unit, with no note, renders plain once that unit is opened.
+    await user.click(
+      within(screen.getByRole("navigation", { name: "目录" })).getByRole("button", {
+        name: "Section Two"
+      })
+    );
+    await screen.findByText("Heading text");
     const plain = blockElement(container, "b-2");
     expect(plain.getAttribute("data-has-notes")).toBeNull();
     expect(plain.className).not.toContain("readerBlock--annotated");
-
-    expect(screen.getByRole("button", { name: "View 1 note" })).toBeDefined();
   });
 
   it("lists a per-work note with its anchored snippet", async () => {
@@ -1015,6 +1072,30 @@ describe("ReaderPage note management", () => {
 
     expect(document.activeElement).toBe(blockElement(container, "b-1"));
   });
+
+  it("loads the holding unit and scrolls when jumping to a note in another unit", async () => {
+    const otherUnitNote = makeNote({
+      anchor: {
+        blockEntryId: toEntryId("b-2"),
+        contextSnapshot: "Heading text",
+        selectedTextSnapshot: "Heading"
+      },
+      blockEntryId: toEntryId("b-2")
+    });
+    const container = await openWorkWithNotes([otherUnitNote]);
+    const user = userEvent.setup();
+
+    // The note lives in the second unit, which is not the open one.
+    expect(blockElement(container, "b-2")).toBeNull();
+
+    const region = screen.getByRole("region", { name: "Your notes" });
+    await user.click(within(region).getByRole("button", { name: "Jump to text: Heading" }));
+
+    const target = await screen.findByText("Heading text");
+    expect(blockElement(container, "b-2")).not.toBeNull();
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+    expect(target.closest("[data-block-id]")?.scrollIntoView).toHaveBeenCalled();
+  });
 });
 
 describe("ReaderPage reading controls", () => {
@@ -1177,5 +1258,21 @@ describe("ReaderPage vocabulary lookup", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByText("an introduction")).toBeNull();
+  });
+});
+
+describe("ReaderPage unit reducers", () => {
+  it("leaves a non-ready state unchanged when selecting a unit", () => {
+    const state = { status: "loadingWorks" } as const;
+
+    expect(applyUnitSelection(state, 2)).toBe(state);
+    expect(applyUnitForBlock(state, "b-1")).toBe(state);
+  });
+
+  it("leaves a ready-but-not-viewing state unchanged", () => {
+    const state = { reading: { status: "idle" }, status: "ready", works: [] } as const;
+
+    expect(applyUnitSelection(state, 2)).toBe(state);
+    expect(applyUnitForBlock(state, "b-1")).toBe(state);
   });
 });

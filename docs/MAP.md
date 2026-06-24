@@ -122,18 +122,24 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `reader/`, `notes/`, `lookup/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
-  reading" deep-links to `#/reader?work=<entryId>`. `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
-  units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
-  with `react-markdown` + `rehype-sanitize` (a schema that also disallows `img`, so no image is fetched/rendered; opening the `?work=` work on arrival via `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
+  reading" deep-links to `#/reader?work=<entryId>` (with an optional `&block=<entryId>` to open a
+  specific block). `reader/` is **目录-driven and renders one reading unit at a time** (no whole-book
+  freeze): `readerModel.ts` orders units/blocks and serializes each block via domain `blockToMarkdown`;
+  `readerNavigation.ts` holds the pure unit-selection logic (which unit holds a block, the initial unit
+  for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 (sidebar/desktop,
+  drawer/mobile) listing units with the current one marked. `ReaderPage.tsx` keeps an `activeUnitIndex`,
+  renders only that unit safely with `react-markdown` + `rehype-sanitize` (a schema that also disallows
+  `img`, so no image is fetched/rendered; opening the `?work=`/`?block=` target on arrival via
+  `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them). Selecting text (`blockSelection.ts`
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
   Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable
   template) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor, and a saved
   block's highlight is "born" via `highlightBirth.ts`. It also shows
-  a per-work note list; jumping back from a note card scrolls/focuses its block via
-  `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
+  a per-work note list; jumping back from a note card loads the unit holding the block (when it differs
+  from the open one) then scrolls/focuses it via `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
-  (title + progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
+  (title + work-level progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
   draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.ts` maps a template to
