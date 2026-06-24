@@ -74,9 +74,10 @@ waiting to be re-triggered:
   cycle — e.g. a `/every` schedule). Keep it in the **foreground**; never a detached or background run.
 - Each tick is exactly one cycle: run `node scripts/developer-next-action.mjs`, do the **single** unit
   it selects (`fix` / `implement`) and nothing more. For `wait` or `idle` there is no unit this tick.
-- End every tick by **re-arming the schedule** as your last action so the loop continues: a short delay
-  after `fix`/`implement` (start the next unit promptly), a longer delay after `wait`/`idle` (poll
-  while you wait for the reviewer or for new ready issues). Re-arm even after a blocker.
+- End every tick by **re-arming the schedule** as your last action so the loop continues, at the
+  cadence the launcher set (**about 10 minutes**, 600s). Re-arm even after `wait`, `idle`, or a
+  blocker — a tick that fires mid-run just queues behind the current one (the session is foreground and
+  single-threaded), so it never interrupts work in progress.
 - Never start a new tick while one is still running, and never run two units at once. The schedule —
   not a hand-rolled loop — provides the recurrence; stop only when the maintainer stops the schedule.
 

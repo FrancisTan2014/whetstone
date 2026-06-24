@@ -90,9 +90,10 @@ waiting to be re-triggered:
   record your verdict (labels + the `reviewer-run-reviewed` marker). On `idle`, review nothing.
 - Whether you reviewed or it was `idle`, run the deterministic merge step
   `node scripts/merge-approved-prs.mjs` — it, not you, decides the merge from the GUIDELINES gates.
-- End every tick by **re-arming the schedule** as your last action: a short delay after a review, a
-  longer delay on `idle` or when a PR's required checks are still pending (poll while you wait). Re-arm
-  even after a blocker.
+- End every tick by **re-arming the schedule** as your last action, at the cadence the launcher set
+  (**about 10 minutes**, 600s). Re-arm even after `idle`, a pending-checks PR, or a blocker — a tick
+  that fires mid-run just queues behind the current one (foreground, single-threaded), so it never
+  interrupts the review in progress.
 - One PR per tick; never overlap ticks or merge by hand. The schedule provides the recurrence; stop
   only when the maintainer stops the schedule.
 
