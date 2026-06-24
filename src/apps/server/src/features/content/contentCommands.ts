@@ -6,6 +6,7 @@ import type { EpubParser } from "../../files/epubSource.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
 import { workSources } from "../../db/schema.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
+import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store, EPUB
@@ -93,7 +94,12 @@ export async function ingestMarkdown(
     });
   });
 
-  return { content: await loadWorkContent(dependencies.db, workEntryId), status: "ingested" };
+  const content = assertContentPersisted(
+    newBlocks.length,
+    await loadWorkContent(dependencies.db, workEntryId)
+  );
+
+  return { content, status: "ingested" };
 }
 
 async function buildProvenance(

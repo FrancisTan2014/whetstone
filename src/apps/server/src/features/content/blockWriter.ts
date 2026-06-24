@@ -2,6 +2,7 @@ import type { BlockType, DecomposedReadingUnit, EntryId } from "@whetstone/domai
 
 import type { DbClient } from "../../db/dbClient.js";
 import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
@@ -73,8 +74,10 @@ export async function writeReadingUnits(
     });
   });
 
-  await tx.insert(entries).values(entryRows);
-  await tx.insert(readingUnits).values(readingUnitRows);
-  await tx.insert(blocks).values(blockRows);
-  await tx.insert(entryLinks).values(linkRows);
+  // Batched so a large work (thousands of blocks) never exceeds the DB's bind-parameter
+  // limit in a single statement, which would silently roll back the whole transaction.
+  await insertInBatches(entryRows, (batch) => tx.insert(entries).values(batch));
+  await insertInBatches(readingUnitRows, (batch) => tx.insert(readingUnits).values(batch));
+  await insertInBatches(blockRows, (batch) => tx.insert(blocks).values(batch));
+  await insertInBatches(linkRows, (batch) => tx.insert(entryLinks).values(batch));
 }

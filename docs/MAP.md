@@ -48,7 +48,10 @@ can navigate them from another package.
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
   new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical
   source is a no-op. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
-  sha256-idempotent, persisting via `blockWriter.ts`. Blocks carry `work_entry_id`, so notes on
+  sha256-idempotent, persisting via `blockWriter.ts`. Both writers bulk-insert through
+  `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
+  bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
+  rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on
   soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
   (`GET /api/works/:id/content/markdown`). `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`);

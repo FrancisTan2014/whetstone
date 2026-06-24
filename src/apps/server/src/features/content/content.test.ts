@@ -10,6 +10,7 @@ import {
   type IngestEpubResultDto,
   type WorkContentDto
 } from "@whetstone/contracts";
+import { decomposeHtmlChapter, decomposeMarkdown } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -407,6 +408,31 @@ describe("content routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ readingUnits: [], workEntryId });
   });
+
+  it("persists every block of a Markdown source large enough to exceed the parameter limit", async () => {
+    const workEntryId = await createWork();
+    const paragraphCount = 6000; // 6000 blocks × 8 columns ≈ 48000 params (> the 32767 limit)
+    const largeMarkdown = Array.from(
+      { length: paragraphCount },
+      (_, index) => `Paragraph ${index} carrying enough words to be a distinct block.`
+    ).join("\n\n");
+    const expectedBlockCount = decomposeMarkdown(largeMarkdown).reduce(
+      (total, unit) => total + unit.blocks.length,
+      0
+    );
+
+    const response = await ingest(workEntryId, { kind: "manual", markdown: largeMarkdown });
+    expect(response.statusCode).toBe(201);
+
+    const persisted = await getContent(workEntryId);
+    const persistedBlockCount = persisted.readingUnits.reduce(
+      (total, unit) => total + unit.blocks.length,
+      0
+    );
+    expect(expectedBlockCount).toBeGreaterThan(5000);
+    expect(persistedBlockCount).toBe(expectedBlockCount);
+    expect(await context.db.select().from(blocks)).toHaveLength(expectedBlockCount);
+  }, 30000);
 });
 
 describe("EPUB ingestion routes", () => {
@@ -590,4 +616,38 @@ describe("EPUB ingestion routes", () => {
 
     expect(response.statusCode).toBe(413);
   });
+
+  it("persists every block of a large EPUB beyond the bind-parameter limit", async () => {
+    const chapterCount = 21;
+    const paragraphsPerChapter = 250; // 21 × 251 ≈ 5271 blocks × 7 columns ≈ 36900 params
+    const chapters = Array.from({ length: chapterCount }, (_, chapterIndex) => {
+      const paragraphs = Array.from(
+        { length: paragraphsPerChapter },
+        (_, paragraphIndex) => `<p>Chapter ${chapterIndex} paragraph ${paragraphIndex}.</p>`
+      ).join("");
+
+      return { html: `<h1>Chapter ${chapterIndex}</h1>${paragraphs}` };
+    });
+    epubResponder = async () => ({
+      chapters,
+      metadata: { author: "Generated", language: "en", title: "Large Book" }
+    });
+    const expectedBlockCount = chapters.reduce(
+      (total, chapter) => total + decomposeHtmlChapter(chapter.html).blocks.length,
+      0
+    );
+
+    const response = await ingestEpub(Buffer.from("epub-large"));
+    expect(response.statusCode).toBe(201);
+
+    const body = response.json() as IngestEpubResultDto;
+    const returnedBlockCount = body.content.readingUnits.reduce(
+      (total, unit) => total + unit.blocks.length,
+      0
+    );
+    expect(expectedBlockCount).toBeGreaterThan(5000);
+    expect(body.content.readingUnits).toHaveLength(chapterCount);
+    expect(returnedBlockCount).toBe(expectedBlockCount);
+    expect(await context.db.select().from(blocks)).toHaveLength(expectedBlockCount);
+  }, 30000);
 });
