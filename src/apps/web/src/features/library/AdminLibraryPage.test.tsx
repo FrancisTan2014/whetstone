@@ -113,17 +113,37 @@ describe("AdminLibraryPage", () => {
     expect(screen.getByText("Enter a work title.")).toBeDefined();
 
     await user.type(screen.getByLabelText("Title"), "Some Work");
-    await user.clear(screen.getByLabelText("Language"));
-    await user.click(screen.getByRole("button", { name: "Create work" }));
-    expect(screen.getByText("Enter a language.")).toBeDefined();
-
-    await user.type(screen.getByLabelText("Language"), "en");
     await user.click(screen.getByRole("button", { name: "Create work" }));
     expect(
       screen.getByText("Select an existing author or source, or name a new one.")
     ).toBeDefined();
 
     expect(mockedCreateWork).not.toHaveBeenCalled();
+  });
+
+  it("offers exactly the three supported languages and submits the chosen code", async () => {
+    const user = await renderReady();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+
+    const languageSelect = screen.getByLabelText("Language") as HTMLSelectElement;
+    expect([...languageSelect.options].map((option) => option.value)).toEqual([
+      "zh-CN",
+      "zh-TW",
+      "en"
+    ]);
+
+    await user.type(screen.getByLabelText("Title"), "古文觀止");
+    await user.selectOptions(languageSelect, "zh-TW");
+    await user.type(screen.getByLabelText("New author or source name"), "吳楚材");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(mockedCreateWork).toHaveBeenCalledWith({
+      author: { mode: "new", name: "吳楚材" },
+      language: "zh-TW",
+      title: "古文觀止",
+      workType: "book"
+    });
   });
 
   it("creates a work with a new inline author", async () => {
@@ -138,7 +158,7 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     expect(
-      await screen.findByText("Politics and the English Language — George Orwell (essay, en)")
+      await screen.findByText("Politics and the English Language — George Orwell (essay, English)")
     ).toBeDefined();
     expect(mockedCreateWork).toHaveBeenCalledWith({
       author: { mode: "new", name: "George Orwell" },
@@ -169,7 +189,7 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     expect(
-      await screen.findByText("A Tale of Two Cities — Charles Dickens (book, en)")
+      await screen.findByText("A Tale of Two Cities — Charles Dickens (book, English)")
     ).toBeDefined();
     const exportLink = screen.getByRole("link", { name: "Export Markdown" });
     expect(exportLink.getAttribute("href")).toBe("/api/works/work-9/content/markdown");
@@ -201,7 +221,7 @@ describe("AdminLibraryPage", () => {
       work: {
         authorId: epubAuthor.id,
         entryId: toEntryId("work-epub"),
-        language: "zh",
+        language: "zh-CN",
         title: "史记选读",
         workType: "book"
       }
@@ -217,7 +237,9 @@ describe("AdminLibraryPage", () => {
     });
     await user.upload(screen.getByLabelText("Upload an EPUB"), file);
 
-    expect(await screen.findByText("史记选读 — 司马迁 (book, zh)")).toBeDefined();
+    expect(
+      await screen.findByText("史记选读 — 司马迁 (book, 中文（简体） Simplified Chinese)")
+    ).toBeDefined();
     expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
   });
 
