@@ -70,7 +70,7 @@ describe("createEpubParser", () => {
 
     const parsed = await parse(buildEpubBytes());
 
-    expect(parsed.metadata).toEqual({ author: "司马迁", language: "zh", title: "史记选读" });
+    expect(parsed.metadata).toEqual({ author: "司马迁", language: "zh-CN", title: "史记选读" });
     expect(parsed.chapters).toHaveLength(2);
     expect(parsed.chapters[0]?.html).toContain("Chapter One");
     expect(parsed.chapters[1]?.html).toContain("五帝本纪");

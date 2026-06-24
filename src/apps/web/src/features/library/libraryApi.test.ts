@@ -95,7 +95,7 @@ describe("libraryApi", () => {
       work: {
         authorId: "author-1",
         entryId: "work-1",
-        language: "zh",
+        language: "zh-CN",
         title: "史记选读",
         workType: "book"
       }

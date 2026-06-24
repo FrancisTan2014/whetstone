@@ -36,4 +36,10 @@ export type { NoteFieldType, NoteTemplate, NoteTemplateField } from "./noteTempl
 export { formatProductHeading, productIdentity } from "./productIdentity.js";
 export type { ProductIdentity } from "./productIdentity.js";
 export { isWorkType, workTypes } from "./work.js";
-export type { WorkType } from "./work.js";
+export {
+  isWorkLanguage,
+  normalizeWorkLanguage,
+  workLanguageLabels,
+  workLanguages
+} from "./work.js";
+export type { WorkLanguage, WorkType } from "./work.js";

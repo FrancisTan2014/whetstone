@@ -7,6 +7,7 @@ import {
   parseEntryTypeDto,
   parseLinkTypeDto,
   parseNoteAnchorDto,
+  parseWorkLanguageDto,
   parseWorkTypeDto
 } from "./entryContracts.js";
 
@@ -38,6 +39,7 @@ describe("entry contract schemas", () => {
     expect(parseEntryTypeDto("reading_unit")).toBe("reading_unit");
     expect(parseLinkTypeDto("related_to")).toBe("related_to");
     expect(parseWorkTypeDto("essay")).toBe("essay");
+    expect(parseWorkLanguageDto("zh-TW")).toBe("zh-TW");
     expect(link).toEqual(validLinkDto);
     expect(anchor).toEqual(validAnchorDto);
     expect(entry).toEqual({ id: "work-1", links: [validLinkDto], type: "work" });
@@ -51,6 +53,7 @@ describe("entry contract schemas", () => {
     expect(() => parseEntryTypeDto("template")).toThrow();
     expect(() => parseLinkTypeDto("invalid")).toThrow();
     expect(() => parseWorkTypeDto("video")).toThrow();
+    expect(() => parseWorkLanguageDto("zh")).toThrow();
     expect(() => parseEntryLinkDto({ ...validLinkDto, type: "invalid" })).toThrow();
   });
 
