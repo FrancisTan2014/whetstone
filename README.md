@@ -75,6 +75,17 @@ pnpm build
 
 `pnpm test` runs Vitest with coverage and enforces 100% statements, branches, functions, and lines for included app/package source. Generated output, config files, type-only files, test files, and framework bootstraps are excluded.
 
+## Screenshots (manual)
+
+`pnpm screenshots` boots the real stack against an ephemeral in-memory database, ingests the public-domain fixture EPUBs in [`fixtures/epub/`](./fixtures/epub/) through the live pipeline, serves the production web build with `vite preview`, and drives headless Chromium to write a labeled PNG for each stage (Library and Reader in Day/Night at desktop and mobile; the selection → note-editor → note-saved annotation moment) into `artifacts/screenshots/` (git-ignored).
+
+It is a screenshot generator, not a test suite, and is **not** part of `pnpm validate` or CI, so it cannot become a flaky merge gate. One-time browser install:
+
+```powershell
+pnpm exec playwright install chromium
+pnpm screenshots
+```
+
 ## Development workflow
 
 This repo is built by **manually-triggered** Copilot CLI roles. You (the maintainer) act as the
