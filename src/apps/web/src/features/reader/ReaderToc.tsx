@@ -22,7 +22,7 @@ export function ReaderToc({ activeIndex, items, onSelect }: ReaderTocProps): Rea
   }
 
   return (
-    <div className="readerToc">
+    <div className={open ? "readerToc readerToc--open" : "readerToc"}>
       <button
         aria-controls="reader-toc-list"
         aria-expanded={open}
@@ -32,11 +32,16 @@ export function ReaderToc({ activeIndex, items, onSelect }: ReaderTocProps): Rea
       >
         目录
       </button>
-      <nav
-        aria-label="目录"
-        className={open ? "readerTocNav readerTocNav--open" : "readerTocNav"}
-        id="reader-toc-list"
-      >
+      {open ? (
+        <button
+          aria-label="Close table of contents"
+          className="readerTocBackdrop"
+          onClick={() => setOpen(false)}
+          type="button"
+        />
+      ) : null}
+      <nav aria-label="目录" className="readerTocNav" id="reader-toc-list">
+        <p className="readerTocHeading">目录</p>
         <ul className="readerTocList">
           {items.map((item, index) => (
             <li key={item.entryId}>

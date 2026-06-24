@@ -529,41 +529,43 @@ function renderViewing(
     ) : null;
 
   return (
-    <div className="readerReading">
+    <div className={toc === null ? "readerReading" : "readerReading readerReading--withToc"}>
       {toc}
-      <ReadingHeader
-        hidden={chrome.scroll.headerHidden}
-        onSizeChange={chrome.onSizeChange}
-        progress={workProgress(activeUnitIndex, units.length, chrome.scroll.progress)}
-        size={chrome.size}
-        title={chrome.title}
-      />
-      <motion.div
-        animate={{ opacity: 1, y: 0 }}
-        className="readerEntrance"
-        initial={{ opacity: 0, y: 8 }}
-        key={`${workEntryId}-${activeUnitIndex}`}
-        transition={entrance}
-      >
-        <div
-          className="reading-surface readerPaper"
-          lang={chrome.language}
-          style={{ "--reading-size": readingSizeToRem(chrome.size) } as React.CSSProperties}
-        >
-          {renderReaderView(units[activeUnitIndex], workEntryId, handlers, chrome.language)}
-        </div>
-      </motion.div>
-      <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
-        <h2 id="work-notes-heading">Your notes</h2>
-        <NoteList
-          emptyLabel="No notes yet. Select text in the reader to add one."
-          notes={handlers.notes}
-          onDelete={(note) => handlers.onDeleteNote(workEntryId, note)}
-          onEdit={(note) => handlers.onEditNote(workEntryId, note)}
-          onJump={(note) => handlers.onJumpToBlock(note)}
-          templates={handlers.templates}
+      <div className="readerReadingMain">
+        <ReadingHeader
+          hidden={chrome.scroll.headerHidden}
+          onSizeChange={chrome.onSizeChange}
+          progress={workProgress(activeUnitIndex, units.length, chrome.scroll.progress)}
+          size={chrome.size}
+          title={chrome.title}
         />
-      </section>
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          className="readerEntrance"
+          initial={{ opacity: 0, y: 8 }}
+          key={`${workEntryId}-${activeUnitIndex}`}
+          transition={entrance}
+        >
+          <div
+            className="reading-surface readerPaper"
+            lang={chrome.language}
+            style={{ "--reading-size": readingSizeToRem(chrome.size) } as React.CSSProperties}
+          >
+            {renderReaderView(units[activeUnitIndex], workEntryId, handlers, chrome.language)}
+          </div>
+        </motion.div>
+        <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
+          <h2 id="work-notes-heading">Your notes</h2>
+          <NoteList
+            emptyLabel="No notes yet. Select text in the reader to add one."
+            notes={handlers.notes}
+            onDelete={(note) => handlers.onDeleteNote(workEntryId, note)}
+            onEdit={(note) => handlers.onEditNote(workEntryId, note)}
+            onJump={(note) => handlers.onJumpToBlock(note)}
+            templates={handlers.templates}
+          />
+        </section>
+      </div>
     </div>
   );
 }

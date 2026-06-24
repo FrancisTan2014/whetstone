@@ -50,12 +50,23 @@ describe("ReaderToc", () => {
 
     await user.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("navigation", { name: "目录" }).className).toContain(
-      "readerTocNav--open"
-    );
+    expect(screen.getByRole("button", { name: "Close table of contents" })).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "Section 1" }));
     expect(onSelect).toHaveBeenCalledWith(0);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Close table of contents" })).toBeNull();
+  });
+
+  it("closes the drawer when the backdrop is tapped", async () => {
+    const user = userEvent.setup();
+    render(<ReaderToc activeIndex={0} items={items} onSelect={vi.fn()} />);
+
+    const toggle = screen.getByRole("button", { name: "目录" });
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    await user.click(screen.getByRole("button", { name: "Close table of contents" }));
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 });

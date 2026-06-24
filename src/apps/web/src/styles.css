@@ -119,11 +119,29 @@ code {
   }
 }
 
-/* The 目录 (table of contents): a persistent sidebar on desktop/tablet, a collapsible
-   drawer on mobile. The toggle is hidden on wide screens (the list is always shown); on
-   narrow screens the list collapses behind the toggle until opened. */
-.readerToc {
-  margin-bottom: 1.5rem;
+/* The 目录 (table of contents): a persistent sidebar on desktop/tablet, an off-canvas
+   drawer on mobile. On wide screens the reading area is a two-column grid (目录 | content)
+   and the toggle/backdrop are hidden; on narrow screens the content stacks and the 目录
+   slides in over a backdrop when the toggle is pressed. */
+.readerReading--withToc {
+  align-items: start;
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: minmax(11rem, 14rem) 1fr;
+}
+
+.readerTocNav {
+  position: sticky;
+  top: 1rem;
+}
+
+.readerTocHeading {
+  color: #6b7280;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
 }
 
 .readerTocToggle {
@@ -136,9 +154,8 @@ code {
   padding: 0.5rem 0.75rem;
 }
 
-.readerTocNav {
-  border-bottom: 1px solid #e5e7eb;
-  padding-bottom: 1rem;
+.readerTocBackdrop {
+  display: none;
 }
 
 .readerTocList {
@@ -170,17 +187,38 @@ code {
 }
 
 @media (width <= 48rem) {
-  .readerTocToggle {
-    display: inline-block;
+  .readerReading--withToc {
+    display: block;
   }
 
-  .readerTocNav {
+  .readerTocToggle {
+    display: inline-block;
+    margin-bottom: 1rem;
+  }
+
+  .readerTocBackdrop {
+    background: rgb(15 23 42 / 40%);
+    border: none;
+    display: block;
+    inset: 0;
+    position: fixed;
+    z-index: 40;
+  }
+
+  .readerToc:not(.readerToc--open) .readerTocNav {
     display: none;
   }
 
-  .readerTocNav--open {
-    display: block;
-    margin-top: 0.75rem;
+  .readerTocNav {
+    background: #ffffff;
+    box-shadow: 0 0 2rem rgb(15 23 42 / 25%);
+    inset: 0 auto 0 0;
+    overflow-y: auto;
+    padding: 1.5rem 1rem;
+    position: fixed;
+    top: 0;
+    width: min(18rem, 80vw);
+    z-index: 50;
   }
 }
 
