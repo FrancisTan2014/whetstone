@@ -23,7 +23,9 @@ export {
   parseEntryTypeDto,
   parseLinkTypeDto,
   parseNoteAnchorDto,
+  parseWorkLanguageDto,
   parseWorkTypeDto,
+  workLanguageDtoSchema,
   workTypeDtoSchema
 } from "./entryContracts.js";
 export type {
@@ -33,6 +35,7 @@ export type {
   EntryTypeDto,
   LinkTypeDto,
   NoteAnchorDto,
+  WorkLanguageDto,
   WorkTypeDto
 } from "./entryContracts.js";
 export { createHealthResponse, healthEndpointPath, healthResponseJsonSchema } from "./health.js";
