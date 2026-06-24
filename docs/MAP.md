@@ -98,12 +98,17 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Notes/Search =
   `ModePlaceholder` until their slices land); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
-  `ThemeToggle` in its footer) with `navigation.ts` destinations. Routing is hash-based
-  (origin-independent for file/Capacitor/Tauri); tests use `MemoryRouter`.
+  `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
+  destinations. Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
+  `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
   `100vh`), `Button` (token variants via `cva`), `Sheet` (Radix Dialog: focus trap + dismissal; right
   side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer spring honoring
-  reduced motion). Components use semantic token utilities only.
+  reduced motion). App-wide result notifications live in `src/shared/ui/toast/`: `ToastProvider.tsx`
+  owns the auto-dismissing queue and exposes `useToast()` (`success`/`error`); `App.tsx` wraps the app
+  in it and `AppShell` mounts the one `ToastViewport.tsx` live region that renders the presentational
+  `Toast.tsx` (success = polite `status`, error = assertive `alert`). Components use semantic token
+  utilities only.
 - Design system (PRODUCT.md "v0 design language"): `src/styles/theme.css` defines the Tailwind v4
   `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
   (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion

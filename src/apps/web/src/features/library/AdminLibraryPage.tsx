@@ -13,6 +13,7 @@ import {
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
+import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 
@@ -41,10 +42,10 @@ export function AdminLibraryPage(): React.JSX.Element {
   const [inlineAuthorName, setInlineAuthorName] = useState("");
   const [workError, setWorkError] = useState<string | undefined>(undefined);
 
-  const [epubError, setEpubError] = useState<string | undefined>(undefined);
   const [epubBusy, setEpubBusy] = useState(false);
 
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -95,8 +96,9 @@ export function AdminLibraryPage(): React.JSX.Element {
       setWorkError(undefined);
       setAddOpen(false);
       await reload();
+      toast.success(`Added “${trimmedTitle}”.`);
     } catch {
-      setWorkError("Could not save the work. Please try again.");
+      toast.error("Could not save the work. Please try again.");
     }
   }
 
@@ -111,11 +113,11 @@ export function AdminLibraryPage(): React.JSX.Element {
     setEpubBusy(true);
 
     try {
-      await ingestEpub(file);
-      setEpubError(undefined);
+      const result = await ingestEpub(file);
       await reload();
+      toast.success(`Imported “${result.work.title}”.`);
     } catch {
-      setEpubError("Could not ingest the EPUB. Please try again.");
+      toast.error("Could not ingest the EPUB. Please try again.");
     } finally {
       setEpubBusy(false);
     }
@@ -157,11 +159,6 @@ export function AdminLibraryPage(): React.JSX.Element {
       </header>
 
       {epubBusy ? <p className="text-text-muted">Ingesting the EPUB…</p> : null}
-      {epubError !== undefined ? (
-        <p className="text-danger" role="alert">
-          {epubError}
-        </p>
-      ) : null}
 
       {loadState === "loading" ? <p className="text-text-muted">Loading the library…</p> : null}
       {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}

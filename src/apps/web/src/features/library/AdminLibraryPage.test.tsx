@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,8 +19,26 @@ vi.mock("./libraryApi", () => ({
 
 import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
+import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
+import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
 import type { AuthorDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
+
+// The library reports action results (work created, EPUB imported, and their failures)
+// through the app-wide toast system, so renders run inside a ToastProvider with the live
+// region mounted — matching how the shell wires it.
+function ToastHost({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <ToastProvider>
+      {children}
+      <ToastViewport />
+    </ToastProvider>
+  );
+}
+
+function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
+  return rtlRender(ui, { wrapper: ToastHost });
+}
 
 const mockedFetchAuthors = vi.mocked(fetchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
@@ -195,6 +220,7 @@ describe("AdminLibraryPage", () => {
     expect(
       await screen.findByRole("heading", { name: "Politics and the English Language" })
     ).toBeDefined();
+    expect(await screen.findByText("Added “Politics and the English Language”.")).toBeDefined();
     expect(mockedCreateWork).toHaveBeenCalledWith({
       author: { mode: "new", name: "George Orwell" },
       language: "en",
@@ -271,6 +297,7 @@ describe("AdminLibraryPage", () => {
     await user.upload(screen.getByLabelText("Upload EPUB"), file);
 
     expect(await screen.findByRole("heading", { name: "史记选读" })).toBeDefined();
+    expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
     expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
   });
 
