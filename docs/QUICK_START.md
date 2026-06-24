@@ -151,4 +151,5 @@ pnpm typecheck   # tsc project references
 pnpm lint        # ESLint + Prettier check
 pnpm test        # Vitest with 100% coverage thresholds
 pnpm build       # build all packages and apps
+pnpm smoke       # boot the web dev server and check every dependency resolves at serve time
 ```

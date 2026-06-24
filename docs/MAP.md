@@ -113,6 +113,6 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.
 - Run/use walkthrough: `docs/QUICK_START.md` (install, env/data config, run server + web, first note flow).
-- Gate: `pnpm validate` (= `typecheck && lint && test && build`); mirrors `.github/workflows/ci.yml`.
+- Gate: `pnpm validate` (= `typecheck && lint && test && build && smoke`); mirrors `.github/workflows/ci.yml`. `smoke` (`src/apps/web/dev-smoke.mjs`) boots the Vite dev server and checks every dependency resolves at serve time — catching dev-only breakage that `build` (rolldown) does not.
 - Workflow roles: `.github/agents/*.agent.md` (design, developer, reviewer). Operational quick-reference: the
   `whetstone-engineering` skill in `.github/skills/`.
