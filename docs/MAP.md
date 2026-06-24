@@ -116,5 +116,6 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.
 - Run/use walkthrough: `docs/QUICK_START.md` (install, env/data config, run server + web, first note flow).
 - Gate: `pnpm validate` (= `typecheck && lint && test && build && smoke`); mirrors `.github/workflows/ci.yml`. `smoke` (`src/apps/web/dev-smoke.mjs`) boots the Vite dev server and checks every dependency resolves at serve time — catching dev-only breakage that `build` (rolldown) does not.
+- Screenshots (manual, outside the gate): `pnpm screenshots` (`scripts/screenshots.mjs`) boots the real stack on an ephemeral in-memory DB, ingests the public-domain `fixtures/epub/` files through the live pipeline, serves the production build via `vite preview`, and drives Playwright Chromium to write per-stage PNGs to `artifacts/screenshots/` (git-ignored). `scripts/make-fixture-epub.mjs` regenerates the English fixture. Needs `pnpm exec playwright install chromium` once.
 - Workflow roles: `.github/agents/*.agent.md` (design, developer, reviewer). Operational quick-reference: the
   `whetstone-engineering` skill in `.github/skills/`.

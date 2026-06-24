@@ -39,6 +39,9 @@ yarn-error.log*
 # Local server data (retained source files / local database)
 .data/
 
+# Screenshot harness output (manual `pnpm screenshots`; never committed)
+artifacts/
+
 # Environment files
 .env
 .env.*
