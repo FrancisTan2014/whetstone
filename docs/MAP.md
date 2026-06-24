@@ -62,7 +62,7 @@ can navigate them from another package.
 ### `src/apps/web/` — React + Vite PWA
 
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
-  reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx` renders the routed
+reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx` renders the routed
   shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the four modes under the `AppShell` layout
   route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Notes/Search =
@@ -87,15 +87,21 @@ can navigate them from another package.
   reading" deep-links to `#/reader?work=<entryId>`. `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
   with `react-markdown` + `rehype-sanitize` (opening the `?work=` work on arrival via `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
-  that have notes (and lets the reader reopen them), and on a block selection (`blockSelection.ts`
-  reads the selected text and its offset from the live Range) opens the `notes/` editor; it also shows
+  that have notes (and lets the reader reopen them). Selecting text (`blockSelection.ts`
+  reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
+  Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable
+  template) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor, and a saved
+  block's highlight is "born" via `highlightBirth.ts`. It also shows
   a per-work note list. The reader is the calm `paper` reading surface (`.reading-surface` +
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
   (title + progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
-  draft, `NoteEditor.tsx` is the template-based create/edit editor (side panel / bottom sheet),
-  `NoteList.tsx` lists notes with edit/delete, `notesApi.ts` calls the templates/notes endpoints.
+  draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.ts` maps a template to
+  its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
+  `Sheet` with a hued segmented template control, `NoteList.tsx` lists notes with edit/delete,
+  `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
+  reduced-motion-aware status confirmations.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,

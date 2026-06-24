@@ -398,7 +398,7 @@ describe("ReaderPage", () => {
     expect(container.textContent).not.toContain("__xssReader");
   });
 
-  it("opens the note editor when text is selected in a block", async () => {
+  it("opens the selection toolbar then the editor when text is selected in a block", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage />);
@@ -410,6 +410,8 @@ describe("ReaderPage", () => {
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
     fireEvent.mouseUp(block);
+
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
 
     expect(await screen.findByRole("heading", { name: "New note" })).toBeDefined();
     expect(screen.getByText(/Selected: Intro/)).toBeDefined();
@@ -429,6 +431,7 @@ describe("ReaderPage", () => {
     selectRangeIn(firstTextNode(block as HTMLElement), 15, 18);
     fireEvent.mouseUp(blockElement(container, "b-rep"));
 
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
     await user.type(await screen.findByLabelText("Meaning in this context"), "definite article");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
@@ -446,7 +449,7 @@ describe("ReaderPage", () => {
     });
   });
 
-  it("does not open the editor when there is no selection", async () => {
+  it("does not open the toolbar when there is no selection", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage />);
@@ -458,10 +461,10 @@ describe("ReaderPage", () => {
     window.getSelection()?.removeAllRanges();
     fireEvent.mouseUp(blockElement(container, "b-1"));
 
-    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
   });
 
-  it("does not open the editor for a whitespace-only selection", async () => {
+  it("does not open the toolbar for a whitespace-only selection", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage />);
@@ -474,7 +477,7 @@ describe("ReaderPage", () => {
     selectRangeIn(firstTextNode(block as HTMLElement), 5, 6);
     fireEvent.mouseUp(blockElement(container, "b-1"));
 
-    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
   });
 
   it("confirms and closes the editor after a note is saved", async () => {
@@ -491,10 +494,30 @@ describe("ReaderPage", () => {
     selectText(block, "Intro");
     fireEvent.mouseUp(block);
 
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
     await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("dismisses the selection toolbar without opening the editor", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
   });
 
@@ -510,6 +533,7 @@ describe("ReaderPage", () => {
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
     fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
     await screen.findByRole("heading", { name: "New note" });
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -531,9 +555,144 @@ describe("ReaderPage", () => {
     selectText(block, "Intro");
     fireEvent.mouseUp(block);
 
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
+
     expect(
       await screen.findByText("Note templates are unavailable. Please try again.")
     ).toBeDefined();
+  });
+});
+
+const threeTemplates: ReadonlyArray<NoteTemplateDto> = [
+  {
+    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
+    id: "vocabulary",
+    name: "Vocabulary"
+  },
+  {
+    fields: [{ id: "noticed", label: "What I noticed", type: "long_text" }],
+    id: "expression",
+    name: "Expression"
+  },
+  {
+    fields: [{ id: "thought", label: "What I thought", type: "long_text" }],
+    id: "thought",
+    name: "Thought"
+  }
+];
+
+async function openHuedReader(): Promise<{
+  container: HTMLElement;
+  user: ReturnType<typeof userEvent.setup>;
+}> {
+  mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+  mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
+  const user = userEvent.setup();
+  const { container } = render(<ReaderPage />);
+
+  await user.click(
+    await screen.findByRole("button", { name: "Politics and the English Language" })
+  );
+  await screen.findByText("Intro paragraph.");
+
+  return { container, user };
+}
+
+describe("ReaderPage selection toolbar", () => {
+  it("preselects the size-based template (one word picks Vocabulary)", async () => {
+    const { container } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    await screen.findByRole("toolbar", { name: "Annotate selection" });
+    expect(screen.getByRole("button", { name: "Vocabulary" }).getAttribute("aria-pressed")).toBe(
+      "true"
+    );
+    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
+      "false"
+    );
+  });
+
+  it("carries the toolbar's switched template into the editor", async () => {
+    const { container, user } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    await user.click(await screen.findByRole("button", { name: "Expression" }));
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+
+    await screen.findByRole("heading", { name: "New note" });
+    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
+      "true"
+    );
+  });
+
+  it("opens the toolbar from the keyboard (key-up over a selection)", async () => {
+    const { container } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+
+    selectText(block, "Intro");
+    fireEvent.keyUp(block);
+
+    expect(await screen.findByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("opens the toolbar from touch (touch-end over a selection)", async () => {
+    const { container } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+
+    selectText(block, "Intro");
+    fireEvent.touchEnd(block);
+
+    expect(await screen.findByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("births the saved block's highlight and confirms with a toast", async () => {
+    mockedCreateNote.mockResolvedValue(makeNote());
+    const { container, user } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
+    await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(await screen.findByText("Note saved.")).toBeDefined();
+    expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true");
+  });
+
+  it("shows the highlight instantly and still toasts under reduced motion", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: query.includes("reduce"),
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn()
+    })) as unknown as typeof window.matchMedia;
+
+    try {
+      mockedCreateNote.mockResolvedValue(makeNote());
+      const { container, user } = await openHuedReader();
+      const block = blockElement(container, "b-1");
+
+      selectText(block, "Intro");
+      fireEvent.mouseUp(block);
+      await user.click(await screen.findByRole("button", { name: "Add note" }));
+      await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+      await user.click(screen.getByRole("button", { name: "Save note" }));
+
+      expect(await screen.findByText("Note saved.")).toBeDefined();
+      expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true");
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });
 

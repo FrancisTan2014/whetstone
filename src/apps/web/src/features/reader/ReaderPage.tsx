@@ -7,16 +7,20 @@ import remarkGfm from "remark-gfm";
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
+import { Toast } from "../../shared/ui/Toast";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
+import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { annotationHueClass } from "./annotationHue";
 import { readBlockSelection } from "./blockSelection";
+import { highlightBirthMotion } from "./highlightBirth";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
 import { ReadingHeader } from "./ReadingHeader";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
+import { selectionRect } from "./selectionRect";
 import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
 
 // remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so
@@ -53,12 +57,24 @@ type NotePanel =
   | Readonly<{ kind: "edit"; note: NoteDto; workEntryId: string }>
   | Readonly<{ blockEntryId: string; kind: "block"; workEntryId: string }>;
 
+// A pending capture: a selection has been made and the floating toolbar is offering its
+// size-preselected (but switchable) template before the editor opens. `anchorRect` is the
+// selection's rect (for positioning) and `selectedTemplateId` tracks the toolbar choice.
+type SelectionCapture = Readonly<{
+  anchorRect?: DOMRect | undefined;
+  draft: NoteDraft;
+  selectedTemplateId: string;
+  workEntryId: string;
+}>;
+
 type ReaderHandlers = Readonly<{
+  bornBlockEntryId?: string | undefined;
   notes: ReadonlyArray<NoteDto>;
+  onCaptureSelection: (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
-  onSelectBlock: (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
+  prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
 }>;
 
@@ -78,6 +94,8 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   const [templates, setTemplates] = useState<ReadonlyArray<NoteTemplateDto>>([]);
   const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
   const [panel, setPanel] = useState<NotePanel | undefined>(undefined);
+  const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
+  const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
@@ -123,6 +141,8 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   ): Promise<void> {
     setState({ reading: { status: "loading", workEntryId }, status: "ready", works });
     setPanel(undefined);
+    setCapture(undefined);
+    setBornBlockEntryId(undefined);
     setNotice(undefined);
     setNotes([]);
 
@@ -140,24 +160,45 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     }
   }
 
-  function onSelectBlock(blockElement: HTMLElement, block: ReaderBlock, workEntryId: string): void {
-    const selection = readBlockSelection(blockElement, window.getSelection());
+  function onCaptureSelection(
+    blockElement: HTMLElement,
+    block: ReaderBlock,
+    workEntryId: string
+  ): void {
+    const selection = window.getSelection();
+    const blockSelection = readBlockSelection(blockElement, selection);
 
-    if (selection === undefined) {
+    if (blockSelection === undefined) {
       return;
     }
 
     const draft = captureBlockSelection(
       block.entryId,
       block.plaintext,
-      selection.selectedText,
-      selection.startOffset
+      blockSelection.selectedText,
+      blockSelection.startOffset
     );
 
-    if (draft !== undefined) {
-      setNotice(undefined);
-      setPanel({ draft, kind: "create", workEntryId });
+    if (draft === undefined) {
+      return;
     }
+
+    setNotice(undefined);
+    setCapture({
+      anchorRect: selectionRect(selection),
+      draft,
+      selectedTemplateId: draft.preselectedTemplateId,
+      workEntryId
+    });
+  }
+
+  function confirmCapture(active: SelectionCapture): void {
+    setCapture(undefined);
+    setPanel({
+      draft: { ...active.draft, preselectedTemplateId: active.selectedTemplateId },
+      kind: "create",
+      workEntryId: active.workEntryId
+    });
   }
 
   function onOpenBlockNotes(blockEntryId: string, workEntryId: string): void {
@@ -170,8 +211,9 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     setPanel({ kind: "edit", note, workEntryId });
   }
 
-  async function onSavedNote(workEntryId: string): Promise<void> {
+  async function onSavedNote(workEntryId: string, note: NoteDto): Promise<void> {
     setPanel(undefined);
+    setBornBlockEntryId(note.blockEntryId);
     setNotice("Note saved.");
     await refreshNotes(workEntryId);
   }
@@ -191,14 +233,17 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
 
   const handleDelete = (workEntryId: string, note: NoteDto): void =>
     void onDeleteNote(workEntryId, note);
-  const handleSaved = (workEntryId: string): void => void onSavedNote(workEntryId);
+  const handleSaved = (workEntryId: string, note: NoteDto): void =>
+    void onSavedNote(workEntryId, note);
 
   const handlers: ReaderHandlers = {
+    bornBlockEntryId,
     notes,
+    onCaptureSelection,
     onDeleteNote: handleDelete,
     onEditNote,
     onOpenBlockNotes,
-    onSelectBlock,
+    prefersReducedMotion,
     templates
   };
 
@@ -220,9 +265,21 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
         : null}
 
       {notice === undefined ? null : (
-        <p className="readerNotice" role="status">
-          {notice}
-        </p>
+        <Toast message={notice} prefersReducedMotion={prefersReducedMotion} />
+      )}
+
+      {capture === undefined ? null : (
+        <SelectionToolbar
+          anchorRect={capture.anchorRect}
+          onClose={() => setCapture(undefined)}
+          onConfirm={() => confirmCapture(capture)}
+          onSelectTemplate={(templateId) =>
+            setCapture({ ...capture, selectedTemplateId: templateId })
+          }
+          prefersReducedMotion={prefersReducedMotion}
+          selectedTemplateId={capture.selectedTemplateId}
+          templates={templates}
+        />
       )}
 
       {renderPanel(panel, notes, templates, {
@@ -381,14 +438,28 @@ function renderBlock(
   const className = annotated
     ? `readerBlock readerBlock--annotated ${annotationHueClass((blockNotes[0] as NoteDto).templateId)}`
     : "readerBlock";
+  const born = handlers.bornBlockEntryId === block.entryId;
+  // A born block remounts (new key) so the highlight-birth motion replays; non-born blocks
+  // render statically.
+  const birth = born ? highlightBirthMotion(handlers.prefersReducedMotion) : {};
+
+  // Keyboard and touch open the editor too, not just the mouse: a selection inside a
+  // focusable block is captured on key-up and touch-end as well as mouse-up.
+  const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
+    handlers.onCaptureSelection(event.currentTarget, block, workEntryId);
 
   return (
-    <div
+    <motion.div
       className={className}
       data-block-id={block.entryId}
+      data-born={born ? "true" : undefined}
       data-has-notes={annotated ? "true" : undefined}
-      key={block.entryId}
-      onMouseUp={(event) => handlers.onSelectBlock(event.currentTarget, block, workEntryId)}
+      key={born ? `${block.entryId}-born` : block.entryId}
+      onKeyUp={capture}
+      onMouseUp={capture}
+      onTouchEnd={capture}
+      tabIndex={0}
+      {...birth}
     >
       <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
         {block.markdown}
@@ -403,7 +474,7 @@ function renderBlock(
           {blockNotes.length === 1 ? "View 1 note" : `View ${blockNotes.length} notes`}
         </button>
       ) : null}
-    </div>
+    </motion.div>
   );
 }
 
@@ -411,7 +482,7 @@ type PanelHandlers = Readonly<{
   onClose: () => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
-  onSavedNote: (workEntryId: string) => void;
+  onSavedNote: (workEntryId: string, note: NoteDto) => void;
 }>;
 
 function renderPanel(
@@ -450,7 +521,7 @@ function renderPanel(
           : `edit-${panel.note.entryId}`
       }
       onClose={handlers.onClose}
-      onSaved={() => handlers.onSavedNote(panel.workEntryId)}
+      onSaved={(note) => handlers.onSavedNote(panel.workEntryId, note)}
       target={
         panel.kind === "create"
           ? { draft: panel.draft, kind: "create" }
