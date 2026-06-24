@@ -35,9 +35,54 @@ const blockTypeByNodeType = new Map<string, BlockType>([
 
 const markdownProcessor = unified().use(remarkParse).use(remarkGfm);
 
+const imageNodeTypes = new Set(["image", "imageReference"]);
+
+// A structural view of an mdast node — enough to walk children and detect images — so the
+// stripping logic stays simple and avoids the mdast content-model union gymnastics.
+type MdastNodeLike = { children?: MdastNodeLike[]; type: string; value?: string };
+
+// v0's content model is text blocks only — images are not a block type. A node counts as an
+// image if it is an mdast image/imageReference or a raw HTML `<img>` (manually entered Markdown).
+function isImageNode(node: MdastNodeLike): boolean {
+  if (imageNodeTypes.has(node.type)) {
+    return true;
+  }
+
+  return node.type === "html" && typeof node.value === "string" && /<img\b/i.test(node.value);
+}
+
+// Recursively drop image descendants from a node's subtree (so an inline image inside a
+// paragraph, list item, etc. is removed while its sibling text stays). Mutates the node and
+// returns whether any image was removed, so the caller can distinguish "emptied by image
+// removal" (skip the block) from an inherently empty node such as a textless heading (keep it).
+function stripImages(node: MdastNodeLike): boolean {
+  if (node.children === undefined) {
+    return false;
+  }
+
+  let removed = false;
+  node.children = node.children.filter((child) => {
+    if (isImageNode(child)) {
+      removed = true;
+      return false;
+    }
+
+    if (stripImages(child)) {
+      removed = true;
+    }
+
+    return true;
+  });
+
+  return removed;
+}
+
 // Map a single top-level mdast node to a decomposed block, keeping the mdast node
-// (for safe rendering/export) plus its plaintext projection (for search). Nodes
-// outside the supported block types map to `undefined` and are skipped by callers.
+// (for safe rendering/export) plus its plaintext projection (for search). Image
+// descendants are stripped first (v0 has no image block); a node left with no
+// renderable text once its images are removed — e.g. an image-only paragraph — yields
+// `undefined` and is skipped. Nodes outside the supported block types also map to
+// `undefined` and are skipped by callers.
 export function blockFromMdastNode(node: RootContent): DecomposedBlock | undefined {
   const blockType = blockTypeByNodeType.get(node.type);
 
@@ -45,10 +90,17 @@ export function blockFromMdastNode(node: RootContent): DecomposedBlock | undefin
     return undefined;
   }
 
+  const removedImage = stripImages(node as unknown as MdastNodeLike);
+  const plaintext = mdastToString(node);
+
+  if (removedImage && plaintext.trim().length === 0) {
+    return undefined;
+  }
+
   return Object.freeze({
     blockType,
     mdast: node,
-    plaintext: mdastToString(node)
+    plaintext
   });
 }
 

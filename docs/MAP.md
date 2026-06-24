@@ -14,7 +14,8 @@ entry to a pointer.
 
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is
 `src/index.ts`. Current units: `entry.ts`, `links.ts`, `block.ts`, `markdownBlocks.ts` (decompose
-Markdown into ordered, stable-id blocks; exports the shared `blockFromMdastNode` mapper),
+Markdown into ordered, stable-id blocks; exports the shared `blockFromMdastNode` mapper, which
+strips image nodes — v0 is text blocks only — and skips a block left empty by that removal),
 `blockDiff.ts` (content-similarity diff matching new blocks to existing ones — Dice-bigram alignment —
 to preserve stable ids on re-ingestion), `htmlBlocks.ts` (decompose one EPUB chapter's XHTML into a
 reading unit of blocks via `rehype-parse` + `rehype-remark`), `epubMetadata.ts` (normalize OPF
@@ -113,7 +114,7 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
   reading" deep-links to `#/reader?work=<entryId>`. `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
-  with `react-markdown` + `rehype-sanitize` (opening the `?work=` work on arrival via `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
+  with `react-markdown` + `rehype-sanitize` (a schema that also disallows `img`, so no image is fetched/rendered; opening the `?work=` work on arrival via `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them). Selecting text (`blockSelection.ts`
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
   Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable

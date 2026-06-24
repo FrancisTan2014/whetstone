@@ -160,6 +160,38 @@ const multiUnitContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A block whose serialized Markdown contains an image, to confirm the reader's sanitize
+// schema strips it (defense in depth — ingestion already drops images).
+const imageContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-img"),
+          mdast: {
+            children: [
+              { type: "text", value: "Visible caption text." },
+              {
+                alt: "Cover image",
+                title: null,
+                type: "image",
+                url: "http://example.test/cover.png"
+              }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          plaintext: "Visible caption text."
+        }
+      ],
+      entryId: toEntryId("u-img"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 // A block whose plaintext repeats a word, so selecting the second occurrence must anchor
 // to that occurrence rather than the first match.
 const repeatedContent: WorkContentDto = {
@@ -312,6 +344,15 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("Select a work to start reading.")).toBeDefined();
     expect(mockedFetchWorkContent).not.toHaveBeenCalled();
+  });
+
+  it("does not render an image even when a block's Markdown contains one", async () => {
+    mockedFetchWorkContent.mockResolvedValue(imageContent);
+
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Visible caption text.")).toBeDefined();
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("opens a work and renders its units and blocks as one continuous scroll", async () => {

@@ -104,3 +104,68 @@ describe("decomposeMarkdown", () => {
     expect(Object.isFrozen(units[0]?.blocks[0])).toBe(true);
   });
 });
+
+function mdastContainsImage(node: unknown): boolean {
+  if (typeof node !== "object" || node === null) {
+    return false;
+  }
+
+  const typed = node as { type?: unknown; value?: unknown; children?: unknown };
+
+  if (typed.type === "image" || typed.type === "imageReference") {
+    return true;
+  }
+
+  if (typed.type === "html" && typeof typed.value === "string" && /<img\b/i.test(typed.value)) {
+    return true;
+  }
+
+  return Array.isArray(typed.children) && typed.children.some(mdastContainsImage);
+}
+
+describe("decomposeMarkdown image handling", () => {
+  it("skips an image-only paragraph", () => {
+    expect(decomposeMarkdown("![Cover image](cover.jpg)")).toEqual([]);
+  });
+
+  it("skips an image-only paragraph that uses an image reference", () => {
+    expect(decomposeMarkdown("![Cover image][c]\n\n[c]: cover.jpg")).toEqual([]);
+  });
+
+  it("keeps the text but drops an inline image in a mixed paragraph", () => {
+    const units = decomposeMarkdown("Hello ![x](y.png) world.");
+    const block = units[0]?.blocks[0];
+
+    expect(block?.blockType).toBe("paragraph");
+    expect(block?.plaintext).toContain("Hello");
+    expect(block?.plaintext).toContain("world.");
+    expect(mdastContainsImage(block?.mdast)).toBe(false);
+  });
+
+  it("drops a raw HTML <img> while keeping surrounding text", () => {
+    const units = decomposeMarkdown('Before <img src="x.png"> after.');
+    const block = units[0]?.blocks[0];
+
+    expect(block?.plaintext).toContain("Before");
+    expect(block?.plaintext).toContain("after.");
+    expect(mdastContainsImage(block?.mdast)).toBe(false);
+  });
+
+  it("strips an image nested inside a list item but keeps the item text", () => {
+    const units = decomposeMarkdown("- item ![x](y.png)");
+    const block = units[0]?.blocks[0];
+
+    expect(block?.blockType).toBe("list");
+    expect(block?.plaintext).toContain("item");
+    expect(mdastContainsImage(block?.mdast)).toBe(false);
+  });
+
+  it("keeps a paragraph with non-image raw HTML", () => {
+    const units = decomposeMarkdown("Line <br> end.");
+    const block = units[0]?.blocks[0];
+
+    expect(block?.blockType).toBe("paragraph");
+    expect(block?.plaintext).toContain("Line");
+    expect(block?.plaintext).toContain("end.");
+  });
+});
