@@ -1338,3 +1338,143 @@ describe("ReaderPage reading position", () => {
     expect(savedUnit()).toBe("u-2");
   });
 });
+
+const richContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "list",
+          entryId: toEntryId("b-list"),
+          mdast: {
+            children: [
+              {
+                children: [
+                  { children: [{ type: "text", value: "First force" }], type: "paragraph" }
+                ],
+                type: "listItem"
+              },
+              {
+                children: [
+                  { children: [{ type: "text", value: "Second force" }], type: "paragraph" }
+                ],
+                type: "listItem"
+              }
+            ],
+            ordered: false,
+            type: "list"
+          },
+          orderIndex: 0,
+          plaintext: "First force\nSecond force"
+        },
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-inline"),
+          mdast: {
+            children: [
+              { type: "text", value: "Run " },
+              { type: "inlineCode", value: "pnpm validate" },
+              { type: "text", value: " often." }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 1,
+          plaintext: "Run pnpm validate often."
+        },
+        {
+          blockType: "code",
+          entryId: toEntryId("b-code"),
+          mdast: { lang: "ts", type: "code", value: "const answer = 42;" },
+          orderIndex: 2,
+          plaintext: "const answer = 42;"
+        },
+        {
+          blockType: "blockquote",
+          entryId: toEntryId("b-quote"),
+          mdast: {
+            children: [{ children: [{ type: "text", value: "An epigraph." }], type: "paragraph" }],
+            type: "blockquote"
+          },
+          orderIndex: 3,
+          plaintext: "An epigraph."
+        }
+      ],
+      entryId: toEntryId("u-rich"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
+// A unit whose declared title duplicates its own first heading (the "title appears twice"
+// front-matter problem).
+const duplicateHeadingContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "heading",
+          entryId: toEntryId("b-h"),
+          mdast: { children: [{ type: "text", value: "Chapter One" }], depth: 2, type: "heading" },
+          orderIndex: 0,
+          plaintext: "Chapter One"
+        },
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-body"),
+          mdast: { children: [{ type: "text", value: "Body text." }], type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "Body text."
+        }
+      ],
+      entryId: toEntryId("u-dup"),
+      orderIndex: 0,
+      title: "Chapter One"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
+describe("ReaderPage readability", () => {
+  it("renders a list as a real list with items", async () => {
+    mockedFetchWorkContent.mockResolvedValue(richContent);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    const article = await screen.findByRole("article", { name: "Reading" });
+    const list = within(article).getByRole("list");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText("First force")).toBeDefined();
+  });
+
+  it("renders fenced code as a pre/code block and inline code as code", async () => {
+    mockedFetchWorkContent.mockResolvedValue(richContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    await screen.findByRole("article", { name: "Reading" });
+    const pre = container.querySelector("pre code");
+    expect(pre?.textContent).toContain("const answer = 42;");
+
+    const inline = Array.from(container.querySelectorAll("code")).find(
+      (code) => code.closest("pre") === null
+    );
+    expect(inline?.textContent).toBe("pnpm validate");
+  });
+
+  it("renders a blockquote as a quote", async () => {
+    mockedFetchWorkContent.mockResolvedValue(richContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    await screen.findByRole("article", { name: "Reading" });
+    expect(container.querySelector("blockquote")?.textContent).toContain("An epigraph.");
+  });
+
+  it("suppresses the unit eyebrow when it duplicates the first heading", async () => {
+    mockedFetchWorkContent.mockResolvedValue(duplicateHeadingContent);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    const article = await screen.findByRole("article", { name: "Reading" });
+    // Only the block heading remains; the duplicate eyebrow is gone.
+    expect(within(article).getAllByRole("heading", { name: "Chapter One" })).toHaveLength(1);
+    expect(article.querySelector(".readerUnitTitle")).toBeNull();
+  });
+});

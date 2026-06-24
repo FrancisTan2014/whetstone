@@ -78,6 +78,13 @@ describe("buildReaderView", () => {
     expect(view.units[0]?.blocks[0]?.markdown).toBe("Intro");
   });
 
+  it("flags heading blocks via isHeading", () => {
+    const view = buildReaderView(unorderedContent);
+
+    expect(view.units[1]?.blocks.map((block) => block.isHeading)).toEqual([true, false]);
+    expect(view.units[0]?.blocks[0]?.isHeading).toBe(false);
+  });
+
   it("includes a unit title when present and omits it otherwise", () => {
     const view = buildReaderView(unorderedContent);
 

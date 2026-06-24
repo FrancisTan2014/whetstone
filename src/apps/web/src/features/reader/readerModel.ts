@@ -6,6 +6,7 @@ import { blockToMarkdown } from "@whetstone/domain";
 // pure model keeps ordering and serialization out of the React component.
 export type ReaderBlock = Readonly<{
   entryId: string;
+  isHeading: boolean;
   markdown: string;
   plaintext: string;
 }>;
@@ -28,6 +29,7 @@ function byOrderIndex(first: { orderIndex: number }, second: { orderIndex: numbe
 function toReaderBlock(block: BlockDto): ReaderBlock {
   return {
     entryId: block.entryId,
+    isHeading: block.blockType === "heading",
     markdown: blockToMarkdown(block.mdast),
     plaintext: block.plaintext
   };

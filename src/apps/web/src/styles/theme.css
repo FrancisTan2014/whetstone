@@ -60,6 +60,8 @@
   --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-serif: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
   --font-reading: var(--font-serif), "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  --font-mono:
+    ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
 }
 
 /* Night (dark) — a pure token override, never a second set of components. */
@@ -257,6 +259,103 @@
 .readerBlock--thought {
   border-inline-start-color: var(--color-anno-thought);
   background-color: var(--color-anno-thought-wash);
+}
+
+/*
+ * Reader readability (#61): clean rendering of real-world content — lists, code, tables,
+ * blockquotes, footnotes — to PRODUCT.md targets. `.readerBlock` owns the even vertical
+ * rhythm, so the top-level markdown elements inside a block reset their own block margins;
+ * Tailwind's preflight strips list markers, so the reader restores them.
+ */
+.reader :where(p, ul, ol, pre, blockquote, table, h1, h2, h3, h4, h5, h6) {
+  margin-block: 0;
+}
+
+.reader :where(ul, ol) {
+  padding-inline-start: 1.5rem;
+}
+
+.reader ul {
+  list-style: disc;
+}
+
+.reader ol {
+  list-style: decimal;
+}
+
+.reader li {
+  margin-block: 0.35rem;
+}
+
+.reader li::marker {
+  color: var(--color-text-muted);
+}
+
+.reader :where(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-sans);
+  line-height: 1.25;
+}
+
+/* Inline code is distinguished on a subtle wash; fenced code blocks use a distinct surface
+   and scroll horizontally instead of breaking the reading measure. */
+.reader :not(pre) > code {
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background-color: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.reader pre {
+  overflow-x: auto;
+  padding: 1rem 1.25rem;
+  border-radius: 0.5rem;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.reader pre code {
+  padding: 0;
+  background-color: transparent;
+  font-family: var(--font-mono);
+}
+
+/* Blockquotes / epigraphs read as quotes. */
+.reader blockquote {
+  padding-inline-start: 1rem;
+  border-inline-start: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Tables stay within the reading measure (scroll instead of overflow) and have legible
+   cell separation. */
+.reader table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.reader :where(th, td) {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-border);
+  text-align: start;
+}
+
+.reader th {
+  background-color: var(--color-surface);
+}
+
+/* GFM footnotes: a quieter, smaller note section set off from the body. */
+.reader .footnotes {
+  margin-block-start: 2rem;
+  padding-block-start: 1rem;
+  border-block-start: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--text-scale-sm);
 }
 
 .readingHeader {

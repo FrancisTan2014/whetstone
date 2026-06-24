@@ -21,6 +21,7 @@ import { readBlockSelection } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
+import { isUnitTitleRedundant } from "./readerHeadings";
 import { clampUnitIndex, targetUnitForBlock, unitTocLabel, workProgress } from "./readerNavigation";
 import { createLocalStoragePositionStore, resolveOpening } from "./readingPosition";
 import { useReadingPositionWriter } from "./useReadingPositionWriter";
@@ -632,9 +633,13 @@ function renderUnit(
   handlers: ReaderHandlers,
   language: string
 ): React.JSX.Element {
+  // The unit title renders as an eyebrow, except when the unit's first heading already says
+  // the same thing (then showing both would duplicate it).
+  const showTitle = unit.title !== undefined && !isUnitTitleRedundant(unit);
+
   return (
     <section className="readerUnit" key={unit.entryId}>
-      {unit.title === undefined ? null : <h2 className="readerUnitTitle">{unit.title}</h2>}
+      {showTitle ? <h2 className="readerUnitTitle">{unit.title}</h2> : null}
       {unit.blocks.map((block) => renderBlock(block, workEntryId, handlers, language))}
     </section>
   );

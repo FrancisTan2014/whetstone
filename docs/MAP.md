@@ -141,6 +141,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
   (title + work-level progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
+  Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
+  targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored
+  list markers, monospace code surface, ~66ch measure); `readerHeadings.ts` decides when a unit's
+  eyebrow title duplicates its first heading (`isUnitTitleRedundant`) so the title is not shown twice,
+  and `readerModel` flags heading blocks via `ReaderBlock.isHeading`.
   Reading position is remembered per work in localStorage (client-side UI state, never server truth):
   `readingPosition.ts` is the pure compute/restore/serialize layer (`resolveOpening` picks the opening
   unit/scroll target from a deep link or saved position, `createLocalStoragePositionStore` injects
