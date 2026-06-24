@@ -102,6 +102,8 @@ Default v0 choices:
 
 The baseline dependencies listed above are approved for the scaffold/foundation work that introduces them. After that, do not add a runtime dependency unless the issue needs it and the PR explains why. Prefer established OSS libraries for text selection, annotation, and Markdown rendering when those issues arrive.
 
+**Choose OSS by reliability, not arbitrarily.** For a non-trivial standard problem (parsing, format handling, and similar), prefer a well-established, actively maintained OSS library over a hand-rolled or arbitrarily-picked one. Evaluate candidates on reliability evidence — maintenance recency, adoption, issue health, spec coverage, and **correctness on real-world inputs** — and record the rationale in the PR. Match the runtime to the problem's genuine need (for example, a Python worker for document-AI/OCR PDF work), not to community size in the abstract; do not introduce a separate runtime or process when an in-process library already does the job correctly.
+
 ## Design principles
 
 The goal is not to recite SOLID as an acronym. The goal is to make code hard to misuse and easy to change. In whetstone, the practical principles are:
@@ -475,6 +477,7 @@ Test the risky parts first:
 - Path traversal prevention in Markdown storage.
 - Server command/query behavior for Entry/link writes.
 - Reader selection logic when implemented.
+- Persistence at realistic scale. Exercise ingestion/persistence against large, real-world-sized inputs (e.g. a full-length book), not only minimal fixtures — minimal fixtures hide scale-dependent failures. Bulk multi-row inserts must be chunked so no statement exceeds the database's bind-parameter limit, and a write must be verified to have actually persisted: a silent transaction rollback must surface as an error, never a false success.
 
 Avoid brittle tests that only assert component markup structure unless the issue is specifically UI rendering.
 
