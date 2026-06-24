@@ -1,13 +1,15 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes } from "react";
 
+import { Spinner } from "./Spinner.js";
+
 // Token-only button styles. Variants and sizes are the single source of truth for
 // interactive styling; features pick a variant rather than inventing colors. Every size
 // keeps a >=44px touch target via the base `min-h-11` (44px) floor while varying padding
 // and text for the visual size (`lg` raises the floor to `min-h-12`). Focus is always
 // visible via the `ring` token.
 export const buttonVariants = cva(
-  "inline-flex min-h-11 items-center justify-center rounded font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
   {
     defaultVariants: {
       size: "md",
@@ -29,11 +31,17 @@ export const buttonVariants = cva(
 );
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> &
-  VariantProps<typeof buttonVariants>;
+  VariantProps<typeof buttonVariants> &
+  Readonly<{ pending?: boolean }>;
 
-// Buttons default to `type="button"` so they never accidentally submit a form.
+// Buttons default to `type="button"` so they never accidentally submit a form. When
+// `pending`, the button shows a spinner, reports `aria-busy`, and is disabled so an
+// in-flight action cannot be double-submitted.
 export function Button({
+  children,
   className,
+  disabled,
+  pending,
   size,
   type,
   variant,
@@ -44,6 +52,11 @@ export function Button({
       className={buttonVariants({ className, size, variant })}
       type={type ?? "button"}
       {...rest}
-    />
+      aria-busy={pending}
+      disabled={disabled === true || pending === true}
+    >
+      {pending === true ? <Spinner /> : null}
+      {children}
+    </button>
   );
 }

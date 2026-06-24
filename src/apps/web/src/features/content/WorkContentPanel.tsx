@@ -4,6 +4,7 @@ import type { ReadingUnitDto, WorkContentDto, WorkListItemDto } from "@whetstone
 import { workLanguageLabels, type WorkType } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
+import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
 import { summarizeWorkContent, workContentSummaryLabel } from "./workContentSummary";
 
@@ -131,7 +132,7 @@ export function WorkContentPanel(): React.JSX.Element {
         Work detail
       </h2>
 
-      {state.status === "loading" ? <p className="text-text-muted">Loading works…</p> : null}
+      {state.status === "loading" ? <LoadingIndicator label="Loading works…" /> : null}
       {state.status === "error" ? <p role="alert">Could not load works.</p> : null}
       {state.status === "empty" ? (
         <p className="text-text-muted">Create a work first to add content.</p>

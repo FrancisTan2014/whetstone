@@ -12,7 +12,9 @@ import {
 } from "@whetstone/domain";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
+import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
+import { Spinner } from "../../shared/ui/Spinner";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
@@ -41,6 +43,7 @@ export function AdminLibraryPage(): React.JSX.Element {
   const [authorChoice, setAuthorChoice] = useState<string>(newAuthorOption);
   const [inlineAuthorName, setInlineAuthorName] = useState("");
   const [workError, setWorkError] = useState<string | undefined>(undefined);
+  const [submitting, setSubmitting] = useState(false);
 
   const [epubBusy, setEpubBusy] = useState(false);
 
@@ -89,6 +92,8 @@ export function AdminLibraryPage(): React.JSX.Element {
       return;
     }
 
+    setSubmitting(true);
+
     try {
       await createWork({ author, language, title: trimmedTitle, workType });
       setTitle("");
@@ -99,6 +104,8 @@ export function AdminLibraryPage(): React.JSX.Element {
       toast.success(`Added “${trimmedTitle}”.`);
     } catch {
       toast.error("Could not save the work. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -139,10 +146,12 @@ export function AdminLibraryPage(): React.JSX.Element {
         <h1 className="text-3xl font-semibold text-text">Library</h1>
         <div className="flex flex-wrap items-center gap-3">
           <label
+            aria-busy={epubBusy}
             className={`${buttonVariants({ variant: "secondary" })} cursor-pointer focus-within:ring-2 focus-within:ring-ring focus-within:outline-none ${
               epubBusy ? "pointer-events-none opacity-50" : ""
             }`}
           >
+            {epubBusy ? <Spinner /> : null}
             Upload EPUB
             <input
               accept=".epub,application/epub+zip"
@@ -158,9 +167,9 @@ export function AdminLibraryPage(): React.JSX.Element {
         </div>
       </header>
 
-      {epubBusy ? <p className="text-text-muted">Ingesting the EPUB…</p> : null}
+      {epubBusy ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
 
-      {loadState === "loading" ? <p className="text-text-muted">Loading the library…</p> : null}
+      {loadState === "loading" ? <LoadingIndicator label="Loading the library…" /> : null}
       {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
 
       {loadState === "ready" ? renderLibrary(groups, listVariants, cardVariants) : null}
@@ -239,7 +248,9 @@ export function AdminLibraryPage(): React.JSX.Element {
               </label>
             ) : null}
 
-            <Button type="submit">Create work</Button>
+            <Button pending={submitting} type="submit">
+              Create work
+            </Button>
             {workError !== undefined ? (
               <p className="text-danger" role="alert">
                 {workError}

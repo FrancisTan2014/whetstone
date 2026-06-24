@@ -50,4 +50,31 @@ describe("Button", () => {
     expect(button.getAttribute("type")).toBe("submit");
     expect(button.className).toContain("bg-transparent");
   });
+
+  it("shows a spinner, marks busy, and disables while pending", () => {
+    render(<Button pending>Create</Button>);
+
+    const button = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.querySelector("svg")).not.toBeNull();
+  });
+
+  it("disables for an explicit disabled without a spinner or busy state", () => {
+    render(<Button disabled>Create</Button>);
+
+    const button = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(button.querySelector("svg")).toBeNull();
+  });
+
+  it("is enabled with no spinner by default", () => {
+    render(<Button>Create</Button>);
+
+    const button = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(button.querySelector("svg")).toBeNull();
+  });
 });
