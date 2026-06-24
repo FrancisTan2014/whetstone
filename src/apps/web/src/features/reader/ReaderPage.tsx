@@ -14,6 +14,8 @@ import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { annotationHueClass } from "./annotationHue";
+import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
+import { lookupTerm } from "../lookup/lookupApi";
 import { readBlockSelection } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
@@ -91,12 +93,17 @@ function notesForBlock(
 // query param and passes it here so the page opens straight into the requested work on arrival.
 type ReaderPageProps = Readonly<{ initialWorkEntryId?: string | undefined }>;
 
+// A view-only vocabulary lookup driven from the selection toolbar: the selected term and
+// its fetch state. Lookup never creates, pre-fills, or edits a note.
+type LookupView = Readonly<{ state: LookupState; term: string }>;
+
 export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.Element {
   const [state, setState] = useState<ReaderState>({ status: "loadingWorks" });
   const [templates, setTemplates] = useState<ReadonlyArray<NoteTemplateDto>>([]);
   const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
   const [panel, setPanel] = useState<NotePanel | undefined>(undefined);
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
+  const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
   const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
@@ -144,6 +151,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     setState({ reading: { status: "loading", workEntryId }, status: "ready", works });
     setPanel(undefined);
     setCapture(undefined);
+    setLookup(undefined);
     setBornBlockEntryId(undefined);
     setNotice(undefined);
     setNotes([]);
@@ -201,6 +209,24 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
       kind: "create",
       workEntryId: active.workEntryId
     });
+  }
+
+  function lookupSelection(active: SelectionCapture): void {
+    const term = active.draft.selectedText;
+    setCapture(undefined);
+    setNotice(undefined);
+    setLookup({ state: { status: "loading" }, term });
+
+    lookupTerm(term, "en")
+      .then((response) => {
+        setLookup({
+          state: response.found
+            ? { attribution: response.attribution, entry: response.entry, status: "loaded" }
+            : { status: "empty" },
+          term
+        });
+      })
+      .catch(() => setLookup({ state: { status: "error" }, term }));
   }
 
   function onOpenBlockNotes(blockEntryId: string, workEntryId: string): void {
@@ -276,12 +302,22 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
           anchorRect={capture.anchorRect}
           onClose={() => setCapture(undefined)}
           onConfirm={() => confirmCapture(capture)}
+          onLookup={() => lookupSelection(capture)}
           onSelectTemplate={(templateId) =>
             setCapture({ ...capture, selectedTemplateId: templateId })
           }
           prefersReducedMotion={prefersReducedMotion}
           selectedTemplateId={capture.selectedTemplateId}
           templates={templates}
+        />
+      )}
+
+      {lookup === undefined ? null : (
+        <LookupPanel
+          onOpenChange={() => setLookup(undefined)}
+          open={true}
+          state={lookup.state}
+          term={lookup.term}
         />
       )}
 

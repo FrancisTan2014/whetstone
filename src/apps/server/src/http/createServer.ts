@@ -17,11 +17,14 @@ import { registerContentRoutes } from "../features/content/contentRoutes.js";
 import type { ContentDependencies } from "../features/content/contentCommands.js";
 import { registerNoteRoutes } from "../features/notes/noteRoutes.js";
 import type { NotesDependencies } from "../features/notes/noteCommands.js";
+import { registerLookupRoutes } from "../features/lookup/lookupRoutes.js";
+import type { LookupDependencies } from "../features/lookup/lookupRoutes.js";
 
 export type CreateServerOptions = Readonly<{
   content?: ContentDependencies;
   library?: LibraryDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
+  lookup?: LookupDependencies;
   notes?: NotesDependencies;
 }>;
 
@@ -53,6 +56,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.notes !== undefined) {
     registerNoteRoutes(server, options.notes);
+  }
+
+  if (options.lookup !== undefined) {
+    registerLookupRoutes(server, options.lookup);
   }
 
   return server;

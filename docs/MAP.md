@@ -29,7 +29,8 @@ are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 Zod request/response contracts shared by client and server. Public surface is `src/index.ts`.
 Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`,
-`noteContracts.ts`, `health.ts`. Tests colocated.
+`noteContracts.ts`, `lookupContracts.ts` (the lookup route query validator + the shared
+`NormalizedEntry` shape and `LookupResponse` DTO rendered by the reader), `health.ts`. Tests colocated.
 Invariant: types resolve through built `dist` — run `pnpm build` (or `tsc -b`) before VS Code/tsc
 can navigate them from another package.
 
@@ -60,9 +61,20 @@ can navigate them from another package.
 - Outbound lookup foundation: `src/lookup/` — reusable boundaries for calling external services and
   caching results, behind the `DictionaryProvider` seam. `httpClient.ts` (typed GET text/JSON with
   timeout + custom headers; normalizes failures to typed `HttpError`; injected `fetch`),
-  `lookupCache.ts` (keyed TTL cache, injected clock; in-memory impl), and
-  `dictionaryProvider.types.ts` (the `DictionaryProvider` interface + `NormalizedEntry` shape). No
-  routes/UI and no provider implementations yet — those land with the English vocabulary-lookup feature.
+  `lookupCache.ts` (keyed TTL cache, injected clock; in-memory impl),
+  `dictionaryProvider.types.ts` (the `DictionaryProvider` interface; re-exports the shared
+  `NormalizedEntry` shape from `@whetstone/contracts`), `jsonValue.ts` (dependency-free narrowing of
+  untrusted JSON), and the English providers + adapters: `merriamWebsterProvider.ts` (ONE shared
+  Merriam-Webster provider/adapter parameterized by reference path + key — Learner's and Collegiate
+  share the same JSON shape; reads keys `MERRIAM_WEBSTER_LEARNERS_KEY`/`MERRIAM_WEBSTER_COLLEGIATE_KEY`
+  server-side; surfaces each reference's required attribution) and `freeDictionaryProvider.ts` (no-key
+  dictionaryapi.dev fallback). `lookupService.ts` orchestrates an ordered provider chain (Learner's →
+  Collegiate → Free Dictionary; absent MW keys omit their source, first match wins) and caches by
+  `language:term`. Adapters cap senses at 3 and are pure (tested against canned JSON via the fake
+  transport). Keys load from a root `.env` via Node's `--env-file-if-exists=.env` (no dotenv dependency;
+  the chain still falls through to Free Dictionary with no keys set).
+  The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=en`,
+  thin: validates the query contract, delegates to the service; the key never reaches the client).
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
@@ -87,7 +99,7 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
   `.dark` class + persists, `ThemeToggle.tsx`); `src/shared/motion/motion.ts` holds motion tokens +
   the `withReducedMotion` guard. The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`, `notes/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
+  `reader/`, `notes/`, `lookup/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
   reading" deep-links to `#/reader?work=<entryId>`. `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
@@ -109,7 +121,10 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
   `Sheet` with a hued segmented template control, `NoteList.tsx` renders notes as hued cards
   (template chip + snippet + answers) with jump-back/edit/delete,
   `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
-  reduced-motion-aware status confirmations.
+  reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
+  text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the headword,
+  pronunciation, senses, and attribution in the shared `Sheet` with explicit loading/empty/error
+  states, and `lookupApi.ts` calls `GET /api/lookup`. Lookup never creates, pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,

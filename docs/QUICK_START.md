@@ -41,17 +41,43 @@ install plus the steps below works without any extra setup.
 
 ## 2. Configure the server (optional environment variables)
 
-The server reads configuration from environment variables at startup. There is no `.env` file
-loader, so set any overrides in your shell before starting the server. All variables are optional
+The server reads configuration from environment variables at startup. The `start` script loads
+a `.env` file from the repository root if one exists (via Node's `--env-file-if-exists`), and you
+can also set overrides in your shell before starting the server. All variables below are optional
 and have sensible defaults.
 
-| Variable           | Default            | Purpose                                                                 |
-| ------------------ | ------------------ | ----------------------------------------------------------------------- |
-| `HOST`             | `127.0.0.1`        | Address the API server binds to.                                        |
-| `PORT`             | `3000`             | Port the API server listens on (the web dev proxy targets `3000`).      |
-| `LOG_LEVEL`        | `info`             | Pino log level (`fatal`/`error`/`warn`/`info`/`debug`/`trace`/`silent`).|
-| `DATABASE_DIR`     | _(unset)_          | Directory PGlite persists the database to. **Unset means in-memory** — the database is ephemeral and discarded when the server stops. |
-| `SOURCE_FILES_DIR` | `./.data/sources`  | Directory where uploaded source files are retained for provenance (resolved relative to the server's working directory; created automatically). |
+| Variable           | Default           | Purpose                                                                                                                                         |
+| ------------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`             | `127.0.0.1`       | Address the API server binds to.                                                                                                                |
+| `PORT`             | `3000`            | Port the API server listens on (the web dev proxy targets `3000`).                                                                              |
+| `LOG_LEVEL`        | `info`            | Pino log level (`fatal`/`error`/`warn`/`info`/`debug`/`trace`/`silent`).                                                                        |
+| `DATABASE_DIR`     | _(unset)_         | Directory PGlite persists the database to. **Unset means in-memory** — the database is ephemeral and discarded when the server stops.           |
+| `SOURCE_FILES_DIR` | `./.data/sources` | Directory where uploaded source files are retained for provenance (resolved relative to the server's working directory; created automatically). |
+
+### Vocabulary lookup keys (optional)
+
+The reader's **Look up** action resolves English definitions through a provider chain:
+Merriam-Webster's Learner's Dictionary, then Collegiate, then the free
+[dictionaryapi.dev](https://dictionaryapi.dev) fallback. **No keys are required** — with none
+set, lookups use the free fallback.
+
+To enable the Merriam-Webster sources, copy the committed `.env.example` to `.env` at the
+repository root and paste your own keys (get free non-commercial keys at
+[dictionaryapi.com](https://dictionaryapi.com/)):
+
+```powershell
+Copy-Item .env.example .env
+```
+
+| Variable                         | Purpose                                                       |
+| -------------------------------- | ------------------------------------------------------------- |
+| `MERRIAM_WEBSTER_LEARNERS_KEY`   | Merriam-Webster Learner's Dictionary key (primary source).    |
+| `MERRIAM_WEBSTER_COLLEGIATE_KEY` | Merriam-Webster Collegiate Dictionary key (broader fallback). |
+
+The server start script loads `.env` via Node's built-in `--env-file-if-exists=.env`, so a
+missing `.env` is fine (no extra dependency, nothing to fail in CI). Each Merriam-Webster
+source is skipped when its key is absent. Never commit `.env` or real keys — `.gitignore`
+ignores `.env`/`.env.*` and allows only `.env.example`.
 
 ### Data directory
 
@@ -129,6 +155,7 @@ the **Work content** panel, and the **Reader**.
 
    The Markdown is split into ordered **reading units** (one per heading section) and **blocks**
    (paragraphs, list items, and so on). They appear in the panel as you add them.
+
 4. **Open the reader.** In the _Reader_ section, choose your work from the list. It renders as one
    continuous scroll.
 5. **Select text.** Select a word or phrase inside a block. Releasing the selection opens the note

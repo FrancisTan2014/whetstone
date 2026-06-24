@@ -29,17 +29,20 @@ function renderToolbar(
     anchorRect?: DOMRect;
     onClose?: () => void;
     onConfirm?: () => void;
+    onLookup?: () => void;
     onSelectTemplate?: (templateId: string) => void;
     selectedTemplateId?: string;
   } = {}
 ): {
   onClose: () => void;
   onConfirm: () => void;
+  onLookup: () => void;
   onSelectTemplate: (templateId: string) => void;
   user: ReturnType<typeof userEvent.setup>;
 } {
   const onClose = overrides.onClose ?? vi.fn();
   const onConfirm = overrides.onConfirm ?? vi.fn();
+  const onLookup = overrides.onLookup ?? vi.fn();
   const onSelectTemplate = overrides.onSelectTemplate ?? vi.fn();
   const user = userEvent.setup();
 
@@ -48,6 +51,7 @@ function renderToolbar(
       anchorRect={overrides.anchorRect}
       onClose={onClose}
       onConfirm={onConfirm}
+      onLookup={onLookup}
       onSelectTemplate={onSelectTemplate}
       prefersReducedMotion={false}
       selectedTemplateId={overrides.selectedTemplateId ?? "vocabulary"}
@@ -55,7 +59,7 @@ function renderToolbar(
     />
   );
 
-  return { onClose, onConfirm, onSelectTemplate, user };
+  return { onClose, onConfirm, onLookup, onSelectTemplate, user };
 }
 
 afterEach(() => {
@@ -88,6 +92,15 @@ describe("SelectionToolbar", () => {
     await user.click(screen.getByRole("button", { name: "Add note" }));
 
     expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("triggers a lookup without opening the editor", async () => {
+    const { onConfirm, onLookup, user } = renderToolbar();
+
+    await user.click(screen.getByRole("button", { name: "Look up" }));
+
+    expect(onLookup).toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it("dismisses when closed", async () => {
