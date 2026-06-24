@@ -29,7 +29,9 @@ describe("ThemeToggle", () => {
   it("defaults to Day, leaves `.dark` off, and persists the choice", () => {
     render(<ThemeToggle />);
 
-    expect(screen.getByRole("button", { name: "Switch to Night" })).toBeDefined();
+    const button = screen.getByRole("button", { name: "Switch to Night" });
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(button.textContent).toBe("");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(window.localStorage.getItem(themeStorageKey)).toBe("day");
   });

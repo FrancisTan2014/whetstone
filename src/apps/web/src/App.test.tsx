@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { App } from "./App";
 
+// jsdom (above) so the shell-mounted ThemeToggle can read `window` (localStorage /
+// matchMedia, provided by the test setup) while we still server-render the markup.
 function renderAt(path: string): string {
   return renderToStaticMarkup(
     <MemoryRouter initialEntries={[path]}>
@@ -11,6 +14,11 @@ function renderAt(path: string): string {
     </MemoryRouter>
   );
 }
+
+beforeEach(() => {
+  window.localStorage.clear();
+  document.documentElement.classList.remove("dark");
+});
 
 describe("App shell and routes", () => {
   it("renders the primary navigation with every mode in the shell", () => {
@@ -20,6 +28,13 @@ describe("App shell and routes", () => {
     for (const label of ["Library", "Reader", "Notes", "Search"]) {
       expect(markup).toContain(label);
     }
+  });
+
+  it("gives the theme toggle a home in the shell", () => {
+    const markup = renderAt("/");
+
+    expect(markup).toContain('aria-label="Switch to Night"');
+    expect(markup).toContain("<svg");
   });
 
   it("marks the active destination at the index route", () => {

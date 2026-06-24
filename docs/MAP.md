@@ -90,14 +90,13 @@ can navigate them from another package.
 ### `src/apps/web/` — React + Vite PWA
 
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
-reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx` renders the routed
-  shell.
+reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the four modes under the `AppShell` layout
   route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Notes/Search =
   `ModePlaceholder` until their slices land); `AppShell.tsx` is the responsive frame (one `Primary`
-  `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`) with `navigation.ts`
-  destinations. Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
-  `MemoryRouter`.
+  `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
+  `ThemeToggle` in its footer) with `navigation.ts` destinations. Routing is hash-based
+  (origin-independent for file/Capacitor/Tauri); tests use `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
   `100vh`), `Button` (token variants via `cva`), `Sheet` (Radix Dialog: focus trap + dismissal; right
   side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer spring honoring
@@ -106,7 +105,7 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
   `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
   (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion
   vars. `src/shared/theme/` is the theme controller (`theme.ts` pure rules, `useTheme.ts` applies the
-  `.dark` class + persists, `ThemeToggle.tsx`); `src/shared/motion/motion.ts` holds motion tokens +
+  `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button mounted in the shell footer); `src/shared/motion/motion.ts` holds motion tokens +
   the `withReducedMotion` guard. The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards

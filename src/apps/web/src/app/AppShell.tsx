@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import { SafeArea } from "../shared/ui/SafeArea.js";
+import { ThemeToggle } from "../shared/theme/ThemeToggle.js";
 import { navDestinations } from "./navigation.js";
 
 function navLinkClassName({ isActive }: { isActive: boolean }): string {
@@ -34,6 +35,9 @@ export function AppShell(): React.JSX.Element {
               {destination.label}
             </NavLink>
           ))}
+          <div className="flex items-center justify-center md:mt-auto md:justify-start">
+            <ThemeToggle />
+          </div>
         </nav>
         <main className="flex-1 overflow-y-auto">
           <Outlet />
