@@ -62,4 +62,10 @@ describe("normalizeWorkLanguage", () => {
     expect(normalizeWorkLanguage("fr")).toBe("en");
     expect(normalizeWorkLanguage("  ")).toBe("en");
   });
+
+  it("trims surrounding whitespace before classifying (mirrors the data migration)", () => {
+    expect(normalizeWorkLanguage(" zh-Hant ")).toBe("zh-TW");
+    expect(normalizeWorkLanguage("zh-CN ")).toBe("zh-CN");
+    expect(normalizeWorkLanguage("  EN  ")).toBe("en");
+  });
 });
