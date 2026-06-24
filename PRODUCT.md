@@ -137,13 +137,41 @@ blocks via the stable-id diff above, inside a transaction.
 
 ## v0 reader
 
-- The reader presents a Work as one continuous vertical scroll of its blocks, in order.
-- ReadingUnit boundaries appear as subtle headings inside the scroll; it must not feel like a file
-  manager.
-- Markdown is rendered safely — no raw/unsafe HTML execution. Each rendered block carries its block
-  id so selection maps deterministically to a block.
+The reader is **目录-driven and reading-unit-scoped**, mirroring how mature readers (EPUB spine readers,
+微信读书) work and avoiding the freeze of rendering a whole book at once.
+
+- **Navigation by table of contents (目录).** A TOC lists the work's reading units in order (current one
+  highlighted); selecting one opens it — a sidebar on desktop/tablet, a drawer on mobile. A single-unit
+  work (a short essay) needs no TOC.
+- **One reading unit at a time.** The reader renders only the **current reading unit's** blocks, as a
+  continuous vertical scroll within that unit — not the whole work concatenated. Rendering stays bounded
+  regardless of book size (a whole book is thousands of blocks; one chapter is hundreds); this is what
+  every mature reader does (load one spine resource, not the entire book).
+- **Scroll within a chapter; chapter breaks between.** This hybrid matches reading-comprehension research
+  for technical/reference material. **Page-flip pagination is a planned later mode** (evidence shows
+  pagination aids recall for dense material), not v0.
+- **Reading position is remembered** (current unit, plus best-effort scroll offset), so reopening a work
+  resumes where the reader left off ("Continue reading"). Position is client-side UI state (localStorage),
+  never a server source of truth.
+- A subtle **progress indicator** shows place in the work; the reader is immersive (chrome recedes while
+  reading).
+- Markdown is rendered safely — no raw/unsafe HTML execution. Each rendered block carries its block id so
+  selection maps deterministically to a block.
 - Empty / loading / error states are explicit.
-- Large works should load reading units progressively (lazy-load) rather than all at once.
+
+### Reader readability
+
+A real book has lists, code, tables, footnotes, and blockquotes — not just prose — so block rendering must
+be clean and consistent:
+
+- Even vertical rhythm; no cramped walls of text. Lists render as lists (markers + indentation), not
+  flattened paragraphs.
+- Code blocks use monospace on a distinct surface; inline code is distinguished. Tables,
+  blockquotes/epigraphs, and footnotes are styled for readability.
+- Front matter (title/copyright/dedication units) is de-emphasized, not rendered as giant repeated
+  headings.
+- Typography targets: reading measure ~66ch (Latin), line-height >= 1.5, comfortable body size (~18px),
+  user-adjustable; warm paper surface (not pure white). Day/Night now; paper/eye-care themes later.
 
 ## v0 note capture
 
@@ -153,7 +181,10 @@ blocks via the stable-id diff above, inside a transaction.
   that (small, stable) block, the selected-text snapshot, and a surrounding-context snapshot.
   Anchoring to a stable block id (not a whole-file offset) keeps notes durable across edits.
 - Selecting text opens the note editor as a side panel on desktop-width screens and a bottom sheet on
-  narrow screens.
+  narrow screens. The selection toolbar/popover must not obstruct the selected text and snaps to
+  word/sentence boundaries. Selection within a single block is sufficient (cross-block selection is not
+  required, matching mature readers). Desktop **marginalia** (notes aligned in the wide margin) is a
+  planned later enhancement.
 - A note contains the selected-text snapshot, the chosen template, structured answers, and the
   rendered Markdown note body.
 
@@ -256,6 +287,8 @@ future, not v0. Lookup does not change the "No LLM note drafting" non-goal.
 - No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
 - No authentication or multi-user behavior (v0 is single-user; "admin" and "reader" are one person in
   different modes).
+- No social reading (shared highlights, friends' notes, comments) or gamification (streaks, rankings,
+  reading-time competitions).
 
 ## Glossary
 
