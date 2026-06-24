@@ -102,13 +102,16 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   destinations. Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
-  `100vh`), `Button` (token variants via `cva`), `Sheet` (Radix Dialog: focus trap + dismissal; right
-  side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer spring honoring
-  reduced motion). App-wide result notifications live in `src/shared/ui/toast/`: `ToastProvider.tsx`
-  owns the auto-dismissing queue and exposes `useToast()` (`success`/`error`); `App.tsx` wraps the app
-  in it and `AppShell` mounts the one `ToastViewport.tsx` live region that renders the presentational
-  `Toast.tsx` (success = polite `status`, error = assertive `alert`). Components use semantic token
-  utilities only.
+  `100vh`), `Button` (token variants via `cva`; a `pending` prop shows a `Spinner`, sets `aria-busy`,
+  and disables so an in-flight action cannot double-submit), `Sheet` (Radix Dialog: focus trap +
+  dismissal; right side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer
+  spring honoring reduced motion). Loading/pending state has two shared pieces: `Spinner.tsx` (CSS
+  spin, `motion-reduce:animate-none`) and `LoadingIndicator.tsx` (spinner + label as a polite
+  `aria-busy` `status`) — used for every page/section loader. App-wide result notifications live in
+  `src/shared/ui/toast/`: `ToastProvider.tsx` owns the auto-dismissing queue and exposes `useToast()`
+  (`success`/`error`); `App.tsx` wraps the app in it and `AppShell` mounts the one `ToastViewport.tsx`
+  live region that renders the presentational `Toast.tsx` (success = polite `status`, error = assertive
+  `alert`). Components use semantic token utilities only.
 - Design system (PRODUCT.md "v0 design language"): `src/styles/theme.css` defines the Tailwind v4
   `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
   (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion

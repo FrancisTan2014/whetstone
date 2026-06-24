@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { CreateNoteRequest, NoteDto, NoteTemplateDto } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
+import { Button } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
 import { createNote, updateNote } from "./notesApi";
 import type { NoteDraft } from "./noteCapture";
@@ -92,6 +93,7 @@ export function NoteEditor({
   const [chosenTemplateId, setChosenTemplateId] = useState<string | undefined>(undefined);
   const [answers, setAnswers] = useState<Record<string, string>>(() => initialAnswersFor(target));
   const [error, setError] = useState<string | undefined>(undefined);
+  const [saving, setSaving] = useState(false);
 
   const activeTemplateId =
     chosenTemplateId ?? initialTemplateId(templates, preselectionFor(target));
@@ -134,6 +136,8 @@ export function NoteEditor({
   async function onSave(currentTemplate: NoteTemplateDto): Promise<void> {
     let saved: NoteDto;
 
+    setSaving(true);
+
     try {
       saved = await persist(currentTemplate);
     } catch (caught) {
@@ -143,6 +147,8 @@ export function NoteEditor({
           : "Could not save the note. Please try again."
       );
       return;
+    } finally {
+      setSaving(false);
     }
 
     onSaved(saved);
@@ -191,12 +197,12 @@ export function NoteEditor({
         {error !== undefined ? <p role="alert">{error}</p> : null}
 
         <div className="noteEditorActions">
-          <button onClick={() => void onSave(template)} type="button">
+          <Button onClick={() => void onSave(template)} pending={saving} type="button">
             Save note
-          </button>
-          <button onClick={onClose} type="button">
+          </Button>
+          <Button onClick={onClose} type="button" variant="secondary">
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </Sheet>

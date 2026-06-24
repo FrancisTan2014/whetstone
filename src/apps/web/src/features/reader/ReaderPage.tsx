@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
+import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
@@ -290,7 +291,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     <section aria-labelledby="reader-heading" className="readerShell">
       <h1 id="reader-heading">Reader</h1>
 
-      {state.status === "loadingWorks" ? <p>Loading works…</p> : null}
+      {state.status === "loadingWorks" ? <LoadingIndicator label="Loading works…" /> : null}
       {state.status === "worksError" ? <p role="alert">Could not load works.</p> : null}
 
       {state.status === "ready"
@@ -391,7 +392,7 @@ function renderReading(
     case "idle":
       return <p className="readerHint">Select a work to start reading.</p>;
     case "loading":
-      return <p>Loading the work…</p>;
+      return <LoadingIndicator label="Loading the work…" />;
     case "error":
       return <p role="alert">Could not load this work. Please try again.</p>;
     case "viewing":

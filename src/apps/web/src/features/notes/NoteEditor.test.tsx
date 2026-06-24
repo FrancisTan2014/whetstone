@@ -206,6 +206,31 @@ describe("NoteEditor create mode", () => {
     expect(await screen.findByText("Could not save the note. Please try again.")).toBeDefined();
   });
 
+  it("disables the save button while the note is being saved", async () => {
+    let resolveSave: (note: NoteDto) => void = () => {};
+    mockedCreateNote.mockImplementation(
+      () =>
+        new Promise<NoteDto>((resolve) => {
+          resolveSave = resolve;
+        })
+    );
+    const { user } = renderEditor();
+
+    await user.type(screen.getByLabelText("Meaning in this context"), "to outwit");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    const saveButton = screen.getByRole("button", { name: "Save note" }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(saveButton.getAttribute("aria-busy")).toBe("true");
+    });
+    expect(saveButton.disabled).toBe(true);
+
+    resolveSave(savedNote);
+    await waitFor(() => {
+      expect(mockedCreateNote).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("closes when cancelled", async () => {
     const { onClose, user } = renderEditor();
 

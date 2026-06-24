@@ -272,6 +272,35 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Could not save the work. Please try again.")).toBeDefined();
   });
 
+  it("disables the create button while the work is saving so it cannot double-submit", async () => {
+    let resolveCreate: (value: WorkListItemDto) => void = () => {};
+    mockedCreateWork.mockImplementation(
+      () =>
+        new Promise<WorkListItemDto>((resolve) => {
+          resolveCreate = resolve;
+        })
+    );
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+    await openAddWork(user);
+
+    await user.type(screen.getByLabelText("Title"), "Pending Work");
+    await user.type(screen.getByLabelText("New author or source name"), "Someone");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    const createButton = screen.getByRole("button", { name: "Create work" }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(createButton.getAttribute("aria-busy")).toBe("true");
+    });
+    expect(createButton.disabled).toBe(true);
+    expect(mockedCreateWork).toHaveBeenCalledTimes(1);
+
+    resolveCreate(essayWorkItem);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Create work" })).toBeNull();
+    });
+  });
+
   it("ingests an EPUB upload and refreshes the grouped works", async () => {
     const user = await renderReady();
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
