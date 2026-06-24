@@ -31,10 +31,14 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 
 ## Pick the work
 
-- If the maintainer named an issue, use it. Otherwise select in **one pass**: fetch all open
-  `ready-for-dev` issues with `number`, `title`, `labels`, and `body` in a single `gh` query, then
-  pick the **lowest-numbered** one whose `Depends on: #N` issues are all closed. Trust the labels as
-  the queue — do not open issues one by one or re-derive the backlog by searching.
+- If the maintainer named an issue, use it. The launcher (`scripts/run-developer.cmd`) normally does
+  this for you: it runs `scripts/pick-next-issue.mjs` to resolve the next issue deterministically, so
+  which issue is next is **not** decided by this session.
+- If you must select yourself, do it in **one pass**: fetch all open `ready-for-dev` issues with
+  `number`, `title`, `labels`, and `body` in a single `gh` query, then **sort by `number` ascending**
+  and pick the **lowest-numbered** one whose `Depends on: #N` issues are all closed. `gh issue list`
+  returns issues **newest-first**, so you must sort — never take the first row or the newest issue.
+  Trust the labels as the queue — do not open issues one by one or re-derive the backlog by searching.
 - Catch up from GitHub, which is the handoff and the source of truth: the **labels** are the queue
   state, the **issue** is the spec, and the reviewer's **review comment** on a PR is their handoff to
   you. Read the one relevant item; do not keep or consult a separate work-log — clean-start distrusts

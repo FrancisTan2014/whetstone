@@ -92,7 +92,7 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 
 ```powershell
 .\scripts\run-design.cmd            # shape ideas into PRODUCT.md + issues (interactive)
-.\scripts\run-developer.cmd 12      # implement issue #12 (omit the number to pick the next ready issue)
+.\scripts\run-developer.cmd 12      # implement issue #12 (omit the number to pick the next ready issue: lowest-numbered, dependencies closed)
 .\scripts\run-reviewer.cmd 17       # review PR #17 (omit the number to pick the oldest needs-review PR)
 ```
 
