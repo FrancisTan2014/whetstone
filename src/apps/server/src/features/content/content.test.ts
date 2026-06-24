@@ -36,7 +36,7 @@ function twoChapterEpub(): ParsedEpub {
       { html: "<h1>Chapter One</h1><p>First.</p>" },
       { html: "<h1>本纪</h1><p>黄帝者。</p>" }
     ],
-    metadata: { author: "司马迁", language: "zh", title: "史记选读" }
+    metadata: { author: "司马迁", language: "zh-CN", title: "史记选读" }
   };
 }
 
@@ -417,7 +417,7 @@ describe("EPUB ingestion routes", () => {
 
     expect(response.statusCode).toBe(201);
     const body = response.json() as IngestEpubResultDto;
-    expect(body.work).toMatchObject({ language: "zh", title: "史记选读", workType: "book" });
+    expect(body.work).toMatchObject({ language: "zh-CN", title: "史记选读", workType: "book" });
     expect(body.content.workEntryId).toBe(body.work.entryId);
     expect(body.content.readingUnits.map((unit) => [unit.title, unit.orderIndex])).toEqual([
       ["Chapter One", 0],
