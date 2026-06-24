@@ -87,7 +87,11 @@ can navigate them from another package.
   with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them), and on a block selection (`blockSelection.ts`
   reads the selected text and its offset from the live Range) opens the `notes/` editor; it also shows
-  a per-work note list. `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
+  a per-work note list. The reader is the calm `paper` reading surface (`.reading-surface` +
+  `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
+  (title + progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
+  text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
+  `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
   draft, `NoteEditor.tsx` is the template-based create/edit editor (side panel / bottom sheet),
   `NoteList.tsx` lists notes with edit/delete, `notesApi.ts` calls the templates/notes endpoints.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when

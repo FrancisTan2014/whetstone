@@ -714,3 +714,81 @@ describe("ReaderPage note management", () => {
     expect(await screen.findByText("Could not delete the note. Please try again.")).toBeDefined();
   });
 });
+
+describe("ReaderPage reading controls", () => {
+  async function openMultiUnitWork(): Promise<HTMLElement> {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    return container;
+  }
+
+  function surfaceIn(container: HTMLElement): HTMLElement {
+    return container.querySelector(".reading-surface") as HTMLElement;
+  }
+
+  it("applies the work's language to the reading surface for language-aware typography", async () => {
+    const container = await openMultiUnitWork();
+
+    expect(surfaceIn(container).getAttribute("lang")).toBe("en");
+  });
+
+  it("changes the reading text size via the size control", async () => {
+    const user = userEvent.setup();
+    const container = await openMultiUnitWork();
+
+    expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
+
+    await user.click(screen.getByRole("button", { name: "Increase reading text size" }));
+    expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.3125rem");
+
+    await user.click(screen.getByRole("button", { name: "Decrease reading text size" }));
+    expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
+  });
+
+  it("tints annotated blocks with the note's annotation hue", async () => {
+    const container = await openWorkWithNotes([makeNote()]);
+
+    expect(blockElement(container, "b-1").className).toContain("readerBlock--vocab");
+  });
+
+  it("auto-hides the reading header on scroll down and restores it on scroll up", async () => {
+    const container = await openMultiUnitWork();
+    const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
+    expect(header().className).not.toContain("readingHeader--hidden");
+
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 300 });
+    fireEvent.scroll(window);
+    expect(header().getAttribute("data-hidden")).toBe("true");
+
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 50 });
+    fireEvent.scroll(window);
+    expect(header().className).not.toContain("readingHeader--hidden");
+
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
+  });
+
+  it("renders under a reduced-motion preference", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: query.includes("reduce"),
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn()
+    })) as unknown as typeof window.matchMedia;
+
+    try {
+      await openMultiUnitWork();
+      expect(screen.getByText("Intro paragraph.")).toBeDefined();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+});

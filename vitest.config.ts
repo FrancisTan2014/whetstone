@@ -40,6 +40,7 @@ export default defineConfig({
       }
     },
     environment: "node",
-    include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}"]
+    include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}"],
+    setupFiles: ["./vitest.setup.ts"]
   }
 });
