@@ -208,6 +208,8 @@ function blockElement(container: HTMLElement, blockId: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   window.getSelection()?.removeAllRanges();
+  // jsdom does not implement scrollIntoView; the jump-back affordance calls it.
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
   mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
   mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
@@ -893,6 +895,29 @@ describe("ReaderPage note management", () => {
     await user.click(within(region).getByRole("button", { name: "Delete note: Intro" }));
 
     expect(await screen.findByText("Could not delete the note. Please try again.")).toBeDefined();
+  });
+
+  it("jumps back to the annotated block from a per-work note card", async () => {
+    const container = await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
+
+    const region = screen.getByRole("region", { name: "Your notes" });
+    await user.click(within(region).getByRole("button", { name: "Jump to text: Intro" }));
+
+    const block = blockElement(container, "b-1");
+    expect(block.scrollIntoView).toHaveBeenCalled();
+    expect(document.activeElement).toBe(block);
+  });
+
+  it("jumps back to the block from the block-notes panel", async () => {
+    const container = await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "View 1 note" }));
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    await user.click(within(panel).getByRole("button", { name: "Jump to text: Intro" }));
+
+    expect(document.activeElement).toBe(blockElement(container, "b-1"));
   });
 });
 

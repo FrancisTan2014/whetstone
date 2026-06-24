@@ -31,69 +31,63 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
   };
 }
 
+function renderList(
+  notes: ReadonlyArray<NoteDto>,
+  handlers: Partial<{
+    onDelete: (note: NoteDto) => void;
+    onEdit: (note: NoteDto) => void;
+    onJump: (note: NoteDto) => void;
+  }> = {}
+): void {
+  render(
+    <NoteList
+      emptyLabel="No notes yet."
+      notes={notes}
+      onDelete={handlers.onDelete ?? vi.fn()}
+      onEdit={handlers.onEdit ?? vi.fn()}
+      onJump={handlers.onJump ?? vi.fn()}
+      templates={templates}
+    />
+  );
+}
+
 afterEach(() => {
   cleanup();
 });
 
 describe("NoteList", () => {
   it("shows the empty label when there are no notes", () => {
-    render(
-      <NoteList
-        emptyLabel="No notes yet."
-        notes={[]}
-        onDelete={vi.fn()}
-        onEdit={vi.fn()}
-        templates={templates}
-      />
-    );
+    renderList([]);
 
     expect(screen.getByText("No notes yet.")).toBeDefined();
   });
 
-  it("renders each note's snippet, template name, and rendered body", () => {
-    render(
-      <NoteList
-        emptyLabel="No notes yet."
-        notes={[makeNote()]}
-        onDelete={vi.fn()}
-        onEdit={vi.fn()}
-        templates={templates}
-      />
-    );
+  it("renders each note's snippet, hued template chip, and rendered body", () => {
+    renderList([makeNote()]);
 
     expect(screen.getByText(/fox/)).toBeDefined();
-    expect(screen.getByText("Vocabulary")).toBeDefined();
+    const chip = screen.getByText("Vocabulary");
+    expect(chip.className).toContain("templateHue--vocab");
     expect(screen.getByText("a sly animal")).toBeDefined();
   });
 
-  it("falls back to the template id when the template is unknown", () => {
-    render(
-      <NoteList
-        emptyLabel="No notes yet."
-        notes={[makeNote({ templateId: "gone" })]}
-        onDelete={vi.fn()}
-        onEdit={vi.fn()}
-        templates={templates}
-      />
-    );
+  it("falls back to the template id and the vocabulary hue when the template is unknown", () => {
+    renderList([makeNote({ templateId: "gone" })]);
 
-    expect(screen.getByText("gone")).toBeDefined();
+    const chip = screen.getByText("gone");
+    expect(chip.className).toContain("templateHue--vocab");
   });
 
-  it("invokes the edit and delete callbacks with the chosen note", async () => {
+  it("invokes jump, edit, and delete callbacks with the chosen note", async () => {
     const onEdit = vi.fn();
     const onDelete = vi.fn();
+    const onJump = vi.fn();
     const note = makeNote();
     const user = userEvent.setup();
-    render(
-      <NoteList
-        emptyLabel="No notes yet."
-        notes={[note]}
-        onDelete={onDelete}
-        onEdit={onEdit}
-        templates={templates}
-      />
-    );
+    renderList([note], { onDelete, onEdit, onJump });
+
+    await user.click(screen.getByRole("button", { name: "Jump to text: fox" }));
+    expect(onJump).toHaveBeenCalledWith(note);
 
     await user.click(screen.getByRole("button", { name: "Edit note: fox" }));
     expect(onEdit).toHaveBeenCalledWith(note);

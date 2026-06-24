@@ -20,6 +20,7 @@ import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
 import { ReadingHeader } from "./ReadingHeader";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
+import { scrollToBlock } from "./scrollToBlock";
 import { selectionRect } from "./selectionRect";
 import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
 
@@ -73,6 +74,7 @@ type ReaderHandlers = Readonly<{
   onCaptureSelection: (blockElement: HTMLElement, block: ReaderBlock, workEntryId: string) => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
+  onJumpToBlock: (note: NoteDto) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
@@ -242,6 +244,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     onCaptureSelection,
     onDeleteNote: handleDelete,
     onEditNote,
+    onJumpToBlock: (note) => scrollToBlock(note.blockEntryId),
     onOpenBlockNotes,
     prefersReducedMotion,
     templates
@@ -286,6 +289,7 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
         onClose: () => setPanel(undefined),
         onDeleteNote: handleDelete,
         onEditNote,
+        onJumpToBlock: (note) => scrollToBlock(note.blockEntryId),
         onSavedNote: handleSaved
       })}
     </section>
@@ -392,6 +396,7 @@ function renderViewing(
           notes={handlers.notes}
           onDelete={(note) => handlers.onDeleteNote(workEntryId, note)}
           onEdit={(note) => handlers.onEditNote(workEntryId, note)}
+          onJump={(note) => handlers.onJumpToBlock(note)}
           templates={handlers.templates}
         />
       </section>
@@ -482,6 +487,7 @@ type PanelHandlers = Readonly<{
   onClose: () => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
+  onJumpToBlock: (note: NoteDto) => void;
   onSavedNote: (workEntryId: string, note: NoteDto) => void;
 }>;
 
@@ -504,6 +510,7 @@ function renderPanel(
           notes={notesForBlock(notes, panel.blockEntryId)}
           onDelete={(note) => handlers.onDeleteNote(panel.workEntryId, note)}
           onEdit={(note) => handlers.onEditNote(panel.workEntryId, note)}
+          onJump={(note) => handlers.onJumpToBlock(note)}
           templates={templates}
         />
         <button onClick={handlers.onClose} type="button">

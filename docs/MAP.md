@@ -92,14 +92,16 @@ reducedMotion="user">` + `<HashRouter>` + the `ThemeToggle`); root `src/App.tsx`
   Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable
   template) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor, and a saved
   block's highlight is "born" via `highlightBirth.ts`. It also shows
-  a per-work note list. The reader is the calm `paper` reading surface (`.reading-surface` +
+  a per-work note list; jumping back from a note card scrolls/focuses its block via
+  `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
   (title + progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
   draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.ts` maps a template to
   its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
-  `Sheet` with a hued segmented template control, `NoteList.tsx` lists notes with edit/delete,
+  `Sheet` with a hued segmented template control, `NoteList.tsx` renders notes as hued cards
+  (template chip + snippet + answers) with jump-back/edit/delete,
   `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
   reduced-motion-aware status confirmations.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
