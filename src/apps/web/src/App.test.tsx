@@ -33,7 +33,7 @@ describe("App shell and routes", () => {
   it("mounts the existing Library screens at the index route", () => {
     const markup = renderAt("/");
 
-    expect(markup).toContain("Library admin");
+    expect(markup).toContain(">Library<");
     expect(markup).toContain('id="content-heading"');
   });
 

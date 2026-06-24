@@ -81,7 +81,8 @@ can navigate them from another package.
   `.dark` class + persists, `ThemeToggle.tsx`); `src/shared/motion/motion.ts` holds motion tokens +
   the `withReducedMotion` guard. The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`, `notes/`). `library/` is the admin: `AdminLibraryPage.tsx` adds authors/works and uploads
+  `reader/`, `notes/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
+  grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). `reader/` renders a work as one continuous scroll: `readerModel.ts` orders
   units/blocks and serializes each block via domain `blockToMarkdown`; `ReaderPage.tsx` renders safely
   with `react-markdown` + `rehype-sanitize`, tags each block with `data-block-id`, highlights blocks
