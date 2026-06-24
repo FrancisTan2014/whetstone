@@ -141,6 +141,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
   (title + work-level progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
+  Reading position is remembered per work in localStorage (client-side UI state, never server truth):
+  `readingPosition.ts` is the pure compute/restore/serialize layer (`resolveOpening` picks the opening
+  unit/scroll target from a deep link or saved position, `createLocalStoragePositionStore` injects
+  storage), and `useReadingPositionWriter.ts` persists the current unit + debounced scroll offset so
+  reopening a work resumes where it left off.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
   draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.ts` maps a template to
   its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared

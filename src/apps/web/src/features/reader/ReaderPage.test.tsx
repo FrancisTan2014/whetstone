@@ -48,7 +48,8 @@ import {
 } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
-import { applyUnitForBlock, applyUnitSelection, ReaderPage } from "./ReaderPage";
+import { applyUnitForBlock, applyUnitSelection, ReaderPage, viewingPosition } from "./ReaderPage";
+import { readingPositionKey } from "./readingPosition";
 import type {
   NoteDto,
   NoteTemplateDto,
@@ -297,6 +298,10 @@ beforeEach(() => {
   window.getSelection()?.removeAllRanges();
   // jsdom does not implement scrollIntoView; the jump-back affordance calls it.
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  // jsdom does not implement scrollTo; restoring a saved offset calls it.
+  Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
+  // Reading position persists to localStorage; clear it so cases do not leak into each other.
+  window.localStorage.clear();
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
   mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
   mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
@@ -1274,5 +1279,62 @@ describe("ReaderPage unit reducers", () => {
 
     expect(applyUnitSelection(state, 2)).toBe(state);
     expect(applyUnitForBlock(state, "b-1")).toBe(state);
+  });
+
+  it("reports no reading position for a non-viewing state", () => {
+    expect(viewingPosition({ status: "loadingWorks" })).toBeUndefined();
+    expect(
+      viewingPosition({ reading: { status: "idle" }, status: "ready", works: [] })
+    ).toBeUndefined();
+  });
+});
+
+describe("ReaderPage reading position", () => {
+  it("restores the saved reading unit and scroll offset when reopening a work", async () => {
+    window.localStorage.setItem(
+      readingPositionKey("work-1"),
+      JSON.stringify({ scrollOffset: 320, unitEntryId: "u-2" })
+    );
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Heading text")).toBeDefined();
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 320);
+  });
+
+  it("opens the first unit when the saved unit no longer exists", async () => {
+    window.localStorage.setItem(
+      readingPositionKey("work-1"),
+      JSON.stringify({ scrollOffset: 40, unitEntryId: "u-removed" })
+    );
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(window.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("saves the current unit per work as the reader navigates", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const savedUnit = (): string =>
+      JSON.parse(window.localStorage.getItem(readingPositionKey("work-1")) ?? "{}").unitEntryId;
+    expect(savedUnit()).toBe("u-1");
+
+    await user.click(
+      within(screen.getByRole("navigation", { name: "目录" })).getByRole("button", {
+        name: "Section Two"
+      })
+    );
+    await screen.findByText("Heading text");
+
+    expect(savedUnit()).toBe("u-2");
   });
 });
