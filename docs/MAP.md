@@ -57,6 +57,12 @@ can navigate them from another package.
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
   (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
   so commands test against a fake parser).
+- Outbound lookup foundation: `src/lookup/` — reusable boundaries for calling external services and
+  caching results, behind the `DictionaryProvider` seam. `httpClient.ts` (typed GET text/JSON with
+  timeout + custom headers; normalizes failures to typed `HttpError`; injected `fetch`),
+  `lookupCache.ts` (keyed TTL cache, injected clock; in-memory impl), and
+  `dictionaryProvider.types.ts` (the `DictionaryProvider` interface + `NormalizedEntry` shape). No
+  routes/UI and no provider implementations yet — those land with the English vocabulary-lookup feature.
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
