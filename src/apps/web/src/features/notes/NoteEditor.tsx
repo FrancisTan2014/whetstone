@@ -3,8 +3,10 @@ import { useState } from "react";
 import type { CreateNoteRequest, NoteDto, NoteTemplateDto } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
+import { Sheet } from "../../shared/ui/Sheet";
 import { createNote, updateNote } from "./notesApi";
 import type { NoteDraft } from "./noteCapture";
+import { templateSwatchClass } from "./templateHue";
 
 // The editor opens either to capture a new note from a reader selection, or to edit an
 // existing note reopened from a highlight or the note list.
@@ -75,11 +77,11 @@ function initialAnswersFor(target: NoteEditorTarget): Record<string, string> {
   return target.kind === "create" ? {} : { ...target.note.answers };
 }
 
-// On desktop widths the editor is a side panel and on narrow widths a bottom sheet (see
-// styles.css); the markup is the same either way. The active template is derived from the
-// current `templates` prop each render (falling back to the size-based preselection for a new
-// note, or the note's own template when editing) so templates that load after the editor opens
-// are used; an explicit choice, once made, takes precedence.
+// The editor is hosted in the shared responsive `Sheet` (right-docked side panel on
+// desktop, bottom sheet above the keyboard on mobile). The active template is derived
+// from the current `templates` prop each render (falling back to the size-based
+// preselection for a new note, or the note's own template when editing) so templates that
+// load after the editor opens are used; an explicit choice, once made, takes precedence.
 export function NoteEditor({
   onClose,
   onSaved,
@@ -98,12 +100,9 @@ export function NoteEditor({
 
   if (template === undefined) {
     return (
-      <aside aria-label="Note editor" className="noteEditor">
+      <Sheet onOpenChange={onClose} open title={heading}>
         <p role="alert">Note templates are unavailable. Please try again.</p>
-        <button onClick={onClose} type="button">
-          Close
-        </button>
-      </aside>
+      </Sheet>
     );
   }
 
@@ -150,53 +149,56 @@ export function NoteEditor({
   }
 
   return (
-    <aside aria-label="Note editor" className="noteEditor">
-      <h2>{heading}</h2>
-      <p className="noteEditorSelection">Selected: {selectionTextFor(target)}</p>
+    <Sheet onOpenChange={onClose} open title={heading}>
+      <div className="noteEditor">
+        <p className="noteEditorSelection">Selected: {selectionTextFor(target)}</p>
 
-      <label htmlFor="note-template">Template</label>
-      <select
-        id="note-template"
-        onChange={(event) => setChosenTemplateId(event.currentTarget.value)}
-        value={template.id}
-      >
-        {templates.map((candidate) => (
-          <option key={candidate.id} value={candidate.id}>
-            {candidate.name}
-          </option>
-        ))}
-      </select>
-
-      {template.fields.map((field) => (
-        <div className="noteEditorField" key={field.id}>
-          <label htmlFor={`note-field-${field.id}`}>{field.label}</label>
-          {field.type === "long_text" ? (
-            <textarea
-              id={`note-field-${field.id}`}
-              onChange={(event) => setAnswer(field.id, event.currentTarget.value)}
-              value={answers[field.id] ?? ""}
-            />
-          ) : (
-            <input
-              id={`note-field-${field.id}`}
-              onChange={(event) => setAnswer(field.id, event.currentTarget.value)}
-              type="text"
-              value={answers[field.id] ?? ""}
-            />
-          )}
+        <div aria-label="Template" className="noteEditorTemplates" role="group">
+          {templates.map((candidate) => (
+            <button
+              aria-label={candidate.name}
+              aria-pressed={candidate.id === template.id}
+              className={`noteEditorTemplate ${templateSwatchClass(candidate.id)}`}
+              key={candidate.id}
+              onClick={() => setChosenTemplateId(candidate.id)}
+              type="button"
+            >
+              {candidate.name}
+            </button>
+          ))}
         </div>
-      ))}
 
-      {error !== undefined ? <p role="alert">{error}</p> : null}
+        {template.fields.map((field) => (
+          <div className="noteEditorField" key={field.id}>
+            <label htmlFor={`note-field-${field.id}`}>{field.label}</label>
+            {field.type === "long_text" ? (
+              <textarea
+                id={`note-field-${field.id}`}
+                onChange={(event) => setAnswer(field.id, event.currentTarget.value)}
+                value={answers[field.id] ?? ""}
+              />
+            ) : (
+              <input
+                id={`note-field-${field.id}`}
+                onChange={(event) => setAnswer(field.id, event.currentTarget.value)}
+                type="text"
+                value={answers[field.id] ?? ""}
+              />
+            )}
+          </div>
+        ))}
 
-      <div className="noteEditorActions">
-        <button onClick={() => void onSave(template)} type="button">
-          Save note
-        </button>
-        <button onClick={onClose} type="button">
-          Cancel
-        </button>
+        {error !== undefined ? <p role="alert">{error}</p> : null}
+
+        <div className="noteEditorActions">
+          <button onClick={() => void onSave(template)} type="button">
+            Save note
+          </button>
+          <button onClick={onClose} type="button">
+            Cancel
+          </button>
+        </div>
       </div>
-    </aside>
+    </Sheet>
   );
 }

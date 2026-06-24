@@ -18,6 +18,18 @@ import { toEntryId } from "@whetstone/domain";
 const mockedCreateNote = vi.mocked(createNote);
 const mockedUpdateNote = vi.mocked(updateNote);
 
+function templateButton(name: string): HTMLButtonElement {
+  return screen.getByRole("button", { name }) as HTMLButtonElement;
+}
+
+function selectedTemplate(): string | null {
+  const pressed = screen
+    .getByRole("group", { name: "Template" })
+    .querySelector('[aria-pressed="true"]');
+
+  return pressed === null ? null : pressed.textContent;
+}
+
 const templates: ReadonlyArray<NoteTemplateDto> = [
   {
     fields: [
@@ -108,7 +120,7 @@ describe("NoteEditor create mode", () => {
     renderEditor();
 
     expect(screen.getByRole("heading", { name: "New note" })).toBeDefined();
-    expect((screen.getByLabelText("Template") as HTMLSelectElement).value).toBe("vocabulary");
+    expect(selectedTemplate()).toBe("Vocabulary");
     expect(screen.getByLabelText("Meaning in this context").tagName).toBe("TEXTAREA");
     expect(screen.getByLabelText("Memory hook").tagName).toBe("INPUT");
     expect(screen.getByText(/Selected: fox/)).toBeDefined();
@@ -162,7 +174,7 @@ describe("NoteEditor create mode", () => {
     mockedCreateNote.mockResolvedValue(savedNote);
     const { user } = renderEditor();
 
-    await user.selectOptions(screen.getByLabelText("Template"), "thought");
+    await user.click(templateButton("Thought / question"));
     await user.type(screen.getByLabelText("What I noticed"), "clever");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
@@ -207,7 +219,7 @@ describe("NoteEditor create mode", () => {
       target: { draft: { ...subBlockDraft, preselectedTemplateId: "missing" }, kind: "create" }
     });
 
-    expect((screen.getByLabelText("Template") as HTMLSelectElement).value).toBe("vocabulary");
+    expect(selectedTemplate()).toBe("Vocabulary");
   });
 
   it("reports and closes when no templates are available", async () => {
@@ -242,7 +254,7 @@ describe("NoteEditor create mode", () => {
       />
     );
 
-    expect((screen.getByLabelText("Template") as HTMLSelectElement).value).toBe("vocabulary");
+    expect(selectedTemplate()).toBe("Vocabulary");
     expect(screen.queryByText("Note templates are unavailable. Please try again.")).toBeNull();
   });
 });
@@ -253,7 +265,7 @@ describe("NoteEditor edit mode", () => {
 
     expect(screen.getByRole("heading", { name: "Edit note" })).toBeDefined();
     expect(screen.getByText(/Selected: fox/)).toBeDefined();
-    expect((screen.getByLabelText("Template") as HTMLSelectElement).value).toBe("vocabulary");
+    expect(selectedTemplate()).toBe("Vocabulary");
     expect((screen.getByLabelText("Meaning in this context") as HTMLTextAreaElement).value).toBe(
       "a sly animal"
     );
