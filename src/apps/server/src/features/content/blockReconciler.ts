@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
@@ -100,18 +101,11 @@ export async function reconcileWorkBlocks(tx: Transaction, input: ReconcileInput
   });
 
   // Insert fresh unit/block entries (FK targets) before re-pointing preserved blocks.
-  if (unitEntryRows.length > 0) {
-    await tx.insert(entries).values(unitEntryRows);
-  }
-  if (newBlockEntryRows.length > 0) {
-    await tx.insert(entries).values(newBlockEntryRows);
-  }
-  if (unitRows.length > 0) {
-    await tx.insert(readingUnits).values(unitRows);
-  }
-  if (newBlockRows.length > 0) {
-    await tx.insert(blocks).values(newBlockRows);
-  }
+  // Each bulk insert is batched so a large work stays within the DB bind-parameter limit.
+  await insertInBatches(unitEntryRows, (batch) => tx.insert(entries).values(batch));
+  await insertInBatches(newBlockEntryRows, (batch) => tx.insert(entries).values(batch));
+  await insertInBatches(unitRows, (batch) => tx.insert(readingUnits).values(batch));
+  await insertInBatches(newBlockRows, (batch) => tx.insert(blocks).values(batch));
 
   for (const update of preservedUpdates) {
     await tx
@@ -149,7 +143,5 @@ export async function reconcileWorkBlocks(tx: Transaction, input: ReconcileInput
     await tx.delete(entries).where(inArray(entries.id, oldUnitIds));
   }
 
-  if (links.length > 0) {
-    await tx.insert(entryLinks).values(links);
-  }
+  await insertInBatches(links, (batch) => tx.insert(entryLinks).values(batch));
 }

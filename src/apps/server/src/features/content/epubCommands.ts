@@ -6,6 +6,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import { authors, entries, workMeta, workSources } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
 import type { ContentDependencies } from "./contentCommands.js";
+import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent } from "./contentQueries.js";
 
 export type IngestEpubResult =
@@ -78,8 +79,14 @@ export async function ingestEpub(
     workType: "book"
   };
 
+  const expectedBlockCount = units.reduce((total, unit) => total + unit.blocks.length, 0);
+  const content = assertContentPersisted(
+    expectedBlockCount,
+    await loadWorkContent(dependencies.db, workEntryId)
+  );
+
   return {
-    result: { content: await loadWorkContent(dependencies.db, workEntryId), work },
+    result: { content, work },
     status: "ingested"
   };
 }
