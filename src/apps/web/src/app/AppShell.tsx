@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { SafeArea } from "../shared/ui/SafeArea.js";
 import { ThemeToggle } from "../shared/theme/ThemeToggle.js";
+import { ToastViewport } from "../shared/ui/toast/ToastViewport.js";
 import { navDestinations } from "./navigation.js";
 
 function navLinkClassName({ isActive }: { isActive: boolean }): string {
@@ -43,6 +44,7 @@ export function AppShell(): React.JSX.Element {
           <Outlet />
         </main>
       </div>
+      <ToastViewport />
     </SafeArea>
   );
 }

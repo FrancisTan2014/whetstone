@@ -37,6 +37,12 @@ describe("App shell and routes", () => {
     expect(markup).toContain("<svg");
   });
 
+  it("mounts the single toast live region in the shell", () => {
+    const markup = renderAt("/");
+
+    expect(markup).toContain('aria-label="Notifications"');
+  });
+
   it("marks the active destination at the index route", () => {
     const markup = renderAt("/");
 

@@ -1,7 +1,26 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
+import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
+
+// The reader reports note results through the app-wide toast system, so its renders run
+// inside a ToastProvider with the shell's live region mounted — the same way the app wires
+// it — letting the existing "Note saved." assertions resolve against the real viewport.
+function ToastHost({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <ToastProvider>
+      {children}
+      <ToastViewport />
+    </ToastProvider>
+  );
+}
+
+function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
+  return rtlRender(ui, { wrapper: ToastHost });
+}
 
 vi.mock("./readerApi", () => ({
   fetchWorkContent: vi.fn(),

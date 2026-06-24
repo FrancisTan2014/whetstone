@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
-import { Toast } from "../../shared/ui/Toast";
+import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
@@ -118,10 +118,10 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
   const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
   const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
-  const [notice, setNotice] = useState<string | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const scroll = useReaderScroll();
+  const toast = useToast();
 
   useEffect(() => {
     setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -166,7 +166,6 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     setCapture(undefined);
     setLookup(undefined);
     setBornBlockEntryId(undefined);
-    setNotice(undefined);
     setNotes([]);
 
     try {
@@ -207,7 +206,6 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
       return;
     }
 
-    setNotice(undefined);
     setCapture({
       anchorRect: selectionRect(selection),
       draft,
@@ -229,7 +227,6 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   function lookupSelection(active: SelectionCapture): void {
     const term = active.draft.selectedText;
     setCapture(undefined);
-    setNotice(undefined);
     setLookup({ state: { status: "loading" }, term });
 
     lookupTerm(term, active.language)
@@ -245,19 +242,17 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
   }
 
   function onOpenBlockNotes(blockEntryId: string, workEntryId: string): void {
-    setNotice(undefined);
     setPanel({ blockEntryId, kind: "block", workEntryId });
   }
 
   function onEditNote(workEntryId: string, note: NoteDto): void {
-    setNotice(undefined);
     setPanel({ kind: "edit", note, workEntryId });
   }
 
   async function onSavedNote(workEntryId: string, note: NoteDto): Promise<void> {
     setPanel(undefined);
     setBornBlockEntryId(note.blockEntryId);
-    setNotice("Note saved.");
+    toast.success("Note saved.");
     await refreshNotes(workEntryId);
   }
 
@@ -265,12 +260,12 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
     try {
       await deleteNote(workEntryId, note.entryId);
     } catch {
-      setNotice("Could not delete the note. Please try again.");
+      toast.error("Could not delete the note. Please try again.");
       return;
     }
 
     setPanel(undefined);
-    setNotice("Note deleted.");
+    toast.success("Note deleted.");
     await refreshNotes(workEntryId);
   }
 
@@ -307,10 +302,6 @@ export function ReaderPage({ initialWorkEntryId }: ReaderPageProps): React.JSX.E
             { onSizeChange: setSize, prefersReducedMotion, scroll, size }
           )
         : null}
-
-      {notice === undefined ? null : (
-        <Toast message={notice} prefersReducedMotion={prefersReducedMotion} />
-      )}
 
       {capture === undefined ? null : (
         <SelectionToolbar
