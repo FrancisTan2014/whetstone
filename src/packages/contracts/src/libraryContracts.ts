@@ -1,7 +1,13 @@
-import { toAuthorId, type AuthorId, type EntryId, type WorkType } from "@whetstone/domain";
+import {
+  toAuthorId,
+  type AuthorId,
+  type EntryId,
+  type WorkLanguage,
+  type WorkType
+} from "@whetstone/domain";
 import { z } from "zod";
 
-import { workTypeDtoSchema } from "./entryContracts.js";
+import { workLanguageDtoSchema, workTypeDtoSchema } from "./entryContracts.js";
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
@@ -37,7 +43,7 @@ export const workAuthorSelectionSchema = z.discriminatedUnion("mode", [
 export const createWorkRequestSchema = z
   .object({
     author: workAuthorSelectionSchema,
-    language: z.string().refine(isNonBlank, { message: "Work language must be non-empty." }),
+    language: workLanguageDtoSchema,
     title: z.string().refine(isNonBlank, { message: "Work title must be non-empty." }),
     workType: workTypeDtoSchema
   })
@@ -55,7 +61,7 @@ export type AuthorDto = Readonly<{
 export type WorkDto = Readonly<{
   authorId: AuthorId;
   entryId: EntryId;
-  language: string;
+  language: WorkLanguage;
   title: string;
   workType: WorkType;
 }>;

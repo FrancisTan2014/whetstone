@@ -5,6 +5,7 @@ import {
   entryTypes,
   linkTypes,
   toEntryId,
+  workLanguages,
   workTypes,
   type Entry,
   type EntryId,
@@ -12,6 +13,7 @@ import {
   type EntryType,
   type LinkType,
   type NoteAnchor,
+  type WorkLanguage,
   type WorkType
 } from "@whetstone/domain";
 import { z } from "zod";
@@ -20,6 +22,7 @@ export type EntryIdDto = EntryId;
 export type EntryTypeDto = EntryType;
 export type LinkTypeDto = LinkType;
 export type WorkTypeDto = WorkType;
+export type WorkLanguageDto = WorkLanguage;
 export type EntryLinkDto = EntryLink;
 export type NoteAnchorDto = NoteAnchor;
 export type EntryDto = Entry;
@@ -34,6 +37,8 @@ export const entryTypeDtoSchema = z.enum(entryTypes);
 export const linkTypeDtoSchema = z.enum(linkTypes);
 
 export const workTypeDtoSchema = z.enum(workTypes);
+
+export const workLanguageDtoSchema = z.enum(workLanguages);
 
 export const entryLinkDtoSchema = z
   .object({
@@ -100,6 +105,10 @@ export function parseLinkTypeDto(value: unknown): LinkTypeDto {
 
 export function parseWorkTypeDto(value: unknown): WorkTypeDto {
   return workTypeDtoSchema.parse(value);
+}
+
+export function parseWorkLanguageDto(value: unknown): WorkLanguageDto {
+  return workLanguageDtoSchema.parse(value);
 }
 
 export function parseEntryLinkDto(value: unknown): EntryLinkDto {

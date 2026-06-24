@@ -81,13 +81,13 @@ describe("parseCreateWorkRequest", () => {
     expect(
       parseCreateWorkRequest({
         author: { authorId: "author-1", mode: "existing" },
-        language: "zh",
+        language: "zh-CN",
         title: "史记",
         workType: "classical_text"
       })
     ).toEqual({
       author: { authorId: "author-1", mode: "existing" },
-      language: "zh",
+      language: "zh-CN",
       title: "史记",
       workType: "classical_text"
     });
@@ -115,11 +115,11 @@ describe("parseCreateWorkRequest", () => {
     ).toBe(false);
   });
 
-  it("rejects a blank language", () => {
+  it("rejects an unsupported language code", () => {
     expect(
       createWorkRequestSchema.safeParse({
         author: { mode: "new", name: "x" },
-        language: " ",
+        language: "zh",
         title: "t",
         workType: "book"
       }).success

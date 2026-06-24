@@ -1,7 +1,14 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import type { AuthorDto, CreateWorkRequest, WorkListItemDto } from "@whetstone/contracts";
-import { toAuthorId, workTypes, type WorkType } from "@whetstone/domain";
+import {
+  toAuthorId,
+  workLanguageLabels,
+  workLanguages,
+  workTypes,
+  type WorkLanguage,
+  type WorkType
+} from "@whetstone/domain";
 
 import { createAuthor, createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 
@@ -22,7 +29,7 @@ export function AdminLibraryPage(): React.JSX.Element {
   const [authorError, setAuthorError] = useState<string | undefined>(undefined);
 
   const [title, setTitle] = useState("");
-  const [language, setLanguage] = useState("en");
+  const [language, setLanguage] = useState<WorkLanguage>("en");
   const [workType, setWorkType] = useState<WorkType>("book");
   const [authorChoice, setAuthorChoice] = useState<string>(newAuthorOption);
   const [inlineAuthorName, setInlineAuthorName] = useState("");
@@ -76,15 +83,9 @@ export function AdminLibraryPage(): React.JSX.Element {
   async function onSubmitWork(event: FormEvent): Promise<void> {
     event.preventDefault();
     const trimmedTitle = title.trim();
-    const trimmedLanguage = language.trim();
 
     if (trimmedTitle.length === 0) {
       setWorkError("Enter a work title.");
-      return;
-    }
-
-    if (trimmedLanguage.length === 0) {
-      setWorkError("Enter a language.");
       return;
     }
 
@@ -96,7 +97,7 @@ export function AdminLibraryPage(): React.JSX.Element {
     }
 
     try {
-      await createWork({ author, language: trimmedLanguage, title: trimmedTitle, workType });
+      await createWork({ author, language, title: trimmedTitle, workType });
       setTitle("");
       setInlineAuthorName("");
       setWorkError(undefined);
@@ -197,11 +198,17 @@ export function AdminLibraryPage(): React.JSX.Element {
               </select>
 
               <label htmlFor="work-language">Language</label>
-              <input
+              <select
                 id="work-language"
-                onChange={(event) => setLanguage(event.currentTarget.value)}
+                onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
                 value={language}
-              />
+              >
+                {workLanguages.map((code) => (
+                  <option key={code} value={code}>
+                    {workLanguageLabels[code]}
+                  </option>
+                ))}
+              </select>
 
               <label htmlFor="work-author">Author or source</label>
               <select
@@ -239,7 +246,7 @@ export function AdminLibraryPage(): React.JSX.Element {
                 {works.map((item) => (
                   <li key={item.work.entryId}>
                     {item.work.title} — {item.author.name} ({formatWorkType(item.work.workType)},{" "}
-                    {item.work.language}){" "}
+                    {workLanguageLabels[item.work.language]}){" "}
                     <a
                       download={`${item.work.title}.md`}
                       href={`/api/works/${item.work.entryId}/content/markdown`}

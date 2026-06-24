@@ -22,7 +22,7 @@ export const workMeta = pgTable(
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),
-    language: text("language").notNull(),
+    language: text("language", { enum: ["zh-CN", "zh-TW", "en"] as const }).notNull(),
     title: text("title").notNull(),
     workType: text("work_type", {
       enum: ["book", "essay", "blog_post", "classical_text"] as const

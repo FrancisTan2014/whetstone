@@ -36,6 +36,13 @@
       "when": 1782252277506,
       "tag": "0004_block_work_entry_id",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782259587321,
+      "tag": "0005_normalize_work_language",
+      "breakpoints": true
     }
   ]
 }
