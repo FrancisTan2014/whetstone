@@ -92,8 +92,12 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 
 ```powershell
 .\scripts\run-design.cmd            # shape ideas into PRODUCT.md + issues (interactive)
-.\scripts\run-developer.cmd 12      # implement issue #12 (omit the number to pick the next ready issue: lowest-numbered, dependencies closed)
+.\scripts\run-developer.cmd 12      # one-shot: implement issue #12 (omit the number to auto-decide: fix an open changes-requested PR, else the next ready issue)
+.\scripts\run-developer-auto.cmd    # auto: foreground loop — the developer schedules itself and does one unit per tick until you stop it (Ctrl+C)
 .\scripts\run-reviewer.cmd 17       # review PR #17 (omit the number to pick the oldest needs-review PR)
 ```
 
-There is no scheduled or background automation; you trigger each role yourself, one at a time.
+The developer runs two ways: a **one-shot** run that completes a single unit, or
+`run-developer-auto.cmd`, a **foreground** loop where it schedules itself (Copilot's scheduled-task
+feature) and does one unit per tick — fix a PR the reviewer sent back, else implement the next ready
+issue — until you stop it. The reviewer and design roles you trigger yourself, one at a time.
