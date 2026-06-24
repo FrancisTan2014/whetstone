@@ -96,6 +96,10 @@ can navigate them from another package.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
   draft, `NoteEditor.tsx` is the template-based create/edit editor (side panel / bottom sheet),
   `NoteList.tsx` lists notes with edit/delete, `notesApi.ts` calls the templates/notes endpoints.
+  `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
+  (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
+  deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,
+  and a units/blocks overview; `contentApi.ts` calls the content/ingest endpoints.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

@@ -36,9 +36,9 @@ const workB: WorkListItemDto = {
   work: {
     authorId: author.id,
     entryId: toEntryId("work-2"),
-    language: "en",
+    language: "zh-CN",
     title: "Work B",
-    workType: "book"
+    workType: "classical_text"
   }
 };
 
@@ -46,6 +46,8 @@ function emptyContent(workEntryId: string): WorkContentDto {
   return { readingUnits: [], workEntryId: toEntryId(workEntryId) };
 }
 
+// work-1 content: an untitled single-block unit and a titled two-block unit, so the
+// overview exercises both the title fallback and the singular/plural block labels.
 const contentA: WorkContentDto = {
   readingUnits: [
     {
@@ -69,6 +71,13 @@ const contentA: WorkContentDto = {
           mdast: { type: "heading" },
           orderIndex: 0,
           plaintext: "Chapter One"
+        },
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-3"),
+          mdast: { type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "More text."
         }
       ],
       entryId: toEntryId("u-2"),
@@ -99,8 +108,8 @@ const contentB: WorkContentDto = {
 };
 
 beforeAll(() => {
-  // jsdom does not implement Blob.text(); the component uses the standard
-  // File.text() web API (native in browsers), so provide it via FileReader here.
+  // jsdom does not implement Blob.text(); the component uses the standard File.text()
+  // web API (native in browsers), so provide it via FileReader here.
   if (typeof Blob.prototype.text !== "function") {
     Blob.prototype.text = function blobText(this: Blob): Promise<string> {
       return new Promise<string>((resolve, reject) => {
@@ -130,7 +139,7 @@ afterEach(() => {
 async function renderReady(): Promise<ReturnType<typeof userEvent.setup>> {
   const user = userEvent.setup();
   render(<WorkContentPanel />);
-  await screen.findByLabelText("Work");
+  await screen.findByRole("heading", { level: 3, name: "Work A" });
 
   return user;
 }
@@ -152,16 +161,31 @@ describe("WorkContentPanel", () => {
     expect(await screen.findByText("Create a work first to add content.")).toBeDefined();
   });
 
+  it("shows a header with the work's metadata, counts, and a reader entry point", async () => {
+    mockedFetchWorkContent.mockResolvedValue(contentA);
+
+    await renderReady();
+
+    expect(screen.getByRole("heading", { level: 3, name: "Work A" })).toBeDefined();
+    expect(screen.getByText("George Orwell · essay · English")).toBeDefined();
+    expect(screen.getByText("2 reading units · 3 blocks")).toBeDefined();
+
+    const readerLink = screen.getByRole("link", { name: "Open in Reader" });
+    expect(readerLink.getAttribute("href")).toBe("#/reader?work=work-1");
+  });
+
   it("lists a work's reading units and blocks in order", async () => {
     mockedFetchWorkContent.mockResolvedValue(contentA);
 
     await renderReady();
 
-    expect(screen.getByRole("heading", { level: 3, name: "Untitled section" })).toBeDefined();
-    expect(screen.getByRole("heading", { level: 3, name: "Chapter One" })).toBeDefined();
+    expect(screen.getByText("Untitled section")).toBeDefined();
+    expect(screen.getByText("1 block")).toBeDefined();
+    expect(screen.getByText("2 blocks")).toBeDefined();
     expect(screen.getByText("Intro paragraph.")).toBeDefined();
-    expect(screen.getByText("paragraph")).toBeDefined();
+    expect(screen.getByText("More text.")).toBeDefined();
     expect(screen.getByText("heading")).toBeDefined();
+    expect(screen.getAllByText("paragraph")).toHaveLength(2);
   });
 
   it("shows a no-content message for an empty work", async () => {
@@ -170,7 +194,13 @@ describe("WorkContentPanel", () => {
     expect(screen.getByText("No content yet.")).toBeDefined();
   });
 
-  it("adds manual Markdown content and shows the new blocks", async () => {
+  it("hides the work switcher when there is only one work", async () => {
+    await renderReady();
+
+    expect(screen.queryByRole("navigation", { name: "Works" })).toBeNull();
+  });
+
+  it("adds manual Markdown content and reports the ingestion result", async () => {
     const user = await renderReady();
     mockedIngestMarkdown.mockResolvedValue(contentA);
 
@@ -178,6 +208,7 @@ describe("WorkContentPanel", () => {
     await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
 
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(screen.getByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
     expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
       kind: "manual",
       markdown: "# Hi"
@@ -205,7 +236,7 @@ describe("WorkContentPanel", () => {
     ).toBeDefined();
   });
 
-  it("uploads a .md file and shows the new blocks", async () => {
+  it("uploads a .md file and reports the ingestion result", async () => {
     const user = await renderReady();
     mockedIngestMarkdown.mockResolvedValue(contentA);
     const file = new File(["# Hi from file"], "notes.md", { type: "text/markdown" });
@@ -214,6 +245,7 @@ describe("WorkContentPanel", () => {
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(screen.getByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
     expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
       fileName: "notes.md",
       kind: "upload",
@@ -248,9 +280,16 @@ describe("WorkContentPanel", () => {
     );
     const user = await renderReady();
 
-    await user.selectOptions(screen.getByLabelText("Work"), "work-2");
+    await user.click(screen.getByRole("button", { name: "Work B" }));
 
     expect(await screen.findByText("Work B body.")).toBeDefined();
+    expect(screen.getByRole("heading", { level: 3, name: "Work B" })).toBeDefined();
+    expect(
+      screen.getByText("George Orwell · classical text · 中文（简体） Simplified Chinese")
+    ).toBeDefined();
+    expect(screen.getByRole("button", { name: "Work B" }).getAttribute("aria-pressed")).toBe(
+      "true"
+    );
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-2");
   });
 
@@ -265,7 +304,7 @@ describe("WorkContentPanel", () => {
     });
     const user = await renderReady();
 
-    await user.selectOptions(screen.getByLabelText("Work"), "work-2");
+    await user.click(screen.getByRole("button", { name: "Work B" }));
 
     expect(
       await screen.findByText("Could not load this work's content. Please try again.")
