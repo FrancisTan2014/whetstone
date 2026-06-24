@@ -11,7 +11,7 @@ import {
 } from "./readerNavigation";
 
 function block(entryId: string): ReaderUnit["blocks"][number] {
-  return { entryId, markdown: entryId, plaintext: entryId };
+  return { entryId, isHeading: false, markdown: entryId, plaintext: entryId };
 }
 
 const view: ReaderView = {
