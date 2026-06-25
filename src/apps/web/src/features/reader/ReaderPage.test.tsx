@@ -626,6 +626,29 @@ describe("ReaderPage", () => {
     expect(screen.getByText(/Selected: Intro/)).toBeDefined();
   });
 
+  it("suppresses the context menu and callout in the reading area while keeping text selectable", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Intro paragraph.");
+
+    // Right-click in the reading area does not open the browser context menu (default prevented).
+    const reading = screen.getByRole("article", { name: "Reading" });
+    expect(fireEvent.contextMenu(reading)).toBe(false);
+    // The reading surface carries the callout/user-select styling hook.
+    expect(reading.className).toContain("reader");
+
+    // Text is still selectable for lookup/annotation — the selection toolbar still appears.
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    expect(await screen.findByRole("button", { name: "Add note" })).toBeDefined();
+  });
+
   it("anchors a note to the selected occurrence of repeated text", async () => {
     mockedFetchWorkContent.mockResolvedValue(repeatedContent);
     mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);

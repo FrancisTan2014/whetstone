@@ -111,6 +111,16 @@ code {
 .reader {
   margin: 0 auto;
   max-width: 42rem;
+  /*
+   * The reading area is whetstone's own selection surface (#75): keep text fully selectable
+   * for lookup/annotation, but suppress the native touch long-press callout (mobile / Capacitor
+   * WebView) so it does not collide with the selection toolbar. The right-click context menu is
+   * prevented in JS on this article. (The desktop Edge/Chrome selection mini-menu is a browser
+   * setting with no web API and is intentionally out of scope.)
+   */
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: none;
 }
 
 @media (width <= 48rem) {
