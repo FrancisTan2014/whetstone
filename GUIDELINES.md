@@ -485,6 +485,24 @@ Testing should validate behavior and invariants, not implementation trivia. Pref
 
 Testing styled/animated UI: do not assert pixels, colors, fonts, or animation frames (jsdom does not render CSS). Test the style-affecting behavior and logic instead — rendered roles/labels/states, interactions, variant-to-class output (e.g. `cva`), the theme toggle setting `.dark` and persisting, and reduced-motion taking the non-animated path. Visual correctness and animation smoothness are verified manually in a browser and a real WebView, not in unit tests.
 
+## Performance
+
+Correct-but-naive code passes the gate (tests + coverage) yet falls over at real scale — the reader freeze and the selection jank are examples. Performance is an emergent property tests do not catch by default, so treat it as a first-class concern on the paths that matter.
+
+**The trigger:** apply this discipline to paths that **grow with content or usage** — rendering a work's blocks, querying notes/library, ingestion, search, and (later) the learner-model/retrieval the coach reads. Cold, fixed-size paths stay simple; do **not** prematurely optimize them.
+
+- **Design and test at realistic scale.** A work is thousands of blocks; the library/knowledge graph grows unbounded. Reason about, and test, growing paths at realistic N (a full-length book; a large generated fixture) — not the 3-block fixture that hides the cost. (Generalizes the persistence-scale rule above to rendering and queries.)
+- **Algorithmic awareness at scaling boundaries.** No accidental O(n^2); do not repeat O(n) work per interaction, keystroke, or render; prefer batched/indexed/streamed over per-item. State the complexity in the PR when code scales with content or usage.
+- **React render discipline.** Do not re-render large subtrees on unrelated state changes; isolate interaction/UI state from large lists; render only what is needed (chapter-at-a-time, pagination, or virtualization) for large collections.
+- **Leverage the React ecosystem instead of hand-rolling — under the OSS reliability/necessity test.**
+  - **Adopt the React Compiler** (stable; React 19 + Vite). Its build-time **automatic memoization** is the default defense against unnecessary re-renders, so `memo`/`useMemo`/`useCallback` become escape hatches, not routine. Roll out incrementally with the React lint rules; pin the version; still profile.
+  - For very large collections, use a **proven virtualization library** (`@tanstack/react-virtual` or `virtua`) rather than a bespoke windowing implementation — **but** virtualization unmounts off-screen DOM, which **breaks text selection across blocks**; for the annotation reader, prototype it against the selection/lookup requirement before adopting, and prefer bounding N (chapter-at-a-time) when that suffices.
+  - Do not add a performance dependency the built-ins or the compiler already cover.
+- **Measure hot paths; do not guess.** For performance-sensitive changes (reader rendering, ingestion, search, retrieval), measure at realistic scale and record **before/after** in the PR (main-thread long-task duration, rendered/visible counts, query timings). A hot path should have a stated budget (e.g. "no single main-thread task over ~100 ms; render only the visible/active unit").
+- **Foundations get extra scrutiny.** Shared boundaries — the rendering pipeline, data access, and the coming learner-model/retrieval — are reviewed for performance and stability because everything builds on them; a regression there is systemic, not local.
+
+Keep heavy or flaky performance *tests* out of the merge gate (as with the screenshot/dev-smoke harness); rely instead on realistic-scale fixtures, in-PR measurement for hot paths, and review.
+
 ## Pull request expectations
 
 Every PR must state:
@@ -546,6 +564,14 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - React state is updated immutably; no in-place mutation followed by setting the same reference.
 - Module-level mutable state is not used for request/user/session data.
 - Hidden caches are not introduced without explicit ownership, invalidation, and tests.
+
+### Performance and scale
+
+- Code on paths that grow with content or usage (rendering a work, querying notes/library, ingestion, search) stays responsive at realistic N — no accidental O(n^2), no repeated O(n) work per interaction or render, no large-subtree re-render on unrelated state changes.
+- Large collections render only what is needed (chapter-at-a-time, pagination, or a proven virtualization library), not the whole set at once.
+- Performance-sensitive changes record a before/after measurement (or state why none is needed), and meet a stated hot-path budget.
+- A bespoke performance mechanism is not introduced where the React Compiler, React built-ins, or an established library already solve it; any added performance dependency is justified.
+- Changes to shared foundations (rendering pipeline, data access, retrieval) are checked for scale and stability, since they ripple app-wide. Do not flag simple cold-path code as needing optimization.
 
 ### Testability quality
 
