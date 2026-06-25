@@ -110,8 +110,8 @@ tokens live in code (the Tailwind theme) once built; this section records the du
     and English (`en`). EPUB metadata languages are normalized into this set on ingestion.
   - `ReadingUnit` is an ordered unit within a work (chapter/section/essay). It is a container/ordering
     entry, linked from the Work via `contains`.
-  - **`Block` is the atomic, addressable unit** — one Markdown block (paragraph, heading, list item,
-    blockquote, code block). Each block is an `Entry`, linked from its ReadingUnit via `contains`,
+  - **`Block` is the atomic, addressable unit** —   one content block (paragraph, heading, list item,
+      blockquote, code block, or **figure** — an extracted EPUB image with its caption). Each block is an `Entry`, linked from its ReadingUnit via `contains`,
     with a **stable id** that survives edits and re-imports. Blocks are what notes anchor to and what
     search returns.
 - A short work (essay, blog post) has one ReadingUnit; a book/classic has many ordered units.
@@ -155,7 +155,7 @@ Staged by difficulty and value:
   ReadingUnit by default; headings infer further structure.
 - **v0 — EPUB**: `.epub` upload. The structured spine gives reading order; the OPF gives title /
   author / language; each chapter's XHTML becomes a ReadingUnit of blocks. **This delivers the
-  whole-book case (史记) without manual typing.**
+  whole-book case (史记) without manual typing.** Figure images and their captions are extracted into figure blocks.
 - **Next stage — PDF / scanned**: deferred. Handled by an **isolated Python ingestion worker**
   (document-AI + CJK OCR) behind the same normalized contract, opened only when its fidelity gain is
   worth the added runtime. Not part of v0. (See future direction.)
@@ -201,6 +201,8 @@ be clean and consistent:
   flattened paragraphs.
 - Code blocks use monospace on a distinct surface; inline code is distinguished. Tables,
   blockquotes/epigraphs, and footnotes are styled for readability.
+- **Figures** (EPUB images) render as a real figure — the image sized to the reading measure with its
+  caption beneath (never a stray heading); a missing or unsupported image degrades to its caption alone.
 - Front matter (title/copyright/dedication units) is de-emphasized, not rendered as giant repeated
   headings.
 - Typography targets: reading measure ~66ch (Latin), line-height >= 1.5, comfortable body size (~18px),
@@ -326,6 +328,9 @@ does not change the "No LLM note drafting" non-goal.
 - No voice or audio features.
 - No daily routine; no complicated settings.
 - No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
+- No remote (`http`) images, SVG, or manual/Markdown image upload in v0: figure support is **EPUB-only**,
+  served from bytes extracted at ingestion. Figures are display-only (not yet annotatable; caption text
+  stays selectable). These are deferred, not permanent exclusions.
 - No authentication or login UI in v0: a single default user (one active person; "admin" and "reader" are
   one person in different modes). The data model still carries a **user dimension for personal data** (see
   Identity & ownership) so multi-user is a clean future migration, not a retrofit. No sign-in, sessions, or
