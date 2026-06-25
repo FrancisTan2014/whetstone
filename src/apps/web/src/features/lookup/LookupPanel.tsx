@@ -29,8 +29,9 @@ export type LookupPanelProps = Readonly<{
   term: string;
 }>;
 
-// A single numbered sense: its definition, any examples (indented and italic), and any
-// synonyms as compact chips.
+// A single numbered sense: its definition and any examples (indented and italic). Synonyms are
+// deliberately not rendered here — they belong once to the whole part-of-speech section (see
+// renderPartOfSpeech), never repeated under each sense.
 function renderSense(sense: DictionarySense, index: number): React.JSX.Element {
   return (
     <li className="lookupSense" key={index}>
@@ -40,28 +41,55 @@ function renderSense(sense: DictionarySense, index: number): React.JSX.Element {
           “{example}”
         </span>
       ))}
-      {sense.synonyms.length === 0 ? null : (
-        <ul aria-label="Synonyms" className="lookupSynonyms">
-          {sense.synonyms.map((synonym, synonymIndex) => (
-            <li className="lookupSynonym" key={synonymIndex}>
-              {synonym}
-            </li>
-          ))}
-        </ul>
-      )}
     </li>
   );
 }
 
-// One part-of-speech group: a color-coded section with its label once (when present), then a
-// numbered list of its senses. The hue class drives the section's tokenized (Day/Night) color.
+// The part of speech's synonyms shown once: the union of its senses' synonyms, deduplicated
+// case-insensitively and kept in first-seen order. WordNet merges the same synonym set onto
+// every sense, so collapsing them here is what stops the chips from repeating under each sense.
+function partOfSpeechSynonyms(part: DictionaryPartOfSpeech): ReadonlyArray<string> {
+  const seen = new Set<string>();
+  const synonyms: string[] = [];
+
+  for (const sense of part.senses) {
+    for (const synonym of sense.synonyms) {
+      const key = synonym.toLowerCase();
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        synonyms.push(synonym);
+      }
+    }
+  }
+
+  return synonyms;
+}
+
+// One part-of-speech group: a color-coded section with its label once (when present), a numbered
+// list of its senses, then a single "Synonyms" row for the whole part of speech — deduplicated,
+// not repeated under each sense. The hue class drives the section's tokenized (Day/Night) color.
 function renderPartOfSpeech(part: DictionaryPartOfSpeech, index: number): React.JSX.Element {
+  const synonyms = partOfSpeechSynonyms(part);
+
   return (
     <section className={`lookupGroup ${partOfSpeechHueClass(part.partOfSpeech)}`} key={index}>
       {part.partOfSpeech === undefined ? null : (
         <p className="lookupPartOfSpeech">{part.partOfSpeech}</p>
       )}
       <ol className="lookupSenses">{part.senses.map(renderSense)}</ol>
+      {synonyms.length === 0 ? null : (
+        <div className="lookupSynonymsRow">
+          <span className="lookupSynonymsLabel">Synonyms</span>
+          <ul aria-label="Synonyms" className="lookupSynonyms">
+            {synonyms.map((synonym, synonymIndex) => (
+              <li className="lookupSynonym" key={synonymIndex}>
+                {synonym}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

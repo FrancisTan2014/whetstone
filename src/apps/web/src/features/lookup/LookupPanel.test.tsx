@@ -164,6 +164,38 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("place").textContent).toBe("place");
   });
 
+  it("renders synonyms once per part of speech, deduplicated across its senses", () => {
+    renderPanel(
+      {
+        entry: {
+          headword: "set",
+          partsOfSpeech: [
+            {
+              partOfSpeech: "verb",
+              senses: [
+                { definition: "to put in place", examples: [], synonyms: ["place", "position"] },
+                { definition: "to fix firmly", examples: [], synonyms: ["Place", "fix"] }
+              ]
+            }
+          ],
+          pronunciations: [],
+          sources: []
+        },
+        status: "loaded"
+      },
+      { matchers: desktop }
+    );
+
+    // A single "Synonyms" row for the whole part of speech, not one under each sense.
+    const lists = screen.getAllByRole("list", { name: "Synonyms" });
+    expect(lists).toHaveLength(1);
+
+    // Deduplicated case-insensitively ("Place" drops to the first-seen "place"), order preserved.
+    const chips = within(lists[0] as HTMLElement).getAllByRole("listitem");
+    expect(chips.map((chip) => chip.textContent)).toEqual(["place", "position", "fix"]);
+    expect(screen.getByText("Synonyms").textContent).toBe("Synonyms");
+  });
+
   it("numbers senses within a part of speech using an ordered list", () => {
     renderPanel(loadedEntry, { matchers: desktop });
 
