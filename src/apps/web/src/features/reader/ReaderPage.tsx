@@ -434,21 +434,21 @@ export function ReaderPage({
   };
 
   return (
-    <section aria-labelledby="reader-heading" className="readerShell">
-      <h1 id="reader-heading">Reader</h1>
+    <section aria-label="Reader" className="readerShell">
+      <a aria-label="Back to Library" className="readerExit" href="#/">
+        ← Library
+      </a>
 
       {state.status === "loadingWorks" ? <LoadingIndicator label="Loading works…" /> : null}
       {state.status === "worksError" ? <p role="alert">Could not load works.</p> : null}
 
       {state.status === "ready"
-        ? renderReady(
-            state.works,
-            state.reading,
-            handlers,
-            (workEntryId) => void openWork(state.works, workEntryId),
-            selectUnit,
-            { onSizeChange: setSize, prefersReducedMotion, scroll, size }
-          )
+        ? renderReady(state.works, state.reading, handlers, selectUnit, {
+            onSizeChange: setSize,
+            prefersReducedMotion,
+            scroll,
+            size
+          })
         : null}
 
       {capture === undefined ? null : (
@@ -493,14 +493,9 @@ function renderReady(
   works: ReadonlyArray<WorkListItemDto>,
   reading: ReadingState,
   handlers: ReaderHandlers,
-  onOpen: (workEntryId: string) => void,
   onSelectUnit: (index: number) => void,
   chromeBase: ReaderChromeBase
 ): React.JSX.Element {
-  if (works.length === 0) {
-    return <p>No works yet. Create one in the library admin.</p>;
-  }
-
   const openWorkEntryId = reading.status === "idle" ? undefined : reading.workEntryId;
   const openWork = works.find((item) => item.work.entryId === openWorkEntryId);
   const chrome: ReaderChrome = {
@@ -509,27 +504,7 @@ function renderReady(
     title: openWork?.work.title ?? ""
   };
 
-  return (
-    <div className="readerLayout">
-      <nav aria-label="Works">
-        <ul className="readerWorkList">
-          {works.map((item) => (
-            <li key={item.work.entryId}>
-              <button
-                aria-pressed={item.work.entryId === openWorkEntryId}
-                onClick={() => onOpen(item.work.entryId)}
-                type="button"
-              >
-                {item.work.title}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
-
-      {renderReading(reading, handlers, onSelectUnit, chrome)}
-    </div>
-  );
+  return renderReading(reading, handlers, onSelectUnit, chrome);
 }
 
 function renderReading(
@@ -540,7 +515,11 @@ function renderReading(
 ): React.JSX.Element {
   switch (reading.status) {
     case "idle":
-      return <p className="readerHint">Select a work to start reading.</p>;
+      return (
+        <div className="readerEmpty">
+          <p>Open a work from your Library</p>
+        </div>
+      );
     case "loading":
       return <LoadingIndicator label="Loading the work…" />;
     case "error":
@@ -581,7 +560,7 @@ function renderViewing(
     ) : null;
 
   return (
-    <div className={toc === null ? "readerReading" : "readerReading readerReading--withToc"}>
+    <div className="readerReading">
       {toc}
       <div className="readerReadingMain">
         <ReadingHeader

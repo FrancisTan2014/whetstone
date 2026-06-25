@@ -18,8 +18,8 @@ function LibraryMode(): React.JSX.Element {
 }
 
 // The reader route opens straight into a work when the library passes `?work=<entryId>`;
-// an optional `?block=<entryId>` deep-links to a specific block. Without the params it falls
-// back to the reader's own work picker.
+// an optional `?block=<entryId>` deep-links to a specific block. Without a work param the
+// reader shows its empty state prompting the reader to open a work from the Library.
 function ReaderRoute(): React.JSX.Element {
   const [searchParams] = useSearchParams();
 

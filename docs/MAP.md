@@ -100,7 +100,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `ModePlaceholder` until their slices land); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
-  destinations. Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
+  destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
+  owns the viewport (immersive reading room); the reader provides its own back-to-Library control.
+  Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
   `100vh`), `Button` (token variants via `cva`; a `pending` prop shows a `Spinner`, sets `aria-busy`,
@@ -129,8 +131,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   specific block). `reader/` is **目录-driven and renders one reading unit at a time** (no whole-book
   freeze): `readerModel.ts` orders units/blocks and serializes each block via domain `blockToMarkdown`;
   `readerNavigation.ts` holds the pure unit-selection logic (which unit holds a block, the initial unit
-  for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 (sidebar/desktop,
-  drawer/mobile) listing units with the current one marked. `ReaderPage.tsx` keeps an `activeUnitIndex`,
+  for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 — a dismissable
+  drawer at every width (toggle + backdrop, never a persistent sidebar) listing units with the current
+  one marked. `ReaderPage.tsx` is the immersive single-column reading room: a work is opened from the
+  Library via `?work=` (no in-reader work-picker or page heading; with no work open it shows an explicit
+  "Open a work from your Library" empty state), with a back-to-Library hash anchor always reachable. It
+  keeps an `activeUnitIndex`,
   renders only that unit safely with `react-markdown` + `rehype-sanitize` (a schema that also disallows
   `img`, so no image is fetched/rendered; an `a` component override renders the source's in-content
   links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —

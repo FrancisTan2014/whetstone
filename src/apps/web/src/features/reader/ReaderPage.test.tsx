@@ -344,7 +344,7 @@ describe("ReaderPage", () => {
     render(<ReaderPage />);
 
     expect(screen.getByText("Loading works…")).toBeDefined();
-    await screen.findByRole("button", { name: "Politics and the English Language" });
+    await screen.findByText("Open a work from your Library");
   });
 
   it("shows an error when works fail to load", async () => {
@@ -355,23 +355,20 @@ describe("ReaderPage", () => {
     expect(await screen.findByText("Could not load works.")).toBeDefined();
   });
 
-  it("prompts to create a work when none exist", async () => {
+  it("shows the empty state when no works exist", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [] });
 
     render(<ReaderPage />);
 
-    expect(await screen.findByText("No works yet. Create one in the library admin.")).toBeDefined();
+    expect(await screen.findByText("Open a work from your Library")).toBeDefined();
   });
 
-  it("lists works and prompts the reader to open one", async () => {
+  it("shows the empty state and a back-to-Library control when no work is open", async () => {
     render(<ReaderPage />);
 
-    const openButton = await screen.findByRole("button", {
-      name: "Politics and the English Language"
-    });
-
-    expect(screen.getByText("Select a work to start reading.")).toBeDefined();
-    expect(openButton.getAttribute("aria-pressed")).toBe("false");
+    expect(await screen.findByText("Open a work from your Library")).toBeDefined();
+    const back = screen.getByRole("link", { name: "Back to Library" });
+    expect(back.getAttribute("href")).toBe("#/");
   });
 
   it("opens the requested work on arrival when given an initial work entry id", async () => {
@@ -382,9 +379,6 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-2");
-    expect(
-      screen.getByRole("button", { name: "A Tale of Two Cities" }).getAttribute("aria-pressed")
-    ).toBe("true");
   });
 
   it("opens the unit deep-linked by a block param and scrolls to that block", async () => {
@@ -399,12 +393,12 @@ describe("ReaderPage", () => {
     expect(blockElement(container, "b-2")?.scrollIntoView).toHaveBeenCalled();
   });
 
-  it("falls back to the work picker when the initial work entry id is unknown", async () => {
+  it("shows the empty state when the initial work entry id is unknown", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
 
     render(<ReaderPage initialWorkEntryId="missing-work" />);
 
-    expect(await screen.findByText("Select a work to start reading.")).toBeDefined();
+    expect(await screen.findByText("Open a work from your Library")).toBeDefined();
     expect(mockedFetchWorkContent).not.toHaveBeenCalled();
   });
 
@@ -420,11 +414,7 @@ describe("ReaderPage", () => {
   it("renders only the active reading unit and switches units via the 目录", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     // The first unit opens by default; the second unit's blocks are not mounted yet.
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
@@ -449,20 +439,12 @@ describe("ReaderPage", () => {
     ).toEqual(["b-2", "b-3"]);
 
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-1");
-    expect(
-      screen
-        .getByRole("button", { name: "Politics and the English Language" })
-        .getAttribute("aria-pressed")
-    ).toBe("true");
   });
 
   it("reads a single-unit work without a 目录", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
     mockedFetchWorkContent.mockResolvedValue(chineseContent);
-    const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(await screen.findByRole("button", { name: "中文测试" }));
+    render(<ReaderPage initialWorkEntryId="work-zh" />);
 
     expect(await screen.findByText("你好世界")).toBeDefined();
     expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
@@ -471,11 +453,7 @@ describe("ReaderPage", () => {
   it("shows the untitled active unit without a heading", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     // The first unit is untitled, so the reading article renders no chapter heading.
@@ -505,14 +483,9 @@ describe("ReaderPage", () => {
         resolveContent = resolve;
       })
     );
-    const user = userEvent.setup();
-    render(<ReaderPage />);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
-
-    expect(screen.getByText("Loading the work…")).toBeDefined();
+    expect(await screen.findByText("Loading the work…")).toBeDefined();
 
     resolveContent(emptyContent("work-1"));
 
@@ -521,56 +494,20 @@ describe("ReaderPage", () => {
 
   it("shows an error when a work's content fails to load", async () => {
     mockedFetchWorkContent.mockRejectedValue(new Error("boom"));
-    const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("Could not load this work. Please try again.")).toBeDefined();
   });
 
   it("shows a message when an opened work has no content", async () => {
-    const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("This work has no content yet.")).toBeDefined();
   });
 
-  it("marks only the open work as pressed among several", async () => {
-    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
-    const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
-    await screen.findByText("Intro paragraph.");
-
-    expect(
-      screen
-        .getByRole("button", { name: "Politics and the English Language" })
-        .getAttribute("aria-pressed")
-    ).toBe("true");
-    expect(
-      screen.getByRole("button", { name: "A Tale of Two Cities" }).getAttribute("aria-pressed")
-    ).toBe("false");
-  });
-
   it("renders Markdown safely and does not execute raw HTML", async () => {
     mockedFetchWorkContent.mockResolvedValue(unsafeContent);
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Safe heading" })).toBeDefined();
     expect(container.querySelector("script")).toBeNull();
@@ -579,12 +516,7 @@ describe("ReaderPage", () => {
 
   it("renders in-content links as non-navigating text that stays selectable", async () => {
     mockedFetchWorkContent.mockResolvedValue(linkContent);
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Chapter 2");
     const block = blockElement(container, "b-1");
 
@@ -610,11 +542,7 @@ describe("ReaderPage", () => {
   it("opens the selection toolbar then the editor when text is selected in a block", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
@@ -628,12 +556,7 @@ describe("ReaderPage", () => {
 
   it("suppresses the context menu and callout in the reading area while keeping text selectable", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     // Right-click in the reading area does not open the browser context menu (default prevented).
@@ -653,11 +576,7 @@ describe("ReaderPage", () => {
     mockedFetchWorkContent.mockResolvedValue(repeatedContent);
     mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     const block = await screen.findByText("the cat sat on the mat");
     // Select the second "the" (offset 15-18), not the first match at offset 0.
     selectRangeIn(firstTextNode(block as HTMLElement), 15, 18);
@@ -683,12 +602,7 @@ describe("ReaderPage", () => {
 
   it("does not open the toolbar when there is no selection", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     window.getSelection()?.removeAllRanges();
     fireEvent.mouseUp(blockElement(container, "b-1"));
@@ -698,12 +612,7 @@ describe("ReaderPage", () => {
 
   it("does not open the toolbar for a whitespace-only selection", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     const block = await screen.findByText("Intro paragraph.");
     // "Intro paragraph." has a space at index 5.
     selectRangeIn(firstTextNode(block as HTMLElement), 5, 6);
@@ -716,11 +625,7 @@ describe("ReaderPage", () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
@@ -737,11 +642,7 @@ describe("ReaderPage", () => {
   it("dismisses the selection toolbar without opening the editor", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
@@ -756,11 +657,7 @@ describe("ReaderPage", () => {
   it("closes the editor when cancelled", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
@@ -777,11 +674,7 @@ describe("ReaderPage", () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     mockedFetchNoteTemplates.mockRejectedValue(new Error("nope"));
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     const block = blockElement(container, "b-1");
     selectText(block, "Intro");
@@ -820,11 +713,8 @@ async function openHuedReader(): Promise<{
   mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
   mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
   const user = userEvent.setup();
-  const { container } = render(<ReaderPage />);
+  const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
-  await user.click(
-    await screen.findByRole("button", { name: "Politics and the English Language" })
-  );
   await screen.findByText("Intro paragraph.");
 
   return { container, user };
@@ -947,12 +837,8 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
 async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
   mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
   mockedFetchNotes.mockResolvedValue({ notes });
-  const user = userEvent.setup();
-  const { container } = render(<ReaderPage />);
+  const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
-  await user.click(
-    await screen.findByRole("button", { name: "Politics and the English Language" })
-  );
   await screen.findByText("Intro paragraph.");
 
   return container;
@@ -995,11 +881,7 @@ describe("ReaderPage note management", () => {
     mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
     mockedUpdateNote.mockResolvedValue(updated);
     const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     await user.click(screen.getByRole("button", { name: "View 1 note" }));
@@ -1038,11 +920,7 @@ describe("ReaderPage note management", () => {
     mockedFetchNotes.mockResolvedValueOnce({ notes: [second] });
     mockedDeleteNote.mockResolvedValue();
     const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     await user.click(screen.getByRole("button", { name: "View 2 notes" }));
@@ -1075,11 +953,7 @@ describe("ReaderPage note management", () => {
     mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
     mockedUpdateNote.mockResolvedValue(updated);
     const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     const region = screen.getByRole("region", { name: "Your notes" });
@@ -1101,11 +975,7 @@ describe("ReaderPage note management", () => {
     mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
     mockedDeleteNote.mockResolvedValue();
     const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     const region = screen.getByRole("region", { name: "Your notes" });
@@ -1121,11 +991,7 @@ describe("ReaderPage note management", () => {
     mockedFetchNotes.mockResolvedValue({ notes: [makeNote()] });
     mockedDeleteNote.mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
-    render(<ReaderPage />);
-
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     const region = screen.getByRole("region", { name: "Your notes" });
@@ -1185,11 +1051,7 @@ describe("ReaderPage note management", () => {
 describe("ReaderPage reading controls", () => {
   async function openMultiUnitWork(): Promise<HTMLElement> {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-    await user.click(
-      await screen.findByRole("button", { name: "Politics and the English Language" })
-    );
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
     return container;
@@ -1328,8 +1190,8 @@ describe("ReaderPage vocabulary lookup", () => {
     });
 
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
-    await user.click(await screen.findByRole("button", { name: "中文测试" }));
+    const { container } = render(<ReaderPage initialWorkEntryId="work-zh" />);
+    await screen.findByText("你好世界");
     const block = blockElement(container, "b-zh");
 
     selectText(block, "你好");

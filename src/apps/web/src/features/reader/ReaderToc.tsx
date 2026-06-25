@@ -10,9 +10,9 @@ export type ReaderTocProps = Readonly<{
 
 // The 目录 (table of contents): lists a work's reading units in order with the current one
 // marked, so the reader moves chapter by chapter instead of scrolling a whole book. It is a
-// persistent sidebar on desktop/tablet and a collapsible drawer on mobile (CSS hides the
-// toggle on wide screens, where the list is always shown). Selecting a unit opens it and
-// closes the mobile drawer.
+// dismissable drawer at every width — the toggle opens it over a backdrop so the immersive
+// reading column is never split by a persistent sidebar. Selecting a unit opens it and closes
+// the drawer.
 export function ReaderToc({ activeIndex, items, onSelect }: ReaderTocProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
 
