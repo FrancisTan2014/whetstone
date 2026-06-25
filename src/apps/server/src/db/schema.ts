@@ -140,6 +140,27 @@ export const notes = pgTable("notes", {
   userId: text("user_id").notNull()
 });
 
+// Per-user, per-work reading position: the reading unit the reader last had open and a
+// best-effort topmost-visible block anchor within it, so reopening a work resumes where the
+// reader left off — durably on the server (it survives a localStorage clear, a new browser, or a
+// different device, and the server is the source of truth). One row per (user, work), enforced by
+// the composite primary key. `anchor_block_entry_id` is nullable: null means the top of the unit.
+export const readingPositions = pgTable(
+  "reading_positions",
+  {
+    anchorBlockEntryId: text("anchor_block_entry_id").references(() => entries.id),
+    unitEntryId: text("unit_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    userId: text("user_id").notNull(),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id)
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.workEntryId] })]
+);
+
 // The anchor binds a note to a stable block id, with an optional sub-block character
 // offset range and the selected-text / surrounding-context snapshots.
 export const noteAnchors = pgTable(

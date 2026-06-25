@@ -39,6 +39,11 @@ vi.mock("../lookup/lookupApi", () => ({
   lookupTerm: vi.fn()
 }));
 
+vi.mock("./readingPositionApi", () => ({
+  fetchReadingPosition: vi.fn(),
+  saveReadingPosition: vi.fn()
+}));
+
 import {
   createNote,
   deleteNote,
@@ -48,8 +53,8 @@ import {
 } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
+import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { applyUnitForBlock, applyUnitSelection, ReaderPage, viewingPosition } from "./ReaderPage";
-import { readingPositionKey } from "./readingPosition";
 import type {
   NoteDto,
   NoteTemplateDto,
@@ -66,6 +71,8 @@ const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedUpdateNote = vi.mocked(updateNote);
 const mockedDeleteNote = vi.mocked(deleteNote);
 const mockedLookupTerm = vi.mocked(lookupTerm);
+const mockedFetchReadingPosition = vi.mocked(fetchReadingPosition);
+const mockedSaveReadingPosition = vi.mocked(saveReadingPosition);
 
 const noteTemplates: ReadonlyArray<NoteTemplateDto> = [
   {
@@ -340,14 +347,15 @@ beforeEach(() => {
   window.getSelection()?.removeAllRanges();
   // jsdom does not implement scrollIntoView; the jump-back affordance calls it.
   HTMLElement.prototype.scrollIntoView = vi.fn();
-  // jsdom does not implement scrollTo; restoring a saved offset calls it.
+  // jsdom does not implement scrollTo; keep it stubbed so any library scroll call is a no-op.
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
-  // Reading position persists to localStorage; clear it so cases do not leak into each other.
-  window.localStorage.clear();
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
   mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
   mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
+  // The server is the source of truth for reading position; default to "no saved position".
+  mockedFetchReadingPosition.mockResolvedValue(undefined);
+  mockedSaveReadingPosition.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -1323,49 +1331,54 @@ describe("ReaderPage unit reducers", () => {
 });
 
 describe("ReaderPage reading position", () => {
-  it("restores the saved reading unit and scroll offset when reopening a work", async () => {
-    window.localStorage.setItem(
-      readingPositionKey("work-1"),
-      JSON.stringify({ scrollOffset: 320, unitEntryId: "u-2" })
-    );
+  it("resumes the saved unit and scrolls to its block anchor when reopening a work", async () => {
+    mockedFetchReadingPosition.mockResolvedValue({ anchorBlockEntryId: "b-2", unitEntryId: "u-2" });
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
 
-    render(<ReaderPage initialWorkEntryId="work-1" />);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("Heading text")).toBeDefined();
     expect(screen.queryByText("Intro paragraph.")).toBeNull();
-    expect(window.scrollTo).toHaveBeenCalledWith(0, 320);
+    expect(mockedFetchReadingPosition).toHaveBeenCalledWith("work-1");
+    expect(blockElement(container, "b-2").scrollIntoView).toHaveBeenCalled();
   });
 
   it("opens the first unit when the saved unit no longer exists", async () => {
-    window.localStorage.setItem(
-      readingPositionKey("work-1"),
-      JSON.stringify({ scrollOffset: 40, unitEntryId: "u-removed" })
-    );
+    mockedFetchReadingPosition.mockResolvedValue({ unitEntryId: "u-removed" });
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(blockElement(container, "b-1").scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("opens the first unit when the position fetch fails (offline) without error", async () => {
+    mockedFetchReadingPosition.mockRejectedValue(new Error("offline"));
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
 
     render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
-    expect(window.scrollTo).not.toHaveBeenCalled();
   });
 
-  it("saves the current unit per work as the reader navigates", async () => {
+  it("saves the current unit per work to the server as the reader navigates", async () => {
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
     const user = userEvent.setup();
 
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    const savedUnit = (): string =>
-      JSON.parse(window.localStorage.getItem(readingPositionKey("work-1")) ?? "{}").unitEntryId;
-    expect(savedUnit()).toBe("u-1");
+    const lastSavedUnit = (): string | undefined =>
+      mockedSaveReadingPosition.mock.calls.at(-1)?.[1].unitEntryId;
+    expect(mockedSaveReadingPosition).toHaveBeenCalledWith("work-1", { unitEntryId: "u-1" });
+    expect(lastSavedUnit()).toBe("u-1");
 
     const toc = await openTocDrawer(user);
     await user.click(within(toc).getByRole("button", { name: "Section Two" }));
     await screen.findByText("Heading text");
 
-    expect(savedUnit()).toBe("u-2");
+    expect(lastSavedUnit()).toBe("u-2");
   });
 });
 

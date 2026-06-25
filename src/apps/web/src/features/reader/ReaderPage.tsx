@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Markdown, { type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -25,8 +25,9 @@ import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
 import { isUnitTitleRedundant } from "./readerHeadings";
 import { clampUnitIndex, targetUnitForBlock, unitTocLabel, workProgress } from "./readerNavigation";
-import { createLocalStoragePositionStore, resolveOpening } from "./readingPosition";
-import { useReadingPositionWriter } from "./useReadingPositionWriter";
+import { resolveOpening } from "./readingPosition";
+import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
+import { useReadingPositionWriter, type SaveReadingPosition } from "./useReadingPositionWriter";
 import { ReaderToc } from "./ReaderToc";
 import { ReadingHeader } from "./ReadingHeader";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
@@ -88,10 +89,9 @@ type ReadingState =
       activeUnitIndex: number;
       // One-shot scroll target carried in state (not refs): the consuming effect reads it after
       // the unit renders and scrolls there. Cleared by the next unit-reducer transition so a
-      // stale target never re-scrolls. `scrollBlockEntryId` jumps to a block (deep link or a
-      // jump to a note/highlight); `scrollOffset` restores a saved pixel offset.
+      // stale target never re-scrolls. `scrollBlockEntryId` jumps to a block — a deep link, a jump
+      // to a note/highlight, or a restored reading position's block anchor.
       scrollBlockEntryId?: string | undefined;
-      scrollOffset?: number | undefined;
       status: "viewing";
       view: ReaderView;
       workEntryId: string;
@@ -115,8 +115,7 @@ export function applyUnitSelection(state: ReaderState, index: number): ReaderSta
     reading: {
       ...state.reading,
       activeUnitIndex: clampUnitIndex(state.reading.view, index),
-      scrollBlockEntryId: undefined,
-      scrollOffset: undefined
+      scrollBlockEntryId: undefined
     }
   };
 }
@@ -140,8 +139,7 @@ export function applyUnitForBlock(state: ReaderState, blockEntryId: string): Rea
     reading: {
       ...state.reading,
       activeUnitIndex: target,
-      scrollBlockEntryId: blockEntryId,
-      scrollOffset: undefined
+      scrollBlockEntryId: blockEntryId
     }
   };
 }
@@ -241,25 +239,29 @@ export function ReaderPage({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const scroll = useReaderScroll();
   const toast = useToast();
-  // localStorage-backed per-work reading position; created once so its identity is stable.
-  const positionStore = useMemo(() => createLocalStoragePositionStore(window.localStorage), []);
-  useReadingPositionWriter(positionStore, viewingPosition(state));
+  // The reader's position is durable server state (per user + work). Saving is best-effort: a
+  // network failure (offline) is swallowed so it never breaks reading or logs an error. The
+  // callback identity is stable so the writer effect does not re-subscribe.
+  const savePosition = useCallback<SaveReadingPosition>((workEntryId, position) => {
+    void saveReadingPosition(workEntryId, position).catch(() => {
+      // Best-effort durable position; ignore network failures.
+    });
+  }, []);
+  useReadingPositionWriter(savePosition, viewingPosition(state));
 
-  // After the active unit renders, consume the viewing scroll target: jump to a requested block
-  // (a deep link, or a jump to a note/highlight in another unit) or restore the saved offset.
-  // The target lives in the reading state and is cleared by the next unit-reducer transition, so
-  // this effect only performs the scroll — it never calls setState, and uses no refs.
+  // After the active unit renders, consume the viewing scroll target: jump to a requested block —
+  // a deep link, a jump to a note/highlight in another unit, or a restored reading position's block
+  // anchor. The target lives in the reading state and is cleared by the next unit-reducer
+  // transition, so this effect only performs the scroll — it never calls setState, and uses no refs.
   useEffect(() => {
     if (state.status !== "ready" || state.reading.status !== "viewing") {
       return;
     }
 
-    const { scrollBlockEntryId, scrollOffset } = state.reading;
+    const { scrollBlockEntryId } = state.reading;
 
     if (scrollBlockEntryId !== undefined) {
       scrollToBlock(scrollBlockEntryId);
-    } else if (scrollOffset !== undefined) {
-      window.scrollTo(0, scrollOffset);
     }
   }, [state]);
 
@@ -287,7 +289,7 @@ export function ReaderPage({
         const noteList = await fetchNotes(workEntryId);
         setNotes(noteList.notes);
         const view = buildReaderView(content);
-        const savedPosition = positionStore.read(workEntryId);
+        const savedPosition = await fetchReadingPosition(workEntryId).catch(() => undefined);
         const plan = resolveOpening(view, {
           ...(deepLinkBlockEntryId === undefined ? {} : { deepLinkBlockEntryId }),
           ...(savedPosition === undefined ? {} : { savedPosition })
@@ -301,8 +303,7 @@ export function ReaderPage({
             workEntryId,
             ...(plan.scrollBlockEntryId === undefined
               ? {}
-              : { scrollBlockEntryId: plan.scrollBlockEntryId }),
-            ...(plan.scrollOffset === undefined ? {} : { scrollOffset: plan.scrollOffset })
+              : { scrollBlockEntryId: plan.scrollBlockEntryId })
           },
           status: "ready",
           works
@@ -328,7 +329,7 @@ export function ReaderPage({
         void openInitialWork(works, requested.work.entryId, initialBlockEntryId);
       })
       .catch(() => setState({ status: "worksError" }));
-  }, [initialBlockEntryId, initialWorkEntryId, positionStore]);
+  }, [initialBlockEntryId, initialWorkEntryId]);
 
   useEffect(() => {
     fetchNoteTemplates()

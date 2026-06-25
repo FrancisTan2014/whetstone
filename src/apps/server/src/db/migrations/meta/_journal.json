@@ -50,6 +50,13 @@
       "when": 1782370040145,
       "tag": "0006_melted_true_believers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782372236990,
+      "tag": "0007_dry_boomer",
+      "breakpoints": true
     }
   ]
 }

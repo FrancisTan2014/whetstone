@@ -1,18 +1,23 @@
 import { useEffect } from "react";
 
-import type { PositionStore } from "./readingPosition";
+import { topmostVisibleBlockId } from "./readingAnchor";
+import type { ReadingPosition } from "./readingPosition";
 
-// Writes are throttled so scrolling does not thrash localStorage.
+// Scroll writes are debounced so scrolling does not flood the server.
 export const positionWriteDelayMs = 300;
 
 export type ReadingPositionTarget = Readonly<{ unitEntryId: string; workEntryId: string }>;
 
-// Persists the reader's position for the open work: it writes once when the work/unit
-// becomes active (so a unit switch is recorded immediately) and again, debounced, as the
-// reader scrolls. Idle/loading states (no target) write nothing. The store is injected so
-// this is exercised with a fake store and fake timers.
+// Persists the reader's position to the server for the open work. `save` is injected so this is
+// exercised with a fake save and fake timers (the real one calls `saveReadingPosition`).
+export type SaveReadingPosition = (workEntryId: string, position: ReadingPosition) => void;
+
+// Saves the reader's position to the server for the open work: it writes once when the work/unit
+// becomes active (so a unit switch is recorded immediately) and again, debounced, as the reader
+// scrolls — each write captures the current unit and the topmost visible block. Idle/loading
+// states (no target) write nothing.
 export function useReadingPositionWriter(
-  store: PositionStore,
+  save: SaveReadingPosition,
   target: ReadingPositionTarget | undefined
 ): void {
   const unitEntryId = target?.unitEntryId;
@@ -25,15 +30,22 @@ export function useReadingPositionWriter(
 
     const work = workEntryId;
     const unit = unitEntryId;
-    store.write(work, { scrollOffset: window.scrollY, unitEntryId: unit });
+
+    function writePosition(): void {
+      const anchorBlockEntryId = topmostVisibleBlockId();
+      save(work, {
+        unitEntryId: unit,
+        ...(anchorBlockEntryId === undefined ? {} : { anchorBlockEntryId })
+      });
+    }
+
+    writePosition();
 
     let timer: number | undefined;
 
     function onScroll(): void {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        store.write(work, { scrollOffset: window.scrollY, unitEntryId: unit });
-      }, positionWriteDelayMs);
+      timer = window.setTimeout(writePosition, positionWriteDelayMs);
     }
 
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -42,5 +54,5 @@ export function useReadingPositionWriter(
       window.clearTimeout(timer);
       window.removeEventListener("scroll", onScroll);
     };
-  }, [store, unitEntryId, workEntryId]);
+  }, [save, unitEntryId, workEntryId]);
 }
