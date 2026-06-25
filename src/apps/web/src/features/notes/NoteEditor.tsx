@@ -136,6 +136,7 @@ export function NoteEditor({
   async function onSave(currentTemplate: NoteTemplateDto): Promise<void> {
     let saved: NoteDto;
 
+    setError(undefined);
     setSaving(true);
 
     try {

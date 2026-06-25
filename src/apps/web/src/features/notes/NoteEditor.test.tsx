@@ -206,6 +206,24 @@ describe("NoteEditor create mode", () => {
     expect(await screen.findByText("Could not save the note. Please try again.")).toBeDefined();
   });
 
+  it("recovers when a retried save succeeds after a failure", async () => {
+    mockedCreateNote.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(savedNote);
+    const { onSaved, user } = renderEditor();
+
+    await user.type(screen.getByLabelText("Meaning in this context"), "to outwit");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+    expect(await screen.findByText("Could not save the note. Please try again.")).toBeDefined();
+    expect(onSaved).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    await waitFor(() => {
+      expect(onSaved).toHaveBeenCalledWith(savedNote);
+    });
+    expect(screen.queryByText("Could not save the note. Please try again.")).toBeNull();
+    expect(mockedCreateNote).toHaveBeenCalledTimes(2);
+  });
+
   it("disables the save button while the note is being saved", async () => {
     let resolveSave: (note: NoteDto) => void = () => {};
     mockedCreateNote.mockImplementation(

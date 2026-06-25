@@ -51,7 +51,7 @@ and have sensible defaults.
 | `HOST`             | `127.0.0.1`       | Address the API server binds to.                                                                                                                |
 | `PORT`             | `3000`            | Port the API server listens on (the web dev proxy targets `3000`).                                                                              |
 | `LOG_LEVEL`        | `info`            | Pino log level (`fatal`/`error`/`warn`/`info`/`debug`/`trace`/`silent`).                                                                        |
-| `DATABASE_DIR`     | _(unset)_         | Directory PGlite persists the database to. **Unset means in-memory** — the database is ephemeral and discarded when the server stops.           |
+| `DATABASE_DIR`     | _(unset)_         | Directory PGlite persists the database to. **Unset means in-memory** — ephemeral, discarded when the server stops. The `dev` script (below) defaults this to a git-ignored local folder so dev data survives a restart. |
 | `SOURCE_FILES_DIR` | `./.data/sources` | Directory where uploaded source files are retained for provenance (resolved relative to the server's working directory; created automatically). |
 
 ### Vocabulary lookup keys (optional)
@@ -81,11 +81,21 @@ ignores `.env`/`.env.*` and allows only `.env.example`.
 
 ### Data directory
 
-The fastest first run needs no configuration: with `DATABASE_DIR` unset, the database runs
-in-memory and is discarded when the server stops — fine for trying the app out.
+For the iterative dev loop, run the server with `pnpm --filter @whetstone/server dev`. It
+**persists the database by default** to a git-ignored folder (`src/apps/server/.data/db`,
+created automatically), so ingested works and blocks survive a server restart (file-watch
+reload, crash, or a manual restart) and notes you add afterward keep working. Without
+persistence, a restart wipes every block while the browser still shows the work, so the next
+note save fails with `block_not_found` (404).
 
-To keep your data between restarts, set `DATABASE_DIR` to a directory. Two caveats make an
-**absolute path to an already-existing folder** the reliable choice:
+The fastest one-off first run still needs no configuration: `pnpm --filter @whetstone/server
+start` (and the raw binary) leaves `DATABASE_DIR` unset, so the database runs in-memory and is
+discarded when the server stops — fine for trying the app out. To force the in-memory database
+even under `dev`, set `DATABASE_DIR` to an empty string (`$env:DATABASE_DIR = ""`).
+
+To choose your own persistent location (with either `dev` or `start`), set `DATABASE_DIR`
+yourself — an explicit value always wins. Two caveats make an **absolute path to an
+already-existing folder** the reliable choice:
 
 - The `pnpm --filter @whetstone/server start` command runs with its working directory set to the
   server package (`src/apps/server`), so a _relative_ path resolves there, not at the repo root.
@@ -112,12 +122,19 @@ these files — the retained source is kept only so you can trace where content 
 
 ## 3. Run the API server
 
-Environment configuration (step 2) is optional — with no variables set, the server runs with an
-in-memory database on `127.0.0.1:3000`. Build the server (this also copies its database migrations)
-and start it:
+Build the server (this also copies its database migrations), then run it. For the iterative dev
+loop, use `dev` — it persists the database to a git-ignored local folder by default, so your
+ingested content and notes survive a server restart:
 
 ```powershell
 pnpm --filter @whetstone/server build
+pnpm --filter @whetstone/server dev
+```
+
+Environment configuration (step 2) is optional. For a throwaway first run with an in-memory
+database (discarded when the server stops), use `start` instead of `dev`:
+
+```powershell
 pnpm --filter @whetstone/server start
 ```
 
