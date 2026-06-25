@@ -159,9 +159,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
   reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
   text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the headword,
-  pronunciation, senses, and attribution in the shared `Sheet` with explicit loading/empty/error
-  states, and `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open work's language so
-  Chinese selections route to CC-CEDICT automatically. Lookup never creates, pre-fills, or edits a note.
+  pronunciation, senses, and attribution — as a compact Radix popover anchored near the selection on
+  desktop/tablet, and a content-height bottom `Sheet` on narrow screens — with explicit
+  loading/empty/error states, and `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open
+  work's language so Chinese selections route to CC-CEDICT automatically. Lookup never creates,
+  pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,
