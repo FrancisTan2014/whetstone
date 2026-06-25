@@ -128,6 +128,17 @@ chapters/passages -> blocks.
   only genuinely new blocks get new ids. Removed blocks are soft-deleted, keeping anchors valid.
 - Content-hash ids (break on any edit) and positional ids (break on insert) are explicitly rejected.
 
+## Identity & ownership (v0)
+
+- **Content is shared library; personal activity is user-owned.** Works, reading units, blocks, and
+  sources are global content (no owner). Notes, reading position, and future personal signals (highlights,
+  the learner model) are **user-owned** and carry a `user_id`.
+- **One default identity, no auth.** v0 has a single `DEFAULT_USER_ID` resolved by one **current-user
+  provider**; every personal write is stamped and every personal read is filtered through it. There is no
+  `users` table, login, or session in v0.
+- **Future migration is additive:** real multi-user swaps only the provider and adds a `users` table +
+  foreign keys; existing personal rows are already keyed, so no retrofit/backfill of ownership is needed.
+
 ## v0 content ingestion
 
 Ingestion is a single boundary with pluggable **format adapters** that all normalize to the same
@@ -168,9 +179,10 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
 - **Scroll within a chapter; chapter breaks between.** This hybrid matches reading-comprehension research
   for technical/reference material. **Page-flip pagination is a planned later mode** (evidence shows
   pagination aids recall for dense material), not v0.
-- **Reading position is remembered** (current unit, plus best-effort scroll offset), so reopening a work
-  resumes where the reader left off ("Continue reading"). Position is client-side UI state (localStorage),
-  never a server source of truth.
+- **Reading position is remembered and durable** (current unit + a best-effort block anchor), so reopening
+  a work resumes where the reader left off ("Continue reading") across sessions and devices. Position is
+  **user-owned state persisted on the server** (per current user + work); localStorage may remain a
+  same-device cache, but the server is the source of truth.
 - **Immersive, single-column layout (微信读书-style).** Reading is full-bleed and calm: one **centered**
   reading column on the paper surface with generous margins, and the surrounding chrome — the app
   navigation, the 目录, and the reading tools — **recedes while reading** and returns on intent (scroll-up /
@@ -314,8 +326,10 @@ does not change the "No LLM note drafting" non-goal.
 - No voice or audio features.
 - No daily routine; no complicated settings.
 - No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
-- No authentication or multi-user behavior (v0 is single-user; "admin" and "reader" are one person in
-  different modes).
+- No authentication or login UI in v0: a single default user (one active person; "admin" and "reader" are
+  one person in different modes). The data model still carries a **user dimension for personal data** (see
+  Identity & ownership) so multi-user is a clean future migration, not a retrofit. No sign-in, sessions, or
+  multi-user behavior is built yet.
 - No social reading (shared highlights, friends' notes, comments) or gamification (streaks, rankings,
   reading-time competitions).
 
