@@ -107,7 +107,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   and disables so an in-flight action cannot double-submit), `Sheet` (Radix Dialog: focus trap +
   dismissal; right side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer
   spring honoring reduced motion). Loading/pending state has two shared pieces: `Spinner.tsx` (CSS
-  spin, `motion-reduce:animate-none`) and `LoadingIndicator.tsx` (spinner + label as a polite
+  spin under normal motion; under reduced motion the global animation freeze stops the rotation and
+  the `loadingSpinner` class keeps it active with a reduced-motion-safe opacity pulse so it never
+  freezes into a static icon) and `LoadingIndicator.tsx` (spinner + label as a polite
   `aria-busy` `status`) — used for every page/section loader. App-wide result notifications live in
   `src/shared/ui/toast/`: `ToastProvider.tsx` owns the auto-dismissing queue and exposes `useToast()`
   (`success`/`error`); `App.tsx` wraps the app in it and `AppShell` mounts the one `ToastViewport.tsx`
