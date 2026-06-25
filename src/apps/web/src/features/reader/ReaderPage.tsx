@@ -1,8 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import Markdown, { type Options } from "react-markdown";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
 
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 
@@ -21,6 +18,7 @@ import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import { eventTargetClosest, readBlockSelection, releasedBlockElement } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
+import { BlockContent } from "./mdastBlock";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
 import { isUnitTitleRedundant } from "./readerHeadings";
@@ -35,26 +33,6 @@ import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readin
 import { scrollToBlock } from "./scrollToBlock";
 import { selectionRect } from "./selectionRect";
 import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
-
-// remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so
-// the reader never executes raw markup (no dangerouslySetInnerHTML). We further disallow
-// `img` (v0 is text blocks only) so no external image is ever fetched or rendered, even
-// from manually entered Markdown.
-const sanitizeSchema = {
-  ...defaultSchema,
-  tagNames: (defaultSchema.tagNames as string[]).filter((tagName) => tagName !== "img")
-};
-const remarkPlugins = [remarkGfm];
-const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [[rehypeSanitize, sanitizeSchema]];
-
-// Render the source's in-content links as non-navigating text. v0 does not resolve
-// cross-document in-book links (blocks are standalone), so a live `<a href>` would hijack the
-// click — navigating the hash-router SPA away (observed: jumping home) and stealing the click
-// from the lookup/annotation selection. Keep the link text; drop the navigation. Empty
-// index/cross-reference anchors become an empty, non-clickable span.
-const markdownComponents: Options["components"] = {
-  a: ({ children }) => <span className="readerLink">{children}</span>
-};
 
 // Immersive-reader chrome state shared with the reading view: the language-aware paper
 // surface, the text-size control, the auto-hiding header, the receding reading tools, and the
@@ -859,9 +837,9 @@ type ReaderBlockViewProps = Readonly<{
 
 // One rendered block. Memoized so it re-renders only when its own data/state changes: with
 // stable props (memoized handlers, a stable notes array, a per-block `born` flag), opening the
-// selection toolbar / lookup / a notes panel or switching a template no longer re-runs the
-// react-markdown pipeline for every block in the unit — the cause of the ~500ms handlers. Only
-// the born/animating block pays for framer-motion; every other block is a plain element.
+// selection toolbar / lookup / a notes panel or switching a template no longer re-runs the mdast
+// rendering for every block in the unit — the cause of the ~500ms handlers. Only the
+// born/animating block pays for framer-motion; every other block is a plain element.
 const ReaderBlockView = memo(function ReaderBlockView({
   block,
   born,
@@ -885,13 +863,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
 
   const body = (
     <>
-      <Markdown
-        components={markdownComponents}
-        rehypePlugins={rehypePlugins}
-        remarkPlugins={remarkPlugins}
-      >
-        {block.markdown}
-      </Markdown>
+      <BlockContent node={block.mdast} />
       {annotated ? (
         <button
           className="readerBlockNotes"

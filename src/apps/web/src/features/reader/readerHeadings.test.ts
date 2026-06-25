@@ -6,7 +6,7 @@ import type { ReaderBlock, ReaderUnit } from "./readerModel";
 function block(partial: Partial<ReaderBlock> & { entryId: string }): ReaderBlock {
   return {
     isHeading: false,
-    markdown: partial.plaintext ?? partial.entryId,
+    mdast: { type: "text", value: partial.plaintext ?? partial.entryId },
     plaintext: partial.entryId,
     ...partial
   };

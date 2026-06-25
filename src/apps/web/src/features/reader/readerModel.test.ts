@@ -65,17 +65,17 @@ describe("buildReaderView", () => {
     expect(view.units.map((unit) => unit.entryId)).toEqual(["u-1", "u-2"]);
   });
 
-  it("orders blocks within a unit and serializes each block to Markdown", () => {
+  it("orders blocks within a unit and keeps each block's stored mdast", () => {
     const view = buildReaderView(unorderedContent);
     const chapter = view.units[1];
 
     expect(chapter?.blocks.map((block) => block.entryId)).toEqual(["b-2a", "b-2b"]);
-    expect(chapter?.blocks.map((block) => block.markdown)).toEqual([
-      "## Chapter One",
-      "*emphasized*"
+    expect(chapter?.blocks.map((block) => block.mdast)).toEqual([
+      chapterHeading,
+      emphasisParagraph
     ]);
     expect(chapter?.blocks.map((block) => block.plaintext)).toEqual(["Chapter One", "emphasized"]);
-    expect(view.units[0]?.blocks[0]?.markdown).toBe("Intro");
+    expect(view.units[0]?.blocks[0]?.mdast).toBe(introParagraph);
   });
 
   it("flags heading blocks via isHeading", () => {
