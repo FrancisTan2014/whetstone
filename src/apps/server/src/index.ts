@@ -20,6 +20,7 @@ import { createInMemoryLookupCache } from "./lookup/lookupCache.js";
 import { createLookupService, type LookupSource } from "./lookup/lookupService.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
 import { createServer } from "./http/createServer.js";
+import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 
 const config = readServerConfig();
 const pglite = new PGlite(config.databaseDir);
@@ -63,6 +64,7 @@ const server = createServer({
     epubUploadLimitBytes: config.epubUploadLimitBytes,
     sourceFileStore
   },
+  currentUser: createDefaultCurrentUserProvider(),
   library: {
     createAuthorId: () => randomUUID(),
     createEntryId: () => randomUUID(),
