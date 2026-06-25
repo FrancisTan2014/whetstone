@@ -21,6 +21,8 @@ import { registerReadingPositionRoutes } from "../features/readingPosition/readi
 import type { ReadingPositionDependencies } from "../features/readingPosition/readingPositionCommands.js";
 import { registerLookupRoutes } from "../features/lookup/lookupRoutes.js";
 import type { LookupDependencies } from "../features/lookup/lookupRoutes.js";
+import { registerImageRoutes } from "../features/images/imageRoutes.js";
+import type { ImageDependencies } from "../features/images/imageRoutes.js";
 import {
   createDefaultCurrentUserProvider,
   type CurrentUserProvider
@@ -39,6 +41,7 @@ export type CreateServerOptions = Readonly<{
   // The identity seam: the source of the current user id for user-owned reads/writes. Defaults to
   // the v0 DEFAULT_USER_ID provider; tests (and future auth) inject their own.
   currentUser?: CurrentUserProvider;
+  images?: ImageDependencies;
   library?: LibraryDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
@@ -84,6 +87,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.lookup !== undefined) {
     registerLookupRoutes(server, options.lookup);
+  }
+
+  if (options.images !== undefined) {
+    registerImageRoutes(server, options.images);
   }
 
   return server;

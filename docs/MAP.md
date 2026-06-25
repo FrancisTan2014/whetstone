@@ -75,7 +75,12 @@ can navigate them from another package.
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
   (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
-  so commands test against a fake parser).
+  so commands test against a fake parser). `src/files/imageResourceStore.ts` — content-addressed image
+  store (sha256-keyed, so identical bytes dedupe to one resource) under `imageResourcesDir`, with a
+  write-time content-type allowlist (PNG/JPEG/GIF/WebP; SVG and others rejected); served read-only by
+  `src/features/images/imageRoutes.ts` (`GET /api/images/:id`, id is the content hash, allowlist
+  re-checked at the boundary, no traversal/remote fetch, unknown id → 404). Foundation for EPUB figures;
+  no UI consumer yet.
 - Outbound lookup foundation: `src/lookup/` — reusable boundaries for calling external services and
   caching results. `httpClient.ts` (typed GET text/JSON with timeout + custom headers; normalizes
   failures to typed `HttpError`; injected `fetch`), `lookupCache.ts` (keyed TTL cache, injected clock;
