@@ -319,6 +319,22 @@ function blockElement(container: HTMLElement, blockId: string): HTMLElement {
   return container.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
 }
 
+// The 目录 is now a controlled drawer toggled from the receding ReadingHeader: open it from the
+// header tool, then read the navigation it reveals.
+async function openTocDrawer(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByRole("button", { name: "Table of contents" }));
+
+  return screen.getByRole("navigation", { name: "目录" });
+}
+
+// "Your notes" is no longer pinned to the reading column; it lives in a Sheet opened from the
+// header tool. Open it, then assert against the dialog it reveals.
+async function openNotesPanel(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByRole("button", { name: "Your notes" }));
+
+  return screen.findByRole("dialog", { name: "Your notes" });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.getSelection()?.removeAllRanges();
@@ -426,7 +442,7 @@ describe("ReaderPage", () => {
     ).toEqual(["b-1"]);
 
     // Selecting the second unit in the 目录 swaps the rendered content.
-    const toc = screen.getByRole("navigation", { name: "目录" });
+    const toc = await openTocDrawer(user);
     await user.click(within(toc).getByRole("button", { name: "Section Two" }));
 
     expect(await screen.findByRole("heading", { level: 2, name: "Heading text" })).toBeDefined();
@@ -447,6 +463,7 @@ describe("ReaderPage", () => {
     render(<ReaderPage initialWorkEntryId="work-zh" />);
 
     expect(await screen.findByText("你好世界")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Table of contents" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
   });
 
@@ -464,11 +481,8 @@ describe("ReaderPage", () => {
     ).toHaveLength(0);
 
     // Switching to the titled unit shows its title heading plus its content heading.
-    await user.click(
-      within(screen.getByRole("navigation", { name: "目录" })).getByRole("button", {
-        name: "Section Two"
-      })
-    );
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
     expect(
       within(await screen.findByRole("article", { name: "Reading" })).getAllByRole("heading", {
         level: 2
@@ -855,11 +869,8 @@ describe("ReaderPage note management", () => {
     expect(screen.getByRole("button", { name: "View 1 note" })).toBeDefined();
 
     // A block in another unit, with no note, renders plain once that unit is opened.
-    await user.click(
-      within(screen.getByRole("navigation", { name: "目录" })).getByRole("button", {
-        name: "Section Two"
-      })
-    );
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
     await screen.findByText("Heading text");
     const plain = blockElement(container, "b-2");
     expect(plain.getAttribute("data-has-notes")).toBeNull();
@@ -868,10 +879,11 @@ describe("ReaderPage note management", () => {
 
   it("lists a per-work note with its anchored snippet", async () => {
     await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
 
-    const region = screen.getByRole("region", { name: "Your notes" });
-    expect(within(region).getByText(/Intro/)).toBeDefined();
-    expect(within(region).getByText("the beginning")).toBeDefined();
+    const panel = await openNotesPanel(user);
+    expect(within(panel).getByText(/Intro/)).toBeDefined();
+    expect(within(panel).getByText("the beginning")).toBeDefined();
   });
 
   it("reopens a block's notes from its highlight and edits one", async () => {
@@ -956,8 +968,8 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    const region = screen.getByRole("region", { name: "Your notes" });
-    await user.click(within(region).getByRole("button", { name: "Edit note: Intro" }));
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Edit note: Intro" }));
 
     expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
     await user.click(screen.getByRole("button", { name: "Save note" }));
@@ -978,8 +990,8 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    const region = screen.getByRole("region", { name: "Your notes" });
-    await user.click(within(region).getByRole("button", { name: "Delete note: Intro" }));
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Delete note: Intro" }));
 
     expect(await screen.findByText("Note deleted.")).toBeDefined();
     expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "note-1");
@@ -994,8 +1006,8 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    const region = screen.getByRole("region", { name: "Your notes" });
-    await user.click(within(region).getByRole("button", { name: "Delete note: Intro" }));
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Delete note: Intro" }));
 
     expect(await screen.findByText("Could not delete the note. Please try again.")).toBeDefined();
   });
@@ -1004,12 +1016,14 @@ describe("ReaderPage note management", () => {
     const container = await openWorkWithNotes([makeNote()]);
     const user = userEvent.setup();
 
-    const region = screen.getByRole("region", { name: "Your notes" });
-    await user.click(within(region).getByRole("button", { name: "Jump to text: Intro" }));
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Jump to text: Intro" }));
 
-    const block = blockElement(container, "b-1");
-    expect(block.scrollIntoView).toHaveBeenCalled();
-    expect(document.activeElement).toBe(block);
+    // Jumping dismisses the notes panel and scrolls the annotated block back into view. (Focus
+    // landing on the block is covered by the non-dialog block-notes jump below, which is not
+    // subject to the Sheet's async focus restoration.)
+    expect(screen.queryByRole("dialog", { name: "Your notes" })).toBeNull();
+    expect(blockElement(container, "b-1").scrollIntoView).toHaveBeenCalled();
   });
 
   it("jumps back to the block from the block-notes panel", async () => {
@@ -1038,13 +1052,75 @@ describe("ReaderPage note management", () => {
     // The note lives in the second unit, which is not the open one.
     expect(blockElement(container, "b-2")).toBeNull();
 
-    const region = screen.getByRole("region", { name: "Your notes" });
-    await user.click(within(region).getByRole("button", { name: "Jump to text: Heading" }));
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Jump to text: Heading" }));
 
     const target = await screen.findByText("Heading text");
     expect(blockElement(container, "b-2")).not.toBeNull();
     expect(screen.queryByText("Intro paragraph.")).toBeNull();
     expect(target.closest("[data-block-id]")?.scrollIntoView).toHaveBeenCalled();
+  });
+});
+
+describe("ReaderPage reading tools", () => {
+  it("opens the notes panel from the header tool and closes it again", async () => {
+    await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
+
+    const panel = await openNotesPanel(user);
+    expect(within(panel).getByText(/Intro/)).toBeDefined();
+
+    await user.click(within(panel).getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByRole("dialog", { name: "Your notes" })).toBeNull();
+  });
+
+  it("labels the notes tool with the note count", async () => {
+    await openWorkWithNotes([makeNote()]);
+
+    expect(screen.getByRole("button", { name: "Your notes" }).textContent).toContain("1");
+  });
+
+  it("shows the notes tool with no count when there are no notes", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const notes = screen.getByRole("button", { name: "Your notes" });
+    expect(notes.querySelector(".readingToolBadge")).toBeNull();
+  });
+
+  it("offers the Day/Night theme toggle among the reading tools", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    expect(screen.getByRole("button", { name: "Switch to Night" })).toBeDefined();
+  });
+
+  it("closes the 目录 drawer after a unit is selected", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
+
+    await screen.findByText("Heading text");
+    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+  });
+
+  it("dismisses the 目录 drawer from its backdrop", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    await openTocDrawer(user);
+    await user.click(screen.getByRole("button", { name: "Close table of contents" }));
+
+    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
   });
 });
 
@@ -1285,11 +1361,8 @@ describe("ReaderPage reading position", () => {
       JSON.parse(window.localStorage.getItem(readingPositionKey("work-1")) ?? "{}").unitEntryId;
     expect(savedUnit()).toBe("u-1");
 
-    await user.click(
-      within(screen.getByRole("navigation", { name: "目录" })).getByRole("button", {
-        name: "Section Two"
-      })
-    );
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
     await screen.findByText("Heading text");
 
     expect(savedUnit()).toBe("u-2");

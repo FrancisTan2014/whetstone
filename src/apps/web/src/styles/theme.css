@@ -447,6 +447,32 @@
   gap: 0.25rem;
 }
 
+/* The receding reading tools (text-size, theme, 目录, notes) sit together so they hide and
+   return as one calm strip. They wrap onto a second row on narrow screens rather than crowding
+   the title, and a safe-area inset keeps them clear of a notch / rounded corner. */
+.readingTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding-inline-end: env(safe-area-inset-right);
+}
+
+/* The note count rides the notes tool as a quiet pill rather than a second control. */
+.readingToolBadge {
+  display: inline-flex;
+  min-inline-size: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: 0.375rem;
+  padding-inline: 0.375rem;
+  border-radius: 999px;
+  background-color: color-mix(in oklch, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+  font-size: var(--text-scale-sm);
+  font-weight: 600;
+}
+
 .readingProgress {
   position: relative;
   inline-size: 6rem;
