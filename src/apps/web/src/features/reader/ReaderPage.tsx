@@ -30,6 +30,7 @@ import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi"
 import { useReadingPositionWriter, type SaveReadingPosition } from "./useReadingPositionWriter";
 import { ReaderToc } from "./ReaderToc";
 import { ReadingHeader } from "./ReadingHeader";
+import { readingMeasureRem } from "./readingMeasure";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
 import { scrollToBlock } from "./scrollToBlock";
 import { selectionRect } from "./selectionRect";
@@ -752,7 +753,12 @@ function renderViewing(
           <div
             className="reading-surface readerPaper"
             lang={chrome.language}
-            style={{ "--reading-size": readingSizeToRem(chrome.size) } as React.CSSProperties}
+            style={
+              {
+                "--reading-measure": readingMeasureRem(chrome.language),
+                "--reading-size": readingSizeToRem(chrome.size)
+              } as React.CSSProperties
+            }
           >
             {renderReaderView(units[activeUnitIndex], workEntryId, handlers, chrome.language)}
           </div>

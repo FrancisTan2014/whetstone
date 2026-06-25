@@ -140,14 +140,14 @@
 }
 
 /*
- * Reading + motion variables. Reading measure is fixed per script (wide screens add
- * margin, never wider text); reading size is user-adjustable. Motion durations/easings
- * are named tokens; components animate only `transform`/`opacity` and honor reduced
- * motion (the JS guard lives in shared/motion/motion.ts).
+ * Reading + motion variables. The reading column width (`--reading-measure`) is set per
+ * language by the reader in a font-size-independent unit (rem), so changing the text size
+ * (`--reading-size`) reflows the text within a stable column instead of widening it. Motion
+ * durations/easings are named tokens; components animate only `transform`/`opacity` and honor
+ * reduced motion (the JS guard lives in shared/motion/motion.ts).
  */
 :root {
-  --reading-measure: 66ch;
-  --reading-measure-cjk: 38em;
+  --reading-measure: 37rem;
   --reading-leading: 1.7;
   --reading-leading-cjk: 1.9;
   --reading-size: 1.125rem;
@@ -182,7 +182,6 @@
 .reading-surface:lang(ja),
 .reading-surface:lang(ko) {
   line-height: var(--reading-leading-cjk);
-  max-inline-size: var(--reading-measure-cjk);
 }
 
 @media (prefers-reduced-motion: reduce) {
