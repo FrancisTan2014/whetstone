@@ -65,40 +65,49 @@ describe("parseCedict", () => {
 describe("createCedictProvider", () => {
   const provider = createCedictProvider(index);
 
-  it("normalizes a match into pinyin pronunciation and capped glosses", async () => {
-    expect(await provider.lookup("你好", "zh-CN")).toEqual({
+  it("maps a match into a DictionaryEntry: pinyin pronunciation, glosses as senses, attribution", async () => {
+    expect(await provider.lookup("你好")).toEqual({
       headword: "你好",
-      pronunciation: "ni3 hao3",
-      senses: [{ gloss: "hello; hi" }]
+      partsOfSpeech: [{ senses: [{ definition: "hello; hi", examples: [], synonyms: [] }] }],
+      pronunciations: [{ ipa: "ni3 hao3" }],
+      sources: [cedictAttribution]
     });
   });
 
   it("uses the matched term as the headword for a Traditional surface form", async () => {
-    expect(await provider.lookup("中國", "zh-TW")).toEqual({
+    expect(await provider.lookup("中國")).toEqual({
       headword: "中國",
-      pronunciation: "Zhong1 guo2",
-      senses: [{ gloss: "China" }, { gloss: "Middle Kingdom" }]
+      partsOfSpeech: [
+        {
+          senses: [
+            { definition: "China", examples: [], synonyms: [] },
+            { definition: "Middle Kingdom", examples: [], synonyms: [] }
+          ]
+        }
+      ],
+      pronunciations: [{ ipa: "Zhong1 guo2" }],
+      sources: [cedictAttribution]
     });
   });
 
   it("caps the senses at five", async () => {
-    const entry = await provider.lookup("集", "zh-CN");
+    const entry = await provider.lookup("集");
 
-    expect(entry?.senses).toEqual([
-      { gloss: "to gather" },
-      { gloss: "to collect" },
-      { gloss: "collection" },
-      { gloss: "anthology" },
-      { gloss: "to add up" }
+    expect(entry?.partsOfSpeech[0]?.senses).toEqual([
+      { definition: "to gather", examples: [], synonyms: [] },
+      { definition: "to collect", examples: [], synonyms: [] },
+      { definition: "collection", examples: [], synonyms: [] },
+      { definition: "anthology", examples: [], synonyms: [] },
+      { definition: "to add up", examples: [], synonyms: [] }
     ]);
   });
 
   it("renders a `u:` umlaut as ü in the pronunciation", async () => {
-    expect((await provider.lookup("女", "zh-CN"))?.pronunciation).toBe("nü3");
+    expect((await provider.lookup("女"))?.pronunciations).toEqual([{ ipa: "nü3" }]);
   });
 
   it("resolves null for a term that is not in the dictionary", async () => {
-    expect(await provider.lookup("沒有這個詞", "zh-TW")).toBeNull();
+    expect(await provider.lookup("沒有這個詞")).toBeNull();
   });
 });
 

@@ -3,11 +3,9 @@
 // and serves lookups from an in-memory index; file reading and gunzip live in the composition
 // root so these functions stay fast and deterministic to test against sample text.
 
-import type { NormalizedEntry } from "@whetstone/contracts";
+import type { DictionaryEntry } from "@whetstone/contracts";
 
-import type { DictionaryProvider } from "./dictionaryProvider.types.js";
-
-// Attribution surfaced alongside Chinese results, mirroring the Merriam-Webster attributions.
+// Attribution surfaced alongside Chinese results in the entry's `sources`.
 // CC-CEDICT is licensed CC BY-SA 4.0 (see src/lookup/data/README.md).
 export const cedictAttribution = "Definitions from CC-CEDICT (CC BY-SA 4.0).";
 
@@ -106,10 +104,15 @@ function formatPinyin(pinyin: string): string {
   return pinyin.replace(/u:/g, "ü").replace(/U:/g, "Ü");
 }
 
-// A pure provider over a prebuilt index: normalizes the matched entry into a NormalizedEntry
-// (pinyin as pronunciation, capped glosses as senses) or resolves null when the term is absent.
-export function createCedictProvider(index: CedictIndex): DictionaryProvider {
-  function lookup(term: string): Promise<NormalizedEntry | null> {
+export interface CedictProvider {
+  lookup(term: string): Promise<DictionaryEntry | null>;
+}
+
+// A pure provider over a prebuilt index: maps the matched entry into a DictionaryEntry (pinyin
+// as the pronunciation, glosses as part-of-speech-less senses, CC-CEDICT attribution) or
+// resolves null when the term is absent.
+export function createCedictProvider(index: CedictIndex): CedictProvider {
+  function lookup(term: string): Promise<DictionaryEntry | null> {
     const entry = index.get(term);
 
     if (entry === undefined) {
@@ -118,8 +121,15 @@ export function createCedictProvider(index: CedictIndex): DictionaryProvider {
 
     return Promise.resolve({
       headword: term,
-      pronunciation: formatPinyin(entry.pinyin),
-      senses: entry.glosses.slice(0, maxSenses).map((gloss) => ({ gloss }))
+      partsOfSpeech: [
+        {
+          senses: entry.glosses
+            .slice(0, maxSenses)
+            .map((gloss) => ({ definition: gloss, examples: [], synonyms: [] }))
+        }
+      ],
+      pronunciations: [{ ipa: formatPinyin(entry.pinyin) }],
+      sources: [cedictAttribution]
     });
   }
 

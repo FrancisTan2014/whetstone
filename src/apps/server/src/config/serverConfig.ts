@@ -7,8 +7,6 @@ export type ServerConfig = Readonly<{
   epubUploadLimitBytes: number;
   host: string;
   logLevel: ServerLogLevel;
-  merriamWebsterCollegiateKey: string | undefined;
-  merriamWebsterLearnersKey: string | undefined;
   port: number;
   sourceFilesDir: string;
 }>;
@@ -18,8 +16,6 @@ const defaultServerConfig: ServerConfig = {
   epubUploadLimitBytes: 50 * 1024 * 1024,
   host: "127.0.0.1",
   logLevel: "info",
-  merriamWebsterCollegiateKey: undefined,
-  merriamWebsterLearnersKey: undefined,
   port: 3000,
   sourceFilesDir: "./.data/sources"
 };
@@ -44,10 +40,6 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     epubUploadLimitBytes,
     host: env.HOST ?? defaultServerConfig.host,
     logLevel,
-    merriamWebsterCollegiateKey:
-      env.MERRIAM_WEBSTER_COLLEGIATE_KEY ?? defaultServerConfig.merriamWebsterCollegiateKey,
-    merriamWebsterLearnersKey:
-      env.MERRIAM_WEBSTER_LEARNERS_KEY ?? defaultServerConfig.merriamWebsterLearnersKey,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir
   };

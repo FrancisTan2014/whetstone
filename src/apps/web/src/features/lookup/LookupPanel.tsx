@@ -1,10 +1,13 @@
 import * as Popover from "@radix-ui/react-popover";
 
-import type { NormalizedEntry, NormalizedSense } from "@whetstone/contracts";
+import type {
+  DictionaryEntry,
+  DictionaryPartOfSpeech,
+  DictionarySense
+} from "@whetstone/contracts";
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
-import { groupSensesByPartOfSpeech, type LookupSenseGroup } from "./lookupGroups";
 
 // The view-only lookup state the reader drives: fetching, a failure, a no-match, or a
 // resolved entry. There are deliberately no note controls here — lookup never creates,
@@ -13,7 +16,7 @@ export type LookupState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "empty" }>
-  | Readonly<{ attribution?: string | undefined; entry: NormalizedEntry; status: "loaded" }>;
+  | Readonly<{ entry: DictionaryEntry; status: "loaded" }>;
 
 export type LookupPanelProps = Readonly<{
   // The selection's viewport rect; the desktop popover anchors to it so the card sits near
@@ -25,38 +28,48 @@ export type LookupPanelProps = Readonly<{
   term: string;
 }>;
 
-function renderSense(sense: NormalizedSense, index: number): React.JSX.Element {
+function renderSense(sense: DictionarySense, index: number): React.JSX.Element {
   return (
     <li className="lookupSense" key={index}>
-      <span className="lookupGloss">{sense.gloss}</span>
-      {sense.example === undefined ? null : (
-        <span className="lookupExample">“{sense.example}”</span>
+      <span className="lookupGloss">{sense.definition}</span>
+      {sense.examples.map((example, exampleIndex) => (
+        <span className="lookupExample" key={exampleIndex}>
+          “{example}”
+        </span>
+      ))}
+      {sense.synonyms.length === 0 ? null : (
+        <span className="lookupSynonyms">Synonyms: {sense.synonyms.join(", ")}</span>
       )}
     </li>
   );
 }
 
-// One part-of-speech group: the label once, then its senses as separated blocks.
-function renderGroup(group: LookupSenseGroup, index: number): React.JSX.Element {
+// One part-of-speech group: the label once (when present), then its senses as separated blocks.
+function renderPartOfSpeech(part: DictionaryPartOfSpeech, index: number): React.JSX.Element {
   return (
     <div className="lookupGroup" key={index}>
-      {group.partOfSpeech === undefined ? null : (
-        <p className="lookupPartOfSpeech">{group.partOfSpeech}</p>
+      {part.partOfSpeech === undefined ? null : (
+        <p className="lookupPartOfSpeech">{part.partOfSpeech}</p>
       )}
-      <ol className="lookupSenses">{group.senses.map(renderSense)}</ol>
+      <ol className="lookupSenses">{part.senses.map(renderSense)}</ol>
     </div>
   );
 }
 
-function renderEntry(entry: NormalizedEntry, attribution: string | undefined): React.JSX.Element {
+function renderEntry(entry: DictionaryEntry): React.JSX.Element {
   return (
     <div className="lookupEntry">
       <p className="lookupHeadword">{entry.headword}</p>
-      {entry.pronunciation === undefined ? null : (
-        <p className="lookupPronunciation">{entry.pronunciation}</p>
+      {entry.pronunciations.length === 0 ? null : (
+        <p className="lookupPronunciation">
+          {entry.pronunciations.map((pronunciation) => pronunciation.ipa).join(", ")}
+        </p>
       )}
-      <div className="lookupGroups">{groupSensesByPartOfSpeech(entry.senses).map(renderGroup)}</div>
-      {attribution === undefined ? null : <p className="lookupAttribution">{attribution}</p>}
+      <div className="lookupGroups">{entry.partsOfSpeech.map(renderPartOfSpeech)}</div>
+      {entry.etymology === undefined ? null : <p className="lookupEtymology">{entry.etymology}</p>}
+      {entry.sources.length === 0 ? null : (
+        <p className="lookupAttribution">{entry.sources.join(" · ")}</p>
+      )}
     </div>
   );
 }
@@ -70,7 +83,7 @@ function renderState(state: LookupState): React.JSX.Element {
     case "empty":
       return <p>No definition found.</p>;
     case "loaded":
-      return renderEntry(state.entry, state.attribution);
+      return renderEntry(state.entry);
   }
 }
 

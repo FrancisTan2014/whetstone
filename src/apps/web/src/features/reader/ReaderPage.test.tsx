@@ -1195,11 +1195,16 @@ describe("ReaderPage vocabulary lookup", () => {
 
   it("opens the view-only panel with the definition and never creates a note", async () => {
     mockedLookupTerm.mockResolvedValue({
-      attribution: "From a source.",
       entry: {
         headword: "intro",
-        pronunciation: "/ˈɪntroʊ/",
-        senses: [{ example: "a short intro", gloss: "an introduction", partOfSpeech: "noun" }]
+        partsOfSpeech: [
+          {
+            partOfSpeech: "noun",
+            senses: [{ definition: "an introduction", examples: ["a short intro"], synonyms: [] }]
+          }
+        ],
+        pronunciations: [{ ipa: "/ˈɪntroʊ/" }],
+        sources: ["From a source."]
       },
       found: true
     });
@@ -1234,8 +1239,12 @@ describe("ReaderPage vocabulary lookup", () => {
     mockedFetchWorkContent.mockResolvedValue(chineseContent);
     mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
     mockedLookupTerm.mockResolvedValue({
-      attribution: "Definitions from CC-CEDICT (CC BY-SA 4.0).",
-      entry: { headword: "你好", pronunciation: "ni3 hao3", senses: [{ gloss: "hello; hi" }] },
+      entry: {
+        headword: "你好",
+        partsOfSpeech: [{ senses: [{ definition: "hello; hi", examples: [], synonyms: [] }] }],
+        pronunciations: [{ ipa: "ni3 hao3" }],
+        sources: ["Definitions from CC-CEDICT (CC BY-SA 4.0)."]
+      },
       found: true
     });
 
@@ -1254,7 +1263,14 @@ describe("ReaderPage vocabulary lookup", () => {
 
   it("dismisses the lookup panel when closed", async () => {
     mockedLookupTerm.mockResolvedValue({
-      entry: { headword: "intro", senses: [{ gloss: "an introduction" }] },
+      entry: {
+        headword: "intro",
+        partsOfSpeech: [
+          { senses: [{ definition: "an introduction", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [],
+        sources: []
+      },
       found: true
     });
 

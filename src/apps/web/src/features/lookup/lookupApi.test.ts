@@ -11,8 +11,12 @@ afterEach(() => {
 describe("lookupTerm", () => {
   it("requests the lookup endpoint with the encoded term and validates the response", async () => {
     const body = {
-      attribution: "Source.",
-      entry: { headword: "set", senses: [{ gloss: "a group" }] },
+      entry: {
+        headword: "set",
+        partsOfSpeech: [{ senses: [{ definition: "a group", examples: [], synonyms: [] }] }],
+        pronunciations: [{ ipa: "/sɛt/" }],
+        sources: ["From a source."]
+      },
       found: true
     };
     const fetchMock = vi.fn().mockResolvedValue({

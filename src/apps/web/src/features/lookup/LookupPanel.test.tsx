@@ -18,14 +18,24 @@ const desktop = { "(min-width: 768px)": true };
 const mobile = { "(min-width: 768px)": false };
 
 const loadedEntry: LookupState = {
-  attribution: "From a source.",
   entry: {
+    etymology: "From Old English settan.",
     headword: "set",
-    pronunciation: "/sɛt/",
-    senses: [
-      { example: "set it down", gloss: "to put in place", partOfSpeech: "verb" },
-      { gloss: "a group of things" }
-    ]
+    partsOfSpeech: [
+      {
+        partOfSpeech: "verb",
+        senses: [
+          {
+            definition: "to put in place",
+            examples: ["set it down"],
+            synonyms: ["place", "position"]
+          }
+        ]
+      },
+      { senses: [{ definition: "a group of things", examples: [], synonyms: [] }] }
+    ],
+    pronunciations: [{ ipa: "/sɛt/" }],
+    sources: ["From WordNet.", "From Wiktionary."]
   },
   status: "loaded"
 };
@@ -51,7 +61,7 @@ afterEach(() => {
 });
 
 describe("LookupPanel content", () => {
-  it("renders the headword, pronunciation, senses, and attribution when loaded", () => {
+  it("renders the headword, pronunciation, senses, synonyms, etymology, and sources when loaded", () => {
     renderPanel(loadedEntry, { matchers: desktop });
 
     expect(screen.getByText("set")).toBeDefined();
@@ -59,43 +69,65 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("verb")).toBeDefined();
     expect(screen.getByText("to put in place")).toBeDefined();
     expect(screen.getByText("“set it down”")).toBeDefined();
+    expect(screen.getByText("Synonyms: place, position")).toBeDefined();
     expect(screen.getByText("a group of things")).toBeDefined();
-    expect(screen.getByText("From a source.")).toBeDefined();
+    expect(screen.getByText("From Old English settan.")).toBeDefined();
+    expect(screen.getByText("From WordNet. · From Wiktionary.")).toBeDefined();
   });
 
-  it("omits pronunciation, part of speech, example, and attribution when absent", () => {
-    renderPanel(
-      { entry: { headword: "set", senses: [{ gloss: "a group of things" }] }, status: "loaded" },
-      { matchers: desktop }
-    );
-
-    expect(screen.getByText("a group of things")).toBeDefined();
-    expect(screen.queryByText("From a source.")).toBeNull();
-  });
-
-  it("groups senses by part of speech, labelling each group once and separating examples", () => {
+  it("omits pronunciation, part of speech, synonyms, etymology, and sources when absent", () => {
     renderPanel(
       {
         entry: {
           headword: "set",
-          senses: [
-            { example: "set it down", gloss: "to put in place", partOfSpeech: "verb" },
-            { gloss: "to fix firmly", partOfSpeech: "verb" },
-            { example: "a chess set", gloss: "a group of things", partOfSpeech: "noun" }
-          ]
+          partsOfSpeech: [
+            { senses: [{ definition: "a group of things", examples: [], synonyms: [] }] }
+          ],
+          pronunciations: [],
+          sources: []
         },
         status: "loaded"
       },
       { matchers: desktop }
     );
 
-    // Each part of speech is a distinct label shown exactly once, never concatenated into a gloss.
+    expect(screen.getByText("a group of things")).toBeDefined();
+    expect(screen.queryByText(/Synonyms:/)).toBeNull();
+    expect(screen.queryByText("From Old English settan.")).toBeNull();
+  });
+
+  it("renders parts of speech once, with examples and synonyms as separated blocks", () => {
+    renderPanel(
+      {
+        entry: {
+          headword: "set",
+          partsOfSpeech: [
+            {
+              partOfSpeech: "verb",
+              senses: [
+                { definition: "to put in place", examples: ["set it down"], synonyms: ["place"] },
+                { definition: "to fix firmly", examples: [], synonyms: [] }
+              ]
+            },
+            {
+              partOfSpeech: "noun",
+              senses: [{ definition: "a group of things", examples: ["a chess set"], synonyms: [] }]
+            }
+          ],
+          pronunciations: [],
+          sources: []
+        },
+        status: "loaded"
+      },
+      { matchers: desktop }
+    );
+
     expect(screen.getAllByText("verb")).toHaveLength(1);
     expect(screen.getAllByText("noun")).toHaveLength(1);
     expect(screen.getByText("verb").textContent).toBe("verb");
-    // The gloss and its example render as separate, distinct text — not a run-on.
     expect(screen.getByText("to put in place").textContent).toBe("to put in place");
     expect(screen.getByText("“set it down”").textContent).toBe("“set it down”");
+    expect(screen.getByText("Synonyms: place").textContent).toBe("Synonyms: place");
   });
 
   it("shows a loading state while fetching", () => {

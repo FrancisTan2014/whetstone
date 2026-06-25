@@ -1,6 +1,5 @@
-import type { LookupResponse } from "@whetstone/contracts";
+import type { DictionaryEntry, LookupResponse } from "@whetstone/contracts";
 
-import type { DictionaryProvider } from "./dictionaryProvider.types.js";
 import type { LookupCache } from "./lookupCache.js";
 
 // Cache lookups for ten minutes: long enough to spare a re-hit on a re-selected word,
@@ -9,18 +8,17 @@ export const lookupCacheTtlMs = 10 * 60 * 1000;
 
 const notFound: LookupResponse = { found: false };
 
-// One link in the provider chain: a provider, the languages it serves, plus the attribution
-// to surface when it is the source that matched (Free Dictionary has none).
+// One language-scoped source: a composed lookup for the languages it serves. English is the
+// Wiktionary+WordNet composer; Chinese is CC-CEDICT. Each returns a fully composed
+// DictionaryEntry (its own attribution lives in the entry's `sources`).
 export type LookupSource = Readonly<{
-  attribution?: string | undefined;
   languages: ReadonlyArray<string>;
-  provider: DictionaryProvider;
+  lookup: (term: string) => Promise<DictionaryEntry | null>;
 }>;
 
 export type LookupServiceDependencies = Readonly<{
   cache: LookupCache<LookupResponse>;
-  // Tried in order; the first non-null match wins. Built by the composition root so absent
-  // keys simply omit their MW source, leaving the no-key Free Dictionary fallback.
+  // Tried in order; the first source serving the language whose lookup matches wins.
   sources: ReadonlyArray<LookupSource>;
 }>;
 
@@ -28,9 +26,9 @@ export type LookupService = Readonly<{
   lookup: (term: string, language: string) => Promise<LookupResponse>;
 }>;
 
-// Orchestrates the provider chain and caching: walk the ordered sources that serve the
-// requested language, returning the first match (with its attribution if any); cache the
-// result — including not-found — by `language:term` so en and zh keys never collide.
+// Orchestrates the language-routed sources and caching: walk the ordered sources that serve the
+// requested language, returning the first composed entry; cache the result — including
+// not-found — by `language:term` so en and zh keys never collide.
 export function createLookupService(dependencies: LookupServiceDependencies): LookupService {
   async function resolve(term: string, language: string): Promise<LookupResponse> {
     for (const source of dependencies.sources) {
@@ -38,12 +36,10 @@ export function createLookupService(dependencies: LookupServiceDependencies): Lo
         continue;
       }
 
-      const entry = await source.provider.lookup(term, language);
+      const entry = await source.lookup(term);
 
       if (entry !== null) {
-        return source.attribution === undefined
-          ? { entry, found: true }
-          : { attribution: source.attribution, entry, found: true };
+        return { entry, found: true };
       }
     }
 

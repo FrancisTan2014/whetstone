@@ -4,8 +4,17 @@ import { describe, expect, it, vi } from "vitest";
 import { createServer } from "../../http/createServer.js";
 
 const foundResponse: LookupResponse = {
-  attribution: "Source.",
-  entry: { headword: "word", senses: [{ gloss: "a unit of language" }] },
+  entry: {
+    headword: "word",
+    partsOfSpeech: [
+      {
+        partOfSpeech: "noun",
+        senses: [{ definition: "a unit of language", examples: [], synonyms: [] }]
+      }
+    ],
+    pronunciations: [{ ipa: "wɜːd" }],
+    sources: ["WordNet", "Wiktionary"]
+  },
   found: true
 };
 
