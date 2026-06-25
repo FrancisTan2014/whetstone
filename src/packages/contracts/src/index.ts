@@ -94,3 +94,15 @@ export type {
   NoteTemplateListDto,
   UpdateNoteRequest
 } from "./noteContracts.js";
+export {
+  parseReadingPositionResponse,
+  parseUpsertReadingPositionRequest,
+  readingPositionDtoSchema,
+  readingPositionResponseSchema,
+  upsertReadingPositionRequestSchema
+} from "./readingPositionContracts.js";
+export type {
+  ReadingPositionDto,
+  ReadingPositionResponse,
+  UpsertReadingPositionRequest
+} from "./readingPositionContracts.js";

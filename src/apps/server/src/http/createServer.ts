@@ -17,6 +17,8 @@ import { registerContentRoutes } from "../features/content/contentRoutes.js";
 import type { ContentDependencies } from "../features/content/contentCommands.js";
 import { registerNoteRoutes } from "../features/notes/noteRoutes.js";
 import type { NotesDependencies } from "../features/notes/noteCommands.js";
+import { registerReadingPositionRoutes } from "../features/readingPosition/readingPositionRoutes.js";
+import type { ReadingPositionDependencies } from "../features/readingPosition/readingPositionCommands.js";
 import { registerLookupRoutes } from "../features/lookup/lookupRoutes.js";
 import type { LookupDependencies } from "../features/lookup/lookupRoutes.js";
 import {
@@ -41,6 +43,7 @@ export type CreateServerOptions = Readonly<{
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
   notes?: NotesDependencies;
+  readingPosition?: ReadingPositionDependencies;
 }>;
 
 export function createServer(options: CreateServerOptions): FastifyInstance {
@@ -73,6 +76,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.notes !== undefined) {
     registerNoteRoutes(server, options.notes);
+  }
+
+  if (options.readingPosition !== undefined) {
+    registerReadingPositionRoutes(server, options.readingPosition);
   }
 
   if (options.lookup !== undefined) {

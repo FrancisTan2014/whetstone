@@ -75,7 +75,8 @@ const server = createServer({
   notes: {
     createEntryId: () => randomUUID(),
     db
-  }
+  },
+  readingPosition: { db }
 });
 
 try {

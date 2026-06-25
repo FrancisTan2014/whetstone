@@ -46,11 +46,12 @@ can navigate them from another package.
   No users table, login, session, or content owner yet (PRODUCT.md "Identity & ownership (v0)").
   `notes` is the first user-owned table: note routes resolve the current user via
   `request.server.currentUser` and stamp `notes.user_id` on create / filter note reads by it
-  (`noteCommands.ts`/`noteQueries.ts`); shared content tables stay unowned.
+  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; shared
+  content tables stay unowned.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
-  `*Queries.ts` (current: `library/`, `content/`, `notes/`). Routes stay thin; logic lives in
+  `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`). Routes stay thin; logic lives in
   commands/queries. `content/` ingests Markdown and EPUB uploads. Markdown re-ingestion REPLACES a
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
   new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical
@@ -63,7 +64,10 @@ can navigate them from another package.
   (`GET /api/works/:id/content/markdown`). `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`);
   templates are seeded from the domain on boot
-  (`seedNoteTemplates`).
+  (`seedNoteTemplates`). `readingPosition/` durably stores each reader's position per (user, work) —
+  the last open reading unit + an optional block anchor — in `reading_positions` (composite
+  `(user_id, work_entry_id)` PK), upserted via `PUT` and read via `GET /api/works/:id/reading-position`;
+  the server is the source of truth so resume survives a localStorage clear / new browser / other device.
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
@@ -171,11 +175,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   list markers, monospace code surface, ~66ch measure); `readerHeadings.ts` decides when a unit's
   eyebrow title duplicates its first heading (`isUnitTitleRedundant`) so the title is not shown twice,
   and `readerModel` flags heading blocks via `ReaderBlock.isHeading`.
-  Reading position is remembered per work in localStorage (client-side UI state, never server truth):
-  `readingPosition.ts` is the pure compute/restore/serialize layer (`resolveOpening` picks the opening
-  unit/scroll target from a deep link or saved position, `createLocalStoragePositionStore` injects
-  storage), and `useReadingPositionWriter.ts` persists the current unit + debounced scroll offset so
-  reopening a work resumes where it left off.
+  Reading position is durable **server** state, remembered per (user, work) — never localStorage:
+  `readingPosition.ts` is the pure compute layer (`resolveOpening` picks the opening unit/block-scroll
+  target from a deep link or the saved position), `readingAnchor.ts` finds the topmost visible block,
+  `readingPositionApi.ts` reads/writes `GET`/`PUT /api/works/:id/reading-position` (server is the
+  source of truth, so resume survives a localStorage clear / new browser / other device), and
+  `useReadingPositionWriter.ts` saves the current unit + best-effort block anchor (immediately on
+  unit change, debounced on scroll) so reopening a work resumes where it left off.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
   draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.ts` maps a template to
   its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
