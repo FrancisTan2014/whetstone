@@ -58,17 +58,18 @@ describe("App shell and routes", () => {
     expect(markup).toContain('id="content-heading"');
   });
 
-  it("resolves the reader route to the reader page", () => {
+  it("recedes the primary navigation and shows the reader landmark at the reader route", () => {
     const markup = renderAt("/reader");
 
-    expect(markup).toContain('id="reader-heading"');
+    expect(markup).toContain('aria-label="Reader"');
     expect(markup).not.toContain('id="content-heading"');
+    expect(markup).not.toContain('aria-label="Primary"');
   });
 
   it("resolves the reader route with a work query param to the reader page", () => {
     const markup = renderAt("/reader?work=work-1");
 
-    expect(markup).toContain('id="reader-heading"');
+    expect(markup).toContain('aria-label="Reader"');
   });
 
   it("resolves the notes route to its placeholder region", () => {

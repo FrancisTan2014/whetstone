@@ -124,9 +124,8 @@ afterEach(() => {
 describe("ReaderPage block memoization", () => {
   it("does not re-render the block list when an interaction opens the toolbar, switches a template, or opens lookup", async () => {
     const user = userEvent.setup();
-    const { container } = render(<ReaderPage />);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
-    await user.click(await screen.findByRole("button", { name: work.work.title }));
     await screen.findByText("Block 0 content");
 
     // Every block ran the markdown pipeline exactly once at mount.

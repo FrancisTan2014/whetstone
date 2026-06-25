@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { SafeArea } from "../shared/ui/SafeArea.js";
 import { ThemeToggle } from "../shared/theme/ThemeToggle.js";
@@ -18,7 +18,25 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
 // desktop/tablet and a bottom tab bar on mobile (a single nav landmark, repositioned
 // with utilities), plus the routed content region. Wrapped in SafeArea so it respects
 // dynamic viewport height and device safe-area insets.
+//
+// On the reader route the app navigation recedes so the reading column owns the full
+// viewport (an immersive reading room): the nav (and the theme toggle it hosts) is not
+// rendered and the routed content goes full-bleed. The reader provides its own
+// back-to-Library affordance. Every other route keeps the primary nav.
 export function AppShell(): React.JSX.Element {
+  const location = useLocation();
+
+  if (location.pathname === "/reader") {
+    return (
+      <SafeArea>
+        <main className="flex-1 overflow-y-auto bg-bg text-text">
+          <Outlet />
+        </main>
+        <ToastViewport />
+      </SafeArea>
+    );
+  }
+
   return (
     <SafeArea>
       <div className="flex flex-1 flex-col bg-bg text-text md:flex-row">
