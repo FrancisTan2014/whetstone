@@ -75,6 +75,17 @@ pnpm build
 
 `pnpm test` runs Vitest with coverage and enforces 100% statements, branches, functions, and lines for included app/package source. Generated output, config files, type-only files, test files, and framework bootstraps are excluded.
 
+## Bundle size budget
+
+`pnpm size-limit` measures the web app's production build (the Vite `dist` JS and CSS, brotli-compressed) against the budgets in [`.size-limit.json`](./.size-limit.json), and CI runs it on every pull request after `pnpm build` — a regression past budget fails the build. Run a build first, then check:
+
+```powershell
+pnpm build
+pnpm size-limit
+```
+
+A failure prints the measured size next to its limit (for example `Size: 280 kB / Size limit: 270 kB`). To fix it, **remove the bloat** — drop or lighten a dependency, or code-split a large chunk. Only **raise a budget** in `.size-limit.json` when the growth is intentional and justified; the budget is a regression tripwire (current baseline plus modest headroom), not a target to grow into. Keep it scoped to the web app — the server/Node packages are not gated.
+
 ## Screenshots (manual)
 
 `pnpm screenshots` boots the real stack against an ephemeral in-memory database, ingests the public-domain fixture EPUBs in [`fixtures/epub/`](./fixtures/epub/) through the live pipeline, serves the production web build with `vite preview`, and drives headless Chromium to write a labeled PNG for each stage (Library and Reader in Day/Night at desktop and mobile; the selection → note-editor → note-saved annotation moment) into `artifacts/screenshots/` (git-ignored).
