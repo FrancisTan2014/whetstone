@@ -207,15 +207,13 @@ code {
   padding: 0.5rem 0.75rem;
 }
 
-.noteEditorTemplates,
-.selectionToolbarTemplates {
+.noteEditorTemplates {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
 }
 
-.noteEditorTemplate,
-.selectionToolbarTemplate {
+.noteEditorTemplate {
   border: 1px solid var(--hue, #d1d5db);
   border-radius: 999px;
   color: var(--hue, #374151);
@@ -224,8 +222,7 @@ code {
   padding: 0.25rem 0.75rem;
 }
 
-.noteEditorTemplate[aria-pressed="true"],
-.selectionToolbarTemplate[aria-pressed="true"] {
+.noteEditorTemplate[aria-pressed="true"] {
   background: var(--hue-wash, #eef2ff);
   font-weight: 600;
 }
@@ -258,22 +255,37 @@ code {
   z-index: 20;
 }
 
-.selectionToolbarConfirm {
+.selectionToolbarAction {
+  align-items: center;
   background: #111827;
-  border: none;
+  border: 1px solid #111827;
   border-radius: 999px;
   color: #ffffff;
   cursor: pointer;
-  font-size: 0.8125rem;
-  padding: 0.25rem 0.75rem;
+  display: inline-flex;
+  font-size: 0.875rem;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.25rem 1rem;
+}
+
+.selectionToolbarAction--secondary {
+  background: #ffffff;
+  color: #111827;
 }
 
 .selectionToolbarDismiss {
+  align-items: center;
   background: transparent;
   border: none;
   color: #6b7280;
   cursor: pointer;
+  display: inline-flex;
   font-size: 0.875rem;
+  justify-content: center;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
 }
 
 /*

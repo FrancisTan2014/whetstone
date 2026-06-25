@@ -743,7 +743,7 @@ async function openHuedReader(): Promise<{
 }
 
 describe("ReaderPage selection toolbar", () => {
-  it("preselects the size-based template (one word picks Vocabulary)", async () => {
+  it("shows only the two primary actions, not inline template buttons", async () => {
     const { container } = await openHuedReader();
     const block = blockElement(container, "b-1");
 
@@ -751,27 +751,27 @@ describe("ReaderPage selection toolbar", () => {
     fireEvent.mouseUp(block);
 
     await screen.findByRole("toolbar", { name: "Annotate selection" });
-    expect(screen.getByRole("button", { name: "Vocabulary" }).getAttribute("aria-pressed")).toBe(
-      "true"
-    );
-    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
-      "false"
-    );
+    expect(screen.getByRole("button", { name: "Add note" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Look up" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Vocabulary" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Expression" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Thought" })).toBeNull();
   });
 
-  it("carries the toolbar's switched template into the editor", async () => {
+  it("preselects the size-based template in the editor (one word picks Vocabulary)", async () => {
     const { container, user } = await openHuedReader();
     const block = blockElement(container, "b-1");
 
     selectText(block, "Intro");
     fireEvent.mouseUp(block);
-
-    await user.click(await screen.findByRole("button", { name: "Expression" }));
-    await user.click(screen.getByRole("button", { name: "Add note" }));
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
 
     await screen.findByRole("heading", { name: "New note" });
-    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
+    expect(screen.getByRole("button", { name: "Vocabulary" }).getAttribute("aria-pressed")).toBe(
       "true"
+    );
+    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
+      "false"
     );
   });
 
