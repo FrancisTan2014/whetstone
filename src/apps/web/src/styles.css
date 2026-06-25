@@ -540,6 +540,16 @@ code {
   padding: 0.125rem 0.5rem;
 }
 
+/*
+ * In-content links from the source render as non-navigating text (#74): keep the original
+ * styling of the surrounding prose so a click selects text for lookup/annotation instead of
+ * leaving the page. The book's own cross-document links are not resolvable in v0.
+ */
+.readerLink {
+  color: inherit;
+  text-decoration: none;
+}
+
 .readerWorkNotes {
   margin-top: 2rem;
 }

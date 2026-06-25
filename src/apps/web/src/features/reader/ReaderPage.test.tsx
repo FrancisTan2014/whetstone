@@ -262,6 +262,32 @@ const unsafeContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+const linkContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-1"),
+          mdast: {
+            children: [
+              { type: "text", value: "See " },
+              { children: [{ type: "text", value: "Chapter 2" }], type: "link", url: "#chapter-2" },
+              { type: "text", value: " for details." }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          plaintext: "See Chapter 2 for details."
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 function firstTextNode(blockElement: HTMLElement): Text {
   const walker = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
   const node = walker.nextNode();
@@ -549,6 +575,36 @@ describe("ReaderPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Safe heading" })).toBeDefined();
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).not.toContain("__xssReader");
+  });
+
+  it("renders in-content links as non-navigating text that stays selectable", async () => {
+    mockedFetchWorkContent.mockResolvedValue(linkContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Politics and the English Language" })
+    );
+    await screen.findByText("Chapter 2");
+    const block = blockElement(container, "b-1");
+
+    // The link text is kept, but there is no navigating anchor — it renders as a plain span.
+    expect(block.querySelector("a")).toBeNull();
+    const link = block.querySelector(".readerLink");
+    expect(link?.tagName).toBe("SPAN");
+    expect(link?.textContent).toBe("Chapter 2");
+
+    // Selecting the former link text still opens the selection toolbar (no navigation).
+    const linkText = link?.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(linkText, 0);
+    range.setEnd(linkText, "Chapter 2".length);
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.mouseUp(block);
+
+    expect(await screen.findByRole("button", { name: "Add note" })).toBeDefined();
   });
 
   it("opens the selection toolbar then the editor when text is selected in a block", async () => {

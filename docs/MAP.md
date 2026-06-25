@@ -132,7 +132,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 (sidebar/desktop,
   drawer/mobile) listing units with the current one marked. `ReaderPage.tsx` keeps an `activeUnitIndex`,
   renders only that unit safely with `react-markdown` + `rehype-sanitize` (a schema that also disallows
-  `img`, so no image is fetched/rendered; opening the `?work=`/`?block=` target on arrival via
+  `img`, so no image is fetched/rendered; an `a` component override renders the source's in-content
+  links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —
+  v0 has no cross-document in-book link resolution; opening the `?work=`/`?block=` target on arrival via
   `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them). Selecting text (`blockSelection.ts`
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the

@@ -43,6 +43,15 @@ const sanitizeSchema = {
 const remarkPlugins = [remarkGfm];
 const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [[rehypeSanitize, sanitizeSchema]];
 
+// Render the source's in-content links as non-navigating text. v0 does not resolve
+// cross-document in-book links (blocks are standalone), so a live `<a href>` would hijack the
+// click — navigating the hash-router SPA away (observed: jumping home) and stealing the click
+// from the lookup/annotation selection. Keep the link text; drop the navigation. Empty
+// index/cross-reference anchors become an empty, non-clickable span.
+const markdownComponents: Options["components"] = {
+  a: ({ children }) => <span className="readerLink">{children}</span>
+};
+
 // Immersive-reader chrome state shared with the reading view: the language-aware paper
 // surface, the text-size control, the auto-hiding header, and the entrance motion.
 type ReaderChrome = Readonly<{
@@ -710,7 +719,11 @@ const ReaderBlockView = memo(function ReaderBlockView({
 
   const body = (
     <>
-      <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
+      <Markdown
+        components={markdownComponents}
+        rehypePlugins={rehypePlugins}
+        remarkPlugins={remarkPlugins}
+      >
         {block.markdown}
       </Markdown>
       {annotated ? (
