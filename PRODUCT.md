@@ -141,8 +141,9 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
 微信读书) work and avoiding the freeze of rendering a whole book at once.
 
 - **Navigation by table of contents (目录).** A TOC lists the work's reading units in order (current one
-  highlighted); selecting one opens it — a sidebar on desktop/tablet, a drawer on mobile. A single-unit
-  work (a short essay) needs no TOC.
+  highlighted); selecting one opens it. The 目录 is a **toggle/drawer on all widths** (it slides over/in and
+  dismisses) — **not** a persistent column that competes with the text. A single-unit work (a short essay)
+  needs no TOC.
 - **One reading unit at a time.** The reader renders only the **current reading unit's** blocks, as a
   continuous vertical scroll within that unit — not the whole work concatenated. Rendering stays bounded
   regardless of book size (a whole book is thousands of blocks; one chapter is hundreds); this is what
@@ -153,8 +154,11 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
 - **Reading position is remembered** (current unit, plus best-effort scroll offset), so reopening a work
   resumes where the reader left off ("Continue reading"). Position is client-side UI state (localStorage),
   never a server source of truth.
-- A subtle **progress indicator** shows place in the work; the reader is immersive (chrome recedes while
-  reading).
+- **Immersive, single-column layout (微信读书-style).** Reading is full-bleed and calm: one **centered**
+  reading column on the paper surface with generous margins, and the surrounding chrome — the app
+  navigation, the 目录, and the reading tools — **recedes while reading** and returns on intent (scroll-up /
+  hover / tap). There is **no in-reader work-picker and no page heading**; a work is opened from the Library
+  (or "Continue reading"). A subtle **progress indicator** shows place in the work.
 - Markdown is rendered safely — no raw/unsafe HTML execution. Each rendered block carries its block id so
   selection maps deterministically to a block.
 - Empty / loading / error states are explicit.
