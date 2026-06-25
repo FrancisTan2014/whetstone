@@ -120,33 +120,41 @@ function toNoteDto(row: NoteRow): NoteDto {
 // listed. Ordered by note id for a deterministic list; the client groups them by block.
 export async function listNotesForWork(
   db: DbClient,
-  workEntryId: EntryId
+  workEntryId: EntryId,
+  userId: string
 ): Promise<ReadonlyArray<NoteDto>> {
   const rows = await db
     .select(noteColumns)
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
     .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
-    .where(eq(blocks.workEntryId, workEntryId))
+    .where(and(eq(blocks.workEntryId, workEntryId), eq(notes.userId, userId)))
     .orderBy(asc(notes.entryId));
 
   return rows.map(toNoteDto);
 }
 
-// A single note scoped to the work, used to authorize edits and deletes against a forged or
-// cross-work note id. Scoped through the block's `work_entry_id` so a note on a soft-deleted
-// block stays editable/deletable for its work.
+// A single note scoped to the work AND the current user, used to authorize edits and deletes
+// against a forged or cross-work note id, or another user's note. Scoped through the block's
+// `work_entry_id` so a note on a soft-deleted block stays editable/deletable for its work.
 export async function getNoteForWork(
   db: DbClient,
   workEntryId: EntryId,
-  noteEntryId: EntryId
+  noteEntryId: EntryId,
+  userId: string
 ): Promise<NoteDto | undefined> {
   const rows = await db
     .select(noteColumns)
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
     .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
-    .where(and(eq(notes.entryId, noteEntryId), eq(blocks.workEntryId, workEntryId)))
+    .where(
+      and(
+        eq(notes.entryId, noteEntryId),
+        eq(blocks.workEntryId, workEntryId),
+        eq(notes.userId, userId)
+      )
+    )
     .limit(1);
   const row = rows[0];
 

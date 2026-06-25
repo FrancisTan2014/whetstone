@@ -17,7 +17,10 @@ import { runMigrations } from "../../db/migrate.js";
 import { entries, entryLinks, noteAnchors, notes } from "../../db/schema.js";
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
+import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { seedNoteTemplates, type NotesDependencies } from "./noteCommands.js";
+import { listNotesForWork } from "./noteQueries.js";
+import { toEntryId } from "@whetstone/domain";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
@@ -450,6 +453,32 @@ describe("list notes route", () => {
 
     expect((response.json() as NoteListDto).notes).toEqual([]);
     expect(note.entryId).toBeDefined();
+  });
+});
+
+describe("note user ownership", () => {
+  it("stamps a created note with the current user (the v0 default identity)", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const rows = await context.db
+      .select({ userId: notes.userId })
+      .from(notes)
+      .where(eq(notes.entryId, note.entryId));
+
+    expect(rows[0]?.userId).toBe(DEFAULT_USER_ID);
+  });
+
+  it("filters note reads by the current user — another user sees none", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+    const work = toEntryId(workEntryId);
+
+    const ownerNotes = await listNotesForWork(context.db, work, DEFAULT_USER_ID);
+    const otherUserNotes = await listNotesForWork(context.db, work, "another-user");
+
+    expect(ownerNotes).toHaveLength(1);
+    expect(otherUserNotes).toEqual([]);
   });
 });
 

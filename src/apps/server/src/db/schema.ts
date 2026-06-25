@@ -134,7 +134,10 @@ export const notes = pgTable("notes", {
   markdownBody: text("markdown_body").notNull(),
   templateId: text("template_id")
     .notNull()
-    .references(() => noteTemplates.id)
+    .references(() => noteTemplates.id),
+  // The owning user (the v0 default identity). Notes are user-owned personal data — stamped on
+  // create from the current-user provider and filtered by on read (PRODUCT.md "Identity & ownership").
+  userId: text("user_id").notNull()
 });
 
 // The anchor binds a note to a stable block id, with an optional sub-block character
