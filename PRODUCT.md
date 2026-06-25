@@ -1,12 +1,29 @@
 # Product brief
 
-## Vision
+## Vision & North Star
 
-whetstone is a personal reading app for turning source materials into a connected, contextual
-knowledge library.
+whetstone is a personal, **LLM-coached self-learning environment**. You do the learning — read, note,
+write, and (later) speak; whetstone collects your activity into a **durable, structured learning history**
+and, leveraging the LLM through a purpose-built context architecture, gives **proactive, personal, deep**
+suggestions and fast feedback. Unlike stateless single-shot chat, the coach is conditioned on everything
+you have read, noted, gotten wrong, and connected — so it can advise in a way generic chat structurally
+cannot.
 
-**North Star:** build my personal knowledge library — read source materials, break them into
-addressable atomic units, attach notes to specific passages, and connect ideas across works.
+**The principle:** the coach **proposes and connects — it never does your understanding for you.** You stay
+the learner; the LLM is the always-available tutor a solo learner otherwise lacks. The moat is not "the LLM
+sees everything" (that hits the context wall) but the **learner model + retrieval** that assembles the right
+slice of your history for each suggestion. Reading is the on-ramp, not the destination.
+
+**The scope test (so the app cannot sprawl into a mix):** every feature is either
+- **(a) capture** — it records your activity/knowledge into the structured learner model, or
+- **(b) coach** — it is the LLM reading that model to give feedback, suggestions, or connections.
+
+If a feature is neither, it is out of scope.
+
+**v0 is the on-ramp:** a usable reading + annotation loop that *begins* the learner model — read source
+materials, break them into addressable blocks, attach notes, connect ideas across works. Writing/speaking
+practice and the proactive LLM coach are the direction v0 builds toward, **not yet built**. The detailed v0
+scope and content model below remain the source of truth for what to build now.
 
 ## v0 scope
 
