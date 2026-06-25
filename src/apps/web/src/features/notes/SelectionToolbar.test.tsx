@@ -4,25 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SelectionToolbar } from "./SelectionToolbar";
-import type { NoteTemplateDto } from "@whetstone/contracts";
-
-const templates: ReadonlyArray<NoteTemplateDto> = [
-  {
-    fields: [{ id: "meaning", label: "Meaning", type: "long_text" }],
-    id: "vocabulary",
-    name: "Vocabulary"
-  },
-  {
-    fields: [{ id: "noticed", label: "Noticed", type: "long_text" }],
-    id: "expression",
-    name: "Expression"
-  },
-  {
-    fields: [{ id: "thought", label: "Thought", type: "long_text" }],
-    id: "thought",
-    name: "Thought"
-  }
-];
 
 function renderToolbar(
   overrides: {
@@ -30,20 +11,16 @@ function renderToolbar(
     onClose?: () => void;
     onConfirm?: () => void;
     onLookup?: () => void;
-    onSelectTemplate?: (templateId: string) => void;
-    selectedTemplateId?: string;
   } = {}
 ): {
   onClose: () => void;
   onConfirm: () => void;
   onLookup: () => void;
-  onSelectTemplate: (templateId: string) => void;
   user: ReturnType<typeof userEvent.setup>;
 } {
   const onClose = overrides.onClose ?? vi.fn();
   const onConfirm = overrides.onConfirm ?? vi.fn();
   const onLookup = overrides.onLookup ?? vi.fn();
-  const onSelectTemplate = overrides.onSelectTemplate ?? vi.fn();
   const user = userEvent.setup();
 
   render(
@@ -52,14 +29,11 @@ function renderToolbar(
       onClose={onClose}
       onConfirm={onConfirm}
       onLookup={onLookup}
-      onSelectTemplate={onSelectTemplate}
       prefersReducedMotion={false}
-      selectedTemplateId={overrides.selectedTemplateId ?? "vocabulary"}
-      templates={templates}
     />
   );
 
-  return { onClose, onConfirm, onLookup, onSelectTemplate, user };
+  return { onClose, onConfirm, onLookup, user };
 }
 
 afterEach(() => {
@@ -67,31 +41,21 @@ afterEach(() => {
 });
 
 describe("SelectionToolbar", () => {
-  it("marks the preselected template as pressed and the others as not", () => {
-    renderToolbar({ selectedTemplateId: "expression" });
+  it("shows exactly two primary actions plus a dismiss control", () => {
+    renderToolbar();
 
-    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
-      "true"
-    );
-    expect(screen.getByRole("button", { name: "Vocabulary" }).getAttribute("aria-pressed")).toBe(
-      "false"
-    );
-  });
-
-  it("switches the template when a hued option is pressed", async () => {
-    const { onSelectTemplate, user } = renderToolbar();
-
-    await user.click(screen.getByRole("button", { name: "Thought" }));
-
-    expect(onSelectTemplate).toHaveBeenCalledWith("thought");
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual(["Add note", "Look up", "✕"]);
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeDefined();
   });
 
   it("confirms to open the editor", async () => {
-    const { onConfirm, user } = renderToolbar();
+    const { onConfirm, onLookup, user } = renderToolbar();
 
     await user.click(screen.getByRole("button", { name: "Add note" }));
 
     expect(onConfirm).toHaveBeenCalled();
+    expect(onLookup).not.toHaveBeenCalled();
   });
 
   it("triggers a lookup without opening the editor", async () => {

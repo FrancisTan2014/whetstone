@@ -159,8 +159,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   toolbar while text stays selectable (the desktop browser selection mini-menu is a user setting,
   out of scope). Selecting text (`blockSelection.ts`
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
-  Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable
-  template) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor, and a saved
+  Range rect for anchoring) opens a floating `SelectionToolbar` (two primary actions — Add note
+  and Look up) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor (where the
+  size-preselected template is chosen), and a saved
   block's highlight is "born" via `highlightBirth.ts`. The per-work note list ("Your notes") opens
   in a toggled `Sheet` panel from the ReadingHeader notes tool (no longer pinned to the reading
   column); jumping back from a note card loads the unit holding the block (when it differs

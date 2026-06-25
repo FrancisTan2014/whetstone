@@ -171,14 +171,13 @@ type NotePanel =
   | Readonly<{ blockEntryId: string; kind: "block"; workEntryId: string }>;
 
 // A pending capture: a selection has been made and the floating toolbar is offering its
-// size-preselected (but switchable) template before the editor opens. `anchorRect` is the
+// two actions (Add note / Look up) before the editor opens. `anchorRect` is the
 // selection's rect (for positioning), `language` is the open work's language (so a Chinese
-// selection routes to CC-CEDICT), and `selectedTemplateId` tracks the toolbar choice.
+// selection routes to CC-CEDICT).
 type SelectionCapture = Readonly<{
   anchorRect?: DOMRect | undefined;
   draft: NoteDraft;
   language: string;
-  selectedTemplateId: string;
   workEntryId: string;
 }>;
 
@@ -403,7 +402,6 @@ export function ReaderPage({
         anchorRect: selectionRect(selection),
         draft,
         language,
-        selectedTemplateId: draft.preselectedTemplateId,
         workEntryId
       });
     },
@@ -413,7 +411,7 @@ export function ReaderPage({
   function confirmCapture(active: SelectionCapture): void {
     setCapture(undefined);
     setPanel({
-      draft: { ...active.draft, preselectedTemplateId: active.selectedTemplateId },
+      draft: active.draft,
       kind: "create",
       workEntryId: active.workEntryId
     });
@@ -516,12 +514,7 @@ export function ReaderPage({
           onClose={() => setCapture(undefined)}
           onConfirm={() => confirmCapture(capture)}
           onLookup={() => lookupSelection(capture)}
-          onSelectTemplate={(templateId) =>
-            setCapture({ ...capture, selectedTemplateId: templateId })
-          }
           prefersReducedMotion={prefersReducedMotion}
-          selectedTemplateId={capture.selectedTemplateId}
-          templates={templates}
         />
       )}
 

@@ -122,7 +122,7 @@ afterEach(() => {
 });
 
 describe("ReaderPage block memoization", () => {
-  it("does not re-render the block list when an interaction opens the toolbar, switches a template, or opens lookup", async () => {
+  it("does not re-render the block list when an interaction opens the toolbar or opens lookup", async () => {
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -132,14 +132,12 @@ describe("ReaderPage block memoization", () => {
     expect(markdown.renders).toBe(blockCount);
     const afterMount = markdown.renders;
 
-    // Open the selection toolbar (mouseup), switch the template, then open lookup. None of these
-    // touch block data, so with memoized blocks + stable props no block re-renders — the
-    // markdown render count must stay flat.
+    // Open the selection toolbar (mouseup), then open lookup. Neither touches block data, so with
+    // memoized blocks + stable props no block re-renders — the markdown render count must stay flat.
     const block = container.querySelector('[data-block-id="b-0"]') as HTMLElement;
     selectText(block, "Block");
     fireEvent.mouseUp(block);
-    await user.click(await screen.findByRole("button", { name: "Vocabulary" }));
-    await user.click(screen.getByRole("button", { name: "Look up" }));
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
     await screen.findByText("No definition found.");
 
     expect(markdown.renders).toBe(afterMount);
