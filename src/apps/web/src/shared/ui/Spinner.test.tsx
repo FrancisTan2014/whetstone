@@ -9,13 +9,15 @@ afterEach(() => {
 });
 
 describe("Spinner", () => {
-  it("is decorative by default and stops under reduced motion", () => {
+  it("is decorative by default and stays perceivably active under reduced motion via a pulse", () => {
     const { container } = render(<Spinner />);
     const svg = container.querySelector("svg");
 
     expect(svg?.getAttribute("aria-hidden")).toBe("true");
     expect(svg?.getAttribute("class")).toContain("animate-spin");
-    expect(svg?.getAttribute("class")).toContain("motion-reduce:animate-none");
+    // The `loadingSpinner` hook drives a reduced-motion-safe opacity pulse (see theme.css) so
+    // the indicator never freezes into a static icon when rotation is disabled.
+    expect(svg?.getAttribute("class")).toContain("loadingSpinner");
   });
 
   it("announces a label when used standalone", () => {

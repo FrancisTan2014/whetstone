@@ -193,6 +193,28 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+
+  /*
+   * Functional loading indicators must still convey "in progress" under reduced motion — a
+   * frozen spinner communicates nothing. Decorative motion stays off (the freeze above); only
+   * the loading spinner is exempted, swapping its rotation for a gentle, reduced-motion-safe
+   * opacity pulse (no rotation/translation). The class selector + !important override the
+   * blanket freeze for this one functional affordance.
+   */
+  .loadingSpinner {
+    animation: loadingPulse 1.5s ease-in-out infinite !important;
+  }
+}
+
+@keyframes loadingPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /*
