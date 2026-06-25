@@ -24,9 +24,11 @@ Rules:
 - Separate broad scaffolding/tooling from feature behavior unless the feature cannot be delivered without that foundation.
 - A **foundation issue** is a valid exception, distinct from a layer split: a reusable engineering capability (e.g. an outbound HTTP client, a cache, a shared provider interface) may be its own issue when an imminent, named feature needs it. Gate it strictly — it must sit behind a stable interface that hides details, be fully unit-tested at its boundary (fakes, no real I/O) so the app still builds and stays green with no UI yet, and have its first consumer queued as a following `Depends on: #N` feature issue. It is a horizontal capability reused across features, never one feature sliced by layer, and never speculative architecture without a named consumer.
 - When a slice is implementable, create a GitHub issue with outcome, acceptance criteria, constraints/non-goals, and validation.
+- Title every issue with a type prefix matching the existing queue: `[Task] …` for a work item, `[Bug] …` for a defect.
 - If an issue depends on another issue, include a clear `Depends on: #N` line in the issue body.
 - Apply `ready-for-dev` only when the issue can be implemented without guessing.
 - Apply `needs-design` when a requirement still needs a product decision.
+- Label every issue `copilot` (local Copilot agent work) alongside its readiness label, and `blocked` when it is gated by an unresolved dependency or decision.
 - Do not create implementation work from vague brainstorming.
 - Do not reintroduce older complex scope unless the user explicitly asks for it.
 - Prefer small v0 slices that preserve the core idea: admin inputs source materials, reader displays them, user clicks/taps words or phrases to create notes linked to source text.
