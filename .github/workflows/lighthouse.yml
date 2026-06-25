@@ -1,0 +1,45 @@
+name: Lighthouse (advisory)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Informational runtime performance report — NOT a merge gate. Runtime perf is flaky on shared
+# CI runners (GUIDELINES.md -> Performance gates), so this job is advisory only and lives in its
+# own workflow, separate from the required `quality` job in ci.yml: it never slows or destabilizes
+# the required gate. Every Lighthouse assertion is `warn` (see .lighthouserc.json) and both the job
+# and the run step are `continue-on-error`, so a low performance score can never fail the PR or
+# block merge. The deterministic budget lives in the size-limit gate; this is the runtime signal.
+# Lighthouse collects 3 runs and reports the median; the report URL is printed in the job log and
+# uploaded to LHCI temporary-public-storage (reachable from the PR's checks).
+jobs:
+  lighthouse:
+    name: Lighthouse CI (informational, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run Lighthouse CI (median of 3 runs, report-only)
+        run: pnpm exec lhci autorun
+        continue-on-error: true
