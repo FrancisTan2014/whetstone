@@ -39,7 +39,10 @@ can navigate them from another package.
 
 ### `src/apps/server/` — Fastify API
 
-- Composition/entry: `src/index.ts`; server assembly in `src/http/createServer.ts`.
+- Composition/entry: `src/index.ts` (in-memory PGlite unless `DATABASE_DIR` is set); `dev-server.mjs`
+  is the local dev entrypoint (`pnpm --filter @whetstone/server dev`) that defaults `DATABASE_DIR`
+  to a git-ignored `.data/db` so content survives a restart. Server assembly in
+  `src/http/createServer.ts`.
 - Identity seam: `src/identity/currentUser.ts` — the single `DEFAULT_USER_ID` constant + the
   `CurrentUserProvider` (`getCurrentUserId()`). `createServer` decorates the instance with it
   (`request.server.currentUser`), defaulting to the v0 provider; tests/future auth inject their own.
