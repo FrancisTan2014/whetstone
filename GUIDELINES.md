@@ -493,7 +493,7 @@ Correct-but-naive code passes the gate (tests + coverage) yet falls over at real
 
 - **Design and test at realistic scale.** A work is thousands of blocks; the library/knowledge graph grows unbounded. Reason about, and test, growing paths at realistic N (a full-length book; a large generated fixture) — not the 3-block fixture that hides the cost. (Generalizes the persistence-scale rule above to rendering and queries.)
 - **Algorithmic awareness at scaling boundaries.** No accidental O(n^2); do not repeat O(n) work per interaction, keystroke, or render; prefer batched/indexed/streamed over per-item. State the complexity in the PR when code scales with content or usage.
-- **React render discipline.** Do not re-render large subtrees on unrelated state changes; isolate interaction/UI state from large lists; render only what is needed (chapter-at-a-time, pagination, or virtualization) for large collections.
+- **React render discipline.** Do not re-render large subtrees on unrelated state changes; isolate interaction/UI state from large lists; render only what is needed (chapter-at-a-time, pagination, or virtualization) for large collections. Keep interactions responsive with React's concurrent features (`useTransition`/`useDeferredValue`) for non-urgent updates, and code-split routes/heavy components (`React.lazy`/Suspense) so the reader ships less JS.
 - **Leverage the React ecosystem instead of hand-rolling — under the OSS reliability/necessity test.**
   - **Adopt the React Compiler** (stable; React 19 + Vite). Its build-time **automatic memoization** is the default defense against unnecessary re-renders, so `memo`/`useMemo`/`useCallback` become escape hatches, not routine. Roll out incrementally with the React lint rules; pin the version; still profile.
   - For very large collections, use a **proven virtualization library** (`@tanstack/react-virtual` or `virtua`) rather than a bespoke windowing implementation — **but** virtualization unmounts off-screen DOM, which **breaks text selection across blocks**; for the annotation reader, prototype it against the selection/lookup requirement before adopting, and prefer bounding N (chapter-at-a-time) when that suffices.
@@ -502,6 +502,17 @@ Correct-but-naive code passes the gate (tests + coverage) yet falls over at real
 - **Foundations get extra scrutiny.** Shared boundaries — the rendering pipeline, data access, and the coming learner-model/retrieval — are reviewed for performance and stability because everything builds on them; a regression there is systemic, not local.
 
 Keep heavy or flaky performance *tests* out of the merge gate (as with the screenshot/dev-smoke harness); rely instead on realistic-scale fixtures, in-PR measurement for hot paths, and review.
+
+### Performance gates (CI)
+
+Performance splits into what a gate can enforce deterministically and what it cannot. Mirror how large React teams operate: gate the deterministic layer, treat runtime numbers as signal.
+
+- **Deterministic — gate in CI (block the PR); these do not flake:**
+  - **React render-safety lint.** `eslint-plugin-react-hooks` (React Compiler rules) runs inside `pnpm lint`, which is already `--max-warnings 0` in CI — so rules-of-React violations and compiler-ineligible code fail the build.
+  - **React Compiler enabled in the build.** Its automatic memoization is the systematic defense against unnecessary re-renders, so manual `memo`/`useMemo`/`useCallback` are escape hatches, not routine.
+  - **Bundle-size budget.** A size check (e.g. `size-limit`) fails CI when a web bundle exceeds its budget, catching dependency bloat before it ships.
+- **Runtime perf — do NOT hard-gate (flaky on shared runners).** Lighthouse CI and Playwright long-task timings vary run to run; run them as an **informational report** (median of N runs), never a merge block. This matches the screenshot/dev-smoke precedent.
+- **Production truth is RUM — deferred for v0.** Large teams gate on real-user Core Web Vitals — especially **INP** (interaction responsiveness, the metric behind reader jank), not CI lab numbers. whetstone is a single-user, local-first app, so full RUM is out of scope for v0; the local long-task harness + realistic-scale fixtures + in-PR before/after stand in for it. Revisit a lightweight `web-vitals` log if whetstone becomes multi-user.
 
 ## Pull request expectations
 
