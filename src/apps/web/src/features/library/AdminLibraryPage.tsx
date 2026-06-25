@@ -15,6 +15,7 @@ import { Button, buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
 import { Spinner } from "../../shared/ui/Spinner";
+import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
@@ -47,12 +48,8 @@ export function AdminLibraryPage(): React.JSX.Element {
 
   const [epubBusy, setEpubBusy] = useState(false);
 
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const toast = useToast();
-
-  useEffect(() => {
-    setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  }, []);
 
   async function reload(): Promise<void> {
     const [authorList, workList] = await Promise.all([fetchAuthors(), fetchWorks()]);
@@ -61,9 +58,16 @@ export function AdminLibraryPage(): React.JSX.Element {
   }
 
   useEffect(() => {
-    reload()
-      .then(() => setLoadState("ready"))
-      .catch(() => setLoadState("error"));
+    async function load(): Promise<void> {
+      try {
+        await reload();
+        setLoadState("ready");
+      } catch {
+        setLoadState("error");
+      }
+    }
+
+    void load();
   }, []);
 
   function buildAuthorSelection(): CreateWorkRequest["author"] | undefined {

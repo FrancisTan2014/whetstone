@@ -9,6 +9,7 @@ import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contr
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
+import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
@@ -85,6 +86,12 @@ type ReadingState =
   | Readonly<{ status: "error"; workEntryId: string }>
   | Readonly<{
       activeUnitIndex: number;
+      // One-shot scroll target carried in state (not refs): the consuming effect reads it after
+      // the unit renders and scrolls there. Cleared by the next unit-reducer transition so a
+      // stale target never re-scrolls. `scrollBlockEntryId` jumps to a block (deep link or a
+      // jump to a note/highlight); `scrollOffset` restores a saved pixel offset.
+      scrollBlockEntryId?: string | undefined;
+      scrollOffset?: number | undefined;
       status: "viewing";
       view: ReaderView;
       workEntryId: string;
@@ -105,7 +112,12 @@ export function applyUnitSelection(state: ReaderState, index: number): ReaderSta
 
   return {
     ...state,
-    reading: { ...state.reading, activeUnitIndex: clampUnitIndex(state.reading.view, index) }
+    reading: {
+      ...state.reading,
+      activeUnitIndex: clampUnitIndex(state.reading.view, index),
+      scrollBlockEntryId: undefined,
+      scrollOffset: undefined
+    }
   };
 }
 
@@ -123,7 +135,15 @@ export function applyUnitForBlock(state: ReaderState, blockEntryId: string): Rea
     state.reading.activeUnitIndex
   );
 
-  return { ...state, reading: { ...state.reading, activeUnitIndex: target } };
+  return {
+    ...state,
+    reading: {
+      ...state.reading,
+      activeUnitIndex: target,
+      scrollBlockEntryId: blockEntryId,
+      scrollOffset: undefined
+    }
+  };
 }
 
 // The work + active reading unit currently being read, or undefined when not viewing a unit
@@ -212,49 +232,86 @@ export function ReaderPage({
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
   const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
   const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
-  const [pendingScrollBlockEntryId, setPendingScrollBlockEntryId] = useState<string | undefined>(
-    undefined
-  );
-  const [pendingScrollOffset, setPendingScrollOffset] = useState<number | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
   // The 目录 drawer and the "Your notes" panel are tools that recede with the reading header:
   // their open state lives here (not inside ReaderToc) so opening a unit / jumping / opening a
   // work can dismiss them alongside the other overlays.
   const [tocOpen, setTocOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const scroll = useReaderScroll();
   const toast = useToast();
   // localStorage-backed per-work reading position; created once so its identity is stable.
   const positionStore = useMemo(() => createLocalStoragePositionStore(window.localStorage), []);
   useReadingPositionWriter(positionStore, viewingPosition(state));
 
+  // After the active unit renders, consume the viewing scroll target: jump to a requested block
+  // (a deep link, or a jump to a note/highlight in another unit) or restore the saved offset.
+  // The target lives in the reading state and is cleared by the next unit-reducer transition, so
+  // this effect only performs the scroll — it never calls setState, and uses no refs.
   useEffect(() => {
-    setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  }, []);
-
-  // After the active unit renders, scroll to a requested block (a deep link, or a jump to a
-  // note/highlight in another unit). The block is in the DOM by the time this effect runs.
-  useEffect(() => {
-    if (pendingScrollBlockEntryId === undefined) {
+    if (state.status !== "ready" || state.reading.status !== "viewing") {
       return;
     }
 
-    scrollToBlock(pendingScrollBlockEntryId);
-    setPendingScrollBlockEntryId(undefined);
-  }, [pendingScrollBlockEntryId]);
+    const { scrollBlockEntryId, scrollOffset } = state.reading;
 
-  // After the saved unit renders, restore its best-effort scroll offset.
+    if (scrollBlockEntryId !== undefined) {
+      scrollToBlock(scrollBlockEntryId);
+    } else if (scrollOffset !== undefined) {
+      window.scrollTo(0, scrollOffset);
+    }
+  }, [state]);
+
   useEffect(() => {
-    if (pendingScrollOffset === undefined) {
-      return;
+    // The initial open is inlined here (rather than calling a component-scoped openWork) so the
+    // effect has no forward reference and no external function dependency: on mount it fetches
+    // works, and when initialWorkEntryId matches one it opens it (loading → fetch content + notes
+    // → build view → resolve the opening plan → viewing, with the scroll target carried in state).
+    async function openInitialWork(
+      works: ReadonlyArray<WorkListItemDto>,
+      workEntryId: string,
+      deepLinkBlockEntryId?: string
+    ): Promise<void> {
+      setState({ reading: { status: "loading", workEntryId }, status: "ready", works });
+      setPanel(undefined);
+      setCapture(undefined);
+      setLookup(undefined);
+      setBornBlockEntryId(undefined);
+      setTocOpen(false);
+      setNotesOpen(false);
+      setNotes([]);
+
+      try {
+        const content = await fetchWorkContent(workEntryId);
+        const noteList = await fetchNotes(workEntryId);
+        setNotes(noteList.notes);
+        const view = buildReaderView(content);
+        const savedPosition = positionStore.read(workEntryId);
+        const plan = resolveOpening(view, {
+          ...(deepLinkBlockEntryId === undefined ? {} : { deepLinkBlockEntryId }),
+          ...(savedPosition === undefined ? {} : { savedPosition })
+        });
+
+        setState({
+          reading: {
+            activeUnitIndex: plan.unitIndex,
+            status: "viewing",
+            view,
+            workEntryId,
+            ...(plan.scrollBlockEntryId === undefined
+              ? {}
+              : { scrollBlockEntryId: plan.scrollBlockEntryId }),
+            ...(plan.scrollOffset === undefined ? {} : { scrollOffset: plan.scrollOffset })
+          },
+          status: "ready",
+          works
+        });
+      } catch {
+        setState({ reading: { status: "error", workEntryId }, status: "ready", works });
+      }
     }
 
-    window.scrollTo(0, pendingScrollOffset);
-    setPendingScrollOffset(undefined);
-  }, [pendingScrollOffset]);
-
-  useEffect(() => {
     fetchWorks()
       .then((list) => {
         const works = list.works;
@@ -268,10 +325,10 @@ export function ReaderPage({
           return;
         }
 
-        void openWork(works, requested.work.entryId, initialBlockEntryId);
+        void openInitialWork(works, requested.work.entryId, initialBlockEntryId);
       })
       .catch(() => setState({ status: "worksError" }));
-  }, [initialBlockEntryId, initialWorkEntryId]);
+  }, [initialBlockEntryId, initialWorkEntryId, positionStore]);
 
   useEffect(() => {
     fetchNoteTemplates()
@@ -282,53 +339,6 @@ export function ReaderPage({
   async function refreshNotes(workEntryId: string): Promise<void> {
     const list = await fetchNotes(workEntryId);
     setNotes(list.notes);
-  }
-
-  async function openWork(
-    works: ReadonlyArray<WorkListItemDto>,
-    workEntryId: string,
-    deepLinkBlockEntryId?: string
-  ): Promise<void> {
-    setState({ reading: { status: "loading", workEntryId }, status: "ready", works });
-    setPanel(undefined);
-    setCapture(undefined);
-    setLookup(undefined);
-    setBornBlockEntryId(undefined);
-    setTocOpen(false);
-    setNotesOpen(false);
-    setNotes([]);
-
-    try {
-      const content = await fetchWorkContent(workEntryId);
-      await refreshNotes(workEntryId);
-      const view = buildReaderView(content);
-      const savedPosition = positionStore.read(workEntryId);
-      const plan = resolveOpening(view, {
-        ...(deepLinkBlockEntryId === undefined ? {} : { deepLinkBlockEntryId }),
-        ...(savedPosition === undefined ? {} : { savedPosition })
-      });
-
-      setState({
-        reading: {
-          activeUnitIndex: plan.unitIndex,
-          status: "viewing",
-          view,
-          workEntryId
-        },
-        status: "ready",
-        works
-      });
-
-      if (plan.scrollBlockEntryId !== undefined) {
-        setPendingScrollBlockEntryId(plan.scrollBlockEntryId);
-      }
-
-      if (plan.scrollOffset !== undefined) {
-        setPendingScrollOffset(plan.scrollOffset);
-      }
-    } catch {
-      setState({ reading: { status: "error", workEntryId }, status: "ready", works });
-    }
   }
 
   // Open a reading unit from the 目录: switch the active unit and close any open overlays so
@@ -350,7 +360,6 @@ export function ReaderPage({
     setPanel(undefined);
     setTocOpen(false);
     setNotesOpen(false);
-    setPendingScrollBlockEntryId(blockEntryId);
   }
 
   const onCaptureSelection = useCallback(

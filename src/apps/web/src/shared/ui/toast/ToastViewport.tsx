@@ -1,20 +1,15 @@
-import { useEffect, useState } from "react";
-
 import { Toast } from "../Toast.js";
+import { useMediaQuery } from "../useMediaQuery.js";
 import { useToastQueue } from "./ToastProvider.js";
 
 // The app's single accessible live region for transient result notifications, mounted once
 // in the app shell. Queued toasts render in a non-overlapping vertical stack pinned to the
 // bottom, safe-area aware and identical on desktop and mobile. The container ignores
 // pointer events so it never blocks the page; each toast re-enables them for its dismiss
-// button. Reduced motion is read once and handed to each toast's spring.
+// button. Reduced motion is read (and kept live) for each toast's spring.
 export function ToastViewport(): React.JSX.Element {
   const { dismiss, toasts } = useToastQueue();
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-
-  useEffect(() => {
-    setPrefersReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  }, []);
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
   return (
     <div

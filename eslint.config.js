@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -57,6 +58,17 @@ export default tseslint.config(
       globals: {
         ...globals.node
       }
+    }
+  },
+  // The React Compiler / rules-of-React gate, scoped to the web app only (the server and Node
+  // packages are not React). The plugin's `recommended-latest` enables rules-of-hooks (error),
+  // exhaustive-deps, and the React Compiler rules; `pnpm lint --max-warnings 0` makes every
+  // violation block CI, so the code stays eligible for the compiler's automatic memoization.
+  {
+    files: ["src/apps/web/**/*.{ts,tsx}"],
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      ...reactHooks.configs["recommended-latest"].rules
     }
   }
 );
