@@ -4,6 +4,7 @@ import type { NormalizedEntry, NormalizedSense } from "@whetstone/contracts";
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
+import { groupSensesByPartOfSpeech, type LookupSenseGroup } from "./lookupGroups";
 
 // The view-only lookup state the reader drives: fetching, a failure, a no-match, or a
 // resolved entry. There are deliberately no note controls here — lookup never creates,
@@ -27,14 +28,23 @@ export type LookupPanelProps = Readonly<{
 function renderSense(sense: NormalizedSense, index: number): React.JSX.Element {
   return (
     <li className="lookupSense" key={index}>
-      {sense.partOfSpeech === undefined ? null : (
-        <span className="lookupPartOfSpeech">{sense.partOfSpeech}</span>
-      )}
       <span className="lookupGloss">{sense.gloss}</span>
       {sense.example === undefined ? null : (
         <span className="lookupExample">“{sense.example}”</span>
       )}
     </li>
+  );
+}
+
+// One part-of-speech group: the label once, then its senses as separated blocks.
+function renderGroup(group: LookupSenseGroup, index: number): React.JSX.Element {
+  return (
+    <div className="lookupGroup" key={index}>
+      {group.partOfSpeech === undefined ? null : (
+        <p className="lookupPartOfSpeech">{group.partOfSpeech}</p>
+      )}
+      <ol className="lookupSenses">{group.senses.map(renderSense)}</ol>
+    </div>
   );
 }
 
@@ -45,7 +55,7 @@ function renderEntry(entry: NormalizedEntry, attribution: string | undefined): R
       {entry.pronunciation === undefined ? null : (
         <p className="lookupPronunciation">{entry.pronunciation}</p>
       )}
-      <ol className="lookupSenses">{entry.senses.map(renderSense)}</ol>
+      <div className="lookupGroups">{groupSensesByPartOfSpeech(entry.senses).map(renderGroup)}</div>
       {attribution === undefined ? null : <p className="lookupAttribution">{attribution}</p>}
     </div>
   );

@@ -38,7 +38,7 @@ function fakeHttpClient(result: HttpResult<unknown>): HttpClient & { lastUrl: ()
 }
 
 describe("adaptFreeDictionary", () => {
-  it("flattens meanings into capped senses with parts of speech and examples", () => {
+  it("flattens every meaning into senses with parts of speech and examples", () => {
     expect(adaptFreeDictionary([cannedEntry])).toEqual({
       headword: "set",
       pronunciation: "/sɛt/",
@@ -49,9 +49,19 @@ describe("adaptFreeDictionary", () => {
           partOfSpeech: "verb"
         },
         { gloss: "to fix firmly", partOfSpeech: "verb" },
-        { example: "a chess set", gloss: "a group of similar things", partOfSpeech: "noun" }
+        { example: "a chess set", gloss: "a group of similar things", partOfSpeech: "noun" },
+        { gloss: "a fourth sense that must be dropped", partOfSpeech: "noun" }
       ]
     });
+  });
+
+  it("caps the flattened senses at twelve", () => {
+    const definitions = Array.from({ length: 15 }, (_unused, index) => ({
+      definition: `sense ${index + 1}`
+    }));
+    const entry = { meanings: [{ definitions, partOfSpeech: "noun" }], word: "many" };
+
+    expect(adaptFreeDictionary([entry])?.senses).toHaveLength(12);
   });
 
   it("omits the part of speech and example when absent", () => {

@@ -73,6 +73,31 @@ describe("LookupPanel content", () => {
     expect(screen.queryByText("From a source.")).toBeNull();
   });
 
+  it("groups senses by part of speech, labelling each group once and separating examples", () => {
+    renderPanel(
+      {
+        entry: {
+          headword: "set",
+          senses: [
+            { example: "set it down", gloss: "to put in place", partOfSpeech: "verb" },
+            { gloss: "to fix firmly", partOfSpeech: "verb" },
+            { example: "a chess set", gloss: "a group of things", partOfSpeech: "noun" }
+          ]
+        },
+        status: "loaded"
+      },
+      { matchers: desktop }
+    );
+
+    // Each part of speech is a distinct label shown exactly once, never concatenated into a gloss.
+    expect(screen.getAllByText("verb")).toHaveLength(1);
+    expect(screen.getAllByText("noun")).toHaveLength(1);
+    expect(screen.getByText("verb").textContent).toBe("verb");
+    // The gloss and its example render as separate, distinct text — not a run-on.
+    expect(screen.getByText("to put in place").textContent).toBe("to put in place");
+    expect(screen.getByText("“set it down”").textContent).toBe("“set it down”");
+  });
+
   it("shows a loading state while fetching", () => {
     renderPanel({ status: "loading" }, { matchers: desktop });
 

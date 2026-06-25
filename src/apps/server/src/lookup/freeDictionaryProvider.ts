@@ -4,8 +4,9 @@ import type { DictionaryProvider } from "./dictionaryProvider.types.js";
 import type { HttpClient } from "./httpClient.js";
 import { asArray, asString, field, isRecord } from "./jsonValue.js";
 
-// A few concise senses keep the popover scannable.
-const maxSenses = 3;
+// A higher cap keeps common words (which span several parts of speech) reasonably complete;
+// the reader groups senses by part of speech and the popover scrolls when results run long.
+const maxSenses = 12;
 
 function buildSense(
   gloss: string,

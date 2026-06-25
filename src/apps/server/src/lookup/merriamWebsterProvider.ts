@@ -15,8 +15,9 @@ export const merriamWebsterAttributions: Readonly<Record<MerriamWebsterReference
   learners: "Definitions from Merriam-Webster's Learner's Dictionary (learnersdictionary.com)."
 };
 
-// A few concise senses keep the popover scannable.
-const maxSenses = 3;
+// A higher cap keeps multi-part-of-speech and homograph entries reasonably complete; the
+// reader groups senses by part of speech and the popover scrolls when results run long.
+const maxSenses = 12;
 
 // MW marks syllable breaks in the headword with `*` (e.g. "vo*lu*mi*nous"); strip them.
 function cleanHeadword(value: string): string {
@@ -87,29 +88,21 @@ function pronunciationOf(headwordInfo: unknown): string | undefined {
   return asString(field(asArray(field(headwordInfo, "prs"))[0], "mw"));
 }
 
-// Pure adapter: normalizes MW's verbose JSON into a capped NormalizedEntry, or null when
-// there is no usable definition (no match, a suggestion list of bare strings, missing
-// headword, or empty short definitions). A no-match response is an array of suggestion
-// strings, so the first record element is the entry.
-export function adaptMerriamWebster(payload: unknown): NormalizedEntry | null {
-  const entry = asArray(payload).find(isRecord);
+// The cleaned headword of one MW record, or undefined when it has none (e.g. a suggestion
+// string rather than an entry object).
+function headwordOf(record: unknown): string | undefined {
+  const headword = asString(field(field(record, "hwi"), "hw"));
+  return headword === undefined ? undefined : cleanHeadword(headword);
+}
 
-  if (entry === undefined) {
-    return null;
-  }
-
-  const headwordInfo = field(entry, "hwi");
-  const headword = asString(field(headwordInfo, "hw"));
-
-  if (headword === undefined) {
-    return null;
-  }
-
-  const partOfSpeech = asString(field(entry, "fl"));
-  const examples = collectExamples(field(entry, "def"));
+// Every short definition of one record as senses, each tagged with that record's functional
+// label (part of speech) and aligned positional example.
+function sensesOfRecord(record: unknown): ReadonlyArray<NormalizedSense> {
+  const partOfSpeech = asString(field(record, "fl"));
+  const examples = collectExamples(field(record, "def"));
   const senses: NormalizedSense[] = [];
 
-  asArray(field(entry, "shortdef")).forEach((shortdef, index) => {
+  asArray(field(record, "shortdef")).forEach((shortdef, index) => {
     const gloss = asString(shortdef);
 
     if (gloss !== undefined) {
@@ -117,14 +110,44 @@ export function adaptMerriamWebster(payload: unknown): NormalizedEntry | null {
     }
   });
 
-  if (senses.length === 0) {
+  return senses;
+}
+
+// Pure adapter: normalizes MW's verbose JSON into a capped NormalizedEntry, or null when
+// there is no usable definition (no match, a suggestion list of bare strings, missing
+// headword, or empty short definitions). MW returns one record per part of speech / homograph
+// for the same word, so we merge the senses of every record that shares the primary
+// headword (the first record's) instead of keeping only the first — that recovers the other
+// parts of speech. The headword and pronunciation come from that primary record.
+export function adaptMerriamWebster(payload: unknown): NormalizedEntry | null {
+  const records = asArray(payload).filter(isRecord);
+  const senses: NormalizedSense[] = [];
+  let headword: string | undefined;
+  let pronunciation: string | undefined;
+
+  for (const record of records) {
+    const recordHeadword = headwordOf(record);
+
+    if (recordHeadword === undefined) {
+      continue;
+    }
+
+    if (headword === undefined) {
+      headword = recordHeadword;
+      pronunciation = pronunciationOf(field(record, "hwi"));
+    }
+
+    if (recordHeadword.toLowerCase() === headword.toLowerCase()) {
+      senses.push(...sensesOfRecord(record));
+    }
+  }
+
+  if (headword === undefined || senses.length === 0) {
     return null;
   }
 
-  const pronunciation = pronunciationOf(headwordInfo);
-
   return {
-    headword: cleanHeadword(headword),
+    headword,
     senses: senses.slice(0, maxSenses),
     ...(pronunciation === undefined ? {} : { pronunciation })
   };
