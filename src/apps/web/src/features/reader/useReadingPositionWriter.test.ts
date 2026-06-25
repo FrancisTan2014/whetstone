@@ -24,9 +24,11 @@ afterEach(() => {
 });
 
 describe("useReadingPositionWriter", () => {
+  const alwaysWrite = (): boolean => true;
+
   it("writes nothing when there is no active reading target", () => {
     const save = vi.fn();
-    renderHook(() => useReadingPositionWriter(save, undefined));
+    renderHook(() => useReadingPositionWriter(save, undefined, alwaysWrite));
 
     expect(save).not.toHaveBeenCalled();
   });
@@ -36,7 +38,9 @@ describe("useReadingPositionWriter", () => {
     addBlock("b-1", -10);
     addBlock("b-2", 50);
 
-    renderHook(() => useReadingPositionWriter(save, { unitEntryId: "u-2", workEntryId: "work-1" }));
+    renderHook(() =>
+      useReadingPositionWriter(save, { unitEntryId: "u-2", workEntryId: "work-1" }, alwaysWrite)
+    );
 
     expect(save).toHaveBeenCalledWith("work-1", { anchorBlockEntryId: "b-2", unitEntryId: "u-2" });
   });
@@ -44,16 +48,37 @@ describe("useReadingPositionWriter", () => {
   it("records just the unit when no block is visible", () => {
     const save = vi.fn();
 
-    renderHook(() => useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" }));
+    renderHook(() =>
+      useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" }, alwaysWrite)
+    );
 
     expect(save).toHaveBeenCalledWith("work-1", { unitEntryId: "u-1" });
+  });
+
+  it("does not write while writes are suppressed (a pending restore/jump scroll)", () => {
+    const save = vi.fn();
+    addBlock("b-1", 40);
+
+    renderHook(() =>
+      useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" }, () => false)
+    );
+
+    // The immediate save is skipped...
+    expect(save).not.toHaveBeenCalled();
+
+    // ...and a debounced scroll write is skipped too while suppressed.
+    window.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(positionWriteDelayMs);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("debounces scroll writes and captures the topmost visible block", () => {
     const save = vi.fn();
     addBlock("b-1", 40);
 
-    renderHook(() => useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" }));
+    renderHook(() =>
+      useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" }, alwaysWrite)
+    );
     save.mockClear();
 
     window.dispatchEvent(new Event("scroll"));
@@ -69,7 +94,7 @@ describe("useReadingPositionWriter", () => {
   it("stops writing after unmount", () => {
     const save = vi.fn();
     const { unmount } = renderHook(() =>
-      useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" })
+      useReadingPositionWriter(save, { unitEntryId: "u-1", workEntryId: "work-1" }, alwaysWrite)
     );
     save.mockClear();
 

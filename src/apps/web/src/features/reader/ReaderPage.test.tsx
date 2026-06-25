@@ -1343,6 +1343,20 @@ describe("ReaderPage reading position", () => {
     expect(blockElement(container, "b-2").scrollIntoView).toHaveBeenCalled();
   });
 
+  it("does not overwrite the saved block anchor with a pre-scroll save when reopening", async () => {
+    // The saved anchor (b-3) is NOT the top of its unit (u-2's top block is b-2), so a save taken
+    // before the restore scroll would capture b-2 and clobber b-3. The writer must stay suppressed
+    // until the scroll lands, so opening writes nothing.
+    mockedFetchReadingPosition.mockResolvedValue({ anchorBlockEntryId: "b-3", unitEntryId: "u-2" });
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Heading text")).toBeDefined();
+    expect(blockElement(container, "b-3").scrollIntoView).toHaveBeenCalled();
+    expect(mockedSaveReadingPosition).not.toHaveBeenCalled();
+  });
+
   it("opens the first unit when the saved unit no longer exists", async () => {
     mockedFetchReadingPosition.mockResolvedValue({ unitEntryId: "u-removed" });
     mockedFetchWorkContent.mockResolvedValue(multiUnitContent);

@@ -15,10 +15,13 @@ export type SaveReadingPosition = (workEntryId: string, position: ReadingPositio
 // Saves the reader's position to the server for the open work: it writes once when the work/unit
 // becomes active (so a unit switch is recorded immediately) and again, debounced, as the reader
 // scrolls — each write captures the current unit and the topmost visible block. Idle/loading
-// states (no target) write nothing.
+// states (no target) write nothing. `shouldWrite` gates every write so the caller can suppress
+// saves while a restore/deep-link scroll is still pending — otherwise the immediate save would
+// capture the pre-scroll top-of-unit block and overwrite the saved anchor before it is applied.
 export function useReadingPositionWriter(
   save: SaveReadingPosition,
-  target: ReadingPositionTarget | undefined
+  target: ReadingPositionTarget | undefined,
+  shouldWrite: () => boolean
 ): void {
   const unitEntryId = target?.unitEntryId;
   const workEntryId = target?.workEntryId;
@@ -32,6 +35,10 @@ export function useReadingPositionWriter(
     const unit = unitEntryId;
 
     function writePosition(): void {
+      if (!shouldWrite()) {
+        return;
+      }
+
       const anchorBlockEntryId = topmostVisibleBlockId();
       save(work, {
         unitEntryId: unit,
@@ -54,5 +61,5 @@ export function useReadingPositionWriter(
       window.clearTimeout(timer);
       window.removeEventListener("scroll", onScroll);
     };
-  }, [save, unitEntryId, workEntryId]);
+  }, [save, shouldWrite, unitEntryId, workEntryId]);
 }

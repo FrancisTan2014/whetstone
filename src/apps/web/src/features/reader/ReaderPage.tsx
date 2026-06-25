@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Markdown, { type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -247,7 +247,13 @@ export function ReaderPage({
       // Best-effort durable position; ignore network failures.
     });
   }, []);
-  useReadingPositionWriter(savePosition, viewingPosition(state));
+  // While a restore/deep-link scroll target is pending (set when a work opens to a saved anchor or
+  // a jump targets a block), suppress position writes: otherwise the writer's immediate save would
+  // capture the pre-scroll top-of-unit block and overwrite the saved anchor before the scroll-to-
+  // anchor effect runs. The scroll effect clears it once the scroll has been applied.
+  const restorePendingRef = useRef(false);
+  const shouldWritePosition = useCallback(() => !restorePendingRef.current, []);
+  useReadingPositionWriter(savePosition, viewingPosition(state), shouldWritePosition);
 
   // After the active unit renders, consume the viewing scroll target: jump to a requested block —
   // a deep link, a jump to a note/highlight in another unit, or a restored reading position's block
@@ -262,6 +268,8 @@ export function ReaderPage({
 
     if (scrollBlockEntryId !== undefined) {
       scrollToBlock(scrollBlockEntryId);
+      // The restore/jump scroll has been applied; position writes may resume.
+      restorePendingRef.current = false;
     }
   }, [state]);
 
@@ -308,6 +316,9 @@ export function ReaderPage({
           status: "ready",
           works
         });
+        // Suppress position writes until the restore/deep-link scroll lands, so the saved anchor is
+        // not overwritten by the pre-scroll top-of-unit block.
+        restorePendingRef.current = plan.scrollBlockEntryId !== undefined;
       } catch {
         setState({ reading: { status: "error", workEntryId }, status: "ready", works });
       }
