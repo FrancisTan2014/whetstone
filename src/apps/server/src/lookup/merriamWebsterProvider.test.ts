@@ -60,7 +60,7 @@ function fakeHttpClient(result: HttpResult<unknown>): HttpClient & { lastUrl: ()
 }
 
 describe("adaptMerriamWebster", () => {
-  it("normalizes the entry, stripping syllable breaks, capping senses, and attaching the first vis example", () => {
+  it("normalizes the entry, stripping syllable breaks, keeping every sense, and attaching the first vis example", () => {
     expect(adaptMerriamWebster([cannedEntry])).toEqual({
       headword: "voluminous",
       pronunciation: "və-ˈlü-mə-nəs",
@@ -71,9 +71,53 @@ describe("adaptMerriamWebster", () => {
           partOfSpeech: "adjective"
         },
         { gloss: "very full or large", partOfSpeech: "adjective" },
-        { gloss: "of, relating to, or filling a large volume", partOfSpeech: "adjective" }
+        { gloss: "of, relating to, or filling a large volume", partOfSpeech: "adjective" },
+        { gloss: "a fourth sense that must be dropped", partOfSpeech: "adjective" }
       ]
     });
+  });
+
+  it("merges every record that shares the headword, recovering the other parts of speech", () => {
+    const noun = {
+      fl: "noun",
+      hwi: { hw: "set", prs: [{ mw: "ˈset" }] },
+      shortdef: ["a group of similar things"]
+    };
+    const verb = { fl: "verb", hwi: { hw: "set" }, shortdef: ["to put in place", "to fix firmly"] };
+
+    expect(adaptMerriamWebster([noun, verb])).toEqual({
+      headword: "set",
+      pronunciation: "ˈset",
+      senses: [
+        { gloss: "a group of similar things", partOfSpeech: "noun" },
+        { gloss: "to put in place", partOfSpeech: "verb" },
+        { gloss: "to fix firmly", partOfSpeech: "verb" }
+      ]
+    });
+  });
+
+  it("ignores related run-on records whose headword differs from the primary entry", () => {
+    const primary = { fl: "noun", hwi: { hw: "set" }, shortdef: ["a group of similar things"] };
+    const relative = { fl: "noun", hwi: { hw: "set*back" }, shortdef: ["a reversal"] };
+
+    expect(adaptMerriamWebster([primary, relative])?.senses).toEqual([
+      { gloss: "a group of similar things", partOfSpeech: "noun" }
+    ]);
+  });
+
+  it("skips leading suggestion strings and adapts the first real record's headword", () => {
+    const entry = { fl: "noun", hwi: { hw: "word" }, shortdef: ["a unit of language"] };
+
+    expect(adaptMerriamWebster(["wor", entry])).toEqual({
+      headword: "word",
+      senses: [{ gloss: "a unit of language", partOfSpeech: "noun" }]
+    });
+  });
+
+  it("caps the merged senses at twelve", () => {
+    const shortdef = Array.from({ length: 15 }, (_unused, index) => `sense ${index + 1}`);
+
+    expect(adaptMerriamWebster([{ hwi: { hw: "many" }, shortdef }])?.senses).toHaveLength(12);
   });
 
   it("normalizes a Collegiate entry of the same shape", () => {

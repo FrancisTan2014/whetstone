@@ -81,7 +81,9 @@ can navigate them from another package.
   `LookupSource` declares the `languages` it serves; `lookupService.ts` orchestrates the ordered
   chain — only trying sources that serve the requested language (English: Learner's → Collegiate →
   Free Dictionary; Chinese `zh-CN`/`zh-TW`: CC-CEDICT) — first match wins, and caches by
-  `language:term`. Adapters cap senses (MW/Free at 3, CC-CEDICT at 5) and are pure (tested against
+  `language:term`. The MW adapter merges the senses of every record sharing the primary
+  headword (recovering the other parts of speech / homographs, not just the first record); the
+  adapters cap senses (MW/Free at 12, CC-CEDICT at 5) and are pure (tested against
   canned data via the fake transport / sample text). Keys load from a root `.env` via Node's
   `--env-file-if-exists=.env` (no dotenv dependency; the chain still falls through to Free Dictionary
   with no keys set).
@@ -161,7 +163,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the headword,
   pronunciation, senses, and attribution — as a compact Radix popover anchored near the selection on
   desktop/tablet, and a content-height bottom `Sheet` on narrow screens — with explicit
-  loading/empty/error states, and `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open
+  loading/empty/error states. `lookupGroups.ts` is the pure helper that groups senses by part of
+  speech (label once per group, examples on their own line) for a readable, token-styled layout, and
+  `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open
   work's language so Chinese selections route to CC-CEDICT automatically. Lookup never creates,
   pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
