@@ -131,9 +131,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   specific block). `reader/` is **目录-driven and renders one reading unit at a time** (no whole-book
   freeze): `readerModel.ts` orders units/blocks and serializes each block via domain `blockToMarkdown`;
   `readerNavigation.ts` holds the pure unit-selection logic (which unit holds a block, the initial unit
-  for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 — a dismissable
-  drawer at every width (toggle + backdrop, never a persistent sidebar) listing units with the current
-  one marked. `ReaderPage.tsx` is the immersive single-column reading room: a work is opened from the
+  for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 — a controlled,
+  dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
+  sidebar) listing units with the current one marked. `ReaderPage.tsx` is the immersive single-column reading room: a work is opened from the
   Library via `?work=` (no in-reader work-picker or page heading; with no work open it shows an explicit
   "Open a work from your Library" empty state), with a back-to-Library hash anchor always reachable. It
   keeps an `activeUnitIndex`,
@@ -150,11 +150,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
   Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable
   template) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor, and a saved
-  block's highlight is "born" via `highlightBirth.ts`. It also shows
-  a per-work note list; jumping back from a note card loads the unit holding the block (when it differs
+  block's highlight is "born" via `highlightBirth.ts`. The per-work note list ("Your notes") opens
+  in a toggled `Sheet` panel from the ReadingHeader notes tool (no longer pinned to the reading
+  column); jumping back from a note card loads the unit holding the block (when it differs
   from the open one) then scrolls/focuses it via `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
-  `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the auto-hiding header
-  (title + work-level progress + text-size control) driven by `useReaderScroll.ts`; `readingSize.ts` holds the
+  `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the receding reading
+  tool strip — title + work-level progress plus the one home for every reading tool (text-size,
+  Day/Night `ThemeToggle`, the 目录 toggle, and the notes toggle) — auto-hiding as one via
+  `useReaderScroll.ts`; `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
   targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored

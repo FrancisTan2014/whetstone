@@ -8,6 +8,7 @@ import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contr
 
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { Sheet } from "../../shared/ui/Sheet";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
@@ -53,7 +54,8 @@ const markdownComponents: Options["components"] = {
 };
 
 // Immersive-reader chrome state shared with the reading view: the language-aware paper
-// surface, the text-size control, the auto-hiding header, and the entrance motion.
+// surface, the text-size control, the auto-hiding header, the receding reading tools, and the
+// entrance motion.
 type ReaderChrome = Readonly<{
   language: string;
   onSizeChange: (size: ReadingSize) => void;
@@ -61,6 +63,20 @@ type ReaderChrome = Readonly<{
   scroll: ReaderScroll;
   size: ReadingSize;
   title: string;
+  tools: ReaderTools;
+}>;
+
+// The receding reading tools whose open state lives in ReaderPage: the 目录 drawer and the
+// "Your notes" panel, both toggled from the ReadingHeader so they hide with the rest of the
+// chrome while reading.
+type ReaderTools = Readonly<{
+  notesCount: number;
+  notesOpen: boolean;
+  onCloseToc: () => void;
+  onSetNotesOpen: (open: boolean) => void;
+  onToggleNotes: () => void;
+  onToggleToc: () => void;
+  tocOpen: boolean;
 }>;
 
 type ReadingState =
@@ -201,6 +217,11 @@ export function ReaderPage({
   );
   const [pendingScrollOffset, setPendingScrollOffset] = useState<number | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
+  // The 目录 drawer and the "Your notes" panel are tools that recede with the reading header:
+  // their open state lives here (not inside ReaderToc) so opening a unit / jumping / opening a
+  // work can dismiss them alongside the other overlays.
+  const [tocOpen, setTocOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const scroll = useReaderScroll();
   const toast = useToast();
@@ -273,6 +294,8 @@ export function ReaderPage({
     setCapture(undefined);
     setLookup(undefined);
     setBornBlockEntryId(undefined);
+    setTocOpen(false);
+    setNotesOpen(false);
     setNotes([]);
 
     try {
@@ -315,6 +338,8 @@ export function ReaderPage({
     setPanel(undefined);
     setCapture(undefined);
     setLookup(undefined);
+    setTocOpen(false);
+    setNotesOpen(false);
   }
 
   // Jump to a block (a note card or a highlight): load the unit that holds it when it differs
@@ -323,6 +348,8 @@ export function ReaderPage({
   function jumpToBlock(blockEntryId: string): void {
     setState((current) => applyUnitForBlock(current, blockEntryId));
     setPanel(undefined);
+    setTocOpen(false);
+    setNotesOpen(false);
     setPendingScrollBlockEntryId(blockEntryId);
   }
 
@@ -393,6 +420,8 @@ export function ReaderPage({
   }, []);
 
   function onEditNote(workEntryId: string, note: NoteDto): void {
+    // Editing opens its own Sheet; close the notes panel so the two do not stack.
+    setNotesOpen(false);
     setPanel({ kind: "edit", note, workEntryId });
   }
 
@@ -447,7 +476,16 @@ export function ReaderPage({
             onSizeChange: setSize,
             prefersReducedMotion,
             scroll,
-            size
+            size,
+            tools: {
+              notesCount: notes.length,
+              notesOpen,
+              onCloseToc: () => setTocOpen(false),
+              onSetNotesOpen: setNotesOpen,
+              onToggleNotes: () => setNotesOpen((value) => !value),
+              onToggleToc: () => setTocOpen((value) => !value),
+              tocOpen
+            }
           })
         : null}
 
@@ -546,29 +584,38 @@ function renderViewing(
 ): React.JSX.Element {
   const entrance = withReducedMotion(motionSprings.gentle, chrome.prefersReducedMotion);
   const units = view.units;
+  const tools = chrome.tools;
   // A multi-unit work navigates by its 目录; a single-unit work (an essay) reads without it.
-  const toc =
-    units.length > 1 ? (
-      <ReaderToc
-        activeIndex={activeUnitIndex}
-        items={units.map((unit, index) => ({
-          entryId: unit.entryId,
-          label: unitTocLabel(unit, index)
-        }))}
-        onSelect={onSelectUnit}
-      />
-    ) : null;
+  const hasToc = units.length > 1;
+  const toc = hasToc ? (
+    <ReaderToc
+      activeIndex={activeUnitIndex}
+      items={units.map((unit, index) => ({
+        entryId: unit.entryId,
+        label: unitTocLabel(unit, index)
+      }))}
+      onClose={tools.onCloseToc}
+      onSelect={onSelectUnit}
+      open={tools.tocOpen}
+    />
+  ) : null;
 
   return (
     <div className="readerReading">
       {toc}
       <div className="readerReadingMain">
         <ReadingHeader
+          hasToc={hasToc}
           hidden={chrome.scroll.headerHidden}
+          notesCount={tools.notesCount}
+          notesOpen={tools.notesOpen}
           onSizeChange={chrome.onSizeChange}
+          onToggleNotes={tools.onToggleNotes}
+          onToggleToc={tools.onToggleToc}
           progress={workProgress(activeUnitIndex, units.length, chrome.scroll.progress)}
           size={chrome.size}
           title={chrome.title}
+          tocOpen={tools.tocOpen}
         />
         <motion.div
           animate={{ opacity: 1, y: 0 }}
@@ -585,8 +632,9 @@ function renderViewing(
             {renderReaderView(units[activeUnitIndex], workEntryId, handlers, chrome.language)}
           </div>
         </motion.div>
-        <section aria-labelledby="work-notes-heading" className="readerWorkNotes">
-          <h2 id="work-notes-heading">Your notes</h2>
+      </div>
+      <Sheet onOpenChange={tools.onSetNotesOpen} open={tools.notesOpen} title="Your notes">
+        <div className="readerNotesPanel">
           <NoteList
             emptyLabel="No notes yet. Select text in the reader to add one."
             notes={handlers.notes}
@@ -595,8 +643,8 @@ function renderViewing(
             onJump={(note) => handlers.onJumpToBlock(note)}
             templates={handlers.templates}
           />
-        </section>
-      </div>
+        </div>
+      </Sheet>
     </div>
   );
 }

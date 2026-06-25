@@ -13,10 +13,21 @@ const items: ReadonlyArray<ReaderTocItem> = [
 afterEach(cleanup);
 
 describe("ReaderToc", () => {
-  it("lists the units and marks the active one", () => {
-    render(<ReaderToc activeIndex={1} items={items} onSelect={vi.fn()} />);
+  it("renders nothing while the drawer is closed", () => {
+    render(
+      <ReaderToc activeIndex={0} items={items} onClose={vi.fn()} onSelect={vi.fn()} open={false} />
+    );
+
+    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+  });
+
+  it("lists the units and marks the active one when open", () => {
+    render(
+      <ReaderToc activeIndex={1} items={items} onClose={vi.fn()} onSelect={vi.fn()} open={true} />
+    );
 
     const nav = screen.getByRole("navigation", { name: "目录" });
+    expect(nav.id).toBe("reader-toc-list");
     const buttons = nav.querySelectorAll("button");
     expect(Array.from(buttons).map((button) => button.textContent)).toEqual([
       "Section 1",
@@ -30,43 +41,29 @@ describe("ReaderToc", () => {
     ).toBeNull();
   });
 
-  it("calls onSelect with the chosen unit index", async () => {
+  it("selects a unit then closes the drawer", async () => {
     const onSelect = vi.fn();
+    const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<ReaderToc activeIndex={0} items={items} onSelect={onSelect} />);
+    render(
+      <ReaderToc activeIndex={0} items={items} onClose={onClose} onSelect={onSelect} open={true} />
+    );
 
     await user.click(screen.getByRole("button", { name: "Chapter Two" }));
 
     expect(onSelect).toHaveBeenCalledWith(1);
-  });
-
-  it("toggles the mobile drawer open and closes it after a selection", async () => {
-    const onSelect = vi.fn();
-    const user = userEvent.setup();
-    render(<ReaderToc activeIndex={0} items={items} onSelect={onSelect} />);
-
-    const toggle = screen.getByRole("button", { name: "目录" });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-
-    await user.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("button", { name: "Close table of contents" })).toBeDefined();
-
-    await user.click(screen.getByRole("button", { name: "Section 1" }));
-    expect(onSelect).toHaveBeenCalledWith(0);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Close table of contents" })).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("closes the drawer when the backdrop is tapped", async () => {
+    const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<ReaderToc activeIndex={0} items={items} onSelect={vi.fn()} />);
-
-    const toggle = screen.getByRole("button", { name: "目录" });
-    await user.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    render(
+      <ReaderToc activeIndex={0} items={items} onClose={onClose} onSelect={vi.fn()} open={true} />
+    );
 
     await user.click(screen.getByRole("button", { name: "Close table of contents" }));
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

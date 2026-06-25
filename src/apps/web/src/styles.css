@@ -117,21 +117,10 @@ code {
   -webkit-touch-callout: none;
 }
 
-/* The 目录 (table of contents) is a dismissable drawer at every width — never a persistent
-   sidebar column — so the reading column is never split. The toggle opens an off-canvas panel
-   over a backdrop; selecting a unit (or tapping the backdrop) closes it. */
-.readerTocToggle {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  color: var(--color-text);
-  cursor: pointer;
-  display: inline-block;
-  font-weight: 600;
-  margin-bottom: 1rem;
-  padding: 0.5rem 0.75rem;
-}
-
+/* The 目录 (table of contents) is a controlled, dismissable drawer at every width — never a
+   persistent sidebar column — so the reading column is never split. The 目录 tool in the
+   ReadingHeader opens an off-canvas panel over a backdrop; selecting a unit (or tapping the
+   backdrop) closes it. */
 .readerTocBackdrop {
   background: rgb(15 23 42 / 40%);
   border: none;
@@ -141,11 +130,7 @@ code {
   z-index: 40;
 }
 
-.readerToc:not(.readerToc--open) .readerTocNav {
-  display: none;
-}
-
-.readerTocNav {
+.readerToc--open .readerTocNav {
   background: var(--color-surface);
   box-shadow: 0 0 2rem rgb(15 23 42 / 25%);
   inset: 0 auto 0 0;
@@ -523,8 +508,11 @@ code {
   text-decoration: none;
 }
 
-.readerWorkNotes {
-  margin-top: 2rem;
+/* The "Your notes" list is no longer pinned to the bottom of the reading column — it lives in
+   a toggled Sheet opened from the ReadingHeader. The Sheet owns its surface/scroll, so the list
+   only needs breathing room above the cards. */
+.readerNotesPanel {
+  margin-top: 1rem;
 }
 
 .readerBlockNotesPanel {

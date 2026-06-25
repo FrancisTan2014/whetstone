@@ -1,45 +1,43 @@
-import { useState } from "react";
-
 export type ReaderTocItem = Readonly<{ entryId: string; label: string }>;
 
 export type ReaderTocProps = Readonly<{
   activeIndex: number;
   items: ReadonlyArray<ReaderTocItem>;
+  onClose: () => void;
   onSelect: (index: number) => void;
+  open: boolean;
 }>;
 
 // The 目录 (table of contents): lists a work's reading units in order with the current one
 // marked, so the reader moves chapter by chapter instead of scrolling a whole book. It is a
-// dismissable drawer at every width — the toggle opens it over a backdrop so the immersive
-// reading column is never split by a persistent sidebar. Selecting a unit opens it and closes
-// the drawer.
-export function ReaderToc({ activeIndex, items, onSelect }: ReaderTocProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+// controlled, dismissable drawer at every width — its open state lives in the reader so the
+// 目录 toggle recedes with the rest of the reading tools (ReadingHeader). The drawer renders
+// over a backdrop; selecting a unit (or tapping the backdrop / close control) closes it, so the
+// immersive reading column is never split by a persistent sidebar.
+export function ReaderToc({
+  activeIndex,
+  items,
+  onClose,
+  onSelect,
+  open
+}: ReaderTocProps): React.JSX.Element | null {
+  if (!open) {
+    return null;
+  }
 
   function select(index: number): void {
     onSelect(index);
-    setOpen(false);
+    onClose();
   }
 
   return (
-    <div className={open ? "readerToc readerToc--open" : "readerToc"}>
+    <div className="readerToc readerToc--open">
       <button
-        aria-controls="reader-toc-list"
-        aria-expanded={open}
-        className="readerTocToggle"
-        onClick={() => setOpen((value) => !value)}
+        aria-label="Close table of contents"
+        className="readerTocBackdrop"
+        onClick={onClose}
         type="button"
-      >
-        目录
-      </button>
-      {open ? (
-        <button
-          aria-label="Close table of contents"
-          className="readerTocBackdrop"
-          onClick={() => setOpen(false)}
-          type="button"
-        />
-      ) : null}
+      />
       <nav aria-label="目录" className="readerTocNav" id="reader-toc-list">
         <p className="readerTocHeading">目录</p>
         <ul className="readerTocList">
