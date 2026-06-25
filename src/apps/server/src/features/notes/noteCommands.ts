@@ -53,7 +53,8 @@ export async function seedNoteTemplates(db: DbClient): Promise<void> {
 export async function createNote(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
-  request: CreateNoteRequest
+  request: CreateNoteRequest,
+  userId: string
 ): Promise<CreateNoteResult> {
   const template = await getNoteTemplateById(dependencies.db, request.templateId);
 
@@ -87,7 +88,8 @@ export async function createNote(
       answersJson: validation.answers,
       entryId: noteEntryId,
       markdownBody: markdown,
-      templateId: template.id
+      templateId: template.id,
+      userId
     });
     await tx.insert(noteAnchors).values({
       blockEntryId: anchor.blockEntryId,
@@ -122,9 +124,10 @@ export async function updateNote(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
   noteEntryId: EntryId,
-  request: UpdateNoteRequest
+  request: UpdateNoteRequest,
+  userId: string
 ): Promise<UpdateNoteResult> {
-  const existing = await getNoteForWork(dependencies.db, workEntryId, noteEntryId);
+  const existing = await getNoteForWork(dependencies.db, workEntryId, noteEntryId, userId);
 
   if (existing === undefined) {
     return { status: "note_not_found" };
@@ -165,9 +168,10 @@ export async function updateNote(
 export async function deleteNote(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
-  noteEntryId: EntryId
+  noteEntryId: EntryId,
+  userId: string
 ): Promise<DeleteNoteResult> {
-  const existing = await getNoteForWork(dependencies.db, workEntryId, noteEntryId);
+  const existing = await getNoteForWork(dependencies.db, workEntryId, noteEntryId, userId);
 
   if (existing === undefined) {
     return { status: "note_not_found" };

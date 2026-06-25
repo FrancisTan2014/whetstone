@@ -17,7 +17,11 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
   }));
 
   server.get<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request) => ({
-    notes: await listNotesForWork(dependencies.db, toEntryId(request.params.workEntryId))
+    notes: await listNotesForWork(
+      dependencies.db,
+      toEntryId(request.params.workEntryId),
+      request.server.currentUser.getCurrentUserId()
+    )
   }));
 
   server.post<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request, reply) => {
@@ -28,7 +32,12 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
     }
 
     const workEntryId = toEntryId(request.params.workEntryId);
-    const result = await createNote(dependencies, workEntryId, parsed.data);
+    const result = await createNote(
+      dependencies,
+      workEntryId,
+      parsed.data,
+      request.server.currentUser.getCurrentUserId()
+    );
 
     switch (result.status) {
       case "template_not_found":
@@ -65,7 +74,13 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
 
       const workEntryId = toEntryId(request.params.workEntryId);
       const noteEntryId = toEntryId(request.params.noteEntryId);
-      const result = await updateNote(dependencies, workEntryId, noteEntryId, parsed.data);
+      const result = await updateNote(
+        dependencies,
+        workEntryId,
+        noteEntryId,
+        parsed.data,
+        request.server.currentUser.getCurrentUserId()
+      );
 
       switch (result.status) {
         case "note_not_found":
@@ -94,7 +109,12 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
     async (request, reply) => {
       const workEntryId = toEntryId(request.params.workEntryId);
       const noteEntryId = toEntryId(request.params.noteEntryId);
-      const result = await deleteNote(dependencies, workEntryId, noteEntryId);
+      const result = await deleteNote(
+        dependencies,
+        workEntryId,
+        noteEntryId,
+        request.server.currentUser.getCurrentUserId()
+      );
 
       if (result.status === "note_not_found") {
         return reply.code(404).send({ error: "note_not_found" });

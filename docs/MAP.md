@@ -44,6 +44,9 @@ can navigate them from another package.
   `CurrentUserProvider` (`getCurrentUserId()`). `createServer` decorates the instance with it
   (`request.server.currentUser`), defaulting to the v0 provider; tests/future auth inject their own.
   No users table, login, session, or content owner yet (PRODUCT.md "Identity & ownership (v0)").
+  `notes` is the first user-owned table: note routes resolve the current user via
+  `request.server.currentUser` and stamp `notes.user_id` on create / filter note reads by it
+  (`noteCommands.ts`/`noteQueries.ts`); shared content tables stay unowned.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
