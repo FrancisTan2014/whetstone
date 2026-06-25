@@ -234,28 +234,36 @@ Storing blocks as rows makes search easier and richer than files would (granular
 
 ## v0 vocabulary lookup
 
-While reading, the user can select a single word (or short phrase) and look up its meaning in place —
-a fast, **view-only** glance that never auto-creates or edits a note. Note-taking stays a deliberate,
-manual act (the effortful encoding is the point); lookup only removes the friction of finding a meaning.
+While reading, the user can select a single word (or short phrase) and look it up in place — a fast,
+**view-only, monolingual** glance that never auto-creates or edits a note. Note-taking stays a deliberate,
+manual act (the effortful encoding is the point), and the *meaning-mapping stays the reader's own work*:
+lookup shows real dictionary content, not a pre-digested analysis.
 
-- **Boundary first.** Every lookup goes through a `DictionaryProvider` interface
-  (`lookup(term, language) -> NormalizedEntry`) that hides each source's format, transport, and caching.
-  Providers are pluggable; the reader UI is identical across them.
-- **Normalize and trim.** Raw dictionary results are long and messy, so each provider has an adapter
-  that normalizes to a compact shape — headword, optional pronunciation, and a few concise senses
-  (part of speech, gloss, optional example) — capped so the popover stays scannable.
-- **English source:** Merriam-Webster's **Learner's Dictionary API** (server-side key, attribution,
-  non-commercial), with the no-key **Free Dictionary API** (Wiktionary-sourced) as a fallback.
-- **Chinese source:** the openly licensed **CC-CEDICT** (pinyin + gloss); for classical depth, the
-  **public-domain** source dictionaries (《康熙字典》, 《说文解字》) may be added as further providers.
-  Copyrighted sites with no open license or API (e.g. Oxford, Longman, 汉典/zdic) are not scraped.
-- **Surface:** a popover on desktop-width screens and a bottom sheet on narrow screens, consistent with
-  the note editor.
-- **Server-centered:** the API key stays on the server; results are cached to respect rate limits.
+- **Boundary first.** Every source implements a `DictionaryProvider` interface that hides its format,
+  transport, and caching. A small **lookup service composes** providers into one `DictionaryEntry`; the
+  reader UI is identical across sources.
+- **Monolingual English (EN -> EN), from trustworthy free sources, composed by role:**
+  - **WordNet** (Princeton; bundled offline via an npm package such as `wordpos`) — the **reliable
+    backbone**: it works with no network and supplies authoritative **synonyms** and a sense fallback.
+  - **Free Dictionary API** (Wiktionary-sourced; no key) — the **rich layer**: pronunciation/IPA, example
+    sentences, and etymology, and the primary sense source when reachable.
+  - We **compose by role** (pronunciation/examples/etymology from Wiktionary; senses primary from
+    Wiktionary with **WordNet fallback**; synonyms from WordNet) — we do **not** align individual senses
+    across sources. **Merriam-Webster is dropped** (distrusted, commercial, keyed).
+- **Chinese source:** the openly licensed **CC-CEDICT** (pinyin + gloss), rendered in the same layout.
+- **`DictionaryEntry` shape:** headword, pronunciations (IPA/audio), **parts of speech each grouping
+  ordered senses** (definition, examples, synonyms), optional etymology, and source attribution. It is
+  ephemeral (not stored); results may be **lightly cached** to respect the Free Dictionary host.
+- **Presentation — like a mature online dictionary.** A compact **popover** near the selection (desktop)
+  / bottom sheet (mobile): **part-of-speech groups as tokenized, color-coded sections** (Day/Night-aware,
+  consistent with the design system), **numbered senses** with indented examples, **synonyms** as chips,
+  a quiet **etymology** section, and a **sources** footer; clear hierarchy and white space; scrolls for
+  long entries.
 
-A future **LLM provider** behind the same interface can give context-aware meanings (and classical
-Chinese, where dictionaries are weak) and, separately, draft a note the user must edit — both remain
-future, not v0. Lookup does not change the "No LLM note drafting" non-goal.
+**LLM lookup is deliberately deferred.** An LLM could synthesize a "core meaning -> extensions" explainer,
+but having it analyze the word *for* the reader is shallow ("fake") learning — reading real senses and
+mapping the contextual meaning yourself is the point. It remains future, behind the same boundary, and
+does not change the "No LLM note drafting" non-goal.
 
 ## v0 technology choices (locked)
 

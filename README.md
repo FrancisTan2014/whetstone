@@ -86,6 +86,17 @@ pnpm exec playwright install chromium
 pnpm screenshots
 ```
 
+## Acknowledgments
+
+whetstone's in-reader vocabulary lookup is built on open dictionary data, with gratitude:
+
+- **WordNet®** — Princeton University ([wordnet.princeton.edu](https://wordnet.princeton.edu/)), via the
+  MIT-licensed [`wordpos`](https://www.npmjs.com/package/wordpos) / [`wordnet-db`](https://www.npmjs.com/package/wordnet-db) packages.
+- **Wiktionary** — the free dictionary, via the community [Free Dictionary API](https://dictionaryapi.dev/); content licensed **CC BY-SA**.
+- **CC-CEDICT** — the community Chinese–English dictionary ([cc-cedict.org](https://cc-cedict.org/)); licensed **CC BY-SA**.
+
+Thanks to these projects and their contributors.
+
 ## Development workflow
 
 This repo is built by **manually-triggered** Copilot CLI roles. You (the maintainer) act as the
