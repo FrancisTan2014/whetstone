@@ -1181,6 +1181,21 @@ describe("ReaderPage reading controls", () => {
     expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
   });
 
+  it("keeps the reading column width stable (font-size-independent) when the text size changes", async () => {
+    const user = userEvent.setup();
+    const container = await openMultiUnitWork();
+    const surface = surfaceIn(container);
+    // A font-size-independent rem measure: the column width never tracks --reading-size.
+    const measureAtDefault = surface.style.getPropertyValue("--reading-measure");
+    expect(measureAtDefault).toBe("37rem");
+
+    await user.click(screen.getByRole("button", { name: "Increase reading text size" }));
+
+    // The text grew, but the column measure is unchanged — the text reflows within it.
+    expect(surface.style.getPropertyValue("--reading-size")).toBe("1.3125rem");
+    expect(surface.style.getPropertyValue("--reading-measure")).toBe(measureAtDefault);
+  });
+
   it("tints annotated blocks with the note's annotation hue", async () => {
     const container = await openWorkWithNotes([makeNote()]);
 
