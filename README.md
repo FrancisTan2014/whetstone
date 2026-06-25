@@ -86,6 +86,10 @@ pnpm size-limit
 
 A failure prints the measured size next to its limit (for example `Size: 280 kB / Size limit: 270 kB`). To fix it, **remove the bloat** — drop or lighten a dependency, or code-split a large chunk. Only **raise a budget** in `.size-limit.json` when the growth is intentional and justified; the budget is a regression tripwire (current baseline plus modest headroom), not a target to grow into. Keep it scoped to the web app — the server/Node packages are not gated.
 
+## Lighthouse report (advisory, non-blocking)
+
+A separate [`Lighthouse (advisory)`](./.github/workflows/lighthouse.yml) workflow runs Lighthouse CI against the built web app on every pull request — collecting 3 runs and reporting the **median** Core Web Vitals / performance scores, with the report uploaded to LHCI temporary-public-storage (the URL is printed in the job log, reachable from the PR's checks). It is **informational only and never blocks merge**: runtime perf is flaky on shared CI runners, so it lives outside the required `quality` job, every Lighthouse assertion is `warn` (see [`.lighthouserc.json`](./.lighthouserc.json)), and both the job and its run step are `continue-on-error`. The deterministic merge gate is the bundle-size budget above; Lighthouse is the runtime signal, not a gate. To run it locally (needs Chrome): `pnpm build` then `pnpm lighthouse`.
+
 ## Screenshots (manual)
 
 `pnpm screenshots` boots the real stack against an ephemeral in-memory database, ingests the public-domain fixture EPUBs in [`fixtures/epub/`](./fixtures/epub/) through the live pipeline, serves the production web build with `vite preview`, and drives headless Chromium to write a labeled PNG for each stage (Library and Reader in Day/Night at desktop and mobile; the selection → note-editor → note-saved annotation moment) into `artifacts/screenshots/` (git-ignored).

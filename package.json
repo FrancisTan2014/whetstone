@@ -17,12 +17,14 @@
     "build": "pnpm --filter @whetstone/domain build && pnpm --filter @whetstone/contracts build && pnpm --filter @whetstone/server build && pnpm --filter @whetstone/web build",
     "smoke": "pnpm --filter @whetstone/web smoke",
     "size-limit": "size-limit",
+    "lighthouse": "lhci autorun",
     "screenshots": "node scripts/screenshots.mjs",
     "validate": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm smoke",
     "db:generate": "drizzle-kit generate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@lhci/cli": "^0.15.1",
     "@size-limit/file": "^12.1.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.1.0",
