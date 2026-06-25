@@ -8,15 +8,15 @@ import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 
-// Count every react-markdown render. Each rendered block runs this pipeline exactly once at
-// mount; the regression this guards against is an interaction (toolbar / template switch /
-// lookup) re-running it for the whole block list (#72: ~500ms handlers on a large chapter).
-const markdown = vi.hoisted(() => ({ renders: 0 }));
+// Count every block-content render. Each rendered block runs the mdast→React pipeline exactly
+// once at mount; the regression this guards against is an interaction (toolbar / template switch
+// / lookup) re-running it for the whole block list (#72: ~500ms handlers on a large chapter).
+const blockContent = vi.hoisted(() => ({ renders: 0 }));
 
-vi.mock("react-markdown", () => ({
-  default: ({ children }: { children: string }): React.JSX.Element => {
-    markdown.renders += 1;
-    return <span>{children}</span>;
+vi.mock("./mdastBlock", () => ({
+  BlockContent: ({ node }: { node: { children?: { value?: string }[] } }): React.JSX.Element => {
+    blockContent.renders += 1;
+    return <p>{node.children?.[0]?.value}</p>;
   }
 }));
 
@@ -108,7 +108,7 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  markdown.renders = 0;
+  blockContent.renders = 0;
   window.getSelection()?.removeAllRanges();
   mockedFetchWorks.mockResolvedValue({ works: [work] });
   mockedFetchWorkContent.mockResolvedValue(bigChapter());
@@ -128,18 +128,18 @@ describe("ReaderPage block memoization", () => {
 
     await screen.findByText("Block 0 content");
 
-    // Every block ran the markdown pipeline exactly once at mount.
-    expect(markdown.renders).toBe(blockCount);
-    const afterMount = markdown.renders;
+    // Every block ran the mdast pipeline exactly once at mount.
+    expect(blockContent.renders).toBe(blockCount);
+    const afterMount = blockContent.renders;
 
     // Open the selection toolbar (mouseup), then open lookup. Neither touches block data, so with
-    // memoized blocks + stable props no block re-renders — the markdown render count must stay flat.
+    // memoized blocks + stable props no block re-renders — the render count must stay flat.
     const block = container.querySelector('[data-block-id="b-0"]') as HTMLElement;
     selectText(block, "Block");
     fireEvent.mouseUp(block);
     await user.click(await screen.findByRole("button", { name: "Look up" }));
     await screen.findByText("No definition found.");
 
-    expect(markdown.renders).toBe(afterMount);
+    expect(blockContent.renders).toBe(afterMount);
   });
 });

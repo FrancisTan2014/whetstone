@@ -119,6 +119,15 @@ importers:
       framer-motion:
         specifier: ^12.23.12
         version: 12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      hast-util-sanitize:
+        specifier: ^5.0.2
+        version: 5.0.2
+      hast-util-to-jsx-runtime:
+        specifier: ^2.3.6
+        version: 2.3.6
+      mdast-util-to-hast:
+        specifier: ^13.2.1
+        version: 13.2.1
       react:
         specifier: ^19.2.7
         version: 19.2.7
@@ -147,6 +156,12 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.1.13
         version: 4.3.1(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
+      '@types/hast':
+        specifier: ^3.0.4
+        version: 3.0.4
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       '@types/react':
         specifier: ^19.2.17
         version: 19.2.17

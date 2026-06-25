@@ -148,7 +148,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
   reading" deep-links to `#/reader?work=<entryId>` (with an optional `&block=<entryId>` to open a
   specific block). `reader/` is **目录-driven and renders one reading unit at a time** (no whole-book
-  freeze): `readerModel.ts` orders units/blocks and serializes each block via domain `blockToMarkdown`;
+  freeze): `readerModel.ts` orders units/blocks and carries each block's stored mdast for direct,
+  re-parse-free rendering (no Markdown round-trip; `blockToMarkdown` stays for the export path only);
   `readerNavigation.ts` holds the pure unit-selection logic (which unit holds a block, the initial unit
   for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 — a controlled,
   dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
@@ -156,7 +157,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   Library via `?work=` (no in-reader work-picker or page heading; with no work open it shows an explicit
   "Open a work from your Library" empty state), with a back-to-Library hash anchor always reachable. It
   keeps an `activeUnitIndex`,
-  renders only that unit safely with `react-markdown` + `rehype-sanitize` (a schema that also disallows
+  renders only that unit safely by converting each block's stored mdast straight to React
+  (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → `hast-util-to-jsx-runtime`, no
+  Markdown re-parse), with a sanitize schema that also disallows
   `img`, so no image is fetched/rendered; an `a` component override renders the source's in-content
   links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —
   v0 has no cross-document in-book link resolution; opening the `?work=`/`?block=` target on arrival via

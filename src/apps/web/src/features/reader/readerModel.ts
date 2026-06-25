@@ -1,13 +1,12 @@
 import type { BlockDto, ReadingUnitDto, WorkContentDto } from "@whetstone/contracts";
-import { blockToMarkdown } from "@whetstone/domain";
 
-// The reader's view of a work: reading units and blocks placed in reading order,
-// with each block's Markdown already serialized for safe rendering. Building this
-// pure model keeps ordering and serialization out of the React component.
+// The reader's view of a work: reading units and blocks placed in reading order, each carrying
+// its stored mdast for direct (re-parse-free) rendering. Building this pure model keeps ordering
+// out of the React component.
 export type ReaderBlock = Readonly<{
   entryId: string;
   isHeading: boolean;
-  markdown: string;
+  mdast: unknown;
   plaintext: string;
 }>;
 
@@ -30,7 +29,7 @@ function toReaderBlock(block: BlockDto): ReaderBlock {
   return {
     entryId: block.entryId,
     isHeading: block.blockType === "heading",
-    markdown: blockToMarkdown(block.mdast),
+    mdast: block.mdast,
     plaintext: block.plaintext
   };
 }
