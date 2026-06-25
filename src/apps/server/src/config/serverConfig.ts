@@ -6,6 +6,7 @@ export type ServerConfig = Readonly<{
   databaseDir: string | undefined;
   epubUploadLimitBytes: number;
   host: string;
+  imageResourcesDir: string;
   logLevel: ServerLogLevel;
   port: number;
   sourceFilesDir: string;
@@ -15,6 +16,7 @@ const defaultServerConfig: ServerConfig = {
   databaseDir: undefined,
   epubUploadLimitBytes: 50 * 1024 * 1024,
   host: "127.0.0.1",
+  imageResourcesDir: "./.data/images",
   logLevel: "info",
   port: 3000,
   sourceFilesDir: "./.data/sources"
@@ -39,6 +41,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
     epubUploadLimitBytes,
     host: env.HOST ?? defaultServerConfig.host,
+    imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
     logLevel,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir

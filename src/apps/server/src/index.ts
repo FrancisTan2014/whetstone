@@ -10,6 +10,7 @@ import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js"
 import { createDbClient } from "./db/dbClient.js";
 import { runMigrations } from "./db/migrate.js";
 import { createEpubParser } from "./files/epubSource.js";
+import { createImageResourceStore } from "./files/imageResourceStore.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
 import { seedNoteTemplates } from "./features/notes/noteCommands.js";
 import { createCedictProvider, parseCedict } from "./lookup/cedict.js";
@@ -29,6 +30,7 @@ const db = createDbClient(pglite);
 await seedNoteTemplates(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
 const epubParser = createEpubParser(join(config.sourceFilesDir, "epub-resources"));
+const imageResourceStore = createImageResourceStore(config.imageResourcesDir);
 
 const httpClient = createHttpClient();
 // English lookup composes the community Free Dictionary (Wiktionary) with the offline,
@@ -65,6 +67,7 @@ const server = createServer({
     sourceFileStore
   },
   currentUser: createDefaultCurrentUserProvider(),
+  images: { imageResourceStore },
   library: {
     createAuthorId: () => randomUUID(),
     createEntryId: () => randomUUID(),
