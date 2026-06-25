@@ -136,7 +136,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —
   v0 has no cross-document in-book link resolution; opening the `?work=`/`?block=` target on arrival via
   `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
-  that have notes (and lets the reader reopen them). Selecting text (`blockSelection.ts`
+  that have notes (and lets the reader reopen them). The reading `article` is whetstone's own
+  selection surface: it prevents the right-click `contextmenu` and uses `-webkit-touch-callout: none`
+  with `user-select: text` so the mobile/Capacitor long-press callout doesn't collide with the
+  toolbar while text stays selectable (the desktop browser selection mini-menu is a user setting,
+  out of scope). Selecting text (`blockSelection.ts`
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
   Range rect for anchoring) opens a floating `SelectionToolbar` (size-preselected, hue-switchable
   template) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor, and a saved

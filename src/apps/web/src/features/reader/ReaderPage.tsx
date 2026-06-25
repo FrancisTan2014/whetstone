@@ -633,8 +633,16 @@ function renderReaderView(
   }
 
   // Only the current reading unit is rendered, so a whole book never mounts at once.
+  // The reading area is whetstone's own selection surface: suppress the right-click context
+  // menu so it doesn't open over a selection (the toolbar is the affordance here). The touch
+  // long-press callout (mobile / Capacitor WebView) is suppressed in CSS, with text kept
+  // selectable. Scoped to the reading article, never the whole app.
   return (
-    <article aria-label="Reading" className="reader">
+    <article
+      aria-label="Reading"
+      className="reader"
+      onContextMenu={(event) => event.preventDefault()}
+    >
       {renderUnit(unit, workEntryId, handlers, language)}
     </article>
   );
