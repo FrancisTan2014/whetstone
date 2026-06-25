@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import type { RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -43,9 +44,9 @@ const loadedEntry: LookupState = {
 function renderPanel(
   state: LookupState,
   options: { anchorRect?: DOMRect; matchers: Record<string, boolean>; onOpenChange?: () => void }
-): void {
+): RenderResult {
   mockMatchMedia(options.matchers);
-  render(
+  return render(
     <LookupPanel
       anchorRect={options.anchorRect}
       onOpenChange={options.onOpenChange ?? (() => undefined)}
@@ -69,10 +70,42 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("verb")).toBeDefined();
     expect(screen.getByText("to put in place")).toBeDefined();
     expect(screen.getByText("“set it down”")).toBeDefined();
-    expect(screen.getByText("Synonyms: place, position")).toBeDefined();
+    const synonyms = screen.getByRole("list", { name: "Synonyms" });
+    expect(within(synonyms).getByText("place")).toBeDefined();
+    expect(within(synonyms).getByText("position")).toBeDefined();
     expect(screen.getByText("a group of things")).toBeDefined();
-    expect(screen.getByText("From Old English settan.")).toBeDefined();
+    expect(screen.getByText(/From Old English settan\./)).toBeDefined();
     expect(screen.getByText("From WordNet. · From Wiktionary.")).toBeDefined();
+  });
+
+  it("color-codes each part-of-speech section with a tokenized hue class", () => {
+    renderPanel(loadedEntry, { matchers: desktop });
+    const groups = document.querySelectorAll(".lookupGroup");
+
+    // The verb group carries the verb hue; the part-of-speech-less group falls back to "other".
+    expect(groups[0]?.className).toContain("lookupPos--verb");
+    expect(groups[1]?.className).toContain("lookupPos--other");
+  });
+
+  it("renders an audio control only for a pronunciation that has audio", () => {
+    renderPanel(
+      {
+        entry: {
+          headword: "set",
+          partsOfSpeech: [{ senses: [{ definition: "d", examples: [], synonyms: [] }] }],
+          pronunciations: [
+            { audio: "https://audio.example/set.mp3", ipa: "/sɛt/" },
+            { ipa: "/sɛt2/" }
+          ],
+          sources: []
+        },
+        status: "loaded"
+      },
+      { matchers: desktop }
+    );
+
+    expect(document.querySelectorAll("audio.lookupAudio")).toHaveLength(1);
+    expect(screen.getByLabelText("Pronunciation audio for set")).toBeDefined();
   });
 
   it("omits pronunciation, part of speech, synonyms, etymology, and sources when absent", () => {
@@ -92,8 +125,9 @@ describe("LookupPanel content", () => {
     );
 
     expect(screen.getByText("a group of things")).toBeDefined();
-    expect(screen.queryByText(/Synonyms:/)).toBeNull();
-    expect(screen.queryByText("From Old English settan.")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Synonyms" })).toBeNull();
+    expect(screen.queryByText(/Origin/)).toBeNull();
+    expect(document.querySelector("audio")).toBeNull();
   });
 
   it("renders parts of speech once, with examples and synonyms as separated blocks", () => {
@@ -127,7 +161,13 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("verb").textContent).toBe("verb");
     expect(screen.getByText("to put in place").textContent).toBe("to put in place");
     expect(screen.getByText("“set it down”").textContent).toBe("“set it down”");
-    expect(screen.getByText("Synonyms: place").textContent).toBe("Synonyms: place");
+    expect(screen.getByText("place").textContent).toBe("place");
+  });
+
+  it("numbers senses within a part of speech using an ordered list", () => {
+    renderPanel(loadedEntry, { matchers: desktop });
+
+    expect(document.querySelector("ol.lookupSenses")).not.toBeNull();
   });
 
   it("shows a loading state while fetching", () => {
