@@ -322,6 +322,23 @@ function selectText(blockElement: HTMLElement, text: string): void {
   selectRangeIn(node, start, start + text.length);
 }
 
+// Select inside a nested block (blockquote, list): walk to the text node that actually contains
+// the phrase, since the block's first text node may be the rendered structural whitespace.
+function selectTextDeep(blockElement: HTMLElement, text: string): void {
+  const walker = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
+
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const start = (node.textContent ?? "").indexOf(text);
+
+    if (start !== -1) {
+      selectRangeIn(node, start, start + text.length);
+      return;
+    }
+  }
+
+  throw new Error(`text not found in block: ${text}`);
+}
+
 function blockElement(container: HTMLElement, blockId: string): HTMLElement {
   return container.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
 }
@@ -1533,5 +1550,128 @@ describe("ReaderPage readability", () => {
     // Only the block heading remains; the duplicate eyebrow is gone.
     expect(within(article).getAllByRole("heading", { name: "Chapter One" })).toHaveLength(1);
     expect(article.querySelector(".readerUnitTitle")).toBeNull();
+  });
+});
+
+describe("ReaderPage selection toolbar lifecycle", () => {
+  it("opens the toolbar for a selection inside a blockquote", async () => {
+    mockedFetchWorkContent.mockResolvedValue(richContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByRole("article", { name: "Reading" });
+
+    const quote = blockElement(container, "b-quote");
+    selectTextDeep(quote, "epigraph");
+    fireEvent.mouseUp(quote);
+
+    expect(await screen.findByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("opens the toolbar for a selection inside a list item", async () => {
+    mockedFetchWorkContent.mockResolvedValue(richContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByRole("article", { name: "Reading" });
+
+    const list = blockElement(container, "b-list");
+    selectTextDeep(list, "Second force");
+    fireEvent.mouseUp(list);
+
+    expect(await screen.findByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("opens the toolbar even when the pointer is released outside the block", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    selectText(blockElement(container, "b-1"), "Intro");
+    // Release on the reading column itself, not on the block element.
+    fireEvent.mouseUp(screen.getByRole("article", { name: "Reading" }));
+
+    expect(await screen.findByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("does not capture a release outside the reading column", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    selectText(blockElement(container, "b-1"), "Intro");
+    fireEvent.mouseUp(document.body);
+
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
+  });
+
+  it("does not capture a release in the reading column without a selection", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    window.getSelection()?.removeAllRanges();
+    fireEvent.mouseUp(screen.getByRole("article", { name: "Reading" }));
+
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
+  });
+
+  it("ignores a release whose selected block is not part of the active unit", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const reading = screen.getByRole("article", { name: "Reading" });
+    // A stray block-like element that is not one of the rendered unit's blocks.
+    const stray = document.createElement("div");
+    stray.setAttribute("data-block-id", "not-a-real-block");
+    stray.textContent = "Ghost text";
+    reading.appendChild(stray);
+    selectRangeIn(stray.firstChild as Node, 0, 5);
+    fireEvent.mouseUp(reading);
+
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
+  });
+
+  it("dismisses the toolbar when pressing outside it", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await screen.findByRole("toolbar", { name: "Annotate selection" });
+
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
+  });
+
+  it("keeps the toolbar open when pressing inside it", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    const toolbar = await screen.findByRole("toolbar", { name: "Annotate selection" });
+
+    fireEvent.mouseDown(toolbar);
+
+    expect(screen.getByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("dismisses the toolbar when the selection is cleared", async () => {
+    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await screen.findByRole("toolbar", { name: "Annotate selection" });
+
+    window.getSelection()?.removeAllRanges();
+    fireEvent(document, new Event("selectionchange"));
+
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
   });
 });

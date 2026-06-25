@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Markdown, { type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -19,7 +19,7 @@ import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { annotationHueClass } from "./annotationHue";
 import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
-import { readBlockSelection } from "./blockSelection";
+import { eventTargetClosest, readBlockSelection, releasedBlockElement } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { fetchWorkContent, fetchWorks } from "./readerApi";
 import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
@@ -218,6 +218,14 @@ type ReaderPageProps = Readonly<{
 // its fetch state. Lookup never creates, pre-fills, or edits a note.
 type LookupView = Readonly<{ anchorRect?: DOMRect | undefined; state: LookupState; term: string }>;
 
+// The active reading slice needed to capture a selection from a document-level listener (a
+// pointer release that lands in the reading column but outside a block element): the rendered
+// blocks to resolve against and the open work's id.
+type SelectionContext = Readonly<{
+  blocks: ReadonlyArray<ReaderBlock>;
+  workEntryId: string;
+}>;
+
 export function ReaderPage({
   initialBlockEntryId,
   initialWorkEntryId
@@ -390,8 +398,8 @@ export function ReaderPage({
       const draft = captureBlockSelection(
         block.entryId,
         block.plaintext,
-        blockSelection.selectedText,
-        blockSelection.startOffset
+        blockSelection.precedingText,
+        blockSelection.selectedText
       );
 
       if (draft === undefined) {
@@ -407,6 +415,109 @@ export function ReaderPage({
     },
     []
   );
+
+  // The open work's language (for routing a lookup), derived for every ready state so an idle
+  // reader resolves it the same way — no open work falls back to English.
+  const readerLanguage = useMemo((): string => {
+    if (state.status !== "ready") {
+      return "en";
+    }
+
+    const workEntryId = state.reading.status === "idle" ? undefined : state.reading.workEntryId;
+
+    return state.works.find((item) => item.work.entryId === workEntryId)?.work.language ?? "en";
+  }, [state]);
+
+  // The active reading slice, so a document-level listener can capture a selection released
+  // anywhere in the reading column — not only when the pointer is released on the block element.
+  const selectionContext = useMemo((): SelectionContext | undefined => {
+    if (state.status !== "ready" || state.reading.status !== "viewing") {
+      return undefined;
+    }
+
+    const unit = state.reading.view.units[state.reading.activeUnitIndex];
+
+    if (unit === undefined) {
+      return undefined;
+    }
+
+    return {
+      blocks: unit.blocks,
+      workEntryId: state.reading.workEntryId
+    };
+  }, [state]);
+
+  // Capture fallback: a pointer release that lands in the reading column but outside a block
+  // (e.g. just past a block edge) — the per-block handlers already cover a release on the block
+  // itself. Resolve the selection's owning block and capture, so the toolbar appears regardless
+  // of where the pointer is released.
+  useEffect(() => {
+    if (selectionContext === undefined) {
+      return;
+    }
+
+    const context = selectionContext;
+
+    function onReleaseOutsideBlock(event: Event): void {
+      const blockElement = releasedBlockElement(
+        event.target,
+        window.getSelection(),
+        Array.from(document.querySelectorAll<HTMLElement>(".reader [data-block-id]"))
+      );
+
+      if (blockElement === undefined) {
+        return;
+      }
+
+      const block = context.blocks.find((item) => item.entryId === blockElement.dataset.blockId);
+
+      if (block !== undefined) {
+        onCaptureSelection(blockElement, block, context.workEntryId, readerLanguage);
+      }
+    }
+
+    document.addEventListener("mouseup", onReleaseOutsideBlock);
+    document.addEventListener("touchend", onReleaseOutsideBlock);
+
+    return () => {
+      document.removeEventListener("mouseup", onReleaseOutsideBlock);
+      document.removeEventListener("touchend", onReleaseOutsideBlock);
+    };
+  }, [selectionContext, readerLanguage, onCaptureSelection]);
+
+  // Dismiss the toolbar across its whole lifecycle: a pointer press anywhere outside the toolbar
+  // closes it, as does clearing the selection. The explicit ✕ / confirm / lookup still close it.
+  useEffect(() => {
+    if (capture === undefined) {
+      return;
+    }
+
+    function onPressOutside(event: Event): void {
+      if (eventTargetClosest(event.target, ".selectionToolbar") !== null) {
+        return;
+      }
+
+      setCapture(undefined);
+    }
+
+    function onSelectionCleared(): void {
+      const selection = window.getSelection();
+
+      if (selection === null || selection.isCollapsed || selection.toString().trim().length === 0) {
+        setCapture(undefined);
+      }
+    }
+
+    document.addEventListener("mousedown", onPressOutside);
+    document.addEventListener("touchstart", onPressOutside);
+    document.addEventListener("selectionchange", onSelectionCleared);
+
+    return () => {
+      document.removeEventListener("mousedown", onPressOutside);
+      document.removeEventListener("touchstart", onPressOutside);
+      document.removeEventListener("selectionchange", onSelectionCleared);
+    };
+  }, [capture]);
 
   function confirmCapture(active: SelectionCapture): void {
     setCapture(undefined);
