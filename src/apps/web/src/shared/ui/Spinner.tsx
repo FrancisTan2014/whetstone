@@ -4,10 +4,11 @@ export type SpinnerProps = Readonly<{
 }>;
 
 // A token-styled loading spinner. It rotates via CSS under normal motion. Under reduced
-// motion the global animation freeze stops the rotation, but the `loadingSpinner` class keeps
-// it perceivably active with a gentle, reduced-motion-safe opacity pulse (functional status
-// feedback — never a frozen, meaningless icon). Decorative by default (`aria-hidden`) when
-// paired with visible text; pass a `label` to make it a standalone, announced indicator.
+// motion the global animation freeze stops the rotation; the `loadingSpinner` class then keeps
+// it perceivably active by cross-fading its two arcs in counter-phase (a pronounced,
+// reduced-motion-safe opacity change — never a frozen, meaningless icon, and no rotation or
+// translation). Decorative by default (`aria-hidden`) when paired with visible text; pass a
+// `label` to make it a standalone, announced indicator.
 export function Spinner({ className, label }: SpinnerProps): React.JSX.Element {
   return (
     <svg
@@ -19,7 +20,7 @@ export function Spinner({ className, label }: SpinnerProps): React.JSX.Element {
       viewBox="0 0 24 24"
     >
       <circle
-        className="opacity-25"
+        className="loadingSpinnerTrack opacity-25"
         cx="12"
         cy="12"
         fill="none"
@@ -28,7 +29,7 @@ export function Spinner({ className, label }: SpinnerProps): React.JSX.Element {
         strokeWidth="4"
       />
       <path
-        className="opacity-75"
+        className="loadingSpinnerArc opacity-75"
         d="M12 2a10 10 0 0 1 10 10"
         stroke="currentColor"
         strokeWidth="4"
