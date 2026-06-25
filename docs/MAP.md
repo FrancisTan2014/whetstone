@@ -40,6 +40,10 @@ can navigate them from another package.
 ### `src/apps/server/` — Fastify API
 
 - Composition/entry: `src/index.ts`; server assembly in `src/http/createServer.ts`.
+- Identity seam: `src/identity/currentUser.ts` — the single `DEFAULT_USER_ID` constant + the
+  `CurrentUserProvider` (`getCurrentUserId()`). `createServer` decorates the instance with it
+  (`request.server.currentUser`), defaulting to the v0 provider; tests/future auth inject their own.
+  No users table, login, session, or content owner yet (PRODUCT.md "Identity & ownership (v0)").
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

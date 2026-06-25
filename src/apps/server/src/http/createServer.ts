@@ -19,9 +19,24 @@ import { registerNoteRoutes } from "../features/notes/noteRoutes.js";
 import type { NotesDependencies } from "../features/notes/noteCommands.js";
 import { registerLookupRoutes } from "../features/lookup/lookupRoutes.js";
 import type { LookupDependencies } from "../features/lookup/lookupRoutes.js";
+import {
+  createDefaultCurrentUserProvider,
+  type CurrentUserProvider
+} from "../identity/currentUser.js";
+
+// The current-user provider is exposed to every handler as a server decoration, so a request
+// reads the current user id via `request.server.currentUser` (never a literal).
+declare module "fastify" {
+  interface FastifyInstance {
+    currentUser: CurrentUserProvider;
+  }
+}
 
 export type CreateServerOptions = Readonly<{
   content?: ContentDependencies;
+  // The identity seam: the source of the current user id for user-owned reads/writes. Defaults to
+  // the v0 DEFAULT_USER_ID provider; tests (and future auth) inject their own.
+  currentUser?: CurrentUserProvider;
   library?: LibraryDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
@@ -33,6 +48,8 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     logger: options.logger,
     requestIdHeader: "x-request-id"
   });
+
+  server.decorate("currentUser", options.currentUser ?? createDefaultCurrentUserProvider());
 
   server.get(
     healthEndpointPath,
