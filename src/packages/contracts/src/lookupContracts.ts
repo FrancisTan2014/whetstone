@@ -1,42 +1,61 @@
 import { workLanguages } from "@whetstone/domain";
 import { z } from "zod";
 
-// A single normalized sense: the shared, source-agnostic shape the reader renders. Both
-// the Merriam-Webster and Free Dictionary adapters collapse their verbose wire formats
-// into this, so the client never depends on a provider's JSON.
-export const normalizedSenseSchema = z
+// One normalized sense: a single definition with its own examples and synonyms. This is the
+// shared, source-agnostic shape the reader renders, so the client never depends on a
+// provider's wire format (Wiktionary, WordNet, or CC-CEDICT).
+export const dictionarySenseSchema = z
   .object({
-    example: z.string().optional(),
-    gloss: z.string(),
-    partOfSpeech: z.string().optional()
+    definition: z.string(),
+    examples: z.array(z.string()),
+    synonyms: z.array(z.string())
   })
   .strict();
 
-export type NormalizedSense = z.infer<typeof normalizedSenseSchema>;
+export type DictionarySense = z.infer<typeof dictionarySenseSchema>;
 
-// One headword's normalized entry. `senses` is already capped by the adapter so results
-// stay scannable; pronunciation is optional because not every source supplies one.
-export const normalizedEntrySchema = z
+// Senses grouped under one part of speech. `partOfSpeech` is optional because some sources
+// (CC-CEDICT) carry no part-of-speech tagging.
+export const dictionaryPartOfSpeechSchema = z
   .object({
+    partOfSpeech: z.string().optional(),
+    senses: z.array(dictionarySenseSchema)
+  })
+  .strict();
+
+export type DictionaryPartOfSpeech = z.infer<typeof dictionaryPartOfSpeechSchema>;
+
+// One pronunciation: an IPA (or pinyin) transcription, with an optional audio URL.
+export const dictionaryPronunciationSchema = z
+  .object({
+    audio: z.string().optional(),
+    ipa: z.string()
+  })
+  .strict();
+
+export type DictionaryPronunciation = z.infer<typeof dictionaryPronunciationSchema>;
+
+// One headword's enriched entry, composed by role from the available sources: pronunciations
+// and etymology from Wiktionary, senses grouped by part of speech (Wiktionary primary, WordNet
+// fallback), synonyms from WordNet (∪ Wiktionary). `sources` carries the attribution strings of
+// every contributing source so the reader can show required credit.
+export const dictionaryEntrySchema = z
+  .object({
+    etymology: z.string().optional(),
     headword: z.string(),
-    pronunciation: z.string().optional(),
-    senses: z.array(normalizedSenseSchema)
+    partsOfSpeech: z.array(dictionaryPartOfSpeechSchema),
+    pronunciations: z.array(dictionaryPronunciationSchema),
+    sources: z.array(z.string())
   })
   .strict();
 
-export type NormalizedEntry = z.infer<typeof normalizedEntrySchema>;
+export type DictionaryEntry = z.infer<typeof dictionaryEntrySchema>;
 
-// The route result is a discriminated union: a found entry (with optional required-source
-// attribution) or an explicit not-found, so the client renders an empty state instead of
-// guessing from a null body.
+// The route result is a discriminated union: a found entry or an explicit not-found, so the
+// client renders an empty state instead of guessing from a null body. Attribution now lives
+// inside the entry's `sources`, so there is no separate top-level attribution field.
 export const lookupResponseSchema = z.discriminatedUnion("found", [
-  z
-    .object({
-      attribution: z.string().optional(),
-      entry: normalizedEntrySchema,
-      found: z.literal(true)
-    })
-    .strict(),
+  z.object({ entry: dictionaryEntrySchema, found: z.literal(true) }).strict(),
   z.object({ found: z.literal(false) }).strict()
 ]);
 

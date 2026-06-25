@@ -39,13 +39,25 @@ describe("parseLookupRequest", () => {
 });
 
 describe("parseLookupResponse", () => {
-  it("accepts a found entry with attribution", () => {
+  it("accepts a found entry with all fields", () => {
     const response = {
-      attribution: "Source.",
       entry: {
+        etymology: "From Old English.",
         headword: "word",
-        pronunciation: "wərd",
-        senses: [{ example: "a kind word", gloss: "a unit of language", partOfSpeech: "noun" }]
+        partsOfSpeech: [
+          {
+            partOfSpeech: "noun",
+            senses: [
+              {
+                definition: "a unit of language",
+                examples: ["a kind word"],
+                synonyms: ["term", "expression"]
+              }
+            ]
+          }
+        ],
+        pronunciations: [{ audio: "https://audio.example/word.mp3", ipa: "wɜːd" }],
+        sources: ["WordNet", "Wiktionary"]
       },
       found: true
     };
@@ -54,7 +66,15 @@ describe("parseLookupResponse", () => {
   });
 
   it("accepts a found entry without optional fields", () => {
-    const response = { entry: { headword: "word", senses: [{ gloss: "meaning" }] }, found: true };
+    const response = {
+      entry: {
+        headword: "word",
+        partsOfSpeech: [{ senses: [{ definition: "meaning", examples: [], synonyms: [] }] }],
+        pronunciations: [],
+        sources: []
+      },
+      found: true
+    };
 
     expect(parseLookupResponse(response)).toEqual(response);
   });

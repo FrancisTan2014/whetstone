@@ -1,66 +1,143 @@
-import type { NormalizedEntry, NormalizedSense } from "@whetstone/contracts";
+import type {
+  DictionaryPartOfSpeech,
+  DictionaryPronunciation,
+  DictionarySense
+} from "@whetstone/contracts";
 
-import type { DictionaryProvider } from "./dictionaryProvider.types.js";
 import type { HttpClient } from "./httpClient.js";
 import { asArray, asString, field, isRecord } from "./jsonValue.js";
 
-// A higher cap keeps common words (which span several parts of speech) reasonably complete;
-// the reader groups senses by part of speech and the popover scrolls when results run long.
-const maxSenses = 12;
+// The community Free Dictionary API serves Wiktionary content (CC BY-SA): rich pronunciation
+// (IPA + audio), example sentences, and etymology, plus senses grouped by part of speech.
+export const wiktionarySource =
+  "Definitions and pronunciation from Wiktionary via the Free Dictionary API (CC BY-SA).";
 
-function buildSense(
-  gloss: string,
-  partOfSpeech: string | undefined,
-  example: string | undefined
-): NormalizedSense {
-  return {
-    gloss,
-    ...(partOfSpeech === undefined ? {} : { partOfSpeech }),
-    ...(example === undefined ? {} : { example })
-  };
+// A few senses per part of speech keep the popover scannable.
+const maxSensesPerPartOfSpeech = 6;
+
+// What the composer consumes from Wiktionary: the role-specific pieces it owns (pronunciation,
+// etymology) plus its senses grouped by part of speech (the primary sense source).
+export type WiktionaryResult = Readonly<{
+  etymology?: string | undefined;
+  partsOfSpeech: ReadonlyArray<DictionaryPartOfSpeech>;
+  pronunciations: ReadonlyArray<DictionaryPronunciation>;
+}>;
+
+export interface WiktionaryProvider {
+  lookup(term: string): Promise<WiktionaryResult | null>;
 }
 
-function pronunciationOf(entry: Record<string, unknown>): string | undefined {
-  const phonetic = asString(field(entry, "phonetic"));
+// Pronunciations from the `phonetics` array (each `{ text, audio }`), falling back to the
+// top-level `phonetic` string; deduped by IPA, audio attached only when a non-empty URL.
+function pronunciationsOf(entry: Record<string, unknown>): ReadonlyArray<DictionaryPronunciation> {
+  const seen = new Set<string>();
+  const pronunciations: DictionaryPronunciation[] = [];
 
-  if (phonetic !== undefined) {
-    return phonetic;
+  for (const phonetic of asArray(field(entry, "phonetics"))) {
+    const ipa = asString(field(phonetic, "text"));
+
+    if (ipa === undefined || seen.has(ipa)) {
+      continue;
+    }
+
+    seen.add(ipa);
+    const audio = asString(field(phonetic, "audio"));
+    pronunciations.push(audio === undefined || audio.length === 0 ? { ipa } : { audio, ipa });
   }
 
-  for (const phonetics of asArray(field(entry, "phonetics"))) {
-    const text = asString(field(phonetics, "text"));
+  if (pronunciations.length === 0) {
+    const phonetic = asString(field(entry, "phonetic"));
 
-    if (text !== undefined) {
-      return text;
+    if (phonetic !== undefined) {
+      pronunciations.push({ ipa: phonetic });
     }
   }
 
-  return undefined;
+  return pronunciations;
 }
 
-function sensesOf(entry: Record<string, unknown>): ReadonlyArray<NormalizedSense> {
-  const senses: NormalizedSense[] = [];
+// A sense's synonyms: the definition's own synonyms unioned with its meaning's, cleaned of the
+// headword and duplicates.
+function synonymsOf(
+  definition: unknown,
+  meaningSynonyms: unknown,
+  headword: string
+): ReadonlyArray<string> {
+  const seen = new Set<string>();
+  const result: string[] = [];
 
-  for (const meaning of asArray(field(entry, "meanings"))) {
-    const partOfSpeech = asString(field(meaning, "partOfSpeech"));
+  for (const raw of [...asArray(field(definition, "synonyms")), ...asArray(meaningSynonyms)]) {
+    const synonym = asString(raw)?.trim();
 
-    for (const definition of asArray(field(meaning, "definitions"))) {
-      const gloss = asString(field(definition, "definition"));
+    if (synonym === undefined || synonym.length === 0) {
+      continue;
+    }
 
-      if (gloss !== undefined) {
-        senses.push(buildSense(gloss, partOfSpeech, asString(field(definition, "example"))));
-      }
+    const key = synonym.toLowerCase();
+
+    if (key === headword.toLowerCase() || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(synonym);
+  }
+
+  return result;
+}
+
+function sensesOf(meaning: unknown, headword: string): ReadonlyArray<DictionarySense> {
+  const meaningSynonyms = field(meaning, "synonyms");
+  const senses: DictionarySense[] = [];
+
+  for (const definition of asArray(field(meaning, "definitions"))) {
+    const gloss = asString(field(definition, "definition"));
+
+    if (gloss === undefined) {
+      continue;
+    }
+
+    const example = asString(field(definition, "example"));
+    senses.push({
+      definition: gloss,
+      examples: example === undefined ? [] : [example],
+      synonyms: [...synonymsOf(definition, meaningSynonyms, headword)]
+    });
+
+    if (senses.length >= maxSensesPerPartOfSpeech) {
+      break;
     }
   }
 
   return senses;
 }
 
-// Pure adapter: normalizes the Free Dictionary array shape into a capped NormalizedEntry,
-// or null when there is no usable entry (not an array, no leading record, missing word, or
-// no definitions). A no-match response is an object, not an array, so it has no record at
-// index 0.
-export function adaptFreeDictionary(payload: unknown): NormalizedEntry | null {
+function partsOfSpeechOf(
+  entry: Record<string, unknown>,
+  headword: string
+): ReadonlyArray<DictionaryPartOfSpeech> {
+  const parts: DictionaryPartOfSpeech[] = [];
+
+  for (const meaning of asArray(field(entry, "meanings"))) {
+    const senses = sensesOf(meaning, headword);
+
+    if (senses.length === 0) {
+      continue;
+    }
+
+    const partOfSpeech = asString(field(meaning, "partOfSpeech"));
+    parts.push(
+      partOfSpeech === undefined ? { senses: [...senses] } : { partOfSpeech, senses: [...senses] }
+    );
+  }
+
+  return parts;
+}
+
+// Pure adapter: normalizes the Free Dictionary array shape into a WiktionaryResult, or null
+// when there is no usable entry (not an array, or no leading record with a `word`). A no-match
+// response is an object, not an array, so it has no record at index 0.
+export function adaptWiktionary(payload: unknown): WiktionaryResult | null {
   const entry = asArray(payload).find(isRecord);
 
   if (entry === undefined) {
@@ -73,18 +150,12 @@ export function adaptFreeDictionary(payload: unknown): NormalizedEntry | null {
     return null;
   }
 
-  const senses = sensesOf(entry);
-
-  if (senses.length === 0) {
-    return null;
-  }
-
-  const pronunciation = pronunciationOf(entry);
+  const etymology = asString(field(entry, "origin"));
 
   return {
-    headword,
-    senses: senses.slice(0, maxSenses),
-    ...(pronunciation === undefined ? {} : { pronunciation })
+    partsOfSpeech: partsOfSpeechOf(entry, headword),
+    pronunciations: pronunciationsOf(entry),
+    ...(etymology === undefined ? {} : { etymology })
   };
 }
 
@@ -96,19 +167,19 @@ function buildUrl(term: string): string {
   return `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(term)}`;
 }
 
-// The fallback provider (no key). Resolves to null on any transport/HTTP error or no-match
-// so the service returns an explicit not-found.
+// The Wiktionary provider over the community Free Dictionary API (no key). Resolves to null on
+// any transport/HTTP error or no-match so the composer falls back to WordNet.
 export function createFreeDictionaryProvider(
   dependencies: FreeDictionaryProviderDependencies
-): DictionaryProvider {
-  async function lookup(term: string): Promise<NormalizedEntry | null> {
+): WiktionaryProvider {
+  async function lookup(term: string): Promise<WiktionaryResult | null> {
     const result = await dependencies.httpClient.getJson<unknown>(buildUrl(term));
 
     if (!result.ok) {
       return null;
     }
 
-    return adaptFreeDictionary(result.value);
+    return adaptWiktionary(result.value);
   }
 
   return Object.freeze({ lookup });

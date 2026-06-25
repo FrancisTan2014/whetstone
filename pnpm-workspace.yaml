@@ -6,3 +6,4 @@ packages:
 # unapproved build script under pnpm 11. CI installs with --frozen-lockfile.
 allowBuilds:
   esbuild: true
+  wordpos: true

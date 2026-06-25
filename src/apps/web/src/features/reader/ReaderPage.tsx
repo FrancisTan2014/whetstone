@@ -369,9 +369,7 @@ export function ReaderPage({
       .then((response) => {
         setLookup({
           anchorRect,
-          state: response.found
-            ? { attribution: response.attribution, entry: response.entry, status: "loaded" }
-            : { status: "empty" },
+          state: response.found ? { entry: response.entry, status: "loaded" } : { status: "empty" },
           term
         });
       })

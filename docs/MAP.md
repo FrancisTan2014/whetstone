@@ -63,33 +63,32 @@ can navigate them from another package.
   (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
   so commands test against a fake parser).
 - Outbound lookup foundation: `src/lookup/` — reusable boundaries for calling external services and
-  caching results, behind the `DictionaryProvider` seam. `httpClient.ts` (typed GET text/JSON with
-  timeout + custom headers; normalizes failures to typed `HttpError`; injected `fetch`),
-  `lookupCache.ts` (keyed TTL cache, injected clock; in-memory impl),
-  `dictionaryProvider.types.ts` (the `DictionaryProvider` interface; re-exports the shared
-  `NormalizedEntry` shape from `@whetstone/contracts`), `jsonValue.ts` (dependency-free narrowing of
-  untrusted JSON), and the English providers + adapters: `merriamWebsterProvider.ts` (ONE shared
-  Merriam-Webster provider/adapter parameterized by reference path + key — Learner's and Collegiate
-  share the same JSON shape; reads keys `MERRIAM_WEBSTER_LEARNERS_KEY`/`MERRIAM_WEBSTER_COLLEGIATE_KEY`
-  server-side; surfaces each reference's required attribution) and `freeDictionaryProvider.ts` (no-key
-  dictionaryapi.dev fallback). For Chinese, `cedict.ts` is a pure, bundled CC-CEDICT provider: it
-  parses the dataset text into an in-memory `Map` keyed by both Simplified and Traditional headwords
-  and normalizes matches into `NormalizedEntry` (pinyin as pronunciation, capped glosses as senses).
-  The 8MB dataset lives in `src/lookup/data/` (`cedict.u8.gz` + a `README.md` recording CC BY-SA 4.0
-  attribution); the composition root (`src/index.ts`) reads + gunzips it via `node:zlib` (resolved
-  from `import.meta.url`) and `pnpm build` copies `src/lookup/data` into `dist/lookup/data`. Each
-  `LookupSource` declares the `languages` it serves; `lookupService.ts` orchestrates the ordered
-  chain — only trying sources that serve the requested language (English: Learner's → Collegiate →
-  Free Dictionary; Chinese `zh-CN`/`zh-TW`: CC-CEDICT) — first match wins, and caches by
-  `language:term`. The MW adapter merges the senses of every record sharing the primary
-  headword (recovering the other parts of speech / homographs, not just the first record); the
-  adapters cap senses (MW/Free at 12, CC-CEDICT at 5) and are pure (tested against
-  canned data via the fake transport / sample text). Keys load from a root `.env` via Node's
-  `--env-file-if-exists=.env` (no dotenv dependency; the chain still falls through to Free Dictionary
-  with no keys set).
+  caching results. `httpClient.ts` (typed GET text/JSON with timeout + custom headers; normalizes
+  failures to typed `HttpError`; injected `fetch`), `lookupCache.ts` (keyed TTL cache, injected clock;
+  in-memory impl), `jsonValue.ts` (dependency-free narrowing of untrusted JSON). Vocabulary lookup is
+  monolingual and key-free, built on free sources and composed by role into the shared
+  `DictionaryEntry` (`@whetstone/contracts`): `wordnetProvider.ts` is the offline backbone — the
+  bundled, MIT-licensed `wordpos`/`wordnet-db` database (the real instance is built only in the
+  composition root and injected behind a `WordPosLike` seam so the provider tests with fakes); it
+  groups synsets by part of speech and supplies the synonym sets. `freeDictionaryProvider.ts` is the
+  Wiktionary provider over the no-key community Free Dictionary API (pronunciation/IPA, examples,
+  etymology, senses). `englishLookup.ts` composes the two by role: pronunciation + etymology from
+  Wiktionary; senses Wiktionary-primary with WordNet fallback; synonyms from WordNet (∪ Wiktionary)
+  merged in by part of speech — never aligning senses across sources. For Chinese, `cedict.ts` is a
+  pure, bundled CC-CEDICT provider: it parses the dataset text into an in-memory `Map` keyed by both
+  Simplified and Traditional headwords and maps matches into a `DictionaryEntry` (pinyin as
+  pronunciation, glosses as part-of-speech-less senses). The 8MB CC-CEDICT dataset lives in
+  `src/lookup/data/` (`cedict.u8.gz` + a `README.md` recording CC BY-SA 4.0 attribution); the
+  composition root (`src/index.ts`) reads + gunzips it via `node:zlib` (resolved from
+  `import.meta.url`) and `pnpm build` copies `src/lookup/data` into `dist/lookup/data`. Each
+  `LookupSource` declares the `languages` it serves; `lookupService.ts` routes by language (English →
+  the composed English lookup; Chinese `zh-CN`/`zh-TW` → CC-CEDICT), returns the first composed
+  `DictionaryEntry`, and caches by `language:term`. Every contributing source's attribution rides in
+  the entry's `sources`. `wordpos` runs its bundled-index build step via pnpm's `allowBuilds` in
+  `pnpm-workspace.yaml`. The adapters are pure (tested against canned data via the fake transport /
+  sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
-  language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service; the
-  key never reaches the client).
+  language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
@@ -160,12 +159,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   (template chip + snippet + answers) with jump-back/edit/delete,
   `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
   reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
-  text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the headword,
-  pronunciation, senses, and attribution — as a compact Radix popover anchored near the selection on
-  desktop/tablet, and a content-height bottom `Sheet` on narrow screens — with explicit
-  loading/empty/error states. `lookupGroups.ts` is the pure helper that groups senses by part of
-  speech (label once per group, examples on their own line) for a readable, token-styled layout, and
-  `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open
+  text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the enriched
+  `DictionaryEntry` — headword, pronunciations, senses grouped by part of speech with examples and
+  synonyms, etymology, and source credits — as a compact Radix popover anchored near the selection on
+  desktop/tablet, and a content-height bottom `Sheet` on narrow screens, with explicit
+  loading/empty/error states. `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open
   work's language so Chinese selections route to CC-CEDICT automatically. Lookup never creates,
   pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
