@@ -76,8 +76,9 @@ tokens live in code (the Tailwind theme) once built; this section records the du
   accent for all interactive elements; **three muted annotation hues** mapped to the note templates —
   Vocabulary (amber), Expression/phrase (teal-green), Thought/question (violet).
 - **Typography:** **serif** reading body (Latin: Source Serif 4; CJK: a Song/Serif stack for
-  classical texts) with **sans (Inter)** for UI; language-aware font stacks; a fixed reading measure
-  (~66ch Latin, narrower and looser-leading for CJK); user-adjustable reading text size.
+  classical texts) with **sans (Inter)** for UI; language-aware font stacks;   a ~66ch reading measure
+    (Latin; narrower, looser-leading for CJK) held at a **stable column width**, so adjusting the text
+    size reflows the text rather than widening or narrowing the column.
 - **Themes:** ship **Day (light)** and **Night (dark)**; Day is the default with a Night toggle. Dark
   mode is a token override, never a second set of components.
 - **Information architecture:** one unified single-user app with four modes — **Library, Reader,
@@ -206,7 +207,8 @@ be clean and consistent:
 - Front matter (title/copyright/dedication units) is de-emphasized, not rendered as giant repeated
   headings.
 - Typography targets: reading measure ~66ch (Latin), line-height >= 1.5, comfortable body size (~18px),
-  user-adjustable; warm paper surface (not pure white). Day/Night now; paper/eye-care themes later.
+  user-adjustable text size that **reflows within a stable column width** (the column does not grow or
+  shrink with text size); warm paper surface (not pure white). Day/Night now; paper/eye-care themes later.
 
 ## v0 note capture
 
