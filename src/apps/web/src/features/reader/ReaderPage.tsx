@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Markdown, { type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -317,38 +317,41 @@ export function ReaderPage({
     setPendingScrollBlockEntryId(blockEntryId);
   }
 
-  function onCaptureSelection(
-    blockElement: HTMLElement,
-    block: ReaderBlock,
-    workEntryId: string,
-    language: string
-  ): void {
-    const selection = window.getSelection();
-    const blockSelection = readBlockSelection(blockElement, selection);
+  const onCaptureSelection = useCallback(
+    (
+      blockElement: HTMLElement,
+      block: ReaderBlock,
+      workEntryId: string,
+      language: string
+    ): void => {
+      const selection = window.getSelection();
+      const blockSelection = readBlockSelection(blockElement, selection);
 
-    if (blockSelection === undefined) {
-      return;
-    }
+      if (blockSelection === undefined) {
+        return;
+      }
 
-    const draft = captureBlockSelection(
-      block.entryId,
-      block.plaintext,
-      blockSelection.selectedText,
-      blockSelection.startOffset
-    );
+      const draft = captureBlockSelection(
+        block.entryId,
+        block.plaintext,
+        blockSelection.selectedText,
+        blockSelection.startOffset
+      );
 
-    if (draft === undefined) {
-      return;
-    }
+      if (draft === undefined) {
+        return;
+      }
 
-    setCapture({
-      anchorRect: selectionRect(selection),
-      draft,
-      language,
-      selectedTemplateId: draft.preselectedTemplateId,
-      workEntryId
-    });
-  }
+      setCapture({
+        anchorRect: selectionRect(selection),
+        draft,
+        language,
+        selectedTemplateId: draft.preselectedTemplateId,
+        workEntryId
+      });
+    },
+    []
+  );
 
   function confirmCapture(active: SelectionCapture): void {
     setCapture(undefined);
@@ -376,9 +379,9 @@ export function ReaderPage({
       .catch(() => setLookup({ anchorRect, state: { status: "error" }, term }));
   }
 
-  function onOpenBlockNotes(blockEntryId: string, workEntryId: string): void {
+  const onOpenBlockNotes = useCallback((blockEntryId: string, workEntryId: string): void => {
     setPanel({ blockEntryId, kind: "block", workEntryId });
-  }
+  }, []);
 
   function onEditNote(workEntryId: string, note: NoteDto): void {
     setPanel({ kind: "edit", note, workEntryId });
@@ -641,61 +644,109 @@ function renderUnit(
   return (
     <section className="readerUnit" key={unit.entryId}>
       {showTitle ? <h2 className="readerUnitTitle">{unit.title}</h2> : null}
-      {unit.blocks.map((block) => renderBlock(block, workEntryId, handlers, language))}
+      {unit.blocks.map((block) => {
+        // A born block remounts (new key) so the highlight-birth motion replays.
+        const born = handlers.bornBlockEntryId === block.entryId;
+
+        return (
+          <ReaderBlockView
+            block={block}
+            born={born}
+            key={born ? `${block.entryId}-born` : block.entryId}
+            language={language}
+            notes={handlers.notes}
+            onCaptureSelection={handlers.onCaptureSelection}
+            onOpenBlockNotes={handlers.onOpenBlockNotes}
+            prefersReducedMotion={handlers.prefersReducedMotion}
+            workEntryId={workEntryId}
+          />
+        );
+      })}
     </section>
   );
 }
 
-function renderBlock(
-  block: ReaderBlock,
-  workEntryId: string,
-  handlers: ReaderHandlers,
-  language: string
-): React.JSX.Element {
-  const blockNotes = notesForBlock(handlers.notes, block.entryId);
+type ReaderBlockViewProps = Readonly<{
+  block: ReaderBlock;
+  born: boolean;
+  language: string;
+  notes: ReadonlyArray<NoteDto>;
+  onCaptureSelection: (
+    blockElement: HTMLElement,
+    block: ReaderBlock,
+    workEntryId: string,
+    language: string
+  ) => void;
+  onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
+  prefersReducedMotion: boolean;
+  workEntryId: string;
+}>;
+
+// One rendered block. Memoized so it re-renders only when its own data/state changes: with
+// stable props (memoized handlers, a stable notes array, a per-block `born` flag), opening the
+// selection toolbar / lookup / a notes panel or switching a template no longer re-runs the
+// react-markdown pipeline for every block in the unit — the cause of the ~500ms handlers. Only
+// the born/animating block pays for framer-motion; every other block is a plain element.
+const ReaderBlockView = memo(function ReaderBlockView({
+  block,
+  born,
+  language,
+  notes,
+  onCaptureSelection,
+  onOpenBlockNotes,
+  prefersReducedMotion,
+  workEntryId
+}: ReaderBlockViewProps): React.JSX.Element {
+  const blockNotes = notesForBlock(notes, block.entryId);
   const annotated = blockNotes.length > 0;
   const className = annotated
     ? `readerBlock readerBlock--annotated ${annotationHueClass((blockNotes[0] as NoteDto).templateId)}`
     : "readerBlock";
-  const born = handlers.bornBlockEntryId === block.entryId;
-  // A born block remounts (new key) so the highlight-birth motion replays; non-born blocks
-  // render statically.
-  const birth = born ? highlightBirthMotion(handlers.prefersReducedMotion) : {};
 
   // Keyboard and touch open the editor too, not just the mouse: a selection inside a
   // focusable block is captured on key-up and touch-end as well as mouse-up.
   const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
-    handlers.onCaptureSelection(event.currentTarget, block, workEntryId, language);
+    onCaptureSelection(event.currentTarget, block, workEntryId, language);
 
-  return (
-    <motion.div
-      className={className}
-      data-block-id={block.entryId}
-      data-born={born ? "true" : undefined}
-      data-has-notes={annotated ? "true" : undefined}
-      key={born ? `${block.entryId}-born` : block.entryId}
-      onKeyUp={capture}
-      onMouseUp={capture}
-      onTouchEnd={capture}
-      tabIndex={0}
-      {...birth}
-    >
+  const body = (
+    <>
       <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
         {block.markdown}
       </Markdown>
       {annotated ? (
         <button
           className="readerBlockNotes"
-          onClick={() => handlers.onOpenBlockNotes(block.entryId, workEntryId)}
+          onClick={() => onOpenBlockNotes(block.entryId, workEntryId)}
           onMouseUp={(event) => event.stopPropagation()}
           type="button"
         >
           {blockNotes.length === 1 ? "View 1 note" : `View ${blockNotes.length} notes`}
         </button>
       ) : null}
-    </motion.div>
+    </>
   );
-}
+
+  const commonProps = {
+    className,
+    "data-block-id": block.entryId,
+    "data-born": born ? "true" : undefined,
+    "data-has-notes": annotated ? "true" : undefined,
+    onKeyUp: capture,
+    onMouseUp: capture,
+    onTouchEnd: capture,
+    tabIndex: 0
+  } as const;
+
+  if (born) {
+    return (
+      <motion.div {...commonProps} {...highlightBirthMotion(prefersReducedMotion)}>
+        {body}
+      </motion.div>
+    );
+  }
+
+  return <div {...commonProps}>{body}</div>;
+});
 
 type PanelHandlers = Readonly<{
   onClose: () => void;
