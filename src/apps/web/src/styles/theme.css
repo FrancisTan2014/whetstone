@@ -197,23 +197,33 @@
   /*
    * Functional loading indicators must still convey "in progress" under reduced motion — a
    * frozen spinner communicates nothing. Decorative motion stays off (the freeze above); only
-   * the loading spinner is exempted, swapping its rotation for a gentle, reduced-motion-safe
-   * opacity pulse (no rotation/translation). The class selector + !important override the
+   * the loading spinner is exempted. Instead of rotating, its two arcs cross-fade in
+   * counter-phase: one brightens while the other dims (a pronounced, reduced-motion-safe
+   * opacity change — no rotation or translation), which reads clearly as "working" rather than
+   * the easily-missed faint pulse it replaces. The class selectors + !important override the
    * blanket freeze for this one functional affordance.
    */
   .loadingSpinner {
-    animation: loadingPulse 1.5s ease-in-out infinite !important;
+    animation: none !important;
+  }
+
+  .loadingSpinnerTrack {
+    animation: loadingCrossFade 1.4s ease-in-out infinite !important;
+  }
+
+  .loadingSpinnerArc {
+    animation: loadingCrossFade 1.4s ease-in-out -0.7s infinite !important;
   }
 }
 
-@keyframes loadingPulse {
+@keyframes loadingCrossFade {
   0%,
   100% {
     opacity: 1;
   }
 
   50% {
-    opacity: 0.35;
+    opacity: 0.15;
   }
 }
 
