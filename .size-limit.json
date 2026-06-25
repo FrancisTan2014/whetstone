@@ -1,0 +1,12 @@
+[
+  {
+    "name": "web app JS (brotli)",
+    "path": "src/apps/web/dist/assets/*.js",
+    "limit": "270 kB"
+  },
+  {
+    "name": "web app CSS (brotli)",
+    "path": "src/apps/web/dist/assets/*.css",
+    "limit": "11 kB"
+  }
+]

@@ -40,5 +40,8 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Bundle size budget
+        run: pnpm size-limit
+
       - name: Dev smoke
         run: pnpm smoke
