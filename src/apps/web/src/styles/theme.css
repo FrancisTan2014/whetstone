@@ -56,6 +56,25 @@
   --color-anno-thought-wash: #ede9fe;
   --color-anno-thought-wash: oklch(0.94 0.04 295);
 
+  /* Part-of-speech hues for the dictionary lookup (restrained: noun blue, verb green,
+   * adjective amber, adverb violet). Day values; the .dark block overrides them. */
+  --color-pos-noun: #1d4ed8;
+  --color-pos-noun: oklch(0.5 0.16 260);
+  --color-pos-noun-wash: #e6edfe;
+  --color-pos-noun-wash: oklch(0.95 0.03 260);
+  --color-pos-verb: #047857;
+  --color-pos-verb: oklch(0.52 0.12 160);
+  --color-pos-verb-wash: #d6f5e9;
+  --color-pos-verb-wash: oklch(0.95 0.04 160);
+  --color-pos-adjective: #b45309;
+  --color-pos-adjective: oklch(0.58 0.13 65);
+  --color-pos-adjective-wash: #fef3c7;
+  --color-pos-adjective-wash: oklch(0.95 0.05 85);
+  --color-pos-adverb: #7c3aed;
+  --color-pos-adverb: oklch(0.55 0.18 300);
+  --color-pos-adverb-wash: #efe7fd;
+  --color-pos-adverb-wash: oklch(0.95 0.03 300);
+
   /* Typography: Inter (UI) + Source Serif 4 (Latin reading), with a CJK serif fallback. */
   --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-serif: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
@@ -102,6 +121,22 @@
   --color-anno-thought: oklch(0.8 0.1 295);
   --color-anno-thought-wash: #2a2342;
   --color-anno-thought-wash: oklch(0.3 0.05 295);
+  --color-pos-noun: #93b4fc;
+  --color-pos-noun: oklch(0.74 0.12 260);
+  --color-pos-noun-wash: #1a2540;
+  --color-pos-noun-wash: oklch(0.3 0.05 260);
+  --color-pos-verb: #5eead4;
+  --color-pos-verb: oklch(0.8 0.11 165);
+  --color-pos-verb-wash: #103a32;
+  --color-pos-verb-wash: oklch(0.3 0.04 165);
+  --color-pos-adjective: #fbbf24;
+  --color-pos-adjective: oklch(0.82 0.12 80);
+  --color-pos-adjective-wash: #3a2f12;
+  --color-pos-adjective-wash: oklch(0.3 0.04 80);
+  --color-pos-adverb: #c4b5fd;
+  --color-pos-adverb: oklch(0.8 0.1 300);
+  --color-pos-adverb-wash: #2a2342;
+  --color-pos-adverb-wash: oklch(0.3 0.05 300);
 }
 
 /*

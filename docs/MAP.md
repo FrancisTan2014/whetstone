@@ -160,12 +160,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
   reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
   text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the enriched
-  `DictionaryEntry` — headword, pronunciations, senses grouped by part of speech with examples and
-  synonyms, etymology, and source credits — as a compact Radix popover anchored near the selection on
-  desktop/tablet, and a content-height bottom `Sheet` on narrow screens, with explicit
-  loading/empty/error states. `lookupApi.ts` calls `GET /api/lookup`. The reader passes the open
-  work's language so Chinese selections route to CC-CEDICT automatically. Lookup never creates,
-  pre-fills, or edits a note.
+  `DictionaryEntry` as a mature online-dictionary card — headword with pronunciations (and an audio
+  control when available), color-coded part-of-speech sections (`partOfSpeechHue.ts` maps each part of
+  speech to a tokenized, Day/Night hue class), numbered senses with italic examples and synonym chips,
+  a quiet etymology line, and a sources footer — in a compact Radix popover anchored near the selection
+  on desktop/tablet, and a content-height bottom `Sheet` on narrow screens (it scrolls for long
+  entries), with explicit loading/empty/error states. `lookupApi.ts` calls `GET /api/lookup`. The
+  reader passes the open work's language so Chinese selections route to CC-CEDICT automatically. Lookup
+  never creates, pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,

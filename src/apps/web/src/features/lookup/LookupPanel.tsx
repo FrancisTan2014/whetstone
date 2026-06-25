@@ -8,6 +8,7 @@ import type {
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
+import { partOfSpeechHueClass } from "./partOfSpeechHue";
 
 // The view-only lookup state the reader drives: fetching, a failure, a no-match, or a
 // resolved entry. There are deliberately no note controls here — lookup never creates,
@@ -28,6 +29,8 @@ export type LookupPanelProps = Readonly<{
   term: string;
 }>;
 
+// A single numbered sense: its definition, any examples (indented and italic), and any
+// synonyms as compact chips.
 function renderSense(sense: DictionarySense, index: number): React.JSX.Element {
   return (
     <li className="lookupSense" key={index}>
@@ -38,37 +41,71 @@ function renderSense(sense: DictionarySense, index: number): React.JSX.Element {
         </span>
       ))}
       {sense.synonyms.length === 0 ? null : (
-        <span className="lookupSynonyms">Synonyms: {sense.synonyms.join(", ")}</span>
+        <ul aria-label="Synonyms" className="lookupSynonyms">
+          {sense.synonyms.map((synonym, synonymIndex) => (
+            <li className="lookupSynonym" key={synonymIndex}>
+              {synonym}
+            </li>
+          ))}
+        </ul>
       )}
     </li>
   );
 }
 
-// One part-of-speech group: the label once (when present), then its senses as separated blocks.
+// One part-of-speech group: a color-coded section with its label once (when present), then a
+// numbered list of its senses. The hue class drives the section's tokenized (Day/Night) color.
 function renderPartOfSpeech(part: DictionaryPartOfSpeech, index: number): React.JSX.Element {
   return (
-    <div className="lookupGroup" key={index}>
+    <section className={`lookupGroup ${partOfSpeechHueClass(part.partOfSpeech)}`} key={index}>
       {part.partOfSpeech === undefined ? null : (
         <p className="lookupPartOfSpeech">{part.partOfSpeech}</p>
       )}
       <ol className="lookupSenses">{part.senses.map(renderSense)}</ol>
-    </div>
+    </section>
   );
+}
+
+function renderPronunciation(headword: string) {
+  return function renderOne(
+    pronunciation: DictionaryEntry["pronunciations"][number],
+    index: number
+  ): React.JSX.Element {
+    return (
+      <span className="lookupPronunciation" key={index}>
+        {pronunciation.ipa}
+        {pronunciation.audio === undefined ? null : (
+          <audio
+            aria-label={`Pronunciation audio for ${headword}`}
+            className="lookupAudio"
+            controls
+            src={pronunciation.audio}
+          />
+        )}
+      </span>
+    );
+  };
 }
 
 function renderEntry(entry: DictionaryEntry): React.JSX.Element {
   return (
     <div className="lookupEntry">
-      <p className="lookupHeadword">{entry.headword}</p>
-      {entry.pronunciations.length === 0 ? null : (
-        <p className="lookupPronunciation">
-          {entry.pronunciations.map((pronunciation) => pronunciation.ipa).join(", ")}
+      <header className="lookupHeader">
+        <p className="lookupHeadword">{entry.headword}</p>
+        {entry.pronunciations.length === 0 ? null : (
+          <div className="lookupPronunciations">
+            {entry.pronunciations.map(renderPronunciation(entry.headword))}
+          </div>
+        )}
+      </header>
+      <div className="lookupGroups">{entry.partsOfSpeech.map(renderPartOfSpeech)}</div>
+      {entry.etymology === undefined ? null : (
+        <p className="lookupEtymology">
+          <span className="lookupEtymologyLabel">Origin</span> {entry.etymology}
         </p>
       )}
-      <div className="lookupGroups">{entry.partsOfSpeech.map(renderPartOfSpeech)}</div>
-      {entry.etymology === undefined ? null : <p className="lookupEtymology">{entry.etymology}</p>}
       {entry.sources.length === 0 ? null : (
-        <p className="lookupAttribution">{entry.sources.join(" · ")}</p>
+        <footer className="lookupAttribution">{entry.sources.join(" · ")}</footer>
       )}
     </div>
   );
