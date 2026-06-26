@@ -1,11 +1,12 @@
 import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import type { Nodes as HastNodes } from "hast";
+import type { Nodes as HastNodes, Root } from "hast";
 import type { RootContent } from "mdast";
 import { toHast } from "mdast-util-to-hast";
 import { memo } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
+import { applyNoteMarks, type NoteMark } from "./noteMarks";
 import { unwrapBlockLinks } from "./phrasingLinks";
 
 // rehype-sanitize's schema is hast-util-sanitize's `defaultSchema`. We additionally drop `img`
@@ -27,23 +28,31 @@ const components = {
   )
 };
 
-export type BlockContentProps = Readonly<{ node: unknown }>;
+export type BlockContentProps = Readonly<{ marks?: ReadonlyArray<NoteMark>; node: unknown }>;
 
 // Render a block straight from its stored mdast: mdast → hast (raw HTML dropped) → sanitize →
-// React, converted once with no Markdown re-parse. This replaces the mdast → Markdown →
-// react-markdown round trip so a unit renders cheaply and scrolling stays smooth. Memoized so a
-// block only re-converts when its mdast identity changes.
+// note marks → React, converted once with no Markdown re-parse. This replaces the mdast → Markdown
+// → react-markdown round trip so a unit renders cheaply and scrolling stays smooth. Memoized so a
+// block only re-converts when its mdast identity or its marks change.
 //
 // `unwrapBlockLinks` first repairs EPUB links that wrap block content, so the inline link
 // rendering never nests a `<li>` (or other block) inside a `<span>` — which would be invalid
 // HTML and trigger a React DOM-nesting/hydration error.
+//
+// Note underlines are applied *after* sanitize: the mark spans carry interactive attributes
+// (`role`, `tabindex`, `aria-label`, `data-note-id`) that the sanitizer would otherwise strip, and
+// the text they wrap is already sanitized. `applyNoteMarks` aligns each mark's plaintext offset
+// range with the rendered inline content, so the underline lands on exactly the anchored span.
 export const BlockContent = memo(function BlockContent({
+  marks,
   node
 }: BlockContentProps): React.JSX.Element {
   const safeNode = unwrapBlockLinks(node as RootContent);
   const hast: HastNodes = toHast({ type: "root", children: [safeNode] });
+  const sanitized = sanitize(hast, sanitizeSchema) as Root;
+  const marked = applyNoteMarks(sanitized, marks ?? []);
 
-  return toJsxRuntime(sanitize(hast, sanitizeSchema), {
+  return toJsxRuntime(marked, {
     Fragment,
     components,
     jsx,

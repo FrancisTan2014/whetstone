@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1110,6 +1117,21 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
   };
 }
 
+// A note anchored to a sub-block range ("Intro" = [0,5) of "Intro paragraph.") — the case that
+// renders an underline rather than a whole-block gutter.
+function subBlockNote(overrides: Partial<NoteDto> = {}): NoteDto {
+  return makeNote({
+    anchor: {
+      blockEntryId: toEntryId("b-1"),
+      contextSnapshot: "Intro paragraph.",
+      endOffset: 5,
+      selectedTextSnapshot: "Intro",
+      startOffset: 0
+    },
+    ...overrides
+  });
+}
+
 async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
   seedWorkContent(multiUnitContent);
   mockedFetchNotes.mockResolvedValue({ notes });
@@ -1120,15 +1142,27 @@ async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLEle
   return container;
 }
 
+// A sub-block note splits the block text across nodes (the anchored span + the remainder), so the
+// "Intro paragraph." text no longer matches as a single node; wait for the block element instead.
+async function openWorkWithSubBlockNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
+  seedWorkContent(multiUnitContent);
+  mockedFetchNotes.mockResolvedValue({ notes });
+  const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+  await waitFor(() => expect(blockElement(container, "b-1")).not.toBeNull());
+
+  return container;
+}
+
 describe("ReaderPage note management", () => {
-  it("highlights blocks that have notes and labels the count", async () => {
+  it("marks a whole-block note with a hue gutter bar and a view affordance", async () => {
     const container = await openWorkWithNotes([makeNote()]);
     const user = userEvent.setup();
 
     const annotated = blockElement(container, "b-1");
     expect(annotated.getAttribute("data-has-notes")).toBe("true");
     expect(annotated.className).toContain("readerBlock--annotated");
-    expect(screen.getByRole("button", { name: "View 1 note" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "View note" })).toBeDefined();
 
     // A block in another unit, with no note, renders plain once that unit is opened.
     const toc = await openTocDrawer(user);
@@ -1137,6 +1171,150 @@ describe("ReaderPage note management", () => {
     const plain = blockElement(container, "b-2");
     expect(plain.getAttribute("data-has-notes")).toBeNull();
     expect(plain.className).not.toContain("readerBlock--annotated");
+  });
+
+  it("underlines only the anchored characters of a sub-block note", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    const block = blockElement(container, "b-1");
+    const marks = block.querySelectorAll(".noteMark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.textContent).toBe("Intro");
+    expect(marks[0]?.classList.contains("noteMark--vocab")).toBe(true);
+    expect(marks[0]?.getAttribute("aria-label")).toBe("Note on 'Intro'");
+    expect(marks[0]?.getAttribute("role")).toBe("button");
+    // A sub-block note shows no whole-block gutter and no separate "View note" button — the
+    // underline itself is the affordance.
+    expect(block.className).not.toContain("readerBlock--annotated");
+    expect(screen.queryByRole("button", { name: "View note" })).toBeNull();
+  });
+
+  it("renders two disjoint sub-block notes as independent underlines", async () => {
+    const container = await openWorkWithSubBlockNotes([
+      subBlockNote(),
+      makeNote({
+        anchor: {
+          blockEntryId: toEntryId("b-1"),
+          contextSnapshot: "Intro paragraph.",
+          endOffset: 15,
+          selectedTextSnapshot: "paragraph",
+          startOffset: 6
+        },
+        entryId: toEntryId("note-2"),
+        templateId: "expression"
+      })
+    ]);
+
+    const marks = blockElement(container, "b-1").querySelectorAll(".noteMark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]?.textContent).toBe("Intro");
+    expect(marks[0]?.getAttribute("data-note-id")).toBe("note-1");
+    expect(marks[1]?.textContent).toBe("paragraph");
+    expect(marks[1]?.getAttribute("data-note-id")).toBe("note-2");
+    expect(marks[1]?.classList.contains("noteMark--expr")).toBe(true);
+  });
+
+  it("opens the tapped note specifically — not the whole-block list", async () => {
+    const container = await openWorkWithSubBlockNotes([
+      subBlockNote(),
+      makeNote({
+        anchor: {
+          blockEntryId: toEntryId("b-1"),
+          contextSnapshot: "Intro paragraph.",
+          endOffset: 15,
+          selectedTextSnapshot: "paragraph",
+          startOffset: 6
+        },
+        entryId: toEntryId("note-2")
+      })
+    ]);
+    const user = userEvent.setup();
+
+    // Activate the SECOND underline ("paragraph"); only that note should open.
+    const marks = blockElement(container, "b-1").querySelectorAll(".noteMark");
+    await user.click(marks[1] as HTMLElement);
+
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByRole("button", { name: "Edit note: paragraph" })).toBeDefined();
+    expect(within(panel).queryByRole("button", { name: "Edit note: Intro" })).toBeNull();
+  });
+
+  it("opens the note when Enter or Space activates a focused underline", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    const mark = blockElement(container, "b-1").querySelector(".noteMark") as HTMLElement;
+    mark.focus();
+    fireEvent.keyDown(mark, { key: "Enter" });
+    let panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByRole("button", { name: "Edit note: Intro" })).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(mark, { key: " " });
+    panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByRole("button", { name: "Edit note: Intro" })).toBeDefined();
+  });
+
+  it("does not open a note for a non-activating key or a click off the underline", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    const block = blockElement(container, "b-1");
+    const mark = block.querySelector(".noteMark") as HTMLElement;
+
+    // A non-activating key on the underline does nothing.
+    mark.focus();
+    fireEvent.keyDown(mark, { key: "ArrowRight" });
+    // Enter, but the target is the block (not an underline), so nothing opens either.
+    fireEvent.keyDown(block, { key: "Enter" });
+    // A plain click on the block body outside any underline opens nothing.
+    fireEvent.click(block);
+
+    expect(screen.queryByRole("complementary", { name: "Block notes" })).toBeNull();
+  });
+
+  it("treats a drag-selection ending on an underline as a selection, not a note open", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    const block = blockElement(container, "b-1");
+    const mark = block.querySelector(".noteMark") as HTMLElement;
+
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.click(mark);
+
+    expect(screen.queryByRole("complementary", { name: "Block notes" })).toBeNull();
+  });
+
+  it("disables Add note when the selection overlaps an existing annotation", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    // "Intro" is already annotated [0,5); selecting it again overlaps.
+    const block = blockElement(container, "b-1");
+    selectTextDeep(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    const addNote = (await screen.findByRole("button", { name: "Add note" })) as HTMLButtonElement;
+    expect(addNote.disabled).toBe(true);
+    expect(screen.getByText("Notes can't overlap")).toBeDefined();
+    // Look up stays available for an overlapping selection.
+    expect((screen.getByRole("button", { name: "Look up" }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
+  });
+
+  it("keeps Add note enabled for a selection disjoint from existing annotations", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    // "paragraph" [6,15) does not overlap the annotated "Intro" [0,5).
+    const block = blockElement(container, "b-1");
+    selectTextDeep(block, "paragraph");
+    fireEvent.mouseUp(block);
+
+    const addNote = (await screen.findByRole("button", { name: "Add note" })) as HTMLButtonElement;
+    expect(addNote.disabled).toBe(false);
+    expect(screen.queryByText("Notes can't overlap")).toBeNull();
   });
 
   it("lists a per-work note with its anchored snippet", async () => {
@@ -1158,7 +1336,7 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    await user.click(screen.getByRole("button", { name: "View 1 note" }));
+    await user.click(screen.getByRole("button", { name: "View note" }));
 
     const panel = await screen.findByRole("complementary", { name: "Block notes" });
     await user.click(within(panel).getByRole("button", { name: "Edit note: Intro" }));
@@ -1197,7 +1375,7 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    await user.click(screen.getByRole("button", { name: "View 2 notes" }));
+    await user.click(screen.getByRole("button", { name: "View note" }));
 
     const panel = await screen.findByRole("complementary", { name: "Block notes" });
     expect(within(panel).getAllByRole("button", { name: /^Edit note:/ })).toHaveLength(2);
@@ -1212,7 +1390,7 @@ describe("ReaderPage note management", () => {
     await openWorkWithNotes([makeNote()]);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: "View 1 note" }));
+    await user.click(screen.getByRole("button", { name: "View note" }));
     await screen.findByRole("complementary", { name: "Block notes" });
 
     await user.click(screen.getByRole("button", { name: "Close" }));
@@ -1292,7 +1470,7 @@ describe("ReaderPage note management", () => {
     const container = await openWorkWithNotes([makeNote()]);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: "View 1 note" }));
+    await user.click(screen.getByRole("button", { name: "View note" }));
     const panel = await screen.findByRole("complementary", { name: "Block notes" });
     await user.click(within(panel).getByRole("button", { name: "Jump to text: Intro" }));
 

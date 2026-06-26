@@ -4,6 +4,7 @@ import { motionSprings, withReducedMotion } from "../../shared/motion/motion.js"
 
 export type SelectionToolbarProps = Readonly<{
   anchorRect?: DOMRect | undefined;
+  disabledHint?: string | undefined;
   onClose: () => void;
   onConfirm: () => void;
   onLookup: () => void;
@@ -15,8 +16,12 @@ export type SelectionToolbarProps = Readonly<{
 // or confirmed) and "Look up" (opens the view-only definition panel) — plus a dismiss
 // control; the template choice lives in the note editor, not here. Positioned from a rect
 // captured off the selection Range; springs in and honors reduced motion.
+//
+// When `disabledHint` is set the selection overlaps an existing annotation: notes are disjoint
+// (#163), so "Add note" is disabled and the hint explains why, while "Look up" stays available.
 export function SelectionToolbar({
   anchorRect,
+  disabledHint,
   onClose,
   onConfirm,
   onLookup,
@@ -24,6 +29,7 @@ export function SelectionToolbar({
 }: SelectionToolbarProps): React.JSX.Element {
   const positioned =
     anchorRect === undefined ? {} : { style: { left: anchorRect.left, top: anchorRect.bottom } };
+  const addNoteDisabled = disabledHint !== undefined;
 
   return (
     <motion.div
@@ -35,7 +41,12 @@ export function SelectionToolbar({
       transition={withReducedMotion(motionSprings.snappy, prefersReducedMotion)}
       {...positioned}
     >
-      <button className="selectionToolbarAction" onClick={onConfirm} type="button">
+      <button
+        className="selectionToolbarAction"
+        disabled={addNoteDisabled}
+        onClick={onConfirm}
+        type="button"
+      >
         Add note
       </button>
       <button
@@ -53,6 +64,11 @@ export function SelectionToolbar({
       >
         ✕
       </button>
+      {addNoteDisabled ? (
+        <p className="selectionToolbarHint" role="note">
+          {disabledHint}
+        </p>
+      ) : null}
     </motion.div>
   );
 }

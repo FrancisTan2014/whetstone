@@ -13,7 +13,7 @@ import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
-import { annotationHueClass } from "./annotationHue.tokens";
+import { blockGutterHueClass, noteMarkHueClass } from "./annotationHue.tokens";
 import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
@@ -24,6 +24,8 @@ import {
 } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { BlockContent } from "./mdastBlock";
+import type { NoteMark } from "./noteMarks";
+import { selectionOverlapsNote } from "./noteOverlap";
 import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
 import {
   buildReaderStructure,
@@ -256,11 +258,18 @@ export function viewingPosition(
 }
 
 // At most one note panel is open at a time: capturing a new note, editing an existing one, or
-// listing the notes anchored to a single block (reopened from its highlight).
+// listing the notes anchored to a single block (reopened from its highlight). `noteEntryId` scopes
+// a reopened block panel to a single note — the case where the reader activates one note's
+// underline rather than the whole-block "View note" affordance.
 type NotePanel =
   | Readonly<{ draft: NoteDraft; kind: "create"; workEntryId: string }>
   | Readonly<{ kind: "edit"; note: NoteDto; workEntryId: string }>
-  | Readonly<{ blockEntryId: string; kind: "block"; workEntryId: string }>;
+  | Readonly<{
+      blockEntryId: string;
+      kind: "block";
+      noteEntryId?: string | undefined;
+      workEntryId: string;
+    }>;
 
 // A pending capture: a selection has been made and the floating toolbar is offering its
 // two actions (Add note / Look up) before the editor opens. `anchorRect` is the
@@ -285,7 +294,7 @@ type ReaderHandlers = Readonly<{
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
   onJumpToBlock: (note: NoteDto) => void;
-  onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
+  onOpenBlockNotes: (blockEntryId: string, workEntryId: string, noteEntryId?: string) => void;
   prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
 }>;
@@ -746,9 +755,12 @@ export function ReaderPage({
       .catch(() => setLookup({ anchorRect, state: { status: "error" }, term }));
   }
 
-  const onOpenBlockNotes = useCallback((blockEntryId: string, workEntryId: string): void => {
-    setPanel({ blockEntryId, kind: "block", workEntryId });
-  }, []);
+  const onOpenBlockNotes = useCallback(
+    (blockEntryId: string, workEntryId: string, noteEntryId?: string): void => {
+      setPanel({ blockEntryId, kind: "block", noteEntryId, workEntryId });
+    },
+    []
+  );
 
   function onEditNote(workEntryId: string, note: NoteDto): void {
     // Editing opens its own Sheet; close the notes panel so the two do not stack.
@@ -826,6 +838,14 @@ export function ReaderPage({
       {capture === undefined ? null : (
         <SelectionToolbar
           anchorRect={capture.anchorRect}
+          disabledHint={
+            selectionOverlapsNote(
+              notesForBlock(notes, capture.draft.blockEntryId).map((note) => note.anchor),
+              capture.draft
+            )
+              ? "Notes can't overlap"
+              : undefined
+          }
           onClose={() => setCapture(undefined)}
           onConfirm={() => confirmCapture(capture)}
           onLookup={() => lookupSelection(capture)}
@@ -1117,7 +1137,7 @@ type ReaderBlockViewProps = Readonly<{
     workEntryId: string,
     language: string
   ) => void;
-  onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
+  onOpenBlockNotes: (blockEntryId: string, workEntryId: string, noteEntryId?: string) => void;
   prefersReducedMotion: boolean;
   workEntryId: string;
 }>;
@@ -1127,7 +1147,13 @@ type ReaderBlockViewProps = Readonly<{
 // leaving the caption alone — when there is no stored image (unsupported/missing at ingest) or it
 // fails to load at runtime. The caption keeps the block's mdast/plaintext, so it stays selectable
 // and annotatable through the normal block selection flow; the image carries no text.
-function ReaderFigure({ block }: { block: ReaderBlock }): React.JSX.Element {
+function ReaderFigure({
+  block,
+  marks
+}: {
+  block: ReaderBlock;
+  marks: ReadonlyArray<NoteMark>;
+}): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
   const imageSrc =
     block.imageResourceId === undefined ? undefined : `/api/images/${block.imageResourceId}`;
@@ -1148,11 +1174,25 @@ function ReaderFigure({ block }: { block: ReaderBlock }): React.JSX.Element {
       ) : null}
       {hasCaption ? (
         <figcaption className="readerFigureCaption">
-          <BlockContent node={block.mdast} />
+          <BlockContent marks={marks} node={block.mdast} />
         </figcaption>
       ) : null}
     </figure>
   );
+}
+
+// Map a block's sub-block notes (those with an offset range) to underline marks in the template
+// hue. Whole-block notes (no offsets) are excluded — they show the gutter bar instead.
+function blockNoteMarks(blockNotes: ReadonlyArray<NoteDto>): ReadonlyArray<NoteMark> {
+  return blockNotes
+    .filter((note) => note.anchor.startOffset !== undefined && note.anchor.endOffset !== undefined)
+    .map((note) => ({
+      ariaLabel: `Note on '${note.anchor.selectedTextSnapshot}'`,
+      className: noteMarkHueClass(note.templateId),
+      endOffset: note.anchor.endOffset as number,
+      noteId: note.entryId,
+      startOffset: note.anchor.startOffset as number
+    }));
 }
 
 // One rendered block. Memoized so it re-renders only when its own data/state changes: with
@@ -1170,34 +1210,76 @@ const ReaderBlockView = memo(function ReaderBlockView({
   prefersReducedMotion,
   workEntryId
 }: ReaderBlockViewProps): React.JSX.Element {
-  const blockNotes = notesForBlock(notes, block.entryId);
+  const blockNotes = useMemo(() => notesForBlock(notes, block.entryId), [notes, block.entryId]);
+  const marks = useMemo(() => blockNoteMarks(blockNotes), [blockNotes]);
   const annotated = blockNotes.length > 0;
-  const className = annotated
-    ? `readerBlock readerBlock--annotated ${annotationHueClass((blockNotes[0] as NoteDto).templateId)}`
-    : "readerBlock";
+
+  // A whole-block note (no sub-block offsets) gets a restrained hue gutter bar instead of an
+  // underline. By the disjoint invariant a block has at most one such note; if legacy data carries
+  // more, the first one's hue marks the gutter.
+  const wholeBlockNote = blockNotes.find((note) => note.anchor.startOffset === undefined);
+  const className =
+    wholeBlockNote === undefined
+      ? "readerBlock"
+      : `readerBlock readerBlock--annotated ${blockGutterHueClass(wholeBlockNote.templateId)}`;
 
   // Keyboard and touch open the editor too, not just the mouse: a selection inside a
   // focusable block is captured on key-up and touch-end as well as mouse-up.
   const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
     onCaptureSelection(event.currentTarget, block, workEntryId, language);
 
+  // Activating an underline opens *that* note (resolved from the mark's `data-note-id`), not the
+  // whole block's notes. A plain tap (collapsed selection) on the underline span — or Enter/Space
+  // while it is focused — opens it; a drag-selection that happens to end on an underline still
+  // becomes a new selection, so creation is never hijacked.
+  const openNoteFrom = (target: EventTarget): boolean => {
+    const mark = (target as Element).closest(".noteMark");
+
+    if (mark === null) {
+      return false;
+    }
+
+    onOpenBlockNotes(block.entryId, workEntryId, mark.getAttribute("data-note-id") as string);
+    return true;
+  };
+
+  const onClickBlock = (event: React.MouseEvent<HTMLElement>): void => {
+    const selection = window.getSelection();
+
+    if (selection !== null && !selection.isCollapsed && selection.toString().length > 0) {
+      return;
+    }
+
+    openNoteFrom(event.target);
+  };
+
+  const onKeyDownBlock = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    if (openNoteFrom(event.target)) {
+      event.preventDefault();
+    }
+  };
+
   const body = (
     <>
       {block.blockType === "figure" ? (
-        <ReaderFigure block={block} />
+        <ReaderFigure block={block} marks={marks} />
       ) : (
-        <BlockContent node={block.mdast} />
+        <BlockContent marks={marks} node={block.mdast} />
       )}
-      {annotated ? (
+      {wholeBlockNote === undefined ? null : (
         <button
           className="readerBlockNotes"
           onClick={() => onOpenBlockNotes(block.entryId, workEntryId)}
           onMouseUp={(event) => event.stopPropagation()}
           type="button"
         >
-          {blockNotes.length === 1 ? "View 1 note" : `View ${blockNotes.length} notes`}
+          View note
         </button>
-      ) : null}
+      )}
     </>
   );
 
@@ -1206,6 +1288,8 @@ const ReaderBlockView = memo(function ReaderBlockView({
     "data-block-id": block.entryId,
     "data-born": born ? "true" : undefined,
     "data-has-notes": annotated ? "true" : undefined,
+    onClick: onClickBlock,
+    onKeyDown: onKeyDownBlock,
     onKeyUp: capture,
     onMouseUp: capture,
     onTouchEnd: capture,
@@ -1242,12 +1326,20 @@ function renderPanel(
   }
 
   if (panel.kind === "block") {
+    // A block panel reopened from a single note's underline shows just that note; the whole-block
+    // "View note" affordance opens with no `noteEntryId`, listing every note on the block.
+    const blockNotes = notesForBlock(notes, panel.blockEntryId);
+    const shown =
+      panel.noteEntryId === undefined
+        ? blockNotes
+        : blockNotes.filter((note) => note.entryId === panel.noteEntryId);
+
     return (
       <aside aria-label="Block notes" className="readerBlockNotesPanel">
         <h2>Notes on this selection</h2>
         <NoteList
           emptyLabel="This block has no notes."
-          notes={notesForBlock(notes, panel.blockEntryId)}
+          notes={shown}
           onDelete={(note) => handlers.onDeleteNote(panel.workEntryId, note)}
           onEdit={(note) => handlers.onEditNote(panel.workEntryId, note)}
           onJump={(note) => handlers.onJumpToBlock(note)}

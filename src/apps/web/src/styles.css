@@ -249,10 +249,26 @@ code {
   border-radius: 999px;
   box-shadow: 0 0.5rem 1.5rem rgb(15 23 42 / 18%);
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.375rem 0.5rem;
   position: fixed;
   z-index: 20;
+}
+
+.selectionToolbarAction:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* The disjoint-annotation hint (#163): why "Add note" is unavailable for an overlapping selection. */
+.selectionToolbarHint {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0 0.5rem 0.25rem;
+  color: #6b7280;
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 .selectionToolbarAction {
