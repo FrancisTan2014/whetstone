@@ -70,8 +70,9 @@ import type {
   NoteDto,
   NoteTemplateDto,
   WorkContentDto,
-  WorkStructureDto,
-  WorkListItemDto
+  WorkListDto,
+  WorkListItemDto,
+  WorkStructureDto
 } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
@@ -477,6 +478,28 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
     expect(mockedFetchWorkStructure).toHaveBeenCalledWith("work-2");
+  });
+
+  it("ignores a superseded initial open torn down before works resolve", async () => {
+    // React StrictMode (and rapid work switches) double-invoke the open effect; the cleanup must
+    // stop a superseded run so it never opens the work after teardown — otherwise the stale run
+    // could reset the active unit back to loading after the live run already loaded it.
+    let resolveWorks: (value: WorkListDto) => void = () => {};
+    mockedFetchWorks.mockReturnValue(
+      new Promise<WorkListDto>((resolve) => {
+        resolveWorks = resolve;
+      })
+    );
+    seedWorkContent(multiUnitContent);
+
+    const { unmount } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    unmount();
+    resolveWorks({ works: [workA] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The torn-down run does not proceed to open the work.
+    expect(mockedFetchWorkStructure).not.toHaveBeenCalled();
   });
 
   it("opens the unit deep-linked by a block param and scrolls to that block", async () => {

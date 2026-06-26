@@ -423,6 +423,12 @@ export function ReaderPage({
     // → build the structure → resolve the opening plan via the locator → viewing with the active
     // unit loading; its blocks are then fetched by the unit-load effect, with the scroll target
     // carried in state).
+    // `active` is flipped false on cleanup so a superseded run never opens a work: under React's
+    // dev double-invoke (or a rapid work switch) the effect runs twice, and without this guard the
+    // stale run's second `openInitialWork` could reset the active unit back to `loading` after the
+    // live run had already loaded it — stranding the spinner. Only the live run proceeds.
+    let active = true;
+
     async function openInitialWork(
       works: ReadonlyArray<WorkListItemDto>,
       workEntryId: string,
@@ -474,6 +480,10 @@ export function ReaderPage({
 
     fetchWorks()
       .then((list) => {
+        if (!active) {
+          return;
+        }
+
         const works = list.works;
         const requested =
           initialWorkEntryId === undefined
@@ -488,6 +498,10 @@ export function ReaderPage({
         void openInitialWork(works, requested.work.entryId, initialBlockEntryId);
       })
       .catch(() => setState({ status: "worksError" }));
+
+    return () => {
+      active = false;
+    };
   }, [initialBlockEntryId, initialWorkEntryId]);
 
   useEffect(() => {
