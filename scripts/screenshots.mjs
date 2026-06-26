@@ -196,18 +196,30 @@ async function shot(page, name) {
 
 async function applyTheme(page, theme) {
   const wantDark = theme === "night";
-  const isDark = await page.evaluate(() =>
-    document.documentElement.classList.contains("dark")
-  );
-  if (isDark !== wantDark) {
-    const name = wantDark ? "Switch to Night" : "Switch to Day";
-    await page.getByRole("button", { name }).click();
+  // Poll until the theme matches: read the CURRENT state each loop and click the correctly-labelled
+  // toggle, so a freshly loaded page that is still applying its persisted theme can't race us into
+  // clicking a button that just changed label. The reader's theme toggle now lives in the chrome,
+  // which is hidden on narrow screens until a center tap — reveal it by tapping the reading area.
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const isDark = await page.evaluate(() =>
+      document.documentElement.classList.contains("dark")
+    );
+    if (isDark === wantDark) {
+      return;
+    }
+    const toggle = page.getByRole("button", { name: isDark ? "Switch to Day" : "Switch to Night" });
+    if (await toggle.isVisible().catch(() => false)) {
+      await toggle.click().catch(() => {});
+    } else {
+      await page
+        .locator('article[aria-label="Reading"]')
+        .click({ position: { x: 8, y: 8 } })
+        .catch(() => {});
+    }
+    await page.waitForTimeout(150);
   }
-  await page.waitForFunction(
-    (dark) => document.documentElement.classList.contains("dark") === dark,
-    wantDark,
-    { timeout: 10000 }
-  );
+  throw new Error(`Could not switch theme to ${theme}.`);
 }
 
 // Let the staggered card / entrance springs settle so a shot is not caught mid-fade.

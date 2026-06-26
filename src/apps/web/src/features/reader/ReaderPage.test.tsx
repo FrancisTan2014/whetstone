@@ -1218,6 +1218,84 @@ describe("ReaderPage reading controls", () => {
     Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
   });
 
+  function mockNarrowViewport(): () => void {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: query.includes("max-width"),
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn()
+    })) as unknown as typeof window.matchMedia;
+    return () => {
+      window.matchMedia = original;
+    };
+  }
+
+  it("on a narrow screen hides the chrome by default and toggles it with a center tap", async () => {
+    const user = userEvent.setup();
+    const restore = mockNarrowViewport();
+    try {
+      const container = await openMultiUnitWork();
+      const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
+
+      // Mobile chrome is hidden by default.
+      expect(header().getAttribute("data-hidden")).toBe("true");
+
+      // A center tap on the reading text (no selection, not a control) reveals the chrome…
+      await user.click(screen.getByText("Intro paragraph."));
+      expect(header().getAttribute("data-hidden")).toBeNull();
+
+      // …and tapping again hides it.
+      await user.click(screen.getByText("Intro paragraph."));
+      expect(header().getAttribute("data-hidden")).toBe("true");
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not toggle the chrome on a tap that completes a text selection", async () => {
+    const restore = mockNarrowViewport();
+    try {
+      const container = await openMultiUnitWork();
+      const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
+      expect(header().getAttribute("data-hidden")).toBe("true");
+
+      const paragraph = screen.getByText("Intro paragraph.");
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      const selection = window.getSelection() as Selection;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      expect(selection.isCollapsed).toBe(false);
+
+      // A click that ends a selection is a selection gesture, not a chrome toggle.
+      fireEvent.click(paragraph);
+      expect(header().getAttribute("data-hidden")).toBe("true");
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not toggle the chrome when a tap lands on a reading tool", async () => {
+    const user = userEvent.setup();
+    const restore = mockNarrowViewport();
+    try {
+      const container = await openMultiUnitWork();
+      const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
+
+      // Reveal the chrome, then tap a tool: the tool acts, but the chrome stays put.
+      await user.click(screen.getByText("Intro paragraph."));
+      expect(header().getAttribute("data-hidden")).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Increase reading text size" }));
+      expect(header().getAttribute("data-hidden")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
   it("renders under a reduced-motion preference", async () => {
     const original = window.matchMedia;
     window.matchMedia = ((query: string) => ({

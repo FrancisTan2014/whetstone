@@ -38,8 +38,11 @@ import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
 // surface, the text-size control, the auto-hiding header, the receding reading tools, and the
 // entrance motion.
 type ReaderChrome = Readonly<{
+  chromeHidden: boolean;
+  isNarrow: boolean;
   language: string;
   onSizeChange: (size: ReadingSize) => void;
+  onToggleChrome: () => void;
   prefersReducedMotion: boolean;
   scroll: ReaderScroll;
   size: ReadingSize;
@@ -224,6 +227,13 @@ export function ReaderPage({
   const [notesOpen, setNotesOpen] = useState(false);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const scroll = useReaderScroll();
+  // Narrow screens hide the chrome by default and toggle it on a center tap of the reading area;
+  // wide screens use the scroll-driven receding (hover / scroll-up returns it). A single
+  // `chromeHidden` flag feeds the ReadingHeader either way.
+  const isNarrow = useMediaQuery("(max-width: 767px)");
+  const [chromeTapHidden, setChromeTapHidden] = useState(true);
+  const onToggleChrome = useCallback(() => setChromeTapHidden((value) => !value), []);
+  const chromeHidden = isNarrow ? chromeTapHidden : scroll.headerHidden;
   const toast = useToast();
   // The reader's position is durable server state (per user + work). Saving is best-effort: a
   // network failure (offline) is swallowed so it never breaks reading or logs an error. The
@@ -582,7 +592,10 @@ export function ReaderPage({
 
       {state.status === "ready"
         ? renderReady(state.works, state.reading, handlers, selectUnit, {
+            chromeHidden,
+            isNarrow,
             onSizeChange: setSize,
+            onToggleChrome,
             prefersReducedMotion,
             scroll,
             size,
@@ -649,6 +662,27 @@ function renderReady(
   return renderReading(reading, handlers, onSelectUnit, chrome);
 }
 
+// A center tap on the reading area toggles the chrome on narrow screens (where it is hidden by
+// default). Ignore taps on controls/overlays and taps that complete a text selection, so reading,
+// selection, and the tools themselves are never disturbed.
+function handleReadingAreaTap(event: React.MouseEvent, chrome: ReaderChrome): void {
+  if (!chrome.isNarrow) {
+    return;
+  }
+
+  const target = event.target as HTMLElement;
+  if (target.closest("button, a, input, textarea, [role='dialog'], [role='toolbar']") !== null) {
+    return;
+  }
+
+  const selection = window.getSelection();
+  if (selection !== null && !selection.isCollapsed) {
+    return;
+  }
+
+  chrome.onToggleChrome();
+}
+
 function renderReading(
   reading: ReadingState,
   handlers: ReaderHandlers,
@@ -707,10 +741,10 @@ function renderViewing(
   return (
     <div className="readerReading">
       {toc}
-      <div className="readerReadingMain">
+      <div className="readerReadingMain" onClick={(event) => handleReadingAreaTap(event, chrome)}>
         <ReadingHeader
           hasToc={hasToc}
-          hidden={chrome.scroll.headerHidden}
+          hidden={chrome.chromeHidden}
           notesCount={tools.notesCount}
           notesOpen={tools.notesOpen}
           onSizeChange={chrome.onSizeChange}

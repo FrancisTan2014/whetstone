@@ -424,31 +424,69 @@
   font-size: var(--text-scale-sm);
 }
 
+/* Reading chrome (WeRead-style): a fixed overlay whose children position independently so the
+   reading column underneath is never pushed or split. Pointer events are off on the overlay and
+   back on for each control. The whole chrome recedes while reading via `data-hidden`. */
 .readingHeader {
-  position: sticky;
-  inset-block-start: 0;
+  position: fixed;
+  inset: 0;
   z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.5rem 1rem;
-  background-color: color-mix(in oklch, var(--color-surface) 90%, transparent);
-  border-block-end: 1px solid var(--color-border);
-  backdrop-filter: blur(8px);
-  transition: transform var(--duration-base) var(--ease-standard);
+  pointer-events: none;
 }
 
-.readingHeader--hidden {
-  transform: translateY(-100%);
+.readingHeader > * {
+  pointer-events: auto;
 }
 
+/* A minimal top affordance: the work title, top-start and translucent, recedes upward. */
 .readingHeaderTitle {
-  flex: 1;
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  max-inline-size: min(60vw, 28rem);
   margin: 0;
+  padding: 0.6rem 1rem;
+  padding-inline-start: max(1rem, env(safe-area-inset-left));
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-scale-sm);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition:
+    transform var(--duration-base) var(--ease-standard),
+    opacity var(--duration-base) var(--ease-standard);
+}
+
+/* A thin reading-progress line pinned to the very top edge. */
+.readingProgress {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 3px;
+  overflow: hidden;
+  background-color: transparent;
+}
+
+.readingProgressBar {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  background-color: var(--color-accent);
+  opacity: 0.75;
+}
+
+/* The reading tools. Desktop: a right-edge vertical icon rail, vertically centered. Narrow: a
+   horizontal cluster at the top-end forming a top bar with the title. */
+.readingTools {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition:
+    transform var(--duration-base) var(--ease-standard),
+    opacity var(--duration-base) var(--ease-standard);
 }
 
 .readingSizeControl {
@@ -456,15 +494,18 @@
   gap: 0.25rem;
 }
 
-/* The receding reading tools (text-size, theme, 目录, notes) sit together so they hide and
-   return as one calm strip. They wrap onto a second row on narrow screens rather than crowding
-   the title, and a safe-area inset keeps them clear of a notch / rounded corner. */
-.readingTools {
-  display: flex;
-  flex-wrap: wrap;
+/* Every rail control is a comfortable >= 44px tap target with a centered icon. */
+.readingTools button {
+  display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  padding-inline-end: env(safe-area-inset-right);
+  justify-content: center;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+}
+
+.readingToolIcon {
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
 }
 
 /* The note count rides the notes tool as a quiet pill rather than a second control. */
@@ -473,7 +514,7 @@
   min-inline-size: 1.25rem;
   align-items: center;
   justify-content: center;
-  margin-inline-start: 0.375rem;
+  margin-inline-start: 0.25rem;
   padding-inline: 0.375rem;
   border-radius: 999px;
   background-color: color-mix(in oklch, var(--color-accent) 16%, transparent);
@@ -482,18 +523,69 @@
   font-weight: 600;
 }
 
-.readingProgress {
-  position: relative;
-  inline-size: 6rem;
-  block-size: 0.25rem;
-  overflow: hidden;
-  background-color: var(--color-border);
-  border-radius: 999px;
+/* The desktop hover zone is off by default; the narrow layout never uses it. */
+.readingRailEdge {
+  display: none;
 }
 
-.readingProgressBar {
-  position: absolute;
-  inset: 0;
-  transform-origin: left center;
-  background-color: var(--color-accent);
+@media (max-width: 767px) {
+  /* Narrow: the tools form a top bar, hidden by default and toggled by a center tap. */
+  .readingTools {
+    inset-block-start: 0;
+    inset-inline-end: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding: 0.4rem;
+    padding-inline-end: max(0.4rem, env(safe-area-inset-right));
+  }
+
+  .readingHeader[data-hidden="true"] .readingTools {
+    transform: translateY(-130%);
+    opacity: 0;
+  }
+}
+
+@media (min-width: 768px) {
+  /* Desktop: the right vertical icon rail, framing the reading column. */
+  .readingTools {
+    inset-inline-end: 0.5rem;
+    inset-block-start: 50%;
+    flex-direction: column;
+    transform: translateY(-50%);
+    padding: 0.25rem;
+    border-radius: 999px;
+    background-color: color-mix(in oklch, var(--color-surface) 80%, transparent);
+    backdrop-filter: blur(8px);
+  }
+
+  /* A thin right-edge zone so the receded rail returns on hover (CSS only; scroll-up also shows it). */
+  .readingRailEdge {
+    display: block;
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 0;
+    inline-size: 1.5rem;
+  }
+
+  .readingHeader[data-hidden="true"] .readingTools {
+    transform: translateY(-50%) translateX(calc(100% + 1rem));
+    opacity: 0;
+  }
+
+  .readingHeader[data-hidden="true"] .readingRailEdge:hover ~ .readingTools,
+  .readingHeader .readingTools:hover {
+    transform: translateY(-50%);
+    opacity: 1;
+  }
+
+  /* Leave room for the rail so the centered reading column reads as framed, not lost in whitespace. */
+  .readerReadingMain {
+    padding-inline-end: 3.5rem;
+  }
+}
+
+/* The title recedes upward with the rest of the chrome. */
+.readingHeader[data-hidden="true"] .readingHeaderTitle {
+  transform: translateY(-110%);
+  opacity: 0;
 }

@@ -180,9 +180,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   column); jumping back from a note card loads the unit holding the block (when it differs
   from the open one) then scrolls/focuses it via `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the receding reading
-  tool strip — title + work-level progress plus the one home for every reading tool (text-size,
-  Day/Night `ThemeToggle`, the 目录 toggle, and the notes toggle) — auto-hiding as one via
-  `useReaderScroll.ts`; `readingSize.ts` holds the
+  chrome — a minimal title + a thin top progress line plus the one home for every reading tool
+  (text-size, Day/Night `ThemeToggle`, the 目录 toggle as a contents icon, and the notes toggle),
+  laid out as a **right-edge vertical icon rail on desktop** (framing the reading column; returns on
+  hover / scroll-up via `useReaderScroll.ts`) and a **top bar hidden by default on mobile** (a center
+  tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). The whole
+  chrome recedes as one through the `data-hidden` flag. `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
   targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored
