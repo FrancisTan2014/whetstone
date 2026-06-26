@@ -86,6 +86,29 @@ Throughout, watch for **any console error, HTTP 4xx/5xx, React hydration/DOM-nes
 because it looks genuinely broken" is itself a signal — turn a suspected real breakage into a `[Bug]`
 rather than letting it hide as test rot.
 
+## Judge what you see, not just the console (visual oracle)
+
+The runtime guard above — console errors, HTTP 4xx/5xx, hydration/DOM-nesting warnings — is necessary
+but **blind to visual defects**. A page can be functionally clean (no error, content in the DOM,
+selectable, lookup works) yet **visually broken**: invisible or low-contrast text, a surface that
+renders blank where it should be full, overlapping/clipped/cut-off elements, an off-screen popover, or
+a mis-applied theme. Unit tests (no CSS) and the E2E console-gate cannot catch these — **you** are the
+layer that can, because you hold the rendered pixels.
+
+So never treat "no console error" as "looks fine". **Open and look at every screenshot you capture**
+(reader Day *and* Night, lookup, notes panel, 目录, mobile) and judge each as a human reader would:
+
+- **Legibility / contrast** — is the text actually readable, with real contrast, in **both** Day and
+  Night? Compare the same surface across themes: if content reads in one theme but **vanishes or
+  washes out in the other** (e.g. light text on a light surface), that is a defect.
+- **Content present** — is the surface full where it should be, not blank or near-blank?
+- **Layout intact** — nothing overlapping, clipped, cut off, off-screen, or mis-themed, at desktop
+  *and* mobile width.
+
+A clear visual defect is a genuine, fileable `[Bug]` **even when the runtime guard is clean** — these
+are exactly the bugs the other gates miss. Reproduce it (re-drive or re-capture), then file it per the
+high-signal bar below, citing the offending screenshot path.
+
 ## High-signal + dedupe guardrails (mandatory)
 
 These are hard requirements, not nice-to-haves. An over-eager bug-filer that floods the backlog is a
@@ -128,7 +151,9 @@ you covered — not by how many bugs you file.
 - **`report.md`** records concisely: the SHA; a checklist of the **flows/surfaces actually
   exercised** (which block types, which tools and combinations, en/zh lookup, navigation,
   accessibility, realistic-scale/mobile); every **console error / HTTP 4xx–5xx / hydration warning**
-  seen, or "none"; and the **outcome** — the `[Bug]` numbers filed, or "clean, 0 filed".
+  seen, or "none"; a **visual-inspection verdict** for the captured screenshots (Day/Night legibility
+  & contrast, content present, layout intact), or the visual defects found; and the **outcome** — the
+  `[Bug]` numbers filed, or "clean, 0 filed".
 - **Surface it on GitHub** so a clean run is visible without backlog noise: append one **concise**
   summary comment (SHA, surfaces covered, outcome) to a single persistent tracking issue titled
   `[Tester] Exploration run log` (label `copilot`). Create that issue once if it does not exist and
