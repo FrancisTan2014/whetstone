@@ -96,7 +96,10 @@ can navigate them from another package.
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
   (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
-  so commands test against a fake parser). `src/files/imageResourceStore.ts` — content-addressed image
+  so commands test against a fake parser). It guards the upload with `src/files/zipArchive.ts`
+  (`isZipArchive`, a dependency-free ZIP signature/EOCD check) and rejects non-ZIP bytes before the
+  library runs — the library otherwise hangs and emits a process-crashing unhandled rejection on
+  non-EPUB input. `src/files/imageResourceStore.ts` — content-addressed image
   store (sha256-keyed, so identical bytes dedupe to one resource) under `imageResourcesDir`, with a
   write-time content-type allowlist (PNG/JPEG/GIF/WebP; SVG and others rejected); served read-only by
   `src/features/images/imageRoutes.ts` (`GET /api/images/:id`, id is the content hash, allowlist

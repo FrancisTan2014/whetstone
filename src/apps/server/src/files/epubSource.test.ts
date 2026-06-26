@@ -144,4 +144,14 @@ describe("createEpubParser", () => {
     expect(image?.src).toBe(resolve(imagesDir, "OEBPS_images_pixel.png"));
     expect(chapter?.html).toContain(image?.src ?? "");
   });
+
+  it("rejects non-ZIP bytes with a settled error instead of hanging or crashing", async () => {
+    const parse = createEpubParser(imagesDir);
+    // A non-EPUB file uploaded with a .epub extension. The underlying library would otherwise leave
+    // its promise unsettled and emit a process-crashing unhandled rejection; the parser must turn it
+    // into a normal rejection the ingest command can map to "invalid EPUB".
+    const notAnEpub = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+
+    await expect(parse(notAnEpub)).rejects.toThrow("not a ZIP archive");
+  });
 });

@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 
 import { normalizeEpubMetadata, type NormalizedEpubMetadata } from "@whetstone/domain";
 
+import { isZipArchive } from "./zipArchive.js";
+
 // One image referenced by a chapter: `src` is the rewritten `<img src>` exactly as it
 // appears in the chapter HTML (an absolute path under the parser's resource directory),
 // `bytes` are the extracted image bytes, and `contentType` is the OPF manifest's
@@ -80,6 +82,13 @@ async function extractChapterImages(
 
 export function createEpubParser(resourceSaveDir: string): EpubParser {
   return async function parseEpub(bytes: Uint8Array): Promise<ParsedEpub> {
+    // The EPUB library hangs and emits a process-crashing unhandled rejection on non-ZIP input
+    // (e.g. a non-EPUB file uploaded with a `.epub` extension), so reject those here — a settled
+    // rejection the caller turns into an "invalid EPUB" response — before it ever runs.
+    if (!isZipArchive(bytes)) {
+      throw new Error("The upload is not a ZIP archive, so it cannot be a valid EPUB.");
+    }
+
     await mkdir(resourceSaveDir, { recursive: true });
     const epub = await initEpubFile(bytes, resourceSaveDir);
 
