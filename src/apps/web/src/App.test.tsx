@@ -79,10 +79,11 @@ describe("App shell and routes", () => {
     expect(markup).toContain("later slice");
   });
 
-  it("resolves the search route to its placeholder region", () => {
+  it("resolves the search route to the library search page", () => {
     const markup = renderAt("/search");
 
-    expect(markup).toContain('id="search-mode-heading"');
-    expect(markup).toContain("later slice");
+    expect(markup).toContain('id="search-heading"');
+    expect(markup).toContain('role="search"');
+    expect(markup).toContain('id="search-query"');
   });
 });

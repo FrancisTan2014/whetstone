@@ -21,6 +21,8 @@ import { registerReadingPositionRoutes } from "../features/readingPosition/readi
 import type { ReadingPositionDependencies } from "../features/readingPosition/readingPositionCommands.js";
 import { registerLookupRoutes } from "../features/lookup/lookupRoutes.js";
 import type { LookupDependencies } from "../features/lookup/lookupRoutes.js";
+import { registerSearchRoutes } from "../features/search/searchRoutes.js";
+import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
 import type { ImageDependencies } from "../features/images/imageRoutes.js";
 import {
@@ -47,6 +49,7 @@ export type CreateServerOptions = Readonly<{
   lookup?: LookupDependencies;
   notes?: NotesDependencies;
   readingPosition?: ReadingPositionDependencies;
+  search?: SearchDependencies;
 }>;
 
 export function createServer(options: CreateServerOptions): FastifyInstance {
@@ -87,6 +90,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.lookup !== undefined) {
     registerLookupRoutes(server, options.lookup);
+  }
+
+  if (options.search !== undefined) {
+    registerSearchRoutes(server, options.search);
   }
 
   if (options.images !== undefined) {

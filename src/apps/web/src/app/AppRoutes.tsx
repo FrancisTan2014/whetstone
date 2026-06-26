@@ -4,6 +4,7 @@ import { Route, Routes, useSearchParams } from "react-router-dom";
 import { WorkContentPanel } from "../features/content/WorkContentPanel.js";
 import { AdminLibraryPage } from "../features/library/AdminLibraryPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
+import { SearchPage } from "../features/search/SearchPage.js";
 import { AppShell } from "./AppShell.js";
 import { ModePlaceholder } from "./ModePlaceholder.js";
 
@@ -52,15 +53,7 @@ export function AppRoutes(): React.JSX.Element {
           }
           path="notes"
         />
-        <Route
-          element={
-            <ModePlaceholder
-              description="Block-level search arrives in a later slice."
-              mode="Search"
-            />
-          }
-          path="search"
-        />
+        <Route element={<SearchPage />} path="search" />
       </Route>
     </Routes>
   );
