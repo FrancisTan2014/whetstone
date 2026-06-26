@@ -38,6 +38,29 @@ export function eventTargetClosest(target: EventTarget | null, selector: string)
   return target instanceof Element ? target.closest(selector) : null;
 }
 
+// The rendered block (`[data-block-id]`) a DOM node sits in, or null when the node is outside any
+// block. A text node has no `closest`, so resolve through its parent element.
+function nodeBlockElement(node: Node): Element | null {
+  const element = node instanceof Element ? node : node.parentElement;
+
+  return element === null ? null : element.closest("[data-block-id]");
+}
+
+// Whether a non-collapsed selection spans more than one rendered block — its start and end lie in
+// different `[data-block-id]` elements. v0 notes anchor to a single block, so the reader surfaces an
+// explicit unsupported-selection message for these instead of silently failing to open the toolbar.
+export function isCrossBlockSelection(selection: Selection | null): boolean {
+  if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  const startBlock = nodeBlockElement(range.startContainer);
+  const endBlock = nodeBlockElement(range.endContainer);
+
+  return startBlock !== null && endBlock !== null && startBlock !== endBlock;
+}
+
 // The rendered block that should capture a pointer release which landed in the reading column
 // but outside a block element (e.g. just past a block edge) — the per-block handlers already
 // cover a release on the block itself. Returns undefined when the release is on a block, outside

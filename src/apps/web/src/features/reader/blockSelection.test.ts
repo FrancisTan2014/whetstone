@@ -1,12 +1,34 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 
-import { eventTargetClosest, readBlockSelection, releasedBlockElement } from "./blockSelection";
+import {
+  eventTargetClosest,
+  isCrossBlockSelection,
+  readBlockSelection,
+  releasedBlockElement
+} from "./blockSelection";
 
 function selectRange(node: Node, start: number, end: number): Selection {
   const range = document.createRange();
   range.setStart(node, start);
   range.setEnd(node, end);
+
+  const selection = window.getSelection() as Selection;
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  return selection;
+}
+
+function selectAcross(
+  startNode: Node,
+  startOffset: number,
+  endNode: Node,
+  endOffset: number
+): Selection {
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
 
   const selection = window.getSelection() as Selection;
   selection.removeAllRanges();
@@ -69,6 +91,87 @@ describe("readBlockSelection", () => {
     const selection = selectRange(otherNode, 0, 3);
 
     expect(readBlockSelection(block, selection)).toBeUndefined();
+  });
+});
+
+describe("isCrossBlockSelection", () => {
+  function buildTwoBlocks(): { a: Node; b: Node } {
+    document.body.innerHTML =
+      '<div class="reader">' +
+      '<div data-block-id="b1"><p>first block</p></div>' +
+      '<div data-block-id="b2"><p>second block</p></div>' +
+      "</div>";
+
+    return {
+      a: document.querySelector('[data-block-id="b1"] p')?.firstChild as Node,
+      b: document.querySelector('[data-block-id="b2"] p')?.firstChild as Node
+    };
+  }
+
+  it("is true when the selection starts in one block and ends in another", () => {
+    const { a, b } = buildTwoBlocks();
+
+    expect(isCrossBlockSelection(selectAcross(a, 0, b, 6))).toBe(true);
+  });
+
+  it("is true when the selection endpoints are the block elements themselves", () => {
+    buildTwoBlocks();
+    const blockA = document.querySelector('[data-block-id="b1"]') as Element;
+    const blockB = document.querySelector('[data-block-id="b2"]') as Element;
+
+    // Element containers (not text nodes) exercise the `node instanceof Element` path.
+    expect(isCrossBlockSelection(selectAcross(blockA, 0, blockB, 0))).toBe(true);
+  });
+
+  it("is false for a selection contained in a single block", () => {
+    const { a } = buildTwoBlocks();
+
+    expect(isCrossBlockSelection(selectAcross(a, 0, a, 5))).toBe(false);
+  });
+
+  it("is false for a collapsed selection", () => {
+    const { a } = buildTwoBlocks();
+
+    expect(isCrossBlockSelection(selectAcross(a, 2, a, 2))).toBe(false);
+  });
+
+  it("is false when there is no selection object or no range", () => {
+    buildTwoBlocks();
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+
+    expect(isCrossBlockSelection(null)).toBe(false);
+    expect(isCrossBlockSelection(selection)).toBe(false);
+  });
+
+  it("is false when the endpoints are outside any block", () => {
+    document.body.innerHTML = '<div id="x">plain text here</div>';
+    const node = document.getElementById("x")?.firstChild as Node;
+
+    expect(isCrossBlockSelection(selectAcross(node, 0, node, 5))).toBe(false);
+  });
+
+  it("is false when only the start is inside a block", () => {
+    document.body.innerHTML =
+      '<div class="reader"><div data-block-id="b1"><p>first block</p></div>' +
+      '<span id="loose">loose</span></div>';
+    const a = document.querySelector('[data-block-id="b1"] p')?.firstChild as Node;
+    const loose = document.getElementById("loose")?.firstChild as Node;
+
+    expect(isCrossBlockSelection(selectAcross(a, 0, loose, 3))).toBe(false);
+  });
+
+  it("is false when an endpoint is a node with no parent element", () => {
+    // A range container can be the document node itself, which is not an Element and has no parent
+    // element — exercises the null-element branch of the block lookup.
+    const range = document.createRange();
+    range.setStart(document, 0);
+    range.setEnd(document, document.childNodes.length);
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(isCrossBlockSelection(selection)).toBe(false);
   });
 });
 

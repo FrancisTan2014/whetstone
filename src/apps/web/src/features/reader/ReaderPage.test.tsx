@@ -226,6 +226,34 @@ const multiUnitContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// Two paragraph blocks in the same (first-opened) reading unit, so a selection can be dragged
+// from the first block into the second to exercise the cross-block path.
+const crossBlockContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-1"),
+          mdast: { children: [{ type: "text", value: "First block text." }], type: "paragraph" },
+          orderIndex: 0,
+          plaintext: "First block text."
+        },
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-2"),
+          mdast: { children: [{ type: "text", value: "Second block text." }], type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "Second block text."
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 // A block whose serialized Markdown contains an image, to confirm the reader's sanitize
 // schema strips it (defense in depth — ingestion already drops images).
 const imageContent: WorkContentDto = {
@@ -780,6 +808,26 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByRole("heading", { name: "New note" })).toBeDefined();
     expect(screen.getByText(/Selected: Intro/)).toBeDefined();
+  });
+
+  it("explains the unsupported selection (and opens no toolbar) for a cross-block selection", async () => {
+    seedWorkContent(crossBlockContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("First block text.");
+
+    const blockA = blockElement(container, "b-1");
+    const blockB = blockElement(container, "b-2");
+    const range = document.createRange();
+    range.setStart(firstTextNode(blockA), 0);
+    range.setEnd(firstTextNode(blockB), "Second".length);
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    // The pointer is released in the second block, so its per-block handler runs the capture.
+    fireEvent.mouseUp(blockB);
+
+    expect(await screen.findByText("Select within a single block to add a note.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Add note" })).toBeNull();
   });
 
   it("suppresses the context menu and callout in the reading area while keeping text selectable", async () => {
