@@ -232,6 +232,19 @@ describe("LookupPanel desktop popover", () => {
     expect(dialog.className).toContain("lookupPopover");
   });
 
+  it("bounds the popover height to the available viewport space so it never clips off-screen", () => {
+    renderPanel(loadedEntry, {
+      anchorRect: { bottom: 60, height: 20, left: 120, top: 40, width: 80 } as DOMRect,
+      matchers: desktop
+    });
+
+    // Height is capped by Radix's collision-aware available height (whichever side it flips to),
+    // not a fixed box — so a card flipped above a low selection shrinks to the room on screen and
+    // scrolls internally rather than extending past the top and clipping the headword.
+    const dialog = screen.getByRole("dialog", { name: "Look up: set" });
+    expect(dialog.style.maxHeight).toContain("var(--radix-popover-content-available-height");
+  });
+
   it("still anchors and renders when the selection rect is unavailable", () => {
     renderPanel(loadedEntry, { matchers: desktop });
 
