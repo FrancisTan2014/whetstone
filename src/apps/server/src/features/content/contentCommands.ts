@@ -3,6 +3,7 @@ import type { IngestMarkdownRequest, WorkContentDto } from "@whetstone/contracts
 
 import type { DbClient } from "../../db/dbClient.js";
 import type { EpubParser } from "../../files/epubSource.js";
+import type { ImageResourceStore } from "../../files/imageResourceStore.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
 import { workSources } from "../../db/schema.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
@@ -10,7 +11,8 @@ import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store, EPUB
-// parser) are passed in so ingestion stays deterministic and testable.
+// parser, image-resource store) are passed in so ingestion stays deterministic and
+// testable.
 export type ContentDependencies = Readonly<{
   createAuthorId: () => string;
   createEntryId: () => string;
@@ -18,6 +20,7 @@ export type ContentDependencies = Readonly<{
   db: DbClient;
   epubParser: EpubParser;
   epubUploadLimitBytes: number;
+  imageResourceStore: Pick<ImageResourceStore, "store">;
   sourceFileStore: SourceFileStore;
 }>;
 

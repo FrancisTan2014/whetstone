@@ -64,6 +64,7 @@ const server = createServer({
     db,
     epubParser,
     epubUploadLimitBytes: config.epubUploadLimitBytes,
+    imageResourceStore,
     sourceFileStore
   },
   currentUser: createDefaultCurrentUserProvider(),

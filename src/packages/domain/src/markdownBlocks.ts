@@ -7,9 +7,15 @@ import { unified } from "unified";
 import type { BlockType } from "./block.js";
 
 // A decomposed block keeps the mdast node (for safe rendering/export) plus a
-// plaintext projection (for search) alongside its block type.
+// plaintext projection (for search) alongside its block type. A figure block also
+// carries its transient image reference (the rewritten `<img src>` + optional alt) so
+// the server can resolve it to stored bytes on ingest; the caption travels as the
+// block's mdast + plaintext, like other blocks.
+export type DecomposedFigureImage = Readonly<{ alt?: string; src: string }>;
+
 export type DecomposedBlock = Readonly<{
   blockType: BlockType;
+  image?: DecomposedFigureImage;
   mdast: RootContent;
   plaintext: string;
 }>;

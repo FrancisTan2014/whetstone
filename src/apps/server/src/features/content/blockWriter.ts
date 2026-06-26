@@ -1,4 +1,4 @@
-import type { BlockType, DecomposedReadingUnit, EntryId } from "@whetstone/domain";
+import type { BlockType, EntryId } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
@@ -6,10 +6,26 @@ import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
+// A block ready to persist: its rendered mdast + plaintext plus the figure columns
+// (`imageResourceId`/`alt`), resolved upstream — `null` on text blocks and on figures
+// whose image was not stored.
+export type PersistableBlock = Readonly<{
+  alt: string | null;
+  blockType: BlockType;
+  imageResourceId: string | null;
+  mdast: unknown;
+  plaintext: string;
+}>;
+
+export type PersistableReadingUnit = Readonly<{
+  blocks: ReadonlyArray<PersistableBlock>;
+  title: string | undefined;
+}>;
+
 export type WriteReadingUnitsInput = Readonly<{
   createEntryId: () => string;
   startOrder: number;
-  units: ReadonlyArray<DecomposedReadingUnit>;
+  units: ReadonlyArray<PersistableReadingUnit>;
   workEntryId: EntryId;
 }>;
 
@@ -37,8 +53,10 @@ export async function writeReadingUnits(
     workEntryId: EntryId;
   }[] = [];
   const blockRows: {
+    alt: string | null;
     blockType: BlockType;
     entryId: string;
+    imageResourceId: string | null;
     mdastJson: unknown;
     orderIndex: number;
     plaintext: string;
@@ -62,8 +80,10 @@ export async function writeReadingUnits(
       const blockEntryId = input.createEntryId();
       entryRows.push({ id: blockEntryId, type: "block" });
       blockRows.push({
+        alt: block.alt,
         blockType: block.blockType,
         entryId: blockEntryId,
+        imageResourceId: block.imageResourceId,
         mdastJson: block.mdast,
         orderIndex: blockIndex,
         plaintext: block.plaintext,

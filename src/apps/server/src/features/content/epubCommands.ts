@@ -1,4 +1,4 @@
-import { decomposeHtmlChapter, toAuthorId, toEntryId, type AuthorId } from "@whetstone/domain";
+import { toAuthorId, toEntryId, type AuthorId } from "@whetstone/domain";
 import type { IngestEpubResultDto, WorkDto } from "@whetstone/contracts";
 import { eq } from "drizzle-orm";
 
@@ -6,6 +6,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import { authors, entries, workMeta, workSources } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
 import type { ContentDependencies } from "./contentCommands.js";
+import { resolveChapters } from "./figureImageResolver.js";
 import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent } from "./contentQueries.js";
 
@@ -39,7 +40,9 @@ export async function ingestEpub(
 
   const sourceId = dependencies.createSourceId();
   const written = await dependencies.sourceFileStore.writeEpubSource({ bytes, id: sourceId });
-  const units = parsed.chapters.map((chapter) => decomposeHtmlChapter(chapter.html));
+  // Figure images are stored (content-addressed) up front so each figure block can be
+  // stamped with its resolved imageResourceId before the content is written.
+  const units = await resolveChapters(parsed.chapters, dependencies.imageResourceStore);
 
   const workEntryId = toEntryId(dependencies.createEntryId());
   const authorId = await dependencies.db.transaction(async (tx) => {

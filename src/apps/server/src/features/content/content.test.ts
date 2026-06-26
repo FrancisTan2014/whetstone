@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -16,14 +16,16 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { authors, blocks, entries, readingUnits, workSources } from "../../db/schema.js";
 import { loadWorkContent } from "./contentQueries.js";
+import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
-import type { ParsedEpub } from "../../files/epubSource.js";
+import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
 type TestContext = Readonly<{
   db: DbClient;
+  imagesDir: string;
   server: ReturnType<typeof createServer>;
   sourcesDir: string;
 }>;
@@ -47,6 +49,7 @@ async function buildContext(): Promise<TestContext> {
   await runMigrations(pglite);
   const db = createDbClient(pglite);
   const sourcesDir = await mkdtemp(join(tmpdir(), "whetstone-content-"));
+  const imagesDir = await mkdtemp(join(tmpdir(), "whetstone-content-img-"));
 
   let authorSequence = 0;
   let workSequence = 0;
@@ -65,10 +68,11 @@ async function buildContext(): Promise<TestContext> {
     db,
     epubParser: (bytes) => epubResponder(bytes),
     epubUploadLimitBytes,
+    imageResourceStore: createImageResourceStore(imagesDir),
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
-  return { db, server: createServer({ content, library, logger: false }), sourcesDir };
+  return { db, imagesDir, server: createServer({ content, library, logger: false }), sourcesDir };
 }
 
 async function createWork(): Promise<string> {
@@ -139,6 +143,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await context.server.close();
   await rm(context.sourcesDir, { force: true, recursive: true });
+  await rm(context.imagesDir, { force: true, recursive: true });
 });
 
 describe("content routes", () => {
@@ -701,5 +706,155 @@ describe("EPUB ingestion routes", () => {
         plaintext: "A river at dusk."
       }
     ]);
+  });
+
+  function pngBytes(): Uint8Array {
+    return Uint8Array.from(
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
+        "base64"
+      )
+    );
+  }
+
+  function svgBytes(): Uint8Array {
+    return new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  }
+
+  function figureChapter(html: string, images: ReadonlyArray<ParsedEpubImage>): ParsedEpub {
+    return {
+      chapters: [{ html, images }],
+      metadata: { author: "Anon", language: "en", title: "Figures" }
+    };
+  }
+
+  async function figureBlocksOf(epubLabel: string): Promise<IngestEpubResultDto> {
+    const response = await ingestEpub(Buffer.from(epubLabel));
+    expect(response.statusCode).toBe(201);
+
+    return response.json() as IngestEpubResultDto;
+  }
+
+  it("ingests a <figure> as a figure block with stored image, alt, and caption", async () => {
+    const png = pngBytes();
+    epubResponder = async () =>
+      figureChapter(
+        '<h1>Plate</h1><figure><img src="img/p.png" alt="A dot"/><figcaption>The <em>caption</em>.</figcaption></figure>',
+        [{ bytes: png, contentType: "image/png", src: "img/p.png" }]
+      );
+
+    const body = await figureBlocksOf("epub-figure-png");
+    const unit = body.content.readingUnits[0];
+    const figure = unit?.blocks.find((block) => block.blockType === "figure");
+
+    expect(figure?.plaintext).toBe("The caption.");
+    expect(figure?.alt).toBe("A dot");
+    expect(figure?.imageResourceId).toBe(hashBytes(png));
+    // The caption is not promoted to a heading or the unit title.
+    expect(unit?.title).toBe("Plate");
+    expect(
+      unit?.blocks.filter((block) => block.blockType === "heading").map((block) => block.plaintext)
+    ).toEqual(["Plate"]);
+  });
+
+  it("ingests a bare <img> as an image-only figure block (no caption)", async () => {
+    const png = pngBytes();
+    epubResponder = async () =>
+      figureChapter('<p>see</p><img src="img/solo.png" alt=""/>', [
+        { bytes: png, contentType: "image/png", src: "img/solo.png" }
+      ]);
+
+    const body = await figureBlocksOf("epub-figure-bare");
+    const figure = body.content.readingUnits[0]?.blocks.find(
+      (block) => block.blockType === "figure"
+    );
+
+    expect(figure?.plaintext).toBe("");
+    expect(figure?.alt).toBeUndefined();
+    expect(figure?.imageResourceId).toBe(hashBytes(png));
+  });
+
+  it("degrades an unsupported (SVG) figure image to a caption-only block", async () => {
+    epubResponder = async () =>
+      figureChapter(
+        '<figure><img src="img/d.svg" alt="diagram"/><figcaption>A diagram.</figcaption></figure>',
+        [{ bytes: svgBytes(), contentType: "image/svg+xml", src: "img/d.svg" }]
+      );
+
+    const body = await figureBlocksOf("epub-figure-svg");
+    const figure = body.content.readingUnits[0]?.blocks.find(
+      (block) => block.blockType === "figure"
+    );
+
+    expect(figure?.plaintext).toBe("A diagram.");
+    expect(figure?.imageResourceId).toBeUndefined();
+    expect(figure?.alt).toBeUndefined();
+    // Nothing was stored for the disallowed type.
+    expect(await readdir(context.imagesDir)).toEqual([]);
+  });
+
+  it("skips a figure with neither a storable image nor a caption", async () => {
+    epubResponder = async () =>
+      figureChapter('<img src="img/d.svg"/>', [
+        { bytes: svgBytes(), contentType: "image/svg+xml", src: "img/d.svg" }
+      ]);
+
+    const body = await figureBlocksOf("epub-figure-empty");
+
+    expect(body.content.readingUnits).toEqual([]);
+  });
+
+  it("stores identical figure images once under a shared content-addressed id", async () => {
+    const png = pngBytes();
+    epubResponder = async () =>
+      figureChapter(
+        '<figure><img src="img/a.png" alt="one"/><figcaption>A</figcaption></figure>' +
+          '<figure><img src="img/b.png" alt="two"/><figcaption>B</figcaption></figure>',
+        [
+          { bytes: png, contentType: "image/png", src: "img/a.png" },
+          { bytes: png, contentType: "image/png", src: "img/b.png" }
+        ]
+      );
+
+    const body = await figureBlocksOf("epub-figure-dedupe");
+    const figures = body.content.readingUnits[0]?.blocks.filter(
+      (block) => block.blockType === "figure"
+    );
+    const id = hashBytes(png);
+
+    expect(figures?.map((figure) => figure.imageResourceId)).toEqual([id, id]);
+    // Stored once: the image bytes file plus its `.type` sidecar, and nothing more.
+    expect((await readdir(context.imagesDir)).sort()).toEqual([id, `${id}.type`].sort());
+  });
+
+  it("degrades a figure whose <img> has no src to a caption-only block", async () => {
+    epubResponder = async () =>
+      figureChapter("<figure><img alt='x'/><figcaption>Caption only.</figcaption></figure>", []);
+
+    const body = await figureBlocksOf("epub-figure-nosrc");
+    const figure = body.content.readingUnits[0]?.blocks.find(
+      (block) => block.blockType === "figure"
+    );
+
+    expect(figure?.plaintext).toBe("Caption only.");
+    expect(figure?.imageResourceId).toBeUndefined();
+    expect(await readdir(context.imagesDir)).toEqual([]);
+  });
+
+  it("degrades a figure whose image bytes are missing to a caption-only block", async () => {
+    epubResponder = async () =>
+      figureChapter(
+        '<figure><img src="img/gone.png" alt="gone"/><figcaption>Missing bytes.</figcaption></figure>',
+        []
+      );
+
+    const body = await figureBlocksOf("epub-figure-missing");
+    const figure = body.content.readingUnits[0]?.blocks.find(
+      (block) => block.blockType === "figure"
+    );
+
+    expect(figure?.plaintext).toBe("Missing bytes.");
+    expect(figure?.imageResourceId).toBeUndefined();
+    expect(await readdir(context.imagesDir)).toEqual([]);
   });
 });

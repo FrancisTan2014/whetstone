@@ -18,7 +18,9 @@ Markdown into ordered, stable-id blocks; exports the shared `blockFromMdastNode`
 strips image nodes — v0 is text blocks only — and skips a block left empty by that removal),
 `blockDiff.ts` (content-similarity diff matching new blocks to existing ones — Dice-bigram alignment —
 to preserve stable ids on re-ingestion), `htmlBlocks.ts` (decompose one EPUB chapter's XHTML into a
-reading unit of blocks via `rehype-parse` + `rehype-remark`), `epubMetadata.ts` (normalize OPF
+reading unit of blocks via `rehype-parse` + `rehype-remark`; detects structural `<figure>`/top-level
+`<img>` at the hast stage and emits figure blocks carrying the transient image src + alt + caption,
+consuming `<figcaption>` so it is never a heading or the unit title), `epubMetadata.ts` (normalize OPF
 title/author/language), `blockMarkdown.ts` (serialize a block's mdast back to Markdown for safe
 rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`, `work.ts`,
 `noteTemplate.ts` (v0 note templates +
@@ -61,7 +63,11 @@ can navigate them from another package.
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
   new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical
   source is a no-op. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
-  sha256-idempotent, persisting via `blockWriter.ts`. Both writers bulk-insert through
+  sha256-idempotent, persisting via `blockWriter.ts`. Figure blocks have their transient image src
+  resolved against the parser's extracted chapter images and stored content-addressed
+  (`figureImageResolver.ts` → `imageResourceStore`), stamping `image_resource_id` + `alt`; an
+  unsupported (e.g. SVG) or missing image degrades the block to caption-only, and a figure with neither
+  a stored image nor a caption is dropped. Both writers bulk-insert through
   `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
   bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
   rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on
@@ -81,8 +87,8 @@ can navigate them from another package.
   store (sha256-keyed, so identical bytes dedupe to one resource) under `imageResourcesDir`, with a
   write-time content-type allowlist (PNG/JPEG/GIF/WebP; SVG and others rejected); served read-only by
   `src/features/images/imageRoutes.ts` (`GET /api/images/:id`, id is the content hash, allowlist
-  re-checked at the boundary, no traversal/remote fetch, unknown id → 404). Foundation for EPUB figures;
-  no UI consumer yet.
+  re-checked at the boundary, no traversal/remote fetch, unknown id → 404). Used by EPUB ingest to
+  store figure images (`content/figureImageResolver.ts`); no reader UI consumer yet.
 - Outbound lookup foundation: `src/lookup/` — reusable boundaries for calling external services and
   caching results. `httpClient.ts` (typed GET text/JSON with timeout + custom headers; normalizes
   failures to typed `HttpError`; injected `fetch`), `lookupCache.ts` (keyed TTL cache, injected clock;
