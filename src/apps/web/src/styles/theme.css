@@ -419,9 +419,61 @@
   color: var(--color-text-muted);
 }
 
+/*
+ * Heading hierarchy (#127): a monochrome, multi-cue scale so any level is placeable at a glance in
+ * Day and Night. Headings are sans (vs the serif reading body), with a non-increasing size h1->h6
+ * (strictly decreasing here), reinforcing weight, and a section-break space above. h5/h6 drop below
+ * body size but stay heavier and use uppercase tracking + a muted tone. Color is tonal only — no hue
+ * — so the hierarchy holds in both themes. The largest level (the chapter title) caps at 3xl.
+ */
 .reader :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-text);
   font-family: var(--font-sans);
   line-height: 1.25;
+}
+
+.reader h1 {
+  margin-block-start: 2.5rem;
+  font-size: var(--text-scale-3xl);
+  font-weight: 700;
+}
+
+.reader h2 {
+  margin-block-start: 2rem;
+  font-size: var(--text-scale-2xl);
+  font-weight: 700;
+}
+
+.reader h3 {
+  margin-block-start: 1.5rem;
+  font-size: var(--text-scale-xl);
+  font-weight: 600;
+}
+
+.reader h4 {
+  margin-block-start: 1.25rem;
+  font-size: var(--text-scale-lg);
+  font-weight: 700;
+}
+
+.reader h5 {
+  margin-block-start: 1.25rem;
+  font-size: var(--text-scale-base);
+  font-weight: 700;
+}
+
+.reader h6 {
+  margin-block-start: 1.25rem;
+  font-size: var(--text-scale-sm);
+  font-weight: 700;
+}
+
+/* h5/h6 fall below body size, so they lean on weight (above) plus uppercase tracking and a muted
+   tone to still read as headings rather than body text. */
+.reader :where(h5, h6) {
+  color: var(--color-text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* Inline code is distinguished on a subtle wash; fenced code blocks use a distinct surface
