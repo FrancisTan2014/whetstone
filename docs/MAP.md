@@ -72,11 +72,13 @@ can navigate them from another package.
   bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
   rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on
   soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
-  (`GET /api/works/:id/content/markdown`). Alongside the whole-work `GET …/content`, `contentQueries.ts`
-  exposes the lazy-reader read endpoints (`loadWorkStructure` / `loadReadingUnitContent` /
-  `locateBlockUnit`): `GET …/structure` (units + block counts, no content), `GET …/units/:unitId/content`
-  (one unit's blocks), and `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note),
-  each 404ing an unknown/out-of-work target. `notes/` serves note templates and creates, lists, edits,
+  (`GET /api/works/:id/content/markdown`, which keeps `loadWorkContent` server-side). The reader no
+  longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
+  (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit`): `GET …/structure` (units +
+  block counts, no content), `GET …/units/:unitId/content` (one unit's blocks), and
+  `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note), each 404ing an
+  unknown/out-of-work target. (The whole-work `GET …/content` route was removed; admin composes
+  structure + per-unit client-side.) `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`);
   templates are seeded from the domain on boot
   (`seedNoteTemplates`). `readingPosition/` durably stores each reader's position per (user, work) —
@@ -159,16 +161,21 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
   reading" deep-links to `#/reader?work=<entryId>` (with an optional `&block=<entryId>` to open a
-  specific block). `reader/` is **目录-driven and renders one reading unit at a time** (no whole-book
-  freeze): `readerModel.ts` orders units/blocks and carries each block's stored mdast for direct,
-  re-parse-free rendering (no Markdown round-trip; `blockToMarkdown` stays for the export path only);
-  `readerNavigation.ts` holds the pure unit-selection logic (which unit holds a block, the initial unit
-  for a deep link, TOC labels, work-level progress); `ReaderToc.tsx` is the 目录 — a controlled,
+  specific block). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
+  transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
+  each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
+  `fetchUnitContent` / `locateBlockUnit`), with an explicit per-unit loading state and an error+Retry;
+  `readerModel.ts` carries each block's stored mdast for direct, re-parse-free rendering (no Markdown
+  round-trip; `blockToMarkdown` stays for the export path only);
+  `readerNavigation.ts` holds the pure unit helpers (TOC labels, clamp, unit-by-entry-id, work-level
+  progress) and `readingPosition.ts` resolves the opening unit (deep-link `?block=` via the locator,
+  else saved position, else first); `ReaderToc.tsx` is the 目录 — a controlled,
   dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
   sidebar) listing units with the current one marked. `ReaderPage.tsx` is the immersive single-column reading room: a work is opened from the
   Library via `?work=` (no in-reader work-picker or page heading; with no work open it shows an explicit
   "Open a work from your Library" empty state), with a back-to-Library hash anchor always reachable. It
-  keeps an `activeUnitIndex`,
+  keeps an `activeUnitIndex` and the active unit's load state, fetches that unit's blocks when it opens
+  (TOC select / jump / deep-link / position restore all switch the unit then scroll once its blocks land),
   renders only that unit safely by converting each block's stored mdast straight to React
   (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → `hast-util-to-jsx-runtime`, no
   Markdown re-parse), with a sanitize schema that also disallows

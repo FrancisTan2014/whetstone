@@ -12,7 +12,12 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
   });
 }
 
-vi.mock("./readerApi", () => ({ fetchWorkContent: vi.fn(), fetchWorks: vi.fn() }));
+vi.mock("./readerApi", () => ({
+  fetchUnitContent: vi.fn(),
+  fetchWorkStructure: vi.fn(),
+  fetchWorks: vi.fn(),
+  locateBlockUnit: vi.fn()
+}));
 vi.mock("../notes/notesApi", () => ({
   createNote: vi.fn(),
   deleteNote: vi.fn(),
@@ -28,14 +33,16 @@ vi.mock("./readingPositionApi", () => ({
 
 import { fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
-import { fetchWorkContent, fetchWorks } from "./readerApi";
+import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { ReaderPage } from "./ReaderPage";
 import type { BlockDto, WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
-const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
+const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
+const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
+const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedLookupTerm = vi.mocked(lookupTerm);
@@ -75,7 +82,23 @@ function figureContent(figure: Partial<BlockDto> & Pick<BlockDto, "plaintext">):
 }
 
 function renderReader(content: WorkContentDto): ReturnType<typeof rtlRender> {
-  mockedFetchWorkContent.mockResolvedValue(content);
+  mockedFetchWorkStructure.mockResolvedValue({
+    readingUnits: content.readingUnits.map((unit) => ({
+      blockCount: unit.blocks.length,
+      entryId: unit.entryId,
+      orderIndex: unit.orderIndex
+    })),
+    workEntryId: content.workEntryId
+  });
+  mockedFetchUnitContent.mockImplementation(async (_workEntryId, unitEntryId) => {
+    const unit = content.readingUnits.find((candidate) => candidate.entryId === unitEntryId);
+
+    if (unit === undefined) {
+      throw new Error(`no reading unit seeded for ${unitEntryId}`);
+    }
+
+    return unit;
+  });
 
   return render(<ReaderPage initialWorkEntryId="work-1" />);
 }
@@ -84,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
   mockedFetchWorks.mockResolvedValue({ works: [work] });
+  mockedLocateBlockUnit.mockResolvedValue(undefined);
   mockedFetchNoteTemplates.mockResolvedValue({ templates: [] });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
   mockedLookupTerm.mockResolvedValue({ found: false });
@@ -132,7 +156,8 @@ describe("ReaderPage figure blocks", () => {
       figureContent({ imageResourceId: "solo999", plaintext: "" })
     );
 
-    await screen.findByText("Illustrated");
+    // Wait for the unit's blocks to render (the figure), not just the always-present header title.
+    await screen.findByRole("figure");
     const image = container.querySelector("img") as HTMLImageElement;
     expect(image.getAttribute("src")).toBe("/api/images/solo999");
     expect(image.getAttribute("alt")).toBe("");

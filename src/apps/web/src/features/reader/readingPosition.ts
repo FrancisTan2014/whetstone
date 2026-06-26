@@ -1,5 +1,5 @@
-import { initialUnitIndex } from "./readerNavigation";
-import type { ReaderView } from "./readerModel";
+import { unitIndexForEntryId } from "./readerNavigation";
+import type { ReaderStructure } from "./readerModel";
 
 // Reading position is now durable server state (persisted per user + work — see
 // `readingPositionApi.ts`), not localStorage UI state: per work, the reader remembers which
@@ -18,28 +18,42 @@ export type OpeningPlan = Readonly<{
   unitIndex: number;
 }>;
 
-// Decide how to open a work. A deep-linked block wins (explicit navigation); otherwise a saved
-// position restores its unit and scrolls to its block anchor when that unit still exists (no
-// anchor = top of the unit); otherwise the first unit opens. A saved unit that no longer exists
-// (the work changed) falls back to the first unit; a missing anchor block simply no-ops at scroll
-// time, so a stale anchor never throws.
-export function resolveOpening(
-  view: ReaderView,
-  options: { deepLinkBlockEntryId?: string; savedPosition?: ReadingPosition }
-): OpeningPlan {
-  const { deepLinkBlockEntryId, savedPosition } = options;
+// Resolves a block to its owning reading unit's entry id (via the locator endpoint), or
+// undefined when the block is unknown/removed so the deep link simply falls through.
+export type LocateBlockUnit = (blockEntryId: string) => Promise<string | undefined>;
+
+// Decide how to open a work. A deep-linked block wins (explicit navigation): its owning unit is
+// resolved through the locator endpoint and the reader scrolls to the block; a locator miss (or a
+// unit no longer in the structure) falls through. Otherwise a saved position restores its unit and
+// scrolls to its block anchor when that unit still exists (no anchor = top of the unit); otherwise
+// the first unit opens. A saved unit that no longer exists (the work changed) falls back to the
+// first unit; a missing anchor block simply no-ops at scroll time, so a stale anchor never throws.
+export async function resolveOpening(
+  structure: ReaderStructure,
+  options: {
+    deepLinkBlockEntryId?: string;
+    locateBlockUnit: LocateBlockUnit;
+    savedPosition?: ReadingPosition;
+  }
+): Promise<OpeningPlan> {
+  const { deepLinkBlockEntryId, locateBlockUnit, savedPosition } = options;
 
   if (deepLinkBlockEntryId !== undefined) {
-    return {
-      scrollBlockEntryId: deepLinkBlockEntryId,
-      unitIndex: initialUnitIndex(view, deepLinkBlockEntryId)
-    };
+    const unitEntryId = await locateBlockUnit(deepLinkBlockEntryId);
+
+    if (unitEntryId !== undefined) {
+      const index = unitIndexForEntryId(structure, unitEntryId);
+
+      if (index !== undefined) {
+        return { scrollBlockEntryId: deepLinkBlockEntryId, unitIndex: index };
+      }
+    }
   }
 
   if (savedPosition !== undefined) {
-    const index = view.units.findIndex((unit) => unit.entryId === savedPosition.unitEntryId);
+    const index = unitIndexForEntryId(structure, savedPosition.unitEntryId);
 
-    if (index !== -1) {
+    if (index !== undefined) {
       return savedPosition.anchorBlockEntryId === undefined
         ? { unitIndex: index }
         : { scrollBlockEntryId: savedPosition.anchorBlockEntryId, unitIndex: index };

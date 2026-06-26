@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ReadingPositionResponse, WorkContentDto } from "@whetstone/contracts";
+import type {
+  ReadingPositionResponse,
+  ReadingUnitContentDto,
+  WorkStructureDto
+} from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -75,16 +79,22 @@ async function createWorkWithUnitAndBlock(): Promise<{
     url: `/api/works/${workEntryId}/content`
   });
 
-  const contentResponse = await context.server.inject({
+  const structureResponse = await context.server.inject({
     method: "GET",
-    url: `/api/works/${workEntryId}/content`
+    url: `/api/works/${workEntryId}/structure`
   });
-  const body = contentResponse.json() as WorkContentDto;
-  const unit = body.readingUnits[0];
+  const structure = structureResponse.json() as WorkStructureDto;
+  const unitMeta = structure.readingUnits[0];
+
+  const unitResponse = await context.server.inject({
+    method: "GET",
+    url: `/api/works/${workEntryId}/units/${unitMeta?.entryId}/content`
+  });
+  const unit = unitResponse.json() as ReadingUnitContentDto;
 
   return {
-    blockEntryId: unit?.blocks[0]?.entryId as string,
-    unitEntryId: unit?.entryId as string,
+    blockEntryId: unit.blocks[0]?.entryId as string,
+    unitEntryId: unit.entryId,
     workEntryId
   };
 }

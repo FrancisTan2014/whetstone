@@ -102,12 +102,7 @@ function ingest(workEntryId: string, payload: unknown): ReturnType<typeof contex
 }
 
 async function getContent(workEntryId: string): Promise<WorkContentDto> {
-  const response = await context.server.inject({
-    method: "GET",
-    url: `/api/works/${workEntryId}/content`
-  });
-
-  return response.json() as WorkContentDto;
+  return loadWorkContent(context.db, toEntryId(workEntryId));
 }
 
 function blockIdByText(content: WorkContentDto): Map<string, string> {
@@ -180,12 +175,8 @@ describe("content routes", () => {
       .find((block) => block.blockType === "heading");
     expect(headingBlock?.mdast).toMatchObject({ depth: 1, type: "heading" });
 
-    const listed = await context.server.inject({
-      method: "GET",
-      url: `/api/works/${workEntryId}/content`
-    });
-    expect(listed.statusCode).toBe(200);
-    expect(listed.json()).toEqual(body);
+    const listed = await getContent(workEntryId);
+    expect(listed).toEqual(body);
   });
 
   it("replaces a work's content on re-ingestion instead of appending", async () => {
@@ -396,26 +387,10 @@ describe("content routes", () => {
     expect(nonMarkdownUpload.statusCode).toBe(400);
   });
 
-  it("returns 404 when listing content for a missing work", async () => {
-    const response = await context.server.inject({
-      method: "GET",
-      url: "/api/works/missing-work/content"
-    });
-
-    expect(response.statusCode).toBe(404);
-    expect(response.json()).toEqual({ error: "work_not_found" });
-  });
-
-  it("returns empty content for a work that has none yet", async () => {
+  it("loads empty content for a work that has none yet", async () => {
     const workEntryId = await createWork();
 
-    const response = await context.server.inject({
-      method: "GET",
-      url: `/api/works/${workEntryId}/content`
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ readingUnits: [], workEntryId });
+    expect(await getContent(workEntryId)).toEqual({ readingUnits: [], workEntryId });
   });
 
   it("persists every block of a Markdown source large enough to exceed the parameter limit", async () => {
