@@ -4,8 +4,10 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 // The screenshot harness (scripts/screenshots.mjs) runs `vite preview` against an ephemeral
-// server on a chosen port and points the proxy at it via WHETSTONE_API_PROXY; the dev server
-// keeps its fixed default. Both proxy /api so the web app's relative API calls reach Fastify.
+// server on a chosen port, and the E2E smoke suite (e2e/) runs the dev server against one;
+// both point the proxy at it via WHETSTONE_API_PROXY. When unset it falls back to the dev
+// default port, so a normal `pnpm dev` is unaffected. Both proxy /api so the web app's
+// relative API calls reach Fastify.
 const apiProxyTarget = process.env.WHETSTONE_API_PROXY ?? "http://127.0.0.1:3000";
 
 export default defineConfig({
@@ -25,7 +27,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:3000"
+      "/api": apiProxyTarget
     }
   }
 });
