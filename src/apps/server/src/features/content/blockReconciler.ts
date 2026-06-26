@@ -2,7 +2,7 @@ import type { BlockType, DecomposedReadingUnit, EntryId } from "@whetstone/domai
 import { and, eq, inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import { blocks, entries, entryLinks, readingPositions, readingUnits } from "../../db/schema.js";
 import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -130,6 +130,12 @@ export async function reconcileWorkBlocks(tx: Transaction, input: ReconcileInput
 
   if (input.oldUnitIds.length > 0) {
     const oldUnitIds = [...input.oldUnitIds];
+    // A saved reading position (created when the work is opened in the Reader) references one of
+    // these old unit entries via `reading_positions.unit_entry_id` (NOT NULL, FK to entries). The
+    // content is being fully replaced, so the position no longer maps to anything: clear the work's
+    // positions before deleting the unit entries, otherwise that dangling FK rolls back the whole
+    // re-ingestion (a 500). The reader simply resumes at the start next time.
+    await tx.delete(readingPositions).where(eq(readingPositions.workEntryId, input.workEntryId));
     await tx.delete(entryLinks).where(inArray(entryLinks.fromEntryId, oldUnitIds));
     await tx
       .delete(entryLinks)

@@ -62,7 +62,8 @@ can navigate them from another package.
   `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`, `search/`). Routes stay thin; logic lives in
   commands/queries. `content/` ingests Markdown and EPUB uploads. Markdown re-ingestion REPLACES a
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
-  new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical
+  new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id` — and clears
+  the work's `reading_positions` so deleting the replaced unit entries cannot dangle their FK); identical
   source is a no-op. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
   sha256-idempotent, persisting via `blockWriter.ts`. Figure blocks have their transient image src
   resolved against the parser's extracted chapter images and stored content-addressed
