@@ -10,11 +10,12 @@ import {
   type IngestEpubResultDto,
   type WorkContentDto
 } from "@whetstone/contracts";
-import { decomposeHtmlChapter, decomposeMarkdown } from "@whetstone/domain";
+import { decomposeHtmlChapter, decomposeMarkdown, toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { authors, blocks, workSources } from "../../db/schema.js";
+import { authors, blocks, entries, readingUnits, workSources } from "../../db/schema.js";
+import { loadWorkContent } from "./contentQueries.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
 import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
@@ -650,4 +651,49 @@ describe("EPUB ingestion routes", () => {
     expect(returnedBlockCount).toBe(expectedBlockCount);
     expect(await context.db.select().from(blocks)).toHaveLength(expectedBlockCount);
   }, 30000);
+
+  it("round-trips a figure block's image, alt, and caption through the content query", async () => {
+    const workEntryId = "fig-work";
+    const unitEntryId = "fig-unit";
+    const blockEntryId = "fig-block";
+    const captionMdast = {
+      children: [{ type: "text", value: "A river at dusk." }],
+      type: "paragraph"
+    };
+
+    await context.db.insert(entries).values([
+      { id: workEntryId, type: "work" },
+      { id: unitEntryId, type: "reading_unit" },
+      { id: blockEntryId, type: "block" }
+    ]);
+    await context.db
+      .insert(readingUnits)
+      .values({ entryId: unitEntryId, orderIndex: 0, title: "Plate I", workEntryId });
+    await context.db.insert(blocks).values({
+      alt: "River at dusk",
+      blockType: "figure",
+      entryId: blockEntryId,
+      imageResourceId: "image-123",
+      mdastJson: captionMdast,
+      orderIndex: 0,
+      plaintext: "A river at dusk.",
+      readingUnitEntryId: unitEntryId,
+      workEntryId
+    });
+
+    const content = await loadWorkContent(context.db, toEntryId(workEntryId));
+
+    expect(content.readingUnits).toHaveLength(1);
+    expect(content.readingUnits[0].blocks).toEqual([
+      {
+        alt: "River at dusk",
+        blockType: "figure",
+        entryId: blockEntryId,
+        imageResourceId: "image-123",
+        mdast: captionMdast,
+        orderIndex: 0,
+        plaintext: "A river at dusk."
+      }
+    ]);
+  });
 });

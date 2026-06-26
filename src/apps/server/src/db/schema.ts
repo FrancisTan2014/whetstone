@@ -58,13 +58,15 @@ export const readingUnits = pgTable(
 export const blocks = pgTable(
   "blocks",
   {
+    alt: text("alt"),
     blockType: text("block_type", {
-      enum: ["paragraph", "heading", "list", "blockquote", "code"] as const
+      enum: ["paragraph", "heading", "list", "blockquote", "code", "figure"] as const
     }).notNull(),
     deletedAt: timestamp("deleted_at", { mode: "date", withTimezone: true }),
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),
+    imageResourceId: text("image_resource_id"),
     mdastJson: jsonb("mdast_json").notNull(),
     orderIndex: integer("order_index").notNull(),
     plaintext: text("plaintext").notNull(),

@@ -12,8 +12,10 @@ type ReadingUnitRow = Readonly<{
 }>;
 
 type BlockRow = Readonly<{
+  alt: string | null;
   blockType: BlockDto["blockType"];
   entryId: string;
+  imageResourceId: string | null;
   mdast: unknown;
   orderIndex: number;
   plaintext: string;
@@ -55,8 +57,10 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
 
   const blockRows = await db
     .select({
+      alt: blocks.alt,
       blockType: blocks.blockType,
       entryId: blocks.entryId,
+      imageResourceId: blocks.imageResourceId,
       mdast: blocks.mdastJson,
       orderIndex: blocks.orderIndex,
       plaintext: blocks.plaintext,
@@ -91,11 +95,15 @@ function toReadingUnitDto(
 }
 
 function toBlockDto(block: BlockRow): BlockDto {
-  return {
+  const base: BlockDto = {
     blockType: block.blockType,
     entryId: toEntryId(block.entryId),
     mdast: block.mdast,
     orderIndex: block.orderIndex,
     plaintext: block.plaintext
   };
+  const withImage =
+    block.imageResourceId === null ? base : { ...base, imageResourceId: block.imageResourceId };
+
+  return block.alt === null ? withImage : { ...withImage, alt: block.alt };
 }
