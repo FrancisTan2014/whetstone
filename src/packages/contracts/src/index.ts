@@ -5,10 +5,14 @@ export {
 } from "./contentContracts.js";
 export type {
   BlockDto,
+  BlockUnitLocatorDto,
   IngestEpubResultDto,
   IngestMarkdownRequest,
+  ReadingUnitContentDto,
   ReadingUnitDto,
-  WorkContentDto
+  ReadingUnitStructureDto,
+  WorkContentDto,
+  WorkStructureDto
 } from "./contentContracts.js";
 export {
   entryDtoSchema,
