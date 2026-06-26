@@ -202,6 +202,27 @@ describe("LookupPanel content", () => {
     expect(document.querySelector("ol.lookupSenses")).not.toBeNull();
   });
 
+  it("collapses and expands a part-of-speech group, toggling aria-expanded", async () => {
+    const user = userEvent.setup();
+    renderPanel(loadedEntry, { matchers: desktop });
+
+    const toggle = screen.getByRole("button", { name: "verb" });
+    // Groups default to expanded: the verb group's senses are visible.
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("to put in place")).toBeDefined();
+
+    // Collapse: the verb senses hide; the other group is unaffected.
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("to put in place")).toBeNull();
+    expect(screen.getByText("a group of things")).toBeDefined();
+
+    // Expand again: the senses come back.
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("to put in place")).toBeDefined();
+  });
+
   it("shows a loading state while fetching", () => {
     renderPanel({ status: "loading" }, { matchers: desktop });
 
@@ -290,6 +311,18 @@ describe("LookupPanel mobile sheet", () => {
     const dialog = screen.getByRole("dialog");
     expect(dialog.getAttribute("data-side")).toBe("bottom");
     expect(screen.getByText("Look up: set")).toBeDefined();
+  });
+
+  it("renders the collapsible part-of-speech toggle in the sheet too", async () => {
+    const user = userEvent.setup();
+    renderPanel(loadedEntry, { matchers: mobile });
+
+    const toggle = screen.getByRole("button", { name: "verb" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("to put in place")).toBeNull();
   });
 
   it("dismisses the sheet via its close control", async () => {
