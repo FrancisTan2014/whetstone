@@ -165,8 +165,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
   (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion
   vars. `src/shared/theme/` is the theme controller (`theme.ts` pure rules, `useTheme.ts` applies the
-  `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button mounted in the shell footer); `src/shared/motion/motion.ts` holds motion tokens +
-  the `withReducedMotion` guard. The legacy `styles.css` is kept until screens migrate to tokens.
+  `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button mounted in the shell footer); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
+  the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`). `search/` is the Search mode: `SearchPage.tsx` is a query
   field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each
@@ -221,7 +221,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   hover / scroll-up via `useReaderScroll.ts`) and a **top bar hidden by default on mobile** (a center
   tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). The whole
   chrome recedes as one through the `data-hidden` flag. `readingSize.ts` holds the
-  text-size steps (`--reading-size`); `annotationHue.ts` maps a note template to its highlight hue.
+  text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its highlight hue.
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
   targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored
   list markers, monospace code surface, ~66ch measure); `readerHeadings.ts` decides when a unit's
@@ -235,7 +235,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `useReadingPositionWriter.ts` saves the current unit + best-effort block anchor (immediately on
   unit change, debounced on scroll) so reopening a work resumes where it left off.
   `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
-  draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.ts` maps a template to
+  draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.tokens.ts` maps a template to
   its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
   `Sheet` with a hued segmented template control, `NoteList.tsx` renders notes as hued cards
   (template chip + snippet + answers) with jump-back/edit/delete,
@@ -246,7 +246,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
   text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the enriched
   `DictionaryEntry` as a mature online-dictionary card — headword with pronunciations (and an audio
-  control when available), color-coded part-of-speech sections (`partOfSpeechHue.ts` maps each part of
+  control when available), color-coded part-of-speech sections (`partOfSpeechHue.tokens.ts` maps each part of
   speech to a tokenized, Day/Night hue class), numbered senses with italic examples and synonym chips,
   a quiet etymology line, and a sources footer — in a compact Radix popover anchored near the selection
   on desktop/tablet, and a content-height bottom `Sheet` on narrow screens (it scrolls for long

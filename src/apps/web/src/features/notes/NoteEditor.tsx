@@ -7,7 +7,7 @@ import { Button } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
 import { createNote, updateNote } from "./notesApi";
 import type { NoteDraft } from "./noteCapture";
-import { templateSwatchClass } from "./templateHue";
+import { templateSwatchClass } from "./templateHue.tokens";
 
 // The editor opens either to capture a new note from a reader selection, or to edit an
 // existing note reopened from a highlight or the note list.
