@@ -502,6 +502,72 @@ describe("ReaderPage", () => {
     expect(mockedFetchWorkStructure).not.toHaveBeenCalled();
   });
 
+  it("a superseded open does not clobber the live work after its later awaits resolve", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
+    seedWorkContent(multiUnitContent);
+    let resolveWork1Structure: (value: WorkStructureDto) => void = () => {};
+    mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => {
+      if (workEntryId === "work-1") {
+        return new Promise<WorkStructureDto>((resolve) => {
+          resolveWork1Structure = resolve;
+        });
+      }
+
+      return {
+        readingUnits: structureOf(multiUnitContent).readingUnits,
+        workEntryId: toEntryId(workEntryId)
+      };
+    });
+
+    // work-1's open begins and stalls on its structure fetch; switch to work-2 before it resolves.
+    const { rerender } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Loading the work…");
+    rerender(<ReaderPage initialWorkEntryId="work-2" />);
+    await screen.findByText("Intro paragraph.");
+
+    // work-1's structure resolves late — the stale run must not replace the live (work-2) state.
+    resolveWork1Structure({
+      readingUnits: structureOf(multiUnitContent).readingUnits,
+      workEntryId: toEntryId("work-1")
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(screen.queryByText("Intro paragraph.")).not.toBeNull();
+    expect(screen.queryByText("Loading the work…")).toBeNull();
+  });
+
+  it("a superseded open that fails after teardown does not surface an error", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
+    seedWorkContent(multiUnitContent);
+    let rejectWork1Structure: (reason: unknown) => void = () => {};
+    mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => {
+      if (workEntryId === "work-1") {
+        return new Promise<WorkStructureDto>((_resolve, reject) => {
+          rejectWork1Structure = reject;
+        });
+      }
+
+      return {
+        readingUnits: structureOf(multiUnitContent).readingUnits,
+        workEntryId: toEntryId(workEntryId)
+      };
+    });
+
+    const { rerender } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Loading the work…");
+    rerender(<ReaderPage initialWorkEntryId="work-2" />);
+    await screen.findByText("Intro paragraph.");
+
+    // work-1's structure rejects late — the stale failure must not show an error over work-2.
+    rejectWork1Structure(new Error("late failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(screen.queryByText("Could not load this work. Please try again.")).toBeNull();
+    expect(screen.queryByText("Intro paragraph.")).not.toBeNull();
+  });
+
   it("opens the unit deep-linked by a block param and scrolls to that block", async () => {
     seedWorkContent(multiUnitContent);
     const { container } = render(

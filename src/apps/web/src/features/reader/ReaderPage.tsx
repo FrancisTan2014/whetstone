@@ -446,7 +446,6 @@ export function ReaderPage({
       try {
         const structureDto = await fetchWorkStructure(workEntryId);
         const noteList = await fetchNotes(workEntryId);
-        setNotes(noteList.notes);
         const structure = buildReaderStructure(structureDto);
         const savedPosition = await fetchReadingPosition(workEntryId).catch(() => undefined);
         const plan = await resolveOpening(structure, {
@@ -455,6 +454,15 @@ export function ReaderPage({
           ...(savedPosition === undefined ? {} : { savedPosition })
         });
 
+        // The open spans several awaits (structure, notes, position, locator). If the effect was torn
+        // down meanwhile — an unmount or a work switch — this run is stale: skip every state write so
+        // it cannot clobber the live reader (reset notes, or replace the viewing state with the old
+        // work). Only the live run reaches the state updates below.
+        if (!active) {
+          return;
+        }
+
+        setNotes(noteList.notes);
         setState({
           reading: {
             activeUnit: { status: "loading" },
@@ -474,7 +482,10 @@ export function ReaderPage({
         // not overwritten by the pre-scroll top-of-unit block.
         restorePendingRef.current = plan.scrollBlockEntryId !== undefined;
       } catch {
-        setState({ reading: { status: "error", workEntryId }, status: "ready", works });
+        // A failure in a stale (torn-down) run must not surface an error over the live reader.
+        if (active) {
+          setState({ reading: { status: "error", workEntryId }, status: "ready", works });
+        }
       }
     }
 

@@ -156,7 +156,8 @@ describe("ReaderPage figure blocks", () => {
       figureContent({ imageResourceId: "solo999", plaintext: "" })
     );
 
-    await screen.findByText("Illustrated");
+    // Wait for the unit's blocks to render (the figure), not just the always-present header title.
+    await screen.findByRole("figure");
     const image = container.querySelector("img") as HTMLImageElement;
     expect(image.getAttribute("src")).toBe("/api/images/solo999");
     expect(image.getAttribute("alt")).toBe("");
