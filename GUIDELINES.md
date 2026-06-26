@@ -462,7 +462,7 @@ Agent-built code should target **100% coverage for source code**. Maintaining te
 Coverage rules:
 
 - CI should enforce 100% statements, branches, functions, and lines for app/package source once test tooling exists.
-- Exclude generated files, migration files, framework bootstrap files, type-only files, test files, and configuration files from coverage.
+- Exclude generated files, migration files, framework bootstrap files, type-only files, test files, configuration files, and pure presentational design-token modules (`*.tokens.ts` — static enum→class, style, or motion maps with no logic) from coverage.
 - Do not lower thresholds to make a PR pass.
 - Do not add shallow tests that execute code without assertions just to increase coverage.
 - Do not rely on snapshots as the only test for behavior.
@@ -483,7 +483,13 @@ Avoid brittle tests that only assert component markup structure unless the issue
 
 Testing should validate behavior and invariants, not implementation trivia. Prefer a few meaningful tests over broad shallow snapshots.
 
-Testing styled/animated UI: do not assert pixels, colors, fonts, or animation frames (jsdom does not render CSS). Test the style-affecting behavior and logic instead — rendered roles/labels/states, interactions, variant-to-class output (e.g. `cva`), the theme toggle setting `.dark` and persisting, and reduced-motion taking the non-animated path. Visual correctness and animation smoothness are verified manually in a browser and a real WebView, not in unit tests.
+Testing styled/animated UI: do not assert pixels, colors, fonts, or animation frames (jsdom does not render CSS). **Assert what the user perceives or what the code does** — accessible roles/names, visible text, component state, and the callback/payload a handler produces — **never a CSS class name, inline-style value, design token, or DOM nesting as the _primary_ oracle.** A test whose only assertion is `className.toContain(...)`, a styling `data-*` hook, or an exact motion/style object is a change-detector: it breaks on a harmless refactor and passes on a real bug. Two narrow exceptions: (1) a _pure_ variant→class mapping function (e.g. `cva`) that carries real logic may be unit-tested in isolation; (2) the theme toggle setting `.dark`/persisting and reduced-motion taking the non-animated path are behaviors, so assert them. Visual correctness and animation smoothness are verified manually in a browser and a real WebView, not in unit tests.
+
+**Layer each unit by concern, not just for coverage.** Cover the concerns a unit's risk warrants — correctness (the contract), boundaries (empty, single, max, off-by-one, unicode, malformed), failure paths (invalid input, exceptions, rejected promises), adversarial input where the data is untrusted (path traversal, injection, cross-user access), and realistic/breaking scale where the path grows with content or usage. Not every unit needs every layer — a pure getter needs correctness; an ingestion, anchoring, or persistence path needs all of them — but a happy-path-only test, or one that merely re-asserts the shape the code just produced, is not enough.
+
+**Write tests a real bug can fail (mutation resistance).** Before committing a test, ask: if I planted a representative bug in the changed logic — flipped a boundary, dropped a `where user_id` filter, offset an anchor by one, removed a guard, widened a batch past the parameter ceiling — would a test redden? If not, the test executes lines without protecting behavior; strengthen the assertion or delete the test. Coverage that no mutation can break is theater.
+
+**Design tokens are not behavior — do not unit-test them.** A pure map from an enum to a CSS class, a motion config object, or a static style value has no logic to protect; a test for it only restates the constant and breaks on every design tweak. Put such pure presentational maps in a coverage-excluded `*.tokens.ts` module and exercise them, if at all, through the behavior that consumes them. Never move real logic into a `*.tokens.ts` module to dodge the gate.
 
 ## Functional verification
 
@@ -599,6 +605,8 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Code does not introduce fake interfaces, factories, or dependency injection containers only for tests.
 - Domain logic can be tested without React, Fastify, PostgreSQL, filesystem, or network setup.
 - File/database failure paths introduced by the PR have a practical test or documented validation path.
+- Tests assert observable behavior or invariants — not CSS classes, inline styles, design tokens, or DOM structure as the primary oracle — and each unit covers the concern layers its risk warrants (correctness, boundaries, failure, adversarial where untrusted, realistic scale where it grows).
+- Tests are mutation-resistant: a representative planted bug in the changed logic (flipped boundary, dropped user-scope filter, removed guard) would fail a test. Pure presentational token maps live in coverage-excluded `*.tokens.ts` modules, not in restate-the-constant tests.
 
 ### Client/UI quality
 

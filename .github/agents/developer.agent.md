@@ -125,6 +125,14 @@ starting fresh:
   do not add content/block ingestion — that is a different issue).
 - Follow the feature-first layout and design rules in `GUIDELINES.md` / the skill. Keep `domain`
   pure. Validate external input once at the boundary with Zod, then trust typed data inward.
+- **Test by concern, not for the coverage number.** For each unit, cover the layers its risk
+  warrants — correctness, boundaries, failure paths, adversarial input where untrusted (path
+  traversal, cross-user access), and realistic scale where the path grows — and assert observable
+  behavior or invariants (roles/labels/state, returned payloads, persisted rows), **never** a CSS
+  class, inline style, design token, or DOM shape as the primary oracle. The bar is **mutation
+  resistance**: a planted bug in the changed logic must fail a test. Put pure enum→class/style/motion
+  maps in a coverage-excluded `*.tokens.ts` module rather than a test that restates the constant.
+  Full rubric: `GUIDELINES.md` › Tests.
 - Work **synchronously in this session**. If you use a subagent, run it foreground/blocking and wait
   for it. Never launch a background or detached agent and then exit — it is killed with the session.
 - Commit in coherent steps with conventional commit messages and push as you go, so progress
@@ -134,7 +142,8 @@ starting fresh:
 
 - Run the full gate and make it pass at 100% coverage: `pnpm validate`, or
   `.github/skills/whetstone-engineering/validate.ps1` on Windows. Never lower thresholds, skip steps,
-  or add assertion-free tests to inflate coverage.
+  or pad coverage with assertion-free, style-asserting, or restate-the-constant tests — 100% coverage
+  is the floor, mutation-resistant behavior tests are the bar (see *Implement*).
 - Open exactly **one** pull request: title scoped to the issue; body opens with `Closes #<n>` and
   states what changed, what validation ran, and anything that could not run and why. Keep the body a
   tight, skimmable **handoff to the reviewer** — enough to catch up from the PR alone, not an essay.

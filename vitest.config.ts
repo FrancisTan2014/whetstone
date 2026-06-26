@@ -27,6 +27,9 @@ export default defineConfig({
         "**/src/main.tsx",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
+        // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.
+        "**/src/**/*.tokens.ts",
+        "**/src/**/*.tokens.tsx",
         "**/src/vite-env.d.ts"
       ],
       include: ["src/apps/*/src/**/*.{ts,tsx}", "src/packages/*/src/**/*.{ts,tsx}"],
