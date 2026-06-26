@@ -57,6 +57,13 @@
       "when": 1782372236990,
       "tag": "0007_dry_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782443643017,
+      "tag": "0008_figure_block_columns",
+      "breakpoints": true
     }
   ]
 }

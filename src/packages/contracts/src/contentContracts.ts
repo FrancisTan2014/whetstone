@@ -42,9 +42,14 @@ export function parseIngestMarkdownRequest(value: unknown): IngestMarkdownReques
   return ingestMarkdownRequestSchema.parse(value);
 }
 
+// A figure block additionally carries the shared image it renders (`imageResourceId`)
+// and its `alt` text; both are optional and absent on non-figure blocks. The caption
+// continues to travel as the block's `mdast` + `plaintext`.
 export type BlockDto = Readonly<{
+  alt?: string;
   blockType: BlockType;
   entryId: EntryId;
+  imageResourceId?: string;
   mdast: unknown;
   orderIndex: number;
   plaintext: string;
