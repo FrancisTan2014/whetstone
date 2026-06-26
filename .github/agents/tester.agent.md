@@ -72,6 +72,14 @@ Exercise the app like a curious user and watch for trouble:
   near the viewport edges.
 - **Multiple works and navigation** — switching works, deep links, reload/restore (reading position),
   empty/edge states.
+- **Tool-state combinations** — drive font size, column width, 目录, Day/Night theme, and the notes
+  panel *together* (not one at a time) and across a reload, watching for state that desyncs, resets,
+  or breaks layout in combination.
+- **Accessibility** — keyboard-only navigation and a visible, logical focus order; focus handling in
+  the note editor and lookup popover (trap, restore, Escape); hit-target size (≥44px) and text/UI
+  contrast in **both** Day and Night.
+- **Realistic scale and mobile** — a large work and a narrow (mobile-width) viewport: reader
+  responsiveness, popover/sheet fit, and no horizontal overflow, clipping, or layout break.
 
 Throughout, watch for **any console error, HTTP 4xx/5xx, React hydration/DOM-nesting warning**, or
 **broken behavior** (a flow that does not do what `PRODUCT.md` says it should). The healer's "skip
@@ -91,7 +99,9 @@ regression:
 - **Stay within budget.** File at most `<budget>` issues this session, and never more than the per-run
   cap the next-action script enforces. Prefer the **highest-signal** findings if you have more than the
   budget.
-- **File nothing when you find nothing.** A clean run files zero issues and is a success.
+- **File nothing when you find nothing.** A clean run files zero issues and is a success. You are
+  measured by the **surface you exercise and the evidence you leave, not by a bug count** — never
+  invent or pad findings to look productive.
 
 ## File the bug (when, and only when, the bar is met)
 
@@ -105,6 +115,26 @@ For each genuine, reproduced, non-duplicate defect, open one issue with `gh`:
 
 Do not file enhancement ideas, style nits, or performance hunches here — only reproducible functional
 defects. Add `Depends on: #N` only if a fix genuinely requires another issue first.
+
+## Leave an exploration report (every run, even a clean one)
+
+Your runs are otherwise invisible: a session that files nothing looks identical to one that never
+ran. So **every** session leaves an evidence trail, and you are judged by that trail and the surface
+you covered — not by how many bugs you file.
+
+- **Save artifacts** under `artifacts/tester/<UTC-timestamp>/` (git-ignored): the `origin/main` SHA
+  tested, a `report.md`, and **screenshots** of the key surfaces you drove (reader in Day *and*
+  Night, the lookup popover, the notes panel, 目录, and a mobile-width viewport).
+- **`report.md`** records concisely: the SHA; a checklist of the **flows/surfaces actually
+  exercised** (which block types, which tools and combinations, en/zh lookup, navigation,
+  accessibility, realistic-scale/mobile); every **console error / HTTP 4xx–5xx / hydration warning**
+  seen, or "none"; and the **outcome** — the `[Bug]` numbers filed, or "clean, 0 filed".
+- **Surface it on GitHub** so a clean run is visible without backlog noise: append one **concise**
+  summary comment (SHA, surfaces covered, outcome) to a single persistent tracking issue titled
+  `[Tester] Exploration run log` (label `copilot`). Create that issue once if it does not exist and
+  keep it open; never open a new issue per run.
+
+This report is mandatory whether you file zero bugs or hit your budget.
 
 ## Run automatically (foreground loop)
 

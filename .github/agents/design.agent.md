@@ -40,6 +40,7 @@ Rules:
 - Do not create implementation work from vague brainstorming.
 - Do not reintroduce older complex scope unless the user explicitly asks for it.
 - Prefer small v0 slices that preserve the core idea: admin inputs source materials, reader displays them, user clicks/taps words or phrases to create notes linked to source text.
+- **Runtime defect discovery belongs to the tester, not design.** Investigate the rendered experience to judge product/UX/visual quality and to specify the design — and file a `[Bug]` when you spot a clear defect in passing — but do not boot the app under Playwright to hunt functional/runtime bugs. That dynamic exploration (console/HTTP/hydration errors, broken flows, accessibility) is the **whetstone-tester**'s job; keep design as static product/UX review so the two roles do not duplicate each other.
 
 Issue sizing guardrails:
 
