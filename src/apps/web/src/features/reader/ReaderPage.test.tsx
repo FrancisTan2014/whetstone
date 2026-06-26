@@ -1577,6 +1577,13 @@ describe("ReaderPage reading controls", () => {
     return container.querySelector(".reading-surface") as HTMLElement;
   }
 
+  // The reading-layout custom properties (--reading-measure / --reading-size) live on the reading
+  // main, the common ancestor of the column and the tool rail, so the docked desktop rail can track
+  // the column's width (#180). The column reads them by inheritance.
+  function readingMainIn(container: HTMLElement): HTMLElement {
+    return container.querySelector(".readerReadingMain") as HTMLElement;
+  }
+
   it("applies the work's language to the reading surface for language-aware typography", async () => {
     const container = await openMultiUnitWork();
 
@@ -1587,28 +1594,28 @@ describe("ReaderPage reading controls", () => {
     const user = userEvent.setup();
     const container = await openMultiUnitWork();
 
-    expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
+    expect(readingMainIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
 
     await user.click(screen.getByRole("button", { name: "Increase reading text size" }));
-    expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.3125rem");
+    expect(readingMainIn(container).style.getPropertyValue("--reading-size")).toBe("1.3125rem");
 
     await user.click(screen.getByRole("button", { name: "Decrease reading text size" }));
-    expect(surfaceIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
+    expect(readingMainIn(container).style.getPropertyValue("--reading-size")).toBe("1.125rem");
   });
 
   it("keeps the reading column width stable (font-size-independent) when the text size changes", async () => {
     const user = userEvent.setup();
     const container = await openMultiUnitWork();
-    const surface = surfaceIn(container);
+    const main = readingMainIn(container);
     // A font-size-independent rem measure: the column width never tracks --reading-size.
-    const measureAtDefault = surface.style.getPropertyValue("--reading-measure");
-    expect(measureAtDefault).toBe("37rem");
+    const measureAtDefault = main.style.getPropertyValue("--reading-measure");
+    expect(measureAtDefault).toBe("44rem");
 
     await user.click(screen.getByRole("button", { name: "Increase reading text size" }));
 
     // The text grew, but the column measure is unchanged — the text reflows within it.
-    expect(surface.style.getPropertyValue("--reading-size")).toBe("1.3125rem");
-    expect(surface.style.getPropertyValue("--reading-measure")).toBe(measureAtDefault);
+    expect(main.style.getPropertyValue("--reading-size")).toBe("1.3125rem");
+    expect(main.style.getPropertyValue("--reading-measure")).toBe(measureAtDefault);
   });
 
   it("tints annotated blocks with the note's annotation hue", async () => {
