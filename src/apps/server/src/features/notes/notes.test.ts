@@ -732,3 +732,85 @@ describe("cross-work notes overview", () => {
     expect(await listNotesForUser(context.db, "another-user")).toEqual([]);
   });
 });
+
+describe("notes route isolation (cross-user) and failure paths", () => {
+  function otherUserServer(): ReturnType<typeof createServer> {
+    // A second server over the SAME database but authenticated as a different user, mirroring the
+    // route-level isolation test in readingPosition.test.ts.
+    return createServer({
+      currentUser: { getCurrentUserId: () => "other-user" },
+      logger: false,
+      notes: { createEntryId: () => "other-note", db: context.db }
+    });
+  }
+
+  it("does not leak one user's notes to another over the route", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    await createWholeBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const other = otherUserServer();
+
+    try {
+      const response = await other.inject({
+        method: "GET",
+        url: `/api/works/${workEntryId}/notes`
+      });
+
+      expect(response.statusCode).toBe(200);
+      // Removing `eq(notes.userId, userId)` from listNotesForWork would leak the owner's note here.
+      expect((response.json() as NoteListDto).notes).toEqual([]);
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("rejects editing or deleting another user's note over the route", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createWholeBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const other = otherUserServer();
+
+    try {
+      const patch = await other.inject({
+        method: "PATCH",
+        payload: { answers: { noticed: "hijacked" }, templateId: "thought" },
+        url: `/api/works/${workEntryId}/notes/${note.entryId}`
+      });
+      expect(patch.statusCode).toBe(404);
+
+      const remove = await other.inject({
+        method: "DELETE",
+        url: `/api/works/${workEntryId}/notes/${note.entryId}`
+      });
+      expect(remove.statusCode).toBe(404);
+
+      // The note is untouched: its owner still sees it.
+      const owner = (await listNotes(workEntryId).then((response) =>
+        response.json()
+      )) as NoteListDto;
+      expect(owner.notes.map((each) => each.entryId)).toContain(note.entryId);
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("surfaces a 5xx when the database rejects a notes read", async () => {
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    const db = createDbClient(pglite);
+    const server = createServer({
+      logger: false,
+      notes: { createEntryId: () => "x", db }
+    });
+    await pglite.close();
+
+    try {
+      const response = await server.inject({ method: "GET", url: "/api/works/any-work/notes" });
+
+      // A db failure must surface as a server error, not a hang or a false 2xx.
+      expect(response.statusCode).toBeGreaterThanOrEqual(500);
+    } finally {
+      await server.close();
+    }
+  });
+});

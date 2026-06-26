@@ -29,6 +29,17 @@ describe("createNoteAnchor", () => {
     expect(Object.isFrozen(anchor)).toBe(true);
   });
 
+  it("accepts a valid range that starts at offset 0", () => {
+    // Pins the valid-zero boundary so a `< 0` -> `<= 0` mutation (which would reject a legitimate
+    // selection at the very start of a block) fails a test.
+    const anchor = createNoteAnchor(
+      subBlockAnchor({ endOffset: 9, selectedTextSnapshot: "The quick", startOffset: 0 })
+    );
+
+    expect(anchor.startOffset).toBe(0);
+    expect(anchor.endOffset).toBe(9);
+  });
+
   it("creates a whole-block anchor without offsets", () => {
     const anchor = createNoteAnchor({
       blockEntryId,

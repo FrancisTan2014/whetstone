@@ -36,6 +36,7 @@ import type { LibraryDependencies } from "../library/libraryCommands.js";
 type TestContext = Readonly<{
   db: DbClient;
   imagesDir: string;
+  pglite: PGlite;
   server: ReturnType<typeof createServer>;
   sourcesDir: string;
 }>;
@@ -82,7 +83,13 @@ async function buildContext(): Promise<TestContext> {
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
-  return { db, imagesDir, server: createServer({ content, library, logger: false }), sourcesDir };
+  return {
+    db,
+    imagesDir,
+    pglite,
+    server: createServer({ content, library, logger: false }),
+    sourcesDir
+  };
 }
 
 async function createWork(): Promise<string> {
@@ -451,6 +458,17 @@ describe("content routes", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json()).toEqual({ error: "work_not_found" });
+  });
+
+  it("surfaces a 5xx when the database rejects during ingestion", async () => {
+    const workEntryId = await createWork();
+    // Drop the database connection so the next query rejects.
+    await context.pglite.close();
+
+    const response = await ingest(workEntryId, { kind: "manual", markdown });
+
+    // A db failure must surface as a server error, not a hang or a false 2xx.
+    expect(response.statusCode).toBeGreaterThanOrEqual(500);
   });
 
   it("rejects invalid ingestion payloads at the boundary", async () => {

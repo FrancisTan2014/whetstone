@@ -103,4 +103,20 @@ describe("GET /api/lookup", () => {
       await server.close();
     }
   });
+
+  it("surfaces a 5xx when the lookup service rejects", async () => {
+    const server = buildServer(() => Promise.reject(new Error("lookup provider down")));
+
+    try {
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/lookup?term=word&language=en"
+      });
+
+      // A dependency failure must surface as a server error, never a hang or a false 2xx.
+      expect(response.statusCode).toBeGreaterThanOrEqual(500);
+    } finally {
+      await server.close();
+    }
+  });
 });
