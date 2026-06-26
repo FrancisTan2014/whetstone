@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BlockContent } from "./mdastBlock";
 
@@ -58,6 +58,73 @@ describe("BlockContent", () => {
 
     expect(container.querySelector("a")).toBeNull();
     expect(container.querySelector("span.readerLink")?.textContent).toBe("ref");
+  });
+
+  it("renders a list item whose link wraps a nested list with valid nesting (no <li> inside inline/<li>)", () => {
+    const errors: unknown[][] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation((...args) => {
+      errors.push(args);
+    });
+
+    // Offending EPUB shape: an `<a>` wrapping block content (text + a nested list) inside a
+    // list item. Rendered naively this puts a `<li>` inside the inline readerLink `<span>`,
+    // which is invalid HTML and triggers React's "<li> cannot be a descendant of <li>" error.
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            {
+              children: [
+                {
+                  children: [
+                    { type: "text", value: "parent" },
+                    {
+                      children: [
+                        { children: [{ type: "text", value: "child" }], type: "listItem" }
+                      ],
+                      ordered: false,
+                      type: "list"
+                    }
+                  ],
+                  type: "link",
+                  url: "chapter2.xhtml"
+                }
+              ],
+              type: "listItem"
+            }
+          ],
+          ordered: false,
+          type: "list"
+        }}
+      />
+    );
+
+    consoleError.mockRestore();
+
+    // Every list item sits directly inside its list container — never inside an inline element
+    // or another <li>.
+    const items = Array.from(container.querySelectorAll("li"));
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.parentElement?.tagName).toMatch(/^(UL|OL)$/);
+    }
+
+    // The non-navigating readerLink span never wraps block content.
+    for (const link of Array.from(container.querySelectorAll("span.readerLink"))) {
+      expect(link.querySelector("li, ul, ol, p")).toBeNull();
+    }
+
+    // The nested structure and its text are preserved.
+    const nested = container.querySelector("ul ul") as HTMLElement;
+    expect(nested).not.toBeNull();
+    expect(container.textContent).toContain("parent");
+    expect(nested.textContent).toContain("child");
+
+    // No DOM-nesting / hydration warning was emitted.
+    const nestingWarnings = errors.filter((args) =>
+      /cannot be a (descendant|child)|hydrat/i.test(args.map(String).join(" "))
+    );
+    expect(nestingWarnings).toHaveLength(0);
   });
 
   it("drops raw HTML so it never executes (no script, no img)", () => {
