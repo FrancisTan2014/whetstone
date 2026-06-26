@@ -51,4 +51,96 @@ describe("decomposeHtmlChapter", () => {
     expect(unit.title).toBeUndefined();
     expect(unit.blocks.map((block) => block.blockType)).toEqual(["heading", "paragraph"]);
   });
+
+  it("emits one figure block for a <figure> with an <img> and <figcaption>, in order", () => {
+    const html = [
+      "<p>before</p>",
+      '<figure><img src="img/x.png" alt="A dot"/><figcaption>Cap <em>it</em></figcaption></figure>',
+      "<p>after</p>"
+    ].join("\n");
+
+    const unit = decomposeHtmlChapter(html);
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["paragraph", "before"],
+      ["figure", "Cap it"],
+      ["paragraph", "after"]
+    ]);
+    const figure = unit.blocks[1];
+    expect(figure?.image).toEqual({ alt: "A dot", src: "img/x.png" });
+    expect(figure?.mdast).toMatchObject({ type: "paragraph" });
+  });
+
+  it("does not turn a figcaption into a heading block or the unit title", () => {
+    const html = [
+      '<figure><img src="img/x.png"/><figcaption>Caption text</figcaption></figure>',
+      "<h1>Real Title</h1>",
+      "<p>body</p>"
+    ].join("\n");
+
+    const unit = decomposeHtmlChapter(html);
+
+    expect(unit.title).toBe("Real Title");
+    expect(unit.blocks.map((block) => block.blockType)).toEqual(["figure", "heading", "paragraph"]);
+    expect(
+      unit.blocks.some(
+        (block) => block.blockType === "heading" && block.plaintext === "Caption text"
+      )
+    ).toBe(false);
+  });
+
+  it("infers no title from a figure caption when the chapter has no heading", () => {
+    const unit = decomposeHtmlChapter(
+      '<figure><img src="img/x.png"/><figcaption>Just a caption</figcaption></figure>'
+    );
+
+    expect(unit.title).toBeUndefined();
+    expect(unit.blocks.map((block) => block.blockType)).toEqual(["figure"]);
+  });
+
+  it("emits an image-only figure block for a bare top-level <img>", () => {
+    const unit = decomposeHtmlChapter('<img src="img/y.jpg" alt=""/>');
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["figure", ""]
+    ]);
+    expect(unit.blocks[0]?.image).toEqual({ src: "img/y.jpg" });
+  });
+
+  it("detects an <img> nested inside a <figure>", () => {
+    const unit = decomposeHtmlChapter(
+      '<figure><div><img src="img/z.gif" alt="nested"/></div></figure>'
+    );
+
+    expect(unit.blocks.map((block) => block.blockType)).toEqual(["figure"]);
+    expect(unit.blocks[0]?.image).toEqual({ alt: "nested", src: "img/z.gif" });
+  });
+
+  it("passes a <figure> without an <img> through the mdast pipeline (no figure block)", () => {
+    const unit = decomposeHtmlChapter("<figure><figcaption>orphan</figcaption></figure>");
+
+    expect(unit.blocks.some((block) => block.blockType === "figure")).toBe(false);
+  });
+
+  it("emits a caption-only figure when the <img> has no src", () => {
+    const unit = decomposeHtmlChapter(
+      "<figure><img alt='x'/><figcaption>Caption</figcaption></figure>"
+    );
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["figure", "Caption"]
+    ]);
+    expect(unit.blocks[0]?.image).toBeUndefined();
+  });
+
+  it("yields an empty caption for a figure with an empty figcaption", () => {
+    const unit = decomposeHtmlChapter(
+      '<figure><img src="img/x.png"/><figcaption></figcaption></figure>'
+    );
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["figure", ""]
+    ]);
+    expect(unit.blocks[0]?.image).toEqual({ src: "img/x.png" });
+  });
 });
