@@ -40,8 +40,10 @@ can navigate them from another package.
 ### `src/apps/server/` — Fastify API
 
 - Composition/entry: `src/index.ts` (in-memory PGlite unless `DATABASE_DIR` is set); `dev-server.mjs`
-  is the local dev entrypoint (`pnpm --filter @whetstone/server dev`) that defaults `DATABASE_DIR`
-  to a git-ignored `.data/db` so content survives a restart. Server assembly in
+  is the local dev entrypoint, run via `tsx watch` (`pnpm --filter @whetstone/server dev`) so the
+  server runs from **source with reload** — a newly landed route is live without a manual `build` (no
+  stale `dist/` 404s) — and it defaults `DATABASE_DIR` to a git-ignored `.data/db` so content
+  survives a restart. `start` (`node dist/index.js`) is the production path. Server assembly in
   `src/http/createServer.ts`.
 - Identity seam: `src/identity/currentUser.ts` — the single `DEFAULT_USER_ID` constant + the
   `CurrentUserProvider` (`getCurrentUserId()`). `createServer` decorates the instance with it
@@ -221,6 +223,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.
 - Run/use walkthrough: `docs/QUICK_START.md` (install, env/data config, run server + web, first note flow).
+- Dev (one command): `pnpm dev` (`scripts/dev.mjs`) builds the shared packages once, then runs the API server from source with reload (`tsx watch`) and the Vite web dev server together — route changes go live with no manual `build`. Production still runs the built `dist` via `pnpm --filter @whetstone/server start`.
 - Gate: `pnpm validate` (= `typecheck && lint && test && build && smoke`); mirrors `.github/workflows/ci.yml`. `smoke` (`src/apps/web/dev-smoke.mjs`) boots the Vite dev server and checks every dependency resolves at serve time — catching dev-only breakage that `build` (rolldown) does not.
 - Screenshots (manual, outside the gate): `pnpm screenshots` (`scripts/screenshots.mjs`) boots the real stack on an ephemeral in-memory DB, ingests the public-domain `fixtures/epub/` files through the live pipeline, serves the production build via `vite preview`, and drives Playwright Chromium to write per-stage PNGs to `artifacts/screenshots/` (git-ignored). `scripts/make-fixture-epub.mjs` regenerates the English fixture. Needs `pnpm exec playwright install chromium` once.
 - Workflow roles: `.github/agents/*.agent.md` (design, developer, reviewer). Operational quick-reference: the
