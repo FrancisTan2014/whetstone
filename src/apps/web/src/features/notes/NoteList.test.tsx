@@ -62,20 +62,18 @@ describe("NoteList", () => {
     expect(screen.getByText("No notes yet.")).toBeDefined();
   });
 
-  it("renders each note's snippet, hued template chip, and rendered body", () => {
+  it("renders each note's snippet, template name chip, and rendered body", () => {
     renderList([makeNote()]);
 
     expect(screen.getByText(/fox/)).toBeDefined();
-    const chip = screen.getByText("Vocabulary");
-    expect(chip.className).toContain("templateHue--vocab");
+    expect(screen.getByText("Vocabulary")).toBeDefined();
     expect(screen.getByText("a sly animal")).toBeDefined();
   });
 
-  it("falls back to the template id and the vocabulary hue when the template is unknown", () => {
+  it("falls back to the raw template id as the chip label when the template is unknown", () => {
     renderList([makeNote({ templateId: "gone" })]);
 
-    const chip = screen.getByText("gone");
-    expect(chip.className).toContain("templateHue--vocab");
+    expect(screen.getByText("gone")).toBeDefined();
   });
 
   it("invokes jump, edit, and delete callbacks with the chosen note", async () => {

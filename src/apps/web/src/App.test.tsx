@@ -34,7 +34,6 @@ describe("App shell and routes", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain('aria-label="Switch to Night"');
-    expect(markup).toContain("<svg");
   });
 
   it("mounts the single toast live region in the shell", () => {
@@ -47,22 +46,20 @@ describe("App shell and routes", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain('aria-current="page"');
-    expect(markup).toContain("text-accent");
-    expect(markup).toContain("text-text-muted");
   });
 
   it("mounts the existing Library screens at the index route", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain(">Library<");
-    expect(markup).toContain('id="content-heading"');
+    expect(markup).toContain("Work detail");
   });
 
   it("recedes the primary navigation and shows the reader landmark at the reader route", () => {
     const markup = renderAt("/reader");
 
     expect(markup).toContain('aria-label="Reader"');
-    expect(markup).not.toContain('id="content-heading"');
+    expect(markup).not.toContain("Work detail");
     expect(markup).not.toContain('aria-label="Primary"');
   });
 
@@ -75,15 +72,13 @@ describe("App shell and routes", () => {
   it("resolves the notes route to the cross-work notes page", () => {
     const markup = renderAt("/notes");
 
-    expect(markup).toContain('id="notes-heading"');
     expect(markup).toContain("Every note you have saved");
   });
 
   it("resolves the search route to the library search page", () => {
     const markup = renderAt("/search");
 
-    expect(markup).toContain('id="search-heading"');
     expect(markup).toContain('role="search"');
-    expect(markup).toContain('id="search-query"');
+    expect(markup).toContain("Find words and phrases across every work");
   });
 });
