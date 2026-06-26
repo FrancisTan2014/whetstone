@@ -4,13 +4,23 @@ import type { FastifyInstance } from "fastify";
 
 import { ingestMarkdown, type ContentDependencies } from "./contentCommands.js";
 import { ingestEpub } from "./epubCommands.js";
-import { loadWorkContent, workExists } from "./contentQueries.js";
+import {
+  loadReadingUnitContent,
+  loadWorkContent,
+  loadWorkStructure,
+  locateBlockUnit,
+  workExists
+} from "./contentQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 const invalidEpubBody = { error: "invalid_epub" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
+const unitNotFoundBody = { error: "unit_not_found" } as const;
+const blockNotFoundBody = { error: "block_not_found" } as const;
 
 type WorkParams = Readonly<{ workEntryId: string }>;
+type UnitParams = Readonly<{ unitEntryId: string; workEntryId: string }>;
+type BlockParams = Readonly<{ blockEntryId: string; workEntryId: string }>;
 
 export function registerContentRoutes(
   server: FastifyInstance,
@@ -85,6 +95,53 @@ export function registerContentRoutes(
 
     return loadWorkContent(dependencies.db, workEntryId);
   });
+
+  // The lightweight outline a lazy-loading reader fetches first: units + block counts, no content.
+  server.get<{ Params: WorkParams }>(
+    "/api/works/:workEntryId/structure",
+    async (request, reply) => {
+      const workEntryId = toEntryId(request.params.workEntryId);
+
+      if (!(await workExists(dependencies.db, workEntryId))) {
+        return reply.code(404).send(workNotFoundBody);
+      }
+
+      return loadWorkStructure(dependencies.db, workEntryId);
+    }
+  );
+
+  // One unit's blocks on demand. 404 covers both an unknown unit and one in another work.
+  server.get<{ Params: UnitParams }>(
+    "/api/works/:workEntryId/units/:unitEntryId/content",
+    async (request, reply) => {
+      const workEntryId = toEntryId(request.params.workEntryId);
+      const unitEntryId = toEntryId(request.params.unitEntryId);
+      const content = await loadReadingUnitContent(dependencies.db, workEntryId, unitEntryId);
+
+      if (content === undefined) {
+        return reply.code(404).send(unitNotFoundBody);
+      }
+
+      return content;
+    }
+  );
+
+  // Resolve a block to its owning unit for deep-links / jump-to-note. 404 covers an unknown,
+  // soft-deleted, or other-work block.
+  server.get<{ Params: BlockParams }>(
+    "/api/works/:workEntryId/blocks/:blockEntryId/unit",
+    async (request, reply) => {
+      const workEntryId = toEntryId(request.params.workEntryId);
+      const blockEntryId = toEntryId(request.params.blockEntryId);
+      const unitEntryId = await locateBlockUnit(dependencies.db, workEntryId, blockEntryId);
+
+      if (unitEntryId === undefined) {
+        return reply.code(404).send(blockNotFoundBody);
+      }
+
+      return { unitEntryId };
+    }
+  );
 
   server.get<{ Params: WorkParams }>(
     "/api/works/:workEntryId/content/markdown",

@@ -72,7 +72,11 @@ can navigate them from another package.
   bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
   rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on
   soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
-  (`GET /api/works/:id/content/markdown`). `notes/` serves note templates and creates, lists, edits,
+  (`GET /api/works/:id/content/markdown`). Alongside the whole-work `GET …/content`, `contentQueries.ts`
+  exposes the lazy-reader read endpoints (`loadWorkStructure` / `loadReadingUnitContent` /
+  `locateBlockUnit`): `GET …/structure` (units + block counts, no content), `GET …/units/:unitId/content`
+  (one unit's blocks), and `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note),
+  each 404ing an unknown/out-of-work target. `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`);
   templates are seeded from the domain on boot
   (`seedNoteTemplates`). `readingPosition/` durably stores each reader's position per (user, work) —

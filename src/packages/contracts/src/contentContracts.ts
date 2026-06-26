@@ -67,6 +67,36 @@ export type WorkContentDto = Readonly<{
   workEntryId: EntryId;
 }>;
 
+// One reading unit in a work's lightweight structure: ordering metadata and the number of
+// non-deleted blocks it holds, but no block content. Keeps the structure payload O(units) so a
+// lazy-loading reader can render the outline and fetch each unit's blocks on demand.
+export type ReadingUnitStructureDto = Readonly<{
+  blockCount: number;
+  entryId: EntryId;
+  orderIndex: number;
+  title?: string;
+}>;
+
+export type WorkStructureDto = Readonly<{
+  readingUnits: ReadonlyArray<ReadingUnitStructureDto>;
+  workEntryId: EntryId;
+}>;
+
+// One reading unit's content, fetched on demand: the unit's ordering metadata plus its ordered,
+// non-deleted blocks.
+export type ReadingUnitContentDto = Readonly<{
+  blocks: ReadonlyArray<BlockDto>;
+  entryId: EntryId;
+  orderIndex: number;
+  title?: string;
+}>;
+
+// Resolves a block to the reading unit that owns it, so a client that no longer holds every block
+// can still open a deep-link (`?block=`) or jump to a note's anchor.
+export type BlockUnitLocatorDto = Readonly<{
+  unitEntryId: EntryId;
+}>;
+
 // EPUB uploads are sent as the raw file bytes under this media type; the owning work
 // is created from the EPUB's own OPF metadata, so there is no JSON request body.
 export const epubContentType = "application/epub+zip";

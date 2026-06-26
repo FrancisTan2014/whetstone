@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   epubContentType,
+  type BlockUnitLocatorDto,
   type IngestEpubResultDto,
-  type WorkContentDto
+  type ReadingUnitContentDto,
+  type WorkContentDto,
+  type WorkStructureDto
 } from "@whetstone/contracts";
 import { decomposeHtmlChapter, decomposeMarkdown, toEntryId } from "@whetstone/domain";
 
@@ -856,5 +859,128 @@ describe("EPUB ingestion routes", () => {
     expect(figure?.plaintext).toBe("Missing bytes.");
     expect(figure?.imageResourceId).toBeUndefined();
     expect(await readdir(context.imagesDir)).toEqual([]);
+  });
+
+  const structureMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
+
+  async function getStructure(workEntryId: string): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/structure` });
+  }
+
+  it("exposes a work's structure: ordered units with block counts and no content", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: structureMarkdown });
+
+    const response = await getStructure(workEntryId);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as WorkStructureDto;
+    expect(body.workEntryId).toBe(workEntryId);
+    expect(body.readingUnits.map((unit) => [unit.title, unit.orderIndex, unit.blockCount])).toEqual(
+      [
+        [undefined, 0, 1],
+        ["Chapter One", 1, 3]
+      ]
+    );
+    // The structure is content-free: no unit carries a `blocks` array.
+    expect(body.readingUnits.every((unit) => !("blocks" in unit))).toBe(true);
+  });
+
+  it("returns 404 for the structure of an unknown work", async () => {
+    const response = await getStructure("missing-work");
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "work_not_found" });
+  });
+
+  it("returns one reading unit's content on demand", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: structureMarkdown });
+    const content = await getContent(workEntryId);
+    const chapterUnit = content.readingUnits.find((unit) => unit.title === "Chapter One");
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/units/${chapterUnit?.entryId}/content`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as ReadingUnitContentDto;
+    expect(body.entryId).toBe(chapterUnit?.entryId);
+    expect(body.title).toBe("Chapter One");
+    expect(body.orderIndex).toBe(1);
+    expect(body.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["heading", "Chapter One"],
+      ["list", "ab"],
+      ["blockquote", "quote"]
+    ]);
+
+    // The untitled leading unit returns its content with no title.
+    const introUnit = content.readingUnits.find((unit) => unit.title === undefined);
+    const introResponse = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/units/${introUnit?.entryId}/content`
+    });
+    const introBody = introResponse.json() as ReadingUnitContentDto;
+    expect(introBody.title).toBeUndefined();
+    expect(introBody.blocks.map((block) => block.plaintext)).toEqual(["Intro."]);
+  });
+
+  it("returns 404 for a unit that is not part of the requested work", async () => {
+    const workA = await createWork();
+    await ingest(workA, { kind: "manual", markdown: structureMarkdown });
+    const unitOfA = (await getContent(workA)).readingUnits[0]?.entryId;
+    const workB = await createWork();
+    await ingest(workB, { kind: "manual", markdown: structureMarkdown });
+
+    const wrongWork = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workB}/units/${unitOfA}/content`
+    });
+    const unknownUnit = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workA}/units/no-such-unit/content`
+    });
+
+    expect(wrongWork.statusCode).toBe(404);
+    expect(wrongWork.json()).toEqual({ error: "unit_not_found" });
+    expect(unknownUnit.statusCode).toBe(404);
+  });
+
+  it("locates the reading unit that owns a block", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: structureMarkdown });
+    const content = await getContent(workEntryId);
+    const chapterUnit = content.readingUnits.find((unit) => unit.title === "Chapter One");
+    const quoteBlockId = blockIdByText(content).get("quote");
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/blocks/${quoteBlockId}/unit`
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as BlockUnitLocatorDto).unitEntryId).toBe(chapterUnit?.entryId);
+  });
+
+  it("returns 404 locating an unknown or soft-deleted block", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: structureMarkdown });
+    const quoteBlockId = blockIdByText(await getContent(workEntryId)).get("quote");
+    // Re-ingest without the blockquote so it is soft-deleted and detached from its unit.
+    await ingest(workEntryId, { kind: "manual", markdown: "Intro.\n\n# Chapter One\n\n- a\n- b" });
+
+    const removed = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/blocks/${quoteBlockId}/unit`
+    });
+    const unknown = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/blocks/no-such-block/unit`
+    });
+
+    expect(removed.statusCode).toBe(404);
+    expect(removed.json()).toEqual({ error: "block_not_found" });
+    expect(unknown.statusCode).toBe(404);
   });
 });
