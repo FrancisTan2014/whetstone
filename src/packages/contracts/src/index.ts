@@ -93,6 +93,8 @@ export type {
   CreateNoteRequest,
   NoteDto,
   NoteListDto,
+  NoteOverviewDto,
+  NotesOverviewListDto,
   NoteTemplateDto,
   NoteTemplateFieldDto,
   NoteTemplateListDto,

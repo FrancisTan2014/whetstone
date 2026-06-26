@@ -3,7 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CreateNoteRequest, UpdateNoteRequest } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
-import { createNote, deleteNote, fetchNoteTemplates, fetchNotes, updateNote } from "./notesApi";
+import {
+  createNote,
+  deleteNote,
+  fetchAllNotes,
+  fetchNoteTemplates,
+  fetchNotes,
+  updateNote
+} from "./notesApi";
 
 function stubFetch(response: {
   ok: boolean;
@@ -30,6 +37,13 @@ describe("notesApi", () => {
 
     await expect(fetchNoteTemplates()).resolves.toEqual({ templates: [] });
     expect(fetchMock).toHaveBeenCalledWith("/api/note-templates", undefined);
+  });
+
+  it("fetches all of the user's notes from the cross-work notes endpoint", async () => {
+    const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
+
+    await expect(fetchAllNotes()).resolves.toEqual({ notes: [] });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes", undefined);
   });
 
   it("posts a note to the work's notes endpoint", async () => {

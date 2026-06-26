@@ -72,11 +72,11 @@ describe("App shell and routes", () => {
     expect(markup).toContain('aria-label="Reader"');
   });
 
-  it("resolves the notes route to its placeholder region", () => {
+  it("resolves the notes route to the cross-work notes page", () => {
     const markup = renderAt("/notes");
 
-    expect(markup).toContain('id="notes-mode-heading"');
-    expect(markup).toContain("later slice");
+    expect(markup).toContain('id="notes-heading"');
+    expect(markup).toContain("Every note you have saved");
   });
 
   it("resolves the search route to the library search page", () => {
