@@ -306,9 +306,11 @@ code {
 
 /*
  * Lookup popover (#66): the desktop/tablet definition surface is a compact card anchored
- * near the selection (Radix positions/flips it), sized to its content with an internal
- * scroll for long entries — never the full-height side Sheet. The invisible anchor mirrors
- * the selection's rect. On narrow screens lookup falls back to the shared bottom Sheet.
+ * near the selection (Radix positions/flips it), held to a stable, comfortable width (#179)
+ * — a sparse entry fills to the min width instead of hugging its content into a cramped
+ * column, while a rich entry may grow up to the max — with an internal scroll for long
+ * entries, never the full-height side Sheet. The invisible anchor mirrors the selection's
+ * rect. On narrow screens lookup falls back to the shared bottom Sheet.
  */
 .lookupAnchor {
   pointer-events: none;
@@ -320,6 +322,7 @@ code {
   border-radius: 0.75rem;
   box-shadow: 0 0.75rem 2rem rgb(15 23 42 / 18%);
   color: var(--color-text);
+  min-width: min(24rem, calc(100vw - 1.5rem));
   max-width: min(32rem, calc(100vw - 1.5rem));
   overflow-y: auto;
   padding: 0.5rem 1.125rem 1.125rem;
