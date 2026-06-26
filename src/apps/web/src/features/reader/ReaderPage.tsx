@@ -2,8 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
-
-import { motionSprings, withReducedMotion } from "../../shared/motion/motion";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
@@ -42,6 +40,7 @@ import {
   workProgress
 } from "./readerNavigation";
 import { resolveOpening } from "./readingPosition";
+import { readingEntranceMotion } from "./readingEntrance";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { useReadingPositionWriter, type SaveReadingPosition } from "./useReadingPositionWriter";
 import { ReaderToc } from "./ReaderToc";
@@ -958,7 +957,7 @@ function renderViewing(
   handlers: ReaderHandlers,
   chrome: ReaderChrome
 ): React.JSX.Element {
-  const entrance = withReducedMotion(motionSprings.gentle, chrome.prefersReducedMotion);
+  const entrance = readingEntranceMotion(chrome.prefersReducedMotion);
   const units = structure.units;
   const tools = chrome.tools;
   // A multi-unit work navigates by its 目录; a single-unit work (an essay) reads without it.
@@ -994,11 +993,11 @@ function renderViewing(
           tocOpen={tools.tocOpen}
         />
         <motion.div
-          animate={{ opacity: 1, y: 0 }}
+          animate={entrance.animate}
           className="readerEntrance"
-          initial={{ opacity: 0, y: 8 }}
+          initial={entrance.initial}
           key={`${workEntryId}-${activeUnitIndex}`}
-          transition={entrance}
+          transition={entrance.transition}
         >
           <div
             className="reading-surface readerPaper"
