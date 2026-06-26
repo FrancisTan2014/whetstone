@@ -184,11 +184,14 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
   a work resumes where the reader left off ("Continue reading") across sessions and devices. Position is
   **user-owned state persisted on the server** (per current user + work); localStorage may remain a
   same-device cache, but the server is the source of truth.
-- **Immersive, single-column layout (微信读书-style).** Reading is full-bleed and calm: one **centered**
-  reading column on the paper surface with generous margins, and the surrounding chrome — the app
-  navigation, the 目录, and the reading tools — **recedes while reading** and returns on intent (scroll-up /
-  hover / tap). There is **no in-reader work-picker and no page heading**; a work is opened from the Library
-  (or "Continue reading"). A subtle **progress indicator** shows place in the work.
+- **Immersive, single-column layout (微信读书-style).** Reading is full-bleed and calm: one reading column
+  on the paper surface, **comfortably sized and framed by the edge chrome** (not a narrow column lost in
+  whitespace). The chrome **recedes while reading** and returns on intent — on **desktop** the reading
+  **tools are a right-edge vertical rail of icons** and the **目录 a left drawer** (returning on hover / scroll-up);
+  on **mobile** the chrome is **hidden and toggled by tapping the center**. Tools are **icon-based** (the table
+  of contents is a labelled **icon**, not the literal "目录" text). There is **no in-reader work-picker and no
+  page heading**; a work is opened from the Library (or "Continue reading"). A subtle **progress indicator**
+  shows place in the work.
 - Markdown is rendered safely — no raw/unsafe HTML execution. Each rendered block carries its block id so
   selection maps deterministically to a block.
 - Empty / loading / error states are explicit.
