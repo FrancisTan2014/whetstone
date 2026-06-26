@@ -33,7 +33,8 @@ are colocated `*.test.ts`. Invariant: depends on nothing outward.
 Zod request/response contracts shared by client and server. Public surface is `src/index.ts`.
 Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`,
 `noteContracts.ts`, `lookupContracts.ts` (the lookup route query validator + the shared
-`NormalizedEntry` shape and `LookupResponse` DTO rendered by the reader), `health.ts`. Tests colocated.
+`NormalizedEntry` shape and `LookupResponse` DTO rendered by the reader), `searchContracts.ts`
+(the `/api/search` query validator + the block-level `SearchResultsDto`), `health.ts`. Tests colocated.
 Invariant: types resolve through built `dist` — run `pnpm build` (or `tsc -b`) before VS Code/tsc
 can navigate them from another package.
 
@@ -58,7 +59,7 @@ can navigate them from another package.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
-  `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`). Routes stay thin; logic lives in
+  `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`, `search/`). Routes stay thin; logic lives in
   commands/queries. `content/` ingests Markdown and EPUB uploads. Markdown re-ingestion REPLACES a
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
   new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id`); identical
@@ -85,6 +86,10 @@ can navigate them from another package.
   the last open reading unit + an optional block anchor — in `reading_positions` (composite
   `(user_id, work_entry_id)` PK), upserted via `PUT` and read via `GET /api/works/:id/reading-position`;
   the server is the source of truth so resume survives a localStorage clear / new browser / other device.
+  `search/` is read-only block-level library search: `GET /api/search?q=` validates the query, then
+  `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over non-deleted blocks'
+  `plaintext` (joined to work + author, capped at `searchResultLimit`, LIKE wildcards escaped); v0 is a
+  substring scan, not ranked FTS (PRODUCT.md "v0 search").
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
@@ -129,8 +134,8 @@ can navigate them from another package.
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the four modes under the `AppShell` layout
-  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Notes/Search =
-  `ModePlaceholder` until their slices land); `AppShell.tsx` is the responsive frame (one `Primary`
+  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Search = `SearchPage`,
+  Notes = `ModePlaceholder` until its slice lands); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
   destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
@@ -157,7 +162,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button mounted in the shell footer); `src/shared/motion/motion.ts` holds motion tokens +
   the `withReducedMotion` guard. The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`, `notes/`, `lookup/`). `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
+  `reader/`, `notes/`, `lookup/`, `search/`). `search/` is the Search mode: `SearchPage.tsx` is a query
+  field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each
+  deep-link the reader to the work/block (`#/reader?work=&block=`), with explicit empty/error states.
+  `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
   an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
   reading" deep-links to `#/reader?work=<entryId>` (with an optional `&block=<entryId>` to open a

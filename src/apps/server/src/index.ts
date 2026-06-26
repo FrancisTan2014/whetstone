@@ -80,7 +80,8 @@ const server = createServer({
     createEntryId: () => randomUUID(),
     db
   },
-  readingPosition: { db }
+  readingPosition: { db },
+  search: { db }
 });
 
 try {

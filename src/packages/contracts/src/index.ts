@@ -110,3 +110,11 @@ export type {
   ReadingPositionResponse,
   UpsertReadingPositionRequest
 } from "./readingPositionContracts.js";
+export {
+  parseSearchRequest,
+  parseSearchResults,
+  searchRequestSchema,
+  searchResultDtoSchema,
+  searchResultsDtoSchema
+} from "./searchContracts.js";
+export type { SearchRequest, SearchResultDto, SearchResultsDto } from "./searchContracts.js";
