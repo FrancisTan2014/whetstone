@@ -62,8 +62,28 @@ Test the integrated, running app — not the source in the abstract:
 ## Explore beyond the smoke (what to drive)
 
 The E2E gate already covers the scripted core loop. Your value is everything it does **not** script.
-Exercise the app like a curious user and watch for trouble:
+Exercise the app like a curious user across the **whole product — not just the reader** — and watch
+for trouble. Two standing rules: **drive the real UI, not a shortcut** — when a surface (especially
+ingestion) has a browser flow, exercise that flow; do not seed content through the API to skip it; and
+**assert the effect, not just the click** — after you drive a control, confirm it actually did
+something (text resized, theme changed, results appeared, content persisted), because a control that
+silently does nothing is a defect:
 
+- **Admin / content ingestion (drive the real upload UI — the riskiest, least-covered area).** From
+  the Library/admin surface, create a work (*Add work*, including the new-author path) and add its
+  content **through the browser**: paste Markdown (*Add Markdown content*), upload a `.md` file, and
+  **upload a real EPUB** (use a fixture from `fixtures/epub/`). Then confirm the work opens in the
+  reader with its blocks. Watch for the classic ingestion failures: a work created but **empty / no
+  readable content with no error**, an oversized book that fails silently, or a missing/incorrect
+  error on bad input. Do **not** API-seed to skip this — testing the upload path is the point.
+- **Search.** Use the Search surface: query a term you know is in a seeded work and confirm it returns
+  results that link to the right work/block; query an absent term and confirm a clear empty state.
+- **Note review, edit, and templates.** Go beyond creating one note: pick each **template**
+  (Vocabulary / Expression / Thought) and fill its answer fields; **edit** an existing note and
+  **delete** one; and exercise the dedicated notes review surface — confirm it lists notes and jumps
+  back to the anchored block.
+- **Export.** Trigger *Export Markdown* for a work and confirm it yields the work's content rather
+  than erroring or producing nothing.
 - **Selection in each block type** — paragraph, heading, list, blockquote, code — and across blocks;
   confirm the toolbar behaves and notes anchor correctly.
 - **Each reader tool** — font size, column width, 目录 (table of contents) navigation, Day/Night theme,
