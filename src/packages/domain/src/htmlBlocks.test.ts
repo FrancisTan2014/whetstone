@@ -143,4 +143,30 @@ describe("decomposeHtmlChapter", () => {
     ]);
     expect(unit.blocks[0]?.image).toEqual({ src: "img/x.png" });
   });
+
+  it("strips parser position data from every node, including figure captions", () => {
+    const unit = decomposeHtmlChapter(
+      "<h1>Chapter</h1><p>A <em>rich</em> paragraph.</p>" +
+        '<figure><img src="img/x.png" alt="dot"/><figcaption>Cap <em>tion</em>.</figcaption></figure>'
+    );
+    const nodes = unit.blocks.map((block) => block.mdast);
+
+    expect(unit.blocks.map((block) => block.blockType)).toContain("figure");
+    expect(nodes.every((node) => !hasPositionAnywhere(node))).toBe(true);
+  });
 });
+
+// True if `position` appears on the node or any descendant — the property the decomposer strips.
+function hasPositionAnywhere(node: unknown): boolean {
+  if (typeof node !== "object" || node === null) {
+    return false;
+  }
+
+  const record = node as { children?: unknown[]; position?: unknown };
+
+  if (record.position !== undefined) {
+    return true;
+  }
+
+  return (record.children ?? []).some((child) => hasPositionAnywhere(child));
+}

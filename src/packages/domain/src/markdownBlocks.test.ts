@@ -168,4 +168,29 @@ describe("decomposeMarkdown image handling", () => {
     expect(block?.plaintext).toContain("Line");
     expect(block?.plaintext).toContain("end.");
   });
+
+  it("strips parser position data from every node of the stored mdast", () => {
+    const units = decomposeMarkdown(
+      "# Title\n\nA *rich* paragraph with [a link](x).\n\n- one\n- two"
+    );
+    const nodes = units.flatMap((unit) => unit.blocks.map((block) => block.mdast));
+
+    expect(nodes.length).toBeGreaterThan(0);
+    expect(nodes.every((node) => !hasPositionAnywhere(node))).toBe(true);
+  });
 });
+
+// True if `position` appears on the node or any descendant — the property the decomposer strips.
+function hasPositionAnywhere(node: unknown): boolean {
+  if (typeof node !== "object" || node === null) {
+    return false;
+  }
+
+  const record = node as { children?: unknown[]; position?: unknown };
+
+  if (record.position !== undefined) {
+    return true;
+  }
+
+  return (record.children ?? []).some((child) => hasPositionAnywhere(child));
+}
