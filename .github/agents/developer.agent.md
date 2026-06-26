@@ -47,9 +47,12 @@ decision line. The rule keeps work-in-progress at 1:
 - **`wait <pr>`** — a workflow PR is open but not changes-requested (in review, or approved and
   awaiting the deterministic merge step): there is nothing for you to do. Stop.
 - **`implement <issue>`** — no workflow PR is open: implement that issue (see *Start clean* and
-  *Implement*). It is the **lowest-numbered** `ready-for-dev` issue whose `Depends on: #N` are all
-  closed. If you ever select an issue yourself, sort by `number` **ascending** — `gh issue list`
-  returns them newest-first, so never take the first row or the newest issue.
+  *Implement*). Among `ready-for-dev` issues whose `Depends on: #N` are all closed, ready **`[Bug]`s
+  are selected before `[Task]`s** (verified defects are paid down before new feature work —
+  GUIDELINES.md "Functional verification"), and within each group the **lowest-numbered** issue
+  wins. If you ever select an issue yourself, apply the same order: bugs first, then sort by `number`
+  **ascending** — `gh issue list` returns them newest-first, so never take the first row or the
+  newest issue.
 - **`idle`** — nothing is ready. Stop.
 
 A maintainer-named issue overrides the decision: implement that issue.

@@ -2,11 +2,17 @@
 // Deterministic issue selection for the whetstone developer workflow.
 //
 // The developer agent implements ONE issue per run. Which issue is next must be a pure function of
-// the GitHub queue -- the lowest-numbered open `ready-for-dev` issue whose `Depends on: #N`
-// references are all closed -- not a choice left to a non-deterministic LLM session. `gh issue list`
+// the GitHub queue -- not a choice left to a non-deterministic LLM session. `gh issue list`
 // returns issues newest-first, so an agent that grabs "the first one" implements the LATEST issue
 // instead of the next one in sequence. This script removes that ambiguity: it prints exactly the
 // next issue number so run-developer.cmd can hand the agent a concrete `#N` to implement.
+//
+// Selection order, among open `ready-for-dev` issues whose `Depends on: #N` references are all
+// closed (dependency-ready):
+//   1. ready `[Bug]`s before ready `[Task]`s -- verified defects are paid down before new feature
+//      work (GUIDELINES.md "Functional verification", the closing half of the tester -> developer
+//      loop). A bug is an issue labeled `bug` or whose title starts with the `[Bug]` prefix.
+//   2. oldest-first (lowest issue number) within each group.
 //
 // Importable: other workflow scripts import `selectNextIssue()` (and the `gh` helpers) from here.
 //
@@ -43,13 +49,22 @@ export function dependsOn(body) {
   return [...deps];
 }
 
-// The lowest-numbered open `ready-for-dev` issue whose `Depends on: #N` are all closed.
-// Returns { next: number|null, eligible: number[], blocked: number[] }.
+// An issue is a bug (fixed before feature `[Task]`s) when it carries the `bug` label or its title
+// starts with the `[Bug]` prefix. EPUB/issue titles are conventionally prefixed by type.
+export function isBug(issue) {
+  const labelled = (issue.labels ?? []).some((l) => l.name === 'bug');
+  const titled = /^\s*\[bug\]/i.test(issue.title ?? '');
+  return labelled || titled;
+}
+
+// The next dependency-ready issue: ready `[Bug]`s before ready `[Task]`s, oldest-first within each.
+// Returns { next: number|null, eligible: number[], blocked: number[] } with `eligible` in
+// selection order (so eligible[0] is the pick).
 export function selectNextIssue() {
   const repo = ghJson(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner;
   const ready = ghJson([
     'issue', 'list', '--repo', repo, '--state', 'open', '--label', READY_LABEL,
-    '--limit', '500', '--json', 'number,body',
+    '--limit', '500', '--json', 'number,body,labels,title',
   ]);
   // One list of every open issue number lets us treat a dependency as satisfied iff it is no longer
   // open (closed or nonexistent) -- without one API call per dependency.
@@ -57,10 +72,12 @@ export function selectNextIssue() {
     ghJson(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', 'number'])
       .map((i) => i.number),
   );
-  const eligible = ready
-    .filter((i) => dependsOn(i.body).every((n) => !openNumbers.has(n)))
-    .map((i) => i.number)
-    .sort((a, b) => a - b);
+  const eligibleIssues = ready.filter((i) => dependsOn(i.body).every((n) => !openNumbers.has(n)));
+  const byNumber = (a, b) => a.number - b.number;
+  // Bug-first, then oldest-first within each group.
+  const bugs = eligibleIssues.filter((i) => isBug(i)).sort(byNumber).map((i) => i.number);
+  const tasks = eligibleIssues.filter((i) => !isBug(i)).sort(byNumber).map((i) => i.number);
+  const eligible = [...bugs, ...tasks];
   const blocked = ready
     .map((i) => i.number)
     .filter((n) => !eligible.includes(n))

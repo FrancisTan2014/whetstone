@@ -9,6 +9,8 @@
 //   * a workflow PR is open and labeled `changes-requested`  -> fix that PR (reviewer handed it back)
 //   * a workflow PR is open but not changes-requested        -> wait (in review or awaiting merge)
 //   * no workflow PR is open                                 -> implement the next dependency-ready issue
+//                                                               (ready `[Bug]`s before `[Task]`s; see
+//                                                               pick-next-issue.mjs `selectNextIssue`)
 //   * none of the above                                      -> idle (nothing to do)
 //
 // A "workflow PR" is one this loop owns: a `dev/` head branch, or a PR carrying a review label. That
