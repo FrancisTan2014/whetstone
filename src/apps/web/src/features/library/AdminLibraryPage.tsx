@@ -32,7 +32,13 @@ function workCountLabel(count: number): string {
   return count === 1 ? "1 work" : `${count} works`;
 }
 
-export function AdminLibraryPage(): React.JSX.Element {
+type AdminLibraryPageProps = Readonly<{
+  // Called with a work's entry id right after it is created or imported, so a sibling
+  // panel (e.g. Work detail) can refresh and select the new work without a page reload.
+  onWorkCreated?: (workEntryId: string) => void;
+}>;
+
+export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): React.JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [authors, setAuthors] = useState<ReadonlyArray<AuthorDto>>([]);
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
@@ -99,13 +105,14 @@ export function AdminLibraryPage(): React.JSX.Element {
     setSubmitting(true);
 
     try {
-      await createWork({ author, language, title: trimmedTitle, workType });
+      const created = await createWork({ author, language, title: trimmedTitle, workType });
       setTitle("");
       setInlineAuthorName("");
       setWorkError(undefined);
       setAddOpen(false);
       await reload();
       toast.success(`Added “${trimmedTitle}”.`);
+      onWorkCreated?.(created.work.entryId);
     } catch {
       toast.error("Could not save the work. Please try again.");
     } finally {
@@ -127,6 +134,7 @@ export function AdminLibraryPage(): React.JSX.Element {
       const result = await ingestEpub(file);
       await reload();
       toast.success(`Imported “${result.work.title}”.`);
+      onWorkCreated?.(result.work.entryId);
     } catch {
       toast.error("Could not ingest the EPUB. Please try again.");
     } finally {

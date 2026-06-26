@@ -310,4 +310,35 @@ describe("WorkContentPanel", () => {
       await screen.findByText("Could not load this work's content. Please try again.")
     ).toBeDefined();
   });
+
+  it("refreshes its works and selects a newly focused work without a remount", async () => {
+    // The panel first loads with only Work A present (mirrors the works that existed when the
+    // Library mounted). After a work is created elsewhere, the parent focuses it: the panel must
+    // re-fetch the now-larger works list and select the new work so it can receive content.
+    mockedFetchWorks.mockResolvedValue({ works: [workA] });
+    mockedFetchWorkContent.mockImplementation(async (workEntryId: string) =>
+      workEntryId === "work-2" ? contentB : emptyContent("work-1")
+    );
+    const { rerender } = render(<WorkContentPanel />);
+    await screen.findByRole("heading", { level: 3, name: "Work A" });
+
+    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
+    rerender(<WorkContentPanel focusWorkEntryId="work-2" />);
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Work B" })).toBeDefined();
+    expect(screen.getByText("Work B body.")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Work B" }).getAttribute("aria-pressed")).toBe(
+      "true"
+    );
+    expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-2");
+  });
+
+  it("falls back to the first work when the focused work is not in the list", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [workA] });
+
+    render(<WorkContentPanel focusWorkEntryId="work-missing" />);
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Work A" })).toBeDefined();
+    expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-1");
+  });
 });

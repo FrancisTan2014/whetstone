@@ -260,6 +260,26 @@ describe("AdminLibraryPage", () => {
     });
   });
 
+  it("notifies the parent of the created work so a sibling panel can refresh and select it", async () => {
+    const onWorkCreated = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = userEvent.setup();
+    render(<AdminLibraryPage onWorkCreated={onWorkCreated} />);
+    await waitFor(() => {
+      expect(screen.queryByText("Loading the library…")).toBeNull();
+    });
+    await openAddWork(user);
+
+    await user.type(screen.getByLabelText("Title"), "Politics and the English Language");
+    await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(onWorkCreated).toHaveBeenCalledWith("work-1");
+    });
+  });
+
   it("shows an error when creating a work fails", async () => {
     const user = await renderReady();
     mockedCreateWork.mockRejectedValue(new Error("boom"));
@@ -328,6 +348,40 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByRole("heading", { name: "史记选读" })).toBeDefined();
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
     expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies the parent of an EPUB-imported work so a sibling panel can refresh and select it", async () => {
+    const onWorkCreated = vi.fn();
+    const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
+    const epubWork: WorkListItemDto = {
+      author: epubAuthor,
+      work: {
+        authorId: epubAuthor.id,
+        entryId: toEntryId("work-epub"),
+        language: "zh-CN",
+        title: "史记选读",
+        workType: "book"
+      }
+    };
+    mockedIngestEpub.mockResolvedValue({
+      content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+      work: epubWork.work
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
+    const user = userEvent.setup();
+    render(<AdminLibraryPage onWorkCreated={onWorkCreated} />);
+    await waitFor(() => {
+      expect(screen.queryByText("Loading the library…")).toBeNull();
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload EPUB"), file);
+
+    await waitFor(() => {
+      expect(onWorkCreated).toHaveBeenCalledWith("work-epub");
+    });
   });
 
   it("shows an error when the EPUB ingestion fails", async () => {
