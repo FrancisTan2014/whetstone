@@ -318,6 +318,44 @@ does not change the "No LLM note drafting" non-goal.
   `tsvector` is set via raw SQL).
 - All chosen libraries are permissively licensed (MIT/Apache/BSD).
 
+## Language practice & recall (the learning loop)
+
+The first capability built **on** the reading/annotation on-ramp: a coach that grows the learner's
+*productive, everyday* English — the spoken vocabulary and ready-made phrasings a technical reader
+rarely picks up.
+
+**The gap it targets.** Outside a technical domain the learner thinks in their first language and
+**constructs** each sentence by grammar instead of **retrieving** ready-made chunks — slow, effortful,
+anchored to translation. Fluency is owning enough **chunks** (collocations, idioms, sentence frames) to
+retrieve, not build. So the module trains **production under mild time pressure** (a situation → say it
+before you can translate), not recognition.
+
+**The compounding principle (the invariant).** *Every practice leaves a durable trace* — mistakes,
+patterns kept, progress, corrections — deposited into the learner model; nothing is ephemeral. The
+longer whetstone is used, the more deeply it knows the learner and the smarter its proposals get. This
+is the moat (learner model + retrieval) made concrete, and the test for any practice feature: *does
+this interaction make the next proposal smarter? If not, it leaks value.*
+
+**The loop.** A short session (~15 min): the coach proposes from your history → you produce (typed now,
+spoken later) → the LLM returns **compact, constructive** feedback (naturalness, not just grammar) →
+it deposits what should be recalled (chunks/idioms/proverbs + your mistakes + progress). Recall
+resurfaces your **weak / missed** items on a spaced schedule.
+
+**Division of labour (smart, bounded, cheap).**
+
+- **Deterministic SM-2 schedules; the LLM grades** (judging production quality) and proposes next — the
+  scheduling math never costs a token.
+- **Content is bounded** to situations/domains the learner lacks, with chunk inventories **pre-cooked
+  and reviewable** — the LLM authors into a stable corpus and judges against it; it never
+  free-generates live.
+- **The app is a thin orchestrator** over a rich **learner-context store** + a **model-agnostic LLM
+  seam**: cheap/local model for the bulk, a stronger model only for the few coaching calls; **voice
+  decoded locally with OSS** (transcript + prosody features → the LLM), never raw audio.
+
+**Settled vs open.** Settled: the gap/thesis, the compounding invariant, deterministic-recall +
+LLM-grades, bounded pre-cooked content, and the thin-app + rich-context + cost-routed model seam. Open
+(next design pass): the session UX, the voice front-end, and the coaching specifics.
+
 ## Future direction protected by v0
 
 - The Entry/link + Block model supports future rich connections between materials, notes, concepts,
@@ -325,8 +363,8 @@ does not change the "No LLM note drafting" non-goal.
 - **PDF / scanned ingestion** via an isolated Python document-AI worker (e.g. Docling + PaddleOCR),
   with admin review of extracted content. Permissive licenses only; AGPL/GPL tools avoided.
 - Semantic search (`pgvector` embeddings).
-- A block-based editor (future), language-learning durability/memorization, and LLM-assisted note
-  drafting remain future, not v0.
+- A block-based editor (future) and LLM-assisted note drafting remain future, not v0. Language
+  practice & recall is **now an active module** — see "Language practice & recall" above.
 
 ## v0 non-goals
 
