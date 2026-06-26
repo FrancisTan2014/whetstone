@@ -10,6 +10,14 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { partOfSpeechHueClass } from "./partOfSpeechHue";
 
+// Bind the desktop popover's height to the space Radix measures between the trigger and the
+// viewport edge (`--radix-popover-content-available-height`), capped at a comfortable 30rem.
+// Set on the content itself so it holds whichever side Radix flips to — when the card flips
+// above a low selection it shrinks to the room above and scrolls internally, instead of
+// extending past the top of the screen and clipping the headword off-screen. The 72vh fallback
+// keeps a sane bound on the first paint before Radix sets the variable.
+const POPOVER_MAX_HEIGHT = "min(30rem, var(--radix-popover-content-available-height, 72vh))";
+
 // The view-only lookup state the reader drives: fetching, a failure, a no-match, or a
 // resolved entry. There are deliberately no note controls here — lookup never creates,
 // pre-fills, or edits a note.
@@ -190,6 +198,7 @@ function LookupPopover({
           collisionPadding={12}
           side="bottom"
           sideOffset={8}
+          style={{ maxHeight: POPOVER_MAX_HEIGHT }}
         >
           <div className="lookupPopoverChrome">
             <Popover.Close aria-label="Close" className="lookupClose">
