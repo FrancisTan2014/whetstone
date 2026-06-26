@@ -43,9 +43,15 @@ const markdownProcessor = unified().use(remarkParse).use(remarkGfm);
 
 const imageNodeTypes = new Set(["image", "imageReference"]);
 
-// A structural view of an mdast node — enough to walk children and detect images — so the
-// stripping logic stays simple and avoids the mdast content-model union gymnastics.
-type MdastNodeLike = { children?: MdastNodeLike[]; type: string; value?: string };
+// A structural view of an mdast node — enough to walk children, detect images, and drop
+// `position` — so the stripping logic stays simple and avoids the mdast content-model union
+// gymnastics.
+type MdastNodeLike = {
+  children?: MdastNodeLike[];
+  position?: unknown;
+  type: string;
+  value?: string;
+};
 
 // v0's content model is text blocks only — images are not a block type. A node counts as an
 // image if it is an mdast image/imageReference or a raw HTML `<img>` (manually entered Markdown).
@@ -83,12 +89,29 @@ function stripImages(node: MdastNodeLike): boolean {
   return removed;
 }
 
+// Remark/rehype annotate every node with source `position` (line/column/offset). The reader
+// (mdast -> hast -> React) and Markdown export (`blocksToMarkdown`) never read it, so strip it
+// recursively before a block is stored — shrinking the persisted/served payload with no change to
+// rendered or exported output.
+export function stripPosition(node: RootContent): void {
+  stripPositionDeep(node as unknown as MdastNodeLike);
+}
+
+function stripPositionDeep(node: MdastNodeLike): void {
+  delete node.position;
+
+  for (const child of node.children ?? []) {
+    stripPositionDeep(child);
+  }
+}
+
 // Map a single top-level mdast node to a decomposed block, keeping the mdast node
 // (for safe rendering/export) plus its plaintext projection (for search). Image
 // descendants are stripped first (v0 has no image block); a node left with no
 // renderable text once its images are removed — e.g. an image-only paragraph — yields
 // `undefined` and is skipped. Nodes outside the supported block types also map to
-// `undefined` and are skipped by callers.
+// `undefined` and are skipped by callers. Source `position` is stripped so stored mdast
+// stays small.
 export function blockFromMdastNode(node: RootContent): DecomposedBlock | undefined {
   const blockType = blockTypeByNodeType.get(node.type);
 
@@ -102,6 +125,8 @@ export function blockFromMdastNode(node: RootContent): DecomposedBlock | undefin
   if (removedImage && plaintext.trim().length === 0) {
     return undefined;
   }
+
+  stripPosition(node);
 
   return Object.freeze({
     blockType,

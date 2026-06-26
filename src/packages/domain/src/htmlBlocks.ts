@@ -6,6 +6,7 @@ import { unified } from "unified";
 
 import {
   blockFromMdastNode,
+  stripPosition,
   type DecomposedBlock,
   type DecomposedFigureImage,
   type DecomposedReadingUnit
@@ -77,6 +78,11 @@ function captionOf(figure: HastNode): { mdast: RootContent; plaintext: string } 
   if (paragraph === undefined) {
     return { mdast: emptyCaption(), plaintext: "" };
   }
+
+  // The caption mdast comes straight from rehype-remark, which annotates every node with
+  // source `position`; strip it so figure blocks store the same position-free mdast as the
+  // shared block pipeline.
+  stripPosition(paragraph);
 
   return { mdast: paragraph, plaintext: mdastToString(paragraph) };
 }
