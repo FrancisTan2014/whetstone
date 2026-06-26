@@ -21,6 +21,7 @@ async function seed(database: DbClient): Promise<void> {
     { id: "work-2", type: "work" },
     { id: "work-3", type: "work" },
     { id: "unit-1", type: "reading_unit" },
+    { id: "unit-1b", type: "reading_unit" },
     { id: "unit-2", type: "reading_unit" },
     { id: "unit-3", type: "reading_unit" },
     { id: "b-1", type: "block" },
@@ -29,7 +30,8 @@ async function seed(database: DbClient): Promise<void> {
     { id: "b-4", type: "block" },
     { id: "b-5", type: "block" },
     { id: "b-6", type: "block" },
-    { id: "b-7", type: "block" }
+    { id: "b-7", type: "block" },
+    { id: "b-8", type: "block" }
   ]);
 
   await database.insert(authors).values([
@@ -58,6 +60,7 @@ async function seed(database: DbClient): Promise<void> {
 
   await database.insert(readingUnits).values([
     { entryId: "unit-1", orderIndex: 0, title: "Chapter 1", workEntryId: "work-1" },
+    { entryId: "unit-1b", orderIndex: 1, title: "Chapter 2", workEntryId: "work-1" },
     { entryId: "unit-2", orderIndex: 0, title: null, workEntryId: "work-2" },
     { entryId: "unit-3", orderIndex: 0, title: null, workEntryId: "work-3" }
   ]);
@@ -126,6 +129,15 @@ async function seed(database: DbClient): Promise<void> {
       plaintext: "我有一只狗。",
       readingUnitEntryId: "unit-3",
       workEntryId: "work-3"
+    },
+    {
+      blockType: "paragraph",
+      entryId: "b-8",
+      mdastJson: paragraph,
+      orderIndex: 0,
+      plaintext: "A second-chapter dog returns.",
+      readingUnitEntryId: "unit-1b",
+      workEntryId: "work-1"
     }
   ]);
 }
@@ -153,10 +165,10 @@ describe("escapeLikePattern", () => {
 });
 
 describe("searchBlocks", () => {
-  it("matches blocks case-insensitively, ordered by work title then block order", async () => {
+  it("matches blocks case-insensitively, ordered by work title then reading order", async () => {
     const results = await searchBlocks(db, "dog");
 
-    expect(results.map((result) => result.blockEntryId)).toEqual(["b-1", "b-6", "b-3"]);
+    expect(results.map((result) => result.blockEntryId)).toEqual(["b-1", "b-6", "b-8", "b-3"]);
     expect(results[0]).toEqual({
       authorName: "George Orwell",
       blockEntryId: "b-1",
@@ -164,6 +176,18 @@ describe("searchBlocks", () => {
       workEntryId: "work-1",
       workTitle: "Animal Farm"
     });
+  });
+
+  it("orders a multi-unit work by reading unit then block order, not block order alone", async () => {
+    // work-1 spans unit-1 (order 0; blocks b-1@0, b-6@4) and unit-1b (order 1; block b-8@0). Ordering
+    // by block index alone would interleave b-8 (index 0) before b-6 (index 4); reading order keeps
+    // all of unit-1 before unit-1b.
+    const results = await searchBlocks(db, "dog");
+    const work1Ids = results
+      .filter((result) => result.workEntryId === "work-1")
+      .map((result) => result.blockEntryId);
+
+    expect(work1Ids).toEqual(["b-1", "b-6", "b-8"]);
   });
 
   it("matches a CJK substring without word segmentation", async () => {
@@ -203,7 +227,7 @@ describe("GET /api/search", () => {
       results: ReadonlyArray<{ blockEntryId: string }>;
     };
     expect(body.query).toBe("dog");
-    expect(body.results.map((result) => result.blockEntryId)).toEqual(["b-1", "b-6", "b-3"]);
+    expect(body.results.map((result) => result.blockEntryId)).toEqual(["b-1", "b-6", "b-8", "b-3"]);
   });
 
   it("returns 200 with an empty result set when nothing matches", async () => {

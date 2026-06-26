@@ -19,6 +19,8 @@ export function escapeLikePattern(term: string): string {
 // non-deleted block's plaintext, joined to its work and author so a hit can be shown and
 // deep-linked. The inner join to reading units also drops soft-deleted/detached blocks (their
 // reading-unit id is null), and `deleted_at IS NULL` excludes any still-attached soft-deleted row.
+// Results follow reading order within a work: by reading unit order, then block order inside the
+// unit (`blocks.order_index` is only meaningful within one unit, so it cannot order across units).
 export async function searchBlocks(db: DbClient, query: string): Promise<SearchResultDto[]> {
   const pattern = `%${escapeLikePattern(query)}%`;
 
@@ -35,7 +37,12 @@ export async function searchBlocks(db: DbClient, query: string): Promise<SearchR
     .innerJoin(workMeta, eq(blocks.workEntryId, workMeta.entryId))
     .innerJoin(authors, eq(workMeta.authorId, authors.id))
     .where(and(isNull(blocks.deletedAt), ilike(blocks.plaintext, pattern)))
-    .orderBy(asc(workMeta.title), asc(blocks.workEntryId), asc(blocks.orderIndex))
+    .orderBy(
+      asc(workMeta.title),
+      asc(blocks.workEntryId),
+      asc(readingUnits.orderIndex),
+      asc(blocks.orderIndex)
+    )
     .limit(searchResultLimit);
 
   return rows.map((row) => ({
