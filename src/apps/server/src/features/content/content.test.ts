@@ -17,7 +17,14 @@ import { decomposeHtmlChapter, decomposeMarkdown, toEntryId } from "@whetstone/d
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { authors, blocks, entries, readingUnits, workSources } from "../../db/schema.js";
+import {
+  authors,
+  blocks,
+  entries,
+  readingPositions,
+  readingUnits,
+  workSources
+} from "../../db/schema.js";
 import { loadWorkContent } from "./contentQueries.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
@@ -221,6 +228,42 @@ describe("content routes", () => {
       body.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext))
     ).toEqual(["Two", "B"]);
     expect(body.readingUnits.map((unit) => unit.orderIndex)).toEqual([0]);
+  });
+
+  it("re-ingests Markdown after the work was opened in the Reader, clearing the stale reading position", async () => {
+    // Opening a work in the Reader saves a reading position referencing one of the work's unit
+    // entries. Re-ingestion replaces (and deletes) those unit entries, so the position must be
+    // cleared first — otherwise its dangling FK rolls the whole re-ingestion back (a 500).
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: "Alpha block.\n\nBeta block." });
+    const before = await getContent(workEntryId);
+    const unitId = before.readingUnits[0]?.entryId as string;
+    const blockId = before.readingUnits[0]?.blocks[0]?.entryId as string;
+
+    await context.db.insert(readingPositions).values({
+      anchorBlockEntryId: blockId,
+      unitEntryId: unitId,
+      userId: "default-user",
+      workEntryId: toEntryId(workEntryId)
+    });
+
+    const response = await ingest(workEntryId, {
+      kind: "manual",
+      markdown: "Gamma block.\n\nDelta block."
+    });
+
+    expect(response.statusCode).toBe(201);
+    const after = await getContent(workEntryId);
+    expect(
+      after.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext))
+    ).toEqual(["Gamma block.", "Delta block."]);
+
+    // The stale position is cleared so the reader resumes at the start.
+    const positions = await context.db
+      .select()
+      .from(readingPositions)
+      .where(eq(readingPositions.workEntryId, toEntryId(workEntryId)));
+    expect(positions).toEqual([]);
   });
 
   it("preserves block ids across edits and inserts and soft-deletes removed blocks", async () => {
