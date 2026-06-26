@@ -133,6 +133,8 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 .\scripts\run-developer-auto.cmd    # auto: foreground loop — the developer schedules itself and does one unit per tick until you stop it (Ctrl+C)
 .\scripts\run-reviewer.cmd 17       # one-shot: review PR #17 (omit the number to auto-pick the oldest needs-review PR), then run the merge step
 .\scripts\run-reviewer-auto.cmd     # auto: foreground loop — the reviewer schedules itself, reviews one PR per tick + runs the merge step, until you stop it (Ctrl+C)
+.\scripts\run-tester.cmd            # one-shot: explore the booted app on main beyond the E2E smoke and file high-signal, de-duplicated [Bug]s (or nothing)
+.\scripts\run-tester-auto.cmd       # auto: foreground loop — the Tester (QA) schedules itself, explores one session per tick + files bugs, until you stop it (Ctrl+C)
 ```
 
 The developer and reviewer each run two ways: a **one-shot** run that handles a single unit/PR, or an
@@ -140,3 +142,12 @@ The developer and reviewer each run two ways: a **one-shot** run that handles a 
 does one unit per tick — the developer fixes a sent-back PR or implements the next ready issue; the
 reviewer reviews the next `needs-review` PR and runs the deterministic merge step — until you stop it
 (Ctrl+C). The design role you trigger yourself.
+
+The **Tester (QA)** is the exploratory discovery layer above the deterministic E2E gate
+([GUIDELINES.md](./GUIDELINES.md) "Functional verification"). It runs **independently** of the
+reviewer (on a different model than the developer), boots the real stack on `main`, drives the app
+beyond the scripted smoke, and files high-signal, de-duplicated `[Bug]` issues — its only action is
+filing issues (read-only on code; it never merges or edits). It is **self-limiting**:
+`scripts/tester-next-action.mjs` caps how many bugs a run may file from the open-bug backlog headroom,
+and it files **nothing** when it finds nothing. The developer's bug-first selection then pays those
+bugs down before new feature work.
