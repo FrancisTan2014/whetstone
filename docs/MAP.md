@@ -191,7 +191,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   keeps an `activeUnitIndex` and the active unit's load state, fetches that unit's blocks when it opens
   (TOC select / jump / deep-link / position restore all switch the unit then scroll once its blocks land),
   renders only that unit safely by converting each block's stored mdast straight to React
-  (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → `hast-util-to-jsx-runtime`, no
+  (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → note-mark underlines
+  (`noteMarks.ts`, applied post-sanitize so the interactive mark spans survive) →
+  `hast-util-to-jsx-runtime`, no
   Markdown re-parse), with a sanitize schema that also disallows
   `img`, so no inline image is fetched/rendered; an `a` component override renders the source's in-content
   links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —
@@ -200,15 +202,19 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   not selectable) above its still-selectable/annotatable caption, degrading to caption-only when the
   image is absent (unsupported/missing at ingest) or fails to load at runtime. Opening the
   `?work=`/`?block=` target on arrival via
-  `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
-  that have notes (and lets the reader reopen them). The reading `article` is whetstone's own
+  `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, and underlines each note's
+  anchored span in its template hue (`noteMarks.ts` maps the plaintext `[startOffset,endOffset)`
+  onto the rendered inline content; a whole-block note shows a restrained hue gutter bar instead).
+  The underline is the tap/keyboard target that reopens the block's notes. The reading `article` is whetstone's own
   selection surface: it prevents the right-click `contextmenu` and uses `-webkit-touch-callout: none`
   with `user-select: text` so the mobile/Capacitor long-press callout doesn't collide with the
   toolbar while text stays selectable (the desktop browser selection mini-menu is a user setting,
   out of scope). Selecting text (`blockSelection.ts`
   reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
   Range rect for anchoring) opens a floating `SelectionToolbar` (two primary actions — Add note
-  and Look up) on mouse-up, key-up, or touch-end; confirming opens the `notes/` editor (where the
+  and Look up) on mouse-up, key-up, or touch-end; annotations are disjoint, so a selection
+  overlapping an existing note disables Add note with a hint while Look up stays (`noteOverlap.ts`).
+  Confirming opens the `notes/` editor (where the
   size-preselected template is chosen), and a saved
   block's highlight is "born" via `highlightBirth.ts`. The per-work note list ("Your notes") opens
   in a toggled `Sheet` panel from the ReadingHeader notes tool (no longer pinned to the reading
@@ -221,7 +227,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   hover / scroll-up via `useReaderScroll.ts`) and a **top bar hidden by default on mobile** (a center
   tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). The whole
   chrome recedes as one through the `data-hidden` flag. `readingSize.ts` holds the
-  text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its highlight hue.
+  text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its hue key
+  for the underline (`noteMark--<hue>`) and whole-block gutter (`readerBlock--<hue>`) classes.
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
   targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored
   list markers, monospace code surface, ~66ch measure); `readerHeadings.ts` decides when a unit's

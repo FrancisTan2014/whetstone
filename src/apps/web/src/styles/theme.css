@@ -45,16 +45,10 @@
   /* Annotation hues mapped to the note templates (Vocabulary / Expression / Thought). */
   --color-anno-vocab: #b45309;
   --color-anno-vocab: oklch(0.58 0.13 65);
-  --color-anno-vocab-wash: #fef3c7;
-  --color-anno-vocab-wash: oklch(0.95 0.05 85);
   --color-anno-expr: #0f766e;
   --color-anno-expr: oklch(0.5 0.1 180);
-  --color-anno-expr-wash: #ccfbf1;
-  --color-anno-expr-wash: oklch(0.94 0.05 180);
   --color-anno-thought: #6d28d9;
   --color-anno-thought: oklch(0.5 0.18 295);
-  --color-anno-thought-wash: #ede9fe;
-  --color-anno-thought-wash: oklch(0.94 0.04 295);
 
   /* Part-of-speech hues for the dictionary lookup (restrained: noun blue, verb green,
    * adjective amber, adverb violet). Day values; the .dark block overrides them. */
@@ -111,16 +105,10 @@
   --color-danger: oklch(0.78 0.1 25);
   --color-anno-vocab: #fbbf24;
   --color-anno-vocab: oklch(0.82 0.12 80);
-  --color-anno-vocab-wash: #3a2f12;
-  --color-anno-vocab-wash: oklch(0.3 0.04 80);
   --color-anno-expr: #5eead4;
   --color-anno-expr: oklch(0.82 0.1 180);
-  --color-anno-expr-wash: #103a36;
-  --color-anno-expr-wash: oklch(0.32 0.04 180);
   --color-anno-thought: #c4b5fd;
   --color-anno-thought: oklch(0.8 0.1 295);
-  --color-anno-thought-wash: #2a2342;
-  --color-anno-thought-wash: oklch(0.3 0.05 295);
   --color-pos-noun: #93b4fc;
   --color-pos-noun: oklch(0.74 0.12 260);
   --color-pos-noun-wash: #1a2540;
@@ -329,6 +317,11 @@
   margin-block: 1.25rem;
 }
 
+/*
+ * A whole-block note (one with no sub-block offsets) gets a restrained left gutter bar in its
+ * template hue — never a full-block background wash. Sub-block notes use `.noteMark` underlines
+ * (below) instead, so the reading surface stays calm and you can see which words a note is about.
+ */
 .readerBlock--annotated {
   border-inline-start: 3px solid var(--color-border);
   border-radius: 0 0.25rem 0.25rem 0;
@@ -337,17 +330,45 @@
 
 .readerBlock--vocab {
   border-inline-start-color: var(--color-anno-vocab);
-  background-color: var(--color-anno-vocab-wash);
 }
 
 .readerBlock--expr {
   border-inline-start-color: var(--color-anno-expr);
-  background-color: var(--color-anno-expr-wash);
 }
 
 .readerBlock--thought {
   border-inline-start-color: var(--color-anno-thought);
-  background-color: var(--color-anno-thought-wash);
+}
+
+/*
+ * A sub-block note marks exactly its anchored characters with a delicate underline in the template
+ * hue — the hue carries the meaning, not the weight. `text-decoration: underline` follows wrapped
+ * lines (unlike a border); `from-font` thickness tracks the reading size; the offset gives the text
+ * air. The underlined span is the tap/keyboard target that opens the note, legible in Day and Night.
+ */
+.noteMark {
+  text-decoration-line: underline;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.noteMark--vocab {
+  text-decoration-color: var(--color-anno-vocab);
+}
+
+.noteMark--expr {
+  text-decoration-color: var(--color-anno-expr);
+}
+
+.noteMark--thought {
+  text-decoration-color: var(--color-anno-thought);
+}
+
+.noteMark:focus-visible {
+  outline: 2px solid var(--color-focus, currentColor);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 /*

@@ -8,6 +8,7 @@ import { SelectionToolbar } from "./SelectionToolbar";
 function renderToolbar(
   overrides: {
     anchorRect?: DOMRect;
+    disabledHint?: string;
     onClose?: () => void;
     onConfirm?: () => void;
     onLookup?: () => void;
@@ -26,6 +27,7 @@ function renderToolbar(
   render(
     <SelectionToolbar
       anchorRect={overrides.anchorRect}
+      disabledHint={overrides.disabledHint}
       onClose={onClose}
       onConfirm={onConfirm}
       onLookup={onLookup}
@@ -88,5 +90,22 @@ describe("SelectionToolbar", () => {
     renderToolbar();
 
     expect(screen.getByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
+  });
+
+  it("disables Add note with a hint when the selection overlaps an annotation, keeping Look up", async () => {
+    const { onConfirm, onLookup, user } = renderToolbar({ disabledHint: "Notes can't overlap" });
+
+    const addNote = screen.getByRole("button", { name: "Add note" }) as HTMLButtonElement;
+    expect(addNote.disabled).toBe(true);
+    expect(screen.getByText("Notes can't overlap")).toBeDefined();
+
+    await user.click(addNote);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    // Look up stays available even when the selection overlaps.
+    const lookUp = screen.getByRole("button", { name: "Look up" }) as HTMLButtonElement;
+    expect(lookUp.disabled).toBe(false);
+    await user.click(lookUp);
+    expect(onLookup).toHaveBeenCalled();
   });
 });
