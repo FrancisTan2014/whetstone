@@ -16,7 +16,12 @@ import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { annotationHueClass } from "./annotationHue";
 import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
-import { eventTargetClosest, readBlockSelection, releasedBlockElement } from "./blockSelection";
+import {
+  eventTargetClosest,
+  isCrossBlockSelection,
+  readBlockSelection,
+  releasedBlockElement
+} from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { BlockContent } from "./mdastBlock";
 import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
@@ -577,6 +582,14 @@ export function ReaderPage({
       language: string
     ): void => {
       const selection = window.getSelection();
+
+      // A selection that spans two blocks cannot anchor to a single block (v0 notes are block-scoped).
+      // Tell the reader explicitly instead of silently doing nothing.
+      if (isCrossBlockSelection(selection)) {
+        toast.error("Select within a single block to add a note.");
+        return;
+      }
+
       const blockSelection = readBlockSelection(blockElement, selection);
 
       if (blockSelection === undefined) {
@@ -601,7 +614,7 @@ export function ReaderPage({
         workEntryId
       });
     },
-    []
+    [toast]
   );
 
   // The open work's language (for routing a lookup), derived for every ready state so an idle

@@ -62,6 +62,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }): Reac
     [dismiss]
   );
 
+  // The enqueue API is referentially stable (it only closes over the stable `enqueue`), so a
+  // memoized consumer can depend on it without re-running when the queue changes.
+  const error = useCallback((message: string) => enqueue(message, "error"), [enqueue]);
+  const success = useCallback((message: string) => enqueue(message, "success"), [enqueue]);
+
   useEffect(() => {
     const pending = timers.current;
 
@@ -76,11 +81,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }): Reac
   const value = useMemo<ToastContextValue>(
     () => ({
       dismiss,
-      error: (message) => enqueue(message, "error"),
-      success: (message) => enqueue(message, "success"),
+      error,
+      success,
       toasts
     }),
-    [dismiss, enqueue, toasts]
+    [dismiss, error, success, toasts]
   );
 
   return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>;
