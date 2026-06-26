@@ -112,7 +112,7 @@ tokens live in code (the Tailwind theme) once built; this section records the du
   - `ReadingUnit` is an ordered unit within a work (chapter/section/essay). It is a container/ordering
     entry, linked from the Work via `contains`.
   - **`Block` is the atomic, addressable unit** —   one content block (paragraph, heading, list item,
-      blockquote, code block, or **figure** — an extracted EPUB image with its caption). Each block is an `Entry`, linked from its ReadingUnit via `contains`,
+      blockquote, code block, **table**, or **figure** — an extracted EPUB image with its caption). Each block is an `Entry`, linked from its ReadingUnit via `contains`,
     with a **stable id** that survives edits and re-imports. Blocks are what notes anchor to and what
     search returns.
 - A short work (essay, blog post) has one ReadingUnit; a book/classic has many ordered units.

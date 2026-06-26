@@ -60,7 +60,7 @@ export const blocks = pgTable(
   {
     alt: text("alt"),
     blockType: text("block_type", {
-      enum: ["paragraph", "heading", "list", "blockquote", "code", "figure"] as const
+      enum: ["paragraph", "heading", "list", "blockquote", "code", "table", "figure"] as const
     }).notNull(),
     deletedAt: timestamp("deleted_at", { mode: "date", withTimezone: true }),
     entryId: text("entry_id")

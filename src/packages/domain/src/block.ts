@@ -2,6 +2,14 @@
 // search returns. A block is one top-level Markdown node decomposed from a source.
 // A `figure` block is an image with an optional caption; its renderable mdast/plaintext
 // is the caption (empty when the figure is image-only).
-export const blockTypes = ["paragraph", "heading", "list", "blockquote", "code", "figure"] as const;
+export const blockTypes = [
+  "paragraph",
+  "heading",
+  "list",
+  "blockquote",
+  "code",
+  "table",
+  "figure"
+] as const;
 
 export type BlockType = (typeof blockTypes)[number];

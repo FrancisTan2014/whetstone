@@ -127,6 +127,39 @@ describe("BlockContent", () => {
     expect(nestingWarnings).toHaveLength(0);
   });
 
+  it("renders a GFM table as a real table with header and body cells", () => {
+    const { container } = render(
+      <BlockContent
+        node={{
+          align: [null, null],
+          children: [
+            {
+              children: [
+                { children: [{ type: "text", value: "Term" }], type: "tableCell" },
+                { children: [{ type: "text", value: "Meaning" }], type: "tableCell" }
+              ],
+              type: "tableRow"
+            },
+            {
+              children: [
+                { children: [{ type: "text", value: "whetstone" }], type: "tableCell" },
+                { children: [{ type: "text", value: "sharpening surface" }], type: "tableCell" }
+              ],
+              type: "tableRow"
+            }
+          ],
+          type: "table"
+        }}
+      />
+    );
+
+    expect(container.querySelector("table")).not.toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Term" })).toBeDefined();
+    expect(screen.getByRole("columnheader", { name: "Meaning" })).toBeDefined();
+    expect(screen.getByRole("cell", { name: "whetstone" })).toBeDefined();
+    expect(screen.getByRole("cell", { name: "sharpening surface" })).toBeDefined();
+  });
+
   it("drops raw HTML so it never executes (no script, no img)", () => {
     const { container } = render(
       <BlockContent
