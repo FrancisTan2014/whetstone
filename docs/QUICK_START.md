@@ -120,43 +120,57 @@ On macOS/Linux: `mkdir -p "$PWD/.data/db"` then `export DATABASE_DIR="$PWD/.data
 In both cases the content the reader shows comes from **blocks stored in the database**, not from
 these files — the retained source is kept only so you can trace where content came from.
 
-## 3. Run the API server
+## 3. Run the app (one command)
 
-Build the server (this also copies its database migrations), then run it. For the iterative dev
-loop, use `dev` — it persists the database to a git-ignored local folder by default, so your
-ingested content and notes survive a server restart:
-
-```powershell
-pnpm --filter @whetstone/server build
-pnpm --filter @whetstone/server dev
-```
-
-Environment configuration (step 2) is optional. For a throwaway first run with an in-memory
-database (discarded when the server stops), use `start` instead of `dev`:
+For the iterative dev loop, a single command from the repository root brings up the whole
+stack — the API server **from source with reload** and the web dev server — together:
 
 ```powershell
-pnpm --filter @whetstone/server start
+pnpm dev
 ```
 
-The server applies migrations and seeds the v0 note templates on boot, then listens on
-`http://127.0.0.1:3000`. Health check:
+This builds the shared packages (`@whetstone/domain`, `@whetstone/contracts`) once, then runs
+the API server via `tsx watch` and the Vite web dev server, streaming both logs to the
+terminal. Because the server runs from **source with reload**, a server route you just changed
+is live on the next request **without a manual `pnpm build`** — no more stale `dist/` returning
+404s for endpoints the source already has. The server persists its database to a git-ignored
+local folder by default (see [Data directory](#data-directory)), so ingested content and notes
+survive each reload. Press Ctrl-C to stop both.
+
+The server listens on `http://127.0.0.1:3000` and the web app on `http://127.0.0.1:5173` (the
+web dev server proxies all `/api` requests to the server). Environment configuration (step 2)
+is optional. Health check:
 
 ```powershell
 curl http://127.0.0.1:3000/health
 ```
 
-## 4. Run the web client
+### Run the server and web separately (alternative)
 
-In a second terminal, start the Vite dev server:
+You can also run the two halves in their own terminals. The server's `dev` script runs from
+source with reload, just like `pnpm dev`:
+
+```powershell
+pnpm --filter @whetstone/server dev
+```
 
 ```powershell
 pnpm --filter @whetstone/web dev
 ```
 
-Open the printed URL (by default `http://127.0.0.1:5173`). The dev server proxies all `/api`
-requests to the API server on port `3000`, so keep the server from step 3 running.
+For a throwaway run with an in-memory database (discarded when the server stops), use the
+production `start` path instead — it serves the built `dist`, so build it first and rebuild
+after server changes:
 
-## 5. First user flow
+```powershell
+pnpm --filter @whetstone/server build
+pnpm --filter @whetstone/server start
+```
+
+The server applies migrations and seeds the v0 note templates on boot. Open the web app's
+printed URL (by default `http://127.0.0.1:5173`) and keep the server running.
+
+## 4. First user flow
 
 With both the server and web client running, open the web app. The page shows the **Library admin**,
 the **Work content** panel, and the **Reader**.
@@ -180,7 +194,7 @@ the **Work content** panel, and the **Reader**.
 6. **Create and save a note.** Pick a note template (a size-based default is preselected), fill in at
    least one field, and choose **Save note**. A "Note saved." confirmation appears.
 
-## 6. Validation
+## 5. Validation
 
 Run the full gate before opening a pull request (it mirrors CI):
 
