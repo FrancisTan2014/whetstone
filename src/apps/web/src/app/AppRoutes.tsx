@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Route, Routes, useSearchParams } from "react-router-dom";
 
 import { WorkContentPanel } from "../features/content/WorkContentPanel.js";
@@ -7,12 +8,15 @@ import { AppShell } from "./AppShell.js";
 import { ModePlaceholder } from "./ModePlaceholder.js";
 
 // The Library mode keeps the existing admin + content screens mounted together; screen
-// redesign happens in later slices.
+// redesign happens in later slices. It lifts the just-created work's entry id so the content
+// panel refreshes and selects a newly added/imported work without a page reload.
 function LibraryMode(): React.JSX.Element {
+  const [focusWorkEntryId, setFocusWorkEntryId] = useState<string | undefined>(undefined);
+
   return (
     <div className="mx-auto max-w-5xl p-4">
-      <AdminLibraryPage />
-      <WorkContentPanel />
+      <AdminLibraryPage onWorkCreated={setFocusWorkEntryId} />
+      <WorkContentPanel focusWorkEntryId={focusWorkEntryId} />
     </div>
   );
 }

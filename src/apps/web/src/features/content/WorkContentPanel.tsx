@@ -20,18 +20,22 @@ type PanelState =
   | Readonly<{ status: "empty" }>
   | Readonly<{ data: ReadyData; status: "ready" }>;
 
-async function loadInitialState(): Promise<PanelState> {
+async function loadInitialState(focusWorkEntryId?: string): Promise<PanelState> {
   const list = await fetchWorks();
-  const first = list.works[0];
+  const focused =
+    focusWorkEntryId === undefined
+      ? undefined
+      : list.works.find((item) => item.work.entryId === focusWorkEntryId);
+  const selected = focused ?? list.works[0];
 
-  if (first === undefined) {
+  if (selected === undefined) {
     return { status: "empty" };
   }
 
-  const content = await fetchWorkContent(first.work.entryId);
+  const content = await fetchWorkContent(selected.work.entryId);
 
   return {
-    data: { content, selectedWork: first, works: list.works },
+    data: { content, selectedWork: selected, works: list.works },
     status: "ready"
   };
 }
@@ -44,7 +48,14 @@ function ingestedLabel(content: WorkContentDto): string {
   return `Ingested — ${workContentSummaryLabel(summarizeWorkContent(content))}.`;
 }
 
-export function WorkContentPanel(): React.JSX.Element {
+type WorkContentPanelProps = Readonly<{
+  // When this changes to a work's entry id (e.g. just after the Library creates or imports
+  // one), the panel reloads its works and selects that work, so its content can be edited
+  // without a page reload.
+  focusWorkEntryId?: string | undefined;
+}>;
+
+export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): React.JSX.Element {
   const [state, setState] = useState<PanelState>({ status: "loading" });
   const [markdown, setMarkdown] = useState("");
   const [file, setFile] = useState<File | undefined>(undefined);
@@ -52,10 +63,10 @@ export function WorkContentPanel(): React.JSX.Element {
   const [result, setResult] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    loadInitialState()
+    loadInitialState(focusWorkEntryId)
       .then(setState)
       .catch(() => setState({ status: "error" }));
-  }, []);
+  }, [focusWorkEntryId]);
 
   function applyContent(data: ReadyData, content: WorkContentDto, work: WorkListItemDto): void {
     setState({ data: { ...data, content, selectedWork: work }, status: "ready" });
