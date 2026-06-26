@@ -568,6 +568,30 @@ describe("ReaderPage", () => {
     expect(screen.queryByText("Intro paragraph.")).not.toBeNull();
   });
 
+  it("a superseded fetchWorks rejection does not surface worksError over the live work", async () => {
+    let rejectWorks: (reason: unknown) => void = () => {};
+    mockedFetchWorks.mockReturnValueOnce(
+      new Promise<WorkListDto>((_resolve, reject) => {
+        rejectWorks = reject;
+      })
+    );
+    mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
+    seedWorkContent(multiUnitContent);
+
+    // The first open's works fetch stays pending; switch to work-2, which opens from a fresh fetch.
+    const { rerender } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    rerender(<ReaderPage initialWorkEntryId="work-2" />);
+    await screen.findByText("Intro paragraph.");
+
+    // The superseded first works fetch rejects late — it must not replace the live reader.
+    rejectWorks(new Error("late works failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(screen.queryByText("Could not load works.")).toBeNull();
+    expect(screen.queryByText("Intro paragraph.")).not.toBeNull();
+  });
+
   it("opens the unit deep-linked by a block param and scrolls to that block", async () => {
     seedWorkContent(multiUnitContent);
     const { container } = render(

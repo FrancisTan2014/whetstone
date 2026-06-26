@@ -508,7 +508,12 @@ export function ReaderPage({
 
         void openInitialWork(works, requested.work.entryId, initialBlockEntryId);
       })
-      .catch(() => setState({ status: "worksError" }));
+      .catch(() => {
+        // A late rejection from a superseded fetchWorks must not replace the live reader.
+        if (active) {
+          setState({ status: "worksError" });
+        }
+      });
 
     return () => {
       active = false;
