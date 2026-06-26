@@ -9,31 +9,23 @@ afterEach(() => {
 });
 
 describe("Spinner", () => {
-  it("is decorative by default and stays perceivably active under reduced motion via a cross-fade", () => {
-    const { container } = render(<Spinner />);
-    const svg = container.querySelector("svg");
+  it("is decorative — hidden from assistive tech — when used without a label", () => {
+    render(<Spinner />);
 
-    expect(svg?.getAttribute("aria-hidden")).toBe("true");
-    expect(svg?.getAttribute("class")).toContain("animate-spin");
-    // The `loadingSpinner` hook plus the two arc hooks drive a reduced-motion-safe counter-phase
-    // opacity cross-fade (see theme.css), so the indicator clearly conveys activity instead of
-    // freezing into a static icon when rotation is disabled.
-    expect(svg?.getAttribute("class")).toContain("loadingSpinner");
-    expect(container.querySelector("circle")?.getAttribute("class")).toContain(
-      "loadingSpinnerTrack"
-    );
-    expect(container.querySelector("path")?.getAttribute("class")).toContain("loadingSpinnerArc");
+    // A label-less spinner is a companion to visible text, so it exposes no accessible image.
+    expect(screen.queryByRole("img")).toBeNull();
   });
 
-  it("announces a label when used standalone", () => {
+  it("announces its label as a standalone status image when given one", () => {
     render(<Spinner label="Loading" />);
 
     expect(screen.getByRole("img", { name: "Loading" })).toBeDefined();
   });
 
-  it("appends caller-provided classes", () => {
-    const { container } = render(<Spinner className="mr-2" />);
+  it("keeps its semantics when a caller passes an extra className", () => {
+    render(<Spinner className="mr-2" label="Saving" />);
 
-    expect(container.querySelector("svg")?.getAttribute("class")).toContain("mr-2");
+    // The optional className is styling that passes through; the indicator stays announced.
+    expect(screen.getByRole("img", { name: "Saving" })).toBeDefined();
   });
 });

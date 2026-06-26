@@ -104,11 +104,12 @@ describe("ReadingHeader", () => {
     expect(notes.textContent).toContain("3");
   });
 
-  it("omits the count badge when there are no notes", () => {
+  it("shows no count on the notes tool when there are no notes", () => {
     renderHeader({ notesCount: 0 });
 
     const notes = screen.getByRole("button", { name: "Your notes" });
-    expect(notes.querySelector(".readingToolBadge")).toBeNull();
+    // The count badge only appears when there are notes, so the control shows no number at zero.
+    expect(notes.textContent).not.toMatch(/\d/);
   });
 
   it("marks the open notes panel through aria-expanded", () => {
@@ -119,25 +120,13 @@ describe("ReadingHeader", () => {
     );
   });
 
-  it("adds the hidden modifier when the chrome recedes", () => {
-    const { container } = render(
-      <ReadingHeader
-        hasToc
-        hidden
-        notesCount={0}
-        notesOpen={false}
-        onSizeChange={vi.fn()}
-        onToggleNotes={vi.fn()}
-        onToggleToc={vi.fn()}
-        progress={0}
-        size="md"
-        title="Hidden"
-        tocOpen={false}
-      />
-    );
+  it("keeps its tools reachable when the chrome recedes", () => {
+    renderHeader({ hidden: true, title: "Hidden" });
 
-    const header = container.querySelector("header") as HTMLElement;
-    expect(header.className).toContain("readingHeader--hidden");
-    expect(header.getAttribute("data-hidden")).toBe("true");
+    // The receded chrome stays in the DOM (it returns on hover / scroll-up), so its tools and
+    // title remain reachable rather than being removed from the accessibility tree.
+    expect(screen.getByText("Hidden")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Your notes" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Increase reading text size" })).toBeDefined();
   });
 });

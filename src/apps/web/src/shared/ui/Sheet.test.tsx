@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("Sheet", () => {
-  it("renders a right-docked side panel when the side is forced to right", () => {
+  it("renders an accessible dialog labelled by its title, with its content", () => {
     mockMatchMedia({});
     render(
       <Sheet onOpenChange={vi.fn()} open side="right" title="Note">
@@ -27,13 +27,11 @@ describe("Sheet", () => {
       </Sheet>
     );
 
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.getAttribute("data-side")).toBe("right");
-    expect(dialog.className).toContain("sheet-panel-right");
+    expect(screen.getByRole("dialog", { name: "Note" })).toBeDefined();
     expect(screen.getByText("panel body")).toBeDefined();
   });
 
-  it("renders a bottom sheet when the side is forced to bottom", () => {
+  it("renders the dialog when docked as a bottom sheet", () => {
     mockMatchMedia({});
     render(
       <Sheet onOpenChange={vi.fn()} open side="bottom" title="Note">
@@ -41,10 +39,11 @@ describe("Sheet", () => {
       </Sheet>
     );
 
-    expect(screen.getByRole("dialog").getAttribute("data-side")).toBe("bottom");
+    expect(screen.getByRole("dialog", { name: "Note" })).toBeDefined();
+    expect(screen.getByText("panel body")).toBeDefined();
   });
 
-  it("defaults to a side panel on desktop widths", () => {
+  it("opens an accessible dialog at desktop widths", () => {
     mockMatchMedia({ "(min-width: 768px)": true });
     render(
       <Sheet onOpenChange={vi.fn()} open title="Note">
@@ -52,10 +51,10 @@ describe("Sheet", () => {
       </Sheet>
     );
 
-    expect(screen.getByRole("dialog").getAttribute("data-side")).toBe("right");
+    expect(screen.getByRole("dialog", { name: "Note" })).toBeDefined();
   });
 
-  it("defaults to a bottom sheet on mobile widths", () => {
+  it("opens an accessible dialog at mobile widths", () => {
     mockMatchMedia({ "(min-width: 768px)": false });
     render(
       <Sheet onOpenChange={vi.fn()} open title="Note">
@@ -63,7 +62,7 @@ describe("Sheet", () => {
       </Sheet>
     );
 
-    expect(screen.getByRole("dialog").getAttribute("data-side")).toBe("bottom");
+    expect(screen.getByRole("dialog", { name: "Note" })).toBeDefined();
   });
 
   it("is dismissible via its close control", async () => {

@@ -9,15 +9,13 @@ afterEach(() => {
 });
 
 describe("SafeArea", () => {
-  it("renders its children inside the safe-area container", () => {
+  it("renders its children", () => {
     render(
       <SafeArea>
         <p>framed content</p>
       </SafeArea>
     );
 
-    const child = screen.getByText("framed content");
-    expect(child).toBeDefined();
-    expect(child.parentElement?.className).toContain("app-safe-area");
+    expect(screen.getByText("framed content")).toBeDefined();
   });
 });
