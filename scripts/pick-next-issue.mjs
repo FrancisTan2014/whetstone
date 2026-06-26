@@ -38,13 +38,15 @@ export function ghJson(args) {
   return JSON.parse(gh(args));
 }
 
-// Every #N referenced on a `Depends on:` line, handling "Depends on: #3, #4" and "Depends on #3 and #5".
+// Every #N in a `Depends on:` clause, handling "Depends on: #3, #4" and "Depends on #3 and #5". The
+// match stops at the first sentence end, so a trailing sentence on the same line (e.g.
+// "Depends on: #3, #4. Split from #9.") never misreads #9 as a dependency.
 export function dependsOn(body) {
   const deps = new Set();
-  const lineRe = /^[ \t]*depends on\b.*$/gim;
-  let line;
-  while ((line = lineRe.exec(body ?? '')) !== null) {
-    for (const m of line[0].matchAll(/#(\d+)/g)) deps.add(Number(m[1]));
+  const clauseRe = /^[ \t]*depends on\b[^.\n]*/gim;
+  let clause;
+  while ((clause = clauseRe.exec(body ?? '')) !== null) {
+    for (const m of clause[0].matchAll(/#(\d+)/g)) deps.add(Number(m[1]));
   }
   return [...deps];
 }

@@ -710,3 +710,15 @@ discretion — merges a PR only when **every** gate below passes. The reviewer a
 
 If any gate fails, the step leaves the PR open and reports the failing gate instead of merging. It uses
 the repository default merge strategy (merge commit) and deletes the branch when GitHub reports it is safe.
+
+### Dependency unblock
+
+After the merge step, the reviewer launcher runs a sibling **deterministic unblock step**
+(`scripts/unblock-ready-issues.mjs`) — again code, not an LLM session's discretion. Merging a PR closes
+its linked issue, which can satisfy another issue's dependency; this step rejoins those issues to the
+developer queue. It flips every open `blocked` issue whose `Depends on: #N` references are **all** closed
+from `blocked` to `ready-for-dev` (with an audit comment), sharing its dependency parse with the
+developer's selector (`scripts/pick-next-issue.mjs`) so "dependencies resolved" means the same thing on
+both sides of the handoff. It leaves an issue blocked when any dependency is still open, when it carries
+`needs-design` (the block is an unresolved decision, not a dependency), or when it names no dependency.
+The scan is idempotent and self-heals, so a dependency closed in an earlier tick is still caught later.

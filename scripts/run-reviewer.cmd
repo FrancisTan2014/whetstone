@@ -32,3 +32,7 @@ copilot --agent=whetstone-reviewer --model gpt-5.5 --allow-all -p "%TASK%"
 echo.
 echo === Deterministic merge step (merges review-approved PRs whose gates pass) ===
 call "%~dp0run-merge.cmd"
+
+echo.
+echo === Deterministic unblock step (unblocks blocked issues whose dependencies are now resolved) ===
+node scripts\unblock-ready-issues.mjs
