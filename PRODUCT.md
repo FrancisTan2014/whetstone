@@ -156,7 +156,9 @@ Staged by difficulty and value:
   ReadingUnit by default; headings infer further structure.
 - **v0 — EPUB**: `.epub` upload. The structured spine gives reading order; the OPF gives title /
   author / language; each chapter's XHTML becomes a ReadingUnit of blocks. **This delivers the
-  whole-book case (史记) without manual typing.** Figure images and their captions are extracted into figure blocks.
+  whole-book case (史记) without manual typing.** Images are extracted into **figure blocks** from EPUB
+  `<figure>` structure (image + `<figcaption>`): the caption becomes the figure's caption, never a stray
+  heading. A bare `<img>` becomes an image-only figure; v0 does not guess captions from neighboring text.
 - **Next stage — PDF / scanned**: deferred. Handled by an **isolated Python ingestion worker**
   (document-AI + CJK OCR) behind the same normalized contract, opened only when its fidelity gain is
   worth the added runtime. Not part of v0. (See future direction.)
@@ -207,6 +209,7 @@ be clean and consistent:
   blockquotes/epigraphs, and footnotes are styled for readability.
 - **Figures** (EPUB images) render as a real figure — the image sized to the reading measure with its
   caption beneath (never a stray heading); a missing or unsupported image degrades to its caption alone.
+  The image is display-only; its caption is selectable text you can take notes on.
 - Front matter (title/copyright/dedication units) is de-emphasized, not rendered as giant repeated
   headings.
 - Typography targets: reading measure ~66ch (Latin), line-height >= 1.5, comfortable body size (~18px),
@@ -334,8 +337,8 @@ does not change the "No LLM note drafting" non-goal.
 - No daily routine; no complicated settings.
 - No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
 - No remote (`http`) images, SVG, or manual/Markdown image upload in v0: figure support is **EPUB-only**,
-  served from bytes extracted at ingestion. Figures are display-only (not yet annotatable; caption text
-  stays selectable). These are deferred, not permanent exclusions.
+  served from bytes extracted at ingestion. The figure **image** is display-only and not annotatable; its
+  **caption** stays selectable and annotatable like any text. These are deferred, not permanent exclusions.
 - No authentication or login UI in v0: a single default user (one active person; "admin" and "reader" are
   one person in different modes). The data model still carries a **user dimension for personal data** (see
   Identity & ownership) so multi-user is a clean future migration, not a retrofit. No sign-in, sessions, or
