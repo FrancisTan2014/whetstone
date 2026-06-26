@@ -23,8 +23,10 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 }
 
 vi.mock("./readerApi", () => ({
-  fetchWorkContent: vi.fn(),
-  fetchWorks: vi.fn()
+  fetchUnitContent: vi.fn(),
+  fetchWorkStructure: vi.fn(),
+  fetchWorks: vi.fn(),
+  locateBlockUnit: vi.fn()
 }));
 
 vi.mock("../notes/notesApi", () => ({
@@ -52,19 +54,31 @@ import {
   updateNote
 } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
-import { fetchWorkContent, fetchWorks } from "./readerApi";
+import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
-import { applyUnitForBlock, applyUnitSelection, ReaderPage, viewingPosition } from "./ReaderPage";
+import {
+  applyUnitError,
+  applyUnitForBlock,
+  applyUnitLoaded,
+  applyUnitSelection,
+  ReaderPage,
+  retryActiveUnit,
+  viewingPosition
+} from "./ReaderPage";
+import type { ReaderBlock, ReaderStructure } from "./readerModel";
 import type {
   NoteDto,
   NoteTemplateDto,
   WorkContentDto,
+  WorkStructureDto,
   WorkListItemDto
 } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
-const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
+const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
+const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
+const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedCreateNote = vi.mocked(createNote);
 const mockedFetchNotes = vi.mocked(fetchNotes);
@@ -138,6 +152,30 @@ const chineseContent: WorkContentDto = {
 
 function emptyContent(workEntryId: string): WorkContentDto {
   return { readingUnits: [], workEntryId: toEntryId(workEntryId) };
+}
+
+// The reader now loads a work's lightweight structure first, then each active unit's blocks on
+// demand. A single seeded `WorkContentDto` drives all three reader fetches: `fetchWorkStructure`
+// returns its unit metadata, `fetchUnitContent` returns the matching unit's blocks (rejecting an
+// unknown unit the way a 404 would), and `locateBlockUnit` resolves a block to its owning unit
+// (or undefined when no unit holds it). Tests keep their existing `content` fixtures and just call
+// `seedWorkContent(content)` instead of stubbing a whole-work fetch.
+let seededContent: WorkContentDto = emptyContent("work-1");
+
+function structureOf(content: WorkContentDto): WorkStructureDto {
+  return {
+    readingUnits: content.readingUnits.map((unit) => ({
+      blockCount: unit.blocks.length,
+      entryId: unit.entryId,
+      orderIndex: unit.orderIndex,
+      ...(unit.title === undefined ? {} : { title: unit.title })
+    })),
+    workEntryId: content.workEntryId
+  };
+}
+
+function seedWorkContent(content: WorkContentDto): void {
+  seededContent = content;
 }
 
 // Units and blocks are stored out of reading order to confirm the page renders them
@@ -367,7 +405,26 @@ beforeEach(() => {
   // jsdom does not implement scrollTo; keep it stubbed so any library scroll call is a no-op.
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
-  mockedFetchWorkContent.mockResolvedValue(emptyContent("work-1"));
+  seededContent = emptyContent("work-1");
+  mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => ({
+    readingUnits: structureOf(seededContent).readingUnits,
+    workEntryId: toEntryId(workEntryId)
+  }));
+  mockedFetchUnitContent.mockImplementation(async (_workEntryId: string, unitEntryId: string) => {
+    const unit = seededContent.readingUnits.find((candidate) => candidate.entryId === unitEntryId);
+
+    if (unit === undefined) {
+      throw new Error(`no reading unit seeded for ${unitEntryId}`);
+    }
+
+    return unit;
+  });
+  mockedLocateBlockUnit.mockImplementation(
+    async (_workEntryId: string, blockEntryId: string) =>
+      seededContent.readingUnits.find((unit) =>
+        unit.blocks.some((block) => block.entryId === blockEntryId)
+      )?.entryId
+  );
   mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
   // The server is the source of truth for reading position; default to "no saved position".
@@ -414,16 +471,16 @@ describe("ReaderPage", () => {
 
   it("opens the requested work on arrival when given an initial work entry id", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
 
     render(<ReaderPage initialWorkEntryId="work-2" />);
 
     expect(await screen.findByText("Intro paragraph.")).toBeDefined();
-    expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-2");
+    expect(mockedFetchWorkStructure).toHaveBeenCalledWith("work-2");
   });
 
   it("opens the unit deep-linked by a block param and scrolls to that block", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(
       <ReaderPage initialBlockEntryId="b-2" initialWorkEntryId="work-1" />
     );
@@ -440,11 +497,11 @@ describe("ReaderPage", () => {
     render(<ReaderPage initialWorkEntryId="missing-work" />);
 
     expect(await screen.findByText("Open a work from your Library")).toBeDefined();
-    expect(mockedFetchWorkContent).not.toHaveBeenCalled();
+    expect(mockedFetchWorkStructure).not.toHaveBeenCalled();
   });
 
   it("does not render an image even when a block's Markdown contains one", async () => {
-    mockedFetchWorkContent.mockResolvedValue(imageContent);
+    seedWorkContent(imageContent);
 
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -453,7 +510,7 @@ describe("ReaderPage", () => {
   });
 
   it("renders only the active reading unit and switches units via the 目录", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -479,12 +536,12 @@ describe("ReaderPage", () => {
       )
     ).toEqual(["b-2", "b-3"]);
 
-    expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-1");
+    expect(mockedFetchWorkStructure).toHaveBeenCalledWith("work-1");
   });
 
   it("reads a single-unit work without a 目录", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
-    mockedFetchWorkContent.mockResolvedValue(chineseContent);
+    seedWorkContent(chineseContent);
     render(<ReaderPage initialWorkEntryId="work-zh" />);
 
     expect(await screen.findByText("你好世界")).toBeDefined();
@@ -493,7 +550,7 @@ describe("ReaderPage", () => {
   });
 
   it("shows the untitled active unit without a heading", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -515,24 +572,24 @@ describe("ReaderPage", () => {
     ).toHaveLength(2);
   });
 
-  it("shows a loading state while a work's content loads", async () => {
-    let resolveContent!: (value: WorkContentDto) => void;
-    mockedFetchWorkContent.mockReturnValue(
-      new Promise<WorkContentDto>((resolve) => {
-        resolveContent = resolve;
+  it("shows a loading state while a work's structure loads", async () => {
+    let resolveStructure!: (value: WorkStructureDto) => void;
+    mockedFetchWorkStructure.mockReturnValue(
+      new Promise<WorkStructureDto>((resolve) => {
+        resolveStructure = resolve;
       })
     );
     render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("Loading the work…")).toBeDefined();
 
-    resolveContent(emptyContent("work-1"));
+    resolveStructure({ readingUnits: [], workEntryId: toEntryId("work-1") });
 
     expect(await screen.findByText("This work has no content yet.")).toBeDefined();
   });
 
-  it("shows an error when a work's content fails to load", async () => {
-    mockedFetchWorkContent.mockRejectedValue(new Error("boom"));
+  it("shows an error when a work's structure fails to load", async () => {
+    mockedFetchWorkStructure.mockRejectedValue(new Error("boom"));
     render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("Could not load this work. Please try again.")).toBeDefined();
@@ -545,7 +602,7 @@ describe("ReaderPage", () => {
   });
 
   it("renders Markdown safely and does not execute raw HTML", async () => {
-    mockedFetchWorkContent.mockResolvedValue(unsafeContent);
+    seedWorkContent(unsafeContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Safe heading" })).toBeDefined();
@@ -554,7 +611,7 @@ describe("ReaderPage", () => {
   });
 
   it("renders in-content links as non-navigating text that stays selectable", async () => {
-    mockedFetchWorkContent.mockResolvedValue(linkContent);
+    seedWorkContent(linkContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Chapter 2");
     const block = blockElement(container, "b-1");
@@ -579,7 +636,7 @@ describe("ReaderPage", () => {
   });
 
   it("opens the selection toolbar then the editor when text is selected in a block", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -594,7 +651,7 @@ describe("ReaderPage", () => {
   });
 
   it("suppresses the context menu and callout in the reading area while keeping text selectable", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -612,7 +669,7 @@ describe("ReaderPage", () => {
   });
 
   it("anchors a note to the selected occurrence of repeated text", async () => {
-    mockedFetchWorkContent.mockResolvedValue(repeatedContent);
+    seedWorkContent(repeatedContent);
     mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -640,7 +697,7 @@ describe("ReaderPage", () => {
   });
 
   it("does not open the toolbar when there is no selection", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
     window.getSelection()?.removeAllRanges();
@@ -650,7 +707,7 @@ describe("ReaderPage", () => {
   });
 
   it("does not open the toolbar for a whitespace-only selection", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     const block = await screen.findByText("Intro paragraph.");
     // "Intro paragraph." has a space at index 5.
@@ -661,7 +718,7 @@ describe("ReaderPage", () => {
   });
 
   it("confirms and closes the editor after a note is saved", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -679,7 +736,7 @@ describe("ReaderPage", () => {
   });
 
   it("dismisses the selection toolbar without opening the editor", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -694,7 +751,7 @@ describe("ReaderPage", () => {
   });
 
   it("closes the editor when cancelled", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -710,7 +767,7 @@ describe("ReaderPage", () => {
   });
 
   it("shows the unavailable editor when note templates fail to load", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     mockedFetchNoteTemplates.mockRejectedValue(new Error("nope"));
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -749,7 +806,7 @@ async function openHuedReader(): Promise<{
   container: HTMLElement;
   user: ReturnType<typeof userEvent.setup>;
 }> {
-  mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+  seedWorkContent(multiUnitContent);
   mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
   const user = userEvent.setup();
   const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -874,7 +931,7 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
 }
 
 async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
-  mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+  seedWorkContent(multiUnitContent);
   mockedFetchNotes.mockResolvedValue({ notes });
   const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -912,7 +969,7 @@ describe("ReaderPage note management", () => {
   });
 
   it("reopens a block's notes from its highlight and edits one", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
     const updated = makeNote({ answers: { meaning: "a fresh start" } });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
@@ -943,7 +1000,7 @@ describe("ReaderPage note management", () => {
   });
 
   it("lists multiple notes for a block and deletes one", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const first = makeNote({ entryId: toEntryId("note-1") });
     const second = makeNote({
       anchor: {
@@ -984,7 +1041,7 @@ describe("ReaderPage note management", () => {
   });
 
   it("edits a note from the per-work note list", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
     const updated = makeNote({ answers: { meaning: "edited" } });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
@@ -1007,7 +1064,7 @@ describe("ReaderPage note management", () => {
   });
 
   it("deletes a note from the per-work note list", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
     mockedDeleteNote.mockResolvedValue();
@@ -1024,7 +1081,7 @@ describe("ReaderPage note management", () => {
   });
 
   it("shows an error when deleting a note fails", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValue({ notes: [makeNote()] });
     mockedDeleteNote.mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
@@ -1107,7 +1164,7 @@ describe("ReaderPage reading tools", () => {
   });
 
   it("shows the notes tool with no count when there are no notes", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1116,7 +1173,7 @@ describe("ReaderPage reading tools", () => {
   });
 
   it("offers the Day/Night theme toggle among the reading tools", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1124,7 +1181,7 @@ describe("ReaderPage reading tools", () => {
   });
 
   it("closes the 目录 drawer after a unit is selected", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -1137,7 +1194,7 @@ describe("ReaderPage reading tools", () => {
   });
 
   it("dismisses the 目录 drawer from its backdrop", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -1151,7 +1208,7 @@ describe("ReaderPage reading tools", () => {
 
 describe("ReaderPage reading controls", () => {
   async function openMultiUnitWork(): Promise<HTMLElement> {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1371,7 +1428,7 @@ describe("ReaderPage vocabulary lookup", () => {
 
   it("routes a Chinese work's selection to the work's language", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
-    mockedFetchWorkContent.mockResolvedValue(chineseContent);
+    seedWorkContent(chineseContent);
     mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
     mockedLookupTerm.mockResolvedValue({
       entry: {
@@ -1422,14 +1479,14 @@ describe("ReaderPage unit reducers", () => {
     const state = { status: "loadingWorks" } as const;
 
     expect(applyUnitSelection(state, 2)).toBe(state);
-    expect(applyUnitForBlock(state, "b-1")).toBe(state);
+    expect(applyUnitForBlock(state, "u-1", "b-1")).toBe(state);
   });
 
   it("leaves a ready-but-not-viewing state unchanged", () => {
     const state = { reading: { status: "idle" }, status: "ready", works: [] } as const;
 
     expect(applyUnitSelection(state, 2)).toBe(state);
-    expect(applyUnitForBlock(state, "b-1")).toBe(state);
+    expect(applyUnitForBlock(state, "u-1", "b-1")).toBe(state);
   });
 
   it("reports no reading position for a non-viewing state", () => {
@@ -1438,12 +1495,160 @@ describe("ReaderPage unit reducers", () => {
       viewingPosition({ reading: { status: "idle" }, status: "ready", works: [] })
     ).toBeUndefined();
   });
+
+  it("leaves a non-viewing state unchanged for the load/error/retry reducers", () => {
+    const state = { status: "loadingWorks" } as const;
+
+    expect(applyUnitLoaded(state, "u-1", [])).toBe(state);
+    expect(applyUnitError(state, "u-1")).toBe(state);
+    expect(retryActiveUnit(state)).toBe(state);
+  });
+});
+
+describe("ReaderPage unit reducers (viewing)", () => {
+  const reducerStructure: ReaderStructure = {
+    units: [
+      { blockCount: 1, entryId: "u-1", orderIndex: 0 },
+      { blockCount: 2, entryId: "u-2", orderIndex: 1, title: "Two" }
+    ],
+    workEntryId: "work-1"
+  };
+
+  const block: ReaderBlock = {
+    blockType: "paragraph",
+    entryId: "b-2",
+    isHeading: false,
+    mdast: { type: "text", value: "x" },
+    plaintext: "x"
+  };
+
+  type ReaderTestState = Parameters<typeof applyUnitSelection>[0];
+  type ViewingReading = Extract<
+    Extract<ReaderTestState, { status: "ready" }>["reading"],
+    { status: "viewing" }
+  >;
+
+  function viewing(overrides: Partial<ViewingReading> = {}): ReaderTestState {
+    return {
+      reading: {
+        activeUnit: { status: "loading" },
+        activeUnitIndex: 0,
+        loadNonce: 0,
+        status: "viewing",
+        structure: reducerStructure,
+        workEntryId: "work-1",
+        ...overrides
+      },
+      status: "ready",
+      works: []
+    };
+  }
+
+  function asViewing(state: ReaderTestState): ViewingReading {
+    if (state.status !== "ready" || state.reading.status !== "viewing") {
+      throw new Error("expected a viewing state");
+    }
+
+    return state.reading;
+  }
+
+  it("clears the scroll target when re-selecting the open unit", () => {
+    const reselected = asViewing(applyUnitSelection(viewing({ scrollBlockEntryId: "b-1" }), 0));
+
+    expect(reselected.activeUnitIndex).toBe(0);
+    expect(reselected.scrollBlockEntryId).toBeUndefined();
+    expect(reselected.loadNonce).toBe(0);
+  });
+
+  it("clamps an out-of-range TOC selection into the last unit", () => {
+    const clamped = asViewing(applyUnitSelection(viewing(), 9));
+
+    expect(clamped.activeUnitIndex).toBe(1);
+    expect(clamped.loadNonce).toBe(1);
+  });
+
+  it("moves to a different selected unit with a fresh load", () => {
+    const moved = asViewing(applyUnitSelection(viewing(), 1));
+
+    expect(moved.activeUnitIndex).toBe(1);
+    expect(moved.activeUnit.status).toBe("loading");
+    expect(moved.loadNonce).toBe(1);
+    expect(moved.scrollBlockEntryId).toBeUndefined();
+  });
+
+  it("ignores a jump whose unit is not in the structure", () => {
+    const state = viewing();
+
+    expect(applyUnitForBlock(state, "u-gone", "b-x")).toBe(state);
+  });
+
+  it("sets only the scroll target for a same-unit jump", () => {
+    const jumped = asViewing(applyUnitForBlock(viewing(), "u-1", "b-1"));
+
+    expect(jumped.activeUnitIndex).toBe(0);
+    expect(jumped.scrollBlockEntryId).toBe("b-1");
+    expect(jumped.loadNonce).toBe(0);
+  });
+
+  it("moves to the holding unit and scrolls for a cross-unit jump", () => {
+    const jumped = asViewing(applyUnitForBlock(viewing(), "u-2", "b-2"));
+
+    expect(jumped.activeUnitIndex).toBe(1);
+    expect(jumped.activeUnit.status).toBe("loading");
+    expect(jumped.scrollBlockEntryId).toBe("b-2");
+    expect(jumped.loadNonce).toBe(1);
+  });
+
+  it("marks the active unit loaded with its blocks and structure title", () => {
+    const loaded = asViewing(applyUnitLoaded(viewing({ activeUnitIndex: 1 }), "u-2", [block]));
+
+    expect(loaded.activeUnit).toEqual({
+      status: "loaded",
+      unit: { blocks: [block], entryId: "u-2", title: "Two" }
+    });
+  });
+
+  it("ignores a loaded result for a unit that is no longer active", () => {
+    const state = viewing();
+
+    expect(applyUnitLoaded(state, "u-2", [block])).toBe(state);
+  });
+
+  it("marks the active unit errored", () => {
+    const errored = asViewing(applyUnitError(viewing(), "u-1"));
+
+    expect(errored.activeUnit.status).toBe("error");
+  });
+
+  it("ignores an error for a unit that is no longer active", () => {
+    const state = viewing();
+
+    expect(applyUnitError(state, "u-2")).toBe(state);
+  });
+
+  it("retries the active unit by reloading and bumping the load nonce", () => {
+    const retried = asViewing(retryActiveUnit(viewing({ activeUnit: { status: "error" } })));
+
+    expect(retried.activeUnit.status).toBe("loading");
+    expect(retried.loadNonce).toBe(1);
+  });
+
+  it("reads the active unit's work and unit ids as the reading position", () => {
+    expect(viewingPosition(viewing({ activeUnitIndex: 1 }))).toEqual({
+      unitEntryId: "u-2",
+      workEntryId: "work-1"
+    });
+  });
+
+  it("reports no reading position when the active index is out of range", () => {
+    expect(viewingPosition(viewing({ activeUnitIndex: 5 }))).toBeUndefined();
+  });
 });
 
 describe("ReaderPage reading position", () => {
   it("resumes the saved unit and scrolls to its block anchor when reopening a work", async () => {
     mockedFetchReadingPosition.mockResolvedValue({ anchorBlockEntryId: "b-2", unitEntryId: "u-2" });
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
 
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -1458,7 +1663,7 @@ describe("ReaderPage reading position", () => {
     // before the restore scroll would capture b-2 and clobber b-3. The writer must stay suppressed
     // until the scroll lands, so opening writes nothing.
     mockedFetchReadingPosition.mockResolvedValue({ anchorBlockEntryId: "b-3", unitEntryId: "u-2" });
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
 
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -1469,7 +1674,7 @@ describe("ReaderPage reading position", () => {
 
   it("opens the first unit when the saved unit no longer exists", async () => {
     mockedFetchReadingPosition.mockResolvedValue({ unitEntryId: "u-removed" });
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
 
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -1479,7 +1684,7 @@ describe("ReaderPage reading position", () => {
 
   it("opens the first unit when the position fetch fails (offline) without error", async () => {
     mockedFetchReadingPosition.mockRejectedValue(new Error("offline"));
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
 
     render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -1487,7 +1692,7 @@ describe("ReaderPage reading position", () => {
   });
 
   it("saves the current unit per work to the server as the reader navigates", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
 
     render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -1503,6 +1708,137 @@ describe("ReaderPage reading position", () => {
     await screen.findByText("Heading text");
 
     expect(lastSavedUnit()).toBe("u-2");
+  });
+});
+
+describe("ReaderPage lazy unit loading", () => {
+  it("shows a per-section loading indicator while the active unit's blocks load", async () => {
+    seedWorkContent(multiUnitContent);
+    let resolveUnit!: (value: WorkContentDto["readingUnits"][number]) => void;
+    mockedFetchUnitContent.mockReturnValueOnce(
+      new Promise<WorkContentDto["readingUnits"][number]>((resolve) => {
+        resolveUnit = resolve;
+      })
+    );
+
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    // The work's structure has resolved, but the first unit's blocks are still in flight.
+    expect(await screen.findByText("Loading this section…")).toBeDefined();
+
+    resolveUnit(multiUnitContent.readingUnits[1]!);
+
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(screen.queryByText("Loading this section…")).toBeNull();
+  });
+
+  it("shows an error with Retry when a unit fails to load, and recovers on Retry", async () => {
+    seedWorkContent(multiUnitContent);
+    const user = userEvent.setup();
+    mockedFetchUnitContent.mockRejectedValueOnce(new Error("offline"));
+
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Could not load this section. Please try again.")).toBeDefined();
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+
+    // Retry refetches the same unit; the second attempt uses the seeded content and succeeds.
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(screen.queryByText("Could not load this section. Please try again.")).toBeNull();
+  });
+
+  it("ignores a jump to a note whose block can no longer be located", async () => {
+    const goneNote = makeNote({
+      anchor: {
+        blockEntryId: toEntryId("b-gone"),
+        contextSnapshot: "Intro paragraph.",
+        selectedTextSnapshot: "Intro"
+      },
+      blockEntryId: toEntryId("b-gone")
+    });
+    const container = await openWorkWithNotes([goneNote]);
+    const user = userEvent.setup();
+    // The locator cannot resolve the removed block, so the jump must no-op.
+    mockedLocateBlockUnit.mockResolvedValue(undefined);
+
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Jump to text: Intro" }));
+
+    // Still on the first unit; no crash, the panel just closed.
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(blockElement(container, "b-1").scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("ignores a jump to a note when the locator request fails", async () => {
+    const container = await openWorkWithNotes([makeNote()]);
+    const user = userEvent.setup();
+    mockedLocateBlockUnit.mockRejectedValue(new Error("offline"));
+
+    const panel = await openNotesPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Jump to text: Intro" }));
+
+    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
+    expect(blockElement(container, "b-1").scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale unit fetch that resolves after the reader switched units", async () => {
+    seedWorkContent(multiUnitContent);
+    const user = userEvent.setup();
+    let resolveStale!: (value: WorkContentDto["readingUnits"][number]) => void;
+    // The first unit's fetch stays in flight so we can resolve it after switching away.
+    mockedFetchUnitContent.mockReturnValueOnce(
+      new Promise<WorkContentDto["readingUnits"][number]>((resolve) => {
+        resolveStale = resolve;
+      })
+    );
+
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Loading this section…")).toBeDefined();
+
+    // Switch to the second unit while the first is still loading; its fetch resolves normally.
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Heading text" })).toBeDefined();
+
+    // The stale first-unit fetch now resolves, but its race guard must drop the result.
+    resolveStale(multiUnitContent.readingUnits[1]!);
+    await Promise.resolve();
+
+    expect(
+      Array.from(container.querySelectorAll("[data-block-id]")).map((element) =>
+        element.getAttribute("data-block-id")
+      )
+    ).toEqual(["b-2", "b-3"]);
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+  });
+
+  it("ignores a stale unit fetch that rejects after the reader switched units", async () => {
+    seedWorkContent(multiUnitContent);
+    const user = userEvent.setup();
+    let rejectStale!: (reason: Error) => void;
+    mockedFetchUnitContent.mockReturnValueOnce(
+      new Promise<WorkContentDto["readingUnits"][number]>((_resolve, reject) => {
+        rejectStale = reject;
+      })
+    );
+
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+
+    expect(await screen.findByText("Loading this section…")).toBeDefined();
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section Two" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Heading text" })).toBeDefined();
+
+    // The stale first-unit fetch now rejects, but its race guard must suppress the error state.
+    rejectStale(new Error("offline"));
+    await Promise.resolve();
+
+    expect(screen.queryByText("Could not load this section. Please try again.")).toBeNull();
+    expect(await screen.findByRole("heading", { level: 2, name: "Heading text" })).toBeDefined();
   });
 });
 
@@ -1604,7 +1940,7 @@ const duplicateHeadingContent: WorkContentDto = {
 
 describe("ReaderPage readability", () => {
   it("renders a list as a real list with items", async () => {
-    mockedFetchWorkContent.mockResolvedValue(richContent);
+    seedWorkContent(richContent);
     render(<ReaderPage initialWorkEntryId="work-1" />);
 
     const article = await screen.findByRole("article", { name: "Reading" });
@@ -1614,7 +1950,7 @@ describe("ReaderPage readability", () => {
   });
 
   it("renders fenced code as a pre/code block and inline code as code", async () => {
-    mockedFetchWorkContent.mockResolvedValue(richContent);
+    seedWorkContent(richContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     await screen.findByRole("article", { name: "Reading" });
@@ -1628,7 +1964,7 @@ describe("ReaderPage readability", () => {
   });
 
   it("renders a blockquote as a quote", async () => {
-    mockedFetchWorkContent.mockResolvedValue(richContent);
+    seedWorkContent(richContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     await screen.findByRole("article", { name: "Reading" });
@@ -1636,7 +1972,7 @@ describe("ReaderPage readability", () => {
   });
 
   it("suppresses the unit eyebrow when it duplicates the first heading", async () => {
-    mockedFetchWorkContent.mockResolvedValue(duplicateHeadingContent);
+    seedWorkContent(duplicateHeadingContent);
     render(<ReaderPage initialWorkEntryId="work-1" />);
 
     const article = await screen.findByRole("article", { name: "Reading" });
@@ -1648,7 +1984,7 @@ describe("ReaderPage readability", () => {
 
 describe("ReaderPage selection toolbar lifecycle", () => {
   it("opens the toolbar for a selection inside a blockquote", async () => {
-    mockedFetchWorkContent.mockResolvedValue(richContent);
+    seedWorkContent(richContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByRole("article", { name: "Reading" });
 
@@ -1660,7 +1996,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("opens the toolbar for a selection inside a list item", async () => {
-    mockedFetchWorkContent.mockResolvedValue(richContent);
+    seedWorkContent(richContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByRole("article", { name: "Reading" });
 
@@ -1672,7 +2008,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("opens the toolbar even when the pointer is released outside the block", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1684,7 +2020,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("does not capture a release outside the reading column", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1695,7 +2031,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("does not capture a release in the reading column without a selection", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1706,7 +2042,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("ignores a release whose selected block is not part of the active unit", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1723,7 +2059,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("dismisses the toolbar when pressing outside it", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1738,7 +2074,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("keeps the toolbar open when pressing inside it", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
@@ -1753,7 +2089,7 @@ describe("ReaderPage selection toolbar lifecycle", () => {
   });
 
   it("dismisses the toolbar when the selection is cleared", async () => {
-    mockedFetchWorkContent.mockResolvedValue(multiUnitContent);
+    seedWorkContent(multiUnitContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 

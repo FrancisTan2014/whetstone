@@ -19,10 +19,21 @@ import { lookupTerm } from "../lookup/lookupApi";
 import { eventTargetClosest, readBlockSelection, releasedBlockElement } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { BlockContent } from "./mdastBlock";
-import { fetchWorkContent, fetchWorks } from "./readerApi";
-import { buildReaderView, type ReaderBlock, type ReaderUnit, type ReaderView } from "./readerModel";
+import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
+import {
+  buildReaderStructure,
+  toReaderBlocks,
+  type ReaderBlock,
+  type ReaderStructure,
+  type ReaderUnit
+} from "./readerModel";
 import { isUnitTitleRedundant } from "./readerHeadings";
-import { clampUnitIndex, targetUnitForBlock, unitTocLabel, workProgress } from "./readerNavigation";
+import {
+  clampUnitIndex,
+  unitIndexForEntryId,
+  unitTocLabel,
+  workProgress
+} from "./readerNavigation";
 import { resolveOpening } from "./readingPosition";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { useReadingPositionWriter, type SaveReadingPosition } from "./useReadingPositionWriter";
@@ -63,19 +74,31 @@ type ReaderTools = Readonly<{
   tocOpen: boolean;
 }>;
 
+// The active reading unit's load lifecycle: its blocks are fetched on demand when the unit
+// becomes active. `loading` shows a spinner, `error` shows a retry affordance, and `loaded`
+// carries the unit's ordered blocks for rendering and selection.
+type ActiveUnit =
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loaded"; unit: ReaderUnit }>;
+
 type ReadingState =
   | Readonly<{ status: "idle" }>
   | Readonly<{ status: "loading"; workEntryId: string }>
   | Readonly<{ status: "error"; workEntryId: string }>
   | Readonly<{
+      // The active unit's blocks, fetched on demand. `loadNonce` keys the unit-load effect so a
+      // Retry re-fetches the same unit; `activeUnitIndex` points into `structure.units`.
+      activeUnit: ActiveUnit;
       activeUnitIndex: number;
+      loadNonce: number;
       // One-shot scroll target carried in state (not refs): the consuming effect reads it after
-      // the unit renders and scrolls there. Cleared by the next unit-reducer transition so a
-      // stale target never re-scrolls. `scrollBlockEntryId` jumps to a block — a deep link, a jump
-      // to a note/highlight, or a restored reading position's block anchor.
+      // the unit's blocks render and scrolls there. Cleared by the next unit-reducer transition so
+      // a stale target never re-scrolls. `scrollBlockEntryId` jumps to a block — a deep link, a
+      // jump to a note/highlight, or a restored reading position's block anchor.
       scrollBlockEntryId?: string | undefined;
       status: "viewing";
-      view: ReaderView;
+      structure: ReaderStructure;
       workEntryId: string;
     }>;
 
@@ -84,51 +107,133 @@ type ReaderState =
   | Readonly<{ status: "worksError" }>
   | Readonly<{ reading: ReadingState; status: "ready"; works: ReadonlyArray<WorkListItemDto> }>;
 
-// Switching the open unit to a TOC selection: clamp the index into range and keep the rest
-// of the viewing state. A no-op for any non-viewing state so the reducer is total. Pure and
-// exported so the unit-selection logic tests without the component.
+// Switching the open unit to a TOC selection: clamp the index into range. Re-selecting the open
+// unit only clears any pending scroll; selecting a different unit moves to it with a fresh load
+// (loading state + bumped `loadNonce`) and no scroll target. A no-op for any non-viewing state so
+// the reducer is total. Pure and exported so the unit-selection logic tests without the component.
 export function applyUnitSelection(state: ReaderState, index: number): ReaderState {
   if (state.status !== "ready" || state.reading.status !== "viewing") {
     return state;
   }
 
+  const clamped = clampUnitIndex(state.reading.structure, index);
+
+  if (clamped === state.reading.activeUnitIndex) {
+    return { ...state, reading: { ...state.reading, scrollBlockEntryId: undefined } };
+  }
+
   return {
     ...state,
     reading: {
       ...state.reading,
-      activeUnitIndex: clampUnitIndex(state.reading.view, index),
+      activeUnit: { status: "loading" },
+      activeUnitIndex: clamped,
+      loadNonce: state.reading.loadNonce + 1,
       scrollBlockEntryId: undefined
     }
   };
 }
 
-// Switching the open unit to the one that holds a block (jumping to a note or highlight).
-// Falls back to the current unit when the block is not in the work, and is a no-op for any
-// non-viewing state. Pure and exported so the jump-across-units logic tests in isolation.
-export function applyUnitForBlock(state: ReaderState, blockEntryId: string): ReaderState {
+// Switching the open unit to the one a locator resolved for a block (jumping to a note or
+// highlight, or a deep link). The owning unit's entry id is resolved to its index; an unknown unit
+// (a locator miss for a removed block) no-ops. A same-unit jump only sets the scroll target;
+// a cross-unit jump moves to the unit with a fresh load and scrolls once its blocks render. A
+// no-op for any non-viewing state. Pure and exported so the jump-across-units logic tests alone.
+export function applyUnitForBlock(
+  state: ReaderState,
+  unitEntryId: string,
+  blockEntryId: string
+): ReaderState {
   if (state.status !== "ready" || state.reading.status !== "viewing") {
     return state;
   }
 
-  const target = targetUnitForBlock(
-    state.reading.view,
-    blockEntryId,
-    state.reading.activeUnitIndex
-  );
+  const index = unitIndexForEntryId(state.reading.structure, unitEntryId);
+
+  if (index === undefined) {
+    return state;
+  }
+
+  if (index === state.reading.activeUnitIndex) {
+    return { ...state, reading: { ...state.reading, scrollBlockEntryId: blockEntryId } };
+  }
 
   return {
     ...state,
     reading: {
       ...state.reading,
-      activeUnitIndex: target,
+      activeUnit: { status: "loading" },
+      activeUnitIndex: index,
+      loadNonce: state.reading.loadNonce + 1,
       scrollBlockEntryId: blockEntryId
     }
   };
 }
 
+// The fetched blocks for the active unit have arrived: mark it loaded. Guarded by the active
+// unit's entry id so a stale fetch (the reader switched units mid-flight) is ignored. The loaded
+// `ReaderUnit` reuses the structure's title for the eyebrow. A no-op for any non-viewing state.
+export function applyUnitLoaded(
+  state: ReaderState,
+  unitEntryId: string,
+  blocks: ReadonlyArray<ReaderBlock>
+): ReaderState {
+  if (state.status !== "ready" || state.reading.status !== "viewing") {
+    return state;
+  }
+
+  const meta = state.reading.structure.units[state.reading.activeUnitIndex];
+
+  if (meta === undefined || meta.entryId !== unitEntryId) {
+    return state;
+  }
+
+  const unit: ReaderUnit = {
+    blocks,
+    entryId: meta.entryId,
+    ...(meta.title === undefined ? {} : { title: meta.title })
+  };
+
+  return { ...state, reading: { ...state.reading, activeUnit: { status: "loaded", unit } } };
+}
+
+// The active unit's fetch failed: mark it errored so the reader shows a retry. Guarded by the
+// active unit's entry id so a stale failure is ignored. A no-op for any non-viewing state.
+export function applyUnitError(state: ReaderState, unitEntryId: string): ReaderState {
+  if (state.status !== "ready" || state.reading.status !== "viewing") {
+    return state;
+  }
+
+  const meta = state.reading.structure.units[state.reading.activeUnitIndex];
+
+  if (meta === undefined || meta.entryId !== unitEntryId) {
+    return state;
+  }
+
+  return { ...state, reading: { ...state.reading, activeUnit: { status: "error" } } };
+}
+
+// Retry the active unit after a failed fetch: back to loading and bump `loadNonce` so the
+// unit-load effect re-runs. A no-op for any non-viewing state.
+export function retryActiveUnit(state: ReaderState): ReaderState {
+  if (state.status !== "ready" || state.reading.status !== "viewing") {
+    return state;
+  }
+
+  return {
+    ...state,
+    reading: {
+      ...state.reading,
+      activeUnit: { status: "loading" },
+      loadNonce: state.reading.loadNonce + 1
+    }
+  };
+}
+
 // The work + active reading unit currently being read, or undefined when not viewing a unit
-// (idle/loading/error, or a work with no units). Drives where the reading position is saved.
-// Pure and exported so it tests without the component.
+// (idle/loading/error, or a work with no units). Read from the structure so the position is known
+// as soon as the unit becomes active, before its blocks finish loading. Drives where the reading
+// position is saved. Pure and exported so it tests without the component.
 export function viewingPosition(
   state: ReaderState
 ): Readonly<{ unitEntryId: string; workEntryId: string }> | undefined {
@@ -136,13 +241,13 @@ export function viewingPosition(
     return undefined;
   }
 
-  const unit = state.reading.view.units[state.reading.activeUnitIndex];
+  const meta = state.reading.structure.units[state.reading.activeUnitIndex];
 
-  if (unit === undefined) {
+  if (meta === undefined) {
     return undefined;
   }
 
-  return { unitEntryId: unit.entryId, workEntryId: state.reading.workEntryId };
+  return { unitEntryId: meta.entryId, workEntryId: state.reading.workEntryId };
 }
 
 // At most one note panel is open at a time: capturing a new note, editing an existing one, or
@@ -251,16 +356,21 @@ export function ReaderPage({
   const shouldWritePosition = useCallback(() => !restorePendingRef.current, []);
   useReadingPositionWriter(savePosition, viewingPosition(state), shouldWritePosition);
 
-  // After the active unit renders, consume the viewing scroll target: jump to a requested block —
-  // a deep link, a jump to a note/highlight in another unit, or a restored reading position's block
-  // anchor. The target lives in the reading state and is cleared by the next unit-reducer
-  // transition, so this effect only performs the scroll — it never calls setState, and uses no refs.
+  // After the active unit's blocks render, consume the viewing scroll target: jump to a requested
+  // block — a deep link, a jump to a note/highlight in another unit, or a restored reading
+  // position's block anchor. The target lives in the reading state and is cleared by the next
+  // unit-reducer transition; this effect waits for the unit's blocks to load (so the block exists),
+  // then performs the scroll — it never calls setState, and uses no refs.
   useEffect(() => {
     if (state.status !== "ready" || state.reading.status !== "viewing") {
       return;
     }
 
-    const { scrollBlockEntryId } = state.reading;
+    const { activeUnit, scrollBlockEntryId } = state.reading;
+
+    if (activeUnit.status !== "loaded") {
+      return;
+    }
 
     if (scrollBlockEntryId !== undefined) {
       scrollToBlock(scrollBlockEntryId);
@@ -269,11 +379,50 @@ export function ReaderPage({
     }
   }, [state]);
 
+  // Load the active unit's blocks on demand. Keyed (via the dependency array) on the work, the
+  // active unit's entry id, and `loadNonce`, so it re-fetches when the unit changes or a Retry
+  // bumps the nonce, but not on unrelated re-renders. The cancel flag plus the entry-id guard in
+  // the reducers drop a stale fetch when the reader switches units mid-flight.
+  const viewing =
+    state.status === "ready" && state.reading.status === "viewing" ? state.reading : undefined;
+  const viewingWorkEntryId = viewing?.workEntryId;
+  const activeUnitEntryId =
+    viewing === undefined ? undefined : viewing.structure.units[viewing.activeUnitIndex]?.entryId;
+  const activeUnitLoadNonce = viewing?.loadNonce;
+
+  useEffect(() => {
+    if (viewingWorkEntryId === undefined || activeUnitEntryId === undefined) {
+      return;
+    }
+
+    const work = viewingWorkEntryId;
+    const unitEntryId = activeUnitEntryId;
+    let cancelled = false;
+
+    fetchUnitContent(work, unitEntryId)
+      .then((content) => {
+        if (!cancelled) {
+          setState((current) => applyUnitLoaded(current, unitEntryId, toReaderBlocks(content)));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setState((current) => applyUnitError(current, unitEntryId));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeUnitEntryId, activeUnitLoadNonce, viewingWorkEntryId]);
+
   useEffect(() => {
     // The initial open is inlined here (rather than calling a component-scoped openWork) so the
     // effect has no forward reference and no external function dependency: on mount it fetches
-    // works, and when initialWorkEntryId matches one it opens it (loading → fetch content + notes
-    // → build view → resolve the opening plan → viewing, with the scroll target carried in state).
+    // works, and when initialWorkEntryId matches one it opens it (loading → fetch structure + notes
+    // → build the structure → resolve the opening plan via the locator → viewing with the active
+    // unit loading; its blocks are then fetched by the unit-load effect, with the scroll target
+    // carried in state).
     async function openInitialWork(
       works: ReadonlyArray<WorkListItemDto>,
       workEntryId: string,
@@ -289,21 +438,24 @@ export function ReaderPage({
       setNotes([]);
 
       try {
-        const content = await fetchWorkContent(workEntryId);
+        const structureDto = await fetchWorkStructure(workEntryId);
         const noteList = await fetchNotes(workEntryId);
         setNotes(noteList.notes);
-        const view = buildReaderView(content);
+        const structure = buildReaderStructure(structureDto);
         const savedPosition = await fetchReadingPosition(workEntryId).catch(() => undefined);
-        const plan = resolveOpening(view, {
+        const plan = await resolveOpening(structure, {
+          locateBlockUnit: (blockEntryId) => locateBlockUnit(workEntryId, blockEntryId),
           ...(deepLinkBlockEntryId === undefined ? {} : { deepLinkBlockEntryId }),
           ...(savedPosition === undefined ? {} : { savedPosition })
         });
 
         setState({
           reading: {
+            activeUnit: { status: "loading" },
             activeUnitIndex: plan.unitIndex,
+            loadNonce: 0,
             status: "viewing",
-            view,
+            structure,
             workEntryId,
             ...(plan.scrollBlockEntryId === undefined
               ? {}
@@ -360,14 +512,31 @@ export function ReaderPage({
     setNotesOpen(false);
   }
 
-  // Jump to a block (a note card or a highlight): load the unit that holds it when it differs
-  // from the open one, then scroll to it once rendered. Same-unit jumps scroll immediately via
-  // the same pending-scroll effect.
+  // Retry loading the active unit after a failed fetch: bump the load nonce so the unit-load
+  // effect re-runs against the same unit.
+  function retryUnit(): void {
+    setState((current) => retryActiveUnit(current));
+  }
+
+  // Jump to a block (a note card or a highlight): resolve the unit that owns it via the locator
+  // endpoint, then switch to that unit and scroll to the block once its blocks render. A locator
+  // miss (a removed block) or a network failure no-ops. Same-unit jumps just set the scroll
+  // target, which the pending-scroll effect consumes. Only reachable while viewing (the note UI
+  // lives in the viewing render), so the active work id is known.
   function jumpToBlock(blockEntryId: string): void {
-    setState((current) => applyUnitForBlock(current, blockEntryId));
     setPanel(undefined);
     setTocOpen(false);
     setNotesOpen(false);
+
+    void locateBlockUnit(viewingWorkEntryId as string, blockEntryId)
+      .then((unitEntryId) => {
+        if (unitEntryId !== undefined) {
+          setState((current) => applyUnitForBlock(current, unitEntryId, blockEntryId));
+        }
+      })
+      .catch(() => {
+        // A locator failure leaves the reader where it is; the jump simply does nothing.
+      });
   }
 
   const onCaptureSelection = useCallback(
@@ -424,14 +593,14 @@ export function ReaderPage({
       return undefined;
     }
 
-    const unit = state.reading.view.units[state.reading.activeUnitIndex];
+    const { activeUnit } = state.reading;
 
-    if (unit === undefined) {
+    if (activeUnit.status !== "loaded") {
       return undefined;
     }
 
     return {
-      blocks: unit.blocks,
+      blocks: activeUnit.unit.blocks,
       workEntryId: state.reading.workEntryId
     };
   }, [state]);
@@ -591,7 +760,7 @@ export function ReaderPage({
       {state.status === "worksError" ? <p role="alert">Could not load works.</p> : null}
 
       {state.status === "ready"
-        ? renderReady(state.works, state.reading, handlers, selectUnit, {
+        ? renderReady(state.works, state.reading, handlers, selectUnit, retryUnit, {
             chromeHidden,
             isNarrow,
             onSizeChange: setSize,
@@ -649,6 +818,7 @@ function renderReady(
   reading: ReadingState,
   handlers: ReaderHandlers,
   onSelectUnit: (index: number) => void,
+  onRetryUnit: () => void,
   chromeBase: ReaderChromeBase
 ): React.JSX.Element {
   const openWorkEntryId = reading.status === "idle" ? undefined : reading.workEntryId;
@@ -659,7 +829,7 @@ function renderReady(
     title: openWork?.work.title ?? ""
   };
 
-  return renderReading(reading, handlers, onSelectUnit, chrome);
+  return renderReading(reading, handlers, onSelectUnit, onRetryUnit, chrome);
 }
 
 // A center tap on the reading area toggles the chrome on narrow screens (where it is hidden by
@@ -687,6 +857,7 @@ function renderReading(
   reading: ReadingState,
   handlers: ReaderHandlers,
   onSelectUnit: (index: number) => void,
+  onRetryUnit: () => void,
   chrome: ReaderChrome
 ): React.JSX.Element {
   switch (reading.status) {
@@ -702,10 +873,12 @@ function renderReading(
       return <p role="alert">Could not load this work. Please try again.</p>;
     case "viewing":
       return renderViewing(
-        reading.view,
+        reading.structure,
+        reading.activeUnit,
         reading.workEntryId,
         reading.activeUnitIndex,
         onSelectUnit,
+        onRetryUnit,
         handlers,
         chrome
       );
@@ -713,15 +886,17 @@ function renderReading(
 }
 
 function renderViewing(
-  view: ReaderView,
+  structure: ReaderStructure,
+  activeUnit: ActiveUnit,
   workEntryId: string,
   activeUnitIndex: number,
   onSelectUnit: (index: number) => void,
+  onRetryUnit: () => void,
   handlers: ReaderHandlers,
   chrome: ReaderChrome
 ): React.JSX.Element {
   const entrance = withReducedMotion(motionSprings.gentle, chrome.prefersReducedMotion);
-  const units = view.units;
+  const units = structure.units;
   const tools = chrome.tools;
   // A multi-unit work navigates by its 目录; a single-unit work (an essay) reads without it.
   const hasToc = units.length > 1;
@@ -772,7 +947,14 @@ function renderViewing(
               } as React.CSSProperties
             }
           >
-            {renderReaderView(units[activeUnitIndex], workEntryId, handlers, chrome.language)}
+            {renderActiveUnit(
+              structure,
+              activeUnit,
+              workEntryId,
+              onRetryUnit,
+              handlers,
+              chrome.language
+            )}
           </div>
         </motion.div>
       </div>
@@ -792,16 +974,44 @@ function renderViewing(
   );
 }
 
+// The active unit's content area: an empty work shows a placeholder; otherwise the active unit's
+// blocks load on demand — a spinner while fetching, an alert with a Retry while errored, and the
+// rendered unit once its blocks arrive.
+function renderActiveUnit(
+  structure: ReaderStructure,
+  activeUnit: ActiveUnit,
+  workEntryId: string,
+  onRetryUnit: () => void,
+  handlers: ReaderHandlers,
+  language: string
+): React.JSX.Element {
+  if (structure.units.length === 0) {
+    return <p>This work has no content yet.</p>;
+  }
+
+  switch (activeUnit.status) {
+    case "loading":
+      return <LoadingIndicator label="Loading this section…" />;
+    case "error":
+      return (
+        <div className="readerUnitError" role="alert">
+          <p>Could not load this section. Please try again.</p>
+          <button className="readerRetry" onClick={onRetryUnit} type="button">
+            Retry
+          </button>
+        </div>
+      );
+    case "loaded":
+      return renderReaderView(activeUnit.unit, workEntryId, handlers, language);
+  }
+}
+
 function renderReaderView(
-  unit: ReaderUnit | undefined,
+  unit: ReaderUnit,
   workEntryId: string,
   handlers: ReaderHandlers,
   language: string
 ): React.JSX.Element {
-  if (unit === undefined) {
-    return <p>This work has no content yet.</p>;
-  }
-
   // Only the current reading unit is rendered, so a whole book never mounts at once.
   // The reading area is whetstone's own selection surface: suppress the right-click context
   // menu so it doesn't open over a selection (the toolbar is the affordance here). The touch

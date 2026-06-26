@@ -86,16 +86,6 @@ export function registerContentRoutes(
     return reply.code(201).send(result.content);
   });
 
-  server.get<{ Params: WorkParams }>("/api/works/:workEntryId/content", async (request, reply) => {
-    const workEntryId = toEntryId(request.params.workEntryId);
-
-    if (!(await workExists(dependencies.db, workEntryId))) {
-      return reply.code(404).send(workNotFoundBody);
-    }
-
-    return loadWorkContent(dependencies.db, workEntryId);
-  });
-
   // The lightweight outline a lazy-loading reader fetches first: units + block counts, no content.
   server.get<{ Params: WorkParams }>(
     "/api/works/:workEntryId/structure",

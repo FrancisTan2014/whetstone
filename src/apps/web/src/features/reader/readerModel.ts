@@ -1,9 +1,16 @@
-import type { BlockDto, ReadingUnitDto, WorkContentDto } from "@whetstone/contracts";
+import type {
+  BlockDto,
+  ReadingUnitContentDto,
+  ReadingUnitStructureDto,
+  WorkStructureDto
+} from "@whetstone/contracts";
 
-// The reader's view of a work: reading units and blocks placed in reading order, each carrying
-// its stored mdast for direct (re-parse-free) rendering. Building this pure model keeps ordering
-// out of the React component. Figure blocks additionally carry their stored image id + alt so the
-// reader can render `<figure>` from `/api/images/:id`; both are absent on non-figure blocks.
+// The reader's view of a work: a lightweight structure (reading units + block counts) loaded
+// first, then each active unit's blocks fetched on demand and placed in reading order, each
+// block carrying its stored mdast for direct (re-parse-free) rendering. Building these pure
+// models keeps ordering out of the React component. Figure blocks additionally carry their
+// stored image id + alt so the reader can render `<figure>` from `/api/images/:id`; both are
+// absent on non-figure blocks.
 export type ReaderBlock = Readonly<{
   alt?: string;
   blockType: BlockDto["blockType"];
@@ -14,14 +21,25 @@ export type ReaderBlock = Readonly<{
   plaintext: string;
 }>;
 
+// A loaded reading unit: its ordered blocks plus the title used for the eyebrow.
 export type ReaderUnit = Readonly<{
   blocks: ReadonlyArray<ReaderBlock>;
   entryId: string;
   title?: string;
 }>;
 
-export type ReaderView = Readonly<{
-  units: ReadonlyArray<ReaderUnit>;
+// One reading unit in the lightweight structure: ordering metadata and how many blocks it
+// holds, but no content — enough to render the 目录 and decide which unit to open.
+export type ReaderUnitMeta = Readonly<{
+  blockCount: number;
+  entryId: string;
+  orderIndex: number;
+  title?: string;
+}>;
+
+// The work's structure: ordered unit metadata, fetched before any unit's blocks.
+export type ReaderStructure = Readonly<{
+  units: ReadonlyArray<ReaderUnitMeta>;
   workEntryId: string;
 }>;
 
@@ -45,16 +63,22 @@ function toReaderBlock(block: BlockDto): ReaderBlock {
   return block.alt === undefined ? withImage : { ...withImage, alt: block.alt };
 }
 
-function toReaderUnit(unit: ReadingUnitDto): ReaderUnit {
-  const blocks = [...unit.blocks].sort(byOrderIndex).map(toReaderBlock);
-  const base = { blocks, entryId: unit.entryId };
+function toReaderUnitMeta(unit: ReadingUnitStructureDto): ReaderUnitMeta {
+  const base = { blockCount: unit.blockCount, entryId: unit.entryId, orderIndex: unit.orderIndex };
 
   return unit.title === undefined ? base : { ...base, title: unit.title };
 }
 
-export function buildReaderView(content: WorkContentDto): ReaderView {
+// The reader structure built from a work's structure DTO: units sorted into reading order so
+// the 目录 and navigation read positionally without trusting the array order.
+export function buildReaderStructure(structure: WorkStructureDto): ReaderStructure {
   return {
-    units: [...content.readingUnits].sort(byOrderIndex).map(toReaderUnit),
-    workEntryId: content.workEntryId
+    units: [...structure.readingUnits].sort(byOrderIndex).map(toReaderUnitMeta),
+    workEntryId: structure.workEntryId
   };
+}
+
+// The ordered blocks of a fetched reading unit, ready to render in reading order.
+export function toReaderBlocks(unit: ReadingUnitContentDto): ReadonlyArray<ReaderBlock> {
+  return [...unit.blocks].sort(byOrderIndex).map(toReaderBlock);
 }

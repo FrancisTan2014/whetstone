@@ -20,7 +20,12 @@ vi.mock("./mdastBlock", () => ({
   }
 }));
 
-vi.mock("./readerApi", () => ({ fetchWorkContent: vi.fn(), fetchWorks: vi.fn() }));
+vi.mock("./readerApi", () => ({
+  fetchUnitContent: vi.fn(),
+  fetchWorkStructure: vi.fn(),
+  fetchWorks: vi.fn(),
+  locateBlockUnit: vi.fn()
+}));
 vi.mock("../notes/notesApi", () => ({
   createNote: vi.fn(),
   deleteNote: vi.fn(),
@@ -32,11 +37,13 @@ vi.mock("../lookup/lookupApi", () => ({ lookupTerm: vi.fn() }));
 
 import { fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
-import { fetchWorkContent, fetchWorks } from "./readerApi";
+import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
 import { ReaderPage } from "./ReaderPage";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
-const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
+const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
+const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
+const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedLookupTerm = vi.mocked(lookupTerm);
@@ -111,7 +118,25 @@ beforeEach(() => {
   blockContent.renders = 0;
   window.getSelection()?.removeAllRanges();
   mockedFetchWorks.mockResolvedValue({ works: [work] });
-  mockedFetchWorkContent.mockResolvedValue(bigChapter());
+  const content = bigChapter();
+  mockedFetchWorkStructure.mockResolvedValue({
+    readingUnits: content.readingUnits.map((unit) => ({
+      blockCount: unit.blocks.length,
+      entryId: unit.entryId,
+      orderIndex: unit.orderIndex
+    })),
+    workEntryId: content.workEntryId
+  });
+  mockedFetchUnitContent.mockImplementation(async (_workEntryId, unitEntryId) => {
+    const unit = content.readingUnits.find((candidate) => candidate.entryId === unitEntryId);
+
+    if (unit === undefined) {
+      throw new Error(`no reading unit seeded for ${unitEntryId}`);
+    }
+
+    return unit;
+  });
+  mockedLocateBlockUnit.mockResolvedValue(undefined);
   mockedFetchNoteTemplates.mockResolvedValue({ templates });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
   mockedLookupTerm.mockResolvedValue({ found: false });

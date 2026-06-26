@@ -9,7 +9,9 @@ import type {
   NoteDto,
   NoteListDto,
   NoteTemplateListDto,
-  WorkContentDto
+  ReadingUnitContentDto,
+  WorkContentDto,
+  WorkStructureDto
 } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -89,11 +91,7 @@ async function createWorkWithBlock(): Promise<{
     url: `/api/works/${workEntryId}/content`
   });
 
-  const contentResponse = await context.server.inject({
-    method: "GET",
-    url: `/api/works/${workEntryId}/content`
-  });
-  const body = contentResponse.json() as WorkContentDto;
+  const body = await listContent(workEntryId);
   const block = body.readingUnits[0]?.blocks[0];
 
   return {
@@ -150,12 +148,24 @@ function listNotes(workEntryId: string): ReturnType<typeof context.server.inject
 }
 
 async function listContent(workEntryId: string): Promise<WorkContentDto> {
-  const response = await context.server.inject({
+  const structureResponse = await context.server.inject({
     method: "GET",
-    url: `/api/works/${workEntryId}/content`
+    url: `/api/works/${workEntryId}/structure`
   });
+  const structure = structureResponse.json() as WorkStructureDto;
 
-  return response.json() as WorkContentDto;
+  const readingUnits = await Promise.all(
+    structure.readingUnits.map(async (meta) => {
+      const unitResponse = await context.server.inject({
+        method: "GET",
+        url: `/api/works/${workEntryId}/units/${meta.entryId}/content`
+      });
+
+      return unitResponse.json() as ReadingUnitContentDto;
+    })
+  );
+
+  return { readingUnits, workEntryId: structure.workEntryId };
 }
 
 function patchNote(

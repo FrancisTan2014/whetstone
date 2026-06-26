@@ -1,89 +1,53 @@
 import { describe, expect, it } from "vitest";
 
-import type { ReaderUnit, ReaderView } from "./readerModel";
+import type { ReaderStructure, ReaderUnitMeta } from "./readerModel";
 import {
   clampUnitIndex,
-  initialUnitIndex,
-  targetUnitForBlock,
-  unitIndexOfBlock,
+  unitIndexForEntryId,
   unitTocLabel,
   workProgress
 } from "./readerNavigation";
 
-function block(entryId: string): ReaderUnit["blocks"][number] {
-  return {
-    blockType: "paragraph",
-    entryId,
-    isHeading: false,
-    mdast: { type: "text", value: entryId },
-    plaintext: entryId
-  };
-}
-
-const view: ReaderView = {
+const structure: ReaderStructure = {
   units: [
-    { blocks: [block("b-1a"), block("b-1b")], entryId: "u-1", title: "Chapter One" },
-    { blocks: [block("b-2a")], entryId: "u-2" }
+    { blockCount: 2, entryId: "u-1", orderIndex: 0, title: "Chapter One" },
+    { blockCount: 1, entryId: "u-2", orderIndex: 1 }
   ],
   workEntryId: "work-1"
 };
 
-const emptyView: ReaderView = { units: [], workEntryId: "work-empty" };
+const emptyStructure: ReaderStructure = { units: [], workEntryId: "work-empty" };
 
-describe("unitIndexOfBlock", () => {
-  it("finds the unit that holds a block", () => {
-    expect(unitIndexOfBlock(view, "b-1b")).toBe(0);
-    expect(unitIndexOfBlock(view, "b-2a")).toBe(1);
+describe("unitIndexForEntryId", () => {
+  it("finds the index of the unit with the given entry id", () => {
+    expect(unitIndexForEntryId(structure, "u-1")).toBe(0);
+    expect(unitIndexForEntryId(structure, "u-2")).toBe(1);
   });
 
-  it("returns undefined when no unit holds the block", () => {
-    expect(unitIndexOfBlock(view, "b-missing")).toBeUndefined();
-  });
-});
-
-describe("initialUnitIndex", () => {
-  it("opens the first unit when no block is deep-linked", () => {
-    expect(initialUnitIndex(view)).toBe(0);
-  });
-
-  it("opens the unit holding the deep-linked block", () => {
-    expect(initialUnitIndex(view, "b-2a")).toBe(1);
-  });
-
-  it("falls back to the first unit when the deep-linked block is unknown", () => {
-    expect(initialUnitIndex(view, "b-missing")).toBe(0);
-  });
-});
-
-describe("targetUnitForBlock", () => {
-  it("returns the unit that holds the block", () => {
-    expect(targetUnitForBlock(view, "b-2a", 0)).toBe(1);
-  });
-
-  it("returns the fallback when the block is not in the work", () => {
-    expect(targetUnitForBlock(view, "b-missing", 0)).toBe(0);
+  it("returns undefined when no unit has the entry id", () => {
+    expect(unitIndexForEntryId(structure, "u-missing")).toBeUndefined();
   });
 });
 
 describe("clampUnitIndex", () => {
   it("clamps into the valid unit range", () => {
-    expect(clampUnitIndex(view, -3)).toBe(0);
-    expect(clampUnitIndex(view, 1)).toBe(1);
-    expect(clampUnitIndex(view, 9)).toBe(1);
+    expect(clampUnitIndex(structure, -3)).toBe(0);
+    expect(clampUnitIndex(structure, 1)).toBe(1);
+    expect(clampUnitIndex(structure, 9)).toBe(1);
   });
 
   it("clamps to 0 for an empty work", () => {
-    expect(clampUnitIndex(emptyView, 4)).toBe(0);
+    expect(clampUnitIndex(emptyStructure, 4)).toBe(0);
   });
 });
 
 describe("unitTocLabel", () => {
   it("uses the unit title when present", () => {
-    expect(unitTocLabel(view.units[0] as ReaderUnit, 0)).toBe("Chapter One");
+    expect(unitTocLabel(structure.units[0] as ReaderUnitMeta, 0)).toBe("Chapter One");
   });
 
   it("falls back to an ordinal for an untitled unit", () => {
-    expect(unitTocLabel(view.units[1] as ReaderUnit, 1)).toBe("Section 2");
+    expect(unitTocLabel(structure.units[1] as ReaderUnitMeta, 1)).toBe("Section 2");
   });
 });
 
