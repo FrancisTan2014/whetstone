@@ -1,4 +1,5 @@
 import * as Popover from "@radix-ui/react-popover";
+import { useState } from "react";
 
 import type {
   DictionaryEntry,
@@ -74,30 +75,65 @@ function partOfSpeechSynonyms(part: DictionaryPartOfSpeech): ReadonlyArray<strin
   return synonyms;
 }
 
-// One part-of-speech group: a color-coded section with its label once (when present), a numbered
-// list of its senses, then a single "Synonyms" row for the whole part of speech — deduplicated,
-// not repeated under each sense. The hue class drives the section's tokenized (Day/Night) color.
-function renderPartOfSpeech(part: DictionaryPartOfSpeech, index: number): React.JSX.Element {
-  const synonyms = partOfSpeechSynonyms(part);
+function renderSynonyms(synonyms: ReadonlyArray<string>): React.JSX.Element | null {
+  if (synonyms.length === 0) {
+    return null;
+  }
 
   return (
-    <section className={`lookupGroup ${partOfSpeechHueClass(part.partOfSpeech)}`} key={index}>
-      {part.partOfSpeech === undefined ? null : (
-        <p className="lookupPartOfSpeech">{part.partOfSpeech}</p>
-      )}
-      <ol className="lookupSenses">{part.senses.map(renderSense)}</ol>
-      {synonyms.length === 0 ? null : (
-        <div className="lookupSynonymsRow">
-          <span className="lookupSynonymsLabel">Synonyms</span>
-          <ul aria-label="Synonyms" className="lookupSynonyms">
-            {synonyms.map((synonym, synonymIndex) => (
-              <li className="lookupSynonym" key={synonymIndex}>
-                {synonym}
-              </li>
-            ))}
-          </ul>
+    <div className="lookupSynonymsRow">
+      <span className="lookupSynonymsLabel">Synonyms</span>
+      <ul aria-label="Synonyms" className="lookupSynonyms">
+        {synonyms.map((synonym, synonymIndex) => (
+          <li className="lookupSynonym" key={synonymIndex}>
+            {synonym}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// One part-of-speech group: a color-coded section with its label once, a numbered list of its
+// senses, then a single deduplicated "Synonyms" row. A named part of speech gets a collapsible
+// header button (the senses are a long list for words like "fundamental"); collapsing focuses the
+// reader on the group they want. Groups default to expanded, and reopening lookup mounts a fresh
+// group so state resets (no persistence in v0). The hue class drives the section's tokenized
+// (Day/Night) color.
+function PartOfSpeechGroup({ part }: { part: DictionaryPartOfSpeech }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(true);
+  const synonyms = partOfSpeechSynonyms(part);
+  const label = part.partOfSpeech;
+
+  // The fallback group with no part of speech has no header to toggle, so it always shows.
+  if (label === undefined) {
+    return (
+      <section className={`lookupGroup ${partOfSpeechHueClass(label)}`}>
+        <ol className="lookupSenses">{part.senses.map(renderSense)}</ol>
+        {renderSynonyms(synonyms)}
+      </section>
+    );
+  }
+
+  return (
+    <section className={`lookupGroup ${partOfSpeechHueClass(label)}`}>
+      <button
+        aria-expanded={expanded}
+        className="lookupPartOfSpeech lookupPartOfSpeechToggle"
+        onClick={() => setExpanded((value) => !value)}
+        type="button"
+      >
+        <span className="lookupPartOfSpeechLabel">{label}</span>
+        <span aria-hidden className="lookupGroupCaret">
+          ▾
+        </span>
+      </button>
+      {expanded ? (
+        <div className="lookupGroupBody">
+          <ol className="lookupSenses">{part.senses.map(renderSense)}</ol>
+          {renderSynonyms(synonyms)}
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -134,7 +170,11 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
           </div>
         )}
       </header>
-      <div className="lookupGroups">{entry.partsOfSpeech.map(renderPartOfSpeech)}</div>
+      <div className="lookupGroups">
+        {entry.partsOfSpeech.map((part, index) => (
+          <PartOfSpeechGroup key={index} part={part} />
+        ))}
+      </div>
       {entry.etymology === undefined ? null : (
         <p className="lookupEtymology">
           <span className="lookupEtymologyLabel">Origin</span> {entry.etymology}
