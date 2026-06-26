@@ -127,6 +127,56 @@ describe("BlockContent", () => {
     expect(nestingWarnings).toHaveLength(0);
   });
 
+  it("renders a listItem whose link wraps bare list items with valid nesting (no <li> inside <li>)", () => {
+    const errors: unknown[][] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation((...args) => {
+      errors.push(args);
+    });
+
+    // The #162 EPUB shape: a `link` whose children are bare `listItem`s sits inside a `listItem`.
+    // Rendered naively this puts a `<li>` directly inside a `<li>` (invalid HTML, hydration error).
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            {
+              children: [
+                {
+                  children: [
+                    { children: [{ type: "text", value: "one" }], type: "listItem" },
+                    { children: [{ type: "text", value: "two" }], type: "listItem" }
+                  ],
+                  type: "link",
+                  url: "chapter2.xhtml"
+                }
+              ],
+              type: "listItem"
+            }
+          ],
+          ordered: false,
+          type: "list"
+        }}
+      />
+    );
+
+    consoleError.mockRestore();
+
+    // Every list item sits directly inside a list container — never inside another <li>.
+    const items = Array.from(container.querySelectorAll("li"));
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item.parentElement?.tagName).toMatch(/^(UL|OL)$/);
+    }
+
+    expect(container.textContent).toContain("one");
+    expect(container.textContent).toContain("two");
+
+    const nestingWarnings = errors.filter((args) =>
+      /cannot be a (descendant|child)|hydrat/i.test(args.map(String).join(" "))
+    );
+    expect(nestingWarnings).toHaveLength(0);
+  });
+
   it("renders a GFM table as a real table with header and body cells", () => {
     const { container } = render(
       <BlockContent
