@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import type { NoteDto, NoteTemplateDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
-import { templateSwatchClass } from "./templateHue";
+import { templateSwatchClass } from "./templateHue.tokens";
 
 // remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so a rendered
 // note body never executes raw markup.

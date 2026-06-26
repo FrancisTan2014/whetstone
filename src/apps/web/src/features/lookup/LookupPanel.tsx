@@ -9,7 +9,7 @@ import type {
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
-import { partOfSpeechHueClass } from "./partOfSpeechHue";
+import { partOfSpeechHueClass } from "./partOfSpeechHue.tokens";
 
 // Bind the desktop popover's height to the space Radix measures between the trigger and the
 // viewport edge (`--radix-popover-content-available-height`), capped at a comfortable 30rem.

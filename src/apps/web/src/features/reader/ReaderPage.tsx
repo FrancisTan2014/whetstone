@@ -13,7 +13,7 @@ import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
-import { annotationHueClass } from "./annotationHue";
+import { annotationHueClass } from "./annotationHue.tokens";
 import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import {

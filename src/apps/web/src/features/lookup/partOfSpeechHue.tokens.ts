@@ -11,9 +11,5 @@ const hueByPartOfSpeech: Readonly<Record<string, string>> = {
 };
 
 export function partOfSpeechHueClass(partOfSpeech: string | undefined): string {
-  if (partOfSpeech === undefined) {
-    return "lookupPos--other";
-  }
-
-  return hueByPartOfSpeech[partOfSpeech] ?? "lookupPos--other";
+  return hueByPartOfSpeech[partOfSpeech ?? ""] ?? "lookupPos--other";
 }
