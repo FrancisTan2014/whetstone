@@ -210,4 +210,11 @@ pnpm lint        # ESLint + Prettier check
 pnpm test        # Vitest with 100% coverage thresholds
 pnpm build       # build all packages and apps
 pnpm smoke       # boot the web dev server and check every dependency resolves at serve time
+pnpm e2e         # Playwright E2E smoke: boot the real stack and drive the core reader loop in a browser
+```
+
+The `pnpm e2e` step needs the Chromium browser installed once (CI does this automatically):
+
+```powershell
+pnpm exec playwright install chromium
 ```
