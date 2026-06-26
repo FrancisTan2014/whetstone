@@ -869,6 +869,39 @@ type ReaderBlockViewProps = Readonly<{
   workEntryId: string;
 }>;
 
+// A figure block renders as a real `<figure>`: the stored image (served by #101 at
+// `/api/images/:id`, lazy-loaded and display-only) above its caption. The image degrades out —
+// leaving the caption alone — when there is no stored image (unsupported/missing at ingest) or it
+// fails to load at runtime. The caption keeps the block's mdast/plaintext, so it stays selectable
+// and annotatable through the normal block selection flow; the image carries no text.
+function ReaderFigure({ block }: { block: ReaderBlock }): React.JSX.Element {
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageSrc =
+    block.imageResourceId === undefined ? undefined : `/api/images/${block.imageResourceId}`;
+  const showImage = imageSrc !== undefined && !imageFailed;
+  const hasCaption = block.plaintext.trim().length > 0;
+
+  return (
+    <figure className="readerFigure">
+      {showImage ? (
+        <img
+          alt={block.alt ?? ""}
+          className="readerFigureImage"
+          draggable={false}
+          loading="lazy"
+          onError={() => setImageFailed(true)}
+          src={imageSrc}
+        />
+      ) : null}
+      {hasCaption ? (
+        <figcaption className="readerFigureCaption">
+          <BlockContent node={block.mdast} />
+        </figcaption>
+      ) : null}
+    </figure>
+  );
+}
+
 // One rendered block. Memoized so it re-renders only when its own data/state changes: with
 // stable props (memoized handlers, a stable notes array, a per-block `born` flag), opening the
 // selection toolbar / lookup / a notes panel or switching a template no longer re-runs the mdast
@@ -897,7 +930,11 @@ const ReaderBlockView = memo(function ReaderBlockView({
 
   const body = (
     <>
-      <BlockContent node={block.mdast} />
+      {block.blockType === "figure" ? (
+        <ReaderFigure block={block} />
+      ) : (
+        <BlockContent node={block.mdast} />
+      )}
       {annotated ? (
         <button
           className="readerBlockNotes"
