@@ -3,10 +3,10 @@ import { Route, Routes, useSearchParams } from "react-router-dom";
 
 import { WorkContentPanel } from "../features/content/WorkContentPanel.js";
 import { AdminLibraryPage } from "../features/library/AdminLibraryPage.js";
+import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { AppShell } from "./AppShell.js";
-import { ModePlaceholder } from "./ModePlaceholder.js";
 
 // The Library mode keeps the existing admin + content screens mounted together; screen
 // redesign happens in later slices. It lifts the just-created work's entry id so the content
@@ -44,15 +44,7 @@ export function AppRoutes(): React.JSX.Element {
       <Route element={<AppShell />} path="/">
         <Route element={<LibraryMode />} index />
         <Route element={<ReaderRoute />} path="reader" />
-        <Route
-          element={
-            <ModePlaceholder
-              description="Your notes across works arrive in a later slice."
-              mode="Notes"
-            />
-          }
-          path="notes"
-        />
+        <Route element={<NotesPage />} path="notes" />
         <Route element={<SearchPage />} path="search" />
       </Route>
     </Routes>

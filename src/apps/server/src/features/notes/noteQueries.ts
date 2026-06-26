@@ -1,9 +1,14 @@
-import { parseNoteTemplateDto, type NoteDto, type NoteTemplateDto } from "@whetstone/contracts";
+import {
+  parseNoteTemplateDto,
+  type NoteDto,
+  type NoteOverviewDto,
+  type NoteTemplateDto
+} from "@whetstone/contracts";
 import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, noteAnchors, noteTemplates, notes } from "../../db/schema.js";
+import { authors, blocks, noteAnchors, noteTemplates, notes, workMeta } from "../../db/schema.js";
 
 type TemplateRow = Readonly<{
   fieldsJson: unknown;
@@ -132,6 +137,50 @@ export async function listNotesForWork(
     .orderBy(asc(notes.entryId));
 
   return rows.map(toNoteDto);
+}
+
+type NoteOverviewRow = NoteRow &
+  Readonly<{
+    authorName: string;
+    workEntryId: string;
+    workTitle: string;
+  }>;
+
+const noteOverviewColumns = {
+  ...noteColumns,
+  authorName: authors.name,
+  workEntryId: blocks.workEntryId,
+  workTitle: workMeta.title
+} as const;
+
+function toNoteOverviewDto(row: NoteOverviewRow): NoteOverviewDto {
+  return {
+    ...toNoteDto(row),
+    authorName: row.authorName,
+    workEntryId: toEntryId(row.workEntryId),
+    workTitle: row.workTitle
+  };
+}
+
+// Every note the user owns, across all works, for the Notes mode. Joined to the anchor for the
+// snapshot and to the work + author for grouping and deep-linking. Scoped through the block's
+// `work_entry_id` (notes on soft-deleted blocks stay listed, matching `listNotesForWork`) and
+// filtered to the user. Ordered by work title then note id so the client can group by work.
+export async function listNotesForUser(
+  db: DbClient,
+  userId: string
+): Promise<ReadonlyArray<NoteOverviewDto>> {
+  const rows = await db
+    .select(noteOverviewColumns)
+    .from(notes)
+    .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
+    .innerJoin(workMeta, eq(workMeta.entryId, blocks.workEntryId))
+    .innerJoin(authors, eq(authors.id, workMeta.authorId))
+    .where(eq(notes.userId, userId))
+    .orderBy(asc(workMeta.title), asc(notes.entryId));
+
+  return rows.map(toNoteOverviewDto);
 }
 
 // A single note scoped to the work AND the current user, used to authorize edits and deletes

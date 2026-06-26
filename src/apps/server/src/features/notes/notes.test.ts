@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   NoteDto,
   NoteListDto,
+  NotesOverviewListDto,
   NoteTemplateListDto,
   ReadingUnitContentDto,
   WorkContentDto,
@@ -21,7 +22,7 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { seedNoteTemplates, type NotesDependencies } from "./noteCommands.js";
-import { listNotesForWork } from "./noteQueries.js";
+import { listNotesForUser, listNotesForWork } from "./noteQueries.js";
 import { toEntryId } from "@whetstone/domain";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
@@ -88,6 +89,35 @@ async function createWorkWithBlock(): Promise<{
   await context.server.inject({
     method: "POST",
     payload: { kind: "manual", markdown: "The quick brown fox jumps over the lazy dog." },
+    url: `/api/works/${workEntryId}/content`
+  });
+
+  const body = await listContent(workEntryId);
+  const block = body.readingUnits[0]?.blocks[0];
+
+  return {
+    blockEntryId: block?.entryId as string,
+    plaintext: block?.plaintext as string,
+    workEntryId
+  };
+}
+
+// A work titled/authored as given, with one manual markdown block — for cross-work tests where the
+// distinct titles drive the Notes overview ordering.
+async function createWorkTitled(
+  title: string,
+  author: string
+): Promise<{ blockEntryId: string; plaintext: string; workEntryId: string }> {
+  const workResponse = await context.server.inject({
+    method: "POST",
+    payload: { author: { mode: "new", name: author }, language: "en", title, workType: "book" },
+    url: "/api/works"
+  });
+  const workEntryId = workResponse.json().work.entryId as string;
+
+  await context.server.inject({
+    method: "POST",
+    payload: { kind: "manual", markdown: `Body for ${title}.` },
     url: `/api/works/${workEntryId}/content`
   });
 
@@ -654,5 +684,51 @@ describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
       response.json()
     )) as NoteListDto;
     expect(afterDelete.notes).toEqual([]);
+  });
+});
+
+describe("cross-work notes overview", () => {
+  it("lists every note the user owns across works, ordered by work title then note id", async () => {
+    const aesop = await createWorkTitled("Aesop Fables", "Aesop");
+    const zen = await createWorkTitled("Zen Mind", "Shunryū Suzuki");
+    // Create the Zen note first (note-1) then two Aesop notes (note-2, note-3): id order alone would
+    // start with the Zen note, so a title-first ordering is what puts the Aesop notes ahead.
+    await createWholeBlockNote(zen.workEntryId, zen.blockEntryId, zen.plaintext);
+    await createWholeBlockNote(aesop.workEntryId, aesop.blockEntryId, aesop.plaintext);
+    await createWholeBlockNote(aesop.workEntryId, aesop.blockEntryId, aesop.plaintext);
+
+    const response = await context.server.inject({ method: "GET", url: "/api/notes" });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as NotesOverviewListDto;
+    expect(body.notes.map((note) => note.workTitle)).toEqual([
+      "Aesop Fables",
+      "Aesop Fables",
+      "Zen Mind"
+    ]);
+    expect(body.notes.map((note) => note.entryId)).toEqual(["note-2", "note-3", "note-1"]);
+
+    const first = body.notes[0];
+    expect(first?.workEntryId).toBe(aesop.workEntryId);
+    expect(first?.authorName).toBe("Aesop");
+    expect(first?.blockEntryId).toBe(aesop.blockEntryId);
+    expect(first?.markdown.length).toBeGreaterThan(0);
+  });
+
+  it("returns an empty list when the user has no notes", async () => {
+    await createWorkTitled("Aesop Fables", "Aesop");
+
+    const response = await context.server.inject({ method: "GET", url: "/api/notes" });
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as NotesOverviewListDto).notes).toEqual([]);
+  });
+
+  it("scopes the overview to the current user", async () => {
+    const aesop = await createWorkTitled("Aesop Fables", "Aesop");
+    await createWholeBlockNote(aesop.workEntryId, aesop.blockEntryId, aesop.plaintext);
+
+    expect(await listNotesForUser(context.db, DEFAULT_USER_ID)).toHaveLength(1);
+    expect(await listNotesForUser(context.db, "another-user")).toEqual([]);
   });
 });

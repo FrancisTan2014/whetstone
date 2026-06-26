@@ -2,6 +2,7 @@ import type {
   CreateNoteRequest,
   NoteDto,
   NoteListDto,
+  NotesOverviewListDto,
   NoteTemplateListDto,
   UpdateNoteRequest
 } from "@whetstone/contracts";
@@ -26,6 +27,11 @@ export async function fetchNoteTemplates(): Promise<NoteTemplateListDto> {
 
 export async function fetchNotes(workEntryId: string): Promise<NoteListDto> {
   return requestJson<NoteListDto>(`/api/works/${encodeURIComponent(workEntryId)}/notes`);
+}
+
+// Every note the current user owns across all works, for the cross-work Notes mode.
+export async function fetchAllNotes(): Promise<NotesOverviewListDto> {
+  return requestJson<NotesOverviewListDto>("/api/notes");
 }
 
 export async function createNote(

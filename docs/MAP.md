@@ -80,7 +80,9 @@ can navigate them from another package.
   `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note), each 404ing an
   unknown/out-of-work target. (The whole-work `GET …/content` route was removed; admin composes
   structure + per-unit client-side.) `notes/` serves note templates and creates, lists, edits,
-  and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`);
+  and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`),
+  and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →
+  `listNotesForUser`, joined to work + author, ordered by work title then note id);
   templates are seeded from the domain on boot
   (`seedNoteTemplates`). `readingPosition/` durably stores each reader's position per (user, work) —
   the last open reading unit + an optional block anchor — in `reading_positions` (composite
@@ -135,7 +137,7 @@ can navigate them from another package.
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the four modes under the `AppShell` layout
   route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Search = `SearchPage`,
-  Notes = `ModePlaceholder` until its slice lands); `AppShell.tsx` is the responsive frame (one `Primary`
+  Notes = `NotesPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
   destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
@@ -233,7 +235,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
   `Sheet` with a hued segmented template control, `NoteList.tsx` renders notes as hued cards
   (template chip + snippet + answers) with jump-back/edit/delete,
-  `notesApi.ts` calls the templates/notes endpoints. Shared `ui/Toast.tsx` shows transient,
+  `notesApi.ts` calls the templates/notes endpoints. The Notes mode page is `NotesPage.tsx`: it
+  fetches the cross-work overview (`notesApi.fetchAllNotes`), groups it by work (`groupNotesByWork.ts`),
+  and links each note back to its anchored block in the Reader (`#/reader?work=&block=`). Shared
+  `ui/Toast.tsx` shows transient,
   reduced-motion-aware status confirmations. `lookup/` is the view-only vocabulary lookup: selecting
   text exposes a "Look up" action on the `SelectionToolbar`; `LookupPanel.tsx` renders the enriched
   `DictionaryEntry` as a mature online-dictionary card — headword with pronunciations (and an audio

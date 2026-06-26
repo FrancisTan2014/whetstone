@@ -3,7 +3,7 @@ import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
 import { createNote, deleteNote, updateNote, type NotesDependencies } from "./noteCommands.js";
-import { listNoteTemplates, listNotesForWork } from "./noteQueries.js";
+import { listNoteTemplates, listNotesForUser, listNotesForWork } from "./noteQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 
@@ -14,6 +14,11 @@ type NoteParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesDependencies): void {
   server.get("/api/note-templates", async () => ({
     templates: await listNoteTemplates(dependencies.db)
+  }));
+
+  // Every note the current user owns, across all works, for the cross-work Notes mode.
+  server.get("/api/notes", async (request) => ({
+    notes: await listNotesForUser(dependencies.db, request.server.currentUser.getCurrentUserId())
   }));
 
   server.get<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request) => ({

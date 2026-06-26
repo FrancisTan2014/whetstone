@@ -70,6 +70,20 @@ export type NoteListDto = Readonly<{
   notes: ReadonlyArray<NoteDto>;
 }>;
 
+// A saved note enriched with the work it belongs to, for the cross-work Notes mode. Carries the
+// note's `blockEntryId` (from `NoteDto`) plus the work title/author and `workEntryId` so the list
+// can group by work and deep-link the reader to the anchored block.
+export type NoteOverviewDto = NoteDto &
+  Readonly<{
+    authorName: string;
+    workEntryId: EntryId;
+    workTitle: string;
+  }>;
+
+export type NotesOverviewListDto = Readonly<{
+  notes: ReadonlyArray<NoteOverviewDto>;
+}>;
+
 export type NoteTemplateListDto = Readonly<{
   templates: ReadonlyArray<NoteTemplateDto>;
 }>;
