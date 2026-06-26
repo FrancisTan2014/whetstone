@@ -1214,14 +1214,29 @@ describe("ReaderPage note management", () => {
     expect(marks[1]?.classList.contains("noteMark--expr")).toBe(true);
   });
 
-  it("opens the note when its underline is tapped", async () => {
-    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+  it("opens the tapped note specifically — not the whole-block list", async () => {
+    const container = await openWorkWithSubBlockNotes([
+      subBlockNote(),
+      makeNote({
+        anchor: {
+          blockEntryId: toEntryId("b-1"),
+          contextSnapshot: "Intro paragraph.",
+          endOffset: 15,
+          selectedTextSnapshot: "paragraph",
+          startOffset: 6
+        },
+        entryId: toEntryId("note-2")
+      })
+    ]);
     const user = userEvent.setup();
 
-    const mark = blockElement(container, "b-1").querySelector(".noteMark") as HTMLElement;
-    await user.click(mark);
+    // Activate the SECOND underline ("paragraph"); only that note should open.
+    const marks = blockElement(container, "b-1").querySelectorAll(".noteMark");
+    await user.click(marks[1] as HTMLElement);
 
-    expect(await screen.findByRole("complementary", { name: "Block notes" })).toBeDefined();
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByRole("button", { name: "Edit note: paragraph" })).toBeDefined();
+    expect(within(panel).queryByRole("button", { name: "Edit note: Intro" })).toBeNull();
   });
 
   it("opens the note when Enter or Space activates a focused underline", async () => {
@@ -1230,11 +1245,13 @@ describe("ReaderPage note management", () => {
     const mark = blockElement(container, "b-1").querySelector(".noteMark") as HTMLElement;
     mark.focus();
     fireEvent.keyDown(mark, { key: "Enter" });
-    expect(await screen.findByRole("complementary", { name: "Block notes" })).toBeDefined();
+    let panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByRole("button", { name: "Edit note: Intro" })).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.keyDown(mark, { key: " " });
-    expect(await screen.findByRole("complementary", { name: "Block notes" })).toBeDefined();
+    panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByRole("button", { name: "Edit note: Intro" })).toBeDefined();
   });
 
   it("does not open a note for a non-activating key or a click off the underline", async () => {
