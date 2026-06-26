@@ -480,6 +480,25 @@ describe("ReaderPage", () => {
     expect(mockedFetchWorkStructure).toHaveBeenCalledWith("work-2");
   });
 
+  it("renders the reading content inside the .reading-surface container (Day text-color guard, #153)", async () => {
+    seedWorkContent(multiUnitContent);
+
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    // The paper surface binds `color: var(--color-text)` (dark in Day, light in Night). The reading
+    // article — and therefore every rendered block — must live inside it (and carry `.reader`, which
+    // also binds the theme text color), so the reader text is never left to inherit a stray color.
+    const surface = container.querySelector(".reading-surface");
+    expect(surface).not.toBeNull();
+    const article = surface?.querySelector('article[aria-label="Reading"]');
+    expect(article).not.toBeNull();
+    expect(article?.classList.contains("reader")).toBe(true);
+    const blocks = Array.from(container.querySelectorAll("[data-block-id]"));
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every((block) => surface?.contains(block))).toBe(true);
+  });
+
   it("ignores a superseded initial open torn down before works resolve", async () => {
     // React StrictMode (and rapid work switches) double-invoke the open effect; the cleanup must
     // stop a superseded run so it never opens the work after teardown — otherwise the stale run

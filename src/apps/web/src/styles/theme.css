@@ -384,6 +384,17 @@
  * rhythm, so the top-level markdown elements inside a block reset their own block margins;
  * Tailwind's preflight strips list markers, so the reader restores them.
  */
+
+/*
+ * The reading article owns its body text color directly (not only by inheriting from the
+ * `.reading-surface` ancestor), so chapter title + every block stay on the theme's `--color-text`
+ * — the dark token in Day, the light token in Night — even if the chrome ever re-wraps the column
+ * (#153: Day reader text must read as dark serif on the cream paper, not a stray light color).
+ */
+.reader {
+  color: var(--color-text);
+}
+
 .reader :where(p, ul, ol, pre, blockquote, table, h1, h2, h3, h4, h5, h6) {
   margin-block: 0;
 }
