@@ -485,6 +485,14 @@ Testing should validate behavior and invariants, not implementation trivia. Pref
 
 Testing styled/animated UI: do not assert pixels, colors, fonts, or animation frames (jsdom does not render CSS). Test the style-affecting behavior and logic instead — rendered roles/labels/states, interactions, variant-to-class output (e.g. `cva`), the theme toggle setting `.dark` and persisting, and reduced-motion taking the non-animated path. Visual correctness and animation smoothness are verified manually in a browser and a real WebView, not in unit tests.
 
+## Functional verification
+
+The loop so far verifies the **code** (types, lint, unit/jsdom tests, build) and reviews the **diff** — but nothing boots the running product and exercises it, so runtime/integration bugs (a hydration error on chapter open, a stale-build 404, an 11 MB load, broken selection) escape every gate. Close that blind spot with a functional-verification layer in two parts.
+
+- **Deterministic E2E smoke — gate in CI.** A Playwright suite boots the **real stack** (reuse the screenshot harness's real-server + in-memory PGlite boot) and drives the core loop: open a work → open a chapter → **assert no console errors, no 4xx, no React hydration/DOM-nesting warnings** → select text → toolbar → add note → note persists → look up a word. These are **correctness** assertions (deterministic, not timing), so unlike flaky runtime perf numbers they **block the merge** (`pnpm validate`/CI). Keep the suite small, stable, and fast; prefer role/label selectors. This is the regression net for the integrated app.
+- **Independent Tester (QA) agent — exploratory, files bugs.** A tester role runs **against `main` after merges** (and/or on a schedule), driving the booted app **beyond the scripted smoke** like a real tester, and files `[Bug]` issues for what it finds. It is **decoupled from the reviewer** (static diff review vs dynamic runtime testing — different skills, cadence, and ideally model). It holds the **same high-signal bar** as the reviewer: reproduce before filing, **dedupe against open `[Bug]`s**, and file only genuine, reproducible defects with clear repro steps — an over-eager bug-filer that floods the backlog is a regression, not a feature.
+- **Bug-first prioritization.** The developer picks ready `[Bug]`s before ready `[Task]`s (`scripts/developer-next-action.mjs`), so verified defects are paid down before new feature work.
+
 ## Performance
 
 Correct-but-naive code passes the gate (tests + coverage) yet falls over at real scale — the reader freeze and the selection jank are examples. Performance is an emergent property tests do not catch by default, so treat it as a first-class concern on the paths that matter.
