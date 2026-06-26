@@ -11,7 +11,13 @@ import {
 } from "./readerNavigation";
 
 function block(entryId: string): ReaderUnit["blocks"][number] {
-  return { entryId, isHeading: false, mdast: { type: "text", value: entryId }, plaintext: entryId };
+  return {
+    blockType: "paragraph",
+    entryId,
+    isHeading: false,
+    mdast: { type: "text", value: entryId },
+    plaintext: entryId
+  };
 }
 
 const view: ReaderView = {

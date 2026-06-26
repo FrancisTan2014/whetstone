@@ -88,7 +88,7 @@ can navigate them from another package.
   write-time content-type allowlist (PNG/JPEG/GIF/WebP; SVG and others rejected); served read-only by
   `src/features/images/imageRoutes.ts` (`GET /api/images/:id`, id is the content hash, allowlist
   re-checked at the boundary, no traversal/remote fetch, unknown id → 404). Used by EPUB ingest to
-  store figure images (`content/figureImageResolver.ts`); no reader UI consumer yet.
+  store figure images (`content/figureImageResolver.ts`) and read back by the reader's `ReaderFigure`.
 - Outbound lookup foundation: `src/lookup/` — reusable boundaries for calling external services and
   caching results. `httpClient.ts` (typed GET text/JSON with timeout + custom headers; normalizes
   failures to typed `HttpError`; injected `fetch`), `lookupCache.ts` (keyed TTL cache, injected clock;
@@ -168,9 +168,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   renders only that unit safely by converting each block's stored mdast straight to React
   (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → `hast-util-to-jsx-runtime`, no
   Markdown re-parse), with a sanitize schema that also disallows
-  `img`, so no image is fetched/rendered; an `a` component override renders the source's in-content
+  `img`, so no inline image is fetched/rendered; an `a` component override renders the source's in-content
   links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —
-  v0 has no cross-document in-book link resolution; opening the `?work=`/`?block=` target on arrival via
+  v0 has no cross-document in-book link resolution. A `figure` block instead renders a real `<figure>`
+  (`ReaderFigure` in `ReaderPage.tsx`): the stored image from `GET /api/images/:id` (lazy, display-only,
+  not selectable) above its still-selectable/annotatable caption, degrading to caption-only when the
+  image is absent (unsupported/missing at ingest) or fails to load at runtime. Opening the
+  `?work=`/`?block=` target on arrival via
   `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, highlights blocks
   that have notes (and lets the reader reopen them). The reading `article` is whetstone's own
   selection surface: it prevents the right-click `contextmenu` and uses `-webkit-touch-callout: none`

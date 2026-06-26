@@ -2,9 +2,13 @@ import type { BlockDto, ReadingUnitDto, WorkContentDto } from "@whetstone/contra
 
 // The reader's view of a work: reading units and blocks placed in reading order, each carrying
 // its stored mdast for direct (re-parse-free) rendering. Building this pure model keeps ordering
-// out of the React component.
+// out of the React component. Figure blocks additionally carry their stored image id + alt so the
+// reader can render `<figure>` from `/api/images/:id`; both are absent on non-figure blocks.
 export type ReaderBlock = Readonly<{
+  alt?: string;
+  blockType: BlockDto["blockType"];
   entryId: string;
+  imageResourceId?: string;
   isHeading: boolean;
   mdast: unknown;
   plaintext: string;
@@ -26,12 +30,19 @@ function byOrderIndex(first: { orderIndex: number }, second: { orderIndex: numbe
 }
 
 function toReaderBlock(block: BlockDto): ReaderBlock {
-  return {
+  const base = {
+    blockType: block.blockType,
     entryId: block.entryId,
     isHeading: block.blockType === "heading",
     mdast: block.mdast,
     plaintext: block.plaintext
   };
+  const withImage =
+    block.imageResourceId === undefined
+      ? base
+      : { ...base, imageResourceId: block.imageResourceId };
+
+  return block.alt === undefined ? withImage : { ...withImage, alt: block.alt };
 }
 
 function toReaderUnit(unit: ReadingUnitDto): ReaderUnit {

@@ -328,6 +328,34 @@
 }
 
 /*
+ * A figure block: the stored image centered and sized to the reading measure with its caption
+ * beneath. `.readerBlock` owns the outer vertical rhythm, so the figure resets its own margin.
+ * The image is display-only (not part of a text selection); the caption inherits the reader's
+ * selectable text and reads in the muted, sans caption style under Day and Night alike.
+ */
+.readerFigure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+}
+
+.readerFigureImage {
+  max-width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.readerFigureCaption {
+  margin-block-start: 0.5rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-scale-sm);
+  text-align: center;
+}
+
+/*
  * Reader readability (#61): clean rendering of real-world content — lists, code, tables,
  * blockquotes, footnotes — to PRODUCT.md targets. `.readerBlock` owns the even vertical
  * rhythm, so the top-level markdown elements inside a block reset their own block margins;
