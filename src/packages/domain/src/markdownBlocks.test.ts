@@ -51,6 +51,47 @@ describe("decomposeMarkdown", () => {
     ]);
   });
 
+  it("decomposes a GFM table into a table block between surrounding paragraphs", () => {
+    // The issue's repro: a table sandwiched between paragraphs must survive as its own block,
+    // not be dropped (which left only heading + the two paragraphs).
+    const markdown = [
+      "# Table Fixture",
+      "",
+      "A paragraph before the table.",
+      "",
+      "| Term | Meaning |",
+      "| --- | --- |",
+      "| whetstone | sharpening surface |",
+      "| reader | focused reading UI |",
+      "",
+      "A paragraph after the table."
+    ].join("\n");
+
+    const units = decomposeMarkdown(markdown);
+
+    expect(units).toHaveLength(1);
+    const blocks = units[0]?.blocks ?? [];
+    expect(blocks.map((block) => block.blockType)).toEqual([
+      "heading",
+      "paragraph",
+      "table",
+      "paragraph"
+    ]);
+
+    const table = blocks[2];
+    expect((table?.mdast as { type: string }).type).toBe("table");
+    for (const cell of [
+      "Term",
+      "Meaning",
+      "whetstone",
+      "sharpening surface",
+      "reader",
+      "focused reading UI"
+    ]) {
+      expect(table?.plaintext).toContain(cell);
+    }
+  });
+
   it("starts a new reading unit at each heading and keeps leading content", () => {
     const markdown = [
       "Intro paragraph.",

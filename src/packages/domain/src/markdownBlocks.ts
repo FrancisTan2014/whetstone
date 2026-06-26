@@ -36,7 +36,8 @@ const blockTypeByNodeType = new Map<string, BlockType>([
   ["code", "code"],
   ["heading", "heading"],
   ["list", "list"],
-  ["paragraph", "paragraph"]
+  ["paragraph", "paragraph"],
+  ["table", "table"]
 ]);
 
 const markdownProcessor = unified().use(remarkParse).use(remarkGfm);

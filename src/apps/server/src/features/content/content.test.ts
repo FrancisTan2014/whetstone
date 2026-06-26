@@ -179,6 +179,36 @@ describe("content routes", () => {
     expect(listed).toEqual(body);
   });
 
+  it("preserves a GFM table as a table block in the ingested content", async () => {
+    const workEntryId = await createWork();
+    const tableMarkdown = [
+      "# Table Fixture",
+      "",
+      "A paragraph before the table.",
+      "",
+      "| Term | Meaning |",
+      "| --- | --- |",
+      "| whetstone | sharpening surface |",
+      "| reader | focused reading UI |",
+      "",
+      "A paragraph after the table."
+    ].join("\n");
+
+    const response = await ingest(workEntryId, { kind: "manual", markdown: tableMarkdown });
+
+    expect(response.statusCode).toBe(201);
+    const blocks = (response.json() as WorkContentDto).readingUnits.flatMap((unit) => unit.blocks);
+    expect(blocks.map((block) => block.blockType)).toEqual([
+      "heading",
+      "paragraph",
+      "table",
+      "paragraph"
+    ]);
+    const table = blocks.find((block) => block.blockType === "table");
+    expect(table?.plaintext).toContain("whetstone");
+    expect((table?.mdast as { type: string }).type).toBe("table");
+  });
+
   it("replaces a work's content on re-ingestion instead of appending", async () => {
     const workEntryId = await createWork();
 
