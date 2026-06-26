@@ -90,18 +90,34 @@ describe("contentApi", () => {
     });
   });
 
-  it("posts a Markdown source and returns the updated content", async () => {
+  it("posts a Markdown source and returns the ingested content", async () => {
     const content = { readingUnits: [], workEntryId: "work-1" };
     const fetchMock = stubFetch({ body: content, ok: true });
 
     await expect(
       ingestMarkdown("work-1", { kind: "manual", markdown: "# Title" })
-    ).resolves.toEqual(content);
+    ).resolves.toEqual({ content, status: "ingested" });
     expect(fetchMock).toHaveBeenCalledWith("/api/works/work-1/content", {
       body: JSON.stringify({ kind: "manual", markdown: "# Title" }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });
+  });
+
+  it("reports empty content when the server rejects the Markdown as unsupported (422)", async () => {
+    stubFetch({ ok: false, status: 422 });
+
+    await expect(
+      ingestMarkdown("work-1", { kind: "manual", markdown: "![only](x.png)" })
+    ).resolves.toEqual({ status: "empty_content" });
+  });
+
+  it("throws when ingesting Markdown fails with another status", async () => {
+    stubFetch({ ok: false, status: 500 });
+
+    await expect(ingestMarkdown("work-1", { kind: "manual", markdown: "# Title" })).rejects.toThrow(
+      "failed with status 500"
+    );
   });
 
   it("throws when the server responds with a non-ok status", async () => {

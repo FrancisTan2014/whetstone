@@ -26,6 +26,7 @@ export type ContentDependencies = Readonly<{
 
 export type IngestMarkdownResult =
   | Readonly<{ content: WorkContentDto; status: "ingested" }>
+  | Readonly<{ status: "empty_content" }>
   | Readonly<{ status: "work_not_found" }>;
 
 type Provenance = Readonly<{
@@ -49,12 +50,21 @@ export async function ingestMarkdown(
   }
 
   const decomposed = decomposeMarkdown(source.markdown);
+  const newBlocks = decomposed.flatMap((unit) => unit.blocks);
+
+  // Markdown that yields no readable blocks — e.g. image-only input, since v0 has no image block —
+  // is unsupported content, not an empty success. Report it and leave the work's content unchanged
+  // (don't persist provenance or wipe any existing content).
+  if (newBlocks.length === 0) {
+    return { status: "empty_content" };
+  }
+
   const current = await loadWorkContent(dependencies.db, workEntryId);
 
   const currentNodes = current.readingUnits.flatMap((unit) =>
     unit.blocks.map((block) => block.mdast)
   );
-  const newNodes = decomposed.flatMap((unit) => unit.blocks.map((block) => block.mdast));
+  const newNodes = newBlocks.map((block) => block.mdast);
 
   if (
     (await workHasSource(dependencies.db, workEntryId)) &&
@@ -69,7 +79,6 @@ export async function ingestMarkdown(
   const oldBlocks = current.readingUnits.flatMap((unit) =>
     unit.blocks.map((block) => ({ id: block.entryId, plaintext: block.plaintext }))
   );
-  const newBlocks = decomposed.flatMap((unit) => unit.blocks);
   const diff = diffBlocks(
     oldBlocks,
     newBlocks.map((block) => ({ plaintext: block.plaintext }))
