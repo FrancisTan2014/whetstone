@@ -35,8 +35,8 @@ let epubUploadLimitBytes: number;
 function twoChapterEpub(): ParsedEpub {
   return {
     chapters: [
-      { html: "<h1>Chapter One</h1><p>First.</p>" },
-      { html: "<h1>本纪</h1><p>黄帝者。</p>" }
+      { html: "<h1>Chapter One</h1><p>First.</p>", images: [] },
+      { html: "<h1>本纪</h1><p>黄帝者。</p>", images: [] }
     ],
     metadata: { author: "司马迁", language: "zh-CN", title: "史记选读" }
   };
@@ -554,7 +554,7 @@ describe("EPUB ingestion routes", () => {
 
   it("creates an untitled reading unit for an EPUB chapter without a heading", async () => {
     epubResponder = async () => ({
-      chapters: [{ html: "<p>Just a paragraph, no heading.</p>" }],
+      chapters: [{ html: "<p>Just a paragraph, no heading.</p>", images: [] }],
       metadata: { author: "Anon", language: "en", title: "No headings" }
     });
 
@@ -571,7 +571,10 @@ describe("EPUB ingestion routes", () => {
 
   it("skips EPUB chapters that decompose to zero supported blocks", async () => {
     epubResponder = async () => ({
-      chapters: [{ html: "<hr>" }, { html: "<h1>Real</h1><p>Body.</p>" }],
+      chapters: [
+        { html: "<hr>", images: [] },
+        { html: "<h1>Real</h1><p>Body.</p>", images: [] }
+      ],
       metadata: { author: "Anon", language: "en", title: "Mixed" }
     });
 
@@ -588,7 +591,10 @@ describe("EPUB ingestion routes", () => {
 
   it("creates a work without a 500 when every chapter lacks supported blocks", async () => {
     epubResponder = async () => ({
-      chapters: [{ html: "<hr>" }, { html: "<hr>" }],
+      chapters: [
+        { html: "<hr>", images: [] },
+        { html: "<hr>", images: [] }
+      ],
       metadata: { author: "Anon", language: "en", title: "All empty" }
     });
 
@@ -627,7 +633,7 @@ describe("EPUB ingestion routes", () => {
         (_, paragraphIndex) => `<p>Chapter ${chapterIndex} paragraph ${paragraphIndex}.</p>`
       ).join("");
 
-      return { html: `<h1>Chapter ${chapterIndex}</h1>${paragraphs}` };
+      return { html: `<h1>Chapter ${chapterIndex}</h1>${paragraphs}`, images: [] };
     });
     epubResponder = async () => ({
       chapters,
