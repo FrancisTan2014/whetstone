@@ -202,7 +202,7 @@ describe("WorkContentPanel", () => {
 
   it("adds manual Markdown content and reports the ingestion result", async () => {
     const user = await renderReady();
-    mockedIngestMarkdown.mockResolvedValue(contentA);
+    mockedIngestMarkdown.mockResolvedValue({ content: contentA, status: "ingested" });
 
     await user.type(screen.getByLabelText("Markdown"), "# Hi");
     await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
@@ -213,6 +213,25 @@ describe("WorkContentPanel", () => {
       kind: "manual",
       markdown: "# Hi"
     });
+  });
+
+  it("shows an unsupported-content message when Markdown has no readable blocks", async () => {
+    const user = await renderReady();
+    mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
+
+    await user.type(screen.getByLabelText("Markdown"), "image only paste");
+    await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
+
+    expect(
+      await screen.findByText(
+        "This Markdown has no readable text to add. Images on their own aren’t supported yet."
+      )
+    ).toBeDefined();
+    // The work is not reported as ingested and the Markdown is kept so it can be fixed.
+    expect(screen.queryByText(/^Ingested —/)).toBeNull();
+    expect((screen.getByLabelText("Markdown") as HTMLTextAreaElement).value).toBe(
+      "image only paste"
+    );
   });
 
   it("validates that Markdown is provided", async () => {
@@ -238,7 +257,7 @@ describe("WorkContentPanel", () => {
 
   it("uploads a .md file and reports the ingestion result", async () => {
     const user = await renderReady();
-    mockedIngestMarkdown.mockResolvedValue(contentA);
+    mockedIngestMarkdown.mockResolvedValue({ content: contentA, status: "ingested" });
     const file = new File(["# Hi from file"], "notes.md", { type: "text/markdown" });
 
     await user.upload(screen.getByLabelText("Upload a .md file"), file);
@@ -271,6 +290,22 @@ describe("WorkContentPanel", () => {
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
     expect(await screen.findByText("Could not upload the file. Please try again.")).toBeDefined();
+  });
+
+  it("shows an unsupported-content message when an uploaded file has no readable blocks", async () => {
+    const user = await renderReady();
+    mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
+    const file = new File(["![only](x.png)"], "image.md", { type: "text/markdown" });
+
+    await user.upload(screen.getByLabelText("Upload a .md file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(
+      await screen.findByText(
+        "This Markdown has no readable text to add. Images on their own aren’t supported yet."
+      )
+    ).toBeDefined();
+    expect(screen.queryByText(/^Ingested —/)).toBeNull();
   });
 
   it("switches the selected work and loads its content", async () => {

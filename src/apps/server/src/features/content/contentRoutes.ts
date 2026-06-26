@@ -15,6 +15,7 @@ import {
 const invalidRequestBody = { error: "invalid_request" } as const;
 const invalidEpubBody = { error: "invalid_epub" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
+const emptyContentBody = { error: "empty_content" } as const;
 const unitNotFoundBody = { error: "unit_not_found" } as const;
 const blockNotFoundBody = { error: "block_not_found" } as const;
 
@@ -72,6 +73,12 @@ export function registerContentRoutes(
 
     if (result.status === "work_not_found") {
       return reply.code(404).send(workNotFoundBody);
+    }
+
+    // Markdown with no readable blocks (e.g. image-only input) is unsupported content, not an
+    // empty success — surface it so the panel can show an explicit message.
+    if (result.status === "empty_content") {
+      return reply.code(422).send(emptyContentBody);
     }
 
     request.log.info(

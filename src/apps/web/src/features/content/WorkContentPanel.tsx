@@ -44,6 +44,11 @@ function formatWorkType(workType: WorkType): string {
   return workType.replace("_", " ");
 }
 
+// Shown when Markdown produced no readable blocks (the server's 422 `empty_content`), e.g. an
+// image-only paste — v0 has no image block, so there is nothing to add.
+const emptyContentMessage =
+  "This Markdown has no readable text to add. Images on their own aren’t supported yet.";
+
 function ingestedLabel(content: WorkContentDto): string {
   return `Ingested — ${workContentSummaryLabel(summarizeWorkContent(content))}.`;
 }
@@ -92,14 +97,21 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
     }
 
     try {
-      const content = await ingestMarkdown(data.selectedWork.work.entryId, {
+      const outcome = await ingestMarkdown(data.selectedWork.work.entryId, {
         kind: "manual",
         markdown
       });
-      applyContent(data, content, data.selectedWork);
+
+      if (outcome.status === "empty_content") {
+        setResult(undefined);
+        setError(emptyContentMessage);
+        return;
+      }
+
+      applyContent(data, outcome.content, data.selectedWork);
       setMarkdown("");
       setError(undefined);
-      setResult(ingestedLabel(content));
+      setResult(ingestedLabel(outcome.content));
     } catch {
       setError("Could not add the Markdown content. Please try again.");
     }
@@ -114,15 +126,22 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
     }
 
     try {
-      const content = await ingestMarkdown(data.selectedWork.work.entryId, {
+      const outcome = await ingestMarkdown(data.selectedWork.work.entryId, {
         fileName: file.name,
         kind: "upload",
         markdown: await file.text()
       });
-      applyContent(data, content, data.selectedWork);
+
+      if (outcome.status === "empty_content") {
+        setResult(undefined);
+        setError(emptyContentMessage);
+        return;
+      }
+
+      applyContent(data, outcome.content, data.selectedWork);
       setFile(undefined);
       setError(undefined);
-      setResult(ingestedLabel(content));
+      setResult(ingestedLabel(outcome.content));
     } catch {
       setError("Could not upload the file. Please try again.");
     }

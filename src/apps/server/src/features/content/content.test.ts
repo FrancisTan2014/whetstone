@@ -260,16 +260,20 @@ describe("content routes", () => {
     expect(sourcesAfter).toHaveLength(sourcesBefore.length);
   });
 
-  it("removes all content when re-ingesting a source with no supported blocks", async () => {
+  it("rejects a re-ingestion that has no supported blocks and keeps the existing content", async () => {
     const workEntryId = await createWork();
     await ingest(workEntryId, { kind: "manual", markdown: "Alpha\n\nBeta" });
 
-    await ingest(workEntryId, { kind: "manual", markdown: "---" });
+    const response = await ingest(workEntryId, { kind: "manual", markdown: "---" });
 
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "empty_content" });
+
+    // The existing content is preserved — unsupported content never silently wipes the work.
     const body = await getContent(workEntryId);
-    expect(body.readingUnits).toEqual([]);
-    const remaining = await context.db.select().from(blocks);
-    expect(remaining.every((block) => block.deletedAt !== null)).toBe(true);
+    expect(
+      body.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext))
+    ).toEqual(["Alpha", "Beta"]);
   });
 
   it("exports a work's Markdown reconstructed from its blocks", async () => {
@@ -350,19 +354,23 @@ describe("content routes", () => {
     expect(onDisk).toBe(markdown);
   });
 
-  it("records a source but no units for content without supported blocks", async () => {
+  it("rejects image-only Markdown that has no supported blocks and records no source", async () => {
     const workEntryId = await createWork();
 
-    const response = await ingest(workEntryId, { kind: "manual", markdown: "---" });
+    const response = await ingest(workEntryId, {
+      kind: "manual",
+      markdown: "![Decorative only](missing.png)"
+    });
 
-    expect(response.statusCode).toBe(201);
-    expect(response.json()).toEqual({ readingUnits: [], workEntryId });
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "empty_content" });
+    expect((await getContent(workEntryId)).readingUnits).toEqual([]);
 
     const sources = await context.db
       .select()
       .from(workSources)
       .where(eq(workSources.workEntryId, workEntryId));
-    expect(sources).toHaveLength(1);
+    expect(sources).toHaveLength(0);
   });
 
   it("returns 404 when ingesting into a missing work", async () => {

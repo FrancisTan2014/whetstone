@@ -45,13 +45,31 @@ export async function fetchWorkContent(workEntryId: string): Promise<WorkContent
   return { readingUnits, workEntryId: structure.workEntryId };
 }
 
+// Ingesting Markdown yields the work's new content, unless the Markdown has no readable blocks
+// (e.g. image-only input — v0 has no image block), which the server reports as 422 `empty_content`
+// so the panel can show an explicit unsupported-content message instead of a false success.
+export type IngestMarkdownOutcome =
+  | Readonly<{ content: WorkContentDto; status: "ingested" }>
+  | Readonly<{ status: "empty_content" }>;
+
 export async function ingestMarkdown(
   workEntryId: string,
   source: IngestMarkdownRequest
-): Promise<WorkContentDto> {
-  return requestJson<WorkContentDto>(`/api/works/${encodeURIComponent(workEntryId)}/content`, {
+): Promise<IngestMarkdownOutcome> {
+  const path = `/api/works/${encodeURIComponent(workEntryId)}/content`;
+  const response = await fetch(path, {
     body: JSON.stringify(source),
     headers: jsonHeaders,
     method: "POST"
   });
+
+  if (response.status === 422) {
+    return { status: "empty_content" };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Request to ${path} failed with status ${response.status}.`);
+  }
+
+  return { content: (await response.json()) as WorkContentDto, status: "ingested" };
 }
