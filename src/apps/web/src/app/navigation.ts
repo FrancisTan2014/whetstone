@@ -10,6 +10,7 @@ export type NavDestination = Readonly<{
 export const navDestinations: ReadonlyArray<NavDestination> = [
   { end: true, label: "Library", to: "/" },
   { label: "Reader", to: "/reader" },
+  { label: "Practice", to: "/practice" },
   { label: "Progress", to: "/progress" },
   { label: "Notes", to: "/notes" },
   { label: "Search", to: "/search" }

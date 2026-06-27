@@ -27,6 +27,10 @@ export type {
 } from "./learnerModel.js";
 export { caseLightLevel, caseLightLevels } from "./progressMap.js";
 export type { CaseLightLevel } from "./progressMap.js";
+export { mistakeCategoryFromIssues } from "./mistakeCategory.js";
+export type { ProductionIssueLike } from "./mistakeCategory.js";
+export { summarizeSessionTurns } from "./sessionSummary.js";
+export type { SessionErrorCount, SessionSummary, SessionTurn } from "./sessionSummary.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,

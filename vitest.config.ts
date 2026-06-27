@@ -26,6 +26,9 @@ export default defineConfig({
         "**/src/index.ts",
         "**/src/mcp/main.ts", // MCP stdio bootstrap is wiring-only infrastructure (like index.ts).
         "**/src/main.tsx",
+        // Browser MediaRecorder boundary for mic capture: touches navigator/MediaRecorder/real timers,
+        // not exercisable in jsdom; the session page injects a fake, and the STT/submit logic is covered.
+        "**/features/session/audioCapture.ts",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
         // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.

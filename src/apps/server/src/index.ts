@@ -1,6 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -23,6 +24,10 @@ import { createLookupService, type LookupSource } from "./lookup/lookupService.j
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
+import { createFakeCoach } from "./coach/fakeCoach.js";
+import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
+import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
+import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 
 const config = readServerConfig();
 const pglite = new PGlite(config.databaseDir);
@@ -58,6 +63,14 @@ const lookupService = createLookupService({
   sources: lookupSources
 });
 
+// The coach (#206) and speech (#207) seams: config-gated and absent-config-safe, so with no API key
+// and no Whisper they stay on the deterministic fakes (the keyless dev/practice path).
+const coach = resolveCoach({ config: readCoachConfig(), fake: createFakeCoach() });
+const speech = resolveSpeechInput({
+  config: readSpeechConfig(),
+  fake: createFakeSpeechInput({ transcript: "", words: [] })
+});
+
 const server = createServer({
   content: {
     createAuthorId: () => randomUUID(),
@@ -85,6 +98,18 @@ const server = createServer({
   },
   readingPosition: { db },
   search: { db },
+  session: {
+    coach,
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date(),
+    saveAudio: (audio) => {
+      const path = join(tmpdir(), `whetstone-${randomUUID()}.audio`);
+      writeFileSync(path, audio);
+      return Promise.resolve(path);
+    },
+    speech
+  },
   // In a single-origin deploy (#184) the built web client is served from this same server; in
   // dev/tests WEB_DIR is unset and Vite serves the client separately.
   web: config.webDir !== undefined ? { dir: config.webDir } : undefined

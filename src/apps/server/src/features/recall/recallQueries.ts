@@ -78,6 +78,23 @@ export async function getRecallItemForUser(
   return row === undefined ? undefined : toRecallItemDto(row);
 }
 
+// The user's recall item linked to a given chunk, if any (newest first). Used by the practice session
+// to find-or-enroll the item to schedule for a practised chunk.
+export async function getRecallItemByChunkForUser(
+  db: DbClient,
+  userId: string,
+  chunkId: string
+): Promise<RecallItemDto | undefined> {
+  const rows = await db
+    .select()
+    .from(recallItems)
+    .where(and(eq(recallItems.userId, userId), eq(recallItems.chunkId, chunkId)))
+    .orderBy(desc(recallItems.createdAt), asc(recallItems.id))
+    .limit(1);
+
+  return rows[0] === undefined ? undefined : toRecallItemDto(rows[0]);
+}
+
 // The user's items due for review at `now` (due_at <= now), soonest-due first, capped at `limit`.
 // Backed by the (user_id, due_at) index.
 export async function listDueRecallItems(

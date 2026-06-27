@@ -364,3 +364,20 @@ export const learnerProfiles = pgTable("learner_profiles", {
   userId: text("user_id").primaryKey(),
   weaknessesJson: jsonb("weaknesses_json").notNull()
 });
+
+// A finished practice session's summary (#211): one row per ended session, user-scoped. The per-turn
+// deposits live in recall (#189) and `turn_outcomes` (#208); this records the session recap that is
+// shown to the learner and kept for history.
+export const sessionSummaries = pgTable(
+  "session_summaries",
+  {
+    averageGrade: doublePrecision("average_grade").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
+    errorCountsJson: jsonb("error_counts_json").notNull(),
+    id: text("id").primaryKey(),
+    strongTurns: integer("strong_turns").notNull(),
+    turnCount: integer("turn_count").notNull(),
+    userId: text("user_id").notNull()
+  },
+  (table) => [index("session_summaries_user_idx").on(table.userId, table.createdAt)]
+);
