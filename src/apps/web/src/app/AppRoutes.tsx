@@ -7,6 +7,7 @@ import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
+import { SessionPage } from "../features/session/SessionPage.js";
 import { AppShell } from "./AppShell.js";
 
 // The Library mode keeps the existing admin + content screens mounted together; screen
@@ -45,6 +46,7 @@ export function AppRoutes(): React.JSX.Element {
       <Route element={<AppShell />} path="/">
         <Route element={<LibraryMode />} index />
         <Route element={<ReaderRoute />} path="reader" />
+        <Route element={<SessionPage />} path="practice" />
         <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<NotesPage />} path="notes" />
         <Route element={<SearchPage />} path="search" />

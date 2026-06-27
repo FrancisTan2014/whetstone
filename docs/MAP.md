@@ -113,6 +113,15 @@ can navigate them from another package.
   owned/weak counts and the #208 recommendation + error trend; exposed by `mapRoutes.ts` at
   `GET /api/progress-map`. Shapes in `@whetstone/contracts` (`mapContracts.ts`). Visualization only — no
   scoring logic.
+- Practice session: `src/features/session/` — `sessionEngine.ts` orchestrates the turn loop over the
+  coach (#206) and speech (#207) seams + #205/#208/#189: `startSession` proposes cues (top gap x
+  frequency chunks; English situation, native target hidden), `submitTurn` transcribes (STT or typed
+  fallback) -> judges + grades -> DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on
+  first practice, + records the turn outcome with its mistake category #208), `endSession` aggregates +
+  persists a `session_summaries` row and refreshes the profile. `sessionRoutes.ts`: `POST /api/session/`
+  `start|transcribe|turn|end`. The coach/speech seams are resolved (fakes when unconfigured) in
+  `index.ts`. Mistake-category map + session aggregation are pure in `@whetstone/domain`
+  (`mistakeCategory.ts`/`sessionSummary.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
@@ -197,8 +206,8 @@ can navigate them from another package.
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
-  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Progress =
-  `ProgressMapPage`, Search = `SearchPage`, Notes = `NotesPage`); `AppShell.tsx` is the responsive frame (one `Primary`
+  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Practice =
+  `SessionPage`, Progress = `ProgressMapPage`, Search = `SearchPage`, Notes = `NotesPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
   destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
