@@ -108,6 +108,11 @@ can navigate them from another package.
   history grows) over user-scoped `error_patterns`, `turn_outcomes`, `learner_profiles`. The gap x
   frequency ranking + level derivation are pure in `@whetstone/domain` (`learnerModel.ts`); shapes in
   `@whetstone/contracts` (`learnerContracts.ts`).
+- Progress map: `src/features/map/` — `mapQueries.ts` `compileProgressMap(now)` composes #205 per-case
+  mastery into lit/dim/dark light levels (`@whetstone/domain` `caseLightLevel`) over active cases, plus
+  owned/weak counts and the #208 recommendation + error trend; exposed by `mapRoutes.ts` at
+  `GET /api/progress-map`. Shapes in `@whetstone/contracts` (`mapContracts.ts`). Visualization only — no
+  scoring logic.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
@@ -191,9 +196,9 @@ can navigate them from another package.
 
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
-- App shell + routing: `src/app/` — `AppRoutes.tsx` nests the four modes under the `AppShell` layout
-  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Search = `SearchPage`,
-  Notes = `NotesPage`); `AppShell.tsx` is the responsive frame (one `Primary`
+- App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
+  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Progress =
+  `ProgressMapPage`, Search = `SearchPage`, Notes = `NotesPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
   destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column

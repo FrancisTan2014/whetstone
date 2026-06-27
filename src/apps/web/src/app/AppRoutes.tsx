@@ -4,6 +4,7 @@ import { Route, Routes, useSearchParams } from "react-router-dom";
 import { WorkContentPanel } from "../features/content/WorkContentPanel.js";
 import { AdminLibraryPage } from "../features/library/AdminLibraryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
+import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { AppShell } from "./AppShell.js";
@@ -44,6 +45,7 @@ export function AppRoutes(): React.JSX.Element {
       <Route element={<AppShell />} path="/">
         <Route element={<LibraryMode />} index />
         <Route element={<ReaderRoute />} path="reader" />
+        <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<NotesPage />} path="notes" />
         <Route element={<SearchPage />} path="search" />
       </Route>

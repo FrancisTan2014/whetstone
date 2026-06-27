@@ -25,6 +25,8 @@ import { registerSearchRoutes } from "../features/search/searchRoutes.js";
 import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
 import type { ImageDependencies } from "../features/images/imageRoutes.js";
+import { registerMapRoutes } from "../features/map/mapRoutes.js";
+import type { MapDependencies } from "../features/map/mapRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
@@ -48,6 +50,7 @@ export type CreateServerOptions = Readonly<{
   library?: LibraryDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
+  map?: MapDependencies;
   notes?: NotesDependencies;
   readingPosition?: ReadingPositionDependencies;
   search?: SearchDependencies;
@@ -98,6 +101,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.search !== undefined) {
     registerSearchRoutes(server, options.search);
+  }
+
+  if (options.map !== undefined) {
+    registerMapRoutes(server, options.map);
   }
 
   if (options.images !== undefined) {

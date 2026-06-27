@@ -78,6 +78,7 @@ const server = createServer({
   },
   logger: createLoggerOptions(config.logLevel),
   lookup: { lookup: lookupService.lookup },
+  map: { db, now: () => new Date() },
   notes: {
     createEntryId: () => randomUUID(),
     db

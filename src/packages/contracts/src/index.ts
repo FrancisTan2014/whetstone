@@ -1,4 +1,20 @@
 export {
+  caseLightLevels,
+  caseLightLevelSchema,
+  mapCaseDtoSchema,
+  mapDomainDtoSchema,
+  parseProgressMapDto,
+  progressMapDtoSchema,
+  progressSignalsDtoSchema
+} from "./mapContracts.js";
+export type {
+  CaseLightLevel,
+  MapCaseDto,
+  MapDomainDto,
+  ProgressMapDto,
+  ProgressSignalsDto
+} from "./mapContracts.js";
+export {
   authorCaseRequestSchema,
   authoredCaseDtoSchema,
   caseDetailDtoSchema,
