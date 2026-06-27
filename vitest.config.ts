@@ -44,7 +44,13 @@ export default defineConfig({
       }
     },
     environment: "node",
+    // PGlite integration tests boot a fresh in-process Postgres (WASM) and run every migration per
+    // case; in isolation that is ~2s, but under the full suite's parallel load it can exceed Vitest's
+    // 5s default and flake. A generous timeout keeps these real-database tests reliable without
+    // weakening any assertion or coverage threshold.
+    hookTimeout: 30000,
     include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}"],
-    setupFiles: ["./vitest.setup.ts"]
+    setupFiles: ["./vitest.setup.ts"],
+    testTimeout: 30000
   }
 });

@@ -76,11 +76,18 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
           {
             id: "kitchen.meal_planning.use_up",
             text: "We should use up the vegetables before they go off.",
-            usageNote: "\"go off\" = spoil (British-leaning but widely understood)."
+            usageNote: '"go off" = spoil (British-leaning but widely understood).'
           },
-          { id: "kitchen.meal_planning.im_easy", text: "I'm easy — whatever you fancy.", gloss: "I don't mind; your choice." },
+          {
+            id: "kitchen.meal_planning.im_easy",
+            text: "I'm easy — whatever you fancy.",
+            gloss: "I don't mind; your choice."
+          },
           { id: "kitchen.meal_planning.order_in", text: "Should we just order in instead?" },
-          { id: "kitchen.meal_planning.defrost", text: "I'll take something out of the freezer to defrost." }
+          {
+            id: "kitchen.meal_planning.defrost",
+            text: "I'll take something out of the freezer to defrost."
+          }
         ]
       },
       {
@@ -88,11 +95,27 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         situation: "Offering and sharing food at the table",
         communicativeFunction: "Offering, accepting, and declining politely",
         chunks: [
-          { id: "kitchen.at_the_table.help_yourself", text: "Help yourself.", usageNote: "A warm, standard invitation to take food." },
-          { id: "kitchen.at_the_table.dig_in", text: "Dig in while it's hot.", gloss: "Start eating." },
+          {
+            id: "kitchen.at_the_table.help_yourself",
+            text: "Help yourself.",
+            usageNote: "A warm, standard invitation to take food."
+          },
+          {
+            id: "kitchen.at_the_table.dig_in",
+            text: "Dig in while it's hot.",
+            gloss: "Start eating."
+          },
           { id: "kitchen.at_the_table.pass_the", text: "Could you pass the salt?" },
-          { id: "kitchen.at_the_table.seconds", text: "Would you like seconds?", gloss: "a second helping" },
-          { id: "kitchen.at_the_table.im_stuffed", text: "I'm stuffed, thanks.", gloss: "I'm very full." },
+          {
+            id: "kitchen.at_the_table.seconds",
+            text: "Would you like seconds?",
+            gloss: "a second helping"
+          },
+          {
+            id: "kitchen.at_the_table.im_stuffed",
+            text: "I'm stuffed, thanks.",
+            gloss: "I'm very full."
+          },
           { id: "kitchen.at_the_table.bit_more", text: "Just a little bit more, please." },
           { id: "kitchen.at_the_table.my_compliments", text: "My compliments to the chef!" }
         ]
@@ -102,12 +125,26 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         situation: "Talking through cooking as it happens",
         communicativeFunction: "Describing an action in progress and asking for help",
         chunks: [
-          { id: "kitchen.cooking_in_progress.keep_an_eye", text: "Can you keep an eye on the stove?", gloss: "watch it for me" },
+          {
+            id: "kitchen.cooking_in_progress.keep_an_eye",
+            text: "Can you keep an eye on the stove?",
+            gloss: "watch it for me"
+          },
           { id: "kitchen.cooking_in_progress.simmer", text: "Let it simmer for ten minutes." },
-          { id: "kitchen.cooking_in_progress.give_a_stir", text: "Give it a stir now and then.", gloss: "occasionally" },
+          {
+            id: "kitchen.cooking_in_progress.give_a_stir",
+            text: "Give it a stir now and then.",
+            gloss: "occasionally"
+          },
           { id: "kitchen.cooking_in_progress.pinch_of", text: "It needs a pinch of salt." },
-          { id: "kitchen.cooking_in_progress.boiling_over", text: "Watch out, it's about to boil over!" },
-          { id: "kitchen.cooking_in_progress.almost_ready", text: "It's almost ready — a couple more minutes." }
+          {
+            id: "kitchen.cooking_in_progress.boiling_over",
+            text: "Watch out, it's about to boil over!"
+          },
+          {
+            id: "kitchen.cooking_in_progress.almost_ready",
+            text: "It's almost ready — a couple more minutes."
+          }
         ]
       }
     ]
@@ -124,9 +161,20 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         chunks: [
           { id: "chores.dividing_up.my_turn", text: "It's my turn to do the dishes." },
           { id: "chores.dividing_up.can_you_take", text: "Can you take care of the laundry?" },
-          { id: "chores.dividing_up.ill_handle", text: "I'll handle the kitchen if you do the bathroom." },
-          { id: "chores.dividing_up.pull_your_weight", text: "Everyone needs to pull their weight.", gloss: "do a fair share" },
-          { id: "chores.dividing_up.lend_a_hand", text: "Could you lend me a hand for a sec?", gloss: "help me briefly" },
+          {
+            id: "chores.dividing_up.ill_handle",
+            text: "I'll handle the kitchen if you do the bathroom."
+          },
+          {
+            id: "chores.dividing_up.pull_your_weight",
+            text: "Everyone needs to pull their weight.",
+            gloss: "do a fair share"
+          },
+          {
+            id: "chores.dividing_up.lend_a_hand",
+            text: "Could you lend me a hand for a sec?",
+            gloss: "help me briefly"
+          },
           { id: "chores.dividing_up.split_it", text: "Let's split it down the middle." }
         ]
       },
@@ -135,7 +183,11 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         situation: "Tidying and cleaning the home",
         communicativeFunction: "Requesting and reporting tidying",
         chunks: [
-          { id: "chores.tidying_up.pick_up_after", text: "Please pick up after yourself.", gloss: "tidy your own mess" },
+          {
+            id: "chores.tidying_up.pick_up_after",
+            text: "Please pick up after yourself.",
+            gloss: "tidy your own mess"
+          },
           { id: "chores.tidying_up.put_away", text: "Can you put your things away?" },
           { id: "chores.tidying_up.wipe_down", text: "I'll wipe down the counters." },
           { id: "chores.tidying_up.run_the_vacuum", text: "Let me run the vacuum quickly." },
@@ -148,11 +200,30 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         situation: "Dealing with something broken at home",
         communicativeFunction: "Reporting a problem and proposing a fix",
         chunks: [
-          { id: "chores.things_breaking.on_the_blink", text: "The washing machine is on the blink again.", gloss: "not working properly" },
-          { id: "chores.things_breaking.acting_up", text: "The heater's been acting up.", gloss: "malfunctioning" },
-          { id: "chores.things_breaking.call_someone", text: "We'd better call someone to fix it." },
-          { id: "chores.things_breaking.give_it_a_go", text: "I'll give it a go myself first.", gloss: "try" },
-          { id: "chores.things_breaking.packed_in", text: "The kettle's finally packed in.", gloss: "stopped working for good" },
+          {
+            id: "chores.things_breaking.on_the_blink",
+            text: "The washing machine is on the blink again.",
+            gloss: "not working properly"
+          },
+          {
+            id: "chores.things_breaking.acting_up",
+            text: "The heater's been acting up.",
+            gloss: "malfunctioning"
+          },
+          {
+            id: "chores.things_breaking.call_someone",
+            text: "We'd better call someone to fix it."
+          },
+          {
+            id: "chores.things_breaking.give_it_a_go",
+            text: "I'll give it a go myself first.",
+            gloss: "try"
+          },
+          {
+            id: "chores.things_breaking.packed_in",
+            text: "The kettle's finally packed in.",
+            gloss: "stopped working for good"
+          },
           { id: "chores.things_breaking.hold_off", text: "Let's hold off until the weekend." }
         ]
       }
@@ -168,7 +239,10 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         situation: "Getting the kids ready in the morning",
         communicativeFunction: "Urging and coordinating a routine",
         chunks: [
-          { id: "childcare.morning_routine.rise_and_shine", text: "Rise and shine, time to get up!" },
+          {
+            id: "childcare.morning_routine.rise_and_shine",
+            text: "Rise and shine, time to get up!"
+          },
           { id: "childcare.morning_routine.running_late", text: "Hurry up, we're running late." },
           { id: "childcare.morning_routine.brush_your_teeth", text: "Go brush your teeth." },
           { id: "childcare.morning_routine.shoes_on", text: "Get your shoes on, please." },
@@ -182,7 +256,11 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         communicativeFunction: "Soothing and setting limits",
         chunks: [
           { id: "childcare.bedtime.lights_out", text: "Five more minutes, then lights out." },
-          { id: "childcare.bedtime.tuck_you_in", text: "Let me tuck you in.", gloss: "settle you under the covers" },
+          {
+            id: "childcare.bedtime.tuck_you_in",
+            text: "Let me tuck you in.",
+            gloss: "settle you under the covers"
+          },
           { id: "childcare.bedtime.one_more_story", text: "Just one more story, okay?" },
           { id: "childcare.bedtime.settle_down", text: "Settle down now, it's late." },
           { id: "childcare.bedtime.sweet_dreams", text: "Sweet dreams." },
@@ -195,7 +273,11 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         communicativeFunction: "Praising, warning, and reasoning",
         chunks: [
           { id: "childcare.behaviour.good_job", text: "Good job, I'm proud of you!" },
-          { id: "childcare.behaviour.knock_it_off", text: "Knock it off, please.", gloss: "stop that" },
+          {
+            id: "childcare.behaviour.knock_it_off",
+            text: "Knock it off, please.",
+            gloss: "stop that"
+          },
           { id: "childcare.behaviour.say_youre_sorry", text: "Say you're sorry to your sister." },
           { id: "childcare.behaviour.share_with", text: "You need to share with your brother." },
           { id: "childcare.behaviour.last_warning", text: "This is your last warning." },
@@ -217,7 +299,11 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
           { id: "small_talk.greetings.hows_it_going", text: "Hey, how's it going?" },
           { id: "small_talk.greetings.long_time", text: "Long time no see!" },
           { id: "small_talk.greetings.whats_new", text: "So what's new with you?" },
-          { id: "small_talk.greetings.cant_complain", text: "Can't complain — and you?", gloss: "things are fine" },
+          {
+            id: "small_talk.greetings.cant_complain",
+            text: "Can't complain — and you?",
+            gloss: "things are fine"
+          },
           { id: "small_talk.greetings.keeping_busy", text: "Keeping busy, the usual." },
           { id: "small_talk.greetings.good_to_see", text: "Good to see you!" }
         ]
@@ -229,9 +315,17 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         chunks: [
           { id: "small_talk.weather.lovely_day", text: "Lovely day, isn't it?" },
           { id: "small_talk.weather.bit_chilly", text: "It's a bit chilly out there today." },
-          { id: "small_talk.weather.pouring", text: "It's absolutely pouring.", gloss: "raining heavily" },
+          {
+            id: "small_talk.weather.pouring",
+            text: "It's absolutely pouring.",
+            gloss: "raining heavily"
+          },
           { id: "small_talk.weather.warming_up", text: "Looks like it's finally warming up." },
-          { id: "small_talk.weather.cant_make_mind", text: "The weather can't make its mind up.", usageNote: "Light humour about changeable weather." },
+          {
+            id: "small_talk.weather.cant_make_mind",
+            text: "The weather can't make its mind up.",
+            usageNote: "Light humour about changeable weather."
+          },
           { id: "small_talk.weather.wrap_up_warm", text: "Wrap up warm out there." }
         ]
       },
@@ -286,12 +380,24 @@ const corpusDefinitions: ReadonlyArray<CorpusDomain> = [
         situation: "Planning errands for the day",
         communicativeFunction: "Listing and sequencing tasks",
         chunks: [
-          { id: "errands.running_around.pop_to", text: "I need to pop to the post office.", gloss: "make a quick visit" },
+          {
+            id: "errands.running_around.pop_to",
+            text: "I need to pop to the post office.",
+            gloss: "make a quick visit"
+          },
           { id: "errands.running_around.few_things", text: "I've got a few things to pick up." },
           { id: "errands.running_around.on_the_way", text: "I'll grab it on the way home." },
-          { id: "errands.running_around.run_out_of", text: "We've run out of coffee.", gloss: "have none left" },
+          {
+            id: "errands.running_around.run_out_of",
+            text: "We've run out of coffee.",
+            gloss: "have none left"
+          },
           { id: "errands.running_around.while_im_out", text: "Anything you need while I'm out?" },
-          { id: "errands.running_around.back_in_a_bit", text: "I'll be back in a bit.", gloss: "soon" }
+          {
+            id: "errands.running_around.back_in_a_bit",
+            text: "I'll be back in a bit.",
+            gloss: "soon"
+          }
         ]
       }
     ]

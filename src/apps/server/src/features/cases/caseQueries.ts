@@ -1,9 +1,4 @@
-import type {
-  CaseDetailDto,
-  CaseDto,
-  ChunkDto,
-  DomainDto
-} from "@whetstone/contracts";
+import type { CaseDetailDto, CaseDto, ChunkDto, DomainDto } from "@whetstone/contracts";
 import { summarizeCaseMastery, type ReviewState } from "@whetstone/domain";
 import { and, asc, eq, inArray } from "drizzle-orm";
 

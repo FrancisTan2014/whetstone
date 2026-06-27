@@ -30,12 +30,13 @@ async function buildContext(): Promise<TestContext> {
 
 // Enroll a recall item linked to a chunk and apply `reviewCount` passing reviews, so a chunk can be
 // driven into a learning or mastered state for the mastery assertions.
-async function practise(
-  chunkId: string,
-  userId: string,
-  reviewCount: number
-): Promise<void> {
-  const item = await enrollRecallItem(context.recall, { chunkId, kind: "chunk", text: chunkId }, userId, t0);
+async function practise(chunkId: string, userId: string, reviewCount: number): Promise<void> {
+  const item = await enrollRecallItem(
+    context.recall,
+    { chunkId, kind: "chunk", text: chunkId },
+    userId,
+    t0
+  );
   for (let i = 0; i < reviewCount; i += 1) {
     await recordRecallReview(context.recall, item.id, 4, userId, t0);
   }
@@ -144,7 +145,9 @@ describe("getCaseDetail", () => {
   });
 
   it("handles a case with no chunks yet", async () => {
-    await context.db.insert(domains).values({ id: "d-empty", name: "Empty", orderIndex: 99, weight: 0.1 });
+    await context.db
+      .insert(domains)
+      .values({ id: "d-empty", name: "Empty", orderIndex: 99, weight: 0.1 });
     await context.db.insert(cases).values({
       communicativeFunction: "f",
       domainId: "d-empty",

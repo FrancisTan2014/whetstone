@@ -37,9 +37,9 @@ describe("chunkMasteryStatus", () => {
   });
 
   it("is 'learning' when only some linked items have graduated", () => {
-    expect(
-      chunkMasteryStatus([state({ repetitions: 4 }), state({ repetitions: 1 })], now)
-    ).toBe("learning");
+    expect(chunkMasteryStatus([state({ repetitions: 4 }), state({ repetitions: 1 })], now)).toBe(
+      "learning"
+    );
   });
 
   it("prefers 'due' over 'mastered' when a graduated item has come due again", () => {

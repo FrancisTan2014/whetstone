@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  parseCaseDetailDto,
-  parseCaseListDto,
-  parseDomainListDto
-} from "./caseContracts.js";
+import { parseCaseDetailDto, parseCaseListDto, parseDomainListDto } from "./caseContracts.js";
 
 const domain = { id: "kitchen", name: "Kitchen & cooking", weight: 0.9 };
 const theCase = {
@@ -70,7 +66,11 @@ describe("parseCaseDetailDto", () => {
 
   it("rejects a mastery summary with a non-integer count", () => {
     expect(() =>
-      parseCaseDetailDto({ case: theCase, chunks: [chunk], mastery: { ...mastery, totalChunks: 1.5 } })
+      parseCaseDetailDto({
+        case: theCase,
+        chunks: [chunk],
+        mastery: { ...mastery, totalChunks: 1.5 }
+      })
     ).toThrow();
   });
 });

@@ -18,10 +18,7 @@ export type RecallKind = z.infer<typeof recallKindSchema>;
 // when jotted or LLM-supplied.
 export const enrollRecallItemRequestSchema = z
   .object({
-    chunkId: z
-      .string()
-      .refine(isNonBlank, { message: "chunkId must be non-empty." })
-      .nullish(),
+    chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }).nullish(),
     gloss: z.string().refine(isNonBlank, { message: "gloss must be non-empty." }).nullish(),
     kind: recallKindSchema,
     provenanceEntryId: z
