@@ -8,6 +8,8 @@ export { caseCorpus, getCorpusDomain } from "./caseCorpus.js";
 export type { CorpusCase, CorpusChunk, CorpusDomain } from "./caseCorpus.js";
 export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "./caseMastery.js";
 export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
+export { judgementToGrade, productionCategories } from "./coachGrade.js";
+export type { ProductionCategory } from "./coachGrade.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,

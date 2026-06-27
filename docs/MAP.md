@@ -76,6 +76,14 @@ can navigate them from another package.
   `recallTools.ts` (five tools mapping 1:1 to the recall ops; validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
+- Coach LLM seam: `src/coach/` — the model-agnostic boundary the language loop calls (like the
+  dictionary seam). `coachProvider.ts` (the `CoachProvider` interface: judge / gradeForScheduler /
+  propose / author), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds and runs with no
+  API key), `coachRouter.ts` (cost-routing — judge=strong, propose/author=cheap, configurable) and
+  `coachConfig.ts` (env-driven routing + an absent-config-safe `resolveCoach` that stays on the fake
+  until real adapters + a key are wired). The verdict -> SM-2 grade map is pure in `@whetstone/domain`
+  (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No
+  real adapter or network yet; consumers go only through the seam.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
