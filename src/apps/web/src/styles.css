@@ -120,7 +120,9 @@ code {
 /* The 目录 (table of contents) is a controlled, dismissable drawer at every width — never a
    persistent sidebar column — so the reading column is never split. The 目录 tool in the
    ReadingHeader opens an off-canvas panel over a backdrop; selecting a unit (or tapping the
-   backdrop) closes it. */
+   backdrop) closes it. On narrow screens the panel is full-width (a true modal) so the reading
+   text is never left peeking, clipped mid-word, beside a part-width drawer (#187); on wider
+   screens it is a side drawer and the dimmed content reads as clearly behind it. */
 .readerTocBackdrop {
   background: rgb(15 23 42 / 40%);
   border: none;
@@ -141,6 +143,14 @@ code {
   top: 0;
   width: min(18rem, 80vw);
   z-index: 50;
+}
+
+/* Narrow screens (matches the reader's `isNarrow` chrome breakpoint): the 目录 covers the full
+   width so it reads as a modal, never leaving a clipped strip of reading text beside it (#187). */
+@media (max-width: 55.999rem) {
+  .readerToc--open .readerTocNav {
+    width: 100%;
+  }
 }
 
 .readerTocHeading {
