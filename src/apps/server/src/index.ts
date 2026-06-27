@@ -81,7 +81,10 @@ const server = createServer({
     db
   },
   readingPosition: { db },
-  search: { db }
+  search: { db },
+  // In a single-origin deploy (#184) the built web client is served from this same server; in
+  // dev/tests WEB_DIR is unset and Vite serves the client separately.
+  web: config.webDir !== undefined ? { dir: config.webDir } : undefined
 });
 
 try {

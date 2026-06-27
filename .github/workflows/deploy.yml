@@ -1,0 +1,66 @@
+name: Deploy
+
+# Continuous deploy to a personal MacBook on every merge to `main` (#184). This runs ONLY on
+# push to `main` (post-merge, trusted code) — never on `pull_request` — so untrusted PR code is
+# never executed on the Mac. The job is gated on the `DEPLOY_ENABLED` repo variable, so until the
+# self-hosted runner + Cloudflare Tunnel are set up (see docs/DEPLOY.md) it skips (it does not
+# queue), and merging stays safe.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# One deploy at a time; never cancel an in-flight deploy (a half-applied build/migration is worse
+# than waiting). A merge while a deploy runs queues behind it.
+concurrency:
+  group: deploy-macbook
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and restart on the MacBook
+    # Skips (does not queue) until you opt in by setting the repo variable DEPLOY_ENABLED=true.
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: self-hosted
+    env:
+      # The launchd label of the app service and the port it listens on. Override with repo
+      # variables if you used different values in docs/DEPLOY.md; these defaults match the runbook.
+      WHETSTONE_SERVICE_LABEL: ${{ vars.WHETSTONE_SERVICE_LABEL || 'com.whetstone.app' }}
+      WHETSTONE_PORT: ${{ vars.WHETSTONE_PORT || '3000' }}
+
+    steps:
+      - name: Check out the merged commit
+        uses: actions/checkout@v4
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web + server
+        run: pnpm build
+
+      - name: Restart the app service
+        # The app runs as a launchd-managed service that executes the freshly built
+        # src/apps/server/dist/index.js and runs DB migrations on boot (against the persistent
+        # DATABASE_DIR). `kickstart -k` stops then restarts it, so the new build + migrations take
+        # effect. Idempotent: re-running re-applies the same build.
+        run: launchctl kickstart -k "gui/$(id -u)/${WHETSTONE_SERVICE_LABEL}"
+
+      - name: Wait for the app to be healthy
+        # Poll the single-origin health endpoint until the restarted service is serving, so a failed
+        # boot/migration fails the deploy instead of silently leaving the old (or no) app running.
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${WHETSTONE_PORT}/health" >/dev/null 2>&1; then
+              echo "App healthy on port ${WHETSTONE_PORT}."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not become healthy on port ${WHETSTONE_PORT} within 60s." >&2
+          exit 1

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.3",
+    "@fastify/static": "^8.3.0",
     "@lingo-reader/epub-parser": "^0.4.6",
     "@whetstone/contracts": "workspace:*",
     "@whetstone/domain": "workspace:*",
