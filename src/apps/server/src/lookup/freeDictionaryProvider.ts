@@ -161,19 +161,28 @@ export function adaptWiktionary(payload: unknown): WiktionaryResult | null {
 
 export type FreeDictionaryProviderDependencies = Readonly<{
   httpClient: HttpClient;
+  timeoutMs?: number;
 }>;
+
+// The Free Dictionary host is a community service over the network; a lookup must never wait on it
+// indefinitely. Bounding the request lets an unreachable/slow host fail fast and fall back to the
+// offline WordNet, instead of leaving the popover stuck on "Looking up…" (#193).
+const defaultLookupTimeoutMs = 2500;
 
 function buildUrl(term: string): string {
   return `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(term)}`;
 }
 
 // The Wiktionary provider over the community Free Dictionary API (no key). Resolves to null on
-// any transport/HTTP error or no-match so the composer falls back to WordNet.
+// any transport/HTTP error, timeout, or no-match so the composer falls back to WordNet. The request
+// is always time-bounded so an unreachable host can never hang the English lookup (#193).
 export function createFreeDictionaryProvider(
   dependencies: FreeDictionaryProviderDependencies
 ): WiktionaryProvider {
+  const timeoutMs = dependencies.timeoutMs ?? defaultLookupTimeoutMs;
+
   async function lookup(term: string): Promise<WiktionaryResult | null> {
-    const result = await dependencies.httpClient.getJson<unknown>(buildUrl(term));
+    const result = await dependencies.httpClient.getJson<unknown>(buildUrl(term), { timeoutMs });
 
     if (!result.ok) {
       return null;

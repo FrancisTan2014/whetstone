@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { adaptWiktionary, createFreeDictionaryProvider } from "./freeDictionaryProvider.js";
-import type { HttpClient, HttpResult } from "./httpClient.js";
+import {
+  createHttpClient,
+  type FetchLike,
+  type HttpClient,
+  type HttpResult
+} from "./httpClient.js";
 
 const cannedEntry = {
   meanings: [
@@ -34,15 +39,20 @@ const cannedEntry = {
   word: "set"
 };
 
-function fakeHttpClient(result: HttpResult<unknown>): HttpClient & { lastUrl: () => string } {
+function fakeHttpClient(
+  result: HttpResult<unknown>
+): HttpClient & { lastUrl: () => string; lastTimeoutMs: () => number | undefined } {
   let requestedUrl = "";
+  let requestedTimeoutMs: number | undefined;
   return {
-    getJson: <T>(url: string): Promise<HttpResult<T>> => {
+    getJson: <T>(url: string, options?: { timeoutMs?: number }): Promise<HttpResult<T>> => {
       requestedUrl = url;
+      requestedTimeoutMs = options?.timeoutMs;
       return Promise.resolve(result as HttpResult<T>);
     },
     getText: () => Promise.resolve({ error: { kind: "network" }, ok: false }),
-    lastUrl: () => requestedUrl
+    lastUrl: () => requestedUrl,
+    lastTimeoutMs: () => requestedTimeoutMs
   };
 }
 
@@ -180,5 +190,34 @@ describe("createFreeDictionaryProvider", () => {
     const provider = createFreeDictionaryProvider({ httpClient });
 
     expect(await provider.lookup("absent")).toBeNull();
+  });
+
+  it("bounds the request with a positive timeout so an unreachable host cannot hang the lookup", async () => {
+    const httpClient = fakeHttpClient({ ok: true, value: [cannedEntry] });
+
+    await createFreeDictionaryProvider({ httpClient }).lookup("set");
+
+    const timeoutMs = httpClient.lastTimeoutMs();
+    expect(typeof timeoutMs).toBe("number");
+    expect(timeoutMs).toBeGreaterThan(0);
+    expect(Number.isFinite(timeoutMs)).toBe(true);
+  });
+
+  it("resolves to null (not a hang) when the host never responds, via the timeout (#193)", async () => {
+    // A fetch that never settles on its own and only rejects when aborted — exactly how an
+    // unreachable/slow host behaves under the client's AbortController timeout. Without the bounded
+    // request this lookup would hang forever (the bug); with it, the timeout aborts and we fall back.
+    const hangingFetch: FetchLike = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        });
+      });
+    const provider = createFreeDictionaryProvider({
+      httpClient: createHttpClient(hangingFetch),
+      timeoutMs: 20
+    });
+
+    expect(await provider.lookup("quick")).toBeNull();
   });
 });
