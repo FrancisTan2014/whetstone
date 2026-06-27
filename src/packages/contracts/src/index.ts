@@ -48,6 +48,13 @@ export type {
   ProposeNextResult
 } from "./coachContracts.js";
 export {
+  parseTranscription,
+  speechTimingSchema,
+  transcribedWordSchema,
+  transcriptionSchema
+} from "./speechContracts.js";
+export type { SpeechTimingDto, TranscribedWord, Transcription } from "./speechContracts.js";
+export {
   epubContentType,
   ingestMarkdownRequestSchema,
   parseIngestMarkdownRequest

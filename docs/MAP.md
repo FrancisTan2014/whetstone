@@ -84,6 +84,15 @@ can navigate them from another package.
   until real adapters + a key are wired). The verdict -> SM-2 grade map is pure in `@whetstone/domain`
   (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No
   real adapter or network yet; consumers go only through the seam.
+- Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`
+  interface: `transcribe(audio) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
+  the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
+  offline CLI args, validates the word-timestamped JSON at the boundary, maps to a `Transcription`),
+  `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
+  safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured). The
+  latency/inter-word-pause derivation is pure in `@whetstone/domain` (`speechTiming.ts`); shapes in
+  `@whetstone/contracts` (`speechContracts.ts`). Audio never leaves the machine; setup in
+  `docs/SPEECH.md`.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
