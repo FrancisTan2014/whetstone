@@ -83,7 +83,10 @@ export async function loadChunkCandidates(
     })
     .from(chunks)
     .innerJoin(cases, eq(chunks.caseId, cases.id))
-    .innerJoin(domains, eq(cases.domainId, domains.id));
+    .innerJoin(domains, eq(cases.domainId, domains.id))
+    // Only active cases are practised: LLM-authored cases awaiting review (#209) are excluded from the
+    // ranking until a curator accepts them.
+    .where(eq(cases.status, "active"));
 
   const statesByChunkId = await reviewStatesByChunkId(db, userId);
 
