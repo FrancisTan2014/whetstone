@@ -20,6 +20,34 @@ export type {
   DomainListDto
 } from "./caseContracts.js";
 export {
+  authorCaseBriefSchema,
+  authorCaseResultSchema,
+  authoredChunkSchema,
+  compiledContextSchema,
+  judgeProductionRequestSchema,
+  parseAuthorCaseResult,
+  parseProductionJudgement,
+  parseProposeNextResult,
+  productionCategories,
+  productionCategorySchema,
+  productionIssueKinds,
+  productionIssueSchema,
+  productionIssueSeverities,
+  productionJudgementSchema,
+  proposeNextResultSchema
+} from "./coachContracts.js";
+export type {
+  AuthorCaseBrief,
+  AuthorCaseResult,
+  AuthoredChunk,
+  CompiledContext,
+  JudgeProductionRequest,
+  ProductionCategory,
+  ProductionIssue,
+  ProductionJudgement,
+  ProposeNextResult
+} from "./coachContracts.js";
+export {
   epubContentType,
   ingestMarkdownRequestSchema,
   parseIngestMarkdownRequest
