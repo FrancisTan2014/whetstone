@@ -10,13 +10,17 @@ function isNonBlank(value: string): boolean {
 }
 
 // One transcribed word with its start/end offset in milliseconds from the start of the recording.
+// `end >= start` is enforced so a Transcription can never carry an impossible (end-before-start) word.
 export const transcribedWordSchema = z
   .object({
     end: z.number().int().min(0),
     start: z.number().int().min(0),
     text: z.string().refine(isNonBlank, { message: "text must be non-empty." })
   })
-  .strict();
+  .strict()
+  .refine((word) => word.end >= word.start, {
+    message: "end must be greater than or equal to start."
+  });
 
 export type TranscribedWord = z.infer<typeof transcribedWordSchema>;
 

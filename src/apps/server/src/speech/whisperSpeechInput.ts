@@ -65,9 +65,15 @@ function readWord(value: unknown): TranscribedWord | null {
   }
 
   const text = word.trim();
-  return text.length === 0
-    ? null
-    : { end: toMilliseconds(end), start: toMilliseconds(start), text };
+  const startMs = toMilliseconds(start);
+  const endMs = toMilliseconds(end);
+  // Reject impossible timings: a word cannot end before it starts. Caught here so an end-before-start
+  // word can never flow inward and corrupt the latency / inter-word-pause signal.
+  if (endMs < startMs) {
+    contractError();
+  }
+
+  return text.length === 0 ? null : { end: endMs, start: startMs, text };
 }
 
 // Parse + validate the Whisper stdout and map it to a Transcription (seconds -> integer ms; blank

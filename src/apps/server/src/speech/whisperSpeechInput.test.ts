@@ -81,6 +81,10 @@ describe("parseWhisperOutput", () => {
     [
       "a non-number end",
       JSON.stringify({ segments: [{ words: [{ end: "1", start: 0, word: "a" }] }], text: "x" })
+    ],
+    [
+      "an end-before-start word",
+      JSON.stringify({ segments: [{ words: [{ end: 0.5, start: 1, word: "a" }] }], text: "x" })
     ]
   ])("throws on %s", (_label, output) => {
     expect(() => parseWhisperOutput(output)).toThrow("did not match the expected");
