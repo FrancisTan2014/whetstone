@@ -523,6 +523,18 @@
   font-family: var(--font-mono);
 }
 
+/* On narrow screens the horizontal scroll (desktop default above) has no visible affordance on
+   touch, so a long line reads as truncated/lost. Wrap code to the column instead so nothing
+   disappears beyond the reading surface (#197); long unbreakable tokens still break rather than
+   overflow. Desktop keeps the deliberate horizontal scroll (#61). */
+@media (max-width: 55.999rem) {
+  .reader pre,
+  .reader pre code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* Blockquotes / epigraphs read as quotes. */
 .reader blockquote {
   padding-inline-start: 1rem;
