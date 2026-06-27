@@ -6,7 +6,8 @@ import {
   pgTable,
   primaryKey,
   text,
-  timestamp
+  timestamp,
+  uniqueIndex
 } from "drizzle-orm/pg-core";
 
 // The Drizzle schema is the database contract. Enum literals mirror the domain
@@ -213,9 +214,21 @@ export const cases = pgTable(
       .references(() => domains.id),
     id: text("id").primaryKey(),
     orderIndex: integer("order_index").notNull(),
-    situation: text("situation").notNull()
+    situation: text("situation").notNull(),
+    // Lifecycle status (#209): seeded and accepted cases are `active` (the default, so existing/seed
+    // rows are active); LLM-authored cases land as `needs_review` until a curator accepts/edits them.
+    status: text("status", { enum: ["needs_review", "active"] as const })
+      .notNull()
+      .default("active"),
+    // Deterministic key of the authoring brief that produced this case (#209), so re-requesting the
+    // same brief reuses the cached case instead of calling the model again. Null for seeded cases;
+    // unique among authored cases.
+    briefKey: text("brief_key")
   },
-  (table) => [index("cases_domain_idx").on(table.domainId)]
+  (table) => [
+    index("cases_domain_idx").on(table.domainId),
+    uniqueIndex("cases_brief_key_idx").on(table.briefKey)
+  ]
 );
 
 export const chunks = pgTable(

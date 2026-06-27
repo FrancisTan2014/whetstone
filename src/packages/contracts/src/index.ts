@@ -1,23 +1,35 @@
 export {
+  authorCaseRequestSchema,
+  authoredCaseDtoSchema,
   caseDetailDtoSchema,
   caseDtoSchema,
   caseListDtoSchema,
   caseMasterySummaryDtoSchema,
+  caseStatuses,
+  caseStatusSchema,
   chunkDtoSchema,
   domainDtoSchema,
   domainListDtoSchema,
+  parseAuthoredCaseDto,
+  parseAuthorCaseRequest,
   parseCaseDetailDto,
   parseCaseListDto,
-  parseDomainListDto
+  parseDomainListDto,
+  parseReviewCaseRequest,
+  reviewCaseRequestSchema
 } from "./caseContracts.js";
 export type {
+  AuthorCaseRequest,
+  AuthoredCaseDto,
   CaseDetailDto,
   CaseDto,
   CaseListDto,
   CaseMasterySummaryDto,
+  CaseStatus,
   ChunkDto,
   DomainDto,
-  DomainListDto
+  DomainListDto,
+  ReviewCaseRequest
 } from "./caseContracts.js";
 export {
   authorCaseBriefSchema,

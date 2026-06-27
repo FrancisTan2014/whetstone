@@ -14,7 +14,7 @@ function toDomainDto(row: DomainRow): DomainDto {
   return { id: row.id, name: row.name, weight: row.weight };
 }
 
-function toCaseDto(row: CaseRow): CaseDto {
+export function toCaseDto(row: CaseRow): CaseDto {
   return {
     communicativeFunction: row.communicativeFunction,
     domainId: row.domainId,
@@ -23,7 +23,7 @@ function toCaseDto(row: CaseRow): CaseDto {
   };
 }
 
-function toChunkDto(row: ChunkRow): ChunkDto {
+export function toChunkDto(row: ChunkRow): ChunkDto {
   return {
     caseId: row.caseId,
     gloss: row.gloss,

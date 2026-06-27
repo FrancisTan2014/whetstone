@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCaseDetailDto, parseCaseListDto, parseDomainListDto } from "./caseContracts.js";
+import {
+  parseAuthorCaseRequest,
+  parseAuthoredCaseDto,
+  parseCaseDetailDto,
+  parseCaseListDto,
+  parseDomainListDto,
+  parseReviewCaseRequest
+} from "./caseContracts.js";
 
 const domain = { id: "kitchen", name: "Kitchen & cooking", weight: 0.9 };
 const theCase = {
@@ -72,5 +79,58 @@ describe("parseCaseDetailDto", () => {
         mastery: { ...mastery, totalChunks: 1.5 }
       })
     ).toThrow();
+  });
+});
+
+describe("parseAuthorCaseRequest", () => {
+  const request = {
+    communicativeFunction: "Asking for directions",
+    domainId: "errands",
+    situation: "Lost in a new neighbourhood"
+  };
+
+  it("round-trips a valid brief", () => {
+    expect(parseAuthorCaseRequest(request)).toEqual(request);
+  });
+
+  it("requires a non-blank domain id", () => {
+    expect(() => parseAuthorCaseRequest({ ...request, domainId: "  " })).toThrow();
+  });
+
+  it("requires a non-blank situation", () => {
+    expect(() => parseAuthorCaseRequest({ ...request, situation: "" })).toThrow();
+  });
+});
+
+describe("parseReviewCaseRequest", () => {
+  it("accepts an empty review (accept as-is)", () => {
+    expect(parseReviewCaseRequest({})).toEqual({});
+  });
+
+  it("accepts an edit", () => {
+    expect(parseReviewCaseRequest({ situation: "A clearer situation" })).toEqual({
+      situation: "A clearer situation"
+    });
+  });
+
+  it("rejects a blank edited field", () => {
+    expect(() => parseReviewCaseRequest({ communicativeFunction: "  " })).toThrow();
+  });
+});
+
+describe("parseAuthoredCaseDto", () => {
+  const authored = {
+    cached: false,
+    case: theCase,
+    chunks: [chunk],
+    status: "needs_review"
+  };
+
+  it("round-trips an authored case", () => {
+    expect(parseAuthoredCaseDto(authored)).toEqual(authored);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(() => parseAuthoredCaseDto({ ...authored, status: "draft" })).toThrow();
   });
 });

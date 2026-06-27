@@ -83,3 +83,72 @@ export function parseCaseListDto(value: unknown): CaseListDto {
 export function parseCaseDetailDto(value: unknown): CaseDetailDto {
   return caseDetailDtoSchema.parse(value);
 }
+
+// --- Case authoring (#209) ---
+
+// A case's lifecycle status. Mirrors the `cases.status` enum in the DB schema.
+export const caseStatuses = ["needs_review", "active"] as const;
+
+export const caseStatusSchema = z.enum(caseStatuses);
+
+export type CaseStatus = z.infer<typeof caseStatusSchema>;
+
+function isNonBlankCase(value: string): boolean {
+  return value.trim().length > 0;
+}
+
+// A brief to author a new case into a domain the learner lacks. `domainId` is required (the case must
+// be placed in an existing domain); the situation + communicative function describe the gap.
+export const authorCaseRequestSchema = z
+  .object({
+    communicativeFunction: z
+      .string()
+      .refine(isNonBlankCase, { message: "communicativeFunction must be non-empty." }),
+    domainId: z.string().refine(isNonBlankCase, { message: "domainId must be non-empty." }),
+    situation: z.string().refine(isNonBlankCase, { message: "situation must be non-empty." })
+  })
+  .strict();
+
+export type AuthorCaseRequest = z.infer<typeof authorCaseRequestSchema>;
+
+// A review of an authored case: accept it as-is, or edit its situation / communicative function before
+// accepting. Either way the case becomes `active` (curated, not blindly trusted).
+export const reviewCaseRequestSchema = z
+  .object({
+    communicativeFunction: z
+      .string()
+      .refine(isNonBlankCase, { message: "communicativeFunction must be non-empty." })
+      .nullish(),
+    situation: z
+      .string()
+      .refine(isNonBlankCase, { message: "situation must be non-empty." })
+      .nullish()
+  })
+  .strict();
+
+export type ReviewCaseRequest = z.infer<typeof reviewCaseRequestSchema>;
+
+// An authored (or cached) case with its chunk inventory and status. `cached` is true when the brief
+// matched an already-authored case and no model call was made.
+export const authoredCaseDtoSchema = z
+  .object({
+    cached: z.boolean(),
+    case: caseDtoSchema,
+    chunks: z.array(chunkDtoSchema),
+    status: caseStatusSchema
+  })
+  .strict();
+
+export type AuthoredCaseDto = z.infer<typeof authoredCaseDtoSchema>;
+
+export function parseAuthorCaseRequest(value: unknown): AuthorCaseRequest {
+  return authorCaseRequestSchema.parse(value);
+}
+
+export function parseReviewCaseRequest(value: unknown): ReviewCaseRequest {
+  return reviewCaseRequestSchema.parse(value);
+}
+
+export function parseAuthoredCaseDto(value: unknown): AuthoredCaseDto {
+  return authoredCaseDtoSchema.parse(value);
+}

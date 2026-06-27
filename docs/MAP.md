@@ -72,6 +72,13 @@ can navigate them from another package.
   (never stored) from the user's `recall_items.chunk_id` links via `@whetstone/domain`
   `summarizeCaseMastery`. Corpus + mastery logic are pure in `@whetstone/domain`
   (`caseCorpus.ts`/`caseMastery.ts`); DTOs in `@whetstone/contracts` (`caseContracts.ts`).
+- Case authoring (#209): `src/features/authoring/` — `authoringCommands.ts` (`authorCase` calls the coach
+  seam to author a case + chunks into #205, persisted as `needs_review` and **cached by brief key** so a
+  repeat brief reuses the stored case with no model call; `reviewCase` edits/accepts -> `active`) and
+  `authoringQueries.ts` (`listCasesNeedingReview`, the curation queue). Cases carry a `status`
+  (`active` default; authored start `needs_review`) and a unique `brief_key`; the practice ranking in
+  `features/learner` only loads `active` cases, so unreviewed authored content is never practised.
+  Shapes in `@whetstone/contracts` (`caseContracts.ts`).
 - Recall MCP server: `src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
   `recallTools.ts` (five tools mapping 1:1 to the recall ops; validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
