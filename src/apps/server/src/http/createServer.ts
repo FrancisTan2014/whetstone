@@ -25,6 +25,7 @@ import { registerSearchRoutes } from "../features/search/searchRoutes.js";
 import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
 import type { ImageDependencies } from "../features/images/imageRoutes.js";
+import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
   type CurrentUserProvider
@@ -50,6 +51,9 @@ export type CreateServerOptions = Readonly<{
   notes?: NotesDependencies;
   readingPosition?: ReadingPositionDependencies;
   search?: SearchDependencies;
+  // When set, the built web client in `web.dir` is served from this same origin (single-origin
+  // deploy, #184). Left unset in dev/tests, where Vite serves the client separately.
+  web?: { dir: string } | undefined;
 }>;
 
 export function createServer(options: CreateServerOptions): FastifyInstance {
@@ -98,6 +102,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.images !== undefined) {
     registerImageRoutes(server, options.images);
+  }
+
+  if (options.web !== undefined) {
+    registerWebStatic(server, options.web.dir);
   }
 
   return server;

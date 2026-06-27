@@ -10,6 +10,7 @@ export type ServerConfig = Readonly<{
   logLevel: ServerLogLevel;
   port: number;
   sourceFilesDir: string;
+  webDir: string | undefined;
 }>;
 
 const defaultServerConfig: ServerConfig = {
@@ -19,7 +20,8 @@ const defaultServerConfig: ServerConfig = {
   imageResourcesDir: "./.data/images",
   logLevel: "info",
   port: 3000,
-  sourceFilesDir: "./.data/sources"
+  sourceFilesDir: "./.data/sources",
+  webDir: undefined
 };
 
 const serverLogLevels = new Set<ServerLogLevel>([
@@ -44,7 +46,8 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
     logLevel,
     port,
-    sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir
+    sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
+    webDir: env.WEB_DIR ?? defaultServerConfig.webDir
   };
 }
 
