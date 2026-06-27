@@ -113,6 +113,27 @@ export type {
   UpsertReadingPositionRequest
 } from "./readingPositionContracts.js";
 export {
+  enrollRecallItemRequestSchema,
+  parseEnrollRecallItemRequest,
+  parseRecallItemDto,
+  parseRecallItemListDto,
+  parseRecordRecallReviewRequest,
+  recallItemDtoSchema,
+  recallItemListDtoSchema,
+  recallKinds,
+  recallKindSchema,
+  recordRecallReviewRequestSchema,
+  reviewStateDtoSchema
+} from "./recallContracts.js";
+export type {
+  EnrollRecallItemRequest,
+  RecallItemDto,
+  RecallItemListDto,
+  RecallKind,
+  RecordRecallReviewRequest,
+  ReviewStateDto
+} from "./recallContracts.js";
+export {
   parseSearchRequest,
   parseSearchResults,
   searchRequestSchema,
