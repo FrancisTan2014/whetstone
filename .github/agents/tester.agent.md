@@ -140,11 +140,25 @@ whetstone deliberately layers UI; these compositions are **expected** and must *
 - transient **loading / toast** states (e.g. "Loading the work…", "Note saved.").
 
 A dimmed-but-still-legible reader behind a panel, or a popover over text, is correct — not a defect.
-Only file a rendering-corruption bug when the **cited screenshot itself** shows genuinely scrambled,
-duplicated, or foreign pixels in a region you can point to — and **describe that exact region** in the
-report. Never infer corruption from an overlay/backdrop, and never file it on a screenshot whose
-content is actually intact. (Repeatedly filed, then closed not-reproduced: #200, #201, #203 — every
-cited screenshot was clean. Do not re-file this without a screenshot that actually shows corruption.)
+
+**Hard stop — the "reader corruption / foreign pixels" false positive.** This exact bug has now been
+filed and refuted **four times** — #200, #201, #203, #204 — every time with **clean** cited
+screenshots, and #204 even invented specifics ("photo-like clothing/hair", "dense unrelated
+Chinese/table text", "duplicated fragments") that appear in **none** of the screenshots. It is a known
+confabulation, not a real defect. So:
+
+- Do **not** file any variant of "reader renders corrupted/overlaid/foreign/garbled/duplicated
+  content". If you believe you see it, write it as an *uncertain observation* in `report.md` for a
+  human to check — do not open a `[Bug]`.
+- The fixtures are **known**: the "Tester All Blocks" work is heading + paragraph (with the inline
+  phrase `你好 学习`) + blockquote + list + code — **no images**. The "Imported 三字经" toast and the
+  CC-CEDICT lookup popover (e.g. `你好 → hello; hi`) are **expected**. Inline Chinese, a success toast,
+  and the lookup popover are therefore **never** "foreign content".
+- Only ever describe corruption by **quoting the exact on-screen text or naming the exact pixel region**
+  you can see in the cited file. Never infer it, and never invent details to satisfy this rule — a
+  fabricated specific is worse than not filing.
+
+(`#187` is the intended modal-panel-over-dimmed-backdrop design; that is not corruption.)
 
 ## High-signal + dedupe guardrails (mandatory)
 
