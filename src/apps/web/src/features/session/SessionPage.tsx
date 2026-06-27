@@ -10,7 +10,7 @@ import type {
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { endSession, startSession, submitTurn } from "./sessionApi";
+import { endSession, startSession, submitTurn, transcribe } from "./sessionApi";
 
 // The session is a queue: `cue` is the current cue (always defined), `remaining` the rest. Stepping by
 // destructuring keeps the "this was the last cue" branch reachable, so there are no unreachable guards.
@@ -30,6 +30,14 @@ type SessionState =
   | (ActiveSession & Readonly<{ result: TurnResultDto; status: "feedback" }>)
   | Readonly<{ status: "summary"; summary: SessionSummaryDto }>;
 
+// Captures a recorded utterance as raw audio bytes (a browser MediaRecorder in production, a fake in
+// tests). Production is spoken: the bytes are sent to the STT seam (#207) before the turn is submitted.
+type CaptureAudio = () => Promise<Uint8Array>;
+
+type SessionPageProps = Readonly<{
+  captureAudio?: CaptureAudio;
+}>;
+
 function beginSession(plan: SessionPlanDto): SessionState {
   const [first, ...rest] = plan.cues;
   if (first === undefined) {
@@ -47,7 +55,7 @@ function beginSession(plan: SessionPlanDto): SessionState {
   };
 }
 
-export function SessionPage(): React.JSX.Element {
+export function SessionPage({ captureAudio }: SessionPageProps): React.JSX.Element {
   const [state, setState] = useState<SessionState>({ status: "loading" });
 
   useEffect(() => {
@@ -70,24 +78,41 @@ export function SessionPage(): React.JSX.Element {
     }
   }
 
+  async function judgeTurn(active: ActiveSession, transcript: string): Promise<void> {
+    const result = await submitTurn({ chunkId: active.cue.chunkId, transcript });
+    setState({
+      cue: active.cue,
+      index: active.index,
+      remaining: active.remaining,
+      result,
+      results: active.results,
+      status: "feedback",
+      total: active.total
+    });
+  }
+
   async function submit(
     active: ActiveSession & { submitting: boolean; transcript: string }
   ): Promise<void> {
     setState({ ...active, status: "cueing", submitting: true });
     try {
-      const result = await submitTurn({
-        chunkId: active.cue.chunkId,
-        production: { kind: "typed", transcript: active.transcript }
-      });
-      setState({
-        cue: active.cue,
-        index: active.index,
-        remaining: active.remaining,
-        result,
-        results: active.results,
-        status: "feedback",
-        total: active.total
-      });
+      await judgeTurn(active, active.transcript);
+    } catch {
+      setState({ status: "error" });
+    }
+  }
+
+  // The spoken path: record -> STT seam (transcribe) -> submit the recognized transcript. Calling the
+  // STT seam BEFORE the turn submission is what makes production spoken; the typed field is the fallback.
+  async function speak(
+    active: ActiveSession & { submitting: boolean; transcript: string },
+    capture: CaptureAudio
+  ): Promise<void> {
+    setState({ ...active, status: "cueing", submitting: true });
+    try {
+      const audio = await capture();
+      const { transcript } = await transcribe(audio);
+      await judgeTurn(active, transcript);
     } catch {
       setState({ status: "error" });
     }
@@ -127,18 +152,26 @@ export function SessionPage(): React.JSX.Element {
       <h1 className="text-2xl font-semibold text-text" id="session-heading">
         Practice
       </h1>
-      <div className="mt-6">{renderState(state, setState, submit, advance, restart)}</div>
+      <div className="mt-6">
+        {renderState(state, { advance, captureAudio, restart, setState, speak, submit })}
+      </div>
     </section>
   );
 }
 
-function renderState(
-  state: SessionState,
-  setState: (next: SessionState) => void,
-  submit: (active: ActiveSession & { submitting: boolean; transcript: string }) => Promise<void>,
-  advance: (active: ActiveSession & { result: TurnResultDto }) => Promise<void>,
-  restart: () => Promise<void>
-): React.JSX.Element {
+type Handlers = Readonly<{
+  advance: (active: ActiveSession & { result: TurnResultDto }) => Promise<void>;
+  captureAudio: CaptureAudio | undefined;
+  restart: () => Promise<void>;
+  setState: (next: SessionState) => void;
+  speak: (
+    active: ActiveSession & { submitting: boolean; transcript: string },
+    capture: CaptureAudio
+  ) => Promise<void>;
+  submit: (active: ActiveSession & { submitting: boolean; transcript: string }) => Promise<void>;
+}>;
+
+function renderState(state: SessionState, handlers: Handlers): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Setting up your session…" />;
   }
@@ -147,7 +180,7 @@ function renderState(
     return (
       <div role="alert">
         <p className="text-danger">Something went wrong with your session.</p>
-        <Button className="mt-3" onClick={() => void restart()}>
+        <Button className="mt-3" onClick={() => void handlers.restart()}>
           Try again
         </Button>
       </div>
@@ -164,14 +197,14 @@ function renderState(
   }
 
   if (state.status === "summary") {
-    return <SessionSummaryView onRestart={restart} summary={state.summary} />;
+    return <SessionSummaryView onRestart={handlers.restart} summary={state.summary} />;
   }
 
   if (state.status === "feedback") {
-    return <FeedbackView onNext={() => void advance(state)} state={state} />;
+    return <FeedbackView onNext={() => void handlers.advance(state)} state={state} />;
   }
 
-  return <CueView onSubmit={submit} setState={setState} state={state} />;
+  return <CueView handlers={handlers} state={state} />;
 }
 
 function progressLabel(active: ActiveSession): string {
@@ -179,14 +212,14 @@ function progressLabel(active: ActiveSession): string {
 }
 
 function CueView({
-  onSubmit,
-  setState,
+  handlers,
   state
 }: Readonly<{
-  onSubmit: (active: ActiveSession & { submitting: boolean; transcript: string }) => Promise<void>;
-  setState: (next: SessionState) => void;
+  handlers: Handlers;
   state: ActiveSession & { status: "cueing"; submitting: boolean; transcript: string };
 }>): React.JSX.Element {
+  const capture = handlers.captureAudio;
+
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-muted">{progressLabel(state)}</p>
@@ -198,18 +231,29 @@ function CueView({
         </p>
       </div>
 
+      {capture === undefined ? null : (
+        <Button
+          className="self-start"
+          onClick={() => void handlers.speak(state, capture)}
+          pending={state.submitting}
+          type="button"
+        >
+          Record &amp; transcribe
+        </Button>
+      )}
+
       <label className="text-sm font-medium text-text" htmlFor="session-transcript">
-        Then type what you said
+        Or type what you said
       </label>
       <textarea
         className="min-h-24 rounded border border-border bg-surface p-3 text-text"
         id="session-transcript"
-        onChange={(event) => setState({ ...state, transcript: event.currentTarget.value })}
+        onChange={(event) => handlers.setState({ ...state, transcript: event.currentTarget.value })}
         value={state.transcript}
       />
       <Button
         className="self-start"
-        onClick={() => void onSubmit(state)}
+        onClick={() => void handlers.submit(state)}
         pending={state.submitting}
         type="button"
       >

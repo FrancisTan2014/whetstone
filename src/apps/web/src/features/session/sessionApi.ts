@@ -1,9 +1,11 @@
-import type {
-  EndSessionRequest,
-  SessionPlanDto,
-  SessionSummaryDto,
-  SubmitTurnRequest,
-  TurnResultDto
+import {
+  audioContentType,
+  type EndSessionRequest,
+  type SessionPlanDto,
+  type SessionSummaryDto,
+  type SubmitTurnRequest,
+  type TranscribeResultDto,
+  type TurnResultDto
 } from "@whetstone/contracts";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
@@ -24,6 +26,22 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
 
 export async function startSession(): Promise<SessionPlanDto> {
   return postJson<SessionPlanDto>("/api/session/start");
+}
+
+// The STT seam (#207): post recorded audio bytes, get back the transcript. The spoken production path
+// calls this before submitting the turn; the typed fallback does not.
+export async function transcribe(audio: Uint8Array): Promise<TranscribeResultDto> {
+  const response = await fetch("/api/session/transcribe", {
+    body: audio as BodyInit,
+    headers: { "content-type": audioContentType },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request to /api/session/transcribe failed with status ${response.status}.`);
+  }
+
+  return (await response.json()) as TranscribeResultDto;
 }
 
 export async function submitTurn(request: SubmitTurnRequest): Promise<TurnResultDto> {

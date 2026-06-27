@@ -33,22 +33,16 @@ export type SessionPlanDto = z.infer<typeof sessionPlanDtoSchema>;
 
 // What the learner produced: either spoken (an audio file the STT seam transcribes) or typed (the
 // fallback when there is no mic).
-export const productionInputSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      audioPath: z.string().refine(isNonBlank, { message: "audioPath must be non-empty." }),
-      kind: z.literal("spoken")
-    })
-    .strict(),
-  z.object({ kind: z.literal("typed"), transcript: z.string() }).strict()
-]);
+// The content type the web posts recorded audio with to the transcribe (STT) endpoint.
+export const audioContentType = "application/octet-stream";
 
-export type ProductionInput = z.infer<typeof productionInputSchema>;
-
+// A turn submits the transcript that was produced — either typed (the fallback) or recognized by the
+// STT seam (#207) from a recorded utterance via the transcribe endpoint. Spoken production therefore
+// always passes through the STT seam before the turn is submitted.
 export const submitTurnRequestSchema = z
   .object({
     chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }),
-    production: productionInputSchema
+    transcript: z.string()
   })
   .strict();
 
@@ -68,14 +62,6 @@ export const turnResultDtoSchema = z
   .strict();
 
 export type TurnResultDto = z.infer<typeof turnResultDtoSchema>;
-
-export const transcribeRequestSchema = z
-  .object({
-    audioPath: z.string().refine(isNonBlank, { message: "audioPath must be non-empty." })
-  })
-  .strict();
-
-export type TranscribeRequest = z.infer<typeof transcribeRequestSchema>;
 
 export const transcribeResultDtoSchema = z.object({ transcript: z.string() }).strict();
 
@@ -114,10 +100,6 @@ export type SessionSummaryDto = z.infer<typeof sessionSummaryDtoSchema>;
 
 export function parseSubmitTurnRequest(value: unknown): SubmitTurnRequest {
   return submitTurnRequestSchema.parse(value);
-}
-
-export function parseTranscribeRequest(value: unknown): TranscribeRequest {
-  return transcribeRequestSchema.parse(value);
 }
 
 export function parseEndSessionRequest(value: unknown): EndSessionRequest {

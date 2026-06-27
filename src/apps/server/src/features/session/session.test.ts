@@ -29,6 +29,7 @@ function makeDeps(speechTranscript = "scripted speech"): SessionDependencies {
     createId: () => `id-${(sequence += 1)}`,
     db,
     now: () => t0,
+    saveAudio: () => Promise.resolve("/tmp/saved.audio"),
     speech: createFakeSpeechInput(scripted)
   };
 }
@@ -90,12 +91,7 @@ describe("submitTurn", () => {
     const { chunkId, target } = await firstCue();
     const deps = makeDeps();
 
-    const outcome = await submitTurn(
-      deps,
-      { chunkId, production: { kind: "typed", transcript: target } },
-      userA,
-      t0
-    );
+    const outcome = await submitTurn(deps, { chunkId, transcript: target }, userA, t0);
     if (outcome.status !== "ok") {
       throw new Error("expected ok");
     }
@@ -118,7 +114,7 @@ describe("submitTurn", () => {
 
     const outcome = await submitTurn(
       makeDeps(),
-      { chunkId, production: { kind: "typed", transcript: "something entirely different" } },
+      { chunkId, transcript: "something entirely different" },
       userA,
       t0
     );
@@ -132,7 +128,7 @@ describe("submitTurn", () => {
   it("reuses the existing recall item on a repeat turn", async () => {
     const { chunkId, target } = await firstCue();
     const deps = makeDeps();
-    const turn = { chunkId, production: { kind: "typed", transcript: target } } as const;
+    const turn = { chunkId, transcript: target } as const;
 
     await submitTurn(deps, turn, userA, t0);
     await submitTurn(deps, turn, userA, t0);
@@ -141,29 +137,8 @@ describe("submitTurn", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("transcribes a spoken production through the STT seam", async () => {
-    const { chunkId } = await firstCue();
-    const deps = makeDeps("help yourself please");
-
-    const outcome = await submitTurn(
-      deps,
-      { chunkId, production: { audioPath: "/tmp/utterance.wav", kind: "spoken" } },
-      userA,
-      t0
-    );
-    if (outcome.status !== "ok") {
-      throw new Error("expected ok");
-    }
-    expect(outcome.result.transcript).toBe("help yourself please");
-  });
-
   it("returns chunk_not_found for an unknown chunk", async () => {
-    const outcome = await submitTurn(
-      makeDeps(),
-      { chunkId: "nope", production: { kind: "typed", transcript: "x" } },
-      userA,
-      t0
-    );
+    const outcome = await submitTurn(makeDeps(), { chunkId: "nope", transcript: "x" }, userA, t0);
     expect(outcome).toEqual({ status: "chunk_not_found" });
   });
 });
@@ -216,15 +191,16 @@ describe("session routes", () => {
 
       const turnRes = await server.inject({
         method: "POST",
-        payload: { chunkId, production: { kind: "typed", transcript: target } },
+        payload: { chunkId, transcript: target },
         url: "/api/session/turn"
       });
       expect(turnRes.statusCode).toBe(200);
       expect(turnRes.json().grade).toBe(5);
 
       const transcribeRes = await server.inject({
+        headers: { "content-type": "application/octet-stream" },
         method: "POST",
-        payload: { audioPath: "/tmp/a.wav" },
+        payload: Buffer.from("fake-audio-bytes"),
         url: "/api/session/transcribe"
       });
       expect(transcribeRes.statusCode).toBe(200);
@@ -249,8 +225,14 @@ describe("session routes", () => {
         (await server.inject({ method: "POST", payload: {}, url: "/api/session/turn" })).statusCode
       ).toBe(400);
       expect(
-        (await server.inject({ method: "POST", payload: {}, url: "/api/session/transcribe" }))
-          .statusCode
+        (
+          await server.inject({
+            headers: { "content-type": "application/octet-stream" },
+            method: "POST",
+            payload: Buffer.alloc(0),
+            url: "/api/session/transcribe"
+          })
+        ).statusCode
       ).toBe(400);
       expect(
         (await server.inject({ method: "POST", payload: { turns: "no" }, url: "/api/session/end" }))
@@ -259,7 +241,7 @@ describe("session routes", () => {
 
       const notFound = await server.inject({
         method: "POST",
-        payload: { chunkId: "nope", production: { kind: "typed", transcript: "x" } },
+        payload: { chunkId: "nope", transcript: "x" },
         url: "/api/session/turn"
       });
       expect(notFound.statusCode).toBe(404);

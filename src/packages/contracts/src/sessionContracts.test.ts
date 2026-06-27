@@ -5,49 +5,25 @@ import {
   parseSessionPlanDto,
   parseSessionSummaryDto,
   parseSubmitTurnRequest,
-  parseTranscribeRequest,
   parseTurnResultDto
 } from "./sessionContracts.js";
 
 describe("parseSubmitTurnRequest", () => {
-  it("accepts a typed production", () => {
-    const request = { chunkId: "c1", production: { kind: "typed", transcript: "help yourself" } };
-    expect(parseSubmitTurnRequest(request)).toEqual(request);
-  });
-
-  it("accepts a spoken production", () => {
-    const request = { chunkId: "c1", production: { audioPath: "/tmp/a.wav", kind: "spoken" } };
+  it("accepts a chunk id and a transcript", () => {
+    const request = { chunkId: "c1", transcript: "help yourself" };
     expect(parseSubmitTurnRequest(request)).toEqual(request);
   });
 
   it("rejects a blank chunk id", () => {
-    expect(() =>
-      parseSubmitTurnRequest({ chunkId: "  ", production: { kind: "typed", transcript: "x" } })
-    ).toThrow();
+    expect(() => parseSubmitTurnRequest({ chunkId: "  ", transcript: "x" })).toThrow();
   });
 
-  it("rejects a spoken production with a blank audio path", () => {
-    expect(() =>
-      parseSubmitTurnRequest({ chunkId: "c1", production: { audioPath: " ", kind: "spoken" } })
-    ).toThrow();
+  it("rejects a missing transcript", () => {
+    expect(() => parseSubmitTurnRequest({ chunkId: "c1" })).toThrow();
   });
 
-  it("rejects an unknown production kind", () => {
-    expect(() =>
-      parseSubmitTurnRequest({ chunkId: "c1", production: { kind: "mimed" } })
-    ).toThrow();
-  });
-});
-
-describe("parseTranscribeRequest", () => {
-  it("accepts an audio path", () => {
-    expect(parseTranscribeRequest({ audioPath: "/tmp/a.wav" })).toEqual({
-      audioPath: "/tmp/a.wav"
-    });
-  });
-
-  it("rejects a blank audio path", () => {
-    expect(() => parseTranscribeRequest({ audioPath: "" })).toThrow();
+  it("rejects unknown fields", () => {
+    expect(() => parseSubmitTurnRequest({ chunkId: "c1", extra: 1, transcript: "x" })).toThrow();
   });
 });
 

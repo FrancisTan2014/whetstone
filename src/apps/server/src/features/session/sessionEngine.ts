@@ -31,6 +31,8 @@ export type SessionDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
   now: () => Date;
+  // Persist a recorded audio upload and return a path the speech seam can read.
+  saveAudio: (audio: Buffer) => Promise<string>;
   speech: SpeechInput;
 }>;
 
@@ -97,10 +99,7 @@ export async function submitTurn(
     return { status: "chunk_not_found" };
   }
 
-  const transcript =
-    request.production.kind === "typed"
-      ? request.production.transcript
-      : (await dependencies.speech.transcribe({ path: request.production.audioPath })).transcript;
+  const transcript = request.transcript;
 
   const judgement = await dependencies.coach.judgeProduction({
     context: { focus: row.situation, recentTargets: [] },

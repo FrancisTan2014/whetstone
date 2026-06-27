@@ -115,13 +115,17 @@ can navigate them from another package.
   scoring logic.
 - Practice session: `src/features/session/` — `sessionEngine.ts` orchestrates the turn loop over the
   coach (#206) and speech (#207) seams + #205/#208/#189: `startSession` proposes cues (top gap x
-  frequency chunks; English situation, native target hidden), `submitTurn` transcribes (STT or typed
-  fallback) -> judges + grades -> DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on
-  first practice, + records the turn outcome with its mistake category #208), `endSession` aggregates +
-  persists a `session_summaries` row and refreshes the profile. `sessionRoutes.ts`: `POST /api/session/`
+  frequency chunks; English situation, native target hidden), `submitTurn` judges + grades the
+  submitted transcript and DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on first
+  practice, + records the turn outcome with its mistake category #208), `endSession` aggregates +
+  persists a `session_summaries` row and refreshes the profile. The spoken path posts recorded audio
+  bytes to `POST /api/session/transcribe` (the STT seam, via injected `saveAudio` + speech) and submits
+  the recognized transcript; typing is the fallback. `sessionRoutes.ts`: `POST /api/session/`
   `start|transcribe|turn|end`. The coach/speech seams are resolved (fakes when unconfigured) in
   `index.ts`. Mistake-category map + session aggregation are pure in `@whetstone/domain`
   (`mistakeCategory.ts`/`sessionSummary.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
+  Web: `SessionPage` (one cue at a time; record→transcribe→submit or type) with the mic capture in the
+  coverage-excluded `audioCapture.ts` browser boundary.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

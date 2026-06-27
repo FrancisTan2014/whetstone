@@ -6,17 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./sessionApi", () => ({
   endSession: vi.fn(),
   startSession: vi.fn(),
-  submitTurn: vi.fn()
+  submitTurn: vi.fn(),
+  transcribe: vi.fn()
 }));
 
 import type { SessionPlanDto, TurnResultDto } from "@whetstone/contracts";
 
-import { endSession, startSession, submitTurn } from "./sessionApi";
+import { endSession, startSession, submitTurn, transcribe } from "./sessionApi";
 import { SessionPage } from "./SessionPage";
 
 const mockedStart = vi.mocked(startSession);
 const mockedSubmit = vi.mocked(submitTurn);
 const mockedEnd = vi.mocked(endSession);
+const mockedTranscribe = vi.mocked(transcribe);
 
 const cueA: SessionPlanDto["cues"][number] = {
   caseId: "k.table",
@@ -108,22 +110,19 @@ describe("SessionPage", () => {
 
     // First cue: the English situation is shown, never an L1 prompt.
     expect(await screen.findByText("Welcoming a guest to the table")).toBeDefined();
-    await user.type(screen.getByLabelText("Then type what you said"), "help yourself");
+    await user.type(screen.getByLabelText("Or type what you said"), "help yourself");
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
     // Feedback reveals the native target and that it sounded natural.
     expect(await screen.findByText("Help yourself.")).toBeDefined();
     expect(screen.getByText("That sounded natural.")).toBeDefined();
-    expect(mockedSubmit).toHaveBeenCalledWith({
-      chunkId: "c1",
-      production: { kind: "typed", transcript: "help yourself" }
-    });
+    expect(mockedSubmit).toHaveBeenCalledWith({ chunkId: "c1", transcript: "help yourself" });
 
     await user.click(screen.getByRole("button", { name: "Next" }));
 
     // Second (last) cue.
     expect(await screen.findByText("Urging them to start")).toBeDefined();
-    await user.type(screen.getByLabelText("Then type what you said"), "please commence eating");
+    await user.type(screen.getByLabelText("Or type what you said"), "please commence eating");
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(await screen.findByText("Too formal for the table.")).toBeDefined();
@@ -169,6 +168,37 @@ describe("SessionPage", () => {
     await screen.findByText("Welcoming a guest to the table");
     await user.click(screen.getByRole("button", { name: "Submit" }));
     await user.click(await screen.findByRole("button", { name: "Finish" }));
+
+    expect(await screen.findByRole("alert")).toBeDefined();
+  });
+
+  it("records and transcribes through the STT seam before submitting the turn", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    const audio = new Uint8Array([1, 2, 3]);
+    const captureAudio = vi.fn(async () => audio);
+    mockedTranscribe.mockResolvedValue({ transcript: "help yourself" });
+    mockedSubmit.mockResolvedValue(perfectResult);
+    const user = userEvent.setup();
+    render(<SessionPage captureAudio={captureAudio} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Record & transcribe" }));
+
+    expect(await screen.findByText("Help yourself.")).toBeDefined();
+    expect(captureAudio).toHaveBeenCalledOnce();
+    // The STT seam is called with the recorded bytes, then the recognized transcript is submitted.
+    expect(mockedTranscribe).toHaveBeenCalledWith(audio);
+    expect(mockedSubmit).toHaveBeenCalledWith({ chunkId: "c1", transcript: "help yourself" });
+  });
+
+  it("shows an error when the spoken path fails", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedTranscribe.mockRejectedValue(new Error("boom"));
+    const user = userEvent.setup();
+    render(<SessionPage captureAudio={vi.fn(async () => new Uint8Array([1]))} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Record & transcribe" }));
 
     expect(await screen.findByRole("alert")).toBeDefined();
   });

@@ -1,6 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -97,7 +98,18 @@ const server = createServer({
   },
   readingPosition: { db },
   search: { db },
-  session: { coach, createId: () => randomUUID(), db, now: () => new Date(), speech },
+  session: {
+    coach,
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date(),
+    saveAudio: (audio) => {
+      const path = join(tmpdir(), `whetstone-${randomUUID()}.audio`);
+      writeFileSync(path, audio);
+      return Promise.resolve(path);
+    },
+    speech
+  },
   // In a single-origin deploy (#184) the built web client is served from this same server; in
   // dev/tests WEB_DIR is unset and Vite serves the client separately.
   web: config.webDir !== undefined ? { dir: config.webDir } : undefined

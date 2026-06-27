@@ -1,7 +1,7 @@
 import {
+  audioContentType,
   endSessionRequestSchema,
-  submitTurnRequestSchema,
-  transcribeRequestSchema
+  submitTurnRequestSchema
 } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
 
@@ -13,19 +13,25 @@ export function registerSessionRoutes(
   server: FastifyInstance,
   dependencies: SessionDependencies
 ): void {
+  server.addContentTypeParser(audioContentType, { parseAs: "buffer" }, (_request, body, done) =>
+    done(null, body)
+  );
+
   server.post("/api/session/start", async (request) =>
     startSession(dependencies, request.server.currentUser.getCurrentUserId(), dependencies.now())
   );
 
-  // The STT boundary (#207): transcribe a recorded utterance. The web calls this, then submits the
-  // transcript to the turn endpoint; the typed fallback skips it.
+  // The STT boundary (#207): the web posts the recorded audio bytes, the server persists them and
+  // transcribes via the speech seam. The web submits the returned transcript to the turn endpoint; the
+  // typed fallback skips this.
   server.post("/api/session/transcribe", async (request, reply) => {
-    const parsed = transcribeRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
+    const body = request.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
       return reply.code(400).send(invalidRequest);
     }
 
-    const { transcript } = await dependencies.speech.transcribe({ path: parsed.data.audioPath });
+    const path = await dependencies.saveAudio(body);
+    const { transcript } = await dependencies.speech.transcribe({ path });
     return { transcript };
   });
 
