@@ -114,6 +114,8 @@ export type {
 } from "./readingPositionContracts.js";
 export {
   enrollRecallItemRequestSchema,
+  getRecallItemToolInputSchema,
+  listDueItemsToolInputSchema,
   parseEnrollRecallItemRequest,
   parseRecallItemDto,
   parseRecallItemListDto,
@@ -123,15 +125,21 @@ export {
   recallKinds,
   recallKindSchema,
   recordRecallReviewRequestSchema,
-  reviewStateDtoSchema
+  recordReviewToolInputSchema,
+  reviewStateDtoSchema,
+  searchRecallItemsToolInputSchema
 } from "./recallContracts.js";
 export type {
   EnrollRecallItemRequest,
+  GetRecallItemToolInput,
+  ListDueItemsToolInput,
   RecallItemDto,
   RecallItemListDto,
   RecallKind,
   RecordRecallReviewRequest,
-  ReviewStateDto
+  RecordReviewToolInput,
+  ReviewStateDto,
+  SearchRecallItemsToolInput
 } from "./recallContracts.js";
 export {
   parseSearchRequest,

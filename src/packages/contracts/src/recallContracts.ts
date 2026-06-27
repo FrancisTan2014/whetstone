@@ -73,6 +73,34 @@ export const recallItemListDtoSchema = z.object({ items: z.array(recallItemDtoSc
 
 export type RecallItemListDto = z.infer<typeof recallItemListDtoSchema>;
 
+// Input schemas for the MCP recall tools (#190). They live here so the MCP layer validates with the
+// same shared contracts the rest of the app uses. `save_recall_item` reuses
+// `enrollRecallItemRequestSchema`; the rest are below.
+export const listDueItemsToolInputSchema = z
+  .object({ limit: z.number().int().positive().optional() })
+  .strict();
+
+export type ListDueItemsToolInput = z.infer<typeof listDueItemsToolInputSchema>;
+
+export const recordReviewToolInputSchema = z
+  .object({
+    grade: z.number().int().min(0).max(5),
+    itemId: z.string().refine(isNonBlank, { message: "itemId must be non-empty." })
+  })
+  .strict();
+
+export type RecordReviewToolInput = z.infer<typeof recordReviewToolInputSchema>;
+
+export const searchRecallItemsToolInputSchema = z.object({ query: z.string() }).strict();
+
+export type SearchRecallItemsToolInput = z.infer<typeof searchRecallItemsToolInputSchema>;
+
+export const getRecallItemToolInputSchema = z
+  .object({ id: z.string().refine(isNonBlank, { message: "id must be non-empty." }) })
+  .strict();
+
+export type GetRecallItemToolInput = z.infer<typeof getRecallItemToolInputSchema>;
+
 export function parseEnrollRecallItemRequest(value: unknown): EnrollRecallItemRequest {
   return enrollRecallItemRequestSchema.parse(value);
 }
