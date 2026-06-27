@@ -115,12 +115,16 @@ export const authoredChunkSchema = z
 
 export type AuthoredChunk = z.infer<typeof authoredChunkSchema>;
 
-// An authored case + its chunk inventory, ready to be reviewed and persisted into the corpus.
+// An authored case + its chunk inventory, ready to be reviewed and persisted into the corpus. The
+// situation/function are model output crossing the seam, so they carry the same non-blank validation
+// as the authoring brief.
 export const authorCaseResultSchema = z
   .object({
     chunks: z.array(authoredChunkSchema),
-    communicativeFunction: z.string(),
-    situation: z.string()
+    communicativeFunction: z
+      .string()
+      .refine(isNonBlank, { message: "communicativeFunction must be non-empty." }),
+    situation: z.string().refine(isNonBlank, { message: "situation must be non-empty." })
   })
   .strict();
 

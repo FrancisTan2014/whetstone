@@ -68,6 +68,18 @@ describe("parseAuthorCaseResult", () => {
       })
     ).toThrow();
   });
+
+  it("rejects a blank situation (model output validated at the boundary)", () => {
+    expect(() =>
+      parseAuthorCaseResult({ chunks: [], communicativeFunction: "Offering food", situation: "  " })
+    ).toThrow();
+  });
+
+  it("rejects a blank communicative function", () => {
+    expect(() =>
+      parseAuthorCaseResult({ chunks: [], communicativeFunction: "  ", situation: "At the table" })
+    ).toThrow();
+  });
 });
 
 describe("boundary request schemas", () => {
