@@ -71,6 +71,13 @@
       "when": 1782527423362,
       "tag": "0009_low_lifeguard",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782567464959,
+      "tag": "0010_fixed_war_machine",
+      "breakpoints": true
     }
   ]
 }

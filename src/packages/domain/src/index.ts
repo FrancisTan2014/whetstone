@@ -4,6 +4,10 @@ export { blockTypes } from "./block.js";
 export type { BlockType } from "./block.js";
 export { blockSimilarity, diffBlocks } from "./blockDiff.js";
 export type { BlockDiff, DiffNewBlock, DiffOldBlock } from "./blockDiff.js";
+export { caseCorpus, getCorpusDomain } from "./caseCorpus.js";
+export type { CorpusCase, CorpusChunk, CorpusDomain } from "./caseCorpus.js";
+export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "./caseMastery.js";
+export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,

@@ -191,6 +191,48 @@ export const noteAnchors = pgTable(
   (table) => [index("note_anchors_block_idx").on(table.blockEntryId)]
 );
 
+// The authored content substrate for the language coach (#205): a map of everyday-life domains, each
+// holding cases (a situation + communicative function), each carrying a chunk inventory (the native
+// phrasings to practise). This is SHARED content (no owner, like works/blocks); it is seeded from the
+// domain's canonical corpus on boot. Per-user mastery is never stored here — it is computed from the
+// recall store (#189) via `recall_items.chunk_id`.
+export const domains = pgTable("domains", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  // Frequency / importance weight in [0, 1].
+  weight: doublePrecision("weight").notNull(),
+  orderIndex: integer("order_index").notNull()
+});
+
+export const cases = pgTable(
+  "cases",
+  {
+    communicativeFunction: text("communicative_function").notNull(),
+    domainId: text("domain_id")
+      .notNull()
+      .references(() => domains.id),
+    id: text("id").primaryKey(),
+    orderIndex: integer("order_index").notNull(),
+    situation: text("situation").notNull()
+  },
+  (table) => [index("cases_domain_idx").on(table.domainId)]
+);
+
+export const chunks = pgTable(
+  "chunks",
+  {
+    caseId: text("case_id")
+      .notNull()
+      .references(() => cases.id),
+    gloss: text("gloss"),
+    id: text("id").primaryKey(),
+    orderIndex: integer("order_index").notNull(),
+    text: text("text").notNull(),
+    usageNote: text("usage_note")
+  },
+  (table) => [index("chunks_case_idx").on(table.caseId)]
+);
+
 // A recall item: a pattern / idiom / proverb / chunk / word / phrase the learner wants to
 // remember, carrying its SM-2 review state inline (one state per item) and an optional link into
 // the content graph (`provenance_entry_id` -> a source note or block when it came from reading;
@@ -207,6 +249,10 @@ export const recallItems = pgTable(
     text: text("text").notNull(),
     gloss: text("gloss"),
     provenanceEntryId: text("provenance_entry_id").references(() => entries.id),
+    // Optional link to the practice chunk (#205) this item is recalling, so jots / reading captures
+    // attach to a case. Null when the item is not tied to the authored corpus. Per-case mastery is
+    // computed by joining a user's items to a case's chunks through this column.
+    chunkId: text("chunk_id").references(() => chunks.id),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     // Inlined SM-2 ReviewState (@whetstone/domain): ease, interval (days), streak, lapses, and the
     // last-reviewed (null until first review) / due timestamps. `due_at` is indexed with the user

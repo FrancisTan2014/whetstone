@@ -40,6 +40,7 @@ export function reviewStateColumns(
 
 export function toRecallItemDto(row: RecallItemRow): RecallItemDto {
   return {
+    chunkId: row.chunkId,
     createdAt: row.createdAt.toISOString(),
     gloss: row.gloss,
     id: row.id,

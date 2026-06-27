@@ -81,6 +81,10 @@ const tools: ReadonlyArray<RecallTool> = [
     inputSchema: {
       additionalProperties: false,
       properties: {
+        chunkId: {
+          description: "Optional id of the practice chunk (#205) this item recalls.",
+          type: "string"
+        },
         gloss: { description: "Optional short gloss or note.", type: "string" },
         kind: { description: "What sort of item this is.", enum: [...recallKinds], type: "string" },
         text: { description: "The text to remember.", type: "string" }

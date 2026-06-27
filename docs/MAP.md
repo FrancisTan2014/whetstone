@@ -62,9 +62,16 @@ can navigate them from another package.
   content tables stay unowned.
 - Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
   listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
-  optional `provenance_entry_id` into the content graph) and `recall_reviews` (append-only history).
+  optional `provenance_entry_id` into the content graph, and an optional `chunk_id` link to a practice
+  chunk (#205)) and `recall_reviews` (append-only history).
   Pure scheduling is `@whetstone/domain` SM-2; DTOs/validation in `@whetstone/contracts`
   (`recallContracts.ts`). Data + operations layer only.
+- Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
+  `caseQueries.ts` `listDomains`/`listCasesInDomain`/`getCaseDetail`) over shared `domains` -> `cases`
+  -> `chunks`. The case detail returns the chunk inventory plus a per-user mastery summary COMPUTED
+  (never stored) from the user's `recall_items.chunk_id` links via `@whetstone/domain`
+  `summarizeCaseMastery`. Corpus + mastery logic are pure in `@whetstone/domain`
+  (`caseCorpus.ts`/`caseMastery.ts`); DTOs in `@whetstone/contracts` (`caseContracts.ts`).
 - Recall MCP server: `src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
   `recallTools.ts` (five tools mapping 1:1 to the recall ops; validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
