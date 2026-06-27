@@ -10,6 +10,8 @@ export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "
 export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
 export { judgementToGrade, productionCategories } from "./coachGrade.js";
 export type { ProductionCategory } from "./coachGrade.js";
+export { deriveSpeechTiming } from "./speechTiming.js";
+export type { SpeechTiming, WordBoundary } from "./speechTiming.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,
