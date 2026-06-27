@@ -284,3 +284,70 @@ export const recallReviews = pgTable(
   },
   (table) => [index("recall_reviews_item_idx").on(table.recallItemId)]
 );
+
+// The learner model (#208) — user-owned personal data, like notes and recall. Three tables: the
+// categorized error-pattern store, the deposited turn outcomes, and the rolling profile. Enum literals
+// mirror `@whetstone/domain` (`learnerModel.ts`); duplicated so migration generation does not depend
+// on the domain package being built first.
+
+// Per-user categorized recurring errors with frequency (`count`) and recency (`last_seen_at`). One row
+// per (user, category) — a deposited turn with that category increments the count and bumps recency.
+export const errorPatterns = pgTable(
+  "error_patterns",
+  {
+    category: text("category", {
+      enum: [
+        "article_drop",
+        "l1_calque",
+        "wrong_collocation",
+        "register",
+        "word_order",
+        "tense_aspect",
+        "other"
+      ] as const
+    }).notNull(),
+    count: integer("count").notNull(),
+    lastSeenAt: timestamp("last_seen_at", { mode: "date", withTimezone: true }).notNull(),
+    userId: text("user_id").notNull()
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.category] })]
+);
+
+// The append-only log of deposited turn outcomes: the grade, the chunk practised (if any), and the
+// diagnosed error category (if any). Recent outcomes for the compiled context come from here.
+export const turnOutcomes = pgTable(
+  "turn_outcomes",
+  {
+    chunkId: text("chunk_id").references(() => chunks.id),
+    errorCategory: text("error_category", {
+      enum: [
+        "article_drop",
+        "l1_calque",
+        "wrong_collocation",
+        "register",
+        "word_order",
+        "tense_aspect",
+        "other"
+      ] as const
+    }),
+    grade: integer("grade").notNull(),
+    id: text("id").primaryKey(),
+    recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).notNull(),
+    userId: text("user_id").notNull()
+  },
+  (table) => [index("turn_outcomes_user_recorded_idx").on(table.userId, table.recordedAt)]
+);
+
+// The rolling, periodically-distilled profile: one row per user (level, focus, a phrased summary, and
+// the structured strengths/weaknesses lists), recomputed from outcomes.
+export const learnerProfiles = pgTable("learner_profiles", {
+  focus: text("focus").notNull(),
+  level: text("level", {
+    enum: ["beginner", "elementary", "intermediate", "advanced"] as const
+  }).notNull(),
+  strengthsJson: jsonb("strengths_json").notNull(),
+  summary: text("summary").notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull(),
+  userId: text("user_id").primaryKey(),
+  weaknessesJson: jsonb("weaknesses_json").notNull()
+});
