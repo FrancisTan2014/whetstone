@@ -5,6 +5,7 @@ import { createFakeCoach } from "../../coach/fakeCoach.js";
 import { createLoggerOptions } from "../../config/serverConfig.js";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
+import { cases, domains } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { authorCase } from "../authoring/authoringCommands.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
@@ -122,6 +123,43 @@ describe("compileProgressMap", () => {
       domain.cases.map((mapCase) => mapCase.caseId)
     );
     expect(allCaseIds).not.toContain("authored-case");
+  });
+  it("handles a chunkless case and a caseless domain", async () => {
+    await db
+      .insert(domains)
+      .values({ id: "d-empty", name: "Empty domain", orderIndex: 90, weight: 0.1 });
+    await db
+      .insert(domains)
+      .values({ id: "d-bare", name: "Bare domain", orderIndex: 91, weight: 0.1 });
+    await db.insert(cases).values({
+      communicativeFunction: "f",
+      domainId: "d-bare",
+      id: "d-bare.case",
+      orderIndex: 0,
+      situation: "A case with no chunks yet"
+    });
+
+    const map = await compileProgressMap(db, userA, t0);
+    const emptyDomain = map.domains.find((domain) => domain.domain.id === "d-empty");
+    const bareDomain = map.domains.find((domain) => domain.domain.id === "d-bare");
+
+    expect(emptyDomain?.cases).toEqual([]);
+    expect(bareDomain?.cases).toHaveLength(1);
+    expect(bareDomain?.cases[0]).toMatchObject({ light: "dark", mastery: { totalChunks: 0 } });
+  });
+
+  it("describes an empty world when no corpus is seeded", async () => {
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    const emptyDb = createDbClient(pglite);
+    try {
+      const map = await compileProgressMap(emptyDb, userA, t0);
+      expect(map.signals.totalChunks).toBe(0);
+      expect(map.signals.summary).toContain("Your map is waiting");
+      expect(map.recommendedCaseId).toBeNull();
+    } finally {
+      await emptyDb.$client.close();
+    }
   });
 });
 

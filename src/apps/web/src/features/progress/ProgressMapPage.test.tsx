@@ -151,6 +151,18 @@ describe("ProgressMapPage", () => {
     expect(mockedFetch).toHaveBeenCalledTimes(2);
   });
 
+  it("shows the error state when a refresh fails", async () => {
+    mockedFetch.mockResolvedValueOnce(makeMap());
+    const user = userEvent.setup();
+    render(<ProgressMapPage />);
+
+    await screen.findByText(/everyday phrasings/);
+    mockedFetch.mockRejectedValueOnce(new Error("boom"));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByRole("alert")).toBeDefined();
+  });
+
   it("starts a session from a chosen region when interactive", async () => {
     mockedFetch.mockResolvedValue(makeMap());
     const onStartRegion = vi.fn();
