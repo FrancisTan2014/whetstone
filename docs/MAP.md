@@ -61,10 +61,14 @@ can navigate them from another package.
   + `recall_reviews` (the recall store, below) are user-owned the same way; shared
   content tables stay unowned.
 - Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
-  listDue/list/search + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
+  listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
   optional `provenance_entry_id` into the content graph) and `recall_reviews` (append-only history).
   Pure scheduling is `@whetstone/domain` SM-2; DTOs/validation in `@whetstone/contracts`
-  (`recallContracts.ts`). Data + operations layer only — no routes/UI yet (the MCP tools wire it up).
+  (`recallContracts.ts`). Data + operations layer only.
+- Recall MCP server: `src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
+  `recallTools.ts` (five tools mapping 1:1 to the recall ops; validate via contracts; `createRecallMcpServer`)
+  and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
+  logic duplicated. Tool list + transport: `docs/MCP.md`.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

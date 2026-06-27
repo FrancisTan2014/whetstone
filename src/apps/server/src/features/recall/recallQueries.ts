@@ -66,6 +66,17 @@ export async function getRecallItemRowForUser(
   return rows[0];
 }
 
+// One recall item scoped to its owner, as a DTO (the read counterpart used by `get_recall_item`).
+export async function getRecallItemForUser(
+  db: DbClient,
+  itemId: string,
+  userId: string
+): Promise<RecallItemDto | undefined> {
+  const row = await getRecallItemRowForUser(db, itemId, userId);
+
+  return row === undefined ? undefined : toRecallItemDto(row);
+}
+
 // The user's items due for review at `now` (due_at <= now), soonest-due first, capped at `limit`.
 // Backed by the (user_id, due_at) index.
 export async function listDueRecallItems(

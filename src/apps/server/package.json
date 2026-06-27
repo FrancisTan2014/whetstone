@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -b tsconfig.json && node -e \"const fs=require('node:fs');fs.cpSync('src/db/migrations','dist/db/migrations',{recursive:true});fs.cpSync('src/lookup/data','dist/lookup/data',{recursive:true})\"",
     "dev": "tsx watch --env-file-if-exists=../../../.env dev-server.mjs",
+    "mcp": "node --env-file-if-exists=../../../.env dist/mcp/main.js",
     "start": "node --env-file-if-exists=../../../.env dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -13,6 +14,7 @@
     "@electric-sql/pglite": "^0.5.3",
     "@fastify/static": "^8.3.0",
     "@lingo-reader/epub-parser": "^0.4.6",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@whetstone/contracts": "workspace:*",
     "@whetstone/domain": "workspace:*",
     "drizzle-orm": "^0.45.2",

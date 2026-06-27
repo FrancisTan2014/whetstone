@@ -24,6 +24,7 @@ export default defineConfig({
         "**/src/db/migrations/**",
         "**/src/db/schema.ts", // Drizzle table declarations are exercised through migrations and integration tests.
         "**/src/index.ts",
+        "**/src/mcp/main.ts", // MCP stdio bootstrap is wiring-only infrastructure (like index.ts).
         "**/src/main.tsx",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
