@@ -336,10 +336,11 @@ longer whetstone is used, the more deeply it knows the learner and the smarter i
 is the moat (learner model + retrieval) made concrete, and the test for any practice feature: *does
 this interaction make the next proposal smarter? If not, it leaks value.*
 
-**The loop.** A short session (~15 min): the coach proposes from your history → you produce (typed now,
-spoken later) → the LLM returns **compact, constructive** feedback (naturalness, not just grammar) →
-it deposits what should be recalled (chunks/idioms/proverbs + your mistakes + progress). Recall
-resurfaces your **weak / missed** items on a spaced schedule.
+**The loop.** A short session (~15 min): the coach proposes from your history → you **speak** (mic →
+local STT) → the LLM returns **compact, constructive** feedback (naturalness, not just grammar) → it
+deposits what should be recalled (chunks/idioms/proverbs + your mistakes + progress). Recall resurfaces
+your **weak / missed** items on a spaced schedule. **Voice from day one (STT first);** pronunciation /
+prosody scoring is a later enrichment, not a prerequisite.
 
 **Division of labour (smart, bounded, cheap).**
 
@@ -352,9 +353,32 @@ resurfaces your **weak / missed** items on a spaced schedule.
   seam**: cheap/local model for the bulk, a stronger model only for the few coaching calls; **voice
   decoded locally with OSS** (transcript + prosody features → the LLM), never raw audio.
 
-**Settled vs open.** Settled: the gap/thesis, the compounding invariant, deterministic-recall +
-LLM-grades, bounded pre-cooked content, and the thin-app + rich-context + cost-routed model seam. Open
-(next design pass): the session UX, the voice front-end, and the coaching specifics.
+**Why production, and why spoken (the basis).** Input (reading) is necessary but not sufficient —
+producing forces retrieval and reveals gaps (Swain's output hypothesis); automaticity is **skill- and
+modality-specific**, so you automate speaking only by *speaking*, not typing (DeKeyser); and real-time
+pressure builds the automatic access fluency needs (Segalowitz). Hence spoken, production-first, under
+mild time pressure.
+
+**Content navigation — a coach-navigated fog-of-war.** Everyday English is an **authored map** of
+domains/cases (kitchen, chores, childcare, small talk, errands…) — the curation of *what matters*, with
+no fixed linear path. The **coach lights the next region by `gap × frequency`** (high-value in real
+life **and** still weak for you), **seeded by your real failures** (jots, reading captures, "I couldn't
+say X"), and it **probes adjacent dark areas** to surface blind spots you couldn't nominate. Your
+learner model drives the route; the map guarantees coverage.
+
+**Progress & the feedback loop.** The map is the **learner model made visible** — lit = owned, dim = in
+progress, dark = unknown — the honest progress signal (not XP). The system knows improvement by
+**measuring every turn** (produced the target? naturally? how fast — STT latency/pauses? which error
+category?) and reading the **trend in those deposits** (mastery intervals lengthening, error frequency
+falling, latency dropping, dark→lit). Improvement is the model's *slope*, not a one-off test. This
+closes a two-level loop — **micro** (speak → judge → next cue adapts) and **macro** (deposits →
+model/map update → tomorrow's navigation + recall schedule) — at once how the system measures progress
+and how it gets smarter.
+
+**Settled vs open.** Settled: the gap/thesis and SLA basis, the compounding invariant + feedback loop,
+deterministic-recall + LLM-grades, voice-first (STT) input, the fog-of-war content navigation, bounded
+pre-cooked content, and the thin-app + rich-context + cost-routed model seam. Open: the precise session
+UX, the case-authoring flow, and pronunciation/prosody scoring.
 
 ## Future direction protected by v0
 
