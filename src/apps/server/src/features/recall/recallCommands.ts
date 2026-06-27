@@ -34,6 +34,7 @@ export async function enrollRecallItem(
   const id = dependencies.createId();
   const review = newReviewState(now);
   const row = {
+    chunkId: request.chunkId ?? null,
     createdAt: now,
     gloss: request.gloss ?? null,
     id,

@@ -26,6 +26,17 @@ describe("enrollRecallItemRequest", () => {
     expect(parseEnrollRecallItemRequest(request)).toEqual(request);
   });
 
+  it("accepts an item linked to a practice chunk", () => {
+    const request = { chunkId: "kitchen.meal_planning.whats_for_dinner", kind: "chunk", text: "x" };
+    expect(parseEnrollRecallItemRequest(request)).toEqual(request);
+  });
+
+  it("rejects a blank chunk id", () => {
+    expect(() =>
+      parseEnrollRecallItemRequest({ chunkId: "  ", kind: "chunk", text: "x" })
+    ).toThrow();
+  });
+
   it.each(recallKinds)("accepts every kind (%s)", (kind) => {
     expect(parseEnrollRecallItemRequest({ kind, text: "x" }).kind).toBe(kind);
   });
@@ -63,6 +74,7 @@ describe("recall DTOs", () => {
     repetitions: 1
   };
   const item = {
+    chunkId: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     gloss: null,
     id: "recall-1",

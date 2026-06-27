@@ -48,6 +48,7 @@ describe("enrollRecallItem", () => {
     const item = await enroll({ kind: "idiom", text: "spill the beans" }, userA, t0);
 
     expect(item).toEqual({
+      chunkId: null,
       createdAt: t0.toISOString(),
       gloss: null,
       id: "id-1",
