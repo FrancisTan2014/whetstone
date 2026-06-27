@@ -1,4 +1,13 @@
-import { index, integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  doublePrecision,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp
+} from "drizzle-orm/pg-core";
 
 // The Drizzle schema is the database contract. Enum literals mirror the domain
 // model (`entryTypes`, `workTypes`, `blockTypes`, `linkTypes`); they are duplicated
@@ -180,4 +189,52 @@ export const noteAnchors = pgTable(
     startOffset: integer("start_offset")
   },
   (table) => [index("note_anchors_block_idx").on(table.blockEntryId)]
+);
+
+// A recall item: a pattern / idiom / proverb / chunk / word / phrase the learner wants to
+// remember, carrying its SM-2 review state inline (one state per item) and an optional link into
+// the content graph (`provenance_entry_id` -> a source note or block when it came from reading;
+// null when jotted or LLM-supplied). User-owned personal data, like notes and reading position —
+// stamped with `user_id` on enroll and filtered by it on read.
+export const recallItems = pgTable(
+  "recall_items",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind", {
+      enum: ["pattern", "idiom", "proverb", "chunk", "word", "phrase"] as const
+    }).notNull(),
+    text: text("text").notNull(),
+    gloss: text("gloss"),
+    provenanceEntryId: text("provenance_entry_id").references(() => entries.id),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    // Inlined SM-2 ReviewState (@whetstone/domain): ease, interval (days), streak, lapses, and the
+    // last-reviewed (null until first review) / due timestamps. `due_at` is indexed with the user
+    // so `listDue` is a cheap range scan.
+    easeFactor: doublePrecision("ease_factor").notNull(),
+    intervalDays: integer("interval_days").notNull(),
+    repetitions: integer("repetitions").notNull(),
+    lapses: integer("lapses").notNull(),
+    lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
+    dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [
+    index("recall_items_user_due_idx").on(table.userId, table.dueAt),
+    index("recall_items_user_idx").on(table.userId)
+  ]
+);
+
+// The append-only review log: one row per recorded review (the grade and when), so a recall item's
+// history is auditable independently of its current (overwritten) review state.
+export const recallReviews = pgTable(
+  "recall_reviews",
+  {
+    id: text("id").primaryKey(),
+    recallItemId: text("recall_item_id")
+      .notNull()
+      .references(() => recallItems.id),
+    grade: integer("grade").notNull(),
+    reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [index("recall_reviews_item_idx").on(table.recallItemId)]
 );

@@ -57,8 +57,14 @@ can navigate them from another package.
   No users table, login, session, or content owner yet (PRODUCT.md "Identity & ownership (v0)").
   `notes` is the first user-owned table: note routes resolve the current user via
   `request.server.currentUser` and stamp `notes.user_id` on create / filter note reads by it
-  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; shared
+  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; `recall_items`
+  + `recall_reviews` (the recall store, below) are user-owned the same way; shared
   content tables stay unowned.
+- Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
+  listDue/list/search + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
+  optional `provenance_entry_id` into the content graph) and `recall_reviews` (append-only history).
+  Pure scheduling is `@whetstone/domain` SM-2; DTOs/validation in `@whetstone/contracts`
+  (`recallContracts.ts`). Data + operations layer only — no routes/UI yet (the MCP tools wire it up).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
