@@ -59,6 +59,11 @@ function checkFailures(rollup) {
     return failures;
   }
   for (const c of rollup) {
+    // Checks that advertise themselves as non-blocking (e.g. "Lighthouse CI (informational,
+    // non-blocking)") must never gate a merge -- otherwise a flaky informational check leaves an
+    // approved, otherwise-green PR unmergeable forever. They also make mergeStateStatus UNSTABLE,
+    // which is accepted below.
+    if (isNonBlockingCheck(c)) continue;
     if (c.__typename === 'StatusContext') {
       if (c.state !== 'SUCCESS') failures.push(`status "${c.context}" is ${c.state}`);
       continue;
@@ -68,6 +73,13 @@ function checkFailures(rollup) {
     else if (!PASSING_CHECK_CONCLUSIONS.has(c.conclusion)) failures.push(`check "${c.name}" is ${c.conclusion}`);
   }
   return failures;
+}
+
+// A check is non-blocking when its own name/context says so. Such checks are informational and are
+// excluded from the merge gate (and from the mergeStateStatus check, since they make it UNSTABLE).
+function isNonBlockingCheck(c) {
+  const label = (c.name ?? c.context ?? '').toLowerCase();
+  return label.includes('non-blocking');
 }
 
 // Returns the list of failing gates for a PR; empty list means every GUIDELINES merge gate passes.
@@ -96,7 +108,12 @@ function failingGates(pr) {
   reasons.push(...checkFailures(pr.statusCheckRollup));
 
   if (pr.mergeable !== 'MERGEABLE') reasons.push(`mergeable is ${pr.mergeable}`);
-  if (pr.mergeStateStatus !== 'CLEAN') reasons.push(`merge state is ${pr.mergeStateStatus}`);
+  // CLEAN = all good; UNSTABLE = mergeable but a non-required (here: non-blocking, see above) check is
+  // failing/pending. Real blocking-check failures are caught by checkFailures, and conflicts/behind/
+  // blocked surface as DIRTY/BEHIND/BLOCKED, so accept only these two mergeable states.
+  if (pr.mergeStateStatus !== 'CLEAN' && pr.mergeStateStatus !== 'UNSTABLE') {
+    reasons.push(`merge state is ${pr.mergeStateStatus}`);
+  }
 
   if (!pr.closingIssuesReferences || pr.closingIssuesReferences.length === 0) {
     reasons.push('no linked closing issue');
