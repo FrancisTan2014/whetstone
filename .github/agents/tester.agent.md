@@ -129,6 +129,23 @@ A clear visual defect is a genuine, fileable `[Bug]` **even when the runtime gua
 are exactly the bugs the other gates miss. Reproduce it (re-drive or re-capture), then file it per the
 high-signal bar below, citing the offending screenshot path.
 
+### Intended overlays are NOT corruption (do not over-flag)
+
+whetstone deliberately layers UI; these compositions are **expected** and must **never** be filed as
+"corrupted overlay content", "garbled/foreign content", or "photo-like overlays":
+
+- the reader **dimmed behind a modal panel + backdrop** — the 目录 (TOC) drawer and the "Your notes"
+  panel render over a translucent scrim that greys the reading column (by design, #187);
+- the **lookup popover** floating over the reading text after a word is selected;
+- transient **loading / toast** states (e.g. "Loading the work…", "Note saved.").
+
+A dimmed-but-still-legible reader behind a panel, or a popover over text, is correct — not a defect.
+Only file a rendering-corruption bug when the **cited screenshot itself** shows genuinely scrambled,
+duplicated, or foreign pixels in a region you can point to — and **describe that exact region** in the
+report. Never infer corruption from an overlay/backdrop, and never file it on a screenshot whose
+content is actually intact. (Repeatedly filed, then closed not-reproduced: #200, #201, #203 — every
+cited screenshot was clean. Do not re-file this without a screenshot that actually shows corruption.)
+
 ## High-signal + dedupe guardrails (mandatory)
 
 These are hard requirements, not nice-to-haves. An over-eager bug-filer that floods the backlog is a
