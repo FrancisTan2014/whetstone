@@ -39,6 +39,8 @@ export {
 export type { NoteFieldType, NoteTemplate, NoteTemplateField } from "./noteTemplate.js";
 export { formatProductHeading, productIdentity } from "./productIdentity.js";
 export type { ProductIdentity } from "./productIdentity.js";
+export { gradeFromRating, newReviewState, scheduleReview } from "./sm2.js";
+export type { ReviewGrade, ReviewRating, ReviewState } from "./sm2.js";
 export { isWorkType, workTypes } from "./work.js";
 export {
   isWorkLanguage,
