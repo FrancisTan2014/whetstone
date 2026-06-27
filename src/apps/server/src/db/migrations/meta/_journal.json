@@ -78,6 +78,13 @@
       "when": 1782567464959,
       "tag": "0010_fixed_war_machine",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782575306880,
+      "tag": "0011_greedy_dragon_man",
+      "breakpoints": true
     }
   ]
 }

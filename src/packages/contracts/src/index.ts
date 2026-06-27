@@ -55,6 +55,33 @@ export {
 } from "./speechContracts.js";
 export type { SpeechTimingDto, TranscribedWord, Transcription } from "./speechContracts.js";
 export {
+  chunkMasteryStatuses,
+  chunkMasteryStatusSchema,
+  compiledLearnerContextDtoSchema,
+  depositTurnOutcomeRequestSchema,
+  errorCategories,
+  errorCategorySchema,
+  errorPatternDtoSchema,
+  learnerProfileDtoSchema,
+  parseCompiledLearnerContextDto,
+  parseDepositTurnOutcomeRequest,
+  parseLearnerProfileDto,
+  proficiencyLevels,
+  proficiencyLevelSchema,
+  rankedChunkDtoSchema,
+  turnOutcomeDtoSchema
+} from "./learnerContracts.js";
+export type {
+  CompiledLearnerContextDto,
+  DepositTurnOutcomeRequest,
+  ErrorCategory,
+  ErrorPatternDto,
+  LearnerProfileDto,
+  ProficiencyLevel,
+  RankedChunkDto,
+  TurnOutcomeDto
+} from "./learnerContracts.js";
+export {
   epubContentType,
   ingestMarkdownRequestSchema,
   parseIngestMarkdownRequest

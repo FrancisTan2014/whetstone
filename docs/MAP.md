@@ -93,6 +93,14 @@ can navigate them from another package.
   latency/inter-word-pause derivation is pure in `@whetstone/domain` (`speechTiming.ts`); shapes in
   `@whetstone/contracts` (`speechContracts.ts`). Audio never leaves the machine; setup in
   `docs/SPEECH.md`.
+- Learner model: `src/features/learner/` — the retrieval half of the moat. `learnerCommands.ts`
+  (`depositTurnOutcome` appends a turn + increments its categorized error pattern; `updateLearnerProfile`
+  recomputes the rolling profile — level/strengths/weaknesses/focus — with an injectable phraser for the
+  LLM seam) and `learnerQueries.ts` (`compileContext(now)` assembles a BOUNDED slice: rolling profile +
+  top gap x frequency chunks + relevant errors + recent outcomes, each capped so size stays ~constant as
+  history grows) over user-scoped `error_patterns`, `turn_outcomes`, `learner_profiles`. The gap x
+  frequency ranking + level derivation are pure in `@whetstone/domain` (`learnerModel.ts`); shapes in
+  `@whetstone/contracts` (`learnerContracts.ts`).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

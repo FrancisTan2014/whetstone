@@ -12,6 +12,19 @@ export { judgementToGrade, productionCategories } from "./coachGrade.js";
 export type { ProductionCategory } from "./coachGrade.js";
 export { deriveSpeechTiming } from "./speechTiming.js";
 export type { SpeechTiming, WordBoundary } from "./speechTiming.js";
+export {
+  chunkGap,
+  deriveLevel,
+  errorCategories,
+  proficiencyLevels,
+  rankChunksByGapFrequency
+} from "./learnerModel.js";
+export type {
+  ChunkCandidate,
+  ErrorCategory,
+  ProficiencyLevel,
+  RankedChunk
+} from "./learnerModel.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,
