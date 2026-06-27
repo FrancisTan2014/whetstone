@@ -25,6 +25,8 @@ export type {
   ProficiencyLevel,
   RankedChunk
 } from "./learnerModel.js";
+export { caseLightLevel, caseLightLevels } from "./progressMap.js";
+export type { CaseLightLevel } from "./progressMap.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,
