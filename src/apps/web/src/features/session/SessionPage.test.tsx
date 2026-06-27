@@ -172,4 +172,24 @@ describe("SessionPage", () => {
 
     expect(await screen.findByRole("alert")).toBeDefined();
   });
+
+  it("omits the error list when a session has no recurring errors", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedSubmit.mockResolvedValue(perfectResult);
+    mockedEnd.mockResolvedValue({
+      averageGrade: 5,
+      errorCounts: [],
+      strongTurns: 1,
+      turnCount: 1
+    });
+    const user = userEvent.setup();
+    render(<SessionPage />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await user.click(await screen.findByRole("button", { name: "Finish" }));
+
+    expect(await screen.findByText("Session complete")).toBeDefined();
+    expect(screen.queryByRole("list", { name: "Errors to watch" })).toBeNull();
+  });
 });
