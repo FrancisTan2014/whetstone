@@ -130,8 +130,15 @@ can navigate them from another package.
   `POST /api/session/` `start|transcribe|turn|say|end`. The coach/speech seams are resolved (fakes when
   unconfigured) in `index.ts`. Mistake-category map + session aggregation are pure in `@whetstone/domain`
   (`mistakeCategory.ts`/`sessionSummary.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
-  Web: `SessionPage` (one cue at a time; record→transcribe→submit or type) with the mic capture in the
-  coverage-excluded `audioCapture.ts` browser boundary.
+  Web: the live **call surface** `SessionPage` (#221) — tap **Start call**, talk continuously, the coach
+  replies in voice, with **barge-in** and scrolling **live captions**, until **End**; a typed box is the
+  secondary no-mic fallback. It wires the foundations end to end: continuous capture + endpointing
+  (`liveCapture.ts`, #219) → STT (`transcribe`, #207) → coach (`say` → `/api/session/say`, #220) →
+  browser TTS out (`voiceOut.ts`'s `createVoiceOut`, wired to `window.speechSynthesis` in the
+  coverage-excluded `browserVoiceOut.ts`). The browser audio/speech boundaries (`liveCapture.ts`,
+  `browserVoiceOut.ts`) are injected via the `live` prop and excluded from coverage; the loop
+  orchestration, `pickEnglishVoice`/`createVoiceOut`, and `sessionApi` are covered. Ending shows a basic
+  completion state (the full debrief is #222).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

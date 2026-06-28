@@ -1,336 +1,341 @@
-import { useEffect, useState } from "react";
-
-import type {
-  SessionCueDto,
-  SessionPlanDto,
-  SessionSummaryDto,
-  SessionTurnRecord,
-  TurnResultDto
-} from "@whetstone/contracts";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { endSession, startSession, submitTurn, transcribe } from "./sessionApi";
+import type { LiveCapture } from "./liveCapture";
+import { say, startSession, transcribe } from "./sessionApi";
+import type { VoiceOut } from "./voiceOut";
 
-// The session is a queue: `cue` is the current cue (always defined), `remaining` the rest. Stepping by
-// destructuring keeps the "this was the last cue" branch reachable, so there are no unreachable guards.
-type ActiveSession = Readonly<{
-  cue: SessionCueDto;
-  index: number;
-  remaining: ReadonlyArray<SessionCueDto>;
-  results: ReadonlyArray<SessionTurnRecord>;
-  total: number;
+// The live call is set in one case (the conversation's situation); the first proposed cue supplies it.
+type CallContext = Readonly<{
+  caseId: string;
+  communicativeFunction: string;
+  situation: string;
 }>;
 
-type SessionState =
-  | Readonly<{ status: "loading" }>
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "empty" }>
-  | (ActiveSession & Readonly<{ status: "cueing"; submitting: boolean; transcript: string }>)
-  | (ActiveSession & Readonly<{ result: TurnResultDto; status: "feedback" }>)
-  | Readonly<{ status: "summary"; summary: SessionSummaryDto }>;
+// Who is speaking right now: idle (call not started), listening (capturing the learner), thinking
+// (STT + coach, the latency window), or speaking (coach TTS playing).
+type Phase = "idle" | "listening" | "thinking" | "speaking";
 
-// Captures a recorded utterance as raw audio bytes (a browser MediaRecorder in production, a fake in
-// tests). Production is spoken: the bytes are sent to the STT seam (#207) before the turn is submitted.
-type CaptureAudio = () => Promise<Uint8Array>;
+type Caption = Readonly<{ id: number; role: "user" | "coach"; text: string }>;
+
+type Status =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{ kind: "empty" }>
+  | Readonly<{ kind: "active"; call: CallContext }>
+  | Readonly<{ kind: "ended" }>;
+
+// The capture + voice halves of a running call, held together so they start and tear down as one.
+type LiveSession = Readonly<{ capture: LiveCapture; voice: VoiceOut }>;
+
+// The browser-dependent halves of the loop, injected so the page is testable with fakes: mic capture +
+// endpointing (#219) and TTS out (#221). Absent = no-mic, typed-only fallback.
+export type LiveDependencies = Readonly<{
+  createCapture: (callbacks: {
+    onUtterance: (audio: Blob) => void;
+    onBargeIn?: () => void;
+    onUtteranceStart?: () => void;
+  }) => LiveCapture;
+  createVoiceOut: () => VoiceOut;
+}>;
 
 type SessionPageProps = Readonly<{
-  captureAudio?: CaptureAudio;
+  live?: LiveDependencies;
 }>;
 
-function beginSession(plan: SessionPlanDto): SessionState {
-  const [first, ...rest] = plan.cues;
-  if (first === undefined) {
-    return { status: "empty" };
+const phaseLabels: Readonly<Record<Phase, string>> = {
+  idle: "Ready when you are",
+  listening: "Listening…",
+  speaking: "Coach is speaking",
+  thinking: "Coach is thinking…"
+};
+
+export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
+  const [status, setStatus] = useState<Status>({ kind: "loading" });
+  const [captions, setCaptions] = useState<ReadonlyArray<Caption>>([]);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [turns, setTurns] = useState(0);
+  const [started, setStarted] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const liveRef = useRef<LiveSession | null>(null);
+  const captionSeq = useRef(0);
+
+  function appendCaption(role: Caption["role"], text: string): void {
+    const id = (captionSeq.current += 1);
+    setCaptions((prev) => [...prev, { id, role, text }]);
   }
-  return {
-    cue: first,
-    index: 0,
-    remaining: rest,
-    results: [],
-    status: "cueing",
-    submitting: false,
-    total: plan.cues.length,
-    transcript: ""
-  };
+
+  function teardown(): void {
+    const session = liveRef.current;
+    if (session !== null) {
+      session.capture.stop();
+      session.voice.cancel();
+    }
+    liveRef.current = null;
+  }
+
+  // One learner turn: show what they said, ask the coach (the latency window), speak the reply, and
+  // return to listening. No per-turn grading — that is the end-of-round job (#222).
+  async function runTurn(call: CallContext, transcript: string): Promise<void> {
+    appendCaption("user", transcript);
+    setPhase("thinking");
+
+    const reply = await say({ caseId: call.caseId, transcript });
+    appendCaption("coach", reply.say);
+    if (reply.repair !== undefined) {
+      appendCaption("coach", reply.repair.recast);
+    }
+
+    const session = liveRef.current;
+    if (session !== null) {
+      setPhase("speaking");
+      session.capture.setCoachPlaying(true);
+      await session.voice.speak(reply.say);
+      session.capture.setCoachPlaying(false);
+    }
+
+    setPhase(liveRef.current !== null ? "listening" : "idle");
+    setTurns((prev) => prev + 1);
+  }
+
+  function guarded(work: () => Promise<void>): Promise<void> {
+    return work().catch(() => {
+      teardown();
+      setStatus({ kind: "error" });
+    });
+  }
+
+  async function onUtterance(call: CallContext, audio: Blob): Promise<void> {
+    setPhase("thinking");
+    const { transcript } = await transcribe(audio);
+    await runTurn(call, transcript);
+  }
+
+  function startCall(call: CallContext, deps: LiveDependencies): Promise<void> {
+    return guarded(async () => {
+      const voice = deps.createVoiceOut();
+      const capture = deps.createCapture({
+        onBargeIn: () => {
+          voice.cancel();
+          capture.setCoachPlaying(false);
+          setPhase("listening");
+        },
+        onUtterance: (audio) => void guarded(() => onUtterance(call, audio))
+      });
+      liveRef.current = { capture, voice };
+      await capture.start();
+      setStarted(true);
+      setPhase("listening");
+    });
+  }
+
+  function endCall(): void {
+    teardown();
+    setStatus({ kind: "ended" });
+  }
+
+  // Event-handler reload (retry / start another): show loading and re-run the load effect via its key,
+  // so the effect (not this handler) performs the async fetch + setState.
+  function reload(): void {
+    setStatus({ kind: "loading" });
+    setReloadKey((prev) => prev + 1);
+  }
+
+  // Load the plan on mount and whenever `reloadKey` changes. The async work is defined inside the effect
+  // and awaits before any setState, so it never sets state synchronously within the effect body.
+  useEffect(() => {
+    async function init(): Promise<void> {
+      try {
+        const plan = await startSession();
+        const cue = plan.cues[0];
+        if (cue === undefined) {
+          setStatus({ kind: "empty" });
+          return;
+        }
+        setCaptions([]);
+        setPhase("idle");
+        setTurns(0);
+        setStarted(false);
+        setStatus({
+          call: {
+            caseId: cue.caseId,
+            communicativeFunction: cue.communicativeFunction,
+            situation: cue.situation
+          },
+          kind: "active"
+        });
+      } catch {
+        setStatus({ kind: "error" });
+      }
+    }
+
+    void init();
+    return () => {
+      teardown();
+    };
+  }, [reloadKey]);
+
+  if (status.kind === "loading") {
+    return <LoadingIndicator label="Setting up your call…" />;
+  }
+
+  if (status.kind === "error") {
+    return (
+      <Shell>
+        <div role="alert">
+          <p className="text-danger">Something went wrong with your call.</p>
+          <Button className="mt-3" onClick={reload}>
+            Try again
+          </Button>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (status.kind === "empty") {
+    return (
+      <Shell>
+        <p className="text-text-muted">
+          Nothing to practise right now — every region of your world is lit. Add reading or check
+          back later.
+        </p>
+      </Shell>
+    );
+  }
+
+  if (status.kind === "ended") {
+    return (
+      <Shell>
+        <div className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold text-text">Call complete</h2>
+          <p className="text-text-muted">You spoke {turns} turn(s) with the coach.</p>
+          <Button className="self-start" onClick={reload}>
+            Start another
+          </Button>
+        </div>
+      </Shell>
+    );
+  }
+
+  return (
+    <CallView
+      call={status.call}
+      captions={captions}
+      endCall={endCall}
+      liveDeps={live}
+      onSend={(transcript) => void guarded(() => runTurn(status.call, transcript))}
+      onStart={(deps) => void startCall(status.call, deps)}
+      phase={phase}
+      started={started}
+    />
+  );
 }
 
-export function SessionPage({ captureAudio }: SessionPageProps): React.JSX.Element {
-  const [state, setState] = useState<SessionState>({ status: "loading" });
-
-  useEffect(() => {
-    async function load(): Promise<void> {
-      try {
-        setState(beginSession(await startSession()));
-      } catch {
-        setState({ status: "error" });
-      }
-    }
-    void load();
-  }, []);
-
-  async function restart(): Promise<void> {
-    setState({ status: "loading" });
-    try {
-      setState(beginSession(await startSession()));
-    } catch {
-      setState({ status: "error" });
-    }
-  }
-
-  async function judgeTurn(active: ActiveSession, transcript: string): Promise<void> {
-    const result = await submitTurn({ chunkId: active.cue.chunkId, transcript });
-    setState({
-      cue: active.cue,
-      index: active.index,
-      remaining: active.remaining,
-      result,
-      results: active.results,
-      status: "feedback",
-      total: active.total
-    });
-  }
-
-  async function submit(
-    active: ActiveSession & { submitting: boolean; transcript: string }
-  ): Promise<void> {
-    setState({ ...active, status: "cueing", submitting: true });
-    try {
-      await judgeTurn(active, active.transcript);
-    } catch {
-      setState({ status: "error" });
-    }
-  }
-
-  // The spoken path: record -> STT seam (transcribe) -> submit the recognized transcript. Calling the
-  // STT seam BEFORE the turn submission is what makes production spoken; the typed field is the fallback.
-  async function speak(
-    active: ActiveSession & { submitting: boolean; transcript: string },
-    capture: CaptureAudio
-  ): Promise<void> {
-    setState({ ...active, status: "cueing", submitting: true });
-    try {
-      const audio = await capture();
-      const { transcript } = await transcribe(audio);
-      await judgeTurn(active, transcript);
-    } catch {
-      setState({ status: "error" });
-    }
-  }
-
-  async function advance(active: ActiveSession & { result: TurnResultDto }): Promise<void> {
-    const results: ReadonlyArray<SessionTurnRecord> = [
-      ...active.results,
-      { errorCategory: active.result.errorCategory, grade: active.result.grade }
-    ];
-
-    const [next, ...rest] = active.remaining;
-    if (next === undefined) {
-      setState({ status: "loading" });
-      try {
-        setState({ status: "summary", summary: await endSession({ turns: [...results] }) });
-      } catch {
-        setState({ status: "error" });
-      }
-      return;
-    }
-
-    setState({
-      cue: next,
-      index: active.index + 1,
-      remaining: rest,
-      results,
-      status: "cueing",
-      submitting: false,
-      total: active.total,
-      transcript: ""
-    });
-  }
-
+function Shell({ children }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
   return (
     <section aria-labelledby="session-heading" className="mx-auto max-w-2xl p-6">
       <h1 className="text-2xl font-semibold text-text" id="session-heading">
         Practice
       </h1>
-      <div className="mt-6">
-        {renderState(state, { advance, captureAudio, restart, setState, speak, submit })}
-      </div>
+      <div className="mt-6">{children}</div>
     </section>
   );
 }
 
-type Handlers = Readonly<{
-  advance: (active: ActiveSession & { result: TurnResultDto }) => Promise<void>;
-  captureAudio: CaptureAudio | undefined;
-  restart: () => Promise<void>;
-  setState: (next: SessionState) => void;
-  speak: (
-    active: ActiveSession & { submitting: boolean; transcript: string },
-    capture: CaptureAudio
-  ) => Promise<void>;
-  submit: (active: ActiveSession & { submitting: boolean; transcript: string }) => Promise<void>;
-}>;
-
-function renderState(state: SessionState, handlers: Handlers): React.JSX.Element {
-  if (state.status === "loading") {
-    return <LoadingIndicator label="Setting up your session…" />;
-  }
-
-  if (state.status === "error") {
-    return (
-      <div role="alert">
-        <p className="text-danger">Something went wrong with your session.</p>
-        <Button className="mt-3" onClick={() => void handlers.restart()}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-
-  if (state.status === "empty") {
-    return (
-      <p className="text-text-muted">
-        Nothing to practise right now — every region of your world is lit. Add reading or check back
-        later.
-      </p>
-    );
-  }
-
-  if (state.status === "summary") {
-    return <SessionSummaryView onRestart={handlers.restart} summary={state.summary} />;
-  }
-
-  if (state.status === "feedback") {
-    return <FeedbackView onNext={() => void handlers.advance(state)} state={state} />;
-  }
-
-  return <CueView handlers={handlers} state={state} />;
-}
-
-function progressLabel(active: ActiveSession): string {
-  return `Cue ${active.index + 1} of ${active.total}`;
-}
-
-function CueView({
-  handlers,
-  state
+function CallView({
+  call,
+  captions,
+  endCall,
+  liveDeps,
+  onSend,
+  onStart,
+  phase,
+  started
 }: Readonly<{
-  handlers: Handlers;
-  state: ActiveSession & { status: "cueing"; submitting: boolean; transcript: string };
+  call: CallContext;
+  captions: ReadonlyArray<Caption>;
+  endCall: () => void;
+  liveDeps: LiveDependencies | undefined;
+  onSend: (transcript: string) => void;
+  onStart: (deps: LiveDependencies) => void;
+  phase: Phase;
+  started: boolean;
 }>): React.JSX.Element {
-  const capture = handlers.captureAudio;
+  const [typed, setTyped] = useState("");
+  const busy = phase === "thinking" || phase === "speaking";
+
+  function submitTyped(): void {
+    const transcript = typed.trim();
+    if (transcript.length === 0) {
+      return;
+    }
+    setTyped("");
+    onSend(transcript);
+  }
 
   return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-text-muted">{progressLabel(state)}</p>
-      <div className="rounded border border-border bg-surface p-4">
-        <p className="text-lg text-text">{state.cue.situation}</p>
-        <p className="mt-1 text-sm text-text-muted">{state.cue.communicativeFunction}</p>
-        <p className="mt-2 text-xs text-text-muted">
-          Say it aloud — aim for ~{state.cue.timerSeconds}s.
-        </p>
-      </div>
-
-      {capture === undefined ? null : (
-        <Button
-          className="self-start"
-          onClick={() => void handlers.speak(state, capture)}
-          pending={state.submitting}
-          type="button"
-        >
-          Record &amp; transcribe
-        </Button>
-      )}
-
-      <label className="text-sm font-medium text-text" htmlFor="session-transcript">
-        Or type what you said
-      </label>
-      <textarea
-        className="min-h-24 rounded border border-border bg-surface p-3 text-text"
-        id="session-transcript"
-        onChange={(event) => handlers.setState({ ...state, transcript: event.currentTarget.value })}
-        value={state.transcript}
-      />
-      <Button
-        className="self-start"
-        onClick={() => void handlers.submit(state)}
-        pending={state.submitting}
-        type="button"
-      >
-        Submit
-      </Button>
-    </div>
-  );
-}
-
-function FeedbackView({
-  onNext,
-  state
-}: Readonly<{
-  onNext: () => void;
-  state: ActiveSession & { result: TurnResultDto };
-}>): React.JSX.Element {
-  const isLast = state.remaining.length === 0;
-
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-text-muted">{progressLabel(state)}</p>
-      <div className="rounded border border-border bg-surface p-4">
-        <p className="text-text">
-          Grade: <span className="font-semibold">{state.result.grade}/5</span>
-        </p>
-        <p className="mt-2 text-sm text-text-muted">Native phrasing</p>
-        <p className="text-text">{state.result.target}</p>
-
-        <div className="mt-3">
-          {state.result.judgement.issues.length === 0 ? (
-            <p className="text-sm text-success">That sounded natural.</p>
-          ) : (
-            <ul aria-label="What was off" className="flex flex-col gap-1 text-sm text-text-muted">
-              {state.result.judgement.issues.map((issue) => (
-                <li key={issue.note}>{issue.note}</li>
-              ))}
-            </ul>
-          )}
+    <Shell>
+      <div className="flex flex-col gap-4">
+        <div className="rounded border border-border bg-surface p-4">
+          <p className="text-sm text-text-muted">{call.communicativeFunction}</p>
+          <p className="text-lg text-text">{call.situation}</p>
         </div>
-      </div>
-      <Button className="self-start" onClick={onNext} type="button">
-        {isLast ? "Finish" : "Next"}
-      </Button>
-    </div>
-  );
-}
 
-function SessionSummaryView({
-  onRestart,
-  summary
-}: Readonly<{
-  onRestart: () => Promise<void>;
-  summary: SessionSummaryDto;
-}>): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold text-text">Session complete</h2>
-      <ul aria-label="Session summary" className="flex flex-col gap-1 text-text-muted">
-        <li>Turns {summary.turnCount}</li>
-        <li>Average grade {summary.averageGrade.toFixed(1)}</li>
-        <li>Strong turns {summary.strongTurns}</li>
-      </ul>
-      {summary.errorCounts.length > 0 ? (
-        <ul aria-label="Errors to watch" className="flex flex-wrap gap-2">
-          {summary.errorCounts.map((error) => (
+        {started ? <p className="text-sm font-medium text-text">{phaseLabels[phase]}</p> : null}
+
+        <ul aria-label="Conversation" aria-live="polite" className="flex flex-col gap-2">
+          {captions.map((caption) => (
             <li
-              className="rounded border border-border px-2 py-1 text-sm text-text-muted"
-              key={error.category}
+              className={
+                caption.role === "coach"
+                  ? "self-start rounded bg-surface px-3 py-2 text-text"
+                  : "self-end rounded bg-bg px-3 py-2 text-text"
+              }
+              key={caption.id}
             >
-              {error.category.replace(/_/g, " ")} · {error.count}
+              <span className="block text-xs text-text-muted">
+                {caption.role === "coach" ? "Coach" : "You"}
+              </span>
+              {caption.text}
             </li>
           ))}
         </ul>
-      ) : null}
-      <Button className="self-start" onClick={() => void onRestart()} type="button">
-        Practise again
-      </Button>
-    </div>
+
+        <div className="flex flex-wrap gap-2">
+          {liveDeps !== undefined && !started ? (
+            <Button onClick={() => onStart(liveDeps)} type="button">
+              Start call
+            </Button>
+          ) : null}
+          {started ? (
+            <Button onClick={endCall} type="button" variant="secondary">
+              End
+            </Button>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-border pt-4">
+          <label className="text-sm text-text-muted" htmlFor="session-typed">
+            Or type what you&apos;d say
+          </label>
+          <textarea
+            className="min-h-20 rounded border border-border bg-surface p-3 text-text"
+            id="session-typed"
+            onChange={(event) => setTyped(event.currentTarget.value)}
+            value={typed}
+          />
+          <Button
+            className="self-start"
+            onClick={submitTyped}
+            pending={busy}
+            type="button"
+            variant="secondary"
+          >
+            Send
+          </Button>
+        </div>
+      </div>
+    </Shell>
   );
 }

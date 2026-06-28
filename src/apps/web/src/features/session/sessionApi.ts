@@ -1,11 +1,9 @@
 import {
   audioContentType,
-  type EndSessionRequest,
+  type CoachConverseResult,
+  type CoachSayRequest,
   type SessionPlanDto,
-  type SessionSummaryDto,
-  type SubmitTurnRequest,
-  type TranscribeResultDto,
-  type TurnResultDto
+  type TranscribeResultDto
 } from "@whetstone/contracts";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
@@ -28,9 +26,9 @@ export async function startSession(): Promise<SessionPlanDto> {
   return postJson<SessionPlanDto>("/api/session/start");
 }
 
-// The STT seam (#207): post recorded audio bytes, get back the transcript. The spoken production path
-// calls this before submitting the turn; the typed fallback does not.
-export async function transcribe(audio: Uint8Array): Promise<TranscribeResultDto> {
+// The STT seam (#207): post a recorded utterance's bytes, get back the transcript. The live call loop
+// (#221) calls this on each utterance-end before asking the coach; browser SpeechRecognition is not used.
+export async function transcribe(audio: Blob | Uint8Array): Promise<TranscribeResultDto> {
   const response = await fetch("/api/session/transcribe", {
     body: audio as BodyInit,
     headers: { "content-type": audioContentType },
@@ -44,10 +42,9 @@ export async function transcribe(audio: Uint8Array): Promise<TranscribeResultDto
   return (await response.json()) as TranscribeResultDto;
 }
 
-export async function submitTurn(request: SubmitTurnRequest): Promise<TurnResultDto> {
-  return postJson<TurnResultDto>("/api/session/turn", request);
-}
-
-export async function endSession(request: EndSessionRequest): Promise<SessionSummaryDto> {
-  return postJson<SessionSummaryDto>("/api/session/end", request);
+// The conversational coach turn (#220): send the learner's latest transcript for the case; get the
+// coach's next spoken line (+ light repair only on a breakdown). No per-turn grade — grading is the
+// end-of-round job (#222).
+export async function say(request: CoachSayRequest): Promise<CoachConverseResult> {
+  return postJson<CoachConverseResult>("/api/session/say", request);
 }
