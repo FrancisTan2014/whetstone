@@ -69,42 +69,44 @@ export function createLiveCapture(
   let audioContext: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
   let sampleTimer: ReturnType<typeof setInterval> | null = null;
-  let recorder: MediaRecorder | null = null;
-  let chunks: Blob[] = [];
+  // The active recording, paired with its own chunk buffer. Keeping the buffer recorder-local means a
+  // stopped recorder's late `dataavailable`/`stop` events write to and emit from *its* buffer, so a new
+  // candidate starting before the old recorder drains can never corrupt or drop the completed blob.
+  let active: Readonly<{ recorder: MediaRecorder; buffer: Blob[] }> | null = null;
 
   // Begin (or keep) a recording from the candidate onset. Idempotent so the later confirmed start, which
   // also asks to record, does not restart and lose the buffered onset.
   function ensureRecording(): void {
-    if (recorder !== null || stream === null) {
+    if (active !== null || stream === null) {
       return;
     }
-    chunks = [];
-    const active = new MediaRecorder(stream);
-    active.addEventListener("dataavailable", (event) => {
+    const buffer: Blob[] = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.addEventListener("dataavailable", (event) => {
       if (event.data.size > 0) {
-        chunks.push(event.data);
+        buffer.push(event.data);
       }
     });
-    recorder = active;
-    active.start();
+    active = { buffer, recorder };
+    recorder.start();
   }
 
   // Stop the current recording. When `emit` is true the assembled blob is handed to `onUtterance`;
   // otherwise the recording (a dead candidate or a torn-down session) is discarded.
   function stopRecording(emit: boolean): void {
-    const active = recorder;
-    if (active === null) {
+    const current = active;
+    if (current === null) {
       return;
     }
-    recorder = null;
+    active = null;
+    const { buffer, recorder } = current;
     if (emit) {
-      const captured = chunks;
-      active.addEventListener("stop", () => {
-        const type = active.mimeType;
-        callbacks.onUtterance(new Blob(captured, type ? { type } : undefined));
+      recorder.addEventListener("stop", () => {
+        const type = recorder.mimeType;
+        callbacks.onUtterance(new Blob(buffer, type ? { type } : undefined));
       });
     }
-    active.stop();
+    recorder.stop();
   }
 
   function dispatch(step: TurnStep): void {
