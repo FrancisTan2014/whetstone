@@ -1,12 +1,32 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseCoachSayRequest,
   parseEndSessionRequest,
   parseSessionPlanDto,
   parseSessionSummaryDto,
   parseSubmitTurnRequest,
   parseTurnResultDto
 } from "./sessionContracts.js";
+
+describe("parseCoachSayRequest", () => {
+  it("accepts a case id and a transcript", () => {
+    const request = { caseId: "k.meal", transcript: "help yourself" };
+    expect(parseCoachSayRequest(request)).toEqual(request);
+  });
+
+  it("accepts an empty transcript (a breakdown the coach repairs)", () => {
+    expect(parseCoachSayRequest({ caseId: "k.meal", transcript: "" }).transcript).toBe("");
+  });
+
+  it("rejects a blank case id", () => {
+    expect(() => parseCoachSayRequest({ caseId: "  ", transcript: "x" })).toThrow();
+  });
+
+  it("rejects unknown fields", () => {
+    expect(() => parseCoachSayRequest({ caseId: "k.meal", extra: 1, transcript: "x" })).toThrow();
+  });
+});
 
 describe("parseSubmitTurnRequest", () => {
   it("accepts a chunk id and a transcript", () => {

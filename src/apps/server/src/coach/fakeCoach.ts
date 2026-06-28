@@ -2,7 +2,10 @@ import type {
   AuthorCaseBrief,
   AuthorCaseResult,
   AuthoredChunk,
+  CoachConverseRequest,
+  CoachConverseResult,
   CompiledContext,
+  ConversationTurn,
   JudgeProductionRequest,
   ProductionCategory,
   ProductionIssue,
@@ -101,10 +104,40 @@ function author(brief: AuthorCaseBrief): AuthorCaseResult {
   };
 }
 
+function lastUserText(history: ReadonlyArray<ConversationTurn>): string | undefined {
+  return [...history].reverse().find((turn) => turn.role === "user")?.text;
+}
+
+// A deterministic conversational turn (#220): the coach stays in flow, asking a scripted follow-up that
+// keeps the learner producing, and offers light repair ONLY on a real breakdown — when the latest user
+// turn carried no usable words (stuck / unintelligible). No grading here; that is the end-of-round job.
+function converse(request: CoachConverseRequest): CoachConverseResult {
+  const latest = lastUserText(request.history);
+  if (latest !== undefined && tokenize(latest).length === 0) {
+    return {
+      repair: {
+        reason: "That one didn't quite come through — looks like a tricky spot.",
+        recast: `Let's take it slowly. Try one short sentence about: ${request.situation}`
+      },
+      say: "No rush — let's try a simpler version. Just give me a few words."
+    };
+  }
+
+  const coachTurns = request.history.filter((turn) => turn.role === "coach").length;
+  const say =
+    coachTurns === 0
+      ? `Let's get into it: ${request.situation}. How would you start?`
+      : "Good — keep going. What would you say next?";
+  return { say };
+}
+
 export function createFakeCoach(): CoachProvider {
   return Object.freeze({
     authorCase(brief: AuthorCaseBrief): Promise<AuthorCaseResult> {
       return Promise.resolve(author(brief));
+    },
+    converse(request: CoachConverseRequest): Promise<CoachConverseResult> {
+      return Promise.resolve(converse(request));
     },
     gradeForScheduler(judgement: ProductionJudgement): ReviewGrade {
       return judgementToGrade(judgement.category);

@@ -48,6 +48,19 @@ export const submitTurnRequestSchema = z
 
 export type SubmitTurnRequest = z.infer<typeof submitTurnRequestSchema>;
 
+// A conversational turn over the coach seam (#220): the case the call is set in and the learner's latest
+// transcript. The transcript may be empty — that is a breakdown (the learner went quiet / unintelligible)
+// the coach repairs. The server reconstructs the conversation history from the persisted exchange, so the
+// client only sends the latest line. No per-turn grading happens here (that is the end-of-round job).
+export const coachSayRequestSchema = z
+  .object({
+    caseId: z.string().refine(isNonBlank, { message: "caseId must be non-empty." }),
+    transcript: z.string()
+  })
+  .strict();
+
+export type CoachSayRequest = z.infer<typeof coachSayRequestSchema>;
+
 // The turn result: the grade, the native target + the coach's judgement (compact constructive
 // feedback), the transcript that was judged, the deposited mistake category, and the item's next due.
 export const turnResultDtoSchema = z
@@ -100,6 +113,10 @@ export type SessionSummaryDto = z.infer<typeof sessionSummaryDtoSchema>;
 
 export function parseSubmitTurnRequest(value: unknown): SubmitTurnRequest {
   return submitTurnRequestSchema.parse(value);
+}
+
+export function parseCoachSayRequest(value: unknown): CoachSayRequest {
+  return coachSayRequestSchema.parse(value);
 }
 
 export function parseEndSessionRequest(value: unknown): EndSessionRequest {

@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Transcription } from "@whetstone/contracts";
@@ -8,13 +8,19 @@ import { createFakeCoach } from "../../coach/fakeCoach.js";
 import { createLoggerOptions } from "../../config/serverConfig.js";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { recallItems, sessionSummaries, turnOutcomes } from "../../db/schema.js";
+import { recallItems, sessionExchanges, sessionSummaries, turnOutcomes } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
 import { getLearnerProfile } from "../learner/learnerQueries.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
 import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
-import { endSession, startSession, submitTurn, type SessionDependencies } from "./sessionEngine.js";
+import {
+  converseTurn,
+  endSession,
+  startSession,
+  submitTurn,
+  type SessionDependencies
+} from "./sessionEngine.js";
 
 const userA = "user-a";
 const t0 = new Date("2026-01-01T00:00:00.000Z");
@@ -143,6 +149,78 @@ describe("submitTurn", () => {
   });
 });
 
+describe("converseTurn", () => {
+  async function firstCaseId(): Promise<string> {
+    const plan = await startSession(makeDeps(), userA, t0);
+    const cue = plan.cues[0];
+    if (cue === undefined) {
+      throw new Error("expected a cue");
+    }
+    return cue.caseId;
+  }
+
+  it("replies in flow with no repair on a normal turn and persists the exchange", async () => {
+    const caseId = await firstCaseId();
+    const deps = makeDeps();
+
+    const outcome = await converseTurn(deps, { caseId, transcript: "Help yourself." }, userA, t0);
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    expect(outcome.reply.say.length).toBeGreaterThan(0);
+    expect(outcome.reply.repair).toBeUndefined();
+
+    const rows = await db
+      .select()
+      .from(sessionExchanges)
+      .where(eq(sessionExchanges.userId, userA))
+      .orderBy(asc(sessionExchanges.orderIndex));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ orderIndex: 0, role: "user", text: "Help yourself." });
+    expect(rows[1]).toMatchObject({ orderIndex: 1, role: "coach", text: outcome.reply.say });
+    expect(rows[1]?.repairJson).toBeNull();
+  });
+
+  it("offers light repair and persists it when the learner breaks down (empty transcript)", async () => {
+    const caseId = await firstCaseId();
+
+    const outcome = await converseTurn(makeDeps(), { caseId, transcript: "" }, userA, t0);
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+    expect(outcome.reply.repair).toBeDefined();
+
+    const coachRow = (
+      await db.select().from(sessionExchanges).where(eq(sessionExchanges.role, "coach"))
+    )[0];
+    expect(coachRow?.repairJson).toEqual(outcome.reply.repair);
+  });
+
+  it("rebuilds the conversation across turns, advancing the coach reply", async () => {
+    const caseId = await firstCaseId();
+    const deps = makeDeps();
+
+    const first = await converseTurn(deps, { caseId, transcript: "Help yourself." }, userA, t0);
+    const second = await converseTurn(deps, { caseId, transcript: "Have some more." }, userA, t0);
+    if (first.status !== "ok" || second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // The opening reply differs from the in-conversation follow-up — proof history was reconstructed.
+    expect(second.reply.say).not.toBe(first.reply.say);
+    expect(
+      await db.select().from(sessionExchanges).where(eq(sessionExchanges.userId, userA))
+    ).toHaveLength(4);
+  });
+
+  it("returns case_not_found for an unknown case and persists nothing", async () => {
+    const outcome = await converseTurn(makeDeps(), { caseId: "nope", transcript: "x" }, userA, t0);
+    expect(outcome).toEqual({ status: "case_not_found" });
+    expect(await db.select().from(sessionExchanges)).toHaveLength(0);
+  });
+});
+
 describe("endSession", () => {
   it("aggregates and persists the summary and refreshes the profile", async () => {
     const deps = makeDeps();
@@ -213,6 +291,38 @@ describe("session routes", () => {
       });
       expect(endRes.statusCode).toBe(200);
       expect(endRes.json().turnCount).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("holds a conversational coach turn over /api/session/say", async () => {
+    const server = buildServer();
+    try {
+      const startRes = await server.inject({ method: "POST", url: "/api/session/start" });
+      const caseId = startRes.json().cues[0].caseId as string;
+
+      const sayRes = await server.inject({
+        method: "POST",
+        payload: { caseId, transcript: "Help yourself to some rice." },
+        url: "/api/session/say"
+      });
+      expect(sayRes.statusCode).toBe(200);
+      expect((sayRes.json().say as string).length).toBeGreaterThan(0);
+
+      const invalid = await server.inject({
+        method: "POST",
+        payload: {},
+        url: "/api/session/say"
+      });
+      expect(invalid.statusCode).toBe(400);
+
+      const notFound = await server.inject({
+        method: "POST",
+        payload: { caseId: "nope", transcript: "x" },
+        url: "/api/session/say"
+      });
+      expect(notFound.statusCode).toBe(404);
     } finally {
       await server.close();
     }

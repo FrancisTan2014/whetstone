@@ -58,8 +58,8 @@ can navigate them from another package.
   `notes` is the first user-owned table: note routes resolve the current user via
   `request.server.currentUser` and stamp `notes.user_id` on create / filter note reads by it
   (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; `recall_items`
-  + `recall_reviews` (the recall store, below) are user-owned the same way; shared
-  content tables stay unowned.
+  - `recall_reviews` (the recall store, below) are user-owned the same way; shared
+    content tables stay unowned.
 - Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
   listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
   optional `provenance_entry_id` into the content graph, and an optional `chunk_id` link to a practice
@@ -85,12 +85,15 @@ can navigate them from another package.
   logic duplicated. Tool list + transport: `docs/MCP.md`.
 - Coach LLM seam: `src/coach/` — the model-agnostic boundary the language loop calls (like the
   dictionary seam). `coachProvider.ts` (the `CoachProvider` interface: judge / gradeForScheduler /
-  propose / author), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds and runs with no
-  API key), `coachRouter.ts` (cost-routing — judge=strong, propose/author=cheap, configurable) and
-  `coachConfig.ts` (env-driven routing + an absent-config-safe `resolveCoach` that stays on the fake
-  until real adapters + a key are wired). The verdict -> SM-2 grade map is pure in `@whetstone/domain`
-  (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No
-  real adapter or network yet; consumers go only through the seam.
+  propose / author / converse), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds and runs
+  with no API key), `coachRouter.ts` (cost-routing — judge=strong, converse=strong, propose/author=cheap,
+  configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe `resolveCoach` that stays
+  on the fake until real adapters + a key are wired). `converse` (#220) is the conversational next-turn
+  call the live loop makes per user turn: conversation history + compiled context + case -> the coach's
+  next spoken line + a light-repair signal only on a real breakdown (no per-turn grading). The verdict ->
+  SM-2 grade map is pure in `@whetstone/domain` (`coachGrade.ts`); boundary shapes/validation in
+  `@whetstone/contracts` (`coachContracts.ts`). No real adapter or network yet; consumers go only through
+  the seam.
 - Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe(audio) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
@@ -118,11 +121,14 @@ can navigate them from another package.
   frequency chunks; English situation, native target hidden), `submitTurn` judges + grades the
   submitted transcript and DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on first
   practice, + records the turn outcome with its mistake category #208), `endSession` aggregates +
-  persists a `session_summaries` row and refreshes the profile. The spoken path posts recorded audio
-  bytes to `POST /api/session/transcribe` (the STT seam, via injected `saveAudio` + speech) and submits
-  the recognized transcript; typing is the fallback. `sessionRoutes.ts`: `POST /api/session/`
-  `start|transcribe|turn|end`. The coach/speech seams are resolved (fakes when unconfigured) in
-  `index.ts`. Mistake-category map + session aggregation are pure in `@whetstone/domain`
+  persists a `session_summaries` row and refreshes the profile. `converseTurn` (#220) holds a
+  conversational coach turn: it loads the case, rebuilds the conversation from the persisted
+  `session_exchanges` rows (append-only, user+case scoped, ordered by `order_index`), calls the coach's
+  `converse`, persists the learner line + coach reply, and returns the reply (no per-turn grading). The
+  spoken path posts recorded audio bytes to `POST /api/session/transcribe` (the STT seam, via injected
+  `saveAudio` + speech) and submits the recognized transcript; typing is the fallback. `sessionRoutes.ts`:
+  `POST /api/session/` `start|transcribe|turn|say|end`. The coach/speech seams are resolved (fakes when
+  unconfigured) in `index.ts`. Mistake-category map + session aggregation are pure in `@whetstone/domain`
   (`mistakeCategory.ts`/`sessionSummary.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
   Web: `SessionPage` (one cue at a time; record→transcribe→submit or type) with the mic capture in the
   coverage-excluded `audioCapture.ts` browser boundary.

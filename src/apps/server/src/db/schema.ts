@@ -381,3 +381,28 @@ export const sessionSummaries = pgTable(
   },
   (table) => [index("session_summaries_user_idx").on(table.userId, table.createdAt)]
 );
+
+// The append-only conversational exchange of a live coaching call (#220): one row per turn the learner
+// or coach spoke, user-owned and scoped to the case the call is set in. The server reconstructs the
+// conversation history from these rows (ordered by `order_index`, which is monotonic per user+case and
+// stable under a fixed clock) so the client only sends the latest line. `repair_json` records the
+// coach's light-repair signal on a breakdown turn (null otherwise). No per-turn grade lives here —
+// grading is the end-of-round job (#222).
+export const sessionExchanges = pgTable(
+  "session_exchanges",
+  {
+    caseId: text("case_id")
+      .notNull()
+      .references(() => cases.id),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
+    id: text("id").primaryKey(),
+    orderIndex: integer("order_index").notNull(),
+    repairJson: jsonb("repair_json"),
+    role: text("role", { enum: ["user", "coach"] as const }).notNull(),
+    text: text("text").notNull(),
+    userId: text("user_id").notNull()
+  },
+  (table) => [
+    index("session_exchanges_user_case_idx").on(table.userId, table.caseId, table.orderIndex)
+  ]
+);

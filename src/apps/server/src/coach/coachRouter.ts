@@ -1,6 +1,8 @@
 import type {
   AuthorCaseBrief,
   AuthorCaseResult,
+  CoachConverseRequest,
+  CoachConverseResult,
   CompiledContext,
   JudgeProductionRequest,
   ProductionJudgement,
@@ -11,9 +13,9 @@ import type { ReviewGrade } from "@whetstone/domain";
 import type { CoachProvider } from "./coachProvider.js";
 
 // Cost-routing is a config seam, not a hardcoded model choice: each model-calling operation is routed
-// to a "strong" or "cheap" tier per call type. The default routes the few coaching judgements to the
-// strong model and the bulk (propose/author) to the cheap one — overridable by config.
-export const coachCallTypes = ["judge", "propose", "author"] as const;
+// to a "strong" or "cheap" tier per call type. The default routes the few coaching calls (judge,
+// converse) to the strong model and the bulk (propose/author) to the cheap one — overridable by config.
+export const coachCallTypes = ["judge", "propose", "author", "converse"] as const;
 
 export type CoachCallType = (typeof coachCallTypes)[number];
 
@@ -25,6 +27,7 @@ export type CostRouting = Readonly<Record<CoachCallType, CoachTier>>;
 
 export const defaultCostRouting: CostRouting = Object.freeze({
   author: "cheap",
+  converse: "strong",
   judge: "strong",
   propose: "cheap"
 });
@@ -46,6 +49,9 @@ export function createRoutedCoach(dependencies: RoutedCoachDependencies): CoachP
   return Object.freeze({
     authorCase(brief: AuthorCaseBrief): Promise<AuthorCaseResult> {
       return providerFor("author").authorCase(brief);
+    },
+    converse(request: CoachConverseRequest): Promise<CoachConverseResult> {
+      return providerFor("converse").converse(request);
     },
     gradeForScheduler(judgement: ProductionJudgement): ReviewGrade {
       return dependencies.strong.gradeForScheduler(judgement);
