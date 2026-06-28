@@ -42,7 +42,7 @@ const converseRequest = {
 };
 const analyzeRequest = {
   communicativeFunction: "f",
-  context: { focus: "", recentTargets: [] },
+  context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
   history: [],
   situation: "s",
   targetChunks: [],

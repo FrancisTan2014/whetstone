@@ -242,9 +242,10 @@ export async function endSession(
     .where(and(eq(sessionExchanges.userId, userId), eq(sessionExchanges.caseId, request.caseId)))
     .orderBy(asc(sessionExchanges.orderIndex));
 
+  const context = await compileContext(dependencies.db, userId, now);
   const analysis = await dependencies.coach.analyze({
     communicativeFunction: caseRow.communicativeFunction,
-    context: { focus: caseRow.situation, recentTargets: targetChunks.map((chunk) => chunk.text) },
+    context,
     history,
     situation: caseRow.situation,
     targetChunks,

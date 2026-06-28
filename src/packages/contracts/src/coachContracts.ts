@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { errorCategorySchema } from "./learnerContracts.js";
+import { compiledLearnerContextDtoSchema, errorCategorySchema } from "./learnerContracts.js";
 import { transcribedWordSchema } from "./speechContracts.js";
 
 // Shared, Zod-validated boundary shapes for the coach LLM seam (#206). Every value crossing the seam
@@ -147,14 +147,17 @@ export const roundChunkSchema = z
 export type RoundChunk = z.infer<typeof roundChunkSchema>;
 
 // The end-of-round analysis input (#222): the whole conversation + STT word-timings + the case's target
-// chunks + compiled context. The coach runs ONE pass over this and returns a structured result; this is
-// the only place a round is graded (never per live turn). Validated once at the boundary.
+// chunks + the **compiled learner context** (the real bounded slice — rolling profile + due/ranked
+// chunks + top error patterns + recent outcomes — so the coach chooses high-value mistakes, wins, and
+// the upgrade against the learner model, closing the compounding loop). The coach runs ONE pass over
+// this and returns a structured result; this is the only place a round is graded. Validated at the
+// boundary.
 export const analyzeRoundRequestSchema = z
   .object({
     communicativeFunction: z
       .string()
       .refine(isNonBlank, { message: "communicativeFunction must be non-empty." }),
-    context: compiledContextSchema,
+    context: compiledLearnerContextDtoSchema,
     history: z.array(conversationTurnSchema),
     situation: z.string().refine(isNonBlank, { message: "situation must be non-empty." }),
     targetChunks: z.array(roundChunkSchema),

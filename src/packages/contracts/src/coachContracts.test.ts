@@ -185,7 +185,7 @@ describe("parseAnalyzeRoundResult", () => {
 describe("analyzeRoundRequestSchema", () => {
   const request = {
     communicativeFunction: "Offering food",
-    context: { focus: "At the table", recentTargets: [] },
+    context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
     history: [{ role: "user", text: "Help yourself." }],
     situation: "At the table",
     targetChunks: [{ chunkId: "c1", text: "Help yourself." }],

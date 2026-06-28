@@ -183,7 +183,7 @@ describe("FakeCoach converse", () => {
 describe("FakeCoach analyze", () => {
   const base = {
     communicativeFunction: "Offering food",
-    context: { focus: "At the table", recentTargets: [] },
+    context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
     situation: "At the table",
     words: []
   } as const;
