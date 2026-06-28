@@ -1,4 +1,6 @@
 import type {
+  AnalyzeRoundRequest,
+  AnalyzeRoundResult,
   AuthorCaseBrief,
   AuthorCaseResult,
   CoachConverseRequest,
@@ -33,4 +35,9 @@ export interface CoachProvider {
   // the coach's next spoken line and a light-repair signal only on a real breakdown. This keeps the
   // learner in flow; grading is the end-of-round job (#222), never per turn.
   converse(request: CoachConverseRequest): Promise<CoachConverseResult>;
+
+  // The end-of-round analysis (#222): ONE pass over the whole round (transcript + word-timings + the
+  // case's target chunks + compiled context) returning chunk grades, the top tagged mistakes, wins, and
+  // one native upgrade. The deterministic deposit reads only this; grading happens here, never per turn.
+  analyze(request: AnalyzeRoundRequest): Promise<AnalyzeRoundResult>;
 }

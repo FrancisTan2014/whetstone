@@ -1,4 +1,6 @@
 import type {
+  AnalyzeRoundRequest,
+  AnalyzeRoundResult,
   AuthorCaseBrief,
   AuthorCaseResult,
   CoachConverseRequest,
@@ -14,8 +16,8 @@ import type { CoachProvider } from "./coachProvider.js";
 
 // Cost-routing is a config seam, not a hardcoded model choice: each model-calling operation is routed
 // to a "strong" or "cheap" tier per call type. The default routes the few coaching calls (judge,
-// converse) to the strong model and the bulk (propose/author) to the cheap one — overridable by config.
-export const coachCallTypes = ["judge", "propose", "author", "converse"] as const;
+// converse, analyze) to the strong model and the bulk (propose/author) to the cheap one — overridable.
+export const coachCallTypes = ["judge", "propose", "author", "converse", "analyze"] as const;
 
 export type CoachCallType = (typeof coachCallTypes)[number];
 
@@ -26,6 +28,7 @@ export type CoachTier = (typeof coachTiers)[number];
 export type CostRouting = Readonly<Record<CoachCallType, CoachTier>>;
 
 export const defaultCostRouting: CostRouting = Object.freeze({
+  analyze: "strong",
   author: "cheap",
   converse: "strong",
   judge: "strong",
@@ -47,6 +50,9 @@ export function createRoutedCoach(dependencies: RoutedCoachDependencies): CoachP
   }
 
   return Object.freeze({
+    analyze(request: AnalyzeRoundRequest): Promise<AnalyzeRoundResult> {
+      return providerFor("analyze").analyze(request);
+    },
     authorCase(brief: AuthorCaseBrief): Promise<AuthorCaseResult> {
       return providerFor("author").authorCase(brief);
     },

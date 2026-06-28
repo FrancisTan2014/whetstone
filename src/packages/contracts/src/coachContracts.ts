@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { errorCategorySchema } from "./learnerContracts.js";
+import { transcribedWordSchema } from "./speechContracts.js";
+
 // Shared, Zod-validated boundary shapes for the coach LLM seam (#206). Every value crossing the seam
 // — the judgement a model returns, a proposed next cue, an authored case — is described here so the
 // real adapter validates untrusted model output once at the boundary and the rest of the app trusts
@@ -133,6 +136,81 @@ export const coachConverseResultSchema = z
 
 export type CoachConverseResult = z.infer<typeof coachConverseResultSchema>;
 
+// One target chunk the round practised: the native phrasing to grade against what the learner said.
+export const roundChunkSchema = z
+  .object({
+    chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }),
+    text: z.string().refine(isNonBlank, { message: "text must be non-empty." })
+  })
+  .strict();
+
+export type RoundChunk = z.infer<typeof roundChunkSchema>;
+
+// The end-of-round analysis input (#222): the whole conversation + STT word-timings + the case's target
+// chunks + compiled context. The coach runs ONE pass over this and returns a structured result; this is
+// the only place a round is graded (never per live turn). Validated once at the boundary.
+export const analyzeRoundRequestSchema = z
+  .object({
+    communicativeFunction: z
+      .string()
+      .refine(isNonBlank, { message: "communicativeFunction must be non-empty." }),
+    context: compiledContextSchema,
+    history: z.array(conversationTurnSchema),
+    situation: z.string().refine(isNonBlank, { message: "situation must be non-empty." }),
+    targetChunks: z.array(roundChunkSchema),
+    words: z.array(transcribedWordSchema)
+  })
+  .strict();
+
+export type AnalyzeRoundRequest = z.infer<typeof analyzeRoundRequestSchema>;
+
+// A grade (0..5, SM-2) for one target chunk — how well the learner produced it across the round.
+export const chunkGradeSchema = z
+  .object({
+    chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }),
+    grade: z.number().int().min(0).max(5)
+  })
+  .strict();
+
+export type ChunkGrade = z.infer<typeof chunkGradeSchema>;
+
+// One high-value mistake, tagged to the error taxonomy (#208): what the learner said, the native form,
+// and a short why. The deposit increments the tagged category's pattern count.
+export const analyzedMistakeSchema = z
+  .object({
+    category: errorCategorySchema,
+    native: z.string().refine(isNonBlank, { message: "native must be non-empty." }),
+    said: z.string(),
+    why: z.string().refine(isNonBlank, { message: "why must be non-empty." })
+  })
+  .strict();
+
+export type AnalyzedMistake = z.infer<typeof analyzedMistakeSchema>;
+
+// The single native upgrade to carry forward: a said -> native pair.
+export const nativeUpgradeSchema = z
+  .object({
+    native: z.string().refine(isNonBlank, { message: "native must be non-empty." }),
+    said: z.string().refine(isNonBlank, { message: "said must be non-empty." })
+  })
+  .strict();
+
+export type NativeUpgrade = z.infer<typeof nativeUpgradeSchema>;
+
+// The structured end-of-round result: a grade per target chunk, the 2-3 highest-value tagged mistakes,
+// wins, one native upgrade, and a line of encouragement. The deterministic deposit reads only this.
+export const analyzeRoundResultSchema = z
+  .object({
+    chunkGrades: z.array(chunkGradeSchema),
+    encouragement: z.string().refine(isNonBlank, { message: "encouragement must be non-empty." }),
+    mistakes: z.array(analyzedMistakeSchema),
+    upgrade: nativeUpgradeSchema,
+    wins: z.array(z.string())
+  })
+  .strict();
+
+export type AnalyzeRoundResult = z.infer<typeof analyzeRoundResultSchema>;
+
 // The navigation step: the next thing to elicit, an optional link to a corpus chunk (#205), and the
 // cue shown to the learner.
 export const proposeNextResultSchema = z
@@ -190,6 +268,10 @@ export function parseProductionJudgement(value: unknown): ProductionJudgement {
 
 export function parseCoachConverseResult(value: unknown): CoachConverseResult {
   return coachConverseResultSchema.parse(value);
+}
+
+export function parseAnalyzeRoundResult(value: unknown): AnalyzeRoundResult {
+  return analyzeRoundResultSchema.parse(value);
 }
 
 export function parseProposeNextResult(value: unknown): ProposeNextResult {

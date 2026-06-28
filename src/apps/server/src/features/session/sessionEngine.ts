@@ -1,23 +1,19 @@
 import type {
   CoachConverseResult,
   CoachSayRequest,
+  DebriefDto,
+  DebriefDueDto,
   SessionPlanDto,
-  SessionSummaryDto,
   SubmitTurnRequest,
   TurnResultDto,
   EndSessionRequest
 } from "@whetstone/contracts";
-import {
-  mistakeCategoryFromIssues,
-  scheduleReview,
-  summarizeSessionTurns,
-  type SessionTurn
-} from "@whetstone/domain";
+import { mistakeCategoryFromIssues, scheduleReview, type ReviewGrade } from "@whetstone/domain";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
 import type { CoachProvider } from "../../coach/coachProvider.js";
 import type { DbClient } from "../../db/dbClient.js";
-import { cases, chunks, sessionExchanges, sessionSummaries } from "../../db/schema.js";
+import { cases, chunks, sessionExchanges } from "../../db/schema.js";
 import { depositTurnOutcome, updateLearnerProfile } from "../learner/learnerCommands.js";
 import { compileContext } from "../learner/learnerQueries.js";
 import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
@@ -45,6 +41,14 @@ export type SubmitTurnOutcome =
 export type ConverseOutcome =
   | Readonly<{ reply: CoachConverseResult; status: "ok" }>
   | Readonly<{ status: "case_not_found" }>;
+
+export type EndRoundOutcome =
+  | Readonly<{ debrief: DebriefDto; status: "ok" }>
+  | Readonly<{ status: "case_not_found" }>;
+
+// The outcome grade logged for a tagged mistake (a deposited turn outcome feeds the error-pattern store
+// and recent-outcomes context). Mistakes are weak production, so a low grade.
+const MISTAKE_OUTCOME_GRADE: ReviewGrade = 2;
 
 // Plan a session: the navigation step. The top gap x frequency chunks (#208 — error-weighted, mixing
 // new and due) become the cues, each carrying its English situation (never L1) and the native target
@@ -202,30 +206,101 @@ export async function converseTurn(
   return { reply, status: "ok" };
 }
 
-// End the session: aggregate the reported turns into a summary, persist it, and refresh the rolling
-// profile (#208) so tomorrow's navigation reflects today's practice — the compounding loop closing.
+// End the round (#222): run ONE analysis pass over the whole round (transcript rebuilt from the
+// persisted exchange + STT word-timings + the case's target chunks + compiled context), then DEPOSIT the
+// durable trace deterministically — four moves, no extra model calls — and return the compact debrief:
+//   1. chunk grades -> SM-2 schedules in the recall store (#188/#189), which also advances case mastery
+//      and so the fog-of-war map (#210);
+//   2. tagged mistakes -> error-pattern counts in the learner model (#208);
+//   3. the rolling profile (#208) recomputed.
+// Grading happens only here, never per live turn.
 export async function endSession(
   dependencies: SessionDependencies,
   request: EndSessionRequest,
   userId: string,
   now: Date
-): Promise<SessionSummaryDto> {
-  const turns: ReadonlyArray<SessionTurn> = request.turns.map((turn) => ({
-    errorCategory: turn.errorCategory,
-    grade: turn.grade
-  }));
-  const summary = summarizeSessionTurns(turns);
+): Promise<EndRoundOutcome> {
+  const caseRows = await dependencies.db
+    .select({ communicativeFunction: cases.communicativeFunction, situation: cases.situation })
+    .from(cases)
+    .where(eq(cases.id, request.caseId))
+    .limit(1);
+  const caseRow = caseRows[0];
+  if (caseRow === undefined) {
+    return { status: "case_not_found" };
+  }
 
-  await dependencies.db.insert(sessionSummaries).values({
-    averageGrade: summary.averageGrade,
-    createdAt: now,
-    errorCountsJson: summary.errorCounts,
-    id: dependencies.createId(),
-    strongTurns: summary.strongTurns,
-    turnCount: summary.turnCount,
-    userId
+  const targetChunks = await dependencies.db
+    .select({ chunkId: chunks.id, text: chunks.text })
+    .from(chunks)
+    .where(eq(chunks.caseId, request.caseId))
+    .orderBy(asc(chunks.orderIndex), asc(chunks.id));
+
+  const history = await dependencies.db
+    .select({ role: sessionExchanges.role, text: sessionExchanges.text })
+    .from(sessionExchanges)
+    .where(and(eq(sessionExchanges.userId, userId), eq(sessionExchanges.caseId, request.caseId)))
+    .orderBy(asc(sessionExchanges.orderIndex));
+
+  const analysis = await dependencies.coach.analyze({
+    communicativeFunction: caseRow.communicativeFunction,
+    context: { focus: caseRow.situation, recentTargets: targetChunks.map((chunk) => chunk.text) },
+    history,
+    situation: caseRow.situation,
+    targetChunks,
+    words: [...request.words]
   });
-  await updateLearnerProfile({ createId: dependencies.createId, db: dependencies.db }, userId, now);
 
-  return { ...summary, errorCounts: [...summary.errorCounts] };
+  const learnerDeps = { createId: dependencies.createId, db: dependencies.db };
+  const textByChunkId = new Map(targetChunks.map((chunk) => [chunk.chunkId, chunk.text]));
+
+  // Deposit 1: each chunk grade schedules its recall item (enrolling on first practice), which advances
+  // case mastery and the map.
+  const due: DebriefDueDto[] = [];
+  for (const chunkGrade of analysis.chunkGrades) {
+    const { chunkId } = chunkGrade;
+    // Only chunks that were part of this round can be deposited (their text + FK exist); a grade for any
+    // other chunk is ignored rather than enrolling a dangling recall item.
+    const text = textByChunkId.get(chunkId);
+    if (text === undefined) {
+      continue;
+    }
+    // The schema bounds grade to an integer 0..5, the SM-2 ReviewGrade range.
+    const grade = chunkGrade.grade as ReviewGrade;
+    const existing = await getRecallItemByChunkForUser(dependencies.db, userId, chunkId);
+    const item =
+      existing ??
+      (await enrollRecallItem(learnerDeps, { chunkId, kind: "chunk", text }, userId, now));
+    const dueAt = scheduleReview(item.review, grade, now).dueAt;
+    await recordRecallReview(learnerDeps, item.id, grade, userId, now);
+    due.push({ dueAt, text });
+  }
+
+  // Deposit 2: each tagged mistake increments its error-pattern count and logs an outcome.
+  for (const mistake of analysis.mistakes) {
+    await depositTurnOutcome(
+      learnerDeps,
+      { chunkId: null, errorCategory: mistake.category, grade: MISTAKE_OUTCOME_GRADE },
+      userId,
+      now
+    );
+  }
+
+  // Deposit 3: recompute the rolling profile from the updated model.
+  await updateLearnerProfile(learnerDeps, userId, now);
+
+  return {
+    debrief: {
+      due,
+      encouragement: analysis.encouragement,
+      moments: analysis.mistakes.map((mistake) => ({
+        native: mistake.native,
+        said: mistake.said,
+        why: mistake.why
+      })),
+      upgrade: analysis.upgrade,
+      wins: [...analysis.wins]
+    },
+    status: "ok"
+  };
 }

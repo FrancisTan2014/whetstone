@@ -1,8 +1,12 @@
 export {
   audioContentType,
   coachSayRequestSchema,
+  debriefDtoSchema,
+  debriefDueDtoSchema,
+  debriefMomentDtoSchema,
   endSessionRequestSchema,
   parseCoachSayRequest,
+  parseDebriefDto,
   parseEndSessionRequest,
   parseSessionPlanDto,
   parseSessionSummaryDto,
@@ -19,6 +23,9 @@ export {
 } from "./sessionContracts.js";
 export type {
   CoachSayRequest,
+  DebriefDto,
+  DebriefDueDto,
+  DebriefMomentDto,
   EndSessionRequest,
   SessionCueDto,
   SessionPlanDto,
@@ -78,9 +85,13 @@ export type {
   ReviewCaseRequest
 } from "./caseContracts.js";
 export {
+  analyzeRoundRequestSchema,
+  analyzeRoundResultSchema,
+  analyzedMistakeSchema,
   authorCaseBriefSchema,
   authorCaseResultSchema,
   authoredChunkSchema,
+  chunkGradeSchema,
   coachConverseRequestSchema,
   coachConverseResultSchema,
   coachRepairSchema,
@@ -89,6 +100,8 @@ export {
   conversationRoleSchema,
   conversationTurnSchema,
   judgeProductionRequestSchema,
+  nativeUpgradeSchema,
+  parseAnalyzeRoundResult,
   parseAuthorCaseResult,
   parseCoachConverseResult,
   parseProductionJudgement,
@@ -99,12 +112,17 @@ export {
   productionIssueSchema,
   productionIssueSeverities,
   productionJudgementSchema,
-  proposeNextResultSchema
+  proposeNextResultSchema,
+  roundChunkSchema
 } from "./coachContracts.js";
 export type {
+  AnalyzedMistake,
+  AnalyzeRoundRequest,
+  AnalyzeRoundResult,
   AuthorCaseBrief,
   AuthorCaseResult,
   AuthoredChunk,
+  ChunkGrade,
   CoachConverseRequest,
   CoachConverseResult,
   CoachRepair,
@@ -112,10 +130,12 @@ export type {
   ConversationRole,
   ConversationTurn,
   JudgeProductionRequest,
+  NativeUpgrade,
   ProductionCategory,
   ProductionIssue,
   ProductionJudgement,
-  ProposeNextResult
+  ProposeNextResult,
+  RoundChunk
 } from "./coachContracts.js";
 export {
   parseTranscription,

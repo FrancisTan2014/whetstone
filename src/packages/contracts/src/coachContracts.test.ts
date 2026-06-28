@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analyzeRoundRequestSchema,
   authorCaseBriefSchema,
   coachConverseRequestSchema,
   judgeProductionRequestSchema,
+  parseAnalyzeRoundResult,
   parseAuthorCaseResult,
   parseCoachConverseResult,
   parseProductionJudgement,
@@ -136,6 +138,73 @@ describe("coachConverseRequestSchema", () => {
   it("rejects an unknown conversation role", () => {
     expect(() =>
       coachConverseRequestSchema.parse({ ...request, history: [{ role: "narrator", text: "x" }] })
+    ).toThrow();
+  });
+});
+
+describe("parseAnalyzeRoundResult", () => {
+  const result = {
+    chunkGrades: [{ chunkId: "c1", grade: 4 }],
+    encouragement: "Good round.",
+    mistakes: [
+      {
+        category: "word_order",
+        native: "Would you like more?",
+        said: "you want more?",
+        why: "Word order."
+      }
+    ],
+    upgrade: { native: "Help yourself.", said: "help self" },
+    wins: ['Nailed "Dig in.".']
+  };
+
+  it("round-trips a valid analysis", () => {
+    expect(parseAnalyzeRoundResult(result)).toEqual(result);
+  });
+
+  it("rejects a chunk grade outside 0..5", () => {
+    expect(() =>
+      parseAnalyzeRoundResult({ ...result, chunkGrades: [{ chunkId: "c1", grade: 9 }] })
+    ).toThrow();
+  });
+
+  it("rejects a blank encouragement", () => {
+    expect(() => parseAnalyzeRoundResult({ ...result, encouragement: "  " })).toThrow();
+  });
+
+  it("rejects a mistake tagged outside the error taxonomy", () => {
+    expect(() =>
+      parseAnalyzeRoundResult({
+        ...result,
+        mistakes: [{ category: "vibes", native: "n", said: "s", why: "w" }]
+      })
+    ).toThrow();
+  });
+});
+
+describe("analyzeRoundRequestSchema", () => {
+  const request = {
+    communicativeFunction: "Offering food",
+    context: { focus: "At the table", recentTargets: [] },
+    history: [{ role: "user", text: "Help yourself." }],
+    situation: "At the table",
+    targetChunks: [{ chunkId: "c1", text: "Help yourself." }],
+    words: [{ end: 300, start: 0, text: "help" }]
+  };
+
+  it("accepts a valid round record", () => {
+    expect(analyzeRoundRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it("rejects a target chunk with blank text", () => {
+    expect(() =>
+      analyzeRoundRequestSchema.parse({ ...request, targetChunks: [{ chunkId: "c1", text: "  " }] })
+    ).toThrow();
+  });
+
+  it("rejects a word with end before start", () => {
+    expect(() =>
+      analyzeRoundRequestSchema.parse({ ...request, words: [{ end: 0, start: 300, text: "x" }] })
     ).toThrow();
   });
 });

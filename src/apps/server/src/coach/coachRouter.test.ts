@@ -8,6 +8,14 @@ import { createRoutedCoach, defaultCostRouting } from "./coachRouter.js";
 // A coach whose every result is tagged with its name, so a routed call reveals which tier served it.
 function tagged(tag: string, grade: 0 | 1 | 2 | 3 | 4 | 5): CoachProvider {
   return {
+    analyze: () =>
+      Promise.resolve({
+        chunkGrades: [],
+        encouragement: tag,
+        mistakes: [],
+        upgrade: { native: tag, said: tag },
+        wins: []
+      }),
     authorCase: () => Promise.resolve({ chunks: [], communicativeFunction: tag, situation: tag }),
     converse: () => Promise.resolve({ say: tag }),
     gradeForScheduler: () => grade,
@@ -32,6 +40,14 @@ const converseRequest = {
   history: [],
   situation: "s"
 };
+const analyzeRequest = {
+  communicativeFunction: "f",
+  context: { focus: "", recentTargets: [] },
+  history: [],
+  situation: "s",
+  targetChunks: [],
+  words: []
+};
 
 describe("createRoutedCoach (default routing)", () => {
   const coach = createRoutedCoach({ cheap, routing: defaultCostRouting, strong });
@@ -42,6 +58,10 @@ describe("createRoutedCoach (default routing)", () => {
 
   it("routes converse to the strong tier", async () => {
     expect((await coach.converse(converseRequest)).say).toBe("strong");
+  });
+
+  it("routes analyze to the strong tier", async () => {
+    expect((await coach.analyze(analyzeRequest)).encouragement).toBe("strong");
   });
 
   it("routes propose and author to the cheap tier", async () => {
@@ -59,13 +79,20 @@ describe("createRoutedCoach (default routing)", () => {
 describe("createRoutedCoach (overridden routing)", () => {
   const coach = createRoutedCoach({
     cheap,
-    routing: { author: "strong", converse: "cheap", judge: "cheap", propose: "strong" },
+    routing: {
+      analyze: "cheap",
+      author: "strong",
+      converse: "cheap",
+      judge: "cheap",
+      propose: "strong"
+    },
     strong
   });
 
   it("sends each call type to its configured tier", async () => {
     expect((await coach.judgeProduction(request)).issues[0]?.note).toBe("cheap");
     expect((await coach.converse(converseRequest)).say).toBe("cheap");
+    expect((await coach.analyze(analyzeRequest)).encouragement).toBe("cheap");
     expect((await coach.proposeNext({ focus: "", recentTargets: [] })).target).toBe("strong");
     expect((await coach.authorCase({ communicativeFunction: "f", situation: "s" })).situation).toBe(
       "strong"

@@ -1,7 +1,11 @@
 import type {
+  AnalyzeRoundRequest,
+  AnalyzeRoundResult,
+  AnalyzedMistake,
   AuthorCaseBrief,
   AuthorCaseResult,
   AuthoredChunk,
+  ChunkGrade,
   CoachConverseRequest,
   CoachConverseResult,
   CompiledContext,
@@ -10,7 +14,8 @@ import type {
   ProductionCategory,
   ProductionIssue,
   ProductionJudgement,
-  ProposeNextResult
+  ProposeNextResult,
+  RoundChunk
 } from "@whetstone/contracts";
 import { judgementToGrade, type ReviewGrade } from "@whetstone/domain";
 
@@ -131,8 +136,74 @@ function converse(request: CoachConverseRequest): CoachConverseResult {
   return { say };
 }
 
+// The full learner production across the round: every user turn joined, lowercased for matching.
+function roundTranscript(history: ReadonlyArray<ConversationTurn>): string {
+  return history
+    .filter((turn) => turn.role === "user")
+    .map((turn) => turn.text)
+    .join(" ")
+    .trim();
+}
+
+// Tag a chunk's mistake to a taxonomy category deterministically (a stable function of the phrasing):
+// longer phrasings read as word-order trouble, short ones as a literal L1 calque. Deterministic so the
+// same round always tags the same way and the error-pattern deposit is assertable.
+function mistakeCategory(chunk: RoundChunk): AnalyzedMistake["category"] {
+  return chunk.text.length > 12 ? "word_order" : "l1_calque";
+}
+
+// A deterministic one-pass analysis (#222): grade each target chunk by how much of it the learner
+// produced (reusing the same overlap judge), turn the weakest chunks into tagged mistakes, the strongest
+// into wins, and derive one native upgrade. No model, no network — assertable exactly.
+function analyze(request: AnalyzeRoundRequest): AnalyzeRoundResult {
+  const transcript = roundTranscript(request.history);
+  const said = transcript.length > 0 ? transcript : "what you tried";
+
+  const graded = request.targetChunks.map((chunk) => ({
+    chunk,
+    grade: judgementToGrade(judge(chunk.text, transcript).category)
+  }));
+
+  const chunkGrades: ChunkGrade[] = graded.map(({ chunk, grade }) => ({
+    chunkId: chunk.chunkId,
+    grade
+  }));
+
+  const mistakes: AnalyzedMistake[] = graded
+    .filter(({ grade }) => grade < 3)
+    .sort((left, right) => left.grade - right.grade)
+    .slice(0, 3)
+    .map(({ chunk }) => ({
+      category: mistakeCategory(chunk),
+      native: chunk.text,
+      said,
+      why: "Reach for the native phrasing rather than a literal translation."
+    }));
+
+  const wins = graded
+    .filter(({ grade }) => grade >= 4)
+    .map(({ chunk }) => `Nailed "${chunk.text}".`);
+
+  const upgradeNative = request.targetChunks[0]?.text ?? "Keep it natural and concrete.";
+  const encouragement =
+    wins.length > 0
+      ? `Good round — ${wins.length} landed cleanly. Keep building.`
+      : "Good effort — let's lock in a couple of phrasings next time.";
+
+  return {
+    chunkGrades,
+    encouragement,
+    mistakes,
+    upgrade: { native: upgradeNative, said },
+    wins
+  };
+}
+
 export function createFakeCoach(): CoachProvider {
   return Object.freeze({
+    analyze(request: AnalyzeRoundRequest): Promise<AnalyzeRoundResult> {
+      return Promise.resolve(analyze(request));
+    },
     authorCase(brief: AuthorCaseBrief): Promise<AuthorCaseResult> {
       return Promise.resolve(author(brief));
     },

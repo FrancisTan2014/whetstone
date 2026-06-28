@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
+import type { DebriefDto, TranscribedWord } from "@whetstone/contracts";
+
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import type { LiveCapture } from "./liveCapture";
-import { say, startSession, transcribe } from "./sessionApi";
+import { endSession, say, startSession, transcribe } from "./sessionApi";
 import type { VoiceOut } from "./voiceOut";
 
 // The live call is set in one case (the conversation's situation); the first proposed cue supplies it.
@@ -24,7 +26,7 @@ type Status =
   | Readonly<{ kind: "error" }>
   | Readonly<{ kind: "empty" }>
   | Readonly<{ kind: "active"; call: CallContext }>
-  | Readonly<{ kind: "ended" }>;
+  | Readonly<{ kind: "debrief"; debrief: DebriefDto }>;
 
 // The capture + voice halves of a running call, held together so they start and tear down as one.
 type LiveSession = Readonly<{ capture: LiveCapture; voice: VoiceOut }>;
@@ -55,11 +57,12 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [captions, setCaptions] = useState<ReadonlyArray<Caption>>([]);
   const [phase, setPhase] = useState<Phase>("idle");
-  const [turns, setTurns] = useState(0);
   const [started, setStarted] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const liveRef = useRef<LiveSession | null>(null);
   const captionSeq = useRef(0);
+  // The round's STT word-timings, accumulated across utterances and sent to the analysis pass on End.
+  const wordsRef = useRef<TranscribedWord[]>([]);
 
   function appendCaption(role: Caption["role"], text: string): void {
     const id = (captionSeq.current += 1);
@@ -96,7 +99,6 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
     }
 
     setPhase(liveRef.current !== null ? "listening" : "idle");
-    setTurns((prev) => prev + 1);
   }
 
   function guarded(work: () => Promise<void>): Promise<void> {
@@ -108,7 +110,8 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
 
   async function onUtterance(call: CallContext, audio: Blob): Promise<void> {
     setPhase("thinking");
-    const { transcript } = await transcribe(audio);
+    const { transcript, words } = await transcribe(audio);
+    wordsRef.current = [...wordsRef.current, ...words];
     await runTurn(call, transcript);
   }
 
@@ -130,9 +133,15 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
     });
   }
 
-  function endCall(): void {
-    teardown();
-    setStatus({ kind: "ended" });
+  // End the round: tear down the live call, run the one analysis pass + deposit (server), and show the
+  // debrief. Grading happens only here.
+  function endCall(call: CallContext): Promise<void> {
+    return guarded(async () => {
+      teardown();
+      setPhase("thinking");
+      const debrief = await endSession({ caseId: call.caseId, words: wordsRef.current });
+      setStatus({ kind: "debrief", debrief });
+    });
   }
 
   // Event-handler reload (retry / start another): show loading and re-run the load effect via its key,
@@ -155,8 +164,8 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
         }
         setCaptions([]);
         setPhase("idle");
-        setTurns(0);
         setStarted(false);
+        wordsRef.current = [];
         setStatus({
           call: {
             caseId: cue.caseId,
@@ -204,25 +213,15 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
     );
   }
 
-  if (status.kind === "ended") {
-    return (
-      <Shell>
-        <div className="flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-text">Call complete</h2>
-          <p className="text-text-muted">You spoke {turns} turn(s) with the coach.</p>
-          <Button className="self-start" onClick={reload}>
-            Start another
-          </Button>
-        </div>
-      </Shell>
-    );
+  if (status.kind === "debrief") {
+    return <DebriefView debrief={status.debrief} onRestart={reload} />;
   }
 
   return (
     <CallView
       call={status.call}
       captions={captions}
-      endCall={endCall}
+      endCall={() => void endCall(status.call)}
       liveDeps={live}
       onSend={(transcript) => void guarded(() => runTurn(status.call, transcript))}
       onStart={(deps) => void startCall(status.call, deps)}
@@ -308,11 +307,9 @@ function CallView({
               Start call
             </Button>
           ) : null}
-          {started ? (
-            <Button onClick={endCall} type="button" variant="secondary">
-              End
-            </Button>
-          ) : null}
+          <Button onClick={endCall} type="button" variant="secondary">
+            End &amp; review
+          </Button>
         </div>
 
         <div className="flex flex-col gap-2 border-t border-border pt-4">
@@ -335,6 +332,84 @@ function CallView({
             Send
           </Button>
         </div>
+      </div>
+    </Shell>
+  );
+}
+
+// The compact end-of-round debrief (#222): encouragement, the few moments that matter (said -> native +
+// why), the one upgrade to carry, wins, and what is now due to recall. Calm, not a wall of corrections.
+function DebriefView({
+  debrief,
+  onRestart
+}: Readonly<{
+  debrief: DebriefDto;
+  onRestart: () => void;
+}>): React.JSX.Element {
+  return (
+    <Shell>
+      <div className="flex flex-col gap-5">
+        <p className="text-lg text-text">{debrief.encouragement}</p>
+
+        {debrief.wins.length > 0 ? (
+          <ul aria-label="Wins" className="flex flex-wrap gap-2">
+            {debrief.wins.map((win) => (
+              <li className="rounded bg-surface px-2 py-1 text-sm text-success" key={win}>
+                {win}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <section aria-labelledby="debrief-moments-heading" className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold text-text" id="debrief-moments-heading">
+            Moments to carry
+          </h2>
+          {debrief.moments.length > 0 ? (
+            <ul className="flex flex-col gap-3">
+              {debrief.moments.map((moment) => (
+                <li className="rounded border border-border bg-surface p-3" key={moment.native}>
+                  <p className="text-text">
+                    <span className="text-text-muted">{moment.said || "—"}</span>
+                    {" → "}
+                    <span className="font-medium">{moment.native}</span>
+                  </p>
+                  <p className="mt-1 text-sm text-text-muted">{moment.why}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-text-muted">Smooth round — nothing needed correcting.</p>
+          )}
+        </section>
+
+        <div className="rounded border border-border bg-surface p-3">
+          <p className="text-sm text-text-muted">One upgrade to carry</p>
+          <p className="text-text">
+            <span className="text-text-muted">{debrief.upgrade.said}</span>
+            {" → "}
+            <span className="font-medium">{debrief.upgrade.native}</span>
+          </p>
+        </div>
+
+        {debrief.due.length > 0 ? (
+          <section aria-labelledby="debrief-due-heading" className="flex flex-col gap-2">
+            <h2 className="text-sm font-semibold text-text" id="debrief-due-heading">
+              Now due to recall
+            </h2>
+            <ul className="flex flex-col gap-1">
+              {debrief.due.map((item) => (
+                <li className="text-sm text-text" key={item.text}>
+                  {item.text}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        <Button className="self-start" onClick={onRestart} type="button">
+          Practise again
+        </Button>
       </div>
     </Shell>
   );
