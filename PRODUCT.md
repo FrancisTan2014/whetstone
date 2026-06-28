@@ -336,11 +336,29 @@ longer whetstone is used, the more deeply it knows the learner and the smarter i
 is the moat (learner model + retrieval) made concrete, and the test for any practice feature: *does
 this interaction make the next proposal smarter? If not, it leaks value.*
 
-**The loop.** A short session (~15 min): the coach proposes from your history → you **speak** (mic →
-local STT) → the LLM returns **compact, constructive** feedback (naturalness, not just grammar) → it
-deposits what should be recalled (chunks/idioms/proverbs + your mistakes + progress). Recall resurfaces
-your **weak / missed** items on a spaced schedule. **Voice from day one (STT first);** pronunciation /
-prosody scoring is a later enrichment, not a prerequisite.
+**The loop — a real-time spoken conversation.** A session (~15 min) is a **call with the coach**, not a
+form. You tap once and **talk**; the coach listens continuously, detects when you've finished
+(client-side endpointing), and **replies in voice** — back and forth, with **barge-in**, no buttons or
+typing. Mid-conversation the coach **stays in flow**: it keeps you producing and offers **light repair
+only on a real breakdown**, never grading every sentence (interrupting kills fluency). The screen is a
+calm **call surface** — who's-speaking, live captions, the situation as quiet context, one **End**.
+
+**End of round → the deposit.** The user ends, or the coach **lands the plane** (scenario resolved or the
+time-box near). Then **one analysis pass** over the whole round (transcript + STT word-timings + the
+case's target chunks + compiled context) returns a **structured debrief** — per-chunk grades, the 2–3
+highest-value **pattern-tagged** mistakes, wins, one native upgrade — and that deposits
+**deterministically** into SM-2 recall, error-pattern counts, the rolling profile, and case mastery (the
+map). A compact **debrief screen** shows the few moments that matter and what is now due to recall. *Flow
+during, learning after:* the conversation stays natural while every round still compounds.
+
+**Voice plumbing (decided).** Voice-**in** = browser mic + lightweight client VAD → **server-side local
+Whisper** (transcript + word-timings; private, swappable, cost-routed). Voice-**out** = the **browser's
+built-in TTS** (free, on-device) for v0, a neural-voice seam later. The browser's own speech *recognizer*
+is rejected (cloud-routed, unreliable on Safari/iOS, no timings). **The coach is a fixed skill that
+evolves by briefing, not by rewriting itself:** each round `compileContext` feeds it your profile + due
+chunks + top error patterns + recent outcomes, and the learner model sets **knobs** (target band,
+challenge-vs-support, patterns to probe, register, pace) — the dossier grows, the skill stays fixed. A
+self-tuning, eval-driven coach is deferred; the knobs are its seam.
 
 **Division of labour (smart, bounded, cheap).**
 
@@ -376,9 +394,11 @@ model/map update → tomorrow's navigation + recall schedule) — at once how th
 and how it gets smarter.
 
 **Settled vs open.** Settled: the gap/thesis and SLA basis, the compounding invariant + feedback loop,
-deterministic-recall + LLM-grades, voice-first (STT) input, the fog-of-war content navigation, bounded
-pre-cooked content, and the thin-app + rich-context + cost-routed model seam. Open: the precise session
-UX, the case-authoring flow, and pronunciation/prosody scoring.
+deterministic-recall + LLM-grades, voice-first input, the fog-of-war content navigation, bounded
+pre-cooked content, the thin-app + rich-context + cost-routed model seam, and **the real-time spoken talk
+loop with its end-of-round analysis → deposit → debrief, the voice-in / voice-out plumbing, and
+coach-evolves-by-briefing + knobs.** Open: pronunciation / prosody scoring, the neural-voice (TTS)
+upgrade, and a self-tuning (eval-driven) coach.
 
 ## Future direction protected by v0
 
@@ -393,9 +413,11 @@ UX, the case-authoring flow, and pronunciation/prosody scoring.
 ## v0 non-goals
 
 - No block-editor UI (v0 edits content by re-ingestion; in-place block editing is future).
-- No spaced repetition, memorization scheduling, or AI grading.
+- No spaced repetition, memorization scheduling, or AI grading **in the reader**; these now live in the
+  active language module (above), not in reading/annotation.
 - No LLM note drafting.
-- No voice or audio features.
+- No voice or audio features **in the reader**; spoken practice (Whisper STT in / browser TTS out) lives
+  in the active language module, while the reader itself stays text-only.
 - No daily routine; no complicated settings.
 - No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
 - No remote (`http`) images, SVG, or manual/Markdown image upload in v0: figure support is **EPUB-only**,
