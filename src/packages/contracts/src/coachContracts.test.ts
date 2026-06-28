@@ -12,6 +12,16 @@ import {
   parseProposeNextResult
 } from "./coachContracts.js";
 
+const knobs = {
+  challenge: "medium",
+  focus: "At the table",
+  pace: "steady",
+  probeErrorPatterns: [],
+  register: "neutral",
+  support: "medium",
+  targetBand: "intermediate"
+};
+
 describe("parseProductionJudgement", () => {
   const judgement = {
     category: "awkward",
@@ -119,6 +129,7 @@ describe("coachConverseRequestSchema", () => {
       { role: "coach", text: "How would you offer them food?" },
       { role: "user", text: "Help yourself." }
     ],
+    knobs,
     situation: "At the table"
   };
 
@@ -138,6 +149,12 @@ describe("coachConverseRequestSchema", () => {
   it("rejects an unknown conversation role", () => {
     expect(() =>
       coachConverseRequestSchema.parse({ ...request, history: [{ role: "narrator", text: "x" }] })
+    ).toThrow();
+  });
+
+  it("rejects knobs with an out-of-range intensity", () => {
+    expect(() =>
+      coachConverseRequestSchema.parse({ ...request, knobs: { ...knobs, challenge: "extreme" } })
     ).toThrow();
   });
 });
@@ -187,6 +204,7 @@ describe("analyzeRoundRequestSchema", () => {
     communicativeFunction: "Offering food",
     context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
     history: [{ role: "user", text: "Help yourself." }],
+    knobs,
     situation: "At the table",
     targetChunks: [{ chunkId: "c1", text: "Help yourself." }],
     words: [{ end: 300, start: 0, text: "help" }]

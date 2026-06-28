@@ -92,7 +92,10 @@ can navigate them from another package.
   conversational next-turn call the live loop makes per user turn (no per-turn grading); `analyze` (#222)
   is the end-of-round one-pass call: the whole round (transcript + word-timings + the case's target chunks
   - compiled context) -> a grade per chunk, the top tagged mistakes, wins, and one native upgrade (the
-    only place a round is graded). The verdict -> SM-2 grade map is pure in `@whetstone/domain`
+    only place a round is graded). Both `converse` and `analyze` carry the adaptive **`CoachKnobs`** (#223)
+    — difficulty/focus/probe-patterns derived deterministically from the learner model by `deriveCoachKnobs`
+    (`@whetstone/domain` `coachKnobs.ts`), briefing the FIXED coach skill (no self-tuning yet). The verdict
+    -> SM-2 grade map is pure in `@whetstone/domain`
     (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No real
     adapter or network yet; consumers go only through the seam.
 - Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`

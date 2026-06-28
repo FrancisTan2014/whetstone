@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { compiledLearnerContextDtoSchema, errorCategorySchema } from "./learnerContracts.js";
+import {
+  compiledLearnerContextDtoSchema,
+  errorCategorySchema,
+  proficiencyLevelSchema
+} from "./learnerContracts.js";
 import { transcribedWordSchema } from "./speechContracts.js";
 
 // Shared, Zod-validated boundary shapes for the coach LLM seam (#206). Every value crossing the seam
@@ -96,10 +100,28 @@ export const conversationTurnSchema = z
 
 export type ConversationTurn = z.infer<typeof conversationTurnSchema>;
 
+// The coach's adaptive knobs (#223): difficulty/focus derived deterministically from the learner model
+// (see `deriveCoachKnobs` in `@whetstone/domain`), briefing the FIXED coach skill. Carried on the coach
+// calls so each round's difficulty and focus reflect the learner's current model. The enum literals
+// mirror the domain (`coachKnobs.ts`); keep in sync.
+export const coachKnobsSchema = z
+  .object({
+    challenge: z.enum(["low", "medium", "high"]),
+    focus: z.string(),
+    pace: z.enum(["slow", "steady", "brisk"]),
+    probeErrorPatterns: z.array(errorCategorySchema),
+    register: z.enum(["casual", "neutral", "formal"]),
+    support: z.enum(["low", "medium", "high"]),
+    targetBand: proficiencyLevelSchema
+  })
+  .strict();
+
+export type CoachKnobs = z.infer<typeof coachKnobsSchema>;
+
 // One conversational coaching exchange (#220): the conversation so far + the compiled learner context +
-// the case the call is set in. The coach returns its next spoken line and an optional light-repair
-// signal. This is what the live call loop (#221) calls on every user turn — grading is the end-of-round
-// job (#222), never per turn.
+// the case the call is set in + the adaptive knobs (#223). The coach returns its next spoken line and an
+// optional light-repair signal. This is what the live call loop (#221) calls on every user turn —
+// grading is the end-of-round job (#222), never per turn.
 export const coachConverseRequestSchema = z
   .object({
     communicativeFunction: z
@@ -107,6 +129,7 @@ export const coachConverseRequestSchema = z
       .refine(isNonBlank, { message: "communicativeFunction must be non-empty." }),
     context: compiledContextSchema,
     history: z.array(conversationTurnSchema),
+    knobs: coachKnobsSchema,
     situation: z.string().refine(isNonBlank, { message: "situation must be non-empty." })
   })
   .strict();
@@ -159,6 +182,7 @@ export const analyzeRoundRequestSchema = z
       .refine(isNonBlank, { message: "communicativeFunction must be non-empty." }),
     context: compiledLearnerContextDtoSchema,
     history: z.array(conversationTurnSchema),
+    knobs: coachKnobsSchema,
     situation: z.string().refine(isNonBlank, { message: "situation must be non-empty." }),
     targetChunks: z.array(roundChunkSchema),
     words: z.array(transcribedWordSchema)

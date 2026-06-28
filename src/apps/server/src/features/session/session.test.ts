@@ -2,7 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Transcription } from "@whetstone/contracts";
+import type { CoachKnobs, Transcription } from "@whetstone/contracts";
 
 import { createFakeCoach } from "../../coach/fakeCoach.js";
 import { createLoggerOptions } from "../../config/serverConfig.js";
@@ -11,6 +11,7 @@ import { runMigrations } from "../../db/migrate.js";
 import { errorPatterns, recallItems, sessionExchanges, turnOutcomes } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
+import { depositTurnOutcome } from "../learner/learnerCommands.js";
 import { getLearnerProfile } from "../learner/learnerQueries.js";
 import { compileProgressMap } from "../map/mapQueries.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
@@ -306,6 +307,63 @@ describe("endSession", () => {
     expect(await db.select().from(recallItems).where(eq(recallItems.userId, userA))).toHaveLength(
       0
     );
+  });
+});
+
+describe("adaptive coach knobs (#223)", () => {
+  // Capture the knobs the engine briefs the coach with, while delegating to the real fake.
+  function spyingDeps(): { captured: CoachKnobs[]; deps: SessionDependencies } {
+    const captured: CoachKnobs[] = [];
+    const fake = createFakeCoach();
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...fake,
+        converse: (request) => {
+          captured.push(request.knobs);
+          return fake.converse(request);
+        }
+      }
+    };
+    return { captured, deps };
+  }
+
+  function lastKnobs(captured: CoachKnobs[]): CoachKnobs {
+    const knobs = captured[captured.length - 1];
+    if (knobs === undefined) {
+      throw new Error("expected knobs to have been captured");
+    }
+    return knobs;
+  }
+
+  it("targets a recurring error pattern in the learner model on the round's knobs", async () => {
+    const { captured, deps } = spyingDeps();
+    const plan = await startSession(deps, userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    // Baseline: a fresh model probes nothing and has no profile-derived focus yet.
+    await converseTurn(deps, { caseId, transcript: "hello" }, userA, t0);
+    expect(lastKnobs(captured).probeErrorPatterns).toEqual([]);
+    expect(lastKnobs(captured).focus).toBe("");
+
+    // Deposit a recurring error into the learner model, then the next round's knobs target it.
+    await depositTurnOutcome(
+      { createId: deps.createId, db },
+      { chunkId: null, errorCategory: "article_drop", grade: 2 },
+      userA,
+      t0
+    );
+
+    await converseTurn(deps, { caseId, transcript: "hello again" }, userA, t0);
+    expect(lastKnobs(captured).probeErrorPatterns).toContain("article_drop");
+
+    // After a round ends and the rolling profile is written, the knobs' focus comes from the model.
+    await endSession(deps, { caseId, words: [] }, userA, t0);
+    await converseTurn(deps, { caseId, transcript: "and more" }, userA, t0);
+    expect(lastKnobs(captured).focus.length).toBeGreaterThan(0);
   });
 });
 

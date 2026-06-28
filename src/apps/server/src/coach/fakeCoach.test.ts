@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import type { CompiledContext } from "@whetstone/contracts";
+import type { CoachKnobs, CompiledContext } from "@whetstone/contracts";
 
 import { createFakeCoach } from "./fakeCoach.js";
 
 const coach = createFakeCoach();
+
+const knobs: CoachKnobs = {
+  challenge: "medium",
+  focus: "kitchen.offering-food",
+  pace: "steady",
+  probeErrorPatterns: [],
+  register: "neutral",
+  support: "medium",
+  targetBand: "intermediate"
+};
 
 function judge(target: string, transcript: string) {
   return coach.judgeProduction({
@@ -135,6 +145,7 @@ describe("FakeCoach converse", () => {
   const base = {
     communicativeFunction: "Offering food",
     context: { focus: "At the table", recentTargets: [] },
+    knobs,
     situation: "At the table"
   } as const;
 
@@ -184,6 +195,7 @@ describe("FakeCoach analyze", () => {
   const base = {
     communicativeFunction: "Offering food",
     context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
+    knobs,
     situation: "At the table",
     words: []
   } as const;
