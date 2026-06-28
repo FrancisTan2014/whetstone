@@ -28,13 +28,13 @@ export default defineConfig({
         "**/src/index.ts",
         "**/src/mcp/main.ts", // MCP stdio bootstrap is wiring-only infrastructure (like index.ts).
         "**/src/main.tsx",
-        // Browser MediaRecorder boundary for mic capture: touches navigator/MediaRecorder/real timers,
-        // not exercisable in jsdom; the session page injects a fake, and the STT/submit logic is covered.
-        "**/features/session/audioCapture.ts",
         // Browser Web Audio / MediaRecorder boundary for live turn-taking (#219): touches
         // AudioContext/AnalyserNode/MediaRecorder/real timers, not exercisable in jsdom; every decision
         // delegates to the pure endpointing/turnTaking modules, which are covered.
         "**/features/session/liveCapture.ts",
+        // Browser speechSynthesis wiring for voice-out (#221): touches window.speechSynthesis and the
+        // SpeechSynthesisUtterance constructor, absent in jsdom; the logic is in createVoiceOut, covered.
+        "**/features/session/browserVoiceOut.ts",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
         // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.

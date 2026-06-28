@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { endSession, startSession, submitTurn, transcribe } from "./sessionApi";
+import { say, startSession, transcribe } from "./sessionApi";
 
 function stubFetch(response: {
   body?: unknown;
@@ -28,19 +28,7 @@ describe("sessionApi", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/session/start", { method: "POST" });
   });
 
-  it("submits a turn with its request body", async () => {
-    const fetchMock = stubFetch({ body: { grade: 5 }, ok: true });
-    const request = { chunkId: "c1", transcript: "x" } as const;
-
-    await submitTurn(request);
-    expect(fetchMock).toHaveBeenCalledWith("/api/session/turn", {
-      body: JSON.stringify(request),
-      headers: { "content-type": "application/json" },
-      method: "POST"
-    });
-  });
-
-  it("transcribes recorded audio bytes via the STT endpoint", async () => {
+  it("transcribes a recorded utterance via the STT endpoint", async () => {
     const fetchMock = stubFetch({ body: { transcript: "hello" }, ok: true });
     const audio = new Uint8Array([1, 2, 3]);
 
@@ -57,9 +45,16 @@ describe("sessionApi", () => {
     await expect(transcribe(new Uint8Array([1]))).rejects.toThrow("status 500");
   });
 
-  it("ends a session and returns the summary", async () => {
-    stubFetch({ body: { turnCount: 1 }, ok: true });
-    await expect(endSession({ turns: [] })).resolves.toEqual({ turnCount: 1 });
+  it("asks the coach for its next line over /api/session/say", async () => {
+    const fetchMock = stubFetch({ body: { say: "Tell me more." }, ok: true });
+    const request = { caseId: "k.table", transcript: "help yourself" } as const;
+
+    await expect(say(request)).resolves.toEqual({ say: "Tell me more." });
+    expect(fetchMock).toHaveBeenCalledWith("/api/session/say", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
   });
 
   it("throws on a non-2xx response", async () => {

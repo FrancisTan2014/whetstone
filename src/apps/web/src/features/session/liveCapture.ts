@@ -3,7 +3,7 @@
 // timers, none of which run in jsdom. Every turn-taking decision delegates to the pure `turnTaking`
 // engine in `@whetstone/domain`; this file only measures per-frame microphone energy, forwards it, and
 // dispatches the resulting effects to callbacks. It is therefore excluded from coverage (see
-// vitest.config.ts), like the existing `audioCapture.ts` mic boundary.
+// vitest.config.ts), like the other browser boundaries in this feature (`browserVoiceOut.ts`).
 //
 // Continuous capture preserves the onset: a fresh `MediaRecorder` starts on `capture-start` — the first
 // candidate voiced frame — so the recording already covers the utterance onset by the time the engine
