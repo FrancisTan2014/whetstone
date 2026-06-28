@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseCoachSayRequest,
+  parseDebriefDto,
   parseEndSessionRequest,
   parseSessionPlanDto,
   parseSessionSummaryDto,
@@ -48,18 +49,39 @@ describe("parseSubmitTurnRequest", () => {
 });
 
 describe("parseEndSessionRequest", () => {
-  it("accepts a list of turn records", () => {
-    const request = {
-      turns: [
-        { errorCategory: "register", grade: 3 },
-        { errorCategory: null, grade: 5 }
-      ]
-    };
+  it("accepts a case id and the round's word-timings", () => {
+    const request = { caseId: "k.table", words: [{ end: 300, start: 0, text: "help" }] };
     expect(parseEndSessionRequest(request)).toEqual(request);
   });
 
-  it("rejects an out-of-range grade", () => {
-    expect(() => parseEndSessionRequest({ turns: [{ errorCategory: null, grade: 9 }] })).toThrow();
+  it("rejects a blank case id", () => {
+    expect(() => parseEndSessionRequest({ caseId: "  ", words: [] })).toThrow();
+  });
+});
+
+describe("parseDebriefDto", () => {
+  it("round-trips a full debrief", () => {
+    const debrief = {
+      due: [{ dueAt: "2026-01-02T00:00:00.000Z", text: "Help yourself." }],
+      encouragement: "Good round.",
+      moments: [{ native: "Would you like more?", said: "you want more?", why: "Word order." }],
+      upgrade: { native: "Help yourself.", said: "help self" },
+      wins: ['Nailed "Dig in.".']
+    };
+    expect(parseDebriefDto(debrief)).toEqual(debrief);
+  });
+
+  it("rejects unknown fields", () => {
+    expect(() =>
+      parseDebriefDto({
+        due: [],
+        encouragement: "ok",
+        extra: 1,
+        moments: [],
+        upgrade: { native: "n", said: "s" },
+        wins: []
+      })
+    ).toThrow();
   });
 });
 

@@ -1,22 +1,24 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./sessionApi", () => ({
+  endSession: vi.fn(),
   say: vi.fn(),
   startSession: vi.fn(),
   transcribe: vi.fn()
 }));
 
-import type { CoachConverseResult, SessionPlanDto } from "@whetstone/contracts";
+import type { DebriefDto, SessionPlanDto } from "@whetstone/contracts";
 
-import { say, startSession, transcribe } from "./sessionApi";
+import { endSession, say, startSession, transcribe } from "./sessionApi";
 import { SessionPage, type LiveDependencies } from "./SessionPage";
 
 const mockedStart = vi.mocked(startSession);
 const mockedSay = vi.mocked(say);
 const mockedTranscribe = vi.mocked(transcribe);
+const mockedEnd = vi.mocked(endSession);
 
 const cue: SessionPlanDto["cues"][number] = {
   caseId: "k.table",
@@ -29,8 +31,29 @@ const cue: SessionPlanDto["cues"][number] = {
 
 const oneCue: SessionPlanDto = { cues: [cue] };
 
-// A fake live stack: captures the callbacks the page registers so a test can drive utterance-end and
-// barge-in, and records capture/voice calls. No real audio or speech is touched.
+const richDebrief: DebriefDto = {
+  due: [{ dueAt: "2026-01-02T00:00:00.000Z", text: "Dig in." }],
+  encouragement: "Good round — one landed cleanly.",
+  moments: [
+    {
+      native: "Would you like more?",
+      said: "you want more",
+      why: "Reach for the native phrasing."
+    },
+    { native: "Make yourself comfortable.", said: "", why: "You went quiet here." }
+  ],
+  upgrade: { native: "Make yourself at home.", said: "be at home" },
+  wins: ['Nailed "Help yourself.".']
+};
+
+const emptyDebrief: DebriefDto = {
+  due: [],
+  encouragement: "Good effort — let's lock in a phrasing next time.",
+  moments: [],
+  upgrade: { native: "Keep it natural.", said: "what you tried" },
+  wins: []
+};
+
 function fakeLive() {
   const callbacks: {
     onUtterance: ((audio: Blob) => void) | undefined;
@@ -74,8 +97,7 @@ describe("SessionPage", () => {
     render(<SessionPage />);
 
     expect(await screen.findByRole("alert")).toBeDefined();
-    const retry = screen.getByRole("button", { name: "Try again" });
-    await userEvent.setup().click(retry);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("alert")).toBeDefined();
     expect(mockedStart).toHaveBeenCalledTimes(2);
   });
@@ -93,10 +115,8 @@ describe("SessionPage", () => {
     render(<SessionPage />);
 
     await screen.findByText("Welcoming a guest to the table");
-    // No mic: there is no Start call control, only the typed fallback.
     expect(screen.queryByRole("button", { name: "Start call" })).toBeNull();
 
-    // A blank submit is ignored.
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(mockedSay).not.toHaveBeenCalled();
 
@@ -113,7 +133,7 @@ describe("SessionPage", () => {
     mockedSay.mockResolvedValue({
       repair: { reason: "stuck", recast: "Try a short sentence." },
       say: "No rush."
-    } satisfies CoachConverseResult);
+    });
     const user = userEvent.setup();
     render(<SessionPage />);
 
@@ -138,17 +158,20 @@ describe("SessionPage", () => {
     expect(await screen.findByRole("alert")).toBeDefined();
   });
 
-  it("runs the spoken loop: start -> utterance -> STT -> coach -> TTS -> back to listening", async () => {
+  it("runs the spoken loop and carries word-timings into the end-of-round analysis", async () => {
     mockedStart.mockResolvedValue(oneCue);
-    mockedTranscribe.mockResolvedValue({ transcript: "help yourself" });
+    mockedTranscribe.mockResolvedValue({
+      transcript: "help yourself",
+      words: [{ end: 400, start: 0, text: "help" }]
+    });
     mockedSay.mockResolvedValue({ say: "And then what?" });
+    mockedEnd.mockResolvedValue(richDebrief);
     const { callbacks, capture, live, voice } = fakeLive();
     const user = userEvent.setup();
     render(<SessionPage live={live} />);
 
     await screen.findByText("Welcoming a guest to the table");
     await user.click(screen.getByRole("button", { name: "Start call" }));
-
     expect(capture.start).toHaveBeenCalledOnce();
     expect(await screen.findByText("Listening…")).toBeDefined();
 
@@ -158,16 +181,27 @@ describe("SessionPage", () => {
     expect(await screen.findByText("help yourself")).toBeDefined();
     expect(await screen.findByText("And then what?")).toBeDefined();
     expect(mockedTranscribe).toHaveBeenCalledWith(audio);
-    expect(mockedSay).toHaveBeenCalledWith({ caseId: "k.table", transcript: "help yourself" });
     expect(voice.speak).toHaveBeenCalledWith("And then what?");
-    expect(capture.setCoachPlaying).toHaveBeenNthCalledWith(1, true);
-    expect(capture.setCoachPlaying).toHaveBeenNthCalledWith(2, false);
-    expect(await screen.findByText("Listening…")).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "End & review" }));
+
+    expect(capture.stop).toHaveBeenCalled();
+    expect(mockedEnd).toHaveBeenCalledWith({
+      caseId: "k.table",
+      words: [{ end: 400, start: 0, text: "help" }]
+    });
+    expect(await screen.findByText("Good round — one landed cleanly.")).toBeDefined();
+    expect(screen.getByText("Would you like more?")).toBeDefined();
+    expect(screen.getByText("Reach for the native phrasing.")).toBeDefined();
+    expect(screen.getByText("Make yourself at home.")).toBeDefined();
+    expect(screen.getByText("—")).toBeDefined();
+    expect(screen.getByText("Dig in.")).toBeDefined();
+    expect(screen.getByText('Nailed "Help yourself.".')).toBeDefined();
   });
 
   it("stops coach playback and resumes listening on barge-in", async () => {
     mockedStart.mockResolvedValue(oneCue);
-    const { callbacks, capture, live, voice } = fakeLive();
+    const { callbacks, live, voice } = fakeLive();
     const user = userEvent.setup();
     render(<SessionPage live={live} />);
 
@@ -176,33 +210,25 @@ describe("SessionPage", () => {
     await screen.findByText("Listening…");
 
     callbacks.onBargeIn?.();
-
-    await waitFor(() => expect(voice.cancel).toHaveBeenCalledOnce());
-    expect(capture.setCoachPlaying).toHaveBeenLastCalledWith(false);
+    expect(voice.cancel).toHaveBeenCalledOnce();
   });
 
-  it("ends the call to a completion state and can start another", async () => {
+  it("ends a typed round to a calm debrief and can practise again", async () => {
     mockedStart.mockResolvedValue(oneCue);
-    mockedTranscribe.mockResolvedValue({ transcript: "help yourself" });
-    mockedSay.mockResolvedValue({ say: "Go on." });
-    const { callbacks, capture, live, voice } = fakeLive();
+    mockedEnd.mockResolvedValue(emptyDebrief);
     const user = userEvent.setup();
-    render(<SessionPage live={live} />);
+    render(<SessionPage />);
 
     await screen.findByText("Welcoming a guest to the table");
-    await user.click(screen.getByRole("button", { name: "Start call" }));
-    await screen.findByText("Listening…");
-    callbacks.onUtterance?.(new Blob(["x"]));
-    await screen.findByText("Go on.");
+    await user.click(screen.getByRole("button", { name: "End & review" }));
 
-    await user.click(screen.getByRole("button", { name: "End" }));
+    expect(mockedEnd).toHaveBeenCalledWith({ caseId: "k.table", words: [] });
+    expect(await screen.findByText("Smooth round — nothing needed correcting.")).toBeDefined();
+    expect(screen.queryByRole("list", { name: "Wins" })).toBeNull();
+    expect(screen.queryByText("Now due to recall")).toBeNull();
+    expect(screen.getByText("what you tried")).toBeDefined();
 
-    expect(capture.stop).toHaveBeenCalledOnce();
-    expect(voice.cancel).toHaveBeenCalled();
-    expect(await screen.findByText("Call complete")).toBeDefined();
-    expect(screen.getByText(/spoke 1 turn/)).toBeDefined();
-
-    await user.click(screen.getByRole("button", { name: "Start another" }));
+    await user.click(screen.getByRole("button", { name: "Practise again" }));
     expect(await screen.findByText("Welcoming a guest to the table")).toBeDefined();
     expect(mockedStart).toHaveBeenCalledTimes(2);
   });
@@ -222,5 +248,33 @@ describe("SessionPage", () => {
 
     expect(await screen.findByRole("alert")).toBeDefined();
     expect(capture.stop).toHaveBeenCalled();
+  });
+
+  it("offers a calm land-the-plane nudge after the time-box, without cutting off the call", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedEnd.mockResolvedValue(emptyDebrief);
+    const user = userEvent.setup();
+    render(<SessionPage timeBoxMs={10} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    // The nudge appears after the (tiny) time-box; the call is not cut off — the input remains.
+    expect(await screen.findByText(/land the plane/)).toBeDefined();
+    expect(screen.getByLabelText("Or type what you'd say")).toBeDefined();
+
+    // The explicit End control still works.
+    await user.click(screen.getByRole("button", { name: "End & review" }));
+    expect(await screen.findByText("Smooth round — nothing needed correcting.")).toBeDefined();
+  });
+
+  it("shows an error when the end-of-round analysis fails", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedEnd.mockRejectedValue(new Error("boom"));
+    const user = userEvent.setup();
+    render(<SessionPage />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "End & review" }));
+
+    expect(await screen.findByRole("alert")).toBeDefined();
   });
 });

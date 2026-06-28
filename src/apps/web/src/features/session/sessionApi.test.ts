@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { say, startSession, transcribe } from "./sessionApi";
+import { endSession, say, startSession, transcribe } from "./sessionApi";
 
 function stubFetch(response: {
   body?: unknown;
@@ -29,10 +29,11 @@ describe("sessionApi", () => {
   });
 
   it("transcribes a recorded utterance via the STT endpoint", async () => {
-    const fetchMock = stubFetch({ body: { transcript: "hello" }, ok: true });
+    const body = { transcript: "hello", words: [{ end: 300, start: 0, text: "hello" }] };
+    const fetchMock = stubFetch({ body, ok: true });
     const audio = new Uint8Array([1, 2, 3]);
 
-    await expect(transcribe(audio)).resolves.toEqual({ transcript: "hello" });
+    await expect(transcribe(audio)).resolves.toEqual(body);
     expect(fetchMock).toHaveBeenCalledWith("/api/session/transcribe", {
       body: audio,
       headers: { "content-type": "application/octet-stream" },
@@ -51,6 +52,25 @@ describe("sessionApi", () => {
 
     await expect(say(request)).resolves.toEqual({ say: "Tell me more." });
     expect(fetchMock).toHaveBeenCalledWith("/api/session/say", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("ends the round and returns the debrief over /api/session/end", async () => {
+    const debrief = {
+      due: [],
+      encouragement: "Good round.",
+      moments: [],
+      upgrade: { native: "n", said: "s" },
+      wins: []
+    };
+    const fetchMock = stubFetch({ body: debrief, ok: true });
+    const request = { caseId: "k.table", words: [] };
+
+    await expect(endSession(request)).resolves.toEqual(debrief);
+    expect(fetchMock).toHaveBeenCalledWith("/api/session/end", {
       body: JSON.stringify(request),
       headers: { "content-type": "application/json" },
       method: "POST"

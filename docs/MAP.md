@@ -85,15 +85,16 @@ can navigate them from another package.
   logic duplicated. Tool list + transport: `docs/MCP.md`.
 - Coach LLM seam: `src/coach/` — the model-agnostic boundary the language loop calls (like the
   dictionary seam). `coachProvider.ts` (the `CoachProvider` interface: judge / gradeForScheduler /
-  propose / author / converse), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds and runs
-  with no API key), `coachRouter.ts` (cost-routing — judge=strong, converse=strong, propose/author=cheap,
-  configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe `resolveCoach` that stays
-  on the fake until real adapters + a key are wired). `converse` (#220) is the conversational next-turn
-  call the live loop makes per user turn: conversation history + compiled context + case -> the coach's
-  next spoken line + a light-repair signal only on a real breakdown (no per-turn grading). The verdict ->
-  SM-2 grade map is pure in `@whetstone/domain` (`coachGrade.ts`); boundary shapes/validation in
-  `@whetstone/contracts` (`coachContracts.ts`). No real adapter or network yet; consumers go only through
-  the seam.
+  propose / author / converse / analyze), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds
+  and runs with no API key), `coachRouter.ts` (cost-routing — judge/converse/analyze=strong,
+  propose/author=cheap, configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe
+  `resolveCoach` that stays on the fake until real adapters + a key are wired). `converse` (#220) is the
+  conversational next-turn call the live loop makes per user turn (no per-turn grading); `analyze` (#222)
+  is the end-of-round one-pass call: the whole round (transcript + word-timings + the case's target chunks
+  - compiled context) -> a grade per chunk, the top tagged mistakes, wins, and one native upgrade (the
+    only place a round is graded). The verdict -> SM-2 grade map is pure in `@whetstone/domain`
+    (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No real
+    adapter or network yet; consumers go only through the seam.
 - Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe(audio) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
@@ -120,16 +121,20 @@ can navigate them from another package.
   coach (#206) and speech (#207) seams + #205/#208/#189: `startSession` proposes cues (top gap x
   frequency chunks; English situation, native target hidden), `submitTurn` judges + grades the
   submitted transcript and DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on first
-  practice, + records the turn outcome with its mistake category #208), `endSession` aggregates +
-  persists a `session_summaries` row and refreshes the profile. `converseTurn` (#220) holds a
+  practice, + records the turn outcome with its mistake category #208). `converseTurn` (#220) holds a
   conversational coach turn: it loads the case, rebuilds the conversation from the persisted
   `session_exchanges` rows (append-only, user+case scoped, ordered by `order_index`), calls the coach's
-  `converse`, persists the learner line + coach reply, and returns the reply (no per-turn grading). The
+  `converse`, persists the learner line + coach reply, and returns the reply (no per-turn grading).
+  `endSession` (#222) is the end-of-round one pass: it rebuilds the round (transcript from
+  `session_exchanges` + the request's word-timings + the case's target chunks + compiled context), calls
+  the coach's `analyze`, and DEPOSITS the durable trace deterministically — chunk grades -> SM-2 recall
+  (#188/#189, which also advances case mastery and so the map #210), tagged mistakes -> error-pattern
+  counts (#208), and the rolling profile (#208) — then returns the compact debrief. The
   spoken path posts recorded audio bytes to `POST /api/session/transcribe` (the STT seam, via injected
-  `saveAudio` + speech) and submits the recognized transcript; typing is the fallback. `sessionRoutes.ts`:
-  `POST /api/session/` `start|transcribe|turn|say|end`. The coach/speech seams are resolved (fakes when
-  unconfigured) in `index.ts`. Mistake-category map + session aggregation are pure in `@whetstone/domain`
-  (`mistakeCategory.ts`/`sessionSummary.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
+  `saveAudio` + speech, returning transcript + word-timings) and submits the recognized transcript; typing
+  is the fallback. `sessionRoutes.ts`: `POST /api/session/` `start|transcribe|turn|say|end`. The
+  coach/speech seams are resolved (fakes when unconfigured) in `index.ts`. Mistake-category map is pure in
+  `@whetstone/domain` (`mistakeCategory.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
   Web: the live **call surface** `SessionPage` (#221) — tap **Start call**, talk continuously, the coach
   replies in voice, with **barge-in** and scrolling **live captions**, until **End**; a typed box is the
   secondary no-mic fallback. It wires the foundations end to end: continuous capture + endpointing
@@ -137,8 +142,11 @@ can navigate them from another package.
   browser TTS out (`voiceOut.ts`'s `createVoiceOut`, wired to `window.speechSynthesis` in the
   coverage-excluded `browserVoiceOut.ts`). The browser audio/speech boundaries (`liveCapture.ts`,
   `browserVoiceOut.ts`) are injected via the `live` prop and excluded from coverage; the loop
-  orchestration, `pickEnglishVoice`/`createVoiceOut`, and `sessionApi` are covered. Ending shows a basic
-  completion state (the full debrief is #222).
+  orchestration, `pickEnglishVoice`/`createVoiceOut`, and `sessionApi` are covered. **End** runs the
+  end-of-round analysis (`endSession`) and renders the compact **debrief** (`DebriefView`, #222):
+  encouragement, the few moments (said -> native + why), the one upgrade, and what is now due to recall.
+  After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
+  nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

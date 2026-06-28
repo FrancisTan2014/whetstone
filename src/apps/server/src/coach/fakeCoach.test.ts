@@ -179,3 +179,80 @@ describe("FakeCoach converse", () => {
     expect(await coach.converse(request)).toEqual(await coach.converse(request));
   });
 });
+
+describe("FakeCoach analyze", () => {
+  const base = {
+    communicativeFunction: "Offering food",
+    context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
+    situation: "At the table",
+    words: []
+  } as const;
+
+  const request = {
+    ...base,
+    history: [
+      { role: "coach" as const, text: "How would you offer them food?" },
+      { role: "user" as const, text: "Help yourself to some rice." }
+    ],
+    targetChunks: [
+      { chunkId: "c1", text: "Help yourself." },
+      { chunkId: "c2", text: "Would you like some more?" }
+    ]
+  };
+
+  it("grades each target chunk, wins the produced one, and flags the missing one as a tagged mistake", async () => {
+    const result = await coach.analyze(request);
+
+    expect(result.chunkGrades).toHaveLength(2);
+    const produced = result.chunkGrades.find((grade) => grade.chunkId === "c1");
+    const missing = result.chunkGrades.find((grade) => grade.chunkId === "c2");
+    expect(produced?.grade).toBeGreaterThanOrEqual(4);
+    expect(missing?.grade).toBeLessThan(3);
+
+    expect(result.wins).toContain('Nailed "Help yourself.".');
+    expect(result.mistakes).toHaveLength(1);
+    expect(result.mistakes[0]).toMatchObject({
+      category: "word_order",
+      native: "Would you like some more?",
+      said: "Help yourself to some rice."
+    });
+    expect(result.upgrade.native).toBe("Help yourself.");
+    expect(result.encouragement.length).toBeGreaterThan(0);
+  });
+
+  it("tags a short missing chunk as an L1 calque and caps mistakes at three", async () => {
+    const result = await coach.analyze({
+      ...base,
+      history: [{ role: "user" as const, text: "totally unrelated words" }],
+      targetChunks: [
+        { chunkId: "a", text: "Dig in." },
+        { chunkId: "b", text: "Help yourself to more." },
+        { chunkId: "c", text: "Make yourself at home." },
+        { chunkId: "d", text: "Would you like a drink?" }
+      ]
+    });
+
+    expect(result.mistakes).toHaveLength(3);
+    expect(result.mistakes.some((mistake) => mistake.category === "l1_calque")).toBe(true);
+    expect(result.wins).toEqual([]);
+  });
+
+  it("handles an empty round (no user words, no target chunks) with safe fallbacks", async () => {
+    const result = await coach.analyze({
+      ...base,
+      history: [{ role: "coach" as const, text: "Hello?" }],
+      targetChunks: []
+    });
+
+    expect(result.chunkGrades).toEqual([]);
+    expect(result.mistakes).toEqual([]);
+    expect(result.upgrade).toEqual({
+      native: "Keep it natural and concrete.",
+      said: "what you tried"
+    });
+  });
+
+  it("is deterministic — the same round analyses identically", async () => {
+    expect(await coach.analyze(request)).toEqual(await coach.analyze(request));
+  });
+});

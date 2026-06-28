@@ -6,6 +6,14 @@ import { defaultCostRouting } from "./coachRouter.js";
 
 function stub(tag: string): CoachProvider {
   return {
+    analyze: () =>
+      Promise.resolve({
+        chunkGrades: [],
+        encouragement: tag,
+        mistakes: [],
+        upgrade: { native: tag, said: tag },
+        wins: []
+      }),
     authorCase: () => Promise.resolve({ chunks: [], communicativeFunction: tag, situation: tag }),
     converse: () => Promise.resolve({ say: tag }),
     gradeForScheduler: () => 0,
@@ -31,12 +39,14 @@ describe("readCoachConfig", () => {
 
   it("applies per-call-type tier overrides", () => {
     const config = readCoachConfig({
+      COACH_ANALYZE_TIER: "cheap",
       COACH_AUTHOR_TIER: "strong",
       COACH_CONVERSE_TIER: "cheap",
       COACH_JUDGE_TIER: "cheap",
       COACH_PROPOSE_TIER: "strong"
     });
     expect(config.routing).toEqual({
+      analyze: "cheap",
       author: "strong",
       converse: "cheap",
       judge: "cheap",

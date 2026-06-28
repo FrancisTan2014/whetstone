@@ -2,6 +2,8 @@ import {
   audioContentType,
   type CoachConverseResult,
   type CoachSayRequest,
+  type DebriefDto,
+  type EndSessionRequest,
   type SessionPlanDto,
   type TranscribeResultDto
 } from "@whetstone/contracts";
@@ -47,4 +49,10 @@ export async function transcribe(audio: Blob | Uint8Array): Promise<TranscribeRe
 // end-of-round job (#222).
 export async function say(request: CoachSayRequest): Promise<CoachConverseResult> {
   return postJson<CoachConverseResult>("/api/session/say", request);
+}
+
+// End the round (#222): the server runs the one analysis pass, deposits the durable trace, and returns
+// the compact debrief shown after the call.
+export async function endSession(request: EndSessionRequest): Promise<DebriefDto> {
+  return postJson<DebriefDto>("/api/session/end", request);
 }

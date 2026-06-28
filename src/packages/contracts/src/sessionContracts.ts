@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { productionJudgementSchema } from "./coachContracts.js";
 import { errorCategorySchema } from "./learnerContracts.js";
+import { transcribedWordSchema } from "./speechContracts.js";
 
 // Shared shapes for the spoken practice session (#211): the session plan (cues), the per-turn request
 // and result, the STT transcribe boundary, and the end-of-session summary. The session runs over the
@@ -76,7 +77,9 @@ export const turnResultDtoSchema = z
 
 export type TurnResultDto = z.infer<typeof turnResultDtoSchema>;
 
-export const transcribeResultDtoSchema = z.object({ transcript: z.string() }).strict();
+export const transcribeResultDtoSchema = z
+  .object({ transcript: z.string(), words: z.array(transcribedWordSchema) })
+  .strict();
 
 export type TranscribeResultDto = z.infer<typeof transcribeResultDtoSchema>;
 
@@ -90,11 +93,43 @@ export const sessionTurnRecordSchema = z
 
 export type SessionTurnRecord = z.infer<typeof sessionTurnRecordSchema>;
 
+// Ending a round (#222): the case the call was set in plus the round's STT word-timings. The server
+// assembles the rest of the round record (full transcript, target chunks, compiled context) from
+// persisted state, runs the one analysis pass, deposits the durable trace, and returns the debrief.
 export const endSessionRequestSchema = z
-  .object({ turns: z.array(sessionTurnRecordSchema) })
+  .object({
+    caseId: z.string().refine(isNonBlank, { message: "caseId must be non-empty." }),
+    words: z.array(transcribedWordSchema)
+  })
   .strict();
 
 export type EndSessionRequest = z.infer<typeof endSessionRequestSchema>;
+
+// One debrief moment: a high-value correction shown as said -> native with a short why.
+export const debriefMomentDtoSchema = z
+  .object({ native: z.string(), said: z.string(), why: z.string() })
+  .strict();
+
+export type DebriefMomentDto = z.infer<typeof debriefMomentDtoSchema>;
+
+// One item now scheduled for recall after the round, with when it is next due.
+export const debriefDueDtoSchema = z.object({ dueAt: z.string(), text: z.string() }).strict();
+
+export type DebriefDueDto = z.infer<typeof debriefDueDtoSchema>;
+
+// The compact end-of-round debrief: a line of encouragement, the 2-3 moments that matter, the one
+// native upgrade to carry, the wins, and what is now due to recall. Calm, not a wall of corrections.
+export const debriefDtoSchema = z
+  .object({
+    due: z.array(debriefDueDtoSchema),
+    encouragement: z.string(),
+    moments: z.array(debriefMomentDtoSchema),
+    upgrade: z.object({ native: z.string(), said: z.string() }).strict(),
+    wins: z.array(z.string())
+  })
+  .strict();
+
+export type DebriefDto = z.infer<typeof debriefDtoSchema>;
 
 export const sessionErrorCountDtoSchema = z
   .object({ category: errorCategorySchema, count: z.number().int().positive() })
@@ -121,6 +156,10 @@ export function parseCoachSayRequest(value: unknown): CoachSayRequest {
 
 export function parseEndSessionRequest(value: unknown): EndSessionRequest {
   return endSessionRequestSchema.parse(value);
+}
+
+export function parseDebriefDto(value: unknown): DebriefDto {
+  return debriefDtoSchema.parse(value);
 }
 
 export function parseSessionPlanDto(value: unknown): SessionPlanDto {

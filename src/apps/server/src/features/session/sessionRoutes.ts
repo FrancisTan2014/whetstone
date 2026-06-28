@@ -38,8 +38,8 @@ export function registerSessionRoutes(
     }
 
     const path = await dependencies.saveAudio(body);
-    const { transcript } = await dependencies.speech.transcribe({ path });
-    return { transcript };
+    const { transcript, words } = await dependencies.speech.transcribe({ path });
+    return { transcript, words };
   });
 
   server.post("/api/session/turn", async (request, reply) => {
@@ -89,11 +89,16 @@ export function registerSessionRoutes(
       return reply.code(400).send(invalidRequest);
     }
 
-    return endSession(
+    const outcome = await endSession(
       dependencies,
       parsed.data,
       request.server.currentUser.getCurrentUserId(),
       dependencies.now()
     );
+    if (outcome.status === "case_not_found") {
+      return reply.code(404).send({ error: "case_not_found" });
+    }
+
+    return outcome.debrief;
   });
 }

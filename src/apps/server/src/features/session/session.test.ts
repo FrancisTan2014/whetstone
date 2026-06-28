@@ -8,10 +8,11 @@ import { createFakeCoach } from "../../coach/fakeCoach.js";
 import { createLoggerOptions } from "../../config/serverConfig.js";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { recallItems, sessionExchanges, sessionSummaries, turnOutcomes } from "../../db/schema.js";
+import { errorPatterns, recallItems, sessionExchanges, turnOutcomes } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
 import { getLearnerProfile } from "../learner/learnerQueries.js";
+import { compileProgressMap } from "../map/mapQueries.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
 import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
 import {
@@ -222,31 +223,89 @@ describe("converseTurn", () => {
 });
 
 describe("endSession", () => {
-  it("aggregates and persists the summary and refreshes the profile", async () => {
+  it("runs one analysis pass and moves all four deposits, returning the debrief", async () => {
     const deps = makeDeps();
-    const summary = await endSession(
-      deps,
-      {
-        turns: [
-          { errorCategory: null, grade: 5 },
-          { errorCategory: "register", grade: 2 }
-        ]
-      },
-      userA,
-      t0
-    );
+    const plan = await startSession(deps, userA, t0);
+    const cue = plan.cues[0];
+    if (cue === undefined) {
+      throw new Error("expected a cue");
+    }
 
-    expect(summary).toEqual({
-      averageGrade: 3.5,
-      errorCounts: [{ category: "register", count: 1 }],
-      strongTurns: 1,
-      turnCount: 2
-    });
+    // The learner produced one chunk's target in the conversation; the rest go ungraded.
+    await converseTurn(deps, { caseId: cue.caseId, transcript: cue.target }, userA, t0);
 
+    const beforeMap = await compileProgressMap(db, userA, t0);
+    const beforeCase = beforeMap.domains
+      .flatMap((domain) => domain.cases)
+      .find((mapCase) => mapCase.caseId === cue.caseId);
+
+    const outcome = await endSession(deps, { caseId: cue.caseId, words: [] }, userA, t0);
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // The debrief reads from the analysis.
+    expect(outcome.debrief.encouragement.length).toBeGreaterThan(0);
+    expect(outcome.debrief.due.length).toBeGreaterThan(0);
+    expect(outcome.debrief.upgrade.native.length).toBeGreaterThan(0);
+
+    // Deposit 1: the produced chunk has a recall item scheduled.
+    expect(await getRecallItemByChunkForUser(db, userA, cue.chunkId)).toBeDefined();
     expect(
-      await db.select().from(sessionSummaries).where(eq(sessionSummaries.userId, userA))
-    ).toHaveLength(1);
+      (await db.select().from(recallItems).where(eq(recallItems.userId, userA))).length
+    ).toBeGreaterThan(0);
+
+    // Deposit 2: tagged mistakes incremented the error-pattern store.
+    expect(
+      (await db.select().from(errorPatterns).where(eq(errorPatterns.userId, userA))).length
+    ).toBeGreaterThan(0);
+
+    // Deposit 3: the rolling profile was refreshed.
     expect(await getLearnerProfile(db, userA)).toBeDefined();
+
+    // Deposit 4: case mastery advanced — the map shows fewer "new" chunks than before.
+    const afterMap = await compileProgressMap(db, userA, t0);
+    const afterCase = afterMap.domains
+      .flatMap((domain) => domain.cases)
+      .find((mapCase) => mapCase.caseId === cue.caseId);
+    expect(afterCase?.mastery.newChunks).toBeLessThan(beforeCase?.mastery.newChunks ?? 0);
+  });
+
+  it("returns case_not_found for an unknown case", async () => {
+    const outcome = await endSession(makeDeps(), { caseId: "nope", words: [] }, userA, t0);
+    expect(outcome).toEqual({ status: "case_not_found" });
+  });
+
+  it("ignores a grade for a chunk outside the round rather than enrolling a dangling item", async () => {
+    const plan = await startSession(makeDeps(), userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...createFakeCoach(),
+        analyze: () =>
+          Promise.resolve({
+            chunkGrades: [{ chunkId: "ghost-chunk", grade: 5 }],
+            encouragement: "Solid.",
+            mistakes: [],
+            upgrade: { native: "n", said: "s" },
+            wins: []
+          })
+      }
+    };
+
+    const outcome = await endSession(deps, { caseId, words: [] }, userA, t0);
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+    expect(outcome.debrief.due).toEqual([]);
+    expect(await db.select().from(recallItems).where(eq(recallItems.userId, userA))).toHaveLength(
+      0
+    );
   });
 });
 
@@ -284,13 +343,21 @@ describe("session routes", () => {
       expect(transcribeRes.statusCode).toBe(200);
       expect(transcribeRes.json().transcript).toBe("spoken words");
 
+      const caseId = plan.cues[0].caseId as string;
       const endRes = await server.inject({
         method: "POST",
-        payload: { turns: [{ errorCategory: null, grade: 5 }] },
+        payload: { caseId, words: [] },
         url: "/api/session/end"
       });
       expect(endRes.statusCode).toBe(200);
-      expect(endRes.json().turnCount).toBe(1);
+      expect((endRes.json().encouragement as string).length).toBeGreaterThan(0);
+
+      const endNotFound = await server.inject({
+        method: "POST",
+        payload: { caseId: "nope", words: [] },
+        url: "/api/session/end"
+      });
+      expect(endNotFound.statusCode).toBe(404);
     } finally {
       await server.close();
     }
@@ -345,8 +412,7 @@ describe("session routes", () => {
         ).statusCode
       ).toBe(400);
       expect(
-        (await server.inject({ method: "POST", payload: { turns: "no" }, url: "/api/session/end" }))
-          .statusCode
+        (await server.inject({ method: "POST", payload: {}, url: "/api/session/end" })).statusCode
       ).toBe(400);
 
       const notFound = await server.inject({
