@@ -32,8 +32,15 @@ jobs:
       WHETSTONE_PORT: ${{ vars.WHETSTONE_PORT || '3000' }}
 
     steps:
-      - name: Check out the merged commit
-        uses: actions/checkout@v4
+      # Plain git checkout instead of actions/checkout: the self-hosted runner cannot reliably reach
+      # codeload.github.com to download the action (SSL/timeout), but it can reach github.com for git.
+      # The repo is public, so no token is needed; we fetch exactly the merged commit (github.sha).
+      - name: Check out the merged commit (plain git)
+        run: |
+          git init -q .
+          git remote add origin "https://github.com/${{ github.repository }}.git" 2>/dev/null || git remote set-url origin "https://github.com/${{ github.repository }}.git"
+          git fetch --depth 1 --force origin "${{ github.sha }}"
+          git checkout -q --force -B __deploy FETCH_HEAD
 
       - name: Enable pnpm (corepack)
         run: corepack enable
