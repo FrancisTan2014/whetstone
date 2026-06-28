@@ -33,17 +33,28 @@ const strong = tagged("strong", 5);
 const cheap = tagged("cheap", 1);
 
 const judgement: ProductionJudgement = { category: "good", issues: [], natural: 1 };
+const knobs = {
+  challenge: "medium" as const,
+  focus: "f",
+  pace: "steady" as const,
+  probeErrorPatterns: [],
+  register: "neutral" as const,
+  support: "medium" as const,
+  targetBand: "intermediate" as const
+};
 const request = { context: { focus: "", recentTargets: [] }, target: "x", transcript: "x" };
 const converseRequest = {
   communicativeFunction: "f",
   context: { focus: "", recentTargets: [] },
   history: [],
+  knobs,
   situation: "s"
 };
 const analyzeRequest = {
   communicativeFunction: "f",
   context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
   history: [],
+  knobs,
   situation: "s",
   targetChunks: [],
   words: []

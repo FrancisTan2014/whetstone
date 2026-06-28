@@ -1,6 +1,8 @@
 import type {
   CoachConverseResult,
+  CoachKnobs,
   CoachSayRequest,
+  CompiledLearnerContextDto,
   DebriefDto,
   DebriefDueDto,
   SessionPlanDto,
@@ -8,7 +10,13 @@ import type {
   TurnResultDto,
   EndSessionRequest
 } from "@whetstone/contracts";
-import { mistakeCategoryFromIssues, scheduleReview, type ReviewGrade } from "@whetstone/domain";
+import {
+  deriveCoachKnobs,
+  mistakeCategoryFromIssues,
+  scheduleReview,
+  type LearnerSnapshot,
+  type ReviewGrade
+} from "@whetstone/domain";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
 import type { CoachProvider } from "../../coach/coachProvider.js";
@@ -23,6 +31,20 @@ import type { SpeechInput } from "../../speech/speechInput.js";
 // How many cues a session proposes, and the soft per-cue timer (mild time pressure).
 const SESSION_SIZE = 5;
 const CUE_TIMER_SECONDS = 20;
+
+// Distil the compiled learner context (#208) into the snapshot the pure knobs function reads, then
+// derive the adaptive coach knobs (#223). Deterministic; the briefing for the fixed coach skill.
+function knobsFromContext(context: CompiledLearnerContextDto): CoachKnobs {
+  const snapshot: LearnerSnapshot = {
+    band: context.profile?.level ?? "beginner",
+    dueChunkCount: context.rankedChunks.length,
+    focus: context.profile?.focus ?? "",
+    recentGrades: context.recentOutcomes.map((outcome) => outcome.grade),
+    topErrorPatterns: context.relevantErrors.map((pattern) => pattern.category)
+  };
+  const knobs = deriveCoachKnobs(snapshot);
+  return { ...knobs, probeErrorPatterns: [...knobs.probeErrorPatterns] };
+}
 
 export type SessionDependencies = Readonly<{
   coach: CoachProvider;
@@ -173,10 +195,12 @@ export async function converseTurn(
     .orderBy(asc(sessionExchanges.orderIndex));
 
   const history = [...prior, { role: "user" as const, text: request.transcript }];
+  const knobs = knobsFromContext(await compileContext(dependencies.db, userId, now));
   const reply = await dependencies.coach.converse({
     communicativeFunction: caseRow.communicativeFunction,
     context: { focus: caseRow.situation, recentTargets: [] },
     history,
+    knobs,
     situation: caseRow.situation
   });
 
@@ -247,6 +271,7 @@ export async function endSession(
     communicativeFunction: caseRow.communicativeFunction,
     context,
     history,
+    knobs: knobsFromContext(context),
     situation: caseRow.situation,
     targetChunks,
     words: [...request.words]

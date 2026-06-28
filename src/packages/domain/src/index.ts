@@ -10,6 +10,14 @@ export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "
 export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
 export { judgementToGrade, productionCategories } from "./coachGrade.js";
 export type { ProductionCategory } from "./coachGrade.js";
+export { coachIntensities, coachPaces, coachRegisters, deriveCoachKnobs } from "./coachKnobs.js";
+export type {
+  CoachIntensity,
+  CoachKnobs,
+  CoachPace,
+  CoachRegister,
+  LearnerSnapshot
+} from "./coachKnobs.js";
 export {
   createEndpointer,
   forceEndUtterance,
