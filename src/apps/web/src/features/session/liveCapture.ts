@@ -5,11 +5,12 @@
 // dispatches the resulting effects to callbacks. It is therefore excluded from coverage (see
 // vitest.config.ts), like the existing `audioCapture.ts` mic boundary.
 //
-// Lifecycle: `start()` opens the mic and begins sampling energy every `frameMs`. When the engine decides
-// the learner has started speaking, a fresh `MediaRecorder` captures the utterance; when it decides the
-// utterance ended (silence window, or a manual `finishUtterance()`), the recording stops and the audio
-// blob is handed to `onUtterance`. A start while the coach is playing is a barge-in: `onBargeIn` fires so
-// the consumer can stop playback. No STT, coach, or TTS lives here — the blob is simply handed off.
+// Continuous capture preserves the onset: a fresh `MediaRecorder` starts on `capture-start` — the first
+// candidate voiced frame — so the recording already covers the utterance onset by the time the engine
+// *confirms* the start `minSpeechMs` later. A candidate that dies (`capture-discard`) throws its
+// recording away; a confirmed end (`utterance-end`, or a manual `finishUtterance()`) finalizes the blob
+// and hands it to `onUtterance`. A confirmed start while the coach is playing is a barge-in: `onBargeIn`
+// fires so the consumer can stop playback. No STT, coach, or TTS lives here — the blob is just handed off.
 
 import {
   createTurnTaking,
@@ -22,7 +23,7 @@ import {
 } from "@whetstone/domain";
 
 export type LiveCaptureCallbacks = Readonly<{
-  // The learner finished an utterance; `audio` is the captured turn, ready for the STT seam.
+  // The learner finished an utterance; `audio` is the captured turn (onset included), ready for STT.
   onUtterance: (audio: Blob) => void;
   // The learner started speaking while the coach was playing — stop playback and switch to capture.
   onBargeIn?: () => void;
@@ -33,7 +34,7 @@ export type LiveCaptureCallbacks = Readonly<{
 export type LiveCapture = Readonly<{
   // Open the microphone and begin continuous turn-taking. Rejects if mic permission is denied.
   start: () => Promise<void>;
-  // Stop sampling, release the microphone, and tear down audio resources.
+  // Stop sampling, release the microphone, and tear down audio resources (drops any in-flight capture).
   stop: () => void;
   // Tell the engine whether the coach is currently speaking, so a later start reads as barge-in.
   setCoachPlaying: (playing: boolean) => void;
@@ -71,32 +72,38 @@ export function createLiveCapture(
   let recorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
 
-  function beginUtteranceRecording(): void {
-    if (stream === null) {
+  // Begin (or keep) a recording from the candidate onset. Idempotent so the later confirmed start, which
+  // also asks to record, does not restart and lose the buffered onset.
+  function ensureRecording(): void {
+    if (recorder !== null || stream === null) {
       return;
     }
     chunks = [];
-    recorder = new MediaRecorder(stream);
-    recorder.addEventListener("dataavailable", (event) => {
+    const active = new MediaRecorder(stream);
+    active.addEventListener("dataavailable", (event) => {
       if (event.data.size > 0) {
         chunks.push(event.data);
       }
     });
-    recorder.start();
+    recorder = active;
+    active.start();
   }
 
-  function endUtteranceRecording(): void {
+  // Stop the current recording. When `emit` is true the assembled blob is handed to `onUtterance`;
+  // otherwise the recording (a dead candidate or a torn-down session) is discarded.
+  function stopRecording(emit: boolean): void {
     const active = recorder;
     if (active === null) {
       return;
     }
     recorder = null;
-    const captured = chunks;
-    active.addEventListener("stop", () => {
-      callbacks.onUtterance(
-        new Blob(captured, active.mimeType ? { type: active.mimeType } : undefined)
-      );
-    });
+    if (emit) {
+      const captured = chunks;
+      active.addEventListener("stop", () => {
+        const type = active.mimeType;
+        callbacks.onUtterance(new Blob(captured, type ? { type } : undefined));
+      });
+    }
     active.stop();
   }
 
@@ -106,16 +113,25 @@ export function createLiveCapture(
     if (effect === null) {
       return;
     }
-    if (effect.type === "utterance-end") {
-      endUtteranceRecording();
-      return;
+    switch (effect.type) {
+      case "capture-start":
+        ensureRecording();
+        break;
+      case "capture-discard":
+        stopRecording(false);
+        break;
+      case "barge-in":
+        callbacks.onBargeIn?.();
+        ensureRecording();
+        break;
+      case "utterance-start":
+        callbacks.onUtteranceStart?.();
+        ensureRecording();
+        break;
+      case "utterance-end":
+        stopRecording(true);
+        break;
     }
-    if (effect.type === "barge-in") {
-      callbacks.onBargeIn?.();
-    } else {
-      callbacks.onUtteranceStart?.();
-    }
-    beginUtteranceRecording();
   }
 
   function sample(): void {
@@ -141,10 +157,7 @@ export function createLiveCapture(
       clearInterval(sampleTimer);
       sampleTimer = null;
     }
-    if (recorder !== null) {
-      recorder.stop();
-      recorder = null;
-    }
+    stopRecording(false);
     if (stream !== null) {
       for (const track of stream.getTracks()) {
         track.stop();

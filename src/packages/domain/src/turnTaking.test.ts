@@ -42,7 +42,7 @@ function observe(
   return { effects, state: current };
 }
 
-describe("turnTaking — barge-in and turn effects", () => {
+describe("turnTaking — capture, barge-in, and turn effects", () => {
   it("starts idle, not listening, with the coach silent", () => {
     const state = createTurnTaking(config);
 
@@ -50,13 +50,20 @@ describe("turnTaking — barge-in and turn effects", () => {
     expect(state.coachPlaying).toBe(false);
   });
 
-  it("emits utterance-start then utterance-end across a full turn when the coach is idle", () => {
+  it("buffers from the candidate onset, confirms the start, then ends — coach idle", () => {
     const { effects, state } = observe(createTurnTaking(config), [
       ...frames(5, VOICED),
       ...frames(10, SILENT)
     ]);
 
-    expect(effects).toEqual(["utterance-start", "utterance-end"]);
+    expect(effects).toEqual(["capture-start", "utterance-start", "utterance-end"]);
+    expect(isListening(state)).toBe(false);
+  });
+
+  it("discards a candidate that aborts before confirming", () => {
+    const { effects, state } = observe(createTurnTaking(config), [...frames(3, VOICED), SILENT]);
+
+    expect(effects).toEqual(["capture-start", "capture-discard"]);
     expect(isListening(state)).toBe(false);
   });
 
@@ -67,17 +74,26 @@ describe("turnTaking — barge-in and turn effects", () => {
     expect(isListening(step.state)).toBe(false);
   });
 
-  it("raises barge-in when the learner starts speaking while the coach is playing", () => {
+  it("buffers speculatively while the coach plays, then barges in only on confirmation", () => {
     const playing = setCoachPlaying(createTurnTaking(config), true);
 
     const { effects, state } = observe(playing, frames(5, VOICED));
 
-    expect(effects).toEqual(["barge-in"]);
+    expect(effects).toEqual(["capture-start", "barge-in"]);
     expect(state.coachPlaying).toBe(false); // taking the floor stops coach playback
     expect(isListening(state)).toBe(true);
   });
 
-  it("reports listening while an utterance is captured", () => {
+  it("keeps the coach playing while only a speculative candidate is open", () => {
+    const playing = setCoachPlaying(createTurnTaking(config), true);
+
+    const { state } = observe(playing, frames(2, VOICED));
+
+    expect(state.coachPlaying).toBe(true);
+    expect(isListening(state)).toBe(false);
+  });
+
+  it("reports listening while a confirmed utterance is captured", () => {
     const { state } = observe(createTurnTaking(config), frames(5, VOICED));
 
     expect(isListening(state)).toBe(true);

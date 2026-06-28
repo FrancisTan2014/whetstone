@@ -1,10 +1,16 @@
 // Pure turn-taking orchestration (#219): layers conversational turn state on top of the endpointer so
-// the live call loop can be driven without a real microphone or audio element. Its one job is to turn
-// endpointing decisions into turn effects given who is currently speaking — in particular **barge-in**:
-// if the learner starts an utterance while the coach is playing, that is an interruption, not a normal
-// turn start, and the consumer should stop playback and switch to capture.
+// the live call loop can be driven without a real microphone or audio element. It maps endpointing
+// decisions to turn **effects** the consumer acts on:
 //
-// No DOM, audio, or timers live here; the browser layer sets `coachPlaying` when it starts/stops TTS and
+// - `capture-start` — a candidate utterance began; start buffering microphone audio from the onset.
+// - `capture-discard` — the candidate died before confirming; throw the buffered audio away.
+// - `utterance-start` — the utterance confirmed while the coach was idle; commit the buffer.
+// - `barge-in` — the utterance confirmed while the coach was playing; an interruption, so the consumer
+//   stops playback and commits the buffer. Confirmation (not the speculative candidate) triggers
+//   barge-in, so a transient noise during coach speech never cuts the coach off.
+// - `utterance-end` — the utterance finished; finalize and hand off the captured audio.
+//
+// No DOM, audio, or timers live here; the browser layer sets `coachPlaying` around TTS playback and
 // forwards energy frames, then dispatches the returned effect.
 
 import {
@@ -18,10 +24,7 @@ import {
 } from "./endpointing.js";
 
 export type TurnEffect = Readonly<{
-  // "barge-in": utterance started while the coach was playing — interrupt playback and capture.
-  // "utterance-start": utterance started while the coach was idle — begin capture.
-  // "utterance-end": utterance finished — finalize and hand off the captured audio.
-  type: "barge-in" | "utterance-start" | "utterance-end";
+  type: "capture-start" | "capture-discard" | "utterance-start" | "barge-in" | "utterance-end";
 }>;
 
 export type TurnTakingState = Readonly<{
@@ -39,33 +42,37 @@ export function createTurnTaking(config: EndpointConfig): TurnTakingState {
   return { coachPlaying: false, endpointer: createEndpointer(config) };
 }
 
-// True while the learner's utterance is being captured.
+// True while a confirmed utterance is being captured.
 export function isListening(state: TurnTakingState): boolean {
   return isCapturingUtterance(state.endpointer);
 }
 
 // Record that the coach started or stopped speaking. The consumer calls this around TTS playback so a
-// later utterance-start can be recognized as a barge-in.
+// later confirmed start can be recognized as a barge-in.
 export function setCoachPlaying(state: TurnTakingState, playing: boolean): TurnTakingState {
   return { ...state, coachPlaying: playing };
 }
 
-// Map an endpointing decision to a turn effect. A start while the coach plays is a barge-in and clears
-// the playing flag, since the learner has taken the floor; a start while idle is a normal turn start.
+// Map an endpointing decision to a turn effect. A confirmed start while the coach plays is a barge-in
+// and clears the playing flag, since the learner has taken the floor.
 function applyEvent(
   state: TurnTakingState,
   event: EndpointEvent,
   endpointer: EndpointerState
 ): TurnStep {
-  if (event.type === "utterance-end") {
-    return { effect: { type: "utterance-end" }, state: { ...state, endpointer } };
+  switch (event.type) {
+    case "speech-candidate":
+      return { effect: { type: "capture-start" }, state: { ...state, endpointer } };
+    case "speech-aborted":
+      return { effect: { type: "capture-discard" }, state: { ...state, endpointer } };
+    case "utterance-end":
+      return { effect: { type: "utterance-end" }, state: { ...state, endpointer } };
+    default:
+      if (state.coachPlaying) {
+        return { effect: { type: "barge-in" }, state: { coachPlaying: false, endpointer } };
+      }
+      return { effect: { type: "utterance-start" }, state: { ...state, endpointer } };
   }
-
-  if (state.coachPlaying) {
-    return { effect: { type: "barge-in" }, state: { coachPlaying: false, endpointer } };
-  }
-
-  return { effect: { type: "utterance-start" }, state: { ...state, endpointer } };
 }
 
 // Feed one energy frame; advance turn state and return any effect the consumer should act on.

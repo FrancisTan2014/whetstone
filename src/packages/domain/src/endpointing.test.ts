@@ -10,7 +10,8 @@ import {
   type EndpointerState
 } from "./endpointing.js";
 
-// 20ms frames: minSpeech 100ms = 5 voiced frames to start, endSilence 200ms = 10 silent frames to end.
+// 20ms frames: minSpeech 100ms = 5 voiced frames to confirm a start, endSilence 200ms = 10 silent
+// frames to end.
 const config: EndpointConfig = {
   endSilenceMs: 200,
   frameMs: 20,
@@ -41,9 +42,10 @@ function run(
   return { events, state };
 }
 
-describe("endpointing — utterance start/end", () => {
-  it("detects a speech burst: starts after the speech window, ends after the silence window", () => {
-    // 3 leading silent, 8 voiced (start confirmed on the 5th), 12 trailing silent (end on the 10th).
+describe("endpointing — utterance start/end with onset candidate", () => {
+  it("opens a candidate on the first voiced frame, confirms the start, then ends after silence", () => {
+    // 3 leading silent, 8 voiced (candidate at frame 3, start confirmed on the 5th = frame 7),
+    // 12 trailing silent (end on the 10th = frame 20).
     const { events } = run(config, [
       ...frames(3, SILENT),
       ...frames(8, VOICED),
@@ -51,6 +53,7 @@ describe("endpointing — utterance start/end", () => {
     ]);
 
     expect(events).toEqual([
+      { frameIndex: 3, type: "speech-candidate" },
       { frameIndex: 7, speechStartFrameIndex: 3, type: "utterance-start" },
       { frameIndex: 20, type: "utterance-end" }
     ]);
@@ -58,16 +61,28 @@ describe("endpointing — utterance start/end", () => {
 
   it("does not end on a short intra-sentence pause, only on the long trailing pause", () => {
     const { events } = run(config, [
-      ...frames(6, VOICED), // start confirmed at frame 4 (onset frame 0)
+      ...frames(6, VOICED), // candidate at 0, start confirmed at 4
       ...frames(4, SILENT), // 80ms pause — under the 200ms end window, must NOT end
       ...frames(3, VOICED), // speech resumes, resetting the silence run
       ...frames(12, SILENT) // long pause — ends the utterance
     ]);
 
     expect(events).toEqual([
+      { frameIndex: 0, type: "speech-candidate" },
       { frameIndex: 4, speechStartFrameIndex: 0, type: "utterance-start" },
       { frameIndex: 22, type: "utterance-end" }
     ]);
+  });
+
+  it("aborts a candidate that goes silent before the speech window completes", () => {
+    // 3 voiced frames (candidate at 0) then silence — never reaches the 5-frame window.
+    const { events, state } = run(config, [...frames(3, VOICED), SILENT]);
+
+    expect(events).toEqual([
+      { frameIndex: 0, type: "speech-candidate" },
+      { frameIndex: 3, type: "speech-aborted" }
+    ]);
+    expect(isCapturingUtterance(state)).toBe(false);
   });
 
   it("emits nothing for leading/trailing silence with no speech", () => {
@@ -77,17 +92,25 @@ describe("endpointing — utterance start/end", () => {
     expect(isCapturingUtterance(state)).toBe(false);
   });
 
-  it("ignores a noisy floor of isolated spikes that never sustain a speech window", () => {
-    // Spikes above the floor but always broken by silence, so the voiced run never reaches 5 frames.
-    const noisy = Array.from({ length: 24 }, (_, index) => (index % 2 === 0 ? 0.2 : 0.05));
+  it("treats a noisy floor of isolated spikes as repeated aborted candidates, never an utterance", () => {
+    // Spikes above the floor but always broken by silence: each spike opens a candidate that the next
+    // silent frame aborts, so the voiced run never reaches 5 and no utterance is confirmed.
+    const noisy = Array.from({ length: 6 }, (_, index) => (index % 2 === 0 ? 0.2 : 0.05));
     const { events, state } = run(config, noisy);
 
-    expect(events).toEqual([]);
+    expect(events).toEqual([
+      { frameIndex: 0, type: "speech-candidate" },
+      { frameIndex: 1, type: "speech-aborted" },
+      { frameIndex: 2, type: "speech-candidate" },
+      { frameIndex: 3, type: "speech-aborted" },
+      { frameIndex: 4, type: "speech-candidate" },
+      { frameIndex: 5, type: "speech-aborted" }
+    ]);
     expect(isCapturingUtterance(state)).toBe(false);
   });
 
   it("reports capturing state across the utterance lifecycle", () => {
-    const started = run(config, [...frames(5, VOICED)]).state;
+    const started = run(config, frames(5, VOICED)).state;
     expect(isCapturingUtterance(started)).toBe(true);
 
     const ended = run(config, [...frames(5, VOICED), ...frames(10, SILENT)]).state;
@@ -100,7 +123,7 @@ describe("endpointing — utterance start/end", () => {
     expect(events).toEqual([]);
   });
 
-  it("requires at least one frame even when a window rounds below a frame", () => {
+  it("confirms immediately, without a separate candidate, when the speech window is one frame", () => {
     const instant: EndpointConfig = {
       endSilenceMs: 0,
       frameMs: 20,

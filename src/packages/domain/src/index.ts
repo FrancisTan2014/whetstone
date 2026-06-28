@@ -21,6 +21,8 @@ export type {
   EndpointEvent,
   EndpointerState,
   EndpointStep,
+  SpeechAbortedEvent,
+  SpeechCandidateEvent,
   UtteranceEndEvent,
   UtteranceStartEvent
 } from "./endpointing.js";
