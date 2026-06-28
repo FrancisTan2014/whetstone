@@ -44,7 +44,12 @@ export type LiveDependencies = Readonly<{
 
 type SessionPageProps = Readonly<{
   live?: LiveDependencies;
+  // The soft time-box (~15 min) after which the coach offers to "land the plane" — a calm, non-blocking
+  // nudge, never a hard cutoff. Injectable so the nudge is testable without waiting real minutes.
+  timeBoxMs?: number;
 }>;
+
+const DEFAULT_TIME_BOX_MS = 15 * 60 * 1000;
 
 const phaseLabels: Readonly<Record<Phase, string>> = {
   idle: "Ready when you are",
@@ -53,11 +58,15 @@ const phaseLabels: Readonly<Record<Phase, string>> = {
   thinking: "Coach is thinking…"
 };
 
-export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
+export function SessionPage({
+  live,
+  timeBoxMs = DEFAULT_TIME_BOX_MS
+}: SessionPageProps): React.JSX.Element {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [captions, setCaptions] = useState<ReadonlyArray<Caption>>([]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [started, setStarted] = useState(false);
+  const [wrapUp, setWrapUp] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const liveRef = useRef<LiveSession | null>(null);
   const captionSeq = useRef(0);
@@ -165,6 +174,7 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
         setCaptions([]);
         setPhase("idle");
         setStarted(false);
+        setWrapUp(false);
         wordsRef.current = [];
         setStatus({
           call: {
@@ -184,6 +194,17 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
       teardown();
     };
   }, [reloadKey]);
+
+  // The "land the plane" nudge: once a round is active, after the soft time-box surface a calm offer to
+  // stop. Non-blocking — the call keeps running and the explicit End control still works; this only
+  // reveals the prompt. The timer is cleared when the round ends or reloads.
+  useEffect(() => {
+    if (status.kind !== "active") {
+      return;
+    }
+    const timer = setTimeout(() => setWrapUp(true), timeBoxMs);
+    return () => clearTimeout(timer);
+  }, [status.kind, timeBoxMs]);
 
   if (status.kind === "loading") {
     return <LoadingIndicator label="Setting up your call…" />;
@@ -227,6 +248,7 @@ export function SessionPage({ live }: SessionPageProps): React.JSX.Element {
       onStart={(deps) => void startCall(status.call, deps)}
       phase={phase}
       started={started}
+      wrapUp={wrapUp}
     />
   );
 }
@@ -250,7 +272,8 @@ function CallView({
   onSend,
   onStart,
   phase,
-  started
+  started,
+  wrapUp
 }: Readonly<{
   call: CallContext;
   captions: ReadonlyArray<Caption>;
@@ -260,6 +283,7 @@ function CallView({
   onStart: (deps: LiveDependencies) => void;
   phase: Phase;
   started: boolean;
+  wrapUp: boolean;
 }>): React.JSX.Element {
   const [typed, setTyped] = useState("");
   const busy = phase === "thinking" || phase === "speaking";
@@ -280,6 +304,15 @@ function CallView({
           <p className="text-sm text-text-muted">{call.communicativeFunction}</p>
           <p className="text-lg text-text">{call.situation}</p>
         </div>
+
+        {wrapUp ? (
+          <p
+            className="rounded border border-border bg-surface px-3 py-2 text-sm text-text-muted"
+            role="status"
+          >
+            Nice and natural place to land the plane — wrap up whenever you're ready, no rush.
+          </p>
+        ) : null}
 
         {started ? <p className="text-sm font-medium text-text">{phaseLabels[phase]}</p> : null}
 

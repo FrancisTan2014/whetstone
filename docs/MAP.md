@@ -145,6 +145,8 @@ can navigate them from another package.
   orchestration, `pickEnglishVoice`/`createVoiceOut`, and `sessionApi` are covered. **End** runs the
   end-of-round analysis (`endSession`) and renders the compact **debrief** (`DebriefView`, #222):
   encouragement, the few moments (said -> native + why), the one upgrade, and what is now due to recall.
+  After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
+  nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,

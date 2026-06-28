@@ -250,6 +250,22 @@ describe("SessionPage", () => {
     expect(capture.stop).toHaveBeenCalled();
   });
 
+  it("offers a calm land-the-plane nudge after the time-box, without cutting off the call", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedEnd.mockResolvedValue(emptyDebrief);
+    const user = userEvent.setup();
+    render(<SessionPage timeBoxMs={10} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    // The nudge appears after the (tiny) time-box; the call is not cut off — the input remains.
+    expect(await screen.findByText(/land the plane/)).toBeDefined();
+    expect(screen.getByLabelText("Or type what you'd say")).toBeDefined();
+
+    // The explicit End control still works.
+    await user.click(screen.getByRole("button", { name: "End & review" }));
+    expect(await screen.findByText("Smooth round — nothing needed correcting.")).toBeDefined();
+  });
+
   it("shows an error when the end-of-round analysis fails", async () => {
     mockedStart.mockResolvedValue(oneCue);
     mockedEnd.mockRejectedValue(new Error("boom"));
