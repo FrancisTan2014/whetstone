@@ -10,6 +10,28 @@ export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "
 export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
 export { judgementToGrade, productionCategories } from "./coachGrade.js";
 export type { ProductionCategory } from "./coachGrade.js";
+export {
+  createEndpointer,
+  forceEndUtterance,
+  isCapturingUtterance,
+  pushFrame
+} from "./endpointing.js";
+export type {
+  EndpointConfig,
+  EndpointEvent,
+  EndpointerState,
+  EndpointStep,
+  UtteranceEndEvent,
+  UtteranceStartEvent
+} from "./endpointing.js";
+export {
+  createTurnTaking,
+  finishTurn,
+  isListening,
+  observeFrame,
+  setCoachPlaying
+} from "./turnTaking.js";
+export type { TurnEffect, TurnStep, TurnTakingState } from "./turnTaking.js";
 export { deriveSpeechTiming } from "./speechTiming.js";
 export type { SpeechTiming, WordBoundary } from "./speechTiming.js";
 export {

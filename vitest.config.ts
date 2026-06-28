@@ -3,7 +3,9 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const domainSource = fileURLToPath(new URL("./src/packages/domain/src/index.ts", import.meta.url));
-const contractsSource = fileURLToPath(new URL("./src/packages/contracts/src/index.ts", import.meta.url));
+const contractsSource = fileURLToPath(
+  new URL("./src/packages/contracts/src/index.ts", import.meta.url)
+);
 
 export default defineConfig({
   resolve: {
@@ -29,6 +31,10 @@ export default defineConfig({
         // Browser MediaRecorder boundary for mic capture: touches navigator/MediaRecorder/real timers,
         // not exercisable in jsdom; the session page injects a fake, and the STT/submit logic is covered.
         "**/features/session/audioCapture.ts",
+        // Browser Web Audio / MediaRecorder boundary for live turn-taking (#219): touches
+        // AudioContext/AnalyserNode/MediaRecorder/real timers, not exercisable in jsdom; every decision
+        // delegates to the pure endpointing/turnTaking modules, which are covered.
+        "**/features/session/liveCapture.ts",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
         // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.
