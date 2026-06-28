@@ -203,3 +203,5 @@ merge before any of the above is set up.
   `sudo launchctl print system/com.cloudflare.cloudflared`.
 - **Brief 404s right after a merge:** expected — the runner cleans then rebuilds the workspace during a
   deploy; the app restarts onto the new build within a minute.
+
+_Continuous-deploy smoke test triggered: 2026-06-28._
