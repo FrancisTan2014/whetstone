@@ -15,6 +15,7 @@ const tierSet: ReadonlySet<string> = new Set(coachTiers);
 
 const tierEnvVar: Readonly<Record<CoachCallType, string>> = {
   author: "COACH_AUTHOR_TIER",
+  converse: "COACH_CONVERSE_TIER",
   judge: "COACH_JUDGE_TIER",
   propose: "COACH_PROPOSE_TIER"
 };
@@ -38,6 +39,7 @@ function parseApiKey(raw: string | undefined): string | undefined {
 export function readCoachConfig(env: NodeJS.ProcessEnv = process.env): CoachConfig {
   const routing: CostRouting = {
     author: parseTier(env.COACH_AUTHOR_TIER, defaultCostRouting.author, tierEnvVar.author),
+    converse: parseTier(env.COACH_CONVERSE_TIER, defaultCostRouting.converse, tierEnvVar.converse),
     judge: parseTier(env.COACH_JUDGE_TIER, defaultCostRouting.judge, tierEnvVar.judge),
     propose: parseTier(env.COACH_PROPOSE_TIER, defaultCostRouting.propose, tierEnvVar.propose)
   };

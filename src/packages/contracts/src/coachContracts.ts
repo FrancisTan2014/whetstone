@@ -79,6 +79,60 @@ export const judgeProductionRequestSchema = z
 
 export type JudgeProductionRequest = z.infer<typeof judgeProductionRequestSchema>;
 
+// A conversational turn in a live coaching call: who spoke and what was said. The learner's text may be
+// empty (they went quiet / were unintelligible — a breakdown the coach repairs); the coach's never is.
+export const conversationRoles = ["user", "coach"] as const;
+
+export const conversationRoleSchema = z.enum(conversationRoles);
+
+export type ConversationRole = z.infer<typeof conversationRoleSchema>;
+
+export const conversationTurnSchema = z
+  .object({ role: conversationRoleSchema, text: z.string() })
+  .strict();
+
+export type ConversationTurn = z.infer<typeof conversationTurnSchema>;
+
+// One conversational coaching exchange (#220): the conversation so far + the compiled learner context +
+// the case the call is set in. The coach returns its next spoken line and an optional light-repair
+// signal. This is what the live call loop (#221) calls on every user turn — grading is the end-of-round
+// job (#222), never per turn.
+export const coachConverseRequestSchema = z
+  .object({
+    communicativeFunction: z
+      .string()
+      .refine(isNonBlank, { message: "communicativeFunction must be non-empty." }),
+    context: compiledContextSchema,
+    history: z.array(conversationTurnSchema),
+    situation: z.string().refine(isNonBlank, { message: "situation must be non-empty." })
+  })
+  .strict();
+
+export type CoachConverseRequest = z.infer<typeof coachConverseRequestSchema>;
+
+// The light-repair signal, present ONLY on a real breakdown (the learner is stuck or unintelligible):
+// what broke down and the gentle recast/scaffold the coach offers to get them producing again. Absent
+// when the learner is in flow — the coach stays in flow and does not grade.
+export const coachRepairSchema = z
+  .object({
+    reason: z.string().refine(isNonBlank, { message: "reason must be non-empty." }),
+    recast: z.string().refine(isNonBlank, { message: "recast must be non-empty." })
+  })
+  .strict();
+
+export type CoachRepair = z.infer<typeof coachRepairSchema>;
+
+// The coach's reply for one turn: the next spoken line (always present), plus `repair` only on a real
+// breakdown.
+export const coachConverseResultSchema = z
+  .object({
+    repair: coachRepairSchema.optional(),
+    say: z.string().refine(isNonBlank, { message: "say must be non-empty." })
+  })
+  .strict();
+
+export type CoachConverseResult = z.infer<typeof coachConverseResultSchema>;
+
 // The navigation step: the next thing to elicit, an optional link to a corpus chunk (#205), and the
 // cue shown to the learner.
 export const proposeNextResultSchema = z
@@ -132,6 +186,10 @@ export type AuthorCaseResult = z.infer<typeof authorCaseResultSchema>;
 
 export function parseProductionJudgement(value: unknown): ProductionJudgement {
   return productionJudgementSchema.parse(value);
+}
+
+export function parseCoachConverseResult(value: unknown): CoachConverseResult {
+  return coachConverseResultSchema.parse(value);
 }
 
 export function parseProposeNextResult(value: unknown): ProposeNextResult {

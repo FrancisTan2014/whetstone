@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   authorCaseBriefSchema,
+  coachConverseRequestSchema,
   judgeProductionRequestSchema,
   parseAuthorCaseResult,
+  parseCoachConverseResult,
   parseProductionJudgement,
   parseProposeNextResult
 } from "./coachContracts.js";
@@ -78,6 +80,62 @@ describe("parseAuthorCaseResult", () => {
   it("rejects a blank communicative function", () => {
     expect(() =>
       parseAuthorCaseResult({ chunks: [], communicativeFunction: "  ", situation: "At the table" })
+    ).toThrow();
+  });
+});
+
+describe("parseCoachConverseResult", () => {
+  it("round-trips an in-flow reply with no repair", () => {
+    const result = { say: "Good — keep going. What would you say next?" };
+    expect(parseCoachConverseResult(result)).toEqual(result);
+  });
+
+  it("round-trips a breakdown reply carrying a light-repair signal", () => {
+    const result = {
+      repair: { reason: "That didn't come through.", recast: "Try a short sentence." },
+      say: "No rush — let's try a simpler version."
+    };
+    expect(parseCoachConverseResult(result)).toEqual(result);
+  });
+
+  it("rejects a blank coach line", () => {
+    expect(() => parseCoachConverseResult({ say: "   " })).toThrow();
+  });
+
+  it("rejects a repair with a blank recast", () => {
+    expect(() =>
+      parseCoachConverseResult({ repair: { reason: "stuck", recast: "  " }, say: "ok" })
+    ).toThrow();
+  });
+});
+
+describe("coachConverseRequestSchema", () => {
+  const request = {
+    communicativeFunction: "Offering food",
+    context: { focus: "At the table", recentTargets: [] },
+    history: [
+      { role: "coach", text: "How would you offer them food?" },
+      { role: "user", text: "Help yourself." }
+    ],
+    situation: "At the table"
+  };
+
+  it("accepts a valid conversational request", () => {
+    expect(coachConverseRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it("allows an empty learner turn (a breakdown the coach repairs)", () => {
+    const breakdown = { ...request, history: [{ role: "user", text: "" }] };
+    expect(coachConverseRequestSchema.parse(breakdown).history[0]?.text).toBe("");
+  });
+
+  it("rejects a blank situation", () => {
+    expect(() => coachConverseRequestSchema.parse({ ...request, situation: "  " })).toThrow();
+  });
+
+  it("rejects an unknown conversation role", () => {
+    expect(() =>
+      coachConverseRequestSchema.parse({ ...request, history: [{ role: "narrator", text: "x" }] })
     ).toThrow();
   });
 });

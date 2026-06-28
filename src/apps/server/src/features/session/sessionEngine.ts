@@ -1,4 +1,6 @@
 import type {
+  CoachConverseResult,
+  CoachSayRequest,
   SessionPlanDto,
   SessionSummaryDto,
   SubmitTurnRequest,
@@ -11,11 +13,11 @@ import {
   summarizeSessionTurns,
   type SessionTurn
 } from "@whetstone/domain";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 import type { CoachProvider } from "../../coach/coachProvider.js";
 import type { DbClient } from "../../db/dbClient.js";
-import { cases, chunks, sessionSummaries } from "../../db/schema.js";
+import { cases, chunks, sessionExchanges, sessionSummaries } from "../../db/schema.js";
 import { depositTurnOutcome, updateLearnerProfile } from "../learner/learnerCommands.js";
 import { compileContext } from "../learner/learnerQueries.js";
 import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
@@ -39,6 +41,10 @@ export type SessionDependencies = Readonly<{
 export type SubmitTurnOutcome =
   | Readonly<{ result: TurnResultDto; status: "ok" }>
   | Readonly<{ status: "chunk_not_found" }>;
+
+export type ConverseOutcome =
+  | Readonly<{ reply: CoachConverseResult; status: "ok" }>
+  | Readonly<{ status: "case_not_found" }>;
 
 // Plan a session: the navigation step. The top gap x frequency chunks (#208 — error-weighted, mixing
 // new and due) become the cues, each carrying its English situation (never L1) and the native target
@@ -133,6 +139,67 @@ export async function submitTurn(
     result: { errorCategory, grade, judgement, nextDueAt, target: row.target, transcript },
     status: "ok"
   };
+}
+
+// One conversational coach turn (#220): the live call loop's per-turn call. Load the case the call is
+// set in, rebuild the conversation so far from the persisted exchange, append the learner's latest
+// transcript, and ask the coach for its next spoken line (+ light repair only on a real breakdown). The
+// learner turn and the coach reply are persisted so the next call can rebuild the history. No grading or
+// recall deposit happens here — that is the end-of-round job (#222); the coach stays in flow.
+export async function converseTurn(
+  dependencies: SessionDependencies,
+  request: CoachSayRequest,
+  userId: string,
+  now: Date
+): Promise<ConverseOutcome> {
+  const caseRows = await dependencies.db
+    .select({ communicativeFunction: cases.communicativeFunction, situation: cases.situation })
+    .from(cases)
+    .where(eq(cases.id, request.caseId))
+    .limit(1);
+  const caseRow = caseRows[0];
+  if (caseRow === undefined) {
+    return { status: "case_not_found" };
+  }
+
+  const prior = await dependencies.db
+    .select({ role: sessionExchanges.role, text: sessionExchanges.text })
+    .from(sessionExchanges)
+    .where(and(eq(sessionExchanges.userId, userId), eq(sessionExchanges.caseId, request.caseId)))
+    .orderBy(asc(sessionExchanges.orderIndex));
+
+  const history = [...prior, { role: "user" as const, text: request.transcript }];
+  const reply = await dependencies.coach.converse({
+    communicativeFunction: caseRow.communicativeFunction,
+    context: { focus: caseRow.situation, recentTargets: [] },
+    history,
+    situation: caseRow.situation
+  });
+
+  await dependencies.db.insert(sessionExchanges).values([
+    {
+      caseId: request.caseId,
+      createdAt: now,
+      id: dependencies.createId(),
+      orderIndex: prior.length,
+      repairJson: null,
+      role: "user",
+      text: request.transcript,
+      userId
+    },
+    {
+      caseId: request.caseId,
+      createdAt: now,
+      id: dependencies.createId(),
+      orderIndex: prior.length + 1,
+      repairJson: reply.repair ?? null,
+      role: "coach",
+      text: reply.say,
+      userId
+    }
+  ]);
+
+  return { reply, status: "ok" };
 }
 
 // End the session: aggregate the reported turns into a summary, persist it, and refresh the rolling

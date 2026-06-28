@@ -1,11 +1,18 @@
 import {
   audioContentType,
+  coachSayRequestSchema,
   endSessionRequestSchema,
   submitTurnRequestSchema
 } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
 
-import { endSession, startSession, submitTurn, type SessionDependencies } from "./sessionEngine.js";
+import {
+  converseTurn,
+  endSession,
+  startSession,
+  submitTurn,
+  type SessionDependencies
+} from "./sessionEngine.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 
@@ -52,6 +59,28 @@ export function registerSessionRoutes(
     }
 
     return outcome.result;
+  });
+
+  // The conversational coach turn (#220): the live call loop posts the learner's latest transcript for a
+  // case; the server rebuilds the conversation, calls the coach, persists the exchange, and returns the
+  // coach's next line (+ light repair only on a breakdown). No per-turn grading.
+  server.post("/api/session/say", async (request, reply) => {
+    const parsed = coachSayRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+
+    const outcome = await converseTurn(
+      dependencies,
+      parsed.data,
+      request.server.currentUser.getCurrentUserId(),
+      dependencies.now()
+    );
+    if (outcome.status === "case_not_found") {
+      return reply.code(404).send({ error: "case_not_found" });
+    }
+
+    return outcome.reply;
   });
 
   server.post("/api/session/end", async (request, reply) => {

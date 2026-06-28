@@ -130,3 +130,52 @@ describe("FakeCoach authorCase", () => {
     expect(result.chunks[1]?.text).toBe("I'd like to offering food.");
   });
 });
+
+describe("FakeCoach converse", () => {
+  const base = {
+    communicativeFunction: "Offering food",
+    context: { focus: "At the table", recentTargets: [] },
+    situation: "At the table"
+  } as const;
+
+  it("opens the call in flow with no repair when there is no history", async () => {
+    const result = await coach.converse({ ...base, history: [] });
+
+    expect(result).toEqual({ say: "Let's get into it: At the table. How would you start?" });
+    expect(result.repair).toBeUndefined();
+  });
+
+  it("stays in flow with a follow-up and no repair on a normal user turn", async () => {
+    const result = await coach.converse({
+      ...base,
+      history: [
+        { role: "coach", text: "Let's get into it." },
+        { role: "user", text: "Sure, help yourself to some rice." }
+      ]
+    });
+
+    expect(result.say).toBe("Good — keep going. What would you say next?");
+    expect(result.repair).toBeUndefined();
+  });
+
+  it("offers light repair when the latest user turn is a breakdown (no usable words)", async () => {
+    const result = await coach.converse({
+      ...base,
+      history: [
+        { role: "coach", text: "How would you offer them food?" },
+        { role: "user", text: "  ...  " }
+      ]
+    });
+
+    expect(result.repair).toBeDefined();
+    expect(result.repair?.reason.length).toBeGreaterThan(0);
+    expect(result.repair?.recast).toContain("At the table");
+    expect(result.say.length).toBeGreaterThan(0);
+  });
+
+  it("is deterministic — the same conversation converses identically", async () => {
+    const request = { ...base, history: [{ role: "user" as const, text: "Have some tea." }] };
+
+    expect(await coach.converse(request)).toEqual(await coach.converse(request));
+  });
+});

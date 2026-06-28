@@ -1,6 +1,8 @@
 import type {
   AuthorCaseBrief,
   AuthorCaseResult,
+  CoachConverseRequest,
+  CoachConverseResult,
   JudgeProductionRequest,
   ProductionJudgement,
   ProposeNextResult,
@@ -26,4 +28,9 @@ export interface CoachProvider {
 
   // Author a new case + chunk inventory from a brief (used later by case authoring).
   authorCase(brief: AuthorCaseBrief): Promise<AuthorCaseResult>;
+
+  // The conversational turn (#220): given the conversation so far + compiled context + the case, return
+  // the coach's next spoken line and a light-repair signal only on a real breakdown. This keeps the
+  // learner in flow; grading is the end-of-round job (#222), never per turn.
+  converse(request: CoachConverseRequest): Promise<CoachConverseResult>;
 }
