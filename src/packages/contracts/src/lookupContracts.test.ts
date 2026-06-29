@@ -2,39 +2,69 @@ import { describe, expect, it } from "vitest";
 
 import {
   lookupResponseSchema,
+  lookupSourceLabel,
+  lookupSourcesForLanguage,
   parseLookupRequest,
   parseLookupResponse
 } from "./lookupContracts.js";
 
 describe("parseLookupRequest", () => {
   it("accepts an English term and trims surrounding whitespace", () => {
-    expect(parseLookupRequest({ language: "en", term: "  voluminous  " })).toEqual({
+    expect(
+      parseLookupRequest({ language: "en", source: "wordnet", term: "  voluminous  " })
+    ).toEqual({
       language: "en",
+      source: "wordnet",
       term: "voluminous"
     });
   });
 
   it("rejects a blank term", () => {
-    expect(() => parseLookupRequest({ language: "en", term: "   " })).toThrow();
+    expect(() => parseLookupRequest({ language: "en", source: "wordnet", term: "   " })).toThrow();
   });
 
   it("accepts the Chinese work languages", () => {
-    expect(parseLookupRequest({ language: "zh-CN", term: "你好" })).toEqual({
+    expect(parseLookupRequest({ language: "zh-CN", source: "cedict", term: "你好" })).toEqual({
       language: "zh-CN",
+      source: "cedict",
       term: "你好"
     });
-    expect(parseLookupRequest({ language: "zh-TW", term: "中國" })).toEqual({
+    expect(parseLookupRequest({ language: "zh-TW", source: "cedict", term: "中國" })).toEqual({
       language: "zh-TW",
+      source: "cedict",
       term: "中國"
     });
   });
 
   it("rejects an unsupported language", () => {
-    expect(() => parseLookupRequest({ language: "fr", term: "bonjour" })).toThrow();
+    expect(() =>
+      parseLookupRequest({ language: "fr", source: "wordnet", term: "bonjour" })
+    ).toThrow();
+  });
+
+  it("rejects an unknown source", () => {
+    expect(() => parseLookupRequest({ language: "en", source: "bogus", term: "word" })).toThrow();
   });
 
   it("rejects unknown keys", () => {
-    expect(() => parseLookupRequest({ extra: 1, language: "en", term: "word" })).toThrow();
+    expect(() =>
+      parseLookupRequest({ extra: 1, language: "en", source: "wordnet", term: "word" })
+    ).toThrow();
+  });
+});
+
+describe("lookupSourcesForLanguage", () => {
+  it("leads English with offline WordNet then Wiktionary, and Chinese with CC-CEDICT only", () => {
+    expect(lookupSourcesForLanguage("en")).toEqual(["wordnet", "wiktionary"]);
+    expect(lookupSourcesForLanguage("zh-CN")).toEqual(["cedict"]);
+    expect(lookupSourcesForLanguage("zh-TW")).toEqual(["cedict"]);
+    expect(lookupSourcesForLanguage("fr")).toEqual([]);
+  });
+
+  it("labels each source", () => {
+    expect(lookupSourceLabel("wordnet")).toBe("WordNet");
+    expect(lookupSourceLabel("wiktionary")).toBe("Wiktionary");
+    expect(lookupSourceLabel("cedict")).toBe("CC-CEDICT");
   });
 });
 

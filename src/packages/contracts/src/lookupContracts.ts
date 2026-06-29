@@ -65,12 +65,42 @@ export function parseLookupResponse(value: unknown): LookupResponse {
   return lookupResponseSchema.parse(value);
 }
 
+// Lookup sources the reader can show as independent tabs: WordNet (offline, instant) and Wiktionary
+// (rich, networked) for English; CC-CEDICT for Chinese. Each tab fetches its source alone so one
+// being slow/down/empty never freezes or empties the popover (#196).
+export const lookupSourceIds = ["wordnet", "wiktionary", "cedict"] as const;
+
+export type LookupSourceId = (typeof lookupSourceIds)[number];
+
+const sourceLabels: Readonly<Record<LookupSourceId, string>> = {
+  cedict: "CC-CEDICT",
+  wiktionary: "Wiktionary",
+  wordnet: "WordNet"
+};
+
+export function lookupSourceLabel(id: LookupSourceId): string {
+  return sourceLabels[id];
+}
+
+const sourcesByLanguage: Readonly<Record<string, ReadonlyArray<LookupSourceId>>> = {
+  en: ["wordnet", "wiktionary"],
+  "zh-CN": ["cedict"],
+  "zh-TW": ["cedict"]
+};
+
+// The ordered tabs to fetch for a work language; the first is the default. English leads with the
+// always-resolving offline WordNet so the popover is never stuck on the networked source.
+export function lookupSourcesForLanguage(language: string): ReadonlyArray<LookupSourceId> {
+  return sourcesByLanguage[language] ?? [];
+}
+
 // The lookup route query: a non-empty (trimmed) term and a supported work language (English
 // or Chinese), so Chinese selections route to the CC-CEDICT provider. The term is trimmed
 // in-place so callers downstream receive the cleaned value.
 export const lookupRequestSchema = z
   .object({
     language: z.enum(workLanguages),
+    source: z.enum(lookupSourceIds),
     term: z.string().trim().min(1, { message: "term must be non-empty." })
   })
   .strict();

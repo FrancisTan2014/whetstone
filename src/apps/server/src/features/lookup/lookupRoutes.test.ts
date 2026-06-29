@@ -18,7 +18,9 @@ const foundResponse: LookupResponse = {
   found: true
 };
 
-function buildServer(lookup: (term: string, language: string) => Promise<LookupResponse>) {
+function buildServer(
+  lookup: (term: string, language: string, source: string) => Promise<LookupResponse>
+) {
   return createServer({ logger: false, lookup: { lookup } });
 }
 
@@ -30,12 +32,12 @@ describe("GET /api/lookup", () => {
     try {
       const response = await server.inject({
         method: "GET",
-        url: "/api/lookup?term=word&language=en"
+        url: "/api/lookup?term=word&language=en&source=wordnet"
       });
 
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual(foundResponse);
-      expect(lookup).toHaveBeenCalledWith("word", "en");
+      expect(lookup).toHaveBeenCalledWith("word", "en", "wordnet");
     } finally {
       await server.close();
     }
@@ -47,7 +49,7 @@ describe("GET /api/lookup", () => {
     try {
       const response = await server.inject({
         method: "GET",
-        url: "/api/lookup?term=absent&language=en"
+        url: "/api/lookup?term=absent&language=en&source=wiktionary"
       });
 
       expect(response.statusCode).toBe(200);
@@ -64,11 +66,11 @@ describe("GET /api/lookup", () => {
     try {
       const response = await server.inject({
         method: "GET",
-        url: "/api/lookup?term=%E4%BD%A0%E5%A5%BD&language=zh-CN"
+        url: "/api/lookup?term=%E4%BD%A0%E5%A5%BD&language=zh-CN&source=cedict"
       });
 
       expect(response.statusCode).toBe(200);
-      expect(lookup).toHaveBeenCalledWith("你好", "zh-CN");
+      expect(lookup).toHaveBeenCalledWith("你好", "zh-CN", "cedict");
     } finally {
       await server.close();
     }
@@ -81,7 +83,7 @@ describe("GET /api/lookup", () => {
     try {
       const response = await server.inject({
         method: "GET",
-        url: "/api/lookup?term=word&language=fr"
+        url: "/api/lookup?term=word&language=fr&source=wordnet"
       });
 
       expect(response.statusCode).toBe(400);
@@ -92,11 +94,31 @@ describe("GET /api/lookup", () => {
     }
   });
 
+  it("rejects an unknown source with 400", async () => {
+    const lookup = vi.fn().mockResolvedValue(foundResponse);
+    const server = buildServer(lookup);
+
+    try {
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/lookup?term=word&language=en&source=bogus"
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(lookup).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects a missing term with 400", async () => {
     const server = buildServer(() => Promise.resolve(foundResponse));
 
     try {
-      const response = await server.inject({ method: "GET", url: "/api/lookup?language=en" });
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/lookup?language=en&source=wordnet"
+      });
 
       expect(response.statusCode).toBe(400);
     } finally {
@@ -110,7 +132,7 @@ describe("GET /api/lookup", () => {
     try {
       const response = await server.inject({
         method: "GET",
-        url: "/api/lookup?term=word&language=en"
+        url: "/api/lookup?term=word&language=en&source=wordnet"
       });
 
       // A dependency failure must surface as a server error, never a hang or a false 2xx.

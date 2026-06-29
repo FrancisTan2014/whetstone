@@ -226,6 +226,9 @@ export {
   dictionarySenseSchema,
   lookupRequestSchema,
   lookupResponseSchema,
+  lookupSourceIds,
+  lookupSourceLabel,
+  lookupSourcesForLanguage,
   parseLookupRequest,
   parseLookupResponse
 } from "./lookupContracts.js";
@@ -235,7 +238,8 @@ export type {
   DictionaryPronunciation,
   DictionarySense,
   LookupRequest,
-  LookupResponse
+  LookupResponse,
+  LookupSourceId
 } from "./lookupContracts.js";
 export {
   authorIdDtoSchema,

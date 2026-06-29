@@ -4,7 +4,7 @@ import type { RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { LookupPanel, type LookupState } from "./LookupPanel";
+import { LookupPanel, type LookupState, type LookupTab } from "./LookupPanel";
 
 function mockMatchMedia(matchers: Record<string, boolean>): void {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -46,15 +46,24 @@ function renderPanel(
   options: { anchorRect?: DOMRect; matchers: Record<string, boolean>; onOpenChange?: () => void }
 ): RenderResult {
   mockMatchMedia(options.matchers);
+  const tabs: LookupTab[] = [{ id: "wordnet", label: "WordNet", state }];
   return render(
     <LookupPanel
       anchorRect={options.anchorRect}
       onOpenChange={options.onOpenChange ?? (() => undefined)}
       open={true}
-      state={state}
+      tabs={tabs}
       term="set"
     />
   );
+}
+
+function renderTabs(
+  tabs: ReadonlyArray<LookupTab>,
+  matchers: Record<string, boolean> = desktop
+): RenderResult {
+  mockMatchMedia(matchers);
+  return render(<LookupPanel onOpenChange={() => undefined} open={true} tabs={tabs} term="set" />);
 }
 
 afterEach(() => {
@@ -232,13 +241,50 @@ describe("LookupPanel content", () => {
   it("shows an error state when the lookup fails", () => {
     renderPanel({ status: "error" }, { matchers: desktop });
 
-    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
+    expect(screen.getByRole("alert").textContent).toContain("unavailable");
   });
 
   it("shows an empty state when no definition is found", () => {
     renderPanel({ status: "empty" }, { matchers: desktop });
 
     expect(screen.getByText("No definition found.")).toBeDefined();
+  });
+
+  it("offers a tab per source and auto-selects the first with content", () => {
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: loadedEntry },
+      { id: "wiktionary", label: "Wiktionary", state: { status: "loading" } }
+    ]);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["WordNet", "Wiktionary"]);
+    // WordNet loaded -> shown by default; the still-loading Wiktionary doesn't trap the panel.
+    expect(screen.getByText("to put in place")).toBeDefined();
+  });
+
+  it("lets the reader switch to the other tab, each fetched independently", async () => {
+    const user = userEvent.setup();
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: loadedEntry },
+      { id: "wiktionary", label: "Wiktionary", state: { status: "error" } }
+    ]);
+
+    await user.click(screen.getByRole("tab", { name: "Wiktionary" }));
+    expect(screen.getByRole("alert").textContent).toContain("unavailable");
+  });
+
+  it("shows one explicit error when every source fails or is empty", () => {
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: { status: "empty" } },
+      { id: "wiktionary", label: "Wiktionary", state: { status: "error" } }
+    ]);
+
+    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
+  });
+
+  it("shows the combined error when there are no sources for the language", () => {
+    renderTabs([]);
+    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
   });
 });
 

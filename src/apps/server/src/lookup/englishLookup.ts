@@ -1,4 +1,4 @@
-import type { DictionaryEntry, DictionaryPartOfSpeech } from "@whetstone/contracts";
+import type { DictionaryEntry } from "@whetstone/contracts";
 
 import {
   wiktionarySource,
@@ -7,127 +7,52 @@ import {
 } from "./freeDictionaryProvider.js";
 import { wordNetSource, type WordNetProvider, type WordNetResult } from "./wordnetProvider.js";
 
-export type EnglishLookupDependencies = Readonly<{
-  wiktionary: WiktionaryProvider;
-  wordNet: WordNetProvider;
-}>;
+// English lookup exposes WordNet and Wiktionary as two independent sources (tabs), each composing a
+// stand-alone DictionaryEntry. They are never merged: WordNet resolves instantly offline; Wiktionary
+// is networked and time-boxed, so a slow/down host fails its own tab and never freezes the popover
+// (#196). Each entry's `sources` carries its single attribution.
 
-export interface EnglishLookupProvider {
-  lookup(term: string): Promise<DictionaryEntry | null>;
-}
-
-// WordNet synonyms keyed by part-of-speech label, unioning every synset's synonyms for that
-// label. This is the synonym backbone the composer merges into whichever source supplies the
-// senses (composing by role and part of speech — never aligning individual senses).
-function wordNetSynonymsByPartOfSpeech(
-  wordNet: WordNetResult | null
-): ReadonlyMap<string, ReadonlyArray<string>> {
-  const byLabel = new Map<string, string[]>();
-
-  if (wordNet === null) {
-    return byLabel;
-  }
-
-  for (const part of wordNet.partsOfSpeech) {
-    if (part.partOfSpeech === undefined) {
-      continue;
-    }
-
-    const existing = byLabel.get(part.partOfSpeech) ?? [];
-    const synonyms = part.senses.flatMap((sense) => sense.synonyms);
-    byLabel.set(part.partOfSpeech, [...existing, ...synonyms]);
-  }
-
-  return byLabel;
-}
-
-function unique(values: ReadonlyArray<string>): ReadonlyArray<string> {
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  for (const value of values) {
-    const key = value.toLowerCase();
-
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(value);
-    }
-  }
-
-  return result;
-}
-
-// Merge the WordNet synonym backbone into the chosen senses by part-of-speech label, so every
-// sense in a group carries that part of speech's synonyms (∪ the sense's own).
-function withSynonyms(
-  parts: ReadonlyArray<DictionaryPartOfSpeech>,
-  synonymsByLabel: ReadonlyMap<string, ReadonlyArray<string>>
-): ReadonlyArray<DictionaryPartOfSpeech> {
-  return parts.map((part) => {
-    const extra =
-      part.partOfSpeech === undefined ? [] : (synonymsByLabel.get(part.partOfSpeech) ?? []);
-
-    return {
-      ...part,
-      senses: part.senses.map((sense) => ({
-        ...sense,
-        synonyms: [...unique([...sense.synonyms, ...extra])]
-      }))
-    };
-  });
-}
-
-// Compose an enriched DictionaryEntry by role: pronunciations and etymology from Wiktionary;
-// senses grouped by part of speech from Wiktionary when it has them, else WordNet; synonyms
-// from WordNet (∪ Wiktionary) merged in by part of speech. Returns null only when neither
-// source yields any senses. `sources` credits every source that contributed.
-export function composeEnglishEntry(
+export function composeWordNetEntry(
   headword: string,
-  wiktionary: WiktionaryResult | null,
   wordNet: WordNetResult | null
 ): DictionaryEntry | null {
-  const senseParts =
-    wiktionary !== null && wiktionary.partsOfSpeech.length > 0
-      ? wiktionary.partsOfSpeech
-      : (wordNet?.partsOfSpeech ?? []);
-
-  if (senseParts.length === 0) {
+  if (wordNet === null || wordNet.partsOfSpeech.length === 0) {
     return null;
-  }
-
-  const partsOfSpeech = withSynonyms(senseParts, wordNetSynonymsByPartOfSpeech(wordNet));
-  const sources: string[] = [];
-
-  if (wiktionary !== null) {
-    sources.push(wiktionarySource);
-  }
-
-  if (wordNet !== null) {
-    sources.push(wordNetSource);
   }
 
   return {
     headword,
-    partsOfSpeech: [...partsOfSpeech],
-    pronunciations: [...(wiktionary?.pronunciations ?? [])],
-    sources,
-    ...(wiktionary?.etymology === undefined ? {} : { etymology: wiktionary.etymology })
+    partsOfSpeech: [...wordNet.partsOfSpeech],
+    pronunciations: [],
+    sources: [wordNetSource]
   };
 }
 
-// English lookup over both free sources: query Wiktionary and the offline WordNet in parallel,
-// then compose. WordNet guarantees a result even when Wiktionary (the community host) is down.
-export function createEnglishLookup(
-  dependencies: EnglishLookupDependencies
-): EnglishLookupProvider {
-  async function lookup(term: string): Promise<DictionaryEntry | null> {
-    const [wiktionary, wordNet] = await Promise.all([
-      dependencies.wiktionary.lookup(term),
-      dependencies.wordNet.lookup(term)
-    ]);
-
-    return composeEnglishEntry(term, wiktionary, wordNet);
+export function composeWiktionaryEntry(
+  headword: string,
+  wiktionary: WiktionaryResult | null
+): DictionaryEntry | null {
+  if (wiktionary === null || wiktionary.partsOfSpeech.length === 0) {
+    return null;
   }
 
-  return Object.freeze({ lookup });
+  return {
+    headword,
+    partsOfSpeech: [...wiktionary.partsOfSpeech],
+    pronunciations: [...wiktionary.pronunciations],
+    sources: [wiktionarySource],
+    ...(wiktionary.etymology === undefined ? {} : { etymology: wiktionary.etymology })
+  };
+}
+
+export function createWordNetEntryLookup(
+  wordNet: WordNetProvider
+): (term: string) => Promise<DictionaryEntry | null> {
+  return async (term) => composeWordNetEntry(term, await wordNet.lookup(term));
+}
+
+export function createWiktionaryEntryLookup(
+  wiktionary: WiktionaryProvider
+): (term: string) => Promise<DictionaryEntry | null> {
+  return async (term) => composeWiktionaryEntry(term, await wiktionary.lookup(term));
 }

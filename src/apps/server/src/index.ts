@@ -16,7 +16,7 @@ import { createSourceFileStore } from "./files/sourceFileStore.js";
 import { seedCaseCorpus } from "./features/cases/caseSeed.js";
 import { seedNoteTemplates } from "./features/notes/noteCommands.js";
 import { createCedictProvider, parseCedict } from "./lookup/cedict.js";
-import { createEnglishLookup } from "./lookup/englishLookup.js";
+import { createWiktionaryEntryLookup, createWordNetEntryLookup } from "./lookup/englishLookup.js";
 import { createFreeDictionaryProvider } from "./lookup/freeDictionaryProvider.js";
 import { createHttpClient } from "./lookup/httpClient.js";
 import { createInMemoryLookupCache } from "./lookup/lookupCache.js";
@@ -41,15 +41,18 @@ const epubParser = createEpubParser(join(config.sourceFilesDir, "epub-resources"
 const imageResourceStore = createImageResourceStore(config.imageResourcesDir);
 
 const httpClient = createHttpClient();
-// English lookup composes the community Free Dictionary (Wiktionary) with the offline,
-// bundled WordNet so it works monolingually with no keys and stays up even when the
-// Wiktionary host is down.
-const english = createEnglishLookup({
-  wiktionary: createFreeDictionaryProvider({ httpClient }),
-  wordNet: createWordNetProvider(new WordPOS() as unknown as WordPosLike)
-});
+// English lookup exposes two independent sources (tabs): the offline, bundled WordNet (instant,
+// always up) and the networked Wiktionary via the Free Dictionary API (rich, time-boxed). Neither
+// blocks the other, so a slow/down Wiktionary host never freezes the offline WordNet tab (#196).
+const wiktionaryLookup = createWiktionaryEntryLookup(createFreeDictionaryProvider({ httpClient }));
+const wordNetLookup = createWordNetEntryLookup(
+  createWordNetProvider(new WordPOS() as unknown as WordPosLike)
+);
 
-const lookupSources: LookupSource[] = [{ languages: ["en"], lookup: english.lookup }];
+const lookupSources: LookupSource[] = [
+  { id: "wordnet", languages: ["en"], lookup: wordNetLookup },
+  { id: "wiktionary", languages: ["en"], lookup: wiktionaryLookup }
+];
 
 // Chinese lookup: the bundled CC-CEDICT dataset, decompressed and parsed once at startup.
 // Resolve via import.meta.url so it works from the built dist/index.js (the build copies
@@ -57,7 +60,7 @@ const lookupSources: LookupSource[] = [{ languages: ["en"], lookup: english.look
 const cedictPath = new URL("./lookup/data/cedict.u8.gz", import.meta.url);
 const cedictText = gunzipSync(readFileSync(cedictPath)).toString("utf8");
 const cedict = createCedictProvider(parseCedict(cedictText));
-lookupSources.push({ languages: ["zh-CN", "zh-TW"], lookup: cedict.lookup });
+lookupSources.push({ id: "cedict", languages: ["zh-CN", "zh-TW"], lookup: cedict.lookup });
 
 const lookupService = createLookupService({
   cache: createInMemoryLookupCache(),

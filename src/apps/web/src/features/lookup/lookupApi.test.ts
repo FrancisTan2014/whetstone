@@ -26,10 +26,10 @@ describe("lookupTerm", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await lookupTerm("a set", "en");
+    const result = await lookupTerm("a set", "en", "wordnet");
 
     expect(result).toEqual(body);
-    expect(fetchMock).toHaveBeenCalledWith("/api/lookup?term=a%20set&language=en");
+    expect(fetchMock).toHaveBeenCalledWith("/api/lookup?term=a%20set&language=en&source=wordnet");
   });
 
   it("parses an explicit not-found response", async () => {
@@ -40,7 +40,7 @@ describe("lookupTerm", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    expect(await lookupTerm("absent", "en")).toEqual({ found: false });
+    expect(await lookupTerm("absent", "en", "wiktionary")).toEqual({ found: false });
   });
 
   it("throws when the response is not ok", async () => {
@@ -51,6 +51,6 @@ describe("lookupTerm", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(lookupTerm("word", "en")).rejects.toThrow("status 500");
+    await expect(lookupTerm("word", "en", "wordnet")).rejects.toThrow("status 500");
   });
 });

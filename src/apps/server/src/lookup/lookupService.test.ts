@@ -1,4 +1,4 @@
-import type { DictionaryEntry, LookupResponse } from "@whetstone/contracts";
+import type { DictionaryEntry, LookupResponse, LookupSourceId } from "@whetstone/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { createInMemoryLookupCache, type LookupCache } from "./lookupCache.js";
@@ -13,15 +13,20 @@ function entry(definition: string): DictionaryEntry {
   };
 }
 
-const englishEntry = entry("from English");
-const chineseEntry = entry("from CC-CEDICT");
+const wordnetEntry = entry("from WordNet");
+const cedictEntry = entry("from CC-CEDICT");
 
 type CountingSource = LookupSource & { calls: () => number };
 
-function source(languages: ReadonlyArray<string>, result: DictionaryEntry | null): CountingSource {
+function source(
+  id: LookupSourceId,
+  languages: ReadonlyArray<string>,
+  result: DictionaryEntry | null
+): CountingSource {
   const state = { calls: 0 };
   return {
     calls: () => state.calls,
+    id,
     languages,
     lookup: () => {
       state.calls += 1;
@@ -31,54 +36,46 @@ function source(languages: ReadonlyArray<string>, result: DictionaryEntry | null
 }
 
 describe("createLookupService", () => {
-  it("returns the first serving source's entry and skips later sources", async () => {
-    const english = source(["en"], englishEntry);
-    const later = source(["en"], entry("later"));
+  it("resolves only the requested source for the language", async () => {
+    const wordnet = source("wordnet", ["en"], wordnetEntry);
+    const wiktionary = source("wiktionary", ["en"], entry("from Wiktionary"));
     const service = createLookupService({
       cache: createInMemoryLookupCache(),
-      sources: [english, later]
+      sources: [wordnet, wiktionary]
     });
 
-    expect(await service.lookup("word", "en")).toEqual({ entry: englishEntry, found: true });
-    expect(later.calls()).toBe(0);
+    expect(await service.lookup("word", "en", "wordnet")).toEqual({
+      entry: wordnetEntry,
+      found: true
+    });
+    expect(wiktionary.calls()).toBe(0);
   });
 
-  it("falls through a missing source to the next serving source", async () => {
-    const missing = source(["en"], null);
-    const english = source(["en"], englishEntry);
+  it("routes by language: the cedict source serves zh, not en", async () => {
+    const cedict = source("cedict", ["zh-CN", "zh-TW"], cedictEntry);
     const service = createLookupService({
       cache: createInMemoryLookupCache(),
-      sources: [missing, english]
+      sources: [cedict]
     });
 
-    expect(await service.lookup("word", "en")).toEqual({ entry: englishEntry, found: true });
-    expect(missing.calls()).toBe(1);
+    expect(await service.lookup("你好", "zh-CN", "cedict")).toEqual({
+      entry: cedictEntry,
+      found: true
+    });
   });
 
-  it("routes by language: a Chinese lookup skips the English source and hits the zh source", async () => {
-    const english = source(["en"], englishEntry);
-    const cedict = source(["zh-CN", "zh-TW"], chineseEntry);
+  it("returns not-found when the requested source misses or no source matches", async () => {
     const service = createLookupService({
       cache: createInMemoryLookupCache(),
-      sources: [english, cedict]
+      sources: [source("wordnet", ["en"], null)]
     });
 
-    expect(await service.lookup("你好", "zh-CN")).toEqual({ entry: chineseEntry, found: true });
-    expect(english.calls()).toBe(0);
-    expect(cedict.calls()).toBe(1);
+    expect(await service.lookup("absent", "en", "wordnet")).toEqual({ found: false });
+    expect(await service.lookup("word", "en", "wiktionary")).toEqual({ found: false });
   });
 
-  it("returns an explicit not-found when every serving source misses", async () => {
-    const service = createLookupService({
-      cache: createInMemoryLookupCache(),
-      sources: [source(["en"], null)]
-    });
-
-    expect(await service.lookup("absent", "en")).toEqual({ found: false });
-  });
-
-  it("caches a result by language:term and serves repeats from the cache", async () => {
-    const english = source(["en"], englishEntry);
+  it("caches by language:source:term and serves repeats from the cache", async () => {
+    const wordnet = source("wordnet", ["en"], wordnetEntry);
     const setSpy = vi.fn();
     const inner = createInMemoryLookupCache<LookupResponse>();
     const cache: LookupCache<LookupResponse> = {
@@ -88,13 +85,13 @@ describe("createLookupService", () => {
         inner.set(key, value, ttlMs);
       }
     };
-    const service = createLookupService({ cache, sources: [english] });
+    const service = createLookupService({ cache, sources: [wordnet] });
 
-    await service.lookup("word", "en");
-    const second = await service.lookup("word", "en");
+    await service.lookup("word", "en", "wordnet");
+    const second = await service.lookup("word", "en", "wordnet");
 
-    expect(second).toEqual({ entry: englishEntry, found: true });
-    expect(english.calls()).toBe(1);
-    expect(setSpy).toHaveBeenCalledWith("en:word", lookupCacheTtlMs);
+    expect(second).toEqual({ entry: wordnetEntry, found: true });
+    expect(wordnet.calls()).toBe(1);
+    expect(setSpy).toHaveBeenCalledWith("en:wordnet:word", lookupCacheTtlMs);
   });
 });

@@ -363,6 +363,33 @@ code {
   max-width: 32rem;
 }
 
+/* Source tabs (#196): WordNet / Wiktionary / CC-CEDICT, each ≥44px and tokenized for Day/Night. The
+   selected tab is underlined with the accent so its source reads at a glance. */
+.lookupTabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0.5rem;
+}
+
+.lookupTab {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.lookupTab[aria-selected="true"] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
 .lookupEntry {
   display: flex;
   flex-direction: column;
