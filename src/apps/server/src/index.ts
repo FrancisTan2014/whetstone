@@ -13,7 +13,8 @@ import { createDbClient } from "./db/dbClient.js";
 import { runMigrations } from "./db/migrate.js";
 import { createEpubParser } from "./files/epubSource.js";
 import { createImageResourceStore } from "./files/imageResourceStore.js";
-import { createDoclingPdfToMarkdown } from "./files/pdfToMarkdown.js";
+import { composePdfToMarkdown, createDoclingPdfToMarkdown } from "./files/pdfToMarkdown.js";
+import { createOcrmypdfPreprocess } from "./files/pdfOcr.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
 import { seedCaseCorpus } from "./features/cases/caseSeed.js";
 import { seedNoteTemplates } from "./features/notes/noteCommands.js";
@@ -93,10 +94,13 @@ const server = createServer({
     epubParser,
     epubUploadLimitBytes: config.epubUploadLimitBytes,
     imageResourceStore,
-    pdfToMarkdown: createDoclingPdfToMarkdown({
-      pythonBinary: config.pdfPythonBinary,
-      scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url))
-    }),
+    pdfToMarkdown: composePdfToMarkdown(
+      createOcrmypdfPreprocess({ ocrmypdfBinary: config.pdfOcrBinary }),
+      createDoclingPdfToMarkdown({
+        pythonBinary: config.pdfPythonBinary,
+        scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url))
+      })
+    ),
     sourceFileStore
   },
   currentUser: createDefaultCurrentUserProvider(),
