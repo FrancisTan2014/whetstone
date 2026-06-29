@@ -4,12 +4,16 @@ import type { CoachAdapters } from "./coachConfig.js";
 
 // Default local model for the cheap tier: llama3.1:8b is the English-best small model for an
 // English-only coach. Swap to qwen3 only when the coach broadens to bilingual coaching (#241).
-const defaultCheapModel = "llama3.1:8b";
+export const defaultCheapModel = "llama3.1:8b";
+
+// Where the local Ollama daemon serves (its fixed default port). Exported so the boot health-check
+// probes the same endpoint the cheap-tier chat calls (#271).
+export const ollamaBaseUrl = "http://127.0.0.1:11434";
 
 /* v8 ignore start -- network boundaries, exercised via the injected ChatModel in tests */
 function createOllamaChat(model: string): ChatModel {
   return async (prompt) => {
-    const response = await fetch("http://127.0.0.1:11434/api/generate", {
+    const response = await fetch(`${ollamaBaseUrl}/api/generate`, {
       body: JSON.stringify({ model, prompt, stream: false }),
       headers: { "content-type": "application/json" },
       method: "POST"
@@ -29,6 +33,18 @@ function createCloudChat(apiKey: string): ChatModel {
     const body = (await response.json()) as { output_text?: string };
     return body.output_text ?? "";
   };
+}
+
+// Boot probe (#271): is `model` pulled and serving on the local Ollama daemon? Asks `/api/tags` and
+// checks membership. Any failure (daemon down, non-200, parse error) surfaces as "not available" so
+// the health check stays a report, never a crash — the coach falls back to the fake regardless.
+export async function probeOllamaModel(model: string): Promise<boolean> {
+  const response = await fetch(`${ollamaBaseUrl}/api/tags`);
+  if (!response.ok) {
+    return false;
+  }
+  const body = (await response.json()) as { models?: ReadonlyArray<{ name?: string }> };
+  return (body.models ?? []).some((entry) => entry.name === model);
 }
 /* v8 ignore stop */
 

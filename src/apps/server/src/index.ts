@@ -28,8 +28,9 @@ import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvide
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
-import { createCoachAdapters } from "./coach/coachAdapters.js";
+import { createCoachAdapters, defaultCheapModel, probeOllamaModel } from "./coach/coachAdapters.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
+import { checkCoachHealth } from "./coach/coachHealth.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { createWhisperSpeechInput } from "./speech/whisperSpeechInput.js";
@@ -74,8 +75,9 @@ const lookupService = createLookupService({
 // The coach (#206) and speech (#207) seams: config-gated and absent-config-safe, so with no API key
 // and no Whisper they stay on the deterministic fakes (the keyless dev/practice path). When Whisper is
 // configured (WHISPER_BINARY + WHISPER_MODEL_PATH), the real local adapter transcribes spoken turns (#236).
+const coachConfig = readCoachConfig();
 const coach = resolveCoach({
-  config: readCoachConfig(),
+  config: coachConfig,
   createAdapters: (apiKey) => createCoachAdapters(apiKey),
   fake: createFakeCoach()
 });
@@ -140,6 +142,19 @@ const server = createServer({
 try {
   await server.listen({ host: config.host, port: config.port });
   server.log.info({ host: config.host, port: config.port }, "server_started");
+
+  // Report the coach model wiring (#271): a clean "pull the model" hint when the local tier is
+  // configured but its Ollama model is not serving, instead of a silent fallback to the fake.
+  const coachHealth = await checkCoachHealth({
+    config: coachConfig,
+    localModel: defaultCheapModel,
+    probeLocalModel: probeOllamaModel
+  });
+  if (coachHealth.status === "local_unavailable") {
+    server.log.warn({ coach: coachHealth.status }, coachHealth.message);
+  } else {
+    server.log.info({ coach: coachHealth.status }, coachHealth.message);
+  }
 } catch (error) {
   server.log.error({ err: error }, "server_start_failed");
   process.exitCode = 1;

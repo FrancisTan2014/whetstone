@@ -1,0 +1,52 @@
+name: "Copilot Setup Steps"
+
+# Run the setup steps when they change so they can be validated, and allow manual runs from the
+# repository's "Actions" tab.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Provision the coach's cheap (local) tier so the agent can exercise real converse (#271). The
+      # coach falls back to the deterministic fake if Ollama or the model is missing, so these steps
+      # are best-effort — a pull failure must not block the agent from starting.
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh || true
+
+      - name: Start Ollama and pull the cheap-tier model
+        run: |
+          ollama serve >/tmp/ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
+            sleep 1
+          done
+          ollama pull llama3.1:8b || true

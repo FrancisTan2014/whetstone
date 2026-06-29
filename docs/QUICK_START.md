@@ -46,13 +46,13 @@ a `.env` file from the repository root if one exists (via Node's `--env-file-if-
 can also set overrides in your shell before starting the server. All variables below are optional
 and have sensible defaults.
 
-| Variable           | Default           | Purpose                                                                                                                                         |
-| ------------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HOST`             | `127.0.0.1`       | Address the API server binds to.                                                                                                                |
-| `PORT`             | `3000`            | Port the API server listens on (the web dev proxy targets `3000`).                                                                              |
-| `LOG_LEVEL`        | `info`            | Pino log level (`fatal`/`error`/`warn`/`info`/`debug`/`trace`/`silent`).                                                                        |
+| Variable           | Default           | Purpose                                                                                                                                                                                                                 |
+| ------------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`             | `127.0.0.1`       | Address the API server binds to.                                                                                                                                                                                        |
+| `PORT`             | `3000`            | Port the API server listens on (the web dev proxy targets `3000`).                                                                                                                                                      |
+| `LOG_LEVEL`        | `info`            | Pino log level (`fatal`/`error`/`warn`/`info`/`debug`/`trace`/`silent`).                                                                                                                                                |
 | `DATABASE_DIR`     | _(unset)_         | Directory PGlite persists the database to. **Unset means in-memory** — ephemeral, discarded when the server stops. The `dev` script (below) defaults this to a git-ignored local folder so dev data survives a restart. |
-| `SOURCE_FILES_DIR` | `./.data/sources` | Directory where uploaded source files are retained for provenance (resolved relative to the server's working directory; created automatically). |
+| `SOURCE_FILES_DIR` | `./.data/sources` | Directory where uploaded source files are retained for provenance (resolved relative to the server's working directory; created automatically).                                                                         |
 
 ### Vocabulary lookup keys (optional)
 
@@ -78,6 +78,29 @@ The server start script loads `.env` via Node's built-in `--env-file-if-exists=.
 missing `.env` is fine (no extra dependency, nothing to fail in CI). Each Merriam-Webster
 source is skipped when its key is absent. Never commit `.env` or real keys — `.gitignore`
 ignores `.env`/`.env.*` and allows only `.env.example`.
+
+### Coaching model (optional)
+
+The speaking coach runs **local converse + cloud judge** when configured, and falls back to a
+deterministic fake when it isn't — so no model is required for the loop or the `pnpm validate` gate.
+
+| Variable        | Default   | Purpose                                                                                |
+| --------------- | --------- | -------------------------------------------------------------------------------------- |
+| `COACH_API_KEY` | _(unset)_ | Cloud key for the strong tier (the judge). **Unset ⇒ coach on the fake.**              |
+| `COACH_*_TIER`  | see docs  | Per-call tier override (`cheap`/`strong`); defaults give local converse + cloud judge. |
+
+To run the real coach, install [Ollama](https://ollama.com/download), pull the local model, set the
+key, and start the server:
+
+```bash
+ollama pull llama3.1:8b
+export COACH_API_KEY=sk-...
+pnpm --filter @whetstone/server start
+```
+
+On boot the server probes the local model and logs the result; if Ollama is down or the model is
+unpulled it **warns with an `ollama pull` hint and keeps running on the fake** (no crash). Full
+detail — tiers, routing, and the boot health check — is in [docs/COACH.md](./COACH.md).
 
 ### Data directory
 
