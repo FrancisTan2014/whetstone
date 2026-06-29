@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createMarkRequestSchema,
   createNoteRequestSchema,
+  parseCreateMarkRequest,
   parseCreateNoteRequest,
   parseNoteTemplateDto,
   parseUpdateNoteRequest,
@@ -55,6 +57,23 @@ describe("createNoteRequestSchema", () => {
     expect(() => parseCreateNoteRequest({ ...validRequest, templateId: " " })).toThrow();
     expect(() => parseCreateNoteRequest({ ...validRequest, extra: true })).toThrow();
     expect(createNoteRequestSchema.safeParse({ answers: {}, templateId: "x" }).success).toBe(false);
+  });
+});
+
+describe("createMarkRequestSchema", () => {
+  it("parses a mark request carrying only the anchor", () => {
+    const parsed = parseCreateMarkRequest({ anchor: validRequest.anchor });
+
+    expect(parsed.anchor).toEqual(validRequest.anchor);
+  });
+
+  it("rejects a mark request with a template, answers, or unexpected keys", () => {
+    expect(
+      createMarkRequestSchema.safeParse({ anchor: validRequest.anchor, templateId: "vocabulary" })
+        .success
+    ).toBe(false);
+    expect(() => parseCreateMarkRequest({ anchor: validRequest.anchor, answers: {} })).toThrow();
+    expect(() => parseCreateMarkRequest({})).toThrow();
   });
 });
 

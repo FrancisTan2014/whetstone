@@ -153,9 +153,9 @@ export const notes = pgTable("notes", {
     .primaryKey()
     .references(() => entries.id),
   markdownBody: text("markdown_body").notNull(),
-  templateId: text("template_id")
-    .notNull()
-    .references(() => noteTemplates.id),
+  // Null for a mark-only highlight (a "Gem", #255): a one-tap highlight with no template/body that
+  // reuses the note anchor + overlap + delete model. A templated note references a seeded template.
+  templateId: text("template_id").references(() => noteTemplates.id),
   // The owning user (the v0 default identity). Notes are user-owned personal data — stamped on
   // create from the current-user provider and filtered by on read (PRODUCT.md "Identity & ownership").
   userId: text("user_id").notNull()

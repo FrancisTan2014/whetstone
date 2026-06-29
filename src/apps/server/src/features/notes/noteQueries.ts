@@ -80,7 +80,7 @@ type NoteRow = Readonly<{
   markdownBody: string;
   selectedText: string;
   startOffset: number | null;
-  templateId: string;
+  templateId: string | null;
 }>;
 
 const noteColumns = {

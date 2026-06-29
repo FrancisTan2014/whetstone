@@ -252,6 +252,11 @@ code {
   --hue-wash: var(--color-anno-thought-wash);
 }
 
+.templateHue--gem {
+  --hue: var(--color-anno-gem);
+  --hue-wash: var(--color-anno-gem-wash);
+}
+
 .selectionToolbar {
   align-items: center;
   background: var(--color-surface);

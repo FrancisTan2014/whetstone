@@ -446,6 +446,90 @@ describe("create note route", () => {
   });
 });
 
+describe("create mark route", () => {
+  function postMark(
+    workEntryId: string,
+    payload: unknown
+  ): ReturnType<typeof context.server.inject> {
+    return context.server.inject({
+      method: "POST",
+      payload,
+      url: `/api/works/${workEntryId}/marks`
+    });
+  }
+
+  it("saves a mark as a note with a null template and empty body", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+
+    const response = await postMark(workEntryId, {
+      anchor: {
+        blockEntryId,
+        contextSnapshot: plaintext,
+        endOffset: 19,
+        selectedTextSnapshot: "brown fox",
+        startOffset: 10
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    const mark = response.json() as NoteDto;
+    expect(mark.templateId).toBeNull();
+    expect(mark.markdown).toBe("");
+    expect(mark.answers).toEqual({});
+    expect(mark.anchor.selectedTextSnapshot).toBe("brown fox");
+
+    // It persists and is listed like any note, and can be deleted.
+    const listed = (await listNotes(workEntryId)).json() as NoteListDto;
+    expect(listed.notes.map((note) => note.entryId)).toEqual([mark.entryId]);
+
+    const deleted = await context.server.inject({
+      method: "DELETE",
+      url: `/api/works/${workEntryId}/notes/${mark.entryId}`
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(((await listNotes(workEntryId)).json() as NoteListDto).notes).toEqual([]);
+  });
+
+  it("returns 404 when the marked block does not belong to the work", async () => {
+    const { workEntryId } = await createWorkWithBlock();
+
+    const response = await postMark(workEntryId, {
+      anchor: {
+        blockEntryId: "block-not-here",
+        contextSnapshot: "text",
+        selectedTextSnapshot: "text"
+      }
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "block_not_found" });
+  });
+
+  it("rejects a mark whose anchor does not fit the block", async () => {
+    const { blockEntryId, workEntryId } = await createWorkWithBlock();
+
+    const response = await postMark(workEntryId, {
+      anchor: {
+        blockEntryId,
+        contextSnapshot: "absent here",
+        selectedTextSnapshot: "absent"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
+
+  it("rejects a malformed mark body at the boundary", async () => {
+    const { workEntryId } = await createWorkWithBlock();
+
+    const response = await postMark(workEntryId, { templateId: "vocabulary" });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+});
+
 describe("list notes route", () => {
   it("returns an empty list for a work with no notes", async () => {
     const { workEntryId } = await createWorkWithBlock();

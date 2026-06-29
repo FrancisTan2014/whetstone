@@ -37,6 +37,7 @@ vi.mock("./readerApi", () => ({
 }));
 
 vi.mock("../notes/notesApi", () => ({
+  createMark: vi.fn(),
   createNote: vi.fn(),
   deleteNote: vi.fn(),
   fetchNoteTemplates: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock("./readingPositionApi", () => ({
 }));
 
 import {
+  createMark,
   createNote,
   deleteNote,
   fetchNoteTemplates,
@@ -89,6 +91,7 @@ const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
 const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedCreateNote = vi.mocked(createNote);
+const mockedCreateMark = vi.mocked(createMark);
 const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedUpdateNote = vi.mocked(updateNote);
 const mockedDeleteNote = vi.mocked(deleteNote);
@@ -1084,6 +1087,70 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("Note saved.")).toBeDefined();
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+  });
+
+  it("marks the selection in one tap: born highlight and gem underline, no editor (#255)", async () => {
+    seedWorkContent(multiUnitContent);
+    const mark = {
+      anchor: {
+        blockEntryId: toEntryId("b-1"),
+        contextSnapshot: "Intro paragraph.",
+        endOffset: 5,
+        selectedTextSnapshot: "Intro",
+        startOffset: 0
+      },
+      answers: {},
+      blockEntryId: toEntryId("b-1"),
+      entryId: toEntryId("mark-1"),
+      markdown: "",
+      templateId: null
+    } as NoteDto;
+    mockedCreateMark.mockResolvedValue(mark);
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [mark] });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    await user.click(await screen.findByRole("button", { name: "Mark" }));
+
+    // One POST with just the anchor; no editor opens.
+    expect(mockedCreateMark).toHaveBeenCalledWith("work-1", {
+      anchor: {
+        blockEntryId: "b-1",
+        contextSnapshot: "Intro paragraph.",
+        endOffset: 5,
+        selectedTextSnapshot: "Intro",
+        startOffset: 0
+      }
+    });
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+
+    // Confirmed, born, and rendered in the dedicated gem hue.
+    expect(await screen.findByText("Marked.")).toBeDefined();
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
+    );
+    await waitFor(() => expect(container.querySelector(".noteMark--gem")).not.toBeNull());
+  });
+
+  it("shows an error and opens no editor when a mark fails to save (#255)", async () => {
+    seedWorkContent(multiUnitContent);
+    mockedCreateMark.mockRejectedValue(new Error("offline"));
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+
+    await user.click(await screen.findByRole("button", { name: "Mark" }));
+
+    expect(await screen.findByText("Could not save the mark. Please try again.")).toBeDefined();
+    expect(blockElement(container, "b-1").getAttribute("data-born")).toBeNull();
   });
 
   it("dismisses the selection toolbar without opening the editor", async () => {

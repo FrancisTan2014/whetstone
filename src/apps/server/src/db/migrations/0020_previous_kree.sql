@@ -1,0 +1,1 @@
+ALTER TABLE "notes" ALTER COLUMN "template_id" DROP NOT NULL;

@@ -1,8 +1,18 @@
-import { createNoteRequestSchema, updateNoteRequestSchema } from "@whetstone/contracts";
+import {
+  createMarkRequestSchema,
+  createNoteRequestSchema,
+  updateNoteRequestSchema
+} from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
-import { createNote, deleteNote, updateNote, type NotesDependencies } from "./noteCommands.js";
+import {
+  createMark,
+  createNote,
+  deleteNote,
+  updateNote,
+  type NotesDependencies
+} from "./noteCommands.js";
 import { listNoteTemplates, listNotesForUser, listNotesForWork } from "./noteQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
@@ -62,6 +72,41 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
             workEntryId
           },
           "note_created"
+        );
+
+        return reply.code(201).send(result.note);
+    }
+  });
+
+  server.post<{ Params: WorkParams }>("/api/works/:workEntryId/marks", async (request, reply) => {
+    const parsed = createMarkRequestSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequestBody);
+    }
+
+    const workEntryId = toEntryId(request.params.workEntryId);
+    const result = await createMark(
+      dependencies,
+      workEntryId,
+      parsed.data,
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    switch (result.status) {
+      case "anchor_out_of_range":
+        return reply.code(400).send({ error: "anchor_out_of_range" });
+      case "block_not_found":
+        return reply.code(404).send({ error: "block_not_found" });
+      case "created":
+        request.log.info(
+          {
+            blockEntryId: result.note.blockEntryId,
+            noteEntryId: result.note.entryId,
+            route: "POST /api/works/:workEntryId/marks",
+            workEntryId
+          },
+          "mark_created"
         );
 
         return reply.code(201).send(result.note);

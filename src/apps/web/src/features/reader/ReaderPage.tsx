@@ -9,8 +9,8 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
-import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
-import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
+import { captureBlockSelection, draftToAnchor, type NoteDraft } from "../notes/noteCapture";
+import { createMark, deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass, noteMarkHueClass } from "./annotationHue.tokens";
 import { ChapterPager } from "./ChapterPager";
@@ -785,6 +785,24 @@ export function ReaderPage({
     });
   }
 
+  // A one-tap mark (#255): save a highlight with no editor, born it, and refresh so it renders in the
+  // gem hue and the notes list. The toolbar disables this when the selection overlaps an annotation.
+  async function markSelection(active: SelectionCapture): Promise<void> {
+    setCapture(undefined);
+
+    let note: NoteDto;
+    try {
+      note = await createMark(active.workEntryId, { anchor: draftToAnchor(active.draft) });
+    } catch {
+      toast.error("Could not save the mark. Please try again.");
+      return;
+    }
+
+    setBornBlockEntryId(note.blockEntryId);
+    toast.success("Marked.");
+    await refreshNotes(active.workEntryId);
+  }
+
   function lookupSelection(active: SelectionCapture): void {
     const term = active.draft.selectedText;
     const anchorRect = active.anchorRect;
@@ -917,6 +935,7 @@ export function ReaderPage({
           onClose={() => setCapture(undefined)}
           onConfirm={() => confirmCapture(capture)}
           onLookup={() => lookupSelection(capture)}
+          onMark={() => void markSelection(capture)}
           prefersReducedMotion={prefersReducedMotion}
         />
       )}

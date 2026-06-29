@@ -4,6 +4,7 @@ import type { CreateNoteRequest, UpdateNoteRequest } from "@whetstone/contracts"
 import { toEntryId } from "@whetstone/domain";
 
 import {
+  createMark,
   createNote,
   deleteNote,
   fetchAllNotes,
@@ -61,6 +62,25 @@ describe("notesApi", () => {
 
     await expect(createNote("work 1", request)).resolves.toEqual(note);
     expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("posts a mark to the work's marks endpoint with only the anchor", async () => {
+    const note = { entryId: "mark-1", templateId: null };
+    const fetchMock = stubFetch({ body: note, ok: true });
+    const request = {
+      anchor: {
+        blockEntryId: toEntryId("block 1"),
+        contextSnapshot: "A great line.",
+        selectedTextSnapshot: "great line"
+      }
+    };
+
+    await expect(createMark("work 1", request)).resolves.toEqual(note);
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/marks", {
       body: JSON.stringify(request),
       headers: { "content-type": "application/json" },
       method: "POST"
