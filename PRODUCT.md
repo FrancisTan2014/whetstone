@@ -186,6 +186,11 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
   a work resumes where the reader left off ("Continue reading") across sessions and devices. Position is
   **user-owned state persisted on the server** (per current user + work); localStorage may remain a
   same-device cache, but the server is the source of truth.
+- **Reading preferences are remembered and durable** (text size, Day/Night theme — and future reader
+  settings). Like reading position, they are **user-owned state persisted on the server** (per current
+  user, work-independent) so a reader's chosen size and mode follow them across sessions and devices;
+  localStorage stays a same-device cache for instant first paint (no theme flash). One extensible
+  preferences record, so new settings join without a new surface.
 - **Immersive, single-column layout (微信读书-style).** Reading is full-bleed and calm: one reading column
   on the paper surface, **comfortably sized and framed by the edge chrome** (not a narrow column lost in
   whitespace). On **desktop** the reading **tools are a persistent right-edge vertical rail of icons** that
