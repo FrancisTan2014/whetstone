@@ -50,6 +50,16 @@ export async function ingestPdf(
     return { status: "invalid_pdf" };
   }
 
+  // Gate before retaining anything so a failure never orphans a PDF file with no work_sources row:
+  // a missing work or Markdown that yields no blocks returns without writing the source (#15).
+  if (!(await workExists(dependencies.db, workEntryId))) {
+    return { status: "work_not_found" };
+  }
+
+  if (decomposeMarkdown(markdown).flatMap((unit) => unit.blocks).length === 0) {
+    return { status: "empty_content" };
+  }
+
   // Provenance is the original PDF: store the bytes with their PDF sha256, not the converted Markdown,
   // so the uploaded source is retained per PRODUCT.md and idempotence keys off the PDF payload (#15).
   const sourceId = dependencies.createSourceId();

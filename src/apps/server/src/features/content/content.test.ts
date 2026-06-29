@@ -506,10 +506,13 @@ describe("content routes", () => {
     pdfResponder = async () => "![only image](x.png)";
     const workEntryId = await createWork();
     expect((await ingestPdf(workEntryId, Buffer.from("%PDF"))).statusCode).toBe(422);
+    // No work_sources row would exist, so no PDF file may be orphaned on disk.
+    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
   it("returns 404 ingesting a PDF into a missing work", async () => {
     expect((await ingestPdf("missing-work", Buffer.from("%PDF"))).statusCode).toBe(404);
+    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
   it("rejects image-only Markdown that has no supported blocks and records no source", async () => {
