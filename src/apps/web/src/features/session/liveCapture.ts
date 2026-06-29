@@ -60,6 +60,15 @@ function frameEnergy(samples: Float32Array): number {
   return Math.sqrt(sumSquares / samples.length);
 }
 
+// Feature-detect microphone capture before offering voice. `navigator.mediaDevices` is `undefined` in a
+// non-secure context (plain http on a phone) and absent in jsdom, so the call must stay typed-only when
+// this is false — never throw. Optional chaining keeps a missing `mediaDevices` from blowing up the check.
+export function isVoiceCaptureSupported(): boolean {
+  return (
+    typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function"
+  );
+}
+
 export function createLiveCapture(
   callbacks: LiveCaptureCallbacks,
   config: EndpointConfig = defaultEndpointConfig

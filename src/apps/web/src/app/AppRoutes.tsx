@@ -8,7 +8,7 @@ import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { SessionPage } from "../features/session/SessionPage.js";
-import { createLiveCapture } from "../features/session/liveCapture.js";
+import { createLiveCapture, isVoiceCaptureSupported } from "../features/session/liveCapture.js";
 import { createBrowserVoiceOut } from "../features/session/browserVoiceOut.js";
 import { AppShell } from "./AppShell.js";
 
@@ -51,7 +51,11 @@ export function AppRoutes(): React.JSX.Element {
         <Route
           element={
             <SessionPage
-              live={{ createCapture: createLiveCapture, createVoiceOut: createBrowserVoiceOut }}
+              live={{
+                createCapture: createLiveCapture,
+                createVoiceOut: createBrowserVoiceOut,
+                supported: isVoiceCaptureSupported()
+              }}
             />
           }
           path="practice"

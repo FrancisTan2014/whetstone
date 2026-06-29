@@ -54,7 +54,7 @@ const emptyDebrief: DebriefDto = {
   wins: []
 };
 
-function fakeLive() {
+function fakeLive(overrides?: { supported?: boolean; startRejects?: boolean }) {
   const callbacks: {
     onUtterance: ((audio: Blob) => void) | undefined;
     onBargeIn: (() => void) | undefined;
@@ -62,7 +62,9 @@ function fakeLive() {
   const capture = {
     finishUtterance: vi.fn(),
     setCoachPlaying: vi.fn(),
-    start: vi.fn(async () => {}),
+    start: vi.fn(
+      overrides?.startRejects === true ? async () => Promise.reject(new Error("denied")) : async () => {}
+    ),
     stop: vi.fn()
   };
   const voice = { cancel: vi.fn(), speak: vi.fn(async () => {}) };
@@ -72,7 +74,8 @@ function fakeLive() {
       callbacks.onBargeIn = cb.onBargeIn;
       return capture;
     },
-    createVoiceOut: () => voice
+    createVoiceOut: () => voice,
+    supported: overrides?.supported ?? true
   };
   return { callbacks, capture, live, voice };
 }
@@ -248,6 +251,47 @@ describe("SessionPage", () => {
 
     expect(await screen.findByRole("alert")).toBeDefined();
     expect(capture.stop).toHaveBeenCalled();
+  });
+
+  it("degrades to typed-only with a calm notice when the mic start fails (not fatal)", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedSay.mockResolvedValue({ say: "Tell me more." });
+    const { capture, live } = fakeLive({ startRejects: true });
+    const user = userEvent.setup();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Start call" }));
+    expect(capture.start).toHaveBeenCalledOnce();
+
+    // No fatal screen: the cue stays, a calm notice appears, Start call is gone.
+    expect(await screen.findByText(/Mic unavailable/)).toBeDefined();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Welcoming a guest to the table")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Start call" })).toBeNull();
+
+    // The typed fallback still works end to end.
+    await user.type(screen.getByLabelText("Or type what you'd say"), "help yourself");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("help yourself")).toBeDefined();
+    expect(await screen.findByText("Tell me more.")).toBeDefined();
+    expect(mockedSay).toHaveBeenCalledWith({ caseId: "k.table", transcript: "help yourself" });
+  });
+
+  it("hides Start call and runs typed-only when capture is unsupported", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedSay.mockResolvedValue({ say: "Go on." });
+    const { capture, live } = fakeLive({ supported: false });
+    const user = userEvent.setup();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    expect(screen.queryByRole("button", { name: "Start call" })).toBeNull();
+    expect(capture.start).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Or type what you'd say"), "hi");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Go on.")).toBeDefined();
   });
 
   it("offers a calm land-the-plane nudge after the time-box, without cutting off the call", async () => {
