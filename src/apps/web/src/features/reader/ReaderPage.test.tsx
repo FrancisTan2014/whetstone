@@ -1849,11 +1849,45 @@ describe("ReaderPage vocabulary lookup", () => {
 
     const user = await selectAndLookup();
     await user.click(screen.getByRole("button", { name: "Close" }));
-    // The in-flight source resolves after dismissal: the update is dropped, no panel resurrected.
     resolveLookup?.({ found: false });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.queryByRole("dialog", { name: /Look up/ })).toBeNull();
+  });
+
+  it("ignores a slow source from an earlier lookup after a newer lookup opens", async () => {
+    let resolveStale: ((value: unknown) => void) | undefined;
+    const staleEntry = {
+      entry: {
+        headword: "stale",
+        partsOfSpeech: [
+          { senses: [{ definition: "STALE DEFINITION", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [],
+        sources: []
+      },
+      found: true as const
+    };
+    // First selection's WordNet hangs; everything after resolves to the stale entry. When the hung
+    // request finally lands, a newer lookup is open, so its requestId no longer matches and it is dropped.
+    mockedLookupTerm
+      .mockReturnValueOnce(new Promise((resolve) => (resolveStale = resolve as never)))
+      .mockResolvedValue({ found: false });
+
+    const { container, user } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
+    resolveStale?.(staleEntry as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("STALE DEFINITION")).toBeNull();
   });
 });
 

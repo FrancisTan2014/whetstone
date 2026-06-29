@@ -319,6 +319,7 @@ type ReaderPageProps = Readonly<{
 // its fetch state. Lookup never creates, pre-fills, or edits a note.
 type LookupView = Readonly<{
   anchorRect?: DOMRect | undefined;
+  requestId: number;
   tabs: ReadonlyArray<LookupTab>;
   term: string;
 }>;
@@ -373,6 +374,9 @@ export function ReaderPage({
   // capture the pre-scroll top-of-unit block and overwrite the saved anchor before the scroll-to-
   // anchor effect runs. The scroll effect clears it once the scroll has been applied.
   const restorePendingRef = useRef(false);
+  // Each lookup gets a monotonic id; an in-flight source from an earlier selection ignores its own
+  // result if a newer lookup has opened, so a stale tab never lands in the current panel (#196).
+  const lookupSeq = useRef(0);
   const shouldWritePosition = useCallback(() => !restorePendingRef.current, []);
   useReadingPositionWriter(savePosition, viewingPosition(state), shouldWritePosition);
 
@@ -750,18 +754,20 @@ export function ReaderPage({
     setCapture(undefined);
 
     const sources = lookupSourcesForLanguage(active.language);
+    const requestId = (lookupSeq.current += 1);
     const initialTabs: LookupTab[] = sources.map((id) => ({
       id,
       label: lookupSourceLabel(id),
       state: { status: "loading" }
     }));
-    setLookup({ anchorRect, tabs: initialTabs, term });
+    setLookup({ anchorRect, requestId, tabs: initialTabs, term });
 
     // Each source is fetched independently and writes only its own tab, so a slow/down/empty source
-    // never freezes or empties the others — WordNet resolves at once, Wiktionary lands or errors alone.
+    // never freezes or empties the others. The requestId guard drops a result whose lookup was closed
+    // or superseded by a newer selection, so a stale source can't land under the current term.
     const setTabState = (id: (typeof sources)[number], state: LookupState): void => {
       setLookup((prev) =>
-        prev === undefined
+        prev === undefined || prev.requestId !== requestId
           ? prev
           : { ...prev, tabs: prev.tabs.map((tab) => (tab.id === id ? { ...tab, state } : tab)) }
       );
