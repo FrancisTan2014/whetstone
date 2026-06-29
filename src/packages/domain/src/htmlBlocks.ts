@@ -27,6 +27,7 @@ type HastNode = {
   properties?: Record<string, unknown>;
   tagName?: string;
   type: string;
+  value?: string;
 };
 
 function childrenOf(node: HastNode): HastNode[] {
@@ -53,6 +54,22 @@ function findDescendant(node: HastNode, tagName: string): HastNode | undefined {
   }
 
   return undefined;
+}
+
+// Whether a node has only whitespace text (so an enclosed <img> is its sole content, e.g. DDIA's
+// `<p><img/></p>`): such a wrapper is an image-only figure, not a paragraph with an inline image.
+function hasOnlyWhitespaceText(node: HastNode): boolean {
+  for (const child of childrenOf(node)) {
+    if (child.type === "text" && (child.value as string).trim().length > 0) {
+      return false;
+    }
+
+    if (child.type === "element" && !hasOnlyWhitespaceText(child)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function emptyCaption(): Paragraph {
@@ -102,9 +119,10 @@ function figureBlock(img: HastNode, figure: HastNode): DecomposedBlock {
   });
 }
 
-// Detect the structural figures the reader anchors to: a `<figure>` containing an
-// `<img>` (with an optional `<figcaption>`), or a bare top-level `<img>` (an image-only
-// figure). Anything else is left to the mdast pipeline.
+// Detect the structural figures the reader anchors to: a `<figure>` containing an `<img>` (with an
+// optional `<figcaption>`), a bare top-level `<img>`, or an image-only wrapper (`<p>`/`<div>` whose
+// sole content is an `<img>`, as DDIA emits) — so a standalone image becomes a figure block instead
+// of being dropped by the mdast pipeline. A wrapper with real text is left to that pipeline.
 function figureFromHast(node: HastNode): DecomposedBlock | undefined {
   if (node.type !== "element") {
     return undefined;
@@ -120,7 +138,9 @@ function figureFromHast(node: HastNode): DecomposedBlock | undefined {
     return figureBlock(node, node);
   }
 
-  return undefined;
+  const img = findDescendant(node, "img");
+
+  return img !== undefined && hasOnlyWhitespaceText(node) ? figureBlock(img, node) : undefined;
 }
 
 // Decompose one EPUB chapter's XHTML into a single reading unit of ordered blocks.
