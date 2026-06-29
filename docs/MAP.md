@@ -227,10 +227,16 @@ can navigate them from another package.
   pronunciation, glosses as part-of-speech-less senses). The 8MB CC-CEDICT dataset lives in
   `src/lookup/data/` (`cedict.u8.gz` + a `README.md` recording CC BY-SA 4.0 attribution); the
   composition root (`src/index.ts`) reads + gunzips it via `node:zlib` (resolved from
-  `import.meta.url`) and `pnpm build` copies `src/lookup/data` into `dist/lookup/data`. Each
-  `LookupSource` declares the `languages` it serves; `lookupService.ts` routes by language (English →
-  the composed English lookup; Chinese `zh-CN`/`zh-TW` → CC-CEDICT), returns the first composed
-  `DictionaryEntry`, and caches by `language:term`. Every contributing source's attribution rides in
+  `import.meta.url`) and `pnpm build` copies `src/lookup/data` into `dist/lookup/data`. For Chinese
+  the lookup is **Chinese-first** (#272): `moedictProvider.ts` is the networked 萌典 (moedict) provider
+  over the open `https://www.moedict.tw/{word}.json` API — it strips the HTML markup, groups 釋義 by
+  詞性 with 例句/書證 as examples, and time-boxes the request — surfaced as the primary tab, with
+  CC-CEDICT's English glosses demoted to a secondary fallback tab (`zh-CN`/`zh-TW` →
+  `["moedict", "cedict"]`). Each
+  `LookupSource` declares the `languages` it serves; `lookupService.ts` resolves the one requested
+  source+language tab (English → WordNet/Wiktionary; Chinese → 萌典/CC-CEDICT), returns its composed
+  `DictionaryEntry`, and caches by `language:source:term`. Every contributing source's attribution
+  rides in
   the entry's `sources`. `wordpos` runs its bundled-index build step via pnpm's `allowBuilds` in
   `pnpm-workspace.yaml`. The adapters are pure (tested against canned data via the fake transport /
   sample text, plus one offline integration test against the real WordNet database).
@@ -360,9 +366,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   speech to a tokenized, Day/Night hue class), numbered senses with italic examples and synonym chips,
   a quiet etymology line, and a sources footer — in a compact Radix popover anchored near the selection
   on desktop/tablet, and a content-height bottom `Sheet` on narrow screens (it scrolls for long
-  entries), with explicit loading/empty/error states. `lookupApi.ts` calls `GET /api/lookup`. The
-  reader passes the open work's language so Chinese selections route to CC-CEDICT automatically. Lookup
-  never creates, pre-fills, or edits a note.
+  entries), with explicit loading/empty/error states. Each work language fetches an ordered set of
+  source tabs (`lookupSourcesForLanguage`), and `preferredTab` defaults to the first loaded-or-loading
+  source in that order so the language's lead source stays the default — 萌典's Chinese definitions for
+  Chinese (#272), offline WordNet for English — without trapping on a dead/empty source. `lookupApi.ts`
+  calls `GET /api/lookup`. The reader passes the open work's language so Chinese selections lead with
+  萌典 and fall back to CC-CEDICT automatically. Lookup never creates, pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,

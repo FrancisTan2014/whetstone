@@ -24,6 +24,7 @@ import { createFreeDictionaryProvider } from "./lookup/freeDictionaryProvider.js
 import { createHttpClient } from "./lookup/httpClient.js";
 import { createInMemoryLookupCache } from "./lookup/lookupCache.js";
 import { createLookupService, type LookupSource } from "./lookup/lookupService.js";
+import { createMoedictProvider } from "./lookup/moedictProvider.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
@@ -59,9 +60,14 @@ const lookupSources: LookupSource[] = [
   { id: "wiktionary", languages: ["en"], lookup: wiktionaryLookup }
 ];
 
-// Chinese lookup: the bundled CC-CEDICT dataset, decompressed and parsed once at startup.
-// Resolve via import.meta.url so it works from the built dist/index.js (the build copies
-// src/lookup/data into dist/lookup/data).
+// Chinese lookup is Chinese-first (#272): 萌典 (moedict) serves Chinese definitions over its open JSON
+// API (networked, time-boxed) as the primary tab, with the bundled CC-CEDICT (English glosses)
+// decompressed and parsed once at startup as the offline secondary/fallback tab. Resolve the dataset
+// via import.meta.url so it works from the built dist/index.js (the build copies src/lookup/data into
+// dist/lookup/data).
+const moedict = createMoedictProvider({ httpClient });
+lookupSources.push({ id: "moedict", languages: ["zh-CN", "zh-TW"], lookup: moedict.lookup });
+
 const cedictPath = new URL("./lookup/data/cedict.u8.gz", import.meta.url);
 const cedictText = gunzipSync(readFileSync(cedictPath)).toString("utf8");
 const cedict = createCedictProvider(parseCedict(cedictText));

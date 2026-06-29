@@ -30,8 +30,9 @@ export type LookupState =
   | Readonly<{ status: "empty" }>
   | Readonly<{ entry: DictionaryEntry; status: "loaded" }>;
 
-// One independently-fetched source rendered as a tab: WordNet, Wiktionary, or CC-CEDICT. Each carries
-// its own loading/empty/error/loaded state so a slow or down source fails to its tab, never the panel.
+// One independently-fetched source rendered as a tab: WordNet, Wiktionary, 萌典, or CC-CEDICT. Each
+// carries its own loading/empty/error/loaded state so a slow or down source fails to its tab, never
+// the panel.
 export type LookupTab = Readonly<{ id: LookupSourceId; label: string; state: LookupState }>;
 
 export type LookupPanelProps = Readonly<{
@@ -223,16 +224,18 @@ function renderState(state: LookupState): React.JSX.Element {
   }
 }
 
-// The first tab worth showing once a tab is open: prefer a loaded source (instant offline WordNet),
-// otherwise fall through to a still-loading one, otherwise the first — so a tab whose source is empty
-// or down never traps the panel on a dead source. The reader can still switch tabs explicitly.
+// The default tab once a tab is open: the first source in declared order that is loaded OR still
+// loading — skipping only leading tabs that resolved to error/empty. This keeps the language's
+// preferred lead source (offline WordNet for English; 萌典's Chinese definitions for Chinese, #272)
+// as the default even when a later, faster source (the offline CC-CEDICT) returns first, while never
+// trapping the panel on a dead source. Each networked source is time-boxed, so a leading "loading"
+// tab is transient — it resolves to content or falls through to the next source. The reader can
+// still switch tabs explicitly.
 function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
-  const loaded = tabs.findIndex((tab) => tab.state.status === "loaded");
-  if (loaded !== -1) {
-    return loaded;
-  }
-  const loading = tabs.findIndex((tab) => tab.state.status === "loading");
-  return loading === -1 ? 0 : loading;
+  const usable = tabs.findIndex(
+    (tab) => tab.state.status === "loaded" || tab.state.status === "loading"
+  );
+  return usable === -1 ? 0 : usable;
 }
 
 // The tabbed lookup body: each source fetched independently, with a >=44px tab strip when there is

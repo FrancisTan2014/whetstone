@@ -328,6 +328,52 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("to put in place")).toBeDefined();
   });
 
+  it("keeps the Chinese 萌典 tab as the default while it loads, even when CC-CEDICT resolves first (#272)", () => {
+    const cedictEnglish: LookupState = {
+      entry: {
+        headword: "卿",
+        partsOfSpeech: [
+          { senses: [{ definition: "high ranking official", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [{ ipa: "qīng" }],
+        sources: ["From CC-CEDICT."]
+      },
+      status: "loaded"
+    };
+    renderTabs([
+      { id: "moedict", label: "萌典", state: { status: "loading" } },
+      { id: "cedict", label: "CC-CEDICT", state: cedictEnglish }
+    ]);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["萌典", "CC-CEDICT"]);
+    // 萌典 leads and is still loading, so its loading state shows — the English gloss never becomes
+    // the default even though CC-CEDICT (offline) loaded first.
+    expect(screen.getByRole("status").textContent).toContain("Looking up");
+    expect(screen.queryByText("high ranking official")).toBeNull();
+  });
+
+  it("falls through to CC-CEDICT when the Chinese 萌典 source resolves empty (#272)", () => {
+    const cedictEnglish: LookupState = {
+      entry: {
+        headword: "卿",
+        partsOfSpeech: [
+          { senses: [{ definition: "high ranking official", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [{ ipa: "qīng" }],
+        sources: ["From CC-CEDICT."]
+      },
+      status: "loaded"
+    };
+    renderTabs([
+      { id: "moedict", label: "萌典", state: { status: "empty" } },
+      { id: "cedict", label: "CC-CEDICT", state: cedictEnglish }
+    ]);
+
+    // 萌典 has no entry, so the default falls through to the CC-CEDICT fallback rather than trapping.
+    expect(screen.getByText("high ranking official")).toBeDefined();
+  });
+
   it("lets the reader switch to the other tab, each fetched independently", async () => {
     const user = userEvent.setup();
     renderTabs([

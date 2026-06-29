@@ -54,10 +54,10 @@ describe("parseLookupRequest", () => {
 });
 
 describe("lookupSourcesForLanguage", () => {
-  it("leads English with offline WordNet then Wiktionary, and Chinese with CC-CEDICT only", () => {
+  it("leads English with offline WordNet then Wiktionary, and Chinese with 萌典 then CC-CEDICT", () => {
     expect(lookupSourcesForLanguage("en")).toEqual(["wordnet", "wiktionary"]);
-    expect(lookupSourcesForLanguage("zh-CN")).toEqual(["cedict"]);
-    expect(lookupSourcesForLanguage("zh-TW")).toEqual(["cedict"]);
+    expect(lookupSourcesForLanguage("zh-CN")).toEqual(["moedict", "cedict"]);
+    expect(lookupSourcesForLanguage("zh-TW")).toEqual(["moedict", "cedict"]);
     expect(lookupSourcesForLanguage("fr")).toEqual([]);
   });
 
@@ -65,6 +65,7 @@ describe("lookupSourcesForLanguage", () => {
     expect(lookupSourceLabel("wordnet")).toBe("WordNet");
     expect(lookupSourceLabel("wiktionary")).toBe("Wiktionary");
     expect(lookupSourceLabel("cedict")).toBe("CC-CEDICT");
+    expect(lookupSourceLabel("moedict")).toBe("萌典");
   });
 });
 
