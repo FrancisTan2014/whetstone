@@ -169,6 +169,42 @@ async function createWorkWithTwoBlocks(): Promise<{
   };
 }
 
+// A work with two reading units (a leading paragraph, then a heading + paragraph), for asserting a
+// span across reading units is rejected (#257).
+async function createWorkWithTwoUnits(): Promise<{
+  firstUnitBlockEntryId: string;
+  firstUnitPlaintext: string;
+  secondUnitBlockEntryId: string;
+  workEntryId: string;
+}> {
+  const workResponse = await context.server.inject({
+    method: "POST",
+    payload: {
+      author: { mode: "new", name: "Aesop" },
+      language: "en",
+      title: "Two Units",
+      workType: "classical_text"
+    },
+    url: "/api/works"
+  });
+  const workEntryId = workResponse.json().work.entryId as string;
+
+  await context.server.inject({
+    method: "POST",
+    payload: { kind: "manual", markdown: "The quick brown fox.\n\n# Heading\n\nJumps over." },
+    url: `/api/works/${workEntryId}/content`
+  });
+
+  const body = await listContent(workEntryId);
+
+  return {
+    firstUnitBlockEntryId: body.readingUnits[0]?.blocks[0]?.entryId as string,
+    firstUnitPlaintext: body.readingUnits[0]?.blocks[0]?.plaintext as string,
+    secondUnitBlockEntryId: body.readingUnits[1]?.blocks[0]?.entryId as string,
+    workEntryId
+  };
+}
+
 function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
   return context.server.inject({ method: "POST", payload, url: `/api/works/${workEntryId}/notes` });
 }
@@ -547,6 +583,49 @@ describe("create note route", () => {
         endOffset: 9999,
         selectedTextSnapshot: "fox",
         startOffset: 16
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
+
+  it("rejects a cross-block span whose end block precedes its start block in one unit (#257)", async () => {
+    const { endBlockEntryId, endPlaintext, startBlockEntryId, workEntryId } =
+      await createWorkWithTwoBlocks();
+
+    // Reversed: the start is the later block and the end is the earlier block, same unit.
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId: endBlockEntryId,
+        contextSnapshot: endPlaintext,
+        endBlockEntryId: startBlockEntryId,
+        endOffset: 5,
+        selectedTextSnapshot: "reversed",
+        startOffset: 5
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
+
+  it("rejects a span whose blocks are in different reading units (#257)", async () => {
+    const { firstUnitBlockEntryId, firstUnitPlaintext, secondUnitBlockEntryId, workEntryId } =
+      await createWorkWithTwoUnits();
+
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId: firstUnitBlockEntryId,
+        contextSnapshot: firstUnitPlaintext,
+        endBlockEntryId: secondUnitBlockEntryId,
+        endOffset: 4,
+        selectedTextSnapshot: "across units",
+        startOffset: 4
       },
       templateId: "vocabulary"
     });

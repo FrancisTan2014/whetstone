@@ -16,7 +16,12 @@ import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, entryLinks, noteAnchors, noteTemplates, notes } from "../../db/schema.js";
-import { findBlockInWork, getNoteForWork, getNoteTemplateById } from "./noteQueries.js";
+import {
+  findBlockInWork,
+  getNoteForWork,
+  getNoteTemplateById,
+  type BlockInWork
+} from "./noteQueries.js";
 
 // Real infrastructure boundaries (database client and id generation) are passed in so
 // commands stay deterministic and testable.
@@ -324,7 +329,22 @@ async function validateAnchorBlocks(
     return "block_not_found";
   }
 
-  return spanFitsBlocks(anchor, startBlock.plaintext, endBlock.plaintext)
-    ? "ok"
-    : "anchor_out_of_range";
+  if (!spanFitsBlocks(anchor, startBlock.plaintext, endBlock.plaintext)) {
+    return "anchor_out_of_range";
+  }
+
+  // A cross-block span must stay within one reading unit and run forward: the end block in the same
+  // unit at an equal-or-later position. A reversed or cross-unit span would render no highlight, so
+  // reject it rather than persist a dead anchor (#257).
+  if (!spanRunsForwardInOneUnit(startBlock, endBlock)) {
+    return "anchor_out_of_range";
+  }
+
+  return "ok";
+}
+
+// Whether a span's end block follows its start block within the same reading unit (an equal-or-later
+// block index), which is the only shape the reader lays out and highlights.
+function spanRunsForwardInOneUnit(start: BlockInWork, end: BlockInWork): boolean {
+  return start.unitOrderIndex === end.unitOrderIndex && start.orderIndex <= end.orderIndex;
 }

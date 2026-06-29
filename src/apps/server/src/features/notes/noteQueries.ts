@@ -8,7 +8,15 @@ import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { authors, blocks, noteAnchors, noteTemplates, notes, workMeta } from "../../db/schema.js";
+import {
+  authors,
+  blocks,
+  noteAnchors,
+  noteTemplates,
+  notes,
+  readingUnits,
+  workMeta
+} from "../../db/schema.js";
 
 type TemplateRow = Readonly<{
   fieldsJson: unknown;
@@ -45,19 +53,32 @@ export async function getNoteTemplateById(
   return row === undefined ? undefined : toTemplateDto(row);
 }
 
-export type BlockInWork = Readonly<{ plaintext: string }>;
+// A block's content plus its position in the work's reading order — the reading unit's order index
+// then the block's order index within that unit — so a cross-block span can be checked for a valid
+// (non-reversed) start..end ordering (#257).
+export type BlockInWork = Readonly<{
+  orderIndex: number;
+  plaintext: string;
+  unitOrderIndex: number;
+}>;
 
 // A note may only annotate an active block that belongs to the named work; this single
 // lookup both confirms the block exists (and is not soft-deleted) and scopes it to the
-// work via the block's own `work_entry_id`.
+// work via the block's own `work_entry_id`. The join to its reading unit yields the unit's
+// order index, so callers can compare two blocks' reading-order position.
 export async function findBlockInWork(
   db: DbClient,
   workEntryId: EntryId,
   blockEntryId: EntryId
 ): Promise<BlockInWork | undefined> {
   const rows = await db
-    .select({ plaintext: blocks.plaintext })
+    .select({
+      orderIndex: blocks.orderIndex,
+      plaintext: blocks.plaintext,
+      unitOrderIndex: readingUnits.orderIndex
+    })
     .from(blocks)
+    .innerJoin(readingUnits, eq(blocks.readingUnitEntryId, readingUnits.entryId))
     .where(
       and(
         eq(blocks.entryId, blockEntryId),
@@ -68,7 +89,9 @@ export async function findBlockInWork(
     .limit(1);
   const row = rows[0];
 
-  return row === undefined ? undefined : { plaintext: row.plaintext };
+  return row === undefined
+    ? undefined
+    : { orderIndex: row.orderIndex, plaintext: row.plaintext, unitOrderIndex: row.unitOrderIndex };
 }
 
 type NoteRow = Readonly<{
