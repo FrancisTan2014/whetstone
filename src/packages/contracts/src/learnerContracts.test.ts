@@ -47,15 +47,6 @@ describe("parseLearnerProfileDto", () => {
     expect(parseLearnerProfileDto(profile)).toEqual(profile);
   });
 
-  it("round-trips the bilingual dial fields when present (#270)", () => {
-    const bilingual = { ...profile, englishShare: 0.4, l1: "zh" };
-    expect(parseLearnerProfileDto(bilingual)).toEqual(bilingual);
-  });
-
-  it("rejects an out-of-range English share (#270)", () => {
-    expect(() => parseLearnerProfileDto({ ...profile, englishShare: 1.2 })).toThrow();
-  });
-
   it("rejects an unknown level", () => {
     expect(() => parseLearnerProfileDto({ ...profile, level: "fluent" })).toThrow();
   });
@@ -83,6 +74,15 @@ describe("parseCompiledLearnerContextDto", () => {
 
   it("round-trips a bounded context (null profile)", () => {
     expect(parseCompiledLearnerContextDto(context)).toEqual(context);
+  });
+
+  it("round-trips the bilingual dial signals when present (#270)", () => {
+    const bilingual = { ...context, englishShareTrend: 0.4, l1: "zh" };
+    expect(parseCompiledLearnerContextDto(bilingual)).toEqual(bilingual);
+  });
+
+  it("rejects an out-of-range English-share trend (#270)", () => {
+    expect(() => parseCompiledLearnerContextDto({ ...context, englishShareTrend: 1.2 })).toThrow();
   });
 
   it("rejects an error pattern with a non-positive count", () => {

@@ -284,6 +284,41 @@ describe("converseTurn", () => {
     expect(userRow?.englishShare).toBeCloseTo(8 / 11);
   });
 
+  it("opens the bilingual dial on the next call after a mostly-Chinese turn (#270)", async () => {
+    const caseId = await firstCaseId();
+    const fake = createFakeCoach();
+    let capturedKnobs: { l1: string; targetL1Share: number } | undefined;
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...fake,
+        converse: (request) => {
+          capturedKnobs = { l1: request.knobs.l1, targetL1Share: request.knobs.targetL1Share };
+          return fake.converse(request);
+        }
+      }
+    };
+
+    // A mostly-Chinese turn persists a low English share...
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+
+    // ...so the NEXT call's compiled context infers L1 zh and a positive target L1 share, and the
+    // coach replies bilingually with an English target to retry.
+    const second = await converseTurn(
+      deps,
+      { caseId, transcript: "再来一个" },
+      userA,
+      new Date(t0.getTime() + 60_000)
+    );
+    if (second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    expect(capturedKnobs?.l1).toBe("zh");
+    expect(capturedKnobs?.targetL1Share).toBeGreaterThan(0);
+    expect(second.reply.englishTarget?.length).toBeGreaterThan(0);
+  });
+
   it("offers light repair and persists it when the learner breaks down (empty transcript)", async () => {
     const caseId = await firstCaseId();
 

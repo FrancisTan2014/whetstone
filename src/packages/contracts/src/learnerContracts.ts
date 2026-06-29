@@ -93,11 +93,7 @@ export type RankedChunkDto = z.infer<typeof rankedChunkDtoSchema>;
 // The rolling learner profile: a small, periodically-distilled summary.
 export const learnerProfileDtoSchema = z
   .object({
-    // The bilingual dial signals (#270): the learner's L1 and their rolling English share (the level
-    // signal). Optional and absent on an English-only profile, where they default to none / 1.
-    englishShare: z.number().min(0).max(1).optional(),
     focus: z.string(),
-    l1: l1LanguageSchema.optional(),
     level: proficiencyLevelSchema,
     strengths: z.array(z.string()),
     summary: z.string(),
@@ -113,6 +109,11 @@ export type LearnerProfileDto = z.infer<typeof learnerProfileDtoSchema>;
 // roughly constant in size however long the learner's history grows.
 export const compiledLearnerContextDtoSchema = z
   .object({
+    // The bilingual dial signals (#270), computed from the recorded per-turn English shares so the
+    // dial works before any profile is distilled: the learner's English-share trend (the level
+    // signal) and inferred L1. Absent for an English-only learner (default share 1 / l1 "none").
+    englishShareTrend: z.number().min(0).max(1).optional(),
+    l1: l1LanguageSchema.optional(),
     profile: learnerProfileDtoSchema.nullable(),
     rankedChunks: z.array(rankedChunkDtoSchema),
     recentOutcomes: z.array(turnOutcomeDtoSchema),

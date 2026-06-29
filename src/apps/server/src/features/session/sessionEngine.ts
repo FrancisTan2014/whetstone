@@ -40,9 +40,9 @@ function knobsFromContext(context: CompiledLearnerContextDto): CoachKnobs {
   const snapshot: LearnerSnapshot = {
     band: context.profile?.level ?? "beginner",
     dueChunkCount: context.rankedChunks.length,
-    englishShare: context.profile?.englishShare ?? 1,
+    englishShare: context.englishShareTrend ?? 1,
     focus: context.profile?.focus ?? "",
-    l1: context.profile?.l1 ?? "none",
+    l1: context.l1 ?? "none",
     recentGrades: context.recentOutcomes.map((outcome) => outcome.grade),
     topErrorPatterns: context.relevantErrors.map((pattern) => pattern.category)
   };
