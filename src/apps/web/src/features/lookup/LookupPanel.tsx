@@ -10,6 +10,7 @@ import type {
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
+import { externalDictionaryLinks } from "./externalDictionaries";
 import { partOfSpeechHueClass } from "./partOfSpeechHue.tokens";
 
 // Bind the desktop popover's height to the space Radix measures between the trigger and the
@@ -177,6 +178,20 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
             {entry.pronunciations.map(renderPronunciation(entry.headword))}
           </div>
         )}
+        <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
+          <span className="lookupExternalLabel">Open in</span>
+          {externalDictionaryLinks(entry.headword).map((link) => (
+            <a
+              className="lookupExternalLink"
+              href={link.url}
+              key={link.label}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              {link.label}
+            </a>
+          ))}
+        </nav>
       </header>
       <div className="lookupGroups">
         {entry.partsOfSpeech.map((part, index) => (

@@ -418,6 +418,36 @@ code {
   gap: 0.5rem;
 }
 
+/* External dictionary deep-links (#254): a quiet inline row that wraps onto its own line UNDER the
+   headword/IPA row (flex-basis 100% in the wrapping header). Muted underlined links, scannable; on
+   touch each link gets a ≥44px target. Muted token meets AA contrast in Day and Night. */
+.lookupExternalLinks {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.lookupExternalLabel {
+  color: var(--color-text-muted);
+}
+
+.lookupExternalLink {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+@media (pointer: coarse) {
+  .lookupExternalLink {
+    min-height: 44px;
+  }
+}
+
 .lookupPronunciation {
   display: inline-flex;
   align-items: center;
