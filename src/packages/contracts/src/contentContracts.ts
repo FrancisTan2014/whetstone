@@ -48,6 +48,9 @@ export function parseIngestMarkdownRequest(value: unknown): IngestMarkdownReques
 export type BlockDto = Readonly<{
   alt?: string;
   anchorId?: string;
+  // A footnote/endnote block's back-link to its marker (noteref) anchor id, so the reader renders a
+  // jump-back affordance (#250). Absent on ordinary blocks.
+  backlinkAnchorId?: string;
   blockType: BlockType;
   entryId: EntryId;
   imageResourceId?: string;

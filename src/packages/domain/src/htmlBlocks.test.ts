@@ -188,6 +188,116 @@ describe("decomposeHtmlChapter", () => {
     ).toBeUndefined();
   });
 
+  const noterefDataFlag = (node: unknown): unknown => {
+    const visit = (current: { children?: unknown[]; data?: unknown; type?: string }): unknown => {
+      if (current.type === "link" && current.data !== undefined) {
+        return current.data;
+      }
+      for (const child of (current.children ?? []) as { type?: string }[]) {
+        const found = visit(child);
+        if (found !== undefined) {
+          return found;
+        }
+      }
+      return undefined;
+    };
+    return visit(node as { children?: unknown[] });
+  };
+
+  it("pairs an EPUB3 noteref marker and its footnote into a two-way link (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p>Replication keeps a copy<sup><a epub:type="noteref" href="#fn-i" id="ref-i">i</a></sup>.</p>' +
+        '<aside epub:type="footnote" id="fn-i"><p>There are other reasons too.</p></aside>'
+    );
+
+    const marker = unit.blocks.find((block) => block.plaintext.startsWith("Replication"));
+    const note = unit.blocks.find((block) => block.plaintext.startsWith("There are other"));
+
+    // Marker block is addressable by the marker's id; the note points back to it.
+    expect(marker?.anchorId).toBe("ref-i");
+    expect(marker?.backlinkAnchorId).toBeUndefined();
+    expect(note?.anchorId).toBe("fn-i");
+    expect(note?.backlinkAnchorId).toBe("ref-i");
+    // The marker link is flagged so the reader renders it as a superscript control.
+    expect(noterefDataFlag(marker?.mdast)).toEqual({ hProperties: { dataNoteref: "true" } });
+  });
+
+  it("synthesizes a marker anchor when a noteref has no id (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p>See note<sup><a href="#fn-1">1</a></sup>.</p>' +
+        '<aside id="fn-1"><p>The note.</p></aside>'
+    );
+
+    const marker = unit.blocks.find((block) => block.plaintext.startsWith("See note"));
+    const note = unit.blocks.find((block) => block.plaintext.startsWith("The note"));
+
+    expect(marker?.anchorId).toBe("fn-1-ref");
+    expect(note?.backlinkAnchorId).toBe("fn-1-ref");
+  });
+
+  it("detects a data-type noteref without a <sup> wrapper (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p>Body<a data-type="noteref" href="#n2" id="r2">2</a>.</p>' +
+        '<aside id="n2"><p>Endnote.</p></aside>'
+    );
+
+    expect(unit.blocks.find((block) => block.plaintext.startsWith("Body"))?.anchorId).toBe("r2");
+    expect(
+      unit.blocks.find((block) => block.plaintext.startsWith("Endnote"))?.backlinkAnchorId
+    ).toBe("r2");
+  });
+
+  it("links the note back to the marker block's explicit id when the paragraph has one (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p id="p1">Text<sup><a href="#fn1" id="r1">1</a></sup>.</p>' +
+        '<aside id="fn1"><p>The footnote.</p></aside>'
+    );
+
+    const marker = unit.blocks.find((block) => block.plaintext.startsWith("Text"));
+    const note = unit.blocks.find((block) => block.plaintext.startsWith("The footnote"));
+
+    // The paragraph's own id is the marker block's anchor, so the note jumps back to that id.
+    expect(marker?.anchorId).toBe("p1");
+    expect(note?.anchorId).toBe("fn1");
+    expect(note?.backlinkAnchorId).toBe("p1");
+  });
+
+  it("keeps an explicit element id as the anchor over a contained marker, and skips an unmatched note backlink (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p id="para">Text<sup><a href="#missing" id="m">x</a></sup>.</p>'
+    );
+
+    const block = unit.blocks[0];
+    // The paragraph's own id wins; no note block carries "#missing", so nothing gets a backlink.
+    expect(block?.anchorId).toBe("para");
+    expect(unit.blocks.every((candidate) => candidate.backlinkAnchorId === undefined)).toBe(true);
+    // The marker is still flagged for superscript rendering.
+    expect(noterefDataFlag(block?.mdast)).toEqual({ hProperties: { dataNoteref: "true" } });
+  });
+
+  it("detects a class-token noteref and ignores non-string marker attributes (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p>Body<a class="noteref" href="#n3" id="r3">3</a>.</p>' +
+        '<aside id="n3"><p>Endnote three.</p></aside>'
+    );
+
+    expect(unit.blocks.find((block) => block.plaintext.startsWith("Body"))?.anchorId).toBe("r3");
+    expect(
+      unit.blocks.find((block) => block.plaintext.startsWith("Endnote three"))?.backlinkAnchorId
+    ).toBe("r3");
+  });
+
+  it("leaves an ordinary in-page link and footnoteless chapter untouched (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p>See <a href="#fig5" id="plain" tabindex="0">Figure 5</a> for detail.</p><p>Plain text.</p>'
+    );
+
+    expect(unit.blocks.every((block) => block.backlinkAnchorId === undefined)).toBe(true);
+    expect(unit.blocks.every((block) => block.anchorId === undefined)).toBe(true);
+    // A non-noteref in-page link is not flagged as a superscript marker.
+    expect(noterefDataFlag(unit.blocks[0]?.mdast)).toBeUndefined();
+  });
+
   it("emits a caption-only figure when the <img> has no src", () => {
     const unit = decomposeHtmlChapter(
       "<figure><img alt='x'/><figcaption>Caption</figcaption></figure>"

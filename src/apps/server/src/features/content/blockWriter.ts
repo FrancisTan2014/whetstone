@@ -12,6 +12,7 @@ type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 export type PersistableBlock = Readonly<{
   alt: string | null;
   anchorId: string | null;
+  backlinkAnchorId: string | null;
   blockType: BlockType;
   imageResourceId: string | null;
   mdast: unknown;
@@ -56,6 +57,7 @@ export async function writeReadingUnits(
   const blockRows: {
     alt: string | null;
     anchorId: string | null;
+    backlinkAnchorId: string | null;
     blockType: BlockType;
     entryId: string;
     imageResourceId: string | null;
@@ -84,6 +86,7 @@ export async function writeReadingUnits(
       blockRows.push({
         alt: block.alt,
         anchorId: block.anchorId,
+        backlinkAnchorId: block.backlinkAnchorId,
         blockType: block.blockType,
         entryId: blockEntryId,
         imageResourceId: block.imageResourceId,

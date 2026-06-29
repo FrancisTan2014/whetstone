@@ -402,6 +402,52 @@ const xrefContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A footnote pair (#250): the marker block (b-1) holds a noteref superscript flagged via
+// `data-noteref`; the note block (b-2) is addressable by the note id and carries a back-link to the
+// marker so the reader renders a two-way jump.
+const footnoteContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          anchorId: "ref-i",
+          blockType: "paragraph",
+          entryId: toEntryId("b-1"),
+          mdast: {
+            children: [
+              { type: "text", value: "Replication keeps a copy" },
+              {
+                children: [{ type: "text", value: "i" }],
+                data: { hProperties: { dataNoteref: "true" } },
+                type: "link",
+                url: "#fn-i"
+              }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          plaintext: "Replication keeps a copyi"
+        },
+        {
+          anchorId: "fn-i",
+          backlinkAnchorId: "ref-i",
+          blockType: "paragraph",
+          entryId: toEntryId("b-2"),
+          mdast: {
+            children: [{ type: "text", value: "There are other reasons too." }],
+            type: "paragraph"
+          },
+          orderIndex: 1,
+          plaintext: "There are other reasons too."
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 const xrefCaptionContent: WorkContentDto = {
   readingUnits: [
     {
@@ -896,6 +942,27 @@ describe("ReaderPage", () => {
 
     await waitFor(() =>
       expect(blockElement(container, "b-2").getAttribute("data-born")).toBe("true")
+    );
+  });
+
+  it("jumps marker→note and note→marker for a footnote pair (#250)", async () => {
+    seedWorkContent(footnoteContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("There are other reasons too.");
+
+    // The marker renders as a quiet superscript control; tapping it jumps to the note block.
+    const marker = screen.getByRole("button", { name: "i" });
+    expect(marker.closest("sup.readerNoteref")).not.toBeNull();
+    await user.click(marker);
+    await waitFor(() =>
+      expect(blockElement(container, "b-2").getAttribute("data-born")).toBe("true")
+    );
+
+    // The note's back-arrow returns to the marker block.
+    await user.click(screen.getByRole("button", { name: "Back to reference" }));
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
     );
   });
 

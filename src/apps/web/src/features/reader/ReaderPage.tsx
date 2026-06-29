@@ -1296,6 +1296,9 @@ const ReaderBlockView = memo(function ReaderBlockView({
   // underline. By the disjoint invariant a block has at most one such note; if legacy data carries
   // more, the first one's hue marks the gutter.
   const wholeBlockNote = blockNotes.find((note) => note.anchor.startOffset === undefined);
+  // A footnote/endnote block (#250) carries a back-link to the marker that referenced it; the bound
+  // const lets the handler reuse the narrowed (defined) anchor id.
+  const backlinkAnchorId = block.backlinkAnchorId;
   const className =
     wholeBlockNote === undefined
       ? "readerBlock"
@@ -1347,6 +1350,17 @@ const ReaderBlockView = memo(function ReaderBlockView({
         <ReaderFigure block={block} marks={marks} onActivateAnchor={onActivateAnchor} />
       ) : (
         <BlockContent marks={marks} node={block.mdast} onActivateAnchor={onActivateAnchor} />
+      )}
+      {backlinkAnchorId === undefined ? null : (
+        <button
+          aria-label="Back to reference"
+          className="readerBacklink"
+          onClick={() => onActivateAnchor(backlinkAnchorId)}
+          onMouseUp={(event) => event.stopPropagation()}
+          type="button"
+        >
+          ↩
+        </button>
       )}
       {wholeBlockNote === undefined ? null : (
         <button

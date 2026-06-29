@@ -162,6 +162,88 @@ function figureFromHast(node: HastNode): DecomposedBlock | undefined {
   return img !== undefined && hasOnlyWhitespaceText(node) ? figureBlock(img, node) : undefined;
 }
 
+// A footnote/endnote reference found in body text: the marker `<a>`'s own anchor id (so the note can
+// jump back to it) and the note id it points at (`href="#target"`). v0 records the first marker per
+// top-level node, since a block carries a single anchor.
+type NoterefMarker = Readonly<{ markerId: string; targetId: string }>;
+
+// Whether a hast property value carries the substring "noteref": EPUB3 markers are typed
+// `epub:type="noteref"`, O'Reilly uses `data-type="noteref"`, and the DPUB-ARIA role is
+// `doc-noteref` — all detected uniformly, plus values stored as space-separated token arrays.
+function valueIncludesNoteref(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.includes("noteref");
+  }
+
+  if (Array.isArray(value)) {
+    return value.join(" ").includes("noteref");
+  }
+
+  return false;
+}
+
+// An `<a href="#…">` is a footnote marker when it sits inside a `<sup>` (the print-faithful
+// superscript form) or any of its non-href properties names it a noteref (epub:type/data-type/role).
+function isNoterefAnchor(node: HastNode, insideSup: boolean): boolean {
+  if (insideSup) {
+    return true;
+  }
+
+  for (const [name, value] of Object.entries(node.properties)) {
+    if (name !== "href" && valueIncludesNoteref(value)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Collect footnote markers in document order from a node's subtree. A marker is an in-page anchor
+// (`href="#id"`) recognised by `isNoterefAnchor`; its own id (or a derived `<target>-ref` when the
+// source gives none) becomes the marker block's anchor so the note can link back to it.
+function collectNoterefs(node: HastNode, insideSup: boolean, found: NoterefMarker[]): void {
+  for (const child of childrenOf(node)) {
+    if (child.type !== "element") {
+      continue;
+    }
+
+    const href = child.tagName === "a" ? stringProperty(child.properties.href) : undefined;
+    const targetId = href?.startsWith("#") ? href.slice(1) : undefined;
+    const childInsideSup = insideSup || child.tagName === "sup";
+
+    if (targetId !== undefined && targetId.length > 0 && isNoterefAnchor(child, childInsideSup)) {
+      const markerId = stringProperty(child.properties.id) ?? `${targetId}-ref`;
+      found.push({ markerId, targetId });
+    }
+
+    collectNoterefs(child, childInsideSup, found);
+  }
+}
+
+// A minimal structural view of an mdast node — enough to find link nodes and attach `data.hProperties`
+// — so noteref flagging avoids the mdast content-model union.
+type MdastLike = {
+  children?: MdastLike[];
+  data?: { hProperties?: Record<string, string> };
+  type: string;
+  url?: string;
+};
+
+// Flag the marker link in the produced mdast so the reader renders it as a quiet superscript control
+// (#250). The link still points at `#target`, so #252's same-work jump carries it to the note; the
+// `data-noteref` hint travels via `hProperties` (hast camelCase) and is allow-listed past sanitize.
+function flagNoterefLinks(node: MdastLike, targets: ReadonlySet<string>): void {
+  if (node.type === "link" && typeof node.url === "string" && node.url.startsWith("#")) {
+    if (targets.has(node.url.slice(1))) {
+      node.data = { ...(node.data ?? {}), hProperties: { dataNoteref: "true" } };
+    }
+  }
+
+  for (const child of node.children ?? []) {
+    flagNoterefLinks(child, targets);
+  }
+}
+
 // Decompose one EPUB chapter's XHTML into a single reading unit of ordered blocks.
 // Structural `<figure>`/`<img>` are detected at the hast stage — before `rehype-remark`
 // discards images — and emitted as figure blocks in document order; their `<figcaption>`
@@ -172,22 +254,43 @@ function figureFromHast(node: HastNode): DecomposedBlock | undefined {
 export function decomposeHtmlChapter(html: string): DecomposedReadingUnit {
   const tree = htmlProcessor.parse(html) as unknown as HastNode;
   const blocks: DecomposedBlock[] = [];
+  // A note id (`#target`) -> the marker's anchor id, recorded when a top-level node holds a footnote
+  // marker. After all blocks exist, the block whose anchor is that note id gets a back-link to the
+  // marker so the reader can render a jump-back affordance (#250).
+  const backlinkByNoteId = new Map<string, string>();
 
   // Convert one top-level node at a time so its element id (a cross-reference target like Figure 5-2)
   // is stamped onto the resulting block before rehype-remark flattens it away (#252): the first block
   // a node yields carries its anchor id, so a same-work `#id` link resolves to an addressable block.
   for (const node of childrenOf(tree)) {
-    const anchorId = node.type === "element" ? stringProperty(node.properties.id) : undefined;
+    const nodeId = node.type === "element" ? stringProperty(node.properties.id) : undefined;
     const figure = figureFromHast(node);
 
     if (figure !== undefined) {
-      blocks.push(anchorId === undefined ? figure : { ...figure, anchorId });
+      blocks.push(nodeId === undefined ? figure : { ...figure, anchorId: nodeId });
       continue;
+    }
+
+    const markers: NoterefMarker[] = [];
+    if (node.type === "element") {
+      collectNoterefs(node, node.tagName === "sup", markers);
+    }
+    const noterefTargets = new Set(markers.map((marker) => marker.targetId));
+    // An explicit element id wins as the block's anchor (it is a deliberate cross-reference target);
+    // otherwise the first marker's id makes the body block addressable so its note can jump back.
+    const firstMarker = markers[0];
+    const anchorId = nodeId ?? firstMarker?.markerId;
+    // The note links back to whatever anchor the marker block actually carries — its explicit element
+    // id when it has one, otherwise the marker's own id — so the back-arrow always resolves to that
+    // block even when the host paragraph is itself a cross-reference target.
+    if (firstMarker !== undefined && anchorId !== undefined) {
+      backlinkByNoteId.set(firstMarker.targetId, anchorId);
     }
 
     const mdast = htmlProcessor.runSync({ children: [node], type: "root" } as unknown as HastTree);
     let stamped = false;
     for (const child of mdast.children) {
+      flagNoterefLinks(child as unknown as MdastLike, noterefTargets);
       const block = blockFromMdastNode(child);
       if (block === undefined) {
         continue;
@@ -197,8 +300,16 @@ export function decomposeHtmlChapter(html: string): DecomposedReadingUnit {
     }
   }
 
-  const title =
-    blocks.find((block) => block.blockType === "heading")?.plaintext.trim() || undefined;
+  // Pair each note block back to its marker: a block whose anchor is a recorded note id carries a
+  // back-link to the marker that referenced it, so the reader renders a two-way jump (#250).
+  const paired = blocks.map((block) => {
+    const backlinkAnchorId =
+      block.anchorId === undefined ? undefined : backlinkByNoteId.get(block.anchorId);
+    return backlinkAnchorId === undefined ? block : { ...block, backlinkAnchorId };
+  });
 
-  return Object.freeze({ blocks: Object.freeze([...blocks]), title });
+  const title =
+    paired.find((block) => block.blockType === "heading")?.plaintext.trim() || undefined;
+
+  return Object.freeze({ blocks: Object.freeze([...paired]), title });
 }

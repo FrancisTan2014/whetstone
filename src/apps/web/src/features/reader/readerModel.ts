@@ -14,6 +14,7 @@ import type {
 export type ReaderBlock = Readonly<{
   alt?: string;
   anchorId?: string;
+  backlinkAnchorId?: string;
   blockType: BlockDto["blockType"];
   entryId: string;
   imageResourceId?: string;
@@ -61,8 +62,12 @@ function toReaderBlock(block: BlockDto): ReaderBlock {
       ? base
       : { ...base, imageResourceId: block.imageResourceId };
   const withAlt = block.alt === undefined ? withImage : { ...withImage, alt: block.alt };
+  const withAnchor =
+    block.anchorId === undefined ? withAlt : { ...withAlt, anchorId: block.anchorId };
 
-  return block.anchorId === undefined ? withAlt : { ...withAlt, anchorId: block.anchorId };
+  return block.backlinkAnchorId === undefined
+    ? withAnchor
+    : { ...withAnchor, backlinkAnchorId: block.backlinkAnchorId };
 }
 
 function toReaderUnitMeta(unit: ReadingUnitStructureDto): ReaderUnitMeta {

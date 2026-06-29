@@ -53,6 +53,7 @@ async function resolveBlock(
     return {
       alt: null,
       anchorId: block.anchorId ?? null,
+      backlinkAnchorId: block.backlinkAnchorId ?? null,
       blockType: block.blockType,
       imageResourceId: null,
       mdast: block.mdast,
@@ -70,6 +71,7 @@ async function resolveBlock(
   return {
     alt: imageResourceId === null ? null : (block.image?.alt ?? null),
     anchorId: block.anchorId ?? null,
+    backlinkAnchorId: block.backlinkAnchorId ?? null,
     blockType: "figure",
     imageResourceId,
     mdast: block.mdast,

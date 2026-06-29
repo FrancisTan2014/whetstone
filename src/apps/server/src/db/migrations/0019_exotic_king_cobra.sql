@@ -1,0 +1,1 @@
+ALTER TABLE "blocks" ADD COLUMN "backlink_anchor_id" text;

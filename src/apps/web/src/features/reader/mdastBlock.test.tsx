@@ -62,6 +62,44 @@ describe("BlockContent", () => {
     expect(screen.queryByRole("button", { name: "example" })).toBeNull();
   });
 
+  it("renders a flagged footnote marker as a superscript control that still jumps (#250)", async () => {
+    const userEvent = (await import("@testing-library/user-event")).default;
+    const onActivateAnchor = vi.fn();
+    const noteref = {
+      children: [
+        { type: "text", value: "Body" },
+        {
+          children: [{ type: "text", value: "i" }],
+          data: { hProperties: { dataNoteref: "true" } },
+          type: "link",
+          url: "#fn-i"
+        }
+      ],
+      type: "paragraph"
+    };
+    const { container } = render(
+      <BlockContent node={noteref} onActivateAnchor={onActivateAnchor} />
+    );
+
+    const sup = container.querySelector("sup.readerNoteref");
+    expect(sup).not.toBeNull();
+    const marker = screen.getByRole("button", { name: "i" });
+    expect(sup?.contains(marker)).toBe(true);
+    await userEvent.setup().click(marker);
+    expect(onActivateAnchor).toHaveBeenCalledWith("fn-i");
+  });
+
+  it("does not wrap an ordinary same-work cross-reference in a superscript (#250)", () => {
+    const node = {
+      children: [{ children: [{ type: "text", value: "Figure 5" }], type: "link", url: "#fig5" }],
+      type: "paragraph"
+    };
+    const { container } = render(<BlockContent node={node} onActivateAnchor={vi.fn()} />);
+
+    expect(container.querySelector("sup.readerNoteref")).toBeNull();
+    expect(screen.getByRole("button", { name: "Figure 5" }).className).toContain("readerXref");
+  });
+
   it("leaves an internal link inert when no anchor activator is provided", () => {
     const node = {
       children: [{ children: [{ type: "text", value: "ref" }], type: "link", url: "#fig5" }],

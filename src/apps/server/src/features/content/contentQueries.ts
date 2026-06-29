@@ -21,6 +21,7 @@ type ReadingUnitRow = Readonly<{
 type BlockRow = Readonly<{
   alt: string | null;
   anchorId: string | null;
+  backlinkAnchorId: string | null;
   blockType: BlockDto["blockType"];
   entryId: string;
   imageResourceId: string | null;
@@ -34,6 +35,7 @@ type BlockRow = Readonly<{
 const blockColumns = {
   alt: blocks.alt,
   anchorId: blocks.anchorId,
+  backlinkAnchorId: blocks.backlinkAnchorId,
   blockType: blocks.blockType,
   entryId: blocks.entryId,
   imageResourceId: blocks.imageResourceId,
@@ -117,8 +119,11 @@ function toBlockDto(block: BlockRow): BlockDto {
   const withImage =
     block.imageResourceId === null ? base : { ...base, imageResourceId: block.imageResourceId };
   const withAlt = block.alt === null ? withImage : { ...withImage, alt: block.alt };
+  const withAnchor = block.anchorId === null ? withAlt : { ...withAlt, anchorId: block.anchorId };
 
-  return block.anchorId === null ? withAlt : { ...withAlt, anchorId: block.anchorId };
+  return block.backlinkAnchorId === null
+    ? withAnchor
+    : { ...withAnchor, backlinkAnchorId: block.backlinkAnchorId };
 }
 
 // A work's lightweight structure: ordered reading units with a non-deleted block count but no
