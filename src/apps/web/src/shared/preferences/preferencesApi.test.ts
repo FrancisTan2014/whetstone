@@ -74,6 +74,22 @@ describe("savePreferences", () => {
     await expect(savePreferences({ theme: "night" })).resolves.toBeUndefined();
   });
 
+  it("serializes concurrent size+theme saves so the last PUT carries both fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Promise.all([
+      savePreferences({ readingSize: "xl" }),
+      savePreferences({ theme: "night" })
+    ]);
+
+    const puts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "PUT");
+    expect(JSON.parse((puts[puts.length - 1]?.[1] as RequestInit).body as string)).toEqual({
+      readingSize: "xl",
+      theme: "night"
+    });
+  });
+
   it("waits for an in-flight fetch so a single-field save keeps the server's other field", async () => {
     let resolveFetch: ((value: unknown) => void) | undefined;
     const fetchMock = vi

@@ -4,14 +4,14 @@ import { defaultPreferences, preferencesSchema, type PreferencesDto } from "@whe
 // the toggle) can PUT the whole record without re-fetching the other field. Server is the source of
 // truth; this only bridges the two controls between a load and the next save.
 let current: PreferencesDto = defaultPreferences;
-// The in-flight load, so a save that fires before it resolves merges onto the real server record
-// rather than module defaults — never clobbering the other field with a default (#234).
+// The in-flight load, cleared on completion so saves only wait while a load is actually running, and a
+// serial save chain so concurrent control changes merge onto one record — neither field clobbers the
+// other and the last PUT carries both (#234).
 let inFlight: Promise<PreferencesDto> | undefined;
+let saveChain: Promise<void> = Promise.resolve();
 
-// Server is the source of truth for reader preferences (size + theme); fetched on load and saved
-// best-effort on change so the controls keep working offline. Validated at the boundary.
 export async function fetchPreferences(): Promise<PreferencesDto> {
-  inFlight = (async () => {
+  const load = (async () => {
     try {
       const response = await fetch("/api/preferences");
 
@@ -25,27 +25,34 @@ export async function fetchPreferences(): Promise<PreferencesDto> {
       return current;
     } catch {
       return current;
+    } finally {
+      inFlight = undefined;
     }
   })();
 
-  return inFlight;
+  inFlight = load;
+  return load;
 }
 
-// Merge the changed field into the known record and upsert; failures never break reading. Waits for
-// any in-flight load first so a single-field save preserves the other field's real server value.
+// Merge the changed field and upsert, serialized so concurrent saves accumulate onto one record (the
+// last PUT carries every field) and merge after any in-flight load. Failures never break reading.
 export async function savePreferences(partial: Partial<PreferencesDto>): Promise<void> {
-  if (inFlight !== undefined) {
-    await inFlight;
-  }
+  saveChain = saveChain.then(async () => {
+    if (inFlight !== undefined) {
+      await inFlight;
+    }
 
-  current = { ...current, ...partial };
-  try {
-    await fetch("/api/preferences", {
-      body: JSON.stringify(current),
-      headers: { "content-type": "application/json" },
-      method: "PUT"
-    });
-  } catch {
-    // Best-effort: an offline save is dropped; the reader keeps working.
-  }
+    current = { ...current, ...partial };
+    try {
+      await fetch("/api/preferences", {
+        body: JSON.stringify(current),
+        headers: { "content-type": "application/json" },
+        method: "PUT"
+      });
+    } catch {
+      // Best-effort: an offline save is dropped; the reader keeps working.
+    }
+  });
+
+  return saveChain;
 }
