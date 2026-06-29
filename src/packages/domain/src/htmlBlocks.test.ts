@@ -247,6 +247,21 @@ describe("decomposeHtmlChapter", () => {
     ).toBe("r2");
   });
 
+  it("links the note back to the marker block's explicit id when the paragraph has one (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p id="p1">Text<sup><a href="#fn1" id="r1">1</a></sup>.</p>' +
+        '<aside id="fn1"><p>The footnote.</p></aside>'
+    );
+
+    const marker = unit.blocks.find((block) => block.plaintext.startsWith("Text"));
+    const note = unit.blocks.find((block) => block.plaintext.startsWith("The footnote"));
+
+    // The paragraph's own id is the marker block's anchor, so the note jumps back to that id.
+    expect(marker?.anchorId).toBe("p1");
+    expect(note?.anchorId).toBe("fn1");
+    expect(note?.backlinkAnchorId).toBe("p1");
+  });
+
   it("keeps an explicit element id as the anchor over a contained marker, and skips an unmatched note backlink (#250)", () => {
     const unit = decomposeHtmlChapter(
       '<p id="para">Text<sup><a href="#missing" id="m">x</a></sup>.</p>'

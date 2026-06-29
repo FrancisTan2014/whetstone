@@ -280,8 +280,11 @@ export function decomposeHtmlChapter(html: string): DecomposedReadingUnit {
     // otherwise the first marker's id makes the body block addressable so its note can jump back.
     const firstMarker = markers[0];
     const anchorId = nodeId ?? firstMarker?.markerId;
-    if (nodeId === undefined && firstMarker !== undefined) {
-      backlinkByNoteId.set(firstMarker.targetId, firstMarker.markerId);
+    // The note links back to whatever anchor the marker block actually carries — its explicit element
+    // id when it has one, otherwise the marker's own id — so the back-arrow always resolves to that
+    // block even when the host paragraph is itself a cross-reference target.
+    if (firstMarker !== undefined && anchorId !== undefined) {
+      backlinkByNoteId.set(firstMarker.targetId, anchorId);
     }
 
     const mdast = htmlProcessor.runSync({ children: [node], type: "root" } as unknown as HastTree);
