@@ -58,7 +58,12 @@ export function isCrossBlockSelection(selection: Selection | null): boolean {
   const startBlock = nodeBlockElement(range.startContainer);
   const endBlock = nodeBlockElement(range.endContainer);
 
-  return startBlock !== null && endBlock !== null && startBlock !== endBlock;
+  // Selecting to a paragraph's very end leaves the range end at offset 0 of the *next* block, with no
+  // text selected there — that is a whole-block selection, not a true cross-block one (#260). Only a
+  // non-zero end offset in a different block means the selection genuinely covers two blocks' content.
+  return (
+    startBlock !== null && endBlock !== null && startBlock !== endBlock && range.endOffset !== 0
+  );
 }
 
 // The rendered block that should capture a pointer release which landed in the reading column
