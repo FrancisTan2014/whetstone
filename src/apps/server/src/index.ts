@@ -109,6 +109,7 @@ const server = createServer({
     db
   },
   readingPosition: { db },
+  preferences: { db },
   search: { db },
   session: {
     coach,
