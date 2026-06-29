@@ -45,10 +45,16 @@
   /* Annotation hues mapped to the note templates (Vocabulary / Expression / Thought). */
   --color-anno-vocab: #b45309;
   --color-anno-vocab: oklch(0.58 0.13 65);
+  --color-anno-vocab-wash: #fef3c7;
+  --color-anno-vocab-wash: oklch(0.95 0.05 85);
   --color-anno-expr: #0f766e;
   --color-anno-expr: oklch(0.5 0.1 180);
+  --color-anno-expr-wash: #d6f5e9;
+  --color-anno-expr-wash: oklch(0.95 0.04 160);
   --color-anno-thought: #6d28d9;
   --color-anno-thought: oklch(0.5 0.18 295);
+  --color-anno-thought-wash: #efe7fd;
+  --color-anno-thought-wash: oklch(0.95 0.03 300);
 
   /* Part-of-speech hues for the dictionary lookup (restrained: noun blue, verb green,
    * adjective amber, adverb violet). Day values; the .dark block overrides them. */
@@ -105,10 +111,16 @@
   --color-danger: oklch(0.78 0.1 25);
   --color-anno-vocab: #fbbf24;
   --color-anno-vocab: oklch(0.82 0.12 80);
+  --color-anno-vocab-wash: #3a2f12;
+  --color-anno-vocab-wash: oklch(0.3 0.04 80);
   --color-anno-expr: #5eead4;
   --color-anno-expr: oklch(0.82 0.1 180);
+  --color-anno-expr-wash: #103a32;
+  --color-anno-expr-wash: oklch(0.3 0.04 165);
   --color-anno-thought: #c4b5fd;
   --color-anno-thought: oklch(0.8 0.1 295);
+  --color-anno-thought-wash: #2a2342;
+  --color-anno-thought-wash: oklch(0.3 0.05 300);
   --color-pos-noun: #93b4fc;
   --color-pos-noun: oklch(0.74 0.12 260);
   --color-pos-noun-wash: #1a2540;
