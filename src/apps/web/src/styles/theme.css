@@ -727,26 +727,6 @@
     background-color: color-mix(in oklch, var(--color-surface) 80%, transparent);
     backdrop-filter: blur(8px);
   }
-
-  /* A thin right-edge zone so the receded rail returns on hover (CSS only; scroll-up also shows it). */
-  .readingRailEdge {
-    display: block;
-    position: fixed;
-    inset-block: 0;
-    inset-inline-end: 0;
-    inline-size: 1.5rem;
-  }
-
-  .readingHeader[data-hidden="true"] .readingTools {
-    transform: translateY(-50%) translateX(calc(100% + 1rem));
-    opacity: 0;
-  }
-
-  .readingHeader[data-hidden="true"] .readingRailEdge:hover ~ .readingTools,
-  .readingHeader .readingTools:hover {
-    transform: translateY(-50%);
-    opacity: 1;
-  }
 }
 
 /* The title recedes upward with the rest of the chrome. */

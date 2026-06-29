@@ -352,14 +352,13 @@ export function ReaderPage({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const scroll = useReaderScroll();
   // Below the desktop rail's fit width the chrome is a top bar, hidden by default and toggled on a
-  // center tap of the reading area; at/above it the rail docks beside the column and uses the
-  // scroll-driven receding (hover / scroll-up returns it). The 56rem threshold matches the
-  // `min-width: 56rem` rail layout in styles/theme.css so the rail never overlaps the reading text.
-  // A single `chromeHidden` flag feeds the ReadingHeader either way.
+  // center tap of the reading area. At/above it the rail is persistent (PRODUCT.md: a fixed right-edge
+  // rail), so it never recedes on scroll — only mobile auto-hides where space is scarce. The 56rem
+  // threshold matches the `min-width: 56rem` rail layout. `useReaderScroll` still drives progress.
   const isNarrow = useMediaQuery("(max-width: 55.999rem)");
   const [chromeTapHidden, setChromeTapHidden] = useState(true);
   const onToggleChrome = useCallback(() => setChromeTapHidden((value) => !value), []);
-  const chromeHidden = isNarrow ? chromeTapHidden : scroll.headerHidden;
+  const chromeHidden = isNarrow ? chromeTapHidden : false;
   const toast = useToast();
   // The reader's position is durable server state (per user + work). Saving is best-effort: a
   // network failure (offline) is swallowed so it never breaks reading or logs an error. The

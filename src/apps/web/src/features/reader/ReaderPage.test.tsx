@@ -1624,17 +1624,15 @@ describe("ReaderPage reading controls", () => {
     expect(blockElement(container, "b-1").className).toContain("readerBlock--vocab");
   });
 
-  it("auto-hides the reading header on scroll down and restores it on scroll up", async () => {
+  it("keeps the desktop tools rail persistently visible while scrolling (no recede)", async () => {
     const container = await openMultiUnitWork();
     const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
-    expect(header().className).not.toContain("readingHeader--hidden");
+    expect(header().getAttribute("data-hidden")).toBeNull();
 
+    // Past the recede threshold the desktop rail stays put — it never auto-hides on scroll (#231).
     Object.defineProperty(window, "scrollY", { configurable: true, value: 300 });
     fireEvent.scroll(window);
-    expect(header().getAttribute("data-hidden")).toBe("true");
-
-    Object.defineProperty(window, "scrollY", { configurable: true, value: 50 });
-    fireEvent.scroll(window);
+    expect(header().getAttribute("data-hidden")).toBeNull();
     expect(header().className).not.toContain("readingHeader--hidden");
 
     Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
