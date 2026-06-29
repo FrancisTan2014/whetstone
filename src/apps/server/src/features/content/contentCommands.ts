@@ -50,7 +50,24 @@ export async function ingestPdf(
     return { status: "invalid_pdf" };
   }
 
-  return ingestMarkdown(dependencies, workEntryId, { fileName, kind: "upload", markdown });
+  // Provenance is the original PDF: store the bytes with their PDF sha256, not the converted Markdown,
+  // so the uploaded source is retained per PRODUCT.md and idempotence keys off the PDF payload (#15).
+  const sourceId = dependencies.createSourceId();
+  const written = await dependencies.sourceFileStore.writePdfSource({ bytes, id: sourceId });
+  const provenance: Provenance = {
+    fileName,
+    filePath: written.path,
+    sha256: written.sha256,
+    sourceText: null
+  };
+
+  return ingestMarkdown(
+    dependencies,
+    workEntryId,
+    { fileName, kind: "upload", markdown },
+    sourceId,
+    provenance
+  );
 }
 
 type Provenance = Readonly<{
@@ -67,7 +84,9 @@ type Provenance = Readonly<{
 export async function ingestMarkdown(
   dependencies: ContentDependencies,
   workEntryId: EntryId,
-  source: IngestMarkdownRequest
+  source: IngestMarkdownRequest,
+  sourceIdOverride?: string,
+  provenanceOverride?: Provenance
 ): Promise<IngestMarkdownResult> {
   if (!(await workExists(dependencies.db, workEntryId))) {
     return { status: "work_not_found" };
@@ -97,8 +116,9 @@ export async function ingestMarkdown(
     return { content: current, status: "ingested" };
   }
 
-  const sourceId = dependencies.createSourceId();
-  const provenance = await buildProvenance(dependencies.sourceFileStore, sourceId, source);
+  const sourceId = sourceIdOverride ?? dependencies.createSourceId();
+  const provenance =
+    provenanceOverride ?? (await buildProvenance(dependencies.sourceFileStore, sourceId, source));
 
   const oldBlocks = current.readingUnits.flatMap((unit) =>
     unit.blocks.map((block) => ({ id: block.entryId, plaintext: block.plaintext }))

@@ -467,6 +467,27 @@ describe("content routes", () => {
     );
   });
 
+  it("retains the uploaded PDF source with a .pdf path and the PDF byte hash, not Markdown", async () => {
+    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
+    const workEntryId = await createWork();
+    const pdfBytes = Buffer.from("%PDF-1.7 original bytes");
+
+    expect((await ingestPdf(workEntryId, pdfBytes)).statusCode).toBe(201);
+
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, workEntryId));
+    const source = sources[0];
+    expect(source?.kind).toBe("upload");
+    expect(source?.fileName).toBe("upload.pdf");
+    expect(source?.filePath?.endsWith(".pdf")).toBe(true);
+    expect(source?.sourceText).toBeNull();
+    // Provenance hashes the original PDF payload, not the converted Markdown.
+    expect(source?.sha256).toBe(hashBytes(new Uint8Array(pdfBytes)));
+    expect(source?.sha256).not.toBe(hashMarkdown("Intro.\n\n# Chapter\n\n- a"));
+  });
+
   it("returns 422 when the PDF worker fails to convert", async () => {
     pdfResponder = async () => Promise.reject(new Error("docling absent"));
     const workEntryId = await createWork();

@@ -24,6 +24,7 @@ export type SourceFileStore = Readonly<{
   hashMarkdown: (markdown: string) => string;
   writeEpubSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
   writeMarkdownSource: (input: WriteMarkdownSourceInput) => Promise<WrittenMarkdownSource>;
+  writePdfSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
 }>;
 
 // Server-generated ids only; user input is never used as a path segment.
@@ -85,5 +86,17 @@ export function createSourceFileStore(sourceFilesDir: string): SourceFileStore {
     return Object.freeze({ path, sha256: hashBytes(input.bytes) });
   }
 
-  return Object.freeze({ hashBytes, hashMarkdown, writeEpubSource, writeMarkdownSource });
+  async function writePdfSource(input: WriteEpubSourceInput): Promise<WrittenEpubSource> {
+    const path = await writeSourceFile(input.id, "pdf", input.bytes);
+
+    return Object.freeze({ path, sha256: hashBytes(input.bytes) });
+  }
+
+  return Object.freeze({
+    hashBytes,
+    hashMarkdown,
+    writeEpubSource,
+    writeMarkdownSource,
+    writePdfSource
+  });
 }
