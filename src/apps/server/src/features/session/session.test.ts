@@ -284,16 +284,44 @@ describe("converseTurn", () => {
     expect(userRow?.englishShare).toBeCloseTo(8 / 11);
   });
 
-  it("opens the bilingual dial on the next call after a mostly-Chinese turn (#270)", async () => {
+  it("opens the bilingual dial on the first mostly-Chinese turn from a fresh user (#270)", async () => {
     const caseId = await firstCaseId();
     const fake = createFakeCoach();
-    let capturedKnobs: { l1: string; targetL1Share: number } | undefined;
+    let firstKnobs: { l1: string; targetL1Share: number } | undefined;
     const deps: SessionDependencies = {
       ...makeDeps(),
       coach: {
         ...fake,
         converse: (request) => {
-          capturedKnobs = { l1: request.knobs.l1, targetL1Share: request.knobs.targetL1Share };
+          firstKnobs ??= { l1: request.knobs.l1, targetL1Share: request.knobs.targetL1Share };
+          return fake.converse(request);
+        }
+      }
+    };
+
+    // A fresh user with no prior exchanges opens with a mostly-Chinese turn. The current turn's mix is
+    // folded into the knobs for THIS same call, so the coach opens the bilingual dial immediately
+    // (l1 zh, positive target L1 share, one English chunk to retry) -- not only on the next round.
+    const first = await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    if (first.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    expect(firstKnobs?.l1).toBe("zh");
+    expect(firstKnobs?.targetL1Share).toBeGreaterThan(0);
+    expect(first.reply.englishTarget?.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the bilingual dial open on a later English turn once the trend shows L1 (#270)", async () => {
+    const caseId = await firstCaseId();
+    const fake = createFakeCoach();
+    let lastKnobs: { l1: string; targetL1Share: number } | undefined;
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...fake,
+        converse: (request) => {
+          lastKnobs = { l1: request.knobs.l1, targetL1Share: request.knobs.targetL1Share };
           return fake.converse(request);
         }
       }
@@ -302,11 +330,11 @@ describe("converseTurn", () => {
     // A mostly-Chinese turn persists a low English share...
     await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
 
-    // ...so the NEXT call's compiled context infers L1 zh and a positive target L1 share, and the
-    // coach replies bilingually with an English target to retry.
+    // ...so even a fully-English next turn keeps the dial open: the persisted trend still infers L1 zh
+    // and a positive target L1 share for the user who has been leaning on Chinese.
     const second = await converseTurn(
       deps,
-      { caseId, transcript: "再来一个" },
+      { caseId, transcript: "I would like to order" },
       userA,
       new Date(t0.getTime() + 60_000)
     );
@@ -314,8 +342,8 @@ describe("converseTurn", () => {
       throw new Error("expected ok");
     }
 
-    expect(capturedKnobs?.l1).toBe("zh");
-    expect(capturedKnobs?.targetL1Share).toBeGreaterThan(0);
+    expect(lastKnobs?.l1).toBe("zh");
+    expect(lastKnobs?.targetL1Share).toBeGreaterThan(0);
     expect(second.reply.englishTarget?.length).toBeGreaterThan(0);
   });
 

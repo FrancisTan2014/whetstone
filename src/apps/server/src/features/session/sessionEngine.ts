@@ -36,13 +36,30 @@ const CUE_TIMER_SECONDS = 20;
 
 // Distil the compiled learner context (#208) into the snapshot the pure knobs function reads, then
 // derive the adaptive coach knobs (#223). Deterministic; the briefing for the fixed coach skill.
-function knobsFromContext(context: CompiledLearnerContextDto): CoachKnobs {
+//
+// `currentTurnShare` is the English-share of the user turn being answered *right now* (#270). It is
+// folded in so the bilingual dial opens on the same turn that needs it — a fresh near-beginner whose
+// first turn is mostly Chinese gets a bilingual reply immediately, not only on the next call once the
+// turn has been persisted into the trend.
+function knobsFromContext(
+  context: CompiledLearnerContextDto,
+  currentTurnShare?: number
+): CoachKnobs {
+  const trend = context.englishShareTrend;
+  const englishShare =
+    currentTurnShare === undefined
+      ? (trend ?? 1)
+      : trend === undefined
+        ? currentTurnShare
+        : (trend + currentTurnShare) / 2;
+  const inferredL1 =
+    currentTurnShare !== undefined && currentTurnShare < 1 ? "zh" : (context.l1 ?? "none");
   const snapshot: LearnerSnapshot = {
     band: context.profile?.level ?? "beginner",
     dueChunkCount: context.rankedChunks.length,
-    englishShare: context.englishShareTrend ?? 1,
+    englishShare,
     focus: context.profile?.focus ?? "",
-    l1: context.l1 ?? "none",
+    l1: inferredL1,
     recentGrades: context.recentOutcomes.map((outcome) => outcome.grade),
     topErrorPatterns: context.relevantErrors.map((pattern) => pattern.category)
   };
@@ -216,7 +233,11 @@ export async function converseTurn(
     .orderBy(asc(sessionExchanges.orderIndex));
 
   const history = [...prior, { role: "user" as const, text: request.transcript }];
-  const knobs = knobsFromContext(await compileContext(dependencies.db, userId, now));
+  const currentTurnShare = englishShare(request.transcript);
+  const knobs = knobsFromContext(
+    await compileContext(dependencies.db, userId, now),
+    currentTurnShare
+  );
   const reply = await dependencies.coach.converse({
     communicativeFunction: caseRow.communicativeFunction,
     context: { focus: caseRow.situation, recentTargets: [] },
@@ -229,7 +250,7 @@ export async function converseTurn(
     {
       caseId: request.caseId,
       createdAt: now,
-      englishShare: englishShare(request.transcript),
+      englishShare: currentTurnShare,
       id: dependencies.createId(),
       orderIndex: prior.length,
       repairJson: null,
