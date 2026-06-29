@@ -6,7 +6,9 @@ function snapshot(overrides: Partial<LearnerSnapshot> = {}): LearnerSnapshot {
   return {
     band: "intermediate",
     dueChunkCount: 3,
+    englishShare: 1,
     focus: "kitchen.offering-food",
+    l1: "none",
     recentGrades: [3, 3],
     topErrorPatterns: [],
     ...overrides
@@ -68,6 +70,26 @@ describe("deriveCoachKnobs", () => {
     expect(deriveCoachKnobs(snapshot({ focus: "errands.post-office" })).focus).toBe(
       "errands.post-office"
     );
+  });
+
+  it("leaves the bilingual dial off for an English-only learner (#270)", () => {
+    const knobs = deriveCoachKnobs(snapshot({ englishShare: 0.4, l1: "none" }));
+
+    expect(knobs.l1).toBe("none");
+    expect(knobs.targetL1Share).toBe(0);
+  });
+
+  it("opens the L1 dial inversely to the learner's English share for an L1 learner (#270)", () => {
+    const mostlyL1 = deriveCoachKnobs(snapshot({ englishShare: 0.1, l1: "zh" }));
+    const balanced = deriveCoachKnobs(snapshot({ englishShare: 0.5, l1: "zh" }));
+    const mostlyEnglish = deriveCoachKnobs(snapshot({ englishShare: 0.95, l1: "zh" }));
+
+    // More L1 is allowed when English is low; it shrinks (toward 0) as English share rises, capped so
+    // the coach always pushes some English.
+    expect(mostlyL1.l1).toBe("zh");
+    expect(mostlyL1.targetL1Share).toBeCloseTo(0.7);
+    expect(balanced.targetL1Share).toBeCloseTo(0.5);
+    expect(mostlyEnglish.targetL1Share).toBeCloseTo(0.05);
   });
 
   it("is deterministic — the same snapshot yields the same knobs", () => {

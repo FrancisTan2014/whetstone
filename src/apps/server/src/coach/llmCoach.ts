@@ -63,15 +63,32 @@ function extractJson(text: string): unknown {
 function conversePrompt(request: CoachConverseRequest): string {
   const transcript = request.history.map((turn) => `${turn.role}: ${turn.text}`).join("\n");
   const { knobs } = request;
+  const bilingual = knobs.targetL1Share > 0;
 
-  return [
+  const lines = [
     "You are an English speaking coach in a live call. Stay in flow: reply with the next natural line",
     "for the situation, never a score. Add a gentle recast ONLY on a real breakdown (stuck/unintelligible).",
     `Register: ${knobs.register}. Pace: ${knobs.pace}. Band: ${knobs.targetBand}. Length tracks the band.`,
-    `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`,
-    'Reply with ONLY JSON: {"say", optional "repair":{"reason","recast"}}.',
-    `Conversation:\n${transcript}`
-  ].join("\n");
+    `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`
+  ];
+
+  if (bilingual) {
+    // Bilingual mix (#270): meet the learner in their EN/L1 mix to stay understood, but always pull
+    // toward English and push ONE English target per turn so L1 is a bridge, not a comfort trap.
+    lines.push(
+      `The learner is bilingual (L1: ${knobs.l1}). You may use up to about ${Math.round(
+        knobs.targetL1Share * 100
+      )}% L1 in "say" to stay understood, but ALWAYS keep some English and pull toward it. Each turn,`,
+      'recast ONE short English target for them to retry (pushed output) in "englishTarget".',
+      'Reply with ONLY JSON: {"say","englishTarget", optional "repair":{"reason","recast"}}.'
+    );
+  } else {
+    lines.push('Reply with ONLY JSON: {"say", optional "repair":{"reason","recast"}}.');
+  }
+
+  lines.push(`Conversation:\n${transcript}`);
+
+  return lines.join("\n");
 }
 
 // A real coach whose end-of-round analysis is LLM-backed: prompt the model, parse strict JSON to the

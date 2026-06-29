@@ -47,6 +47,15 @@ describe("parseLearnerProfileDto", () => {
     expect(parseLearnerProfileDto(profile)).toEqual(profile);
   });
 
+  it("round-trips the bilingual dial fields when present (#270)", () => {
+    const bilingual = { ...profile, englishShare: 0.4, l1: "zh" };
+    expect(parseLearnerProfileDto(bilingual)).toEqual(bilingual);
+  });
+
+  it("rejects an out-of-range English share (#270)", () => {
+    expect(() => parseLearnerProfileDto({ ...profile, englishShare: 1.2 })).toThrow();
+  });
+
   it("rejects an unknown level", () => {
     expect(() => parseLearnerProfileDto({ ...profile, level: "fluent" })).toThrow();
   });

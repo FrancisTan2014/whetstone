@@ -28,6 +28,12 @@ export const proficiencyLevelSchema = z.enum(proficiencyLevels);
 
 export type ProficiencyLevel = z.infer<typeof proficiencyLevelSchema>;
 
+// The learner's L1 for the bilingual mix dial (#270). Mirrors `l1Languages` in `@whetstone/domain`;
+// keep the two in sync. "none" is an English-only learner.
+export const l1LanguageSchema = z.enum(["none", "zh"]);
+
+export type L1LanguageDto = z.infer<typeof l1LanguageSchema>;
+
 export const chunkMasteryStatuses = ["new", "learning", "due", "mastered"] as const;
 
 export const chunkMasteryStatusSchema = z.enum(chunkMasteryStatuses);
@@ -87,7 +93,11 @@ export type RankedChunkDto = z.infer<typeof rankedChunkDtoSchema>;
 // The rolling learner profile: a small, periodically-distilled summary.
 export const learnerProfileDtoSchema = z
   .object({
+    // The bilingual dial signals (#270): the learner's L1 and their rolling English share (the level
+    // signal). Optional and absent on an English-only profile, where they default to none / 1.
+    englishShare: z.number().min(0).max(1).optional(),
     focus: z.string(),
+    l1: l1LanguageSchema.optional(),
     level: proficiencyLevelSchema,
     strengths: z.array(z.string()),
     summary: z.string(),

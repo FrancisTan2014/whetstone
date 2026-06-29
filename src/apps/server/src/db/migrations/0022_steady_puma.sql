@@ -1,0 +1,1 @@
+ALTER TABLE "session_exchanges" ADD COLUMN "english_share" double precision;

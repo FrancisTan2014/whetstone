@@ -12,6 +12,7 @@ import type {
 } from "@whetstone/contracts";
 import {
   deriveCoachKnobs,
+  englishShare,
   mistakeCategoryFromIssues,
   scheduleReview,
   type LearnerSnapshot,
@@ -39,7 +40,9 @@ function knobsFromContext(context: CompiledLearnerContextDto): CoachKnobs {
   const snapshot: LearnerSnapshot = {
     band: context.profile?.level ?? "beginner",
     dueChunkCount: context.rankedChunks.length,
+    englishShare: context.profile?.englishShare ?? 1,
     focus: context.profile?.focus ?? "",
+    l1: context.profile?.l1 ?? "none",
     recentGrades: context.recentOutcomes.map((outcome) => outcome.grade),
     topErrorPatterns: context.relevantErrors.map((pattern) => pattern.category)
   };
@@ -226,6 +229,7 @@ export async function converseTurn(
     {
       caseId: request.caseId,
       createdAt: now,
+      englishShare: englishShare(request.transcript),
       id: dependencies.createId(),
       orderIndex: prior.length,
       repairJson: null,

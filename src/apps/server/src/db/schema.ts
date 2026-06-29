@@ -424,6 +424,9 @@ export const sessionExchanges = pgTable(
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
     id: text("id").primaryKey(),
     orderIndex: integer("order_index").notNull(),
+    // The English share of a user turn (#270): the bilingual-dial level signal, recorded per turn so
+    // the trend can be read over rounds. Null on coach turns.
+    englishShare: doublePrecision("english_share"),
     repairJson: jsonb("repair_json"),
     role: text("role", { enum: ["user", "coach"] as const }).notNull(),
     text: text("text").notNull(),

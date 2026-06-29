@@ -94,7 +94,11 @@ can navigate them from another package.
   - compiled context) -> a grade per chunk, the top tagged mistakes, wins, and one native upgrade (the
     only place a round is graded). Both `converse` and `analyze` carry the adaptive **`CoachKnobs`** (#223)
     — difficulty/focus/probe-patterns derived deterministically from the learner model by `deriveCoachKnobs`
-    (`@whetstone/domain` `coachKnobs.ts`), briefing the FIXED coach skill (no self-tuning yet). The verdict
+    (`@whetstone/domain` `coachKnobs.ts`), briefing the FIXED coach skill (no self-tuning yet). The knobs also
+    carry the **bilingual language-mix dial** (#270): `targetL1Share` (from the learner's English share via
+    `languageMix.ts`) lets the cheap-tier `converse` reply in the learner's EN/L1 mix while always pushing one
+    English target; `englishShare(userTurn)` is recorded per turn on `session_exchanges` as the level signal.
+    The verdict
     -> SM-2 grade map is pure in `@whetstone/domain`
     (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No real
     adapter or network yet; consumers go only through the seam.

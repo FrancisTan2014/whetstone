@@ -267,6 +267,21 @@ describe("converseTurn", () => {
     expect(rows[0]).toMatchObject({ orderIndex: 0, role: "user", text: "Help yourself." });
     expect(rows[1]).toMatchObject({ orderIndex: 1, role: "coach", text: outcome.reply.say });
     expect(rows[1]?.repairJson).toBeNull();
+    // The user turn's English share is recorded (all-English -> 1); coach turns carry none.
+    expect(rows[0]?.englishShare).toBe(1);
+    expect(rows[1]?.englishShare).toBeNull();
+  });
+
+  it("records the user turn's English share so the bilingual trend can be read (#270)", async () => {
+    const caseId = await firstCaseId();
+
+    await converseTurn(makeDeps(), { caseId, transcript: "我想点 some rice" }, userA, t0);
+
+    const userRow = (
+      await db.select().from(sessionExchanges).where(eq(sessionExchanges.role, "user"))
+    )[0];
+    // "some rice" = 8 Latin letters; "我想点" = 3 CJK characters -> 8 / 11.
+    expect(userRow?.englishShare).toBeCloseTo(8 / 11);
   });
 
   it("offers light repair and persists it when the learner breaks down (empty transcript)", async () => {

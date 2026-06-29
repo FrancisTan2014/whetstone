@@ -8,11 +8,13 @@ import { createLlmCoach } from "./llmCoach.js";
 const knobs: CoachKnobs = {
   challenge: "medium",
   focus: "kitchen.offering-food",
+  l1: "none",
   pace: "steady",
   probeErrorPatterns: [],
   register: "neutral",
   support: "medium",
-  targetBand: "intermediate"
+  targetBand: "intermediate",
+  targetL1Share: 0
 };
 
 const request: AnalyzeRoundRequest = {
@@ -108,5 +110,22 @@ describe("createLlmCoach converse", () => {
       fallback: createFakeCoach()
     });
     expect((await coach.converse(converseRequest)).say.length).toBeGreaterThan(0);
+  });
+
+  it("briefs a bilingual mix and returns the pushed English target (#270)", async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValue('{"say":"好的 — 我们试试英文。","englishTarget":"Help yourself."}');
+    const coach = createLlmCoach({ chat, fallback: createFakeCoach() });
+
+    const result = await coach.converse({
+      ...converseRequest,
+      knobs: { ...knobs, l1: "zh", targetL1Share: 0.5 }
+    });
+
+    expect(result.englishTarget).toBe("Help yourself.");
+    const prompt = (chat.mock.calls[0]?.[0] as string).toLowerCase();
+    expect(prompt).toContain("bilingual");
+    expect(prompt).toContain("englishtarget");
   });
 });
