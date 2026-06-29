@@ -87,6 +87,30 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("From WordNet. · From Wiktionary.")).toBeDefined();
   });
 
+  it("renders external dictionary deep-links under the headword with safe new-tab attributes (#254)", () => {
+    renderPanel(loadedEntry, { matchers: desktop });
+
+    const links = within(
+      screen.getByRole("navigation", { name: "Open in external dictionary" })
+    ).getAllByRole("link");
+
+    expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["Longman", "https://www.ldoceonline.com/dictionary/set"],
+      ["Merriam-Webster", "https://www.merriam-webster.com/dictionary/set"],
+      ["Oxford Learner's", "https://www.oxfordlearnersdictionaries.com/definition/english/set"]
+    ]);
+    for (const link of links) {
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toContain("noopener");
+    }
+
+    // The row lives inside the header (under the headword/IPA), not in the groups body.
+    const header = screen.getByText("set").closest("header");
+    expect(
+      header?.contains(screen.getByRole("navigation", { name: "Open in external dictionary" }))
+    ).toBe(true);
+  });
+
   it("color-codes each part-of-speech section with a tokenized hue class", () => {
     renderPanel(loadedEntry, { matchers: desktop });
     const groups = document.querySelectorAll(".lookupGroup");
