@@ -2133,6 +2133,32 @@ describe("ReaderPage vocabulary lookup", () => {
     expect(mockedCreateNote).not.toHaveBeenCalled();
   });
 
+  it("dismisses the lookup when the reader scrolls (#265)", async () => {
+    mockedLookupTerm.mockResolvedValue({
+      entry: {
+        headword: "intro",
+        partsOfSpeech: [
+          {
+            partOfSpeech: "noun",
+            senses: [{ definition: "an introduction", examples: [], synonyms: [] }]
+          }
+        ],
+        pronunciations: [],
+        sources: []
+      },
+      found: true
+    });
+
+    await selectAndLookup();
+    expect(await screen.findByRole("dialog", { name: /Look up/ })).toBeDefined();
+
+    // Scrolling the reading column (the window) closes the floating popover; outside-click + Esc
+    // (Radix) still apply, and a fresh selection reopens it.
+    fireEvent.scroll(window);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Look up/ })).toBeNull());
+  });
+
   it("shows a combined error when every source is empty", async () => {
     mockedLookupTerm.mockResolvedValue({ found: false });
 

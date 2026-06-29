@@ -801,6 +801,28 @@ export function ReaderPage({
     };
   }, [capture]);
 
+  // Dismiss the lookup popover when the reader scrolls (#265). Radix already closes it on
+  // outside-click and Esc, but the reading column scrolls the window, which would leave the popover
+  // floating beside text that has moved. A non-capturing window scroll listener fires for the
+  // page/reader scroll but not for a scroll inside the lookup's own content (which never reaches the
+  // window without capture), so the desktop popover and mobile sheet both dismiss; a fresh selection
+  // reopens it.
+  useEffect(() => {
+    if (lookup === undefined) {
+      return;
+    }
+
+    function onReaderScroll(): void {
+      setLookup(undefined);
+    }
+
+    window.addEventListener("scroll", onReaderScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", onReaderScroll);
+    };
+  }, [lookup]);
+
   function confirmCapture(active: SelectionCapture): void {
     setCapture(undefined);
     setPanel({
