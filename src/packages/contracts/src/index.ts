@@ -293,6 +293,16 @@ export type {
   UpsertReadingPositionRequest
 } from "./readingPositionContracts.js";
 export {
+  defaultPreferences,
+  parsePreferences,
+  parseUpsertPreferencesRequest,
+  preferencesSchema,
+  readingSizes,
+  themes,
+  upsertPreferencesRequestSchema
+} from "./preferencesContracts.js";
+export type { PreferencesDto, UpsertPreferencesRequest } from "./preferencesContracts.js";
+export {
   enrollRecallItemRequestSchema,
   getRecallItemToolInputSchema,
   listDueItemsToolInputSchema,

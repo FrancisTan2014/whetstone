@@ -173,6 +173,16 @@ export const readingPositions = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.workEntryId] })]
 );
 
+// Per-user reader preferences (work-independent): text size and Day/Night theme, server-owned so they
+// restore on any device. One row per user (current user = DEFAULT_USER_ID in v0). Designed to grow —
+// new settings join as columns, no new endpoint. `updated_at` records the last change.
+export const readerPreferences = pgTable("reader_preferences", {
+  readingSize: text("reading_size").notNull(),
+  theme: text("theme").notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+  userId: text("user_id").primaryKey()
+});
+
 // The anchor binds a note to a stable block id, with an optional sub-block character
 // offset range and the selected-text / surrounding-context snapshots.
 export const noteAnchors = pgTable(

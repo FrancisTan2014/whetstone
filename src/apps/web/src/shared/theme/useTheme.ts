@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { fetchPreferences, savePreferences } from "../preferences/preferencesApi.js";
 import { nextTheme, resolveInitialTheme, themeStorageKey, type Theme } from "./theme.js";
 
 // Read the active theme from the browser: a persisted choice, else the system
@@ -17,11 +18,15 @@ export type ThemeController = Readonly<{
   toggle: () => void;
 }>;
 
-// Owns the active theme: applies it to the root element with the `class` strategy
-// (`.dark` for Night), persists the choice, and exposes a toggle. The applying effect
-// also runs on first mount so the document reflects the resolved theme immediately.
+// Owns the active theme: applies it to the root element with the `class` strategy (`.dark` for Night),
+// caches the choice in localStorage for an instant first paint, and reconciles from the server (the
+// source of truth, #234) on mount so it restores on any device. Toggling persists best-effort.
 export function useTheme(): ThemeController {
   const [theme, setTheme] = useState<Theme>(readBrowserTheme);
+
+  useEffect(() => {
+    void fetchPreferences().then((prefs) => setTheme(prefs.theme));
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -36,7 +41,11 @@ export function useTheme(): ThemeController {
   }, [theme]);
 
   const toggle = useCallback(() => {
-    setTheme((current) => nextTheme(current));
+    setTheme((current) => {
+      const updated = nextTheme(current);
+      void savePreferences({ theme: updated });
+      return updated;
+    });
   }, []);
 
   return { theme, toggle };

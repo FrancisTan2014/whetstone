@@ -14,6 +14,7 @@ import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass, noteMarkHueClass } from "./annotationHue.tokens";
 import { ChapterPager } from "./ChapterPager";
+import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
@@ -345,6 +346,16 @@ export function ReaderPage({
   const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
   const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
+
+  // Reader text size is a server-owned preference (#234): restore it on mount and persist changes
+  // best-effort, so it survives reload and follows the user to another device.
+  useEffect(() => {
+    void fetchPreferences().then((prefs) => setSize(prefs.readingSize));
+  }, []);
+  const onSizeChange = useCallback((next: ReadingSize) => {
+    setSize(next);
+    void savePreferences({ readingSize: next });
+  }, []);
   // The 目录 drawer and the "Your notes" panel are tools that recede with the reading header:
   // their open state lives here (not inside ReaderToc) so opening a unit / jumping / opening a
   // work can dismiss them alongside the other overlays.
@@ -848,7 +859,7 @@ export function ReaderPage({
         ? renderReady(state.works, state.reading, handlers, selectUnit, retryUnit, {
             chromeHidden,
             isNarrow,
-            onSizeChange: setSize,
+            onSizeChange,
             onToggleChrome,
             prefersReducedMotion,
             scroll,
