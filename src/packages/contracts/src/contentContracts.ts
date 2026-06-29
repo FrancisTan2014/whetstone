@@ -101,6 +101,10 @@ export type BlockUnitLocatorDto = Readonly<{
 // is created from the EPUB's own OPF metadata, so there is no JSON request body.
 export const epubContentType = "application/epub+zip";
 
+// PDF uploads are sent as raw bytes under this media type; a Python doc-AI worker converts the PDF to
+// Markdown, which then flows through the same Markdown -> blocks pipeline (#15). No PDF block model.
+export const pdfContentType = "application/pdf";
+
 // Ingesting an EPUB creates a Work and its content in one step, so the result returns
 // both the created/matched work and its decomposed content.
 export type IngestEpubResultDto = Readonly<{

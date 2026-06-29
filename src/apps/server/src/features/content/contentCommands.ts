@@ -4,6 +4,7 @@ import type { IngestMarkdownRequest, WorkContentDto } from "@whetstone/contracts
 import type { DbClient } from "../../db/dbClient.js";
 import type { EpubParser } from "../../files/epubSource.js";
 import type { ImageResourceStore } from "../../files/imageResourceStore.js";
+import type { PdfToMarkdown } from "../../files/pdfToMarkdown.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
 import { workSources } from "../../db/schema.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
@@ -11,8 +12,8 @@ import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store, EPUB
-// parser, image-resource store) are passed in so ingestion stays deterministic and
-// testable.
+// parser, image-resource store, PDF worker) are passed in so ingestion stays
+// deterministic and testable.
 export type ContentDependencies = Readonly<{
   createAuthorId: () => string;
   createEntryId: () => string;
@@ -21,6 +22,7 @@ export type ContentDependencies = Readonly<{
   epubParser: EpubParser;
   epubUploadLimitBytes: number;
   imageResourceStore: Pick<ImageResourceStore, "store">;
+  pdfToMarkdown: PdfToMarkdown;
   sourceFileStore: SourceFileStore;
 }>;
 
@@ -28,6 +30,28 @@ export type IngestMarkdownResult =
   | Readonly<{ content: WorkContentDto; status: "ingested" }>
   | Readonly<{ status: "empty_content" }>
   | Readonly<{ status: "work_not_found" }>;
+
+export type IngestPdfResult = IngestMarkdownResult | Readonly<{ status: "invalid_pdf" }>;
+
+// PDF ingestion converges on the Markdown pipeline (#15): the doc-AI worker converts the PDF to clean
+// Markdown one-shot, which is ingested exactly like an uploaded .md so a PDF and the equivalent .md
+// decompose to identical blocks. A conversion failure (no/garbled PDF) is invalid_pdf, not a crash.
+export async function ingestPdf(
+  dependencies: ContentDependencies,
+  workEntryId: EntryId,
+  fileName: string,
+  bytes: Uint8Array
+): Promise<IngestPdfResult> {
+  let markdown: string;
+
+  try {
+    markdown = await dependencies.pdfToMarkdown.convert(bytes);
+  } catch {
+    return { status: "invalid_pdf" };
+  }
+
+  return ingestMarkdown(dependencies, workEntryId, { fileName, kind: "upload", markdown });
+}
 
 type Provenance = Readonly<{
   fileName: string | null;
