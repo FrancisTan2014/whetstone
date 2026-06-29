@@ -63,7 +63,9 @@ function fakeLive(overrides?: { supported?: boolean; startRejects?: boolean }) {
     finishUtterance: vi.fn(),
     setCoachPlaying: vi.fn(),
     start: vi.fn(
-      overrides?.startRejects === true ? async () => Promise.reject(new Error("denied")) : async () => {}
+      overrides?.startRejects === true
+        ? async () => Promise.reject(new Error("denied"))
+        : async () => {}
     ),
     stop: vi.fn()
   };
