@@ -241,3 +241,12 @@ The `pnpm e2e` step needs the Chromium browser installed once (CI does this auto
 ```powershell
 pnpm exec playwright install chromium
 ```
+
+## 6. Deploying to a phone-reachable URL (optional)
+
+To run whetstone continuously on a Mac and reach it from your phone over HTTPS, follow
+[docs/DEPLOY.md](./DEPLOY.md). For a **stable public URL that survives reboots**, the deploy uses a
+**named Cloudflare Tunnel** (token-based, fixed `whetstone.<your-domain>`), with **Tailscale Funnel**
+(`*.ts.net`, no domain needed) as a fallback — never a random `trycloudflare.com` quick tunnel. The
+tunnel token and hostname stay in the host's environment / the Cloudflare dashboard; nothing secret is
+committed. See [DEPLOY.md § 5 — A stable public URL](./DEPLOY.md#5-a-stable-public-url-named-cloudflare-tunnel-token-based).
