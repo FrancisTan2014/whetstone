@@ -296,6 +296,8 @@ type ReaderHandlers = Readonly<{
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
   onJumpToBlock: (note: NoteDto) => void;
+  // Activate a same-work internal cross-reference: jump to the block whose anchor id matches (#252).
+  onActivateAnchor: (anchorId: string) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string, noteEntryId?: string) => void;
   prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
@@ -588,21 +590,45 @@ export function ReaderPage({
   // miss (a removed block) or a network failure no-ops. Same-unit jumps just set the scroll
   // target, which the pending-scroll effect consumes. Only reachable while viewing (the note UI
   // lives in the viewing render), so the active work id is known.
-  function jumpToBlock(blockEntryId: string): void {
-    setPanel(undefined);
-    setTocOpen(false);
-    setNotesOpen(false);
+  const jumpToBlock = useCallback(
+    (blockEntryId: string): void => {
+      setPanel(undefined);
+      setTocOpen(false);
+      setNotesOpen(false);
 
-    void locateBlockUnit(viewingWorkEntryId as string, blockEntryId)
-      .then((unitEntryId) => {
-        if (unitEntryId !== undefined) {
-          setState((current) => applyUnitForBlock(current, unitEntryId, blockEntryId));
-        }
-      })
-      .catch(() => {
-        // A locator failure leaves the reader where it is; the jump simply does nothing.
-      });
-  }
+      void locateBlockUnit(viewingWorkEntryId as string, blockEntryId)
+        .then((unitEntryId) => {
+          if (unitEntryId !== undefined) {
+            setState((current) => applyUnitForBlock(current, unitEntryId, blockEntryId));
+            // Briefly highlight the landing block so a jump (a note, a restored position, or a
+            // cross-reference) is visible where it lands (#252).
+            setBornBlockEntryId(blockEntryId);
+          }
+        })
+        .catch(() => {
+          // A locator failure leaves the reader where it is; the jump simply does nothing.
+        });
+    },
+    [viewingWorkEntryId]
+  );
+
+  // Activate a same-work internal cross-reference (#252): resolve the target block from the rendered
+  // DOM (no ref read in render) by its anchor id, then jump there. Stable so memoized blocks stay flat.
+  const onActivateAnchor = useCallback(
+    (anchorId: string): void => {
+      // Escape quotes/backslashes for the attribute selector; ingest ids are plain html ids.
+      const escaped = anchorId.replace(/["\\]/g, "\\$&");
+      const target =
+        document
+          .querySelector(`.reader [data-anchor-id="${escaped}"]`)
+          ?.closest("[data-block-id]")
+          ?.getAttribute("data-block-id") ?? undefined;
+      if (target !== undefined) {
+        jumpToBlock(target);
+      }
+    },
+    [jumpToBlock]
+  );
 
   const onCaptureSelection = useCallback(
     (
@@ -841,6 +867,7 @@ export function ReaderPage({
     onDeleteNote: handleDelete,
     onEditNote,
     onJumpToBlock: (note) => jumpToBlock(note.blockEntryId),
+    onActivateAnchor,
     onOpenBlockNotes,
     prefersReducedMotion,
     templates
@@ -1161,6 +1188,7 @@ function renderUnit(
             key={born ? `${block.entryId}-born` : block.entryId}
             language={language}
             notes={handlers.notes}
+            onActivateAnchor={handlers.onActivateAnchor}
             onCaptureSelection={handlers.onCaptureSelection}
             onOpenBlockNotes={handlers.onOpenBlockNotes}
             prefersReducedMotion={handlers.prefersReducedMotion}
@@ -1177,6 +1205,7 @@ type ReaderBlockViewProps = Readonly<{
   born: boolean;
   language: string;
   notes: ReadonlyArray<NoteDto>;
+  onActivateAnchor: (anchorId: string) => void;
   onCaptureSelection: (
     blockElement: HTMLElement,
     block: ReaderBlock,
@@ -1251,6 +1280,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
   born,
   language,
   notes,
+  onActivateAnchor,
   onCaptureSelection,
   onOpenBlockNotes,
   prefersReducedMotion,
@@ -1314,7 +1344,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
       {block.blockType === "figure" ? (
         <ReaderFigure block={block} marks={marks} />
       ) : (
-        <BlockContent marks={marks} node={block.mdast} />
+        <BlockContent marks={marks} node={block.mdast} onActivateAnchor={onActivateAnchor} />
       )}
       {wholeBlockNote === undefined ? null : (
         <button
@@ -1331,6 +1361,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
 
   const commonProps = {
     className,
+    "data-anchor-id": block.anchorId,
     "data-block-id": block.entryId,
     "data-born": born ? "true" : undefined,
     "data-has-notes": annotated ? "true" : undefined,

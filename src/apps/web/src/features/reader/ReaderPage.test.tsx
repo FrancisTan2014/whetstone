@@ -369,6 +369,39 @@ const linkContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+const xrefContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-1"),
+          mdast: {
+            children: [
+              { type: "text", value: "Jump to " },
+              { children: [{ type: "text", value: "the figure" }], type: "link", url: "#fig-2" }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          plaintext: "Jump to the figure."
+        },
+        {
+          anchorId: "fig-2",
+          blockType: "paragraph",
+          entryId: toEntryId("b-2"),
+          mdast: { children: [{ type: "text", value: "The figure caption." }], type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "The figure caption."
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 function firstTextNode(blockElement: HTMLElement): Text {
   const walker = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
   const node = walker.nextNode();
@@ -777,20 +810,24 @@ describe("ReaderPage", () => {
     expect(container.textContent).not.toContain("__xssReader");
   });
 
-  it("renders in-content links as non-navigating text that stays selectable", async () => {
+  it("makes a same-work #id link a live cross-reference, still selectable, no SPA anchor", async () => {
     seedWorkContent(linkContent);
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Chapter 2");
     const block = blockElement(container, "b-1");
 
-    // The link text is kept, but there is no navigating anchor — it renders as a plain span.
+    // A same-work #id link renders as a live cross-reference control (#252), never a navigating <a>.
     expect(block.querySelector("a")).toBeNull();
-    const link = block.querySelector(".readerLink");
-    expect(link?.tagName).toBe("SPAN");
-    expect(link?.textContent).toBe("Chapter 2");
+    const link = block.querySelector(".readerXref") as HTMLElement;
+    expect(link.tagName).toBe("BUTTON");
+    expect(link.textContent).toBe("Chapter 2");
 
-    // Selecting the former link text still opens the selection toolbar (no navigation).
-    const linkText = link?.firstChild as Text;
+    // A mistargeted #id (no block carries it) is inert on activation — no jump, no born highlight.
+    fireEvent.click(link);
+    expect(blockElement(container, "b-1").getAttribute("data-born")).toBeNull();
+
+    // Selecting the link text still opens the selection toolbar (no navigation).
+    const linkText = link.firstChild as Text;
     const range = document.createRange();
     range.setStart(linkText, 0);
     range.setEnd(linkText, "Chapter 2".length);
@@ -800,6 +837,20 @@ describe("ReaderPage", () => {
     fireEvent.mouseUp(block);
 
     expect(await screen.findByRole("button", { name: "Add note" })).toBeDefined();
+  });
+
+  it("jumps to the target block when a same-work cross-reference is activated (#252)", async () => {
+    seedWorkContent(xrefContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("The figure caption.");
+
+    await user.click(screen.getByRole("button", { name: "the figure" }));
+
+    // The target block is marked born (the jump highlight), proving the reference resolved + jumped.
+    await waitFor(() =>
+      expect(blockElement(container, "b-2").getAttribute("data-born")).toBe("true")
+    );
   });
 
   it("opens the selection toolbar then the editor when text is selected in a block", async () => {

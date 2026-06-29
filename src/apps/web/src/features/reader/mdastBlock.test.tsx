@@ -33,6 +33,44 @@ describe("BlockContent", () => {
     expect(mark.getAttribute("role")).toBe("button");
   });
 
+  it("makes a same-work #id link a live cross-reference that jumps; external links stay inert", async () => {
+    const userEvent = (await import("@testing-library/user-event")).default;
+    const onActivateAnchor = vi.fn();
+    const internal = {
+      children: [
+        { children: [{ type: "text", value: "see Figure 5-2" }], type: "link", url: "#fig5" }
+      ],
+      type: "paragraph"
+    };
+    const { rerender } = render(
+      <BlockContent node={internal} onActivateAnchor={onActivateAnchor} />
+    );
+
+    const xref = screen.getByRole("button", { name: "see Figure 5-2" });
+    expect(xref.className).toContain("readerXref");
+    await userEvent.setup().click(xref);
+    expect(onActivateAnchor).toHaveBeenCalledWith("fig5");
+
+    // An external link stays inert non-navigating text — no button, no SPA hijack.
+    const external = {
+      children: [
+        { children: [{ type: "text", value: "example" }], type: "link", url: "https://x.test" }
+      ],
+      type: "paragraph"
+    };
+    rerender(<BlockContent node={external} onActivateAnchor={onActivateAnchor} />);
+    expect(screen.queryByRole("button", { name: "example" })).toBeNull();
+  });
+
+  it("leaves an internal link inert when no anchor activator is provided", () => {
+    const node = {
+      children: [{ children: [{ type: "text", value: "ref" }], type: "link", url: "#fig5" }],
+      type: "paragraph"
+    };
+    render(<BlockContent node={node} />);
+    expect(screen.queryByRole("button", { name: "ref" })).toBeNull();
+  });
+
   it("renders a heading from stored mdast without re-parsing Markdown", () => {
     render(
       <BlockContent

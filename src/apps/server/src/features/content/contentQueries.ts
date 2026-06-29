@@ -20,6 +20,7 @@ type ReadingUnitRow = Readonly<{
 
 type BlockRow = Readonly<{
   alt: string | null;
+  anchorId: string | null;
   blockType: BlockDto["blockType"];
   entryId: string;
   imageResourceId: string | null;
@@ -32,6 +33,7 @@ type BlockRow = Readonly<{
 // The block columns a BlockDto is built from, shared by the whole-work and per-unit queries.
 const blockColumns = {
   alt: blocks.alt,
+  anchorId: blocks.anchorId,
   blockType: blocks.blockType,
   entryId: blocks.entryId,
   imageResourceId: blocks.imageResourceId,
@@ -114,8 +116,9 @@ function toBlockDto(block: BlockRow): BlockDto {
   };
   const withImage =
     block.imageResourceId === null ? base : { ...base, imageResourceId: block.imageResourceId };
+  const withAlt = block.alt === null ? withImage : { ...withImage, alt: block.alt };
 
-  return block.alt === null ? withImage : { ...withImage, alt: block.alt };
+  return block.anchorId === null ? withAlt : { ...withAlt, anchorId: block.anchorId };
 }
 
 // A work's lightweight structure: ordered reading units with a non-deleted block count but no

@@ -642,6 +642,22 @@ code {
   text-decoration: none;
 }
 
+/* A live same-work cross-reference (#252): a real control, but styled inline like prose with a subtle
+   accent underline so it reads as a tappable reference, not a button. Tokenized for Day/Night; the
+   inline padding keeps a comfortable touch target without breaking the text line. */
+.readerXref {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
 /* The "Your notes" list is no longer pinned to the bottom of the reading column — it lives in
    a toggled Sheet opened from the ReadingHeader. The Sheet owns its surface/scroll, so the list
    only needs breathing room above the cards. */

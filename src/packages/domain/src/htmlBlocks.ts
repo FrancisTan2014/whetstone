@@ -172,39 +172,30 @@ function figureFromHast(node: HastNode): DecomposedBlock | undefined {
 export function decomposeHtmlChapter(html: string): DecomposedReadingUnit {
   const tree = htmlProcessor.parse(html) as unknown as HastNode;
   const blocks: DecomposedBlock[] = [];
-  let pending: HastNode[] = [];
 
-  const flushPending = (): void => {
-    if (pending.length === 0) {
-      return;
-    }
-
-    const mdast = htmlProcessor.runSync({ children: pending, type: "root" } as unknown as HastTree);
-
-    for (const node of mdast.children) {
-      const block = blockFromMdastNode(node);
-
-      if (block !== undefined) {
-        blocks.push(block);
-      }
-    }
-
-    pending = [];
-  };
-
+  // Convert one top-level node at a time so its element id (a cross-reference target like Figure 5-2)
+  // is stamped onto the resulting block before rehype-remark flattens it away (#252): the first block
+  // a node yields carries its anchor id, so a same-work `#id` link resolves to an addressable block.
   for (const node of childrenOf(tree)) {
+    const anchorId = node.type === "element" ? stringProperty(node.properties.id) : undefined;
     const figure = figureFromHast(node);
 
-    if (figure === undefined) {
-      pending.push(node);
+    if (figure !== undefined) {
+      blocks.push(anchorId === undefined ? figure : { ...figure, anchorId });
       continue;
     }
 
-    flushPending();
-    blocks.push(figure);
+    const mdast = htmlProcessor.runSync({ children: [node], type: "root" } as unknown as HastTree);
+    let stamped = false;
+    for (const child of mdast.children) {
+      const block = blockFromMdastNode(child);
+      if (block === undefined) {
+        continue;
+      }
+      blocks.push(!stamped && anchorId !== undefined ? { ...block, anchorId } : block);
+      stamped = true;
+    }
   }
-
-  flushPending();
 
   const title =
     blocks.find((block) => block.blockType === "heading")?.plaintext.trim() || undefined;

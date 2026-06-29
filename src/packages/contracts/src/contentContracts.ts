@@ -47,6 +47,7 @@ export function parseIngestMarkdownRequest(value: unknown): IngestMarkdownReques
 // continues to travel as the block's `mdast` + `plaintext`.
 export type BlockDto = Readonly<{
   alt?: string;
+  anchorId?: string;
   blockType: BlockType;
   entryId: EntryId;
   imageResourceId?: string;

@@ -127,6 +127,13 @@
       "when": 1782733230331,
       "tag": "0017_whole_redwing",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1782734527081,
+      "tag": "0018_majestic_morlocks",
+      "breakpoints": true
     }
   ]
 }

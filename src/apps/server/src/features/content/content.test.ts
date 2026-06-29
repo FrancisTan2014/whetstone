@@ -936,6 +936,18 @@ describe("EPUB ingestion routes", () => {
     ).toEqual(["Plate"]);
   });
 
+  it("preserves a host element id as a block anchor for in-work cross-references (#252)", async () => {
+    epubResponder = async () =>
+      figureChapter('<p id="sec-3">A referenced paragraph.</p><p>Plain.</p>', []);
+
+    const body = await figureBlocksOf("epub-anchor");
+    const blocks = body.content.readingUnits[0]?.blocks ?? [];
+    expect(blocks.find((block) => block.plaintext === "A referenced paragraph.")?.anchorId).toBe(
+      "sec-3"
+    );
+    expect(blocks.find((block) => block.plaintext === "Plain.")?.anchorId).toBeUndefined();
+  });
+
   it("ingests a bare <img> as an image-only figure block (no caption)", async () => {
     const png = pngBytes();
     epubResponder = async () =>

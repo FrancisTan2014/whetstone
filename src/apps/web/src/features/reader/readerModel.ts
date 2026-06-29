@@ -13,6 +13,7 @@ import type {
 // absent on non-figure blocks.
 export type ReaderBlock = Readonly<{
   alt?: string;
+  anchorId?: string;
   blockType: BlockDto["blockType"];
   entryId: string;
   imageResourceId?: string;
@@ -59,8 +60,9 @@ function toReaderBlock(block: BlockDto): ReaderBlock {
     block.imageResourceId === undefined
       ? base
       : { ...base, imageResourceId: block.imageResourceId };
+  const withAlt = block.alt === undefined ? withImage : { ...withImage, alt: block.alt };
 
-  return block.alt === undefined ? withImage : { ...withImage, alt: block.alt };
+  return block.anchorId === undefined ? withAlt : { ...withAlt, anchorId: block.anchorId };
 }
 
 function toReaderUnitMeta(unit: ReadingUnitStructureDto): ReaderUnitMeta {

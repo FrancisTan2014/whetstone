@@ -69,6 +69,9 @@ export const blocks = pgTable(
   "blocks",
   {
     alt: text("alt"),
+    // The host element's id at ingest, an in-work cross-reference target (e.g. a figure or heading id)
+    // so a same-work `#id` link resolves to this block (#252). Null when the source had no id.
+    anchorId: text("anchor_id"),
     blockType: text("block_type", {
       enum: ["paragraph", "heading", "list", "blockquote", "code", "table", "figure"] as const
     }).notNull(),
