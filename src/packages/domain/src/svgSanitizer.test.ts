@@ -39,4 +39,19 @@ describe("sanitizeSvg", () => {
     expect(out).toContain('href="#frag"');
     expect(out).toContain("data:image/png;base64,AA");
   });
+
+  it("strips refs that hide javascript:/external URLs behind character references", () => {
+    const out = sanitizeSvg(
+      '<svg><a href="java&#x73;cript:alert(1)">x</a>' +
+        '<a href="javascript&colon;alert(2)">y</a>' +
+        '<image href="&#x68;ttps://evil.test/x.png"/>' +
+        '<image href="&#104;ttps://evil.test/y.png"/>' +
+        '<a href="#frag&foo;tail">keep</a><rect/></svg>'
+    );
+    expect(out).toContain("<rect");
+    expect(out).not.toMatch(/x73;cript|alert/iu);
+    expect(out).not.toContain("evil.test");
+    // An internal ref with an unknown named entity is preserved (not classified as external).
+    expect(out).toContain("#frag&foo;tail");
+  });
 });
