@@ -117,15 +117,20 @@ function lastUserText(history: ReadonlyArray<ConversationTurn>): string | undefi
 // keeps the learner producing, and offers light repair ONLY on a real breakdown — when the latest user
 // turn carried no usable words (stuck / unintelligible). No grading here; that is the end-of-round job.
 function converse(request: CoachConverseRequest): CoachConverseResult {
+  // The bilingual mix (#270): when any L1 is allowed, push one short English target each turn so L1
+  // is a bridge, not a comfort trap. English-only learners (share 0) get the prior English reply.
+  const bilingual = request.knobs.targetL1Share > 0;
+  const englishTarget = "Let's try that in English.";
   const latest = lastUserText(request.history);
   if (latest !== undefined && tokenize(latest).length === 0) {
-    return {
+    const stuck: CoachConverseResult = {
       repair: {
         reason: "That one didn't quite come through — looks like a tricky spot.",
         recast: `Let's take it slowly. Try one short sentence about: ${request.situation}`
       },
       say: "No rush — let's try a simpler version. Just give me a few words."
     };
+    return bilingual ? { ...stuck, englishTarget } : stuck;
   }
 
   const coachTurns = request.history.filter((turn) => turn.role === "coach").length;
@@ -133,7 +138,7 @@ function converse(request: CoachConverseRequest): CoachConverseResult {
     coachTurns === 0
       ? `Let's get into it: ${request.situation}. How would you start?`
       : "Good — keep going. What would you say next?";
-  return { say };
+  return bilingual ? { englishTarget, say } : { say };
 }
 
 // The full learner production across the round: every user turn joined, lowercased for matching.

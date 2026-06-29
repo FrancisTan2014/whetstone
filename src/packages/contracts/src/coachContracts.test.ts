@@ -15,11 +15,13 @@ import {
 const knobs = {
   challenge: "medium",
   focus: "At the table",
+  l1: "none",
   pace: "steady",
   probeErrorPatterns: [],
   register: "neutral",
   support: "medium",
-  targetBand: "intermediate"
+  targetBand: "intermediate",
+  targetL1Share: 0
 };
 
 describe("parseProductionJudgement", () => {
@@ -110,6 +112,18 @@ describe("parseCoachConverseResult", () => {
     expect(parseCoachConverseResult(result)).toEqual(result);
   });
 
+  it("round-trips a bilingual reply carrying an English target to retry (#270)", () => {
+    const result = {
+      englishTarget: "I'd like a table for two.",
+      say: "好的 — let's try in English."
+    };
+    expect(parseCoachConverseResult(result)).toEqual(result);
+  });
+
+  it("rejects a blank English target (#270)", () => {
+    expect(() => parseCoachConverseResult({ englishTarget: "  ", say: "ok" })).toThrow();
+  });
+
   it("rejects a blank coach line", () => {
     expect(() => parseCoachConverseResult({ say: "   " })).toThrow();
   });
@@ -155,6 +169,14 @@ describe("coachConverseRequestSchema", () => {
   it("rejects knobs with an out-of-range intensity", () => {
     expect(() =>
       coachConverseRequestSchema.parse({ ...request, knobs: { ...knobs, challenge: "extreme" } })
+    ).toThrow();
+  });
+
+  it("accepts bilingual knobs and rejects an out-of-range L1 share (#270)", () => {
+    const bilingual = { ...knobs, l1: "zh", targetL1Share: 0.5 };
+    expect(coachConverseRequestSchema.parse({ ...request, knobs: bilingual }).knobs.l1).toBe("zh");
+    expect(() =>
+      coachConverseRequestSchema.parse({ ...request, knobs: { ...knobs, targetL1Share: 1.5 } })
     ).toThrow();
   });
 });

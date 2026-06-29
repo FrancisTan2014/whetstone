@@ -9,6 +9,7 @@ import {
   chunkMasteryStatus,
   rankChunksByGapFrequency,
   type ChunkMasteryStatus,
+  type L1Language,
   type ReviewState
 } from "@whetstone/domain";
 import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
@@ -21,6 +22,7 @@ import {
   errorPatterns,
   learnerProfiles,
   recallItems,
+  sessionExchanges,
   turnOutcomes
 } from "../../db/schema.js";
 import { rowToReviewState } from "../recall/recallQueries.js";
@@ -31,6 +33,8 @@ import { rowToReviewState } from "../recall/recallQueries.js";
 export const DEFAULT_CHUNK_LIMIT = 10;
 export const DEFAULT_ERROR_LIMIT = 5;
 export const DEFAULT_OUTCOME_LIMIT = 10;
+// How many recent user turns the bilingual dial averages for its English-share trend (#270).
+export const DEFAULT_LANGUAGE_MIX_LIMIT = 10;
 
 // A candidate chunk enriched with its domain name (for profile strengths), on top of the fields the
 // pure ranker needs.
@@ -165,6 +169,39 @@ export async function getLearnerProfile(
   return row === undefined ? undefined : toLearnerProfileDto(row);
 }
 
+// The bilingual dial signals (#270) from the recorded per-turn English shares: the trend (their
+// average) and the inferred L1 — "zh" once any recorded turn carried Chinese (a share below 1, i.e.
+// some CJK), else "none". Returns undefined when no user turn has a recorded share yet, so the dial
+// stays off (English-only) until there is evidence.
+async function loadLanguageMix(
+  db: DbClient,
+  userId: string,
+  limit: number
+): Promise<{ englishShareTrend: number; l1: L1Language } | undefined> {
+  const rows = await db
+    .select({ englishShare: sessionExchanges.englishShare })
+    .from(sessionExchanges)
+    .where(
+      and(
+        eq(sessionExchanges.userId, userId),
+        eq(sessionExchanges.role, "user"),
+        isNotNull(sessionExchanges.englishShare)
+      )
+    )
+    .orderBy(desc(sessionExchanges.createdAt), desc(sessionExchanges.orderIndex))
+    .limit(limit);
+
+  if (rows.length === 0) {
+    return undefined;
+  }
+
+  const shares = rows.map((row) => row.englishShare as number);
+  const englishShareTrend = shares.reduce((sum, share) => sum + share, 0) / shares.length;
+  const l1: L1Language = shares.some((share) => share < 1) ? "zh" : "none";
+
+  return { englishShareTrend, l1 };
+}
+
 export type CompileContextOptions = Readonly<{
   chunkLimit?: number;
   errorLimit?: number;
@@ -189,8 +226,12 @@ export async function compileContext(
     candidates,
     chunkLimit
   );
+  const languageMix = await loadLanguageMix(db, userId, DEFAULT_LANGUAGE_MIX_LIMIT);
 
   return {
+    ...(languageMix === undefined
+      ? {}
+      : { englishShareTrend: languageMix.englishShareTrend, l1: languageMix.l1 }),
     profile: (await getLearnerProfile(db, userId)) ?? null,
     rankedChunks: [...rankedChunks],
     recentOutcomes: [...(await listRecentOutcomes(db, userId, outcomeLimit))],

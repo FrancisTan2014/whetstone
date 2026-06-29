@@ -9,11 +9,13 @@ const coach = createFakeCoach();
 const knobs: CoachKnobs = {
   challenge: "medium",
   focus: "kitchen.offering-food",
+  l1: "none",
   pace: "steady",
   probeErrorPatterns: [],
   register: "neutral",
   support: "medium",
-  targetBand: "intermediate"
+  targetBand: "intermediate",
+  targetL1Share: 0
 };
 
 function judge(target: string, transcript: string) {
@@ -188,6 +190,31 @@ describe("FakeCoach converse", () => {
     const request = { ...base, history: [{ role: "user" as const, text: "Have some tea." }] };
 
     expect(await coach.converse(request)).toEqual(await coach.converse(request));
+  });
+
+  it("pushes one English target when the bilingual dial is on (#270)", async () => {
+    const bilingual = { ...base, knobs: { ...knobs, l1: "zh", targetL1Share: 0.5 } } as const;
+
+    const flow = await coach.converse({
+      ...bilingual,
+      history: [{ role: "user" as const, text: "我想点菜。" }]
+    });
+    expect(flow.englishTarget?.length).toBeGreaterThan(0);
+
+    // A breakdown turn (no usable words) in bilingual mode still pushes an English target.
+    const breakdown = await coach.converse({
+      ...bilingual,
+      history: [{ role: "user" as const, text: "  ...  " }]
+    });
+    expect(breakdown.repair).toBeDefined();
+    expect(breakdown.englishTarget?.length).toBeGreaterThan(0);
+
+    // The English-only path carries no target.
+    const englishOnly = await coach.converse({
+      ...base,
+      history: [{ role: "user" as const, text: "I'd like to order." }]
+    });
+    expect(englishOnly.englishTarget).toBeUndefined();
   });
 });
 

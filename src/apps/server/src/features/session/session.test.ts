@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CoachKnobs, Transcription } from "@whetstone/contracts";
@@ -16,7 +16,10 @@ import { depositTurnOutcome } from "../learner/learnerCommands.js";
 import { getLearnerProfile } from "../learner/learnerQueries.js";
 import { compileProgressMap } from "../map/mapQueries.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
-import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
+import {
+  getRecallItemByChunkForUser,
+  getRecallItemByTextForUser
+} from "../recall/recallQueries.js";
 import {
   converseTurn,
   endSession,
@@ -267,6 +270,84 @@ describe("converseTurn", () => {
     expect(rows[0]).toMatchObject({ orderIndex: 0, role: "user", text: "Help yourself." });
     expect(rows[1]).toMatchObject({ orderIndex: 1, role: "coach", text: outcome.reply.say });
     expect(rows[1]?.repairJson).toBeNull();
+    // The user turn's English share is recorded (all-English -> 1); coach turns carry none.
+    expect(rows[0]?.englishShare).toBe(1);
+    expect(rows[1]?.englishShare).toBeNull();
+  });
+
+  it("records the user turn's English share so the bilingual trend can be read (#270)", async () => {
+    const caseId = await firstCaseId();
+
+    await converseTurn(makeDeps(), { caseId, transcript: "我想点 some rice" }, userA, t0);
+
+    const userRow = (
+      await db.select().from(sessionExchanges).where(eq(sessionExchanges.role, "user"))
+    )[0];
+    // "some rice" = 8 Latin letters; "我想点" = 3 CJK characters -> 8 / 11.
+    expect(userRow?.englishShare).toBeCloseTo(8 / 11);
+  });
+
+  it("opens the bilingual dial on the first mostly-Chinese turn from a fresh user (#270)", async () => {
+    const caseId = await firstCaseId();
+    const fake = createFakeCoach();
+    let firstKnobs: { l1: string; targetL1Share: number } | undefined;
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...fake,
+        converse: (request) => {
+          firstKnobs ??= { l1: request.knobs.l1, targetL1Share: request.knobs.targetL1Share };
+          return fake.converse(request);
+        }
+      }
+    };
+
+    // A fresh user with no prior exchanges opens with a mostly-Chinese turn. The current turn's mix is
+    // folded into the knobs for THIS same call, so the coach opens the bilingual dial immediately
+    // (l1 zh, positive target L1 share, one English chunk to retry) -- not only on the next round.
+    const first = await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    if (first.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    expect(firstKnobs?.l1).toBe("zh");
+    expect(firstKnobs?.targetL1Share).toBeGreaterThan(0);
+    expect(first.reply.englishTarget?.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the bilingual dial open on a later English turn once the trend shows L1 (#270)", async () => {
+    const caseId = await firstCaseId();
+    const fake = createFakeCoach();
+    let lastKnobs: { l1: string; targetL1Share: number } | undefined;
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...fake,
+        converse: (request) => {
+          lastKnobs = { l1: request.knobs.l1, targetL1Share: request.knobs.targetL1Share };
+          return fake.converse(request);
+        }
+      }
+    };
+
+    // A mostly-Chinese turn persists a low English share...
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+
+    // ...so even a fully-English next turn keeps the dial open: the persisted trend still infers L1 zh
+    // and a positive target L1 share for the user who has been leaning on Chinese.
+    const second = await converseTurn(
+      deps,
+      { caseId, transcript: "I would like to order" },
+      userA,
+      new Date(t0.getTime() + 60_000)
+    );
+    if (second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    expect(lastKnobs?.l1).toBe("zh");
+    expect(lastKnobs?.targetL1Share).toBeGreaterThan(0);
+    expect(second.reply.englishTarget?.length).toBeGreaterThan(0);
   });
 
   it("offers light repair and persists it when the learner breaks down (empty transcript)", async () => {
@@ -373,6 +454,93 @@ describe("endSession", () => {
       .flatMap((domain) => domain.cases)
       .find((mapCase) => mapCase.caseId === cue.caseId);
     expect(afterCase?.mastery.newChunks).toBeLessThan(beforeCase?.mastery.newChunks ?? 0);
+  });
+
+  it("deposits the bilingual coach's pushed English target as recall practice, deduped (#270)", async () => {
+    const deps = makeDeps();
+    const plan = await startSession(deps, userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    // Two mostly-Chinese turns each earn the same pushed English target ("Let's try that in
+    // English." from the fake coach), so the round-end deposit must dedupe to a single recall item.
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    await converseTurn(
+      deps,
+      { caseId, transcript: "再来一个 thanks" },
+      userA,
+      new Date(t0.getTime() + 30_000)
+    );
+
+    const outcome = await endSession(
+      deps,
+      { caseId, words: [] },
+      userA,
+      new Date(t0.getTime() + 60_000)
+    );
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // The pushed target is now durable recall material: an LLM-supplied phrase with no chunk FK,
+    // surfaced as due practice in the debrief.
+    const item = await getRecallItemByTextForUser(db, userA, "Let's try that in English.");
+    expect(item?.kind).toBe("phrase");
+    expect(item?.chunkId).toBeNull();
+    expect(outcome.debrief.due.some((entry) => entry.text === "Let's try that in English.")).toBe(
+      true
+    );
+    // Deduped within the round despite two pushes.
+    const phrases = await db
+      .select()
+      .from(recallItems)
+      .where(
+        and(eq(recallItems.userId, userA), eq(recallItems.text, "Let's try that in English."))
+      );
+    expect(phrases).toHaveLength(1);
+  });
+
+  it("does not re-deposit a pushed English target already enrolled from an earlier round (#270)", async () => {
+    const deps = makeDeps();
+    const plan = await startSession(deps, userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    await endSession(deps, { caseId, words: [] }, userA, new Date(t0.getTime() + 60_000));
+
+    // A later round pushes the same target again...
+    await converseTurn(
+      deps,
+      { caseId, transcript: "我想点菜 again please" },
+      userA,
+      new Date(t0.getTime() + 120_000)
+    );
+    const second = await endSession(
+      deps,
+      { caseId, words: [] },
+      userA,
+      new Date(t0.getTime() + 180_000)
+    );
+    if (second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // ...so the existing recall item is reused, not duplicated, and the debrief does not re-surface it.
+    const phrases = await db
+      .select()
+      .from(recallItems)
+      .where(
+        and(eq(recallItems.userId, userA), eq(recallItems.text, "Let's try that in English."))
+      );
+    expect(phrases).toHaveLength(1);
+    expect(second.debrief.due.some((entry) => entry.text === "Let's try that in English.")).toBe(
+      false
+    );
   });
 
   it("returns case_not_found for an unknown case", async () => {

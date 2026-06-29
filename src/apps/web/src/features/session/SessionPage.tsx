@@ -21,6 +21,12 @@ type Phase = "idle" | "listening" | "thinking" | "speaking";
 
 type Caption = Readonly<{ id: number; role: "user" | "coach"; text: string }>;
 
+// The coach's "one English chunk to retry" (#270 bilingual dial). Phrased as a gentle nudge so the
+// learner both sees it as its own caption and hears it appended to the spoken reply.
+function retryPrompt(englishTarget: string): string {
+  return `Now try it in English: ${englishTarget}`;
+}
+
 type Status =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "error" }>
@@ -102,12 +108,19 @@ export function SessionPage({
     if (reply.repair !== undefined) {
       appendCaption("coach", reply.repair.recast);
     }
+    if (reply.englishTarget !== undefined) {
+      appendCaption("coach", retryPrompt(reply.englishTarget));
+    }
 
     const session = liveRef.current;
     if (session !== null) {
       setPhase("speaking");
       session.capture.setCoachPlaying(true);
-      await session.voice.speak(reply.say);
+      const spoken =
+        reply.englishTarget !== undefined
+          ? `${reply.say} ${retryPrompt(reply.englishTarget)}`
+          : reply.say;
+      await session.voice.speak(spoken);
       session.capture.setCoachPlaying(false);
     }
 

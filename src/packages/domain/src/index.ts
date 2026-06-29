@@ -18,6 +18,8 @@ export type {
   CoachRegister,
   LearnerSnapshot
 } from "./coachKnobs.js";
+export { englishShare, l1Languages, MAX_L1_SHARE, targetL1Share } from "./languageMix.js";
+export type { L1Language } from "./languageMix.js";
 export {
   createEndpointer,
   forceEndUtterance,

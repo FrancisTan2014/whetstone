@@ -76,6 +76,15 @@ describe("parseCompiledLearnerContextDto", () => {
     expect(parseCompiledLearnerContextDto(context)).toEqual(context);
   });
 
+  it("round-trips the bilingual dial signals when present (#270)", () => {
+    const bilingual = { ...context, englishShareTrend: 0.4, l1: "zh" };
+    expect(parseCompiledLearnerContextDto(bilingual)).toEqual(bilingual);
+  });
+
+  it("rejects an out-of-range English-share trend (#270)", () => {
+    expect(() => parseCompiledLearnerContextDto({ ...context, englishShareTrend: 1.2 })).toThrow();
+  });
+
   it("rejects an error pattern with a non-positive count", () => {
     expect(() =>
       parseCompiledLearnerContextDto({

@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   compiledLearnerContextDtoSchema,
   errorCategorySchema,
+  l1LanguageSchema,
   proficiencyLevelSchema
 } from "./learnerContracts.js";
 import { transcribedWordSchema } from "./speechContracts.js";
@@ -108,11 +109,13 @@ export const coachKnobsSchema = z
   .object({
     challenge: z.enum(["low", "medium", "high"]),
     focus: z.string(),
+    l1: l1LanguageSchema,
     pace: z.enum(["slow", "steady", "brisk"]),
     probeErrorPatterns: z.array(errorCategorySchema),
     register: z.enum(["casual", "neutral", "formal"]),
     support: z.enum(["low", "medium", "high"]),
-    targetBand: proficiencyLevelSchema
+    targetBand: proficiencyLevelSchema,
+    targetL1Share: z.number().min(0).max(1)
   })
   .strict();
 
@@ -149,9 +152,14 @@ export const coachRepairSchema = z
 export type CoachRepair = z.infer<typeof coachRepairSchema>;
 
 // The coach's reply for one turn: the next spoken line (always present), plus `repair` only on a real
-// breakdown.
+// breakdown. In the bilingual mix (#270) `say` may carry the learner's L1, and `englishTarget` is the
+// one English chunk the coach pushes the learner to retry (pushed output) — absent in English-only mode.
 export const coachConverseResultSchema = z
   .object({
+    englishTarget: z
+      .string()
+      .refine(isNonBlank, { message: "englishTarget must be non-empty." })
+      .optional(),
     repair: coachRepairSchema.optional(),
     say: z.string().refine(isNonBlank, { message: "say must be non-empty." })
   })

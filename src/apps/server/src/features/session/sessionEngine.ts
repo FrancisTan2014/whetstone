@@ -12,6 +12,7 @@ import type {
 } from "@whetstone/contracts";
 import {
   deriveCoachKnobs,
+  englishShare,
   mistakeCategoryFromIssues,
   scheduleReview,
   type LearnerSnapshot,
@@ -26,7 +27,10 @@ import { depositTurnOutcome, updateLearnerProfile } from "../learner/learnerComm
 import { compileContext } from "../learner/learnerQueries.js";
 import { harvestReadingCase } from "./harvestCommands.js";
 import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
-import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
+import {
+  getRecallItemByChunkForUser,
+  getRecallItemByTextForUser
+} from "../recall/recallQueries.js";
 import type { SpeechInput } from "../../speech/speechInput.js";
 
 // How many cues a session proposes, and the soft per-cue timer (mild time pressure).
@@ -35,11 +39,30 @@ const CUE_TIMER_SECONDS = 20;
 
 // Distil the compiled learner context (#208) into the snapshot the pure knobs function reads, then
 // derive the adaptive coach knobs (#223). Deterministic; the briefing for the fixed coach skill.
-function knobsFromContext(context: CompiledLearnerContextDto): CoachKnobs {
+//
+// `currentTurnShare` is the English-share of the user turn being answered *right now* (#270). It is
+// folded in so the bilingual dial opens on the same turn that needs it — a fresh near-beginner whose
+// first turn is mostly Chinese gets a bilingual reply immediately, not only on the next call once the
+// turn has been persisted into the trend.
+function knobsFromContext(
+  context: CompiledLearnerContextDto,
+  currentTurnShare?: number
+): CoachKnobs {
+  const trend = context.englishShareTrend;
+  const englishShare =
+    currentTurnShare === undefined
+      ? (trend ?? 1)
+      : trend === undefined
+        ? currentTurnShare
+        : (trend + currentTurnShare) / 2;
+  const inferredL1 =
+    currentTurnShare !== undefined && currentTurnShare < 1 ? "zh" : (context.l1 ?? "none");
   const snapshot: LearnerSnapshot = {
     band: context.profile?.level ?? "beginner",
     dueChunkCount: context.rankedChunks.length,
+    englishShare,
     focus: context.profile?.focus ?? "",
+    l1: inferredL1,
     recentGrades: context.recentOutcomes.map((outcome) => outcome.grade),
     topErrorPatterns: context.relevantErrors.map((pattern) => pattern.category)
   };
@@ -213,7 +236,11 @@ export async function converseTurn(
     .orderBy(asc(sessionExchanges.orderIndex));
 
   const history = [...prior, { role: "user" as const, text: request.transcript }];
-  const knobs = knobsFromContext(await compileContext(dependencies.db, userId, now));
+  const currentTurnShare = englishShare(request.transcript);
+  const knobs = knobsFromContext(
+    await compileContext(dependencies.db, userId, now),
+    currentTurnShare
+  );
   const reply = await dependencies.coach.converse({
     communicativeFunction: caseRow.communicativeFunction,
     context: { focus: caseRow.situation, recentTargets: [] },
@@ -226,6 +253,7 @@ export async function converseTurn(
     {
       caseId: request.caseId,
       createdAt: now,
+      englishShare: currentTurnShare,
       id: dependencies.createId(),
       orderIndex: prior.length,
       repairJson: null,
@@ -236,6 +264,7 @@ export async function converseTurn(
     {
       caseId: request.caseId,
       createdAt: now,
+      englishTarget: reply.englishTarget ?? null,
       id: dependencies.createId(),
       orderIndex: prior.length + 1,
       repairJson: reply.repair ?? null,
@@ -336,6 +365,35 @@ export async function endSession(
     const dueAt = scheduleReview(item.review, grade, now).dueAt;
     await recordRecallReview(learnerDeps, item.id, grade, userId, now);
     due.push({ dueAt, text });
+  }
+
+  // Deposit 1b: the bilingual coach's pushed English targets (#270). A mostly-L1 turn earns one
+  // English chunk to retry; deposit it as recall practice so it is scheduled, not just shown/spoken.
+  // It has no case-chunk FK (the coach generated it), so enroll it as an LLM-supplied phrase, deduped
+  // by text within the round and across rounds so repeated pushes keep one item.
+  const pushedTargets = await dependencies.db
+    .select({ englishTarget: sessionExchanges.englishTarget })
+    .from(sessionExchanges)
+    .where(and(eq(sessionExchanges.userId, userId), eq(sessionExchanges.caseId, request.caseId)))
+    .orderBy(asc(sessionExchanges.orderIndex));
+  const seenTargets = new Set<string>();
+  for (const row of pushedTargets) {
+    const target = row.englishTarget;
+    if (target === null || seenTargets.has(target)) {
+      continue;
+    }
+    seenTargets.add(target);
+    const existing = await getRecallItemByTextForUser(dependencies.db, userId, target);
+    if (existing !== undefined) {
+      continue;
+    }
+    const item = await enrollRecallItem(
+      learnerDeps,
+      { chunkId: null, kind: "phrase", text: target },
+      userId,
+      now
+    );
+    due.push({ dueAt: item.review.dueAt, text: target });
   }
 
   // Deposit 2: each tagged mistake increments its error-pattern count and logs an outcome.

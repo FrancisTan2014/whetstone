@@ -5,6 +5,7 @@
 // knobs and the whole derivation is unit-testable.
 
 import type { ErrorCategory, ProficiencyLevel } from "./learnerModel.js";
+import { type L1Language, targetL1Share } from "./languageMix.js";
 
 // The challenge / support intensity scale, and the pace and register the coach is briefed to adopt.
 export const coachIntensities = ["low", "medium", "high"] as const;
@@ -25,6 +26,10 @@ export type LearnerSnapshot = Readonly<{
   dueChunkCount: number;
   recentGrades: ReadonlyArray<number>;
   focus: string;
+  // The learner's L1 and their recent English share (#270): the bilingual dial's inputs. An
+  // English-only learner is `l1: "none"`, `englishShare: 1`.
+  l1: L1Language;
+  englishShare: number;
 }>;
 
 export type CoachKnobs = Readonly<{
@@ -39,6 +44,10 @@ export type CoachKnobs = Readonly<{
   // The topic to steer toward (the model's top gap).
   focus: string;
   pace: CoachPace;
+  // The bilingual dial (#270): the learner's L1 and how much L1 the coach may use this round (0 for
+  // an English-only learner). The coach replies in that mix but always recasts one English target.
+  l1: L1Language;
+  targetL1Share: number;
 }>;
 
 // At most this many error patterns are probed in one round, to keep repair light and focused.
@@ -119,10 +128,12 @@ export function deriveCoachKnobs(snapshot: LearnerSnapshot): CoachKnobs {
   return {
     challenge,
     focus: snapshot.focus,
+    l1: snapshot.l1,
     pace: bandPace[targetBand],
     probeErrorPatterns: snapshot.topErrorPatterns.slice(0, MAX_PROBE_PATTERNS),
     register: bandRegister[targetBand],
     support: invertIntensity[challenge],
-    targetBand
+    targetBand,
+    targetL1Share: targetL1Share(snapshot.l1, snapshot.englishShare)
   };
 }

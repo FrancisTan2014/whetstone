@@ -150,6 +150,29 @@ describe("SessionPage", () => {
     expect(await screen.findByText("Try a short sentence.")).toBeDefined();
   });
 
+  it("surfaces the bilingual English target to the learner and speaks it (#270)", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedTranscribe.mockResolvedValue({
+      transcript: "我想点菜 please",
+      words: [{ end: 400, start: 0, text: "please" }]
+    });
+    mockedSay.mockResolvedValue({ englishTarget: "I'd like to order", say: "好的，没问题。" });
+    const { callbacks, live, voice } = fakeLive();
+    const user = userEvent.setup();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Start call" }));
+
+    callbacks.onUtterance?.(new Blob(["x"]));
+
+    // The learner both sees the retry chunk as its own caption and hears it appended to the reply.
+    expect(await screen.findByText("Now try it in English: I'd like to order")).toBeDefined();
+    expect(voice.speak).toHaveBeenCalledWith(
+      "好的，没问题。 Now try it in English: I'd like to order"
+    );
+  });
+
   it("shows an error when the typed turn fails", async () => {
     mockedStart.mockResolvedValue(oneCue);
     mockedSay.mockRejectedValue(new Error("boom"));
