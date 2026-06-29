@@ -49,12 +49,15 @@ export type LookupPanelProps = Readonly<{
 function renderSense(sense: DictionarySense, index: number): React.JSX.Element {
   return (
     <li className="lookupSense" key={index}>
-      <span className="lookupGloss">{sense.definition}</span>
-      {sense.examples.map((example, exampleIndex) => (
-        <span className="lookupExample" key={exampleIndex}>
-          “{example}”
-        </span>
-      ))}
+      <span className="lookupSenseOrdinal">{index + 1}.</span>
+      <div className="lookupSenseBody">
+        <span className="lookupGloss">{sense.definition}</span>
+        {sense.examples.map((example, exampleIndex) => (
+          <span className="lookupExample" key={exampleIndex}>
+            “{example}”
+          </span>
+        ))}
+      </div>
     </li>
   );
 }
