@@ -2,14 +2,16 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import { hashBytes, resolveWithinDirectory } from "./sourceFileStore.js";
 
-// The raster image types the reader may store and serve. SVG is intentionally excluded (it can
-// carry script) and every other type is rejected — this allowlist is the security boundary for
-// image bytes that originate from untrusted EPUB content.
+// The image types the reader may store and serve. Raster types are stored as-is; SVG is allowed only
+// because every SVG is sanitized at ingest (scripts/handlers/external refs stripped) before it enters
+// the store. This allowlist is the security boundary for image bytes that originate from untrusted
+// EPUB content; any other type is rejected.
 export const imageContentTypeAllowlist = [
   "image/png",
   "image/jpeg",
   "image/gif",
-  "image/webp"
+  "image/webp",
+  "image/svg+xml"
 ] as const;
 
 export type ImageContentType = (typeof imageContentTypeAllowlist)[number];
@@ -60,9 +62,9 @@ async function readOptional(path: string): Promise<Uint8Array | undefined> {
 }
 
 // Filesystem-backed image store. Bytes live at `{dir}/{sha256}` and the recorded content type at
-// the sidecar `{dir}/{sha256}.type`. Disallowed content types are refused at write time, so SVG
-// and other non-raster bytes never enter the store. Reads return undefined for any missing or
-// unreadable resource so the serving endpoint maps them to 404.
+// the sidecar `{dir}/{sha256}.type`. Disallowed content types are refused at write time; SVG is
+// allowed but must be sanitized by the caller (figureImageResolver) before reaching the store. Reads
+// return undefined for any missing or unreadable resource so the serving endpoint maps them to 404.
 export function createImageResourceStore(directory: string): ImageResourceStore {
   function bytesPath(id: string): string {
     return resolveWithinDirectory(directory, id);

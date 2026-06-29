@@ -1,5 +1,6 @@
 import {
   decomposeHtmlChapter,
+  sanitizeSvg,
   type DecomposedBlock,
   type DecomposedFigureImage
 } from "@whetstone/domain";
@@ -15,8 +16,9 @@ type ImageStore = Pick<ImageResourceStore, "store">;
 
 // Store a figure's image and return its content-addressed id, or `null` when the figure
 // has no resolvable, storable image: the block carries no image, the parser surfaced no
-// bytes for its transient src, or the manifest media type is not an allowed raster type
-// (e.g. SVG). Identical bytes resolve to the same id and are stored once.
+// bytes for its transient src, or the manifest media type is not in the allowlist. SVG is
+// allowed but sanitized first (scripts/handlers/external refs stripped) so the stored bytes
+// are safe to serve. Identical bytes resolve to the same id and are stored once.
 async function storeFigureImage(
   image: DecomposedFigureImage | undefined,
   imageBySrc: ReadonlyMap<string, ParsedEpubImage>,
@@ -32,7 +34,12 @@ async function storeFigureImage(
     return null;
   }
 
-  const stored = await store.store({ bytes: resource.bytes, contentType: resource.contentType });
+  const bytes =
+    resource.contentType === "image/svg+xml"
+      ? new TextEncoder().encode(sanitizeSvg(new TextDecoder().decode(resource.bytes)))
+      : resource.bytes;
+
+  const stored = await store.store({ bytes, contentType: resource.contentType });
 
   return stored.id;
 }

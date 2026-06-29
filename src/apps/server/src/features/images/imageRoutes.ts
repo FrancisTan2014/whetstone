@@ -15,10 +15,10 @@ export type ImageDependencies = Readonly<{
 // Read-only image serving. The id is a content hash, validated before the store touches the
 // filesystem, so there is no path traversal and no remote fetch — only a previously stored
 // resource can be served. The recorded content type is re-checked against the allowlist at the
-// boundary, so SVG (or any non-raster type) is refused even if it somehow reached the store. An
-// invalid id, an unknown id, and a non-allowlisted type all return 404 so the endpoint never
-// reveals or serves anything outside the boundary. Content-addressed bytes are immutable, so the
-// response is safely cacheable forever.
+// boundary, so any non-image type is refused even if it somehow reached the store; allowed SVG was
+// sanitized at ingest. An invalid id, an unknown id, and a non-allowlisted type all return 404 so
+// the endpoint never reveals or serves anything outside the boundary. Content-addressed bytes are
+// immutable, so the response is safely cacheable forever.
 export function registerImageRoutes(
   server: FastifyInstance,
   dependencies: ImageDependencies

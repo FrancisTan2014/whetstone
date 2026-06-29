@@ -28,10 +28,26 @@ describe("GET /api/images/:id", () => {
     }
   });
 
-  it("returns 404 for a non-allowlisted content type such as SVG", async () => {
+  it("serves an allowlisted SVG with its content type", async () => {
     const read = vi
       .fn()
       .mockResolvedValue({ bytes: new Uint8Array([1]), contentType: "image/svg+xml" });
+    const server = buildServer(read);
+
+    try {
+      const response = await server.inject({ method: "GET", url: `/api/images/${validId}` });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toBe("image/svg+xml");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns 404 for a non-allowlisted content type such as HTML", async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValue({ bytes: new Uint8Array([1]), contentType: "text/html" });
     const server = buildServer(read);
 
     try {

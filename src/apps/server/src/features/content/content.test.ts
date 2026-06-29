@@ -794,8 +794,11 @@ describe("EPUB ingestion routes", () => {
     );
   }
 
-  function svgBytes(): Uint8Array {
-    return new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  function maliciousSvgBytes(): Uint8Array {
+    return new TextEncoder().encode(
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script>' +
+        '<image href="https://evil.test/x.png"/><rect width="10" height="10"/></svg>'
+    );
   }
 
   function figureChapter(html: string, images: ReadonlyArray<ParsedEpubImage>): ParsedEpub {
@@ -851,11 +854,11 @@ describe("EPUB ingestion routes", () => {
     expect(figure?.imageResourceId).toBe(hashBytes(png));
   });
 
-  it("degrades an unsupported (SVG) figure image to a caption-only block", async () => {
+  it("ingests a sanitized SVG figure with stored diagram, alt, and caption", async () => {
     epubResponder = async () =>
       figureChapter(
         '<figure><img src="img/d.svg" alt="diagram"/><figcaption>A diagram.</figcaption></figure>',
-        [{ bytes: svgBytes(), contentType: "image/svg+xml", src: "img/d.svg" }]
+        [{ bytes: maliciousSvgBytes(), contentType: "image/svg+xml", src: "img/d.svg" }]
       );
 
     const body = await figureBlocksOf("epub-figure-svg");
@@ -864,17 +867,18 @@ describe("EPUB ingestion routes", () => {
     );
 
     expect(figure?.plaintext).toBe("A diagram.");
-    expect(figure?.imageResourceId).toBeUndefined();
-    expect(figure?.alt).toBeUndefined();
-    // Nothing was stored for the disallowed type.
-    expect(await readdir(context.imagesDir)).toEqual([]);
+    expect(figure?.alt).toBe("diagram");
+    expect(figure?.imageResourceId).toBeDefined();
+    // The diagram is stored, and the stored SVG is sanitized: no script, event handler, or external ref.
+    const stored = new TextDecoder().decode(
+      await readFile(join(context.imagesDir, figure?.imageResourceId ?? ""))
+    );
+    expect(stored).toContain("<rect");
+    expect(stored).not.toMatch(/script|onload|evil\.test/iu);
   });
 
   it("skips a figure with neither a storable image nor a caption", async () => {
-    epubResponder = async () =>
-      figureChapter('<img src="img/d.svg"/>', [
-        { bytes: svgBytes(), contentType: "image/svg+xml", src: "img/d.svg" }
-      ]);
+    epubResponder = async () => figureChapter('<img src="img/missing.svg"/>', []);
 
     const body = await figureBlocksOf("epub-figure-empty");
 

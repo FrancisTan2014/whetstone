@@ -26,12 +26,12 @@ const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 const pngId = createHash("sha256").update(png).digest("hex");
 
 describe("isAllowedImageContentType", () => {
-  it("accepts the raster image allowlist and rejects SVG and anything else", () => {
+  it("accepts the full image allowlist (incl. sanitized SVG) and rejects anything else", () => {
     for (const contentType of imageContentTypeAllowlist) {
       expect(isAllowedImageContentType(contentType)).toBe(true);
     }
 
-    expect(isAllowedImageContentType("image/svg+xml")).toBe(false);
+    expect(isAllowedImageContentType("image/svg+xml")).toBe(true);
     expect(isAllowedImageContentType("text/html")).toBe(false);
   });
 });
@@ -62,10 +62,10 @@ describe("createImageResourceStore", () => {
     expect(resource?.bytes).toEqual(png);
   });
 
-  it("rejects a disallowed content type (including SVG) at write time", async () => {
+  it("rejects a disallowed content type at write time", async () => {
     const store = createImageResourceStore(directory);
 
-    await expect(store.store({ bytes: png, contentType: "image/svg+xml" })).rejects.toThrow(
+    await expect(store.store({ bytes: png, contentType: "text/html" })).rejects.toThrow(
       /Unsupported image content type/
     );
     expect(await readdir(directory)).toEqual([]);
