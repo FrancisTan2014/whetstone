@@ -119,8 +119,7 @@ function toBlockDto(block: BlockRow): BlockDto {
   const withImage =
     block.imageResourceId === null ? base : { ...base, imageResourceId: block.imageResourceId };
   const withAlt = block.alt === null ? withImage : { ...withImage, alt: block.alt };
-  const withAnchor =
-    block.anchorId === null ? withAlt : { ...withAlt, anchorId: block.anchorId };
+  const withAnchor = block.anchorId === null ? withAlt : { ...withAlt, anchorId: block.anchorId };
 
   return block.backlinkAnchorId === null
     ? withAnchor

@@ -260,9 +260,21 @@ describe("decomposeHtmlChapter", () => {
     expect(noterefDataFlag(block?.mdast)).toEqual({ hProperties: { dataNoteref: "true" } });
   });
 
+  it("detects a class-token noteref and ignores non-string marker attributes (#250)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p>Body<a class="noteref" href="#n3" id="r3">3</a>.</p>' +
+        '<aside id="n3"><p>Endnote three.</p></aside>'
+    );
+
+    expect(unit.blocks.find((block) => block.plaintext.startsWith("Body"))?.anchorId).toBe("r3");
+    expect(
+      unit.blocks.find((block) => block.plaintext.startsWith("Endnote three"))?.backlinkAnchorId
+    ).toBe("r3");
+  });
+
   it("leaves an ordinary in-page link and footnoteless chapter untouched (#250)", () => {
     const unit = decomposeHtmlChapter(
-      '<p>See <a href="#fig5">Figure 5</a> for detail.</p><p>Plain text.</p>'
+      '<p>See <a href="#fig5" id="plain" tabindex="0">Figure 5</a> for detail.</p><p>Plain text.</p>'
     );
 
     expect(unit.blocks.every((block) => block.backlinkAnchorId === undefined)).toBe(true);

@@ -175,7 +175,11 @@ function valueIncludesNoteref(value: unknown): boolean {
     return value.includes("noteref");
   }
 
-  return Array.isArray(value) && value.some((item) => valueIncludesNoteref(item));
+  if (Array.isArray(value)) {
+    return value.join(" ").includes("noteref");
+  }
+
+  return false;
 }
 
 // An `<a href="#…">` is a footnote marker when it sits inside a `<sup>` (the print-faithful
@@ -207,11 +211,7 @@ function collectNoterefs(node: HastNode, insideSup: boolean, found: NoterefMarke
     const targetId = href?.startsWith("#") ? href.slice(1) : undefined;
     const childInsideSup = insideSup || child.tagName === "sup";
 
-    if (
-      targetId !== undefined &&
-      targetId.length > 0 &&
-      isNoterefAnchor(child, childInsideSup)
-    ) {
+    if (targetId !== undefined && targetId.length > 0 && isNoterefAnchor(child, childInsideSup)) {
       const markerId = stringProperty(child.properties.id) ?? `${targetId}-ref`;
       found.push({ markerId, targetId });
     }

@@ -19,6 +19,8 @@ const sanitizeSchema: Schema = {
   // footnote marker as a superscript control; the value is a fixed flag, never user markup.
   attributes: {
     ...defaultSchema.attributes,
+    // defaultSchema always defines `a` attributes; the `?? []` is a defensive fallback only.
+    /* v8 ignore next */
     a: [...(defaultSchema.attributes?.a ?? []), "dataNoteref"]
   },
   tagNames: (defaultSchema.tagNames as string[]).filter((tagName) => tagName !== "img")
