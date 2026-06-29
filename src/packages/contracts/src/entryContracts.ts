@@ -49,12 +49,22 @@ export const entryLinkDtoSchema = z
   .strict()
   .transform((link) => createEntryLink(link));
 
+// A single-block anchor (the end block omitted or equal to the start) keeps the same-block
+// invariants; a cross-block span (#257) relaxes them and instead requires an offset on each end.
+function anchorIsSameBlock(anchor: {
+  blockEntryId: EntryId;
+  endBlockEntryId?: EntryId | undefined;
+}): boolean {
+  return anchor.endBlockEntryId === undefined || anchor.endBlockEntryId === anchor.blockEntryId;
+}
+
 export const noteAnchorDtoSchema = z
   .object({
     blockEntryId: entryIdDtoSchema,
     contextSnapshot: z
       .string()
       .refine(isNonBlank, { message: "contextSnapshot must be non-empty." }),
+    endBlockEntryId: entryIdDtoSchema.optional(),
     endOffset: z.number().int().nonnegative().optional(),
     selectedTextSnapshot: z
       .string()
@@ -62,12 +72,27 @@ export const noteAnchorDtoSchema = z
     startOffset: z.number().int().nonnegative().optional()
   })
   .strict()
-  .refine((anchor) => (anchor.startOffset === undefined) === (anchor.endOffset === undefined), {
-    message: "startOffset and endOffset must be provided together.",
-    path: ["startOffset"]
-  })
   .refine(
     (anchor) =>
+      !anchorIsSameBlock(anchor) ||
+      (anchor.startOffset === undefined) === (anchor.endOffset === undefined),
+    {
+      message: "startOffset and endOffset must be provided together.",
+      path: ["startOffset"]
+    }
+  )
+  .refine(
+    (anchor) =>
+      anchorIsSameBlock(anchor) ||
+      (anchor.startOffset !== undefined && anchor.endOffset !== undefined),
+    {
+      message: "a cross-block span must provide startOffset and endOffset.",
+      path: ["endOffset"]
+    }
+  )
+  .refine(
+    (anchor) =>
+      !anchorIsSameBlock(anchor) ||
       anchor.startOffset === undefined ||
       anchor.endOffset === undefined ||
       anchor.endOffset > anchor.startOffset,
@@ -76,10 +101,14 @@ export const noteAnchorDtoSchema = z
       path: ["endOffset"]
     }
   )
-  .refine((anchor) => anchor.contextSnapshot.includes(anchor.selectedTextSnapshot), {
-    message: "contextSnapshot must contain selectedTextSnapshot.",
-    path: ["contextSnapshot"]
-  })
+  .refine(
+    (anchor) =>
+      !anchorIsSameBlock(anchor) || anchor.contextSnapshot.includes(anchor.selectedTextSnapshot),
+    {
+      message: "contextSnapshot must contain selectedTextSnapshot.",
+      path: ["contextSnapshot"]
+    }
+  )
   .transform((anchor) => createNoteAnchor(anchor));
 
 export const entryDtoSchema = z

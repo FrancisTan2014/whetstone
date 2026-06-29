@@ -66,6 +66,7 @@ const existingNote: NoteDto = {
   anchor: {
     blockEntryId: toEntryId("block-1"),
     contextSnapshot: "The quick brown fox.",
+    endBlockEntryId: toEntryId("block-1"),
     endOffset: 19,
     selectedTextSnapshot: "fox",
     startOffset: 16
@@ -140,6 +141,7 @@ describe("NoteEditor create mode", () => {
         anchor: {
           blockEntryId: "block-1",
           contextSnapshot: "The quick brown fox.",
+          endBlockEntryId: "block-1",
           endOffset: 19,
           selectedTextSnapshot: "fox",
           startOffset: 16
@@ -163,6 +165,7 @@ describe("NoteEditor create mode", () => {
         anchor: {
           blockEntryId: "block-1",
           contextSnapshot: "The quick brown fox.",
+          endBlockEntryId: "block-1",
           selectedTextSnapshot: "The quick brown fox."
         },
         templateId: "thought"

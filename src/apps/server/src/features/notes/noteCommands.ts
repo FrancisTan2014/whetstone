@@ -16,7 +16,12 @@ import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, entryLinks, noteAnchors, noteTemplates, notes } from "../../db/schema.js";
-import { findBlockInWork, getNoteForWork, getNoteTemplateById } from "./noteQueries.js";
+import {
+  findBlockInWork,
+  getNoteForWork,
+  getNoteTemplateById,
+  type BlockInWork
+} from "./noteQueries.js";
 
 // Real infrastructure boundaries (database client and id generation) are passed in so
 // commands stay deterministic and testable.
@@ -80,14 +85,10 @@ export async function createNote(
     return { reason: validation.status, status: "invalid_answers" };
   }
 
-  const block = await findBlockInWork(dependencies.db, workEntryId, request.anchor.blockEntryId);
+  const blockCheck = await validateAnchorBlocks(dependencies.db, workEntryId, request.anchor);
 
-  if (block === undefined) {
-    return { status: "block_not_found" };
-  }
-
-  if (!anchorFitsBlock(request.anchor, block.plaintext)) {
-    return { status: "anchor_out_of_range" };
+  if (blockCheck !== "ok") {
+    return { status: blockCheck };
   }
 
   const noteEntryId = toEntryId(dependencies.createEntryId());
@@ -142,6 +143,7 @@ async function persistNoteWithAnchor(
     await tx.insert(noteAnchors).values({
       blockEntryId: params.anchor.blockEntryId,
       contextSnapshot: params.anchor.contextSnapshot,
+      endBlockEntryId: params.anchor.endBlockEntryId,
       endOffset: params.anchor.endOffset ?? null,
       noteEntryId: params.noteEntryId,
       selectedText: params.anchor.selectedTextSnapshot,
@@ -164,14 +166,10 @@ export async function createMark(
   request: CreateMarkRequest,
   userId: string
 ): Promise<CreateMarkResult> {
-  const block = await findBlockInWork(dependencies.db, workEntryId, request.anchor.blockEntryId);
+  const blockCheck = await validateAnchorBlocks(dependencies.db, workEntryId, request.anchor);
 
-  if (block === undefined) {
-    return { status: "block_not_found" };
-  }
-
-  if (!anchorFitsBlock(request.anchor, block.plaintext)) {
-    return { status: "anchor_out_of_range" };
+  if (blockCheck !== "ok") {
+    return { status: blockCheck };
   }
 
   const noteEntryId = toEntryId(dependencies.createEntryId());
@@ -291,4 +289,62 @@ function anchorFitsBlock(anchor: NoteAnchor, plaintext: string): boolean {
     endOffset <= plaintext.length &&
     plaintext.slice(startOffset, endOffset) === anchor.selectedTextSnapshot
   );
+}
+
+// A cross-block span (#257) anchors a start offset in the start block and an end offset in the end
+// block; each offset must fall within its own block's plaintext. The single-block context/slice
+// checks do not apply because the selected text spans blocks.
+function spanFitsBlocks(anchor: NoteAnchor, startText: string, endText: string): boolean {
+  const { endOffset, startOffset } = anchor;
+
+  return (
+    startOffset !== undefined &&
+    endOffset !== undefined &&
+    startOffset <= startText.length &&
+    endOffset <= endText.length
+  );
+}
+
+// Confirm a note's anchor blocks belong to the work and its offsets fit: a single-block anchor uses
+// the strict context/slice check; a cross-block span additionally requires the end block to exist in
+// the work and each offset to fall within its block. Shared by note and mark creation.
+async function validateAnchorBlocks(
+  db: DbClient,
+  workEntryId: EntryId,
+  anchor: NoteAnchor
+): Promise<"anchor_out_of_range" | "block_not_found" | "ok"> {
+  const startBlock = await findBlockInWork(db, workEntryId, anchor.blockEntryId);
+
+  if (startBlock === undefined) {
+    return "block_not_found";
+  }
+
+  if (anchor.endBlockEntryId === anchor.blockEntryId) {
+    return anchorFitsBlock(anchor, startBlock.plaintext) ? "ok" : "anchor_out_of_range";
+  }
+
+  const endBlock = await findBlockInWork(db, workEntryId, anchor.endBlockEntryId);
+
+  if (endBlock === undefined) {
+    return "block_not_found";
+  }
+
+  if (!spanFitsBlocks(anchor, startBlock.plaintext, endBlock.plaintext)) {
+    return "anchor_out_of_range";
+  }
+
+  // A cross-block span must stay within one reading unit and run forward: the end block in the same
+  // unit at an equal-or-later position. A reversed or cross-unit span would render no highlight, so
+  // reject it rather than persist a dead anchor (#257).
+  if (!spanRunsForwardInOneUnit(startBlock, endBlock)) {
+    return "anchor_out_of_range";
+  }
+
+  return "ok";
+}
+
+// Whether a span's end block follows its start block within the same reading unit (an equal-or-later
+// block index), which is the only shape the reader lays out and highlights.
+function spanRunsForwardInOneUnit(start: BlockInWork, end: BlockInWork): boolean {
+  return start.unitOrderIndex === end.unitOrderIndex && start.orderIndex <= end.orderIndex;
 }

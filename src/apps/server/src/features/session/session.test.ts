@@ -80,6 +80,7 @@ async function seedCapture(
   await db.insert(noteAnchors).values({
     blockEntryId: blockId,
     contextSnapshot: "from the book",
+    endBlockEntryId: blockId,
     noteEntryId: noteId,
     selectedText
   });

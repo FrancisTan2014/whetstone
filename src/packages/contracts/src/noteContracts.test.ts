@@ -37,7 +37,10 @@ describe("createNoteRequestSchema", () => {
 
     expect(parsed.templateId).toBe("vocabulary");
     expect(parsed.answers).toEqual({ meaning: "to surrender" });
-    expect(parsed.anchor).toEqual(validRequest.anchor);
+    expect(parsed.anchor).toEqual({
+      ...validRequest.anchor,
+      endBlockEntryId: validRequest.anchor.blockEntryId
+    });
   });
 
   it("accepts a whole-block anchor without an offset range", () => {
@@ -64,7 +67,10 @@ describe("createMarkRequestSchema", () => {
   it("parses a mark request carrying only the anchor", () => {
     const parsed = parseCreateMarkRequest({ anchor: validRequest.anchor });
 
-    expect(parsed.anchor).toEqual(validRequest.anchor);
+    expect(parsed.anchor).toEqual({
+      ...validRequest.anchor,
+      endBlockEntryId: validRequest.anchor.blockEntryId
+    });
   });
 
   it("rejects a mark request with a template, answers, or unexpected keys", () => {

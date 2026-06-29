@@ -12,7 +12,7 @@ import { NoteList } from "../notes/NoteList";
 import { captureBlockSelection, draftToAnchor, type NoteDraft } from "../notes/noteCapture";
 import { createMark, deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
-import { blockGutterHueClass, noteMarkHueClass } from "./annotationHue.tokens";
+import { blockGutterHueClass } from "./annotationHue.tokens";
 import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
@@ -21,12 +21,13 @@ import {
   eventTargetClosest,
   isCrossBlockSelection,
   readBlockSelection,
+  readCrossBlockDraft,
   releasedBlockElement
 } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { BlockContent } from "./mdastBlock";
 import type { NoteMark } from "./noteMarks";
-import { selectionOverlapsNote } from "./noteOverlap";
+import { draftOverlapsNotes, indexBlocks, spanMarksForBlock } from "./readerMarks";
 import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
 import {
   buildReaderStructure,
@@ -291,7 +292,8 @@ type ReaderHandlers = Readonly<{
     blockElement: HTMLElement,
     block: ReaderBlock,
     workEntryId: string,
-    language: string
+    language: string,
+    unitBlocks: ReadonlyArray<ReaderBlock>
   ) => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
@@ -635,14 +637,25 @@ export function ReaderPage({
       blockElement: HTMLElement,
       block: ReaderBlock,
       workEntryId: string,
-      language: string
+      language: string,
+      unitBlocks: ReadonlyArray<ReaderBlock>
     ): void => {
       const selection = window.getSelection();
 
-      // A selection that spans two blocks cannot anchor to a single block (v0 notes are block-scoped).
-      // Tell the reader explicitly instead of silently doing nothing.
+      // A selection spanning two blocks captures a cross-block span (#257): align each end block's
+      // portion onto its own plaintext, using the active unit's blocks for the end block's text.
       if (isCrossBlockSelection(selection)) {
-        toast.error("Select within a single block to add a note.");
+        const crossDraft = readCrossBlockDraft(selection, unitBlocks);
+
+        if (crossDraft !== undefined) {
+          setCapture({
+            anchorRect: selectionRect(selection),
+            draft: crossDraft,
+            language,
+            workEntryId
+          });
+        }
+
         return;
       }
 
@@ -670,7 +683,7 @@ export function ReaderPage({
         workEntryId
       });
     },
-    [toast]
+    []
   );
 
   // The open work's language (for routing a lookup), derived for every ready state so an idle
@@ -704,6 +717,12 @@ export function ReaderPage({
     };
   }, [state]);
 
+  // The active unit's block index, reused for the disjoint-overlap check across a span (#257).
+  const overlapIndex = useMemo(
+    () => indexBlocks(selectionContext?.blocks ?? []),
+    [selectionContext]
+  );
+
   // Capture fallback: a pointer release that lands in the reading column but outside a block
   // (e.g. just past a block edge) — the per-block handlers already cover a release on the block
   // itself. Resolve the selection's owning block and capture, so the toolbar appears regardless
@@ -729,7 +748,13 @@ export function ReaderPage({
       const block = context.blocks.find((item) => item.entryId === blockElement.dataset.blockId);
 
       if (block !== undefined) {
-        onCaptureSelection(blockElement, block, context.workEntryId, readerLanguage);
+        onCaptureSelection(
+          blockElement,
+          block,
+          context.workEntryId,
+          readerLanguage,
+          context.blocks
+        );
       }
     }
 
@@ -925,10 +950,7 @@ export function ReaderPage({
         <SelectionToolbar
           anchorRect={capture.anchorRect}
           disabledHint={
-            selectionOverlapsNote(
-              notesForBlock(notes, capture.draft.blockEntryId).map((note) => note.anchor),
-              capture.draft
-            )
+            draftOverlapsNotes(capture.draft, notes, overlapIndex)
               ? "Notes can't overlap"
               : undefined
           }
@@ -1211,6 +1233,7 @@ function renderUnit(
             onCaptureSelection={handlers.onCaptureSelection}
             onOpenBlockNotes={handlers.onOpenBlockNotes}
             prefersReducedMotion={handlers.prefersReducedMotion}
+            unitBlocks={unit.blocks}
             workEntryId={workEntryId}
           />
         );
@@ -1229,10 +1252,12 @@ type ReaderBlockViewProps = Readonly<{
     blockElement: HTMLElement,
     block: ReaderBlock,
     workEntryId: string,
-    language: string
+    language: string,
+    unitBlocks: ReadonlyArray<ReaderBlock>
   ) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string, noteEntryId?: string) => void;
   prefersReducedMotion: boolean;
+  unitBlocks: ReadonlyArray<ReaderBlock>;
   workEntryId: string;
 }>;
 
@@ -1277,20 +1302,6 @@ function ReaderFigure({
   );
 }
 
-// Map a block's sub-block notes (those with an offset range) to underline marks in the template
-// hue. Whole-block notes (no offsets) are excluded — they show the gutter bar instead.
-function blockNoteMarks(blockNotes: ReadonlyArray<NoteDto>): ReadonlyArray<NoteMark> {
-  return blockNotes
-    .filter((note) => note.anchor.startOffset !== undefined && note.anchor.endOffset !== undefined)
-    .map((note) => ({
-      ariaLabel: `Note on '${note.anchor.selectedTextSnapshot}'`,
-      className: noteMarkHueClass(note.templateId),
-      endOffset: note.anchor.endOffset as number,
-      noteId: note.entryId,
-      startOffset: note.anchor.startOffset as number
-    }));
-}
-
 // One rendered block. Memoized so it re-renders only when its own data/state changes: with
 // stable props (memoized handlers, a stable notes array, a per-block `born` flag), opening the
 // selection toolbar / lookup / a notes panel or switching a template no longer re-runs the mdast
@@ -1305,10 +1316,17 @@ const ReaderBlockView = memo(function ReaderBlockView({
   onCaptureSelection,
   onOpenBlockNotes,
   prefersReducedMotion,
+  unitBlocks,
   workEntryId
 }: ReaderBlockViewProps): React.JSX.Element {
   const blockNotes = useMemo(() => notesForBlock(notes, block.entryId), [notes, block.entryId]);
-  const marks = useMemo(() => blockNoteMarks(blockNotes), [blockNotes]);
+  // The block index is keyed on the (stable) unit blocks, so the span-mark memo only recomputes when
+  // the notes change — opening the toolbar/lookup keeps every block flat (#72/#257).
+  const index = useMemo(() => indexBlocks(unitBlocks), [unitBlocks]);
+  const marks = useMemo(
+    () => spanMarksForBlock(block.entryId, notes, index),
+    [block.entryId, notes, index]
+  );
   const annotated = blockNotes.length > 0;
 
   // A whole-block note (no sub-block offsets) gets a restrained hue gutter bar instead of an
@@ -1326,7 +1344,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
   // Keyboard and touch open the editor too, not just the mouse: a selection inside a
   // focusable block is captured on key-up and touch-end as well as mouse-up.
   const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
-    onCaptureSelection(event.currentTarget, block, workEntryId, language);
+    onCaptureSelection(event.currentTarget, block, workEntryId, language, unitBlocks);
 
   // Activating an underline opens *that* note (resolved from the mark's `data-note-id`), not the
   // whole block's notes. A plain tap (collapsed selection) on the underline span — or Enter/Space
@@ -1438,13 +1456,13 @@ function renderPanel(
   }
 
   if (panel.kind === "block") {
-    // A block panel reopened from a single note's underline shows just that note; the whole-block
-    // "View note" affordance opens with no `noteEntryId`, listing every note on the block.
-    const blockNotes = notesForBlock(notes, panel.blockEntryId);
+    // A block panel reopened from a single note's underline shows just that note — resolved by id
+    // across all notes so a cross-block span's mark opens it from any intersected block (#257). The
+    // whole-block "View note" affordance opens with no `noteEntryId`, listing every note on the block.
     const shown =
       panel.noteEntryId === undefined
-        ? blockNotes
-        : blockNotes.filter((note) => note.entryId === panel.noteEntryId);
+        ? notesForBlock(notes, panel.blockEntryId)
+        : notes.filter((note) => note.entryId === panel.noteEntryId);
 
     return (
       <aside aria-label="Block notes" className="readerBlockNotesPanel">

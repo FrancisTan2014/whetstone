@@ -26,6 +26,7 @@ function note(
     anchor: {
       blockEntryId: toEntryId(blockEntryId),
       contextSnapshot: "context",
+      endBlockEntryId: toEntryId(blockEntryId),
       selectedTextSnapshot: selected
     },
     answers: {},

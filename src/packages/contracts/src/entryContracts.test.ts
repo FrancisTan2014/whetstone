@@ -41,7 +41,7 @@ describe("entry contract schemas", () => {
     expect(parseWorkTypeDto("essay")).toBe("essay");
     expect(parseWorkLanguageDto("zh-TW")).toBe("zh-TW");
     expect(link).toEqual(validLinkDto);
-    expect(anchor).toEqual(validAnchorDto);
+    expect(anchor).toEqual({ ...validAnchorDto, endBlockEntryId: validAnchorDto.blockEntryId });
     expect(entry).toEqual({ id: "work-1", links: [validLinkDto], type: "work" });
     expect(Object.isFrozen(link)).toBe(true);
     expect(Object.isFrozen(anchor)).toBe(true);
@@ -74,8 +74,40 @@ describe("entry contract schemas", () => {
     expect(anchor).toEqual({
       blockEntryId: "block-1",
       contextSnapshot: "brown fox",
+      endBlockEntryId: "block-1",
       selectedTextSnapshot: "brown fox"
     });
+  });
+
+  it("parses a cross-block span anchor, defaulting nothing and keeping both offsets (#257)", () => {
+    const anchor = parseNoteAnchorDto({
+      blockEntryId: "block-1",
+      contextSnapshot: "the start block text",
+      endBlockEntryId: "block-3",
+      endOffset: 4,
+      selectedTextSnapshot: "spanned across blocks",
+      startOffset: 12
+    });
+
+    expect(anchor).toEqual({
+      blockEntryId: "block-1",
+      contextSnapshot: "the start block text",
+      endBlockEntryId: "block-3",
+      endOffset: 4,
+      selectedTextSnapshot: "spanned across blocks",
+      startOffset: 12
+    });
+  });
+
+  it("rejects a cross-block span that omits an offset (#257)", () => {
+    expect(() =>
+      parseNoteAnchorDto({
+        blockEntryId: "block-1",
+        contextSnapshot: "ctx",
+        endBlockEntryId: "block-3",
+        selectedTextSnapshot: "x"
+      })
+    ).toThrow();
   });
 
   it("rejects invalid note anchors at the boundary", () => {

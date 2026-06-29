@@ -55,6 +55,7 @@ describe("notesApi", () => {
       anchor: {
         blockEntryId: toEntryId("block 1"),
         contextSnapshot: "capitulate",
+        endBlockEntryId: toEntryId("block 1"),
         selectedTextSnapshot: "capitulate"
       },
       templateId: "vocabulary"
@@ -75,6 +76,7 @@ describe("notesApi", () => {
       anchor: {
         blockEntryId: toEntryId("block 1"),
         contextSnapshot: "A great line.",
+        endBlockEntryId: toEntryId("block 1"),
         selectedTextSnapshot: "great line"
       }
     };

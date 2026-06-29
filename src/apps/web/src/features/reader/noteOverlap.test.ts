@@ -1,39 +1,42 @@
 import { describe, expect, it } from "vitest";
 
-import { selectionOverlapsNote } from "./noteOverlap";
+import { blockRangesOverlap, type BlockRange } from "./noteOverlap";
 
-describe("selectionOverlapsNote", () => {
-  it("is false when the block has no notes", () => {
-    expect(selectionOverlapsNote([], { endOffset: 5, startOffset: 0 })).toBe(false);
+const range = (blockEntryId: string, startOffset: number, endOffset: number): BlockRange => ({
+  blockEntryId,
+  endOffset,
+  startOffset
+});
+
+describe("blockRangesOverlap", () => {
+  it("is false when either set is empty", () => {
+    expect(blockRangesOverlap([], [range("b1", 0, 5)])).toBe(false);
+    expect(blockRangesOverlap([range("b1", 0, 5)], [])).toBe(false);
   });
 
-  it("is false for two disjoint sub-block ranges that merely touch end-to-start", () => {
+  it("is false for ranges in different blocks even at the same offsets", () => {
+    expect(blockRangesOverlap([range("b1", 0, 5)], [range("b2", 0, 5)])).toBe(false);
+  });
+
+  it("is false for two disjoint ranges in one block that merely touch end-to-start", () => {
     // [0,5) and [5,10) share no character (half-open intervals).
-    expect(
-      selectionOverlapsNote([{ endOffset: 5, startOffset: 0 }], { endOffset: 10, startOffset: 5 })
-    ).toBe(false);
+    expect(blockRangesOverlap([range("b1", 0, 5)], [range("b1", 5, 10)])).toBe(false);
   });
 
-  it("is true when sub-block ranges share a character", () => {
-    expect(
-      selectionOverlapsNote([{ endOffset: 6, startOffset: 2 }], { endOffset: 10, startOffset: 5 })
-    ).toBe(true);
+  it("is true when ranges in the same block share a character", () => {
+    expect(blockRangesOverlap([range("b1", 2, 6)], [range("b1", 5, 10)])).toBe(true);
   });
 
-  it("treats an existing whole-block note as covering the entire block", () => {
-    expect(selectionOverlapsNote([{}], { endOffset: 3, startOffset: 1 })).toBe(true);
+  it("detects overlap on a shared block within multi-block spans", () => {
+    // A span over b1+b2 vs a span over b2+b3 overlap on b2.
+    const spanA = [range("b1", 4, 9), range("b2", 0, 3)];
+    const spanB = [range("b2", 2, 7), range("b3", 0, 5)];
+    expect(blockRangesOverlap(spanA, spanB)).toBe(true);
   });
 
-  it("treats a whole-block selection as overlapping any existing note", () => {
-    expect(selectionOverlapsNote([{ endOffset: 3, startOffset: 1 }], {})).toBe(true);
-  });
-
-  it("detects overlap against any one of several existing notes", () => {
-    const existing = [
-      { endOffset: 4, startOffset: 0 },
-      { endOffset: 20, startOffset: 12 }
-    ];
-    expect(selectionOverlapsNote(existing, { endOffset: 15, startOffset: 13 })).toBe(true);
-    expect(selectionOverlapsNote(existing, { endOffset: 12, startOffset: 8 })).toBe(false);
+  it("is false when multi-block spans share a block but not a character", () => {
+    const spanA = [range("b1", 0, 4), range("b2", 0, 2)];
+    const spanB = [range("b2", 2, 7), range("b3", 0, 5)];
+    expect(blockRangesOverlap(spanA, spanB)).toBe(false);
   });
 });

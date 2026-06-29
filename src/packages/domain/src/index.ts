@@ -88,6 +88,8 @@ export { renderNoteMarkdown, validateNoteAnswers } from "./noteAnswers.js";
 export type { NoteAnswers, NoteAnswerValidation } from "./noteAnswers.js";
 export { createNoteAnchor } from "./noteAnchor.js";
 export type { CreateNoteAnchorInput, NoteAnchor } from "./noteAnchor.js";
+export { splitSpanIntoBlockRanges } from "./spanMarks.js";
+export type { BlockSpanRange, NoteSpan } from "./spanMarks.js";
 export {
   getNoteTemplate,
   isNoteFieldType,

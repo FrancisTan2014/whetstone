@@ -15,6 +15,7 @@ function note(
     anchor: {
       blockEntryId: toEntryId(`${entryId}-block`),
       contextSnapshot: "c",
+      endBlockEntryId: toEntryId(`${entryId}-block`),
       selectedTextSnapshot: "s"
     },
     answers: {},

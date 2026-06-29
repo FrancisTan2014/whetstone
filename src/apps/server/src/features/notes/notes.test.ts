@@ -131,12 +131,82 @@ async function createWorkTitled(
   };
 }
 
-function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
-  return context.server.inject({
+// A work whose single reading unit holds two paragraph blocks, for cross-block span notes (#257).
+async function createWorkWithTwoBlocks(): Promise<{
+  endBlockEntryId: string;
+  endPlaintext: string;
+  startBlockEntryId: string;
+  startPlaintext: string;
+  workEntryId: string;
+}> {
+  const workResponse = await context.server.inject({
     method: "POST",
-    payload,
-    url: `/api/works/${workEntryId}/notes`
+    payload: {
+      author: { mode: "new", name: "Aesop" },
+      language: "en",
+      title: "Two Paragraphs",
+      workType: "classical_text"
+    },
+    url: "/api/works"
   });
+  const workEntryId = workResponse.json().work.entryId as string;
+
+  await context.server.inject({
+    method: "POST",
+    payload: { kind: "manual", markdown: "The quick brown fox.\n\nJumps over the lazy dog." },
+    url: `/api/works/${workEntryId}/content`
+  });
+
+  const body = await listContent(workEntryId);
+  const blocks = body.readingUnits[0]?.blocks ?? [];
+
+  return {
+    endBlockEntryId: blocks[1]?.entryId as string,
+    endPlaintext: blocks[1]?.plaintext as string,
+    startBlockEntryId: blocks[0]?.entryId as string,
+    startPlaintext: blocks[0]?.plaintext as string,
+    workEntryId
+  };
+}
+
+// A work with two reading units (a leading paragraph, then a heading + paragraph), for asserting a
+// span across reading units is rejected (#257).
+async function createWorkWithTwoUnits(): Promise<{
+  firstUnitBlockEntryId: string;
+  firstUnitPlaintext: string;
+  secondUnitBlockEntryId: string;
+  workEntryId: string;
+}> {
+  const workResponse = await context.server.inject({
+    method: "POST",
+    payload: {
+      author: { mode: "new", name: "Aesop" },
+      language: "en",
+      title: "Two Units",
+      workType: "classical_text"
+    },
+    url: "/api/works"
+  });
+  const workEntryId = workResponse.json().work.entryId as string;
+
+  await context.server.inject({
+    method: "POST",
+    payload: { kind: "manual", markdown: "The quick brown fox.\n\n# Heading\n\nJumps over." },
+    url: `/api/works/${workEntryId}/content`
+  });
+
+  const body = await listContent(workEntryId);
+
+  return {
+    firstUnitBlockEntryId: body.readingUnits[0]?.blocks[0]?.entryId as string,
+    firstUnitPlaintext: body.readingUnits[0]?.blocks[0]?.plaintext as string,
+    secondUnitBlockEntryId: body.readingUnits[1]?.blocks[0]?.entryId as string,
+    workEntryId
+  };
+}
+
+function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+  return context.server.inject({ method: "POST", payload, url: `/api/works/${workEntryId}/notes` });
 }
 
 async function createSubBlockNote(
@@ -281,6 +351,7 @@ describe("create note route", () => {
     expect(note.anchor).toEqual({
       blockEntryId,
       contextSnapshot: plaintext,
+      endBlockEntryId: blockEntryId,
       endOffset: 19,
       selectedTextSnapshot: "brown fox",
       startOffset: 10
@@ -294,6 +365,7 @@ describe("create note route", () => {
       .from(noteAnchors)
       .where(eq(noteAnchors.noteEntryId, note.entryId));
     expect(anchorRows[0]?.blockEntryId).toBe(blockEntryId);
+    expect(anchorRows[0]?.endBlockEntryId).toBe(blockEntryId);
     expect(anchorRows[0]?.startOffset).toBe(10);
 
     const links = await context.db
@@ -444,6 +516,123 @@ describe("create note route", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
   });
+
+  it("persists and serves a cross-block span note (#257)", async () => {
+    const { endBlockEntryId, endPlaintext, startBlockEntryId, startPlaintext, workEntryId } =
+      await createWorkWithTwoBlocks();
+
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "spanning two blocks" },
+      anchor: {
+        blockEntryId: startBlockEntryId,
+        contextSnapshot: startPlaintext,
+        endBlockEntryId,
+        endOffset: 5,
+        selectedTextSnapshot: "fox. Jumps",
+        startOffset: 16
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(201);
+    const note = response.json() as NoteDto;
+    expect(note.anchor.blockEntryId).toBe(startBlockEntryId);
+    expect(note.anchor.endBlockEntryId).toBe(endBlockEntryId);
+    expect(note.anchor.startOffset).toBe(16);
+    expect(note.anchor.endOffset).toBe(5);
+
+    // Round-trips through the list with both block ids intact.
+    const listed = (await listNotes(workEntryId)).json() as NoteListDto;
+    const served = listed.notes.find((item) => item.entryId === note.entryId);
+    expect(served?.anchor.endBlockEntryId).toBe(endBlockEntryId);
+    // A sanity check on the fixtures: the offsets sit within their own blocks.
+    expect(startPlaintext.length).toBeGreaterThanOrEqual(16);
+    expect(endPlaintext.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("returns 404 when a cross-block span's end block is not in the work (#257)", async () => {
+    const { startBlockEntryId, startPlaintext, workEntryId } = await createWorkWithTwoBlocks();
+
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId: startBlockEntryId,
+        contextSnapshot: startPlaintext,
+        endBlockEntryId: "not-in-this-work",
+        endOffset: 5,
+        selectedTextSnapshot: "fox",
+        startOffset: 16
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "block_not_found" });
+  });
+
+  it("rejects a cross-block span whose offset runs past its block (#257)", async () => {
+    const { endBlockEntryId, startBlockEntryId, startPlaintext, workEntryId } =
+      await createWorkWithTwoBlocks();
+
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId: startBlockEntryId,
+        contextSnapshot: startPlaintext,
+        endBlockEntryId,
+        endOffset: 9999,
+        selectedTextSnapshot: "fox",
+        startOffset: 16
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
+
+  it("rejects a cross-block span whose end block precedes its start block in one unit (#257)", async () => {
+    const { endBlockEntryId, endPlaintext, startBlockEntryId, workEntryId } =
+      await createWorkWithTwoBlocks();
+
+    // Reversed: the start is the later block and the end is the earlier block, same unit.
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId: endBlockEntryId,
+        contextSnapshot: endPlaintext,
+        endBlockEntryId: startBlockEntryId,
+        endOffset: 5,
+        selectedTextSnapshot: "reversed",
+        startOffset: 5
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
+
+  it("rejects a span whose blocks are in different reading units (#257)", async () => {
+    const { firstUnitBlockEntryId, firstUnitPlaintext, secondUnitBlockEntryId, workEntryId } =
+      await createWorkWithTwoUnits();
+
+    const response = await postNote(workEntryId, {
+      answers: { meaning: "x" },
+      anchor: {
+        blockEntryId: firstUnitBlockEntryId,
+        contextSnapshot: firstUnitPlaintext,
+        endBlockEntryId: secondUnitBlockEntryId,
+        endOffset: 4,
+        selectedTextSnapshot: "across units",
+        startOffset: 4
+      },
+      templateId: "vocabulary"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "anchor_out_of_range" });
+  });
 });
 
 describe("create mark route", () => {
@@ -556,6 +745,7 @@ describe("list notes route", () => {
     expect(sub?.anchor).toEqual({
       blockEntryId,
       contextSnapshot: plaintext,
+      endBlockEntryId: blockEntryId,
       endOffset: 19,
       selectedTextSnapshot: "brown fox",
       startOffset: 10
