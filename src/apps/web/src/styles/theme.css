@@ -689,20 +689,23 @@
 }
 
 @media (max-width: 55.999rem) {
-  /* Narrow / rail-doesn't-fit: the tools form a top bar, hidden by default and toggled by a center
-     tap. This is also the fallback below the desktop rail's fit width, so the rail never overlaps
-     the reading text. */
+  /* Mobile: dock the tools as a bottom bar within the safe area (matching the app's mobile bottom
+     tabs), hidden by default and toggled by a center tap. Below the desktop rail's fit width this is
+     the fallback, so the rail never overlaps the reading text and no control sits above the fold. */
   .readingTools {
-    inset-block-start: 0;
-    inset-inline-end: 0;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    inset-block-start: auto;
+    inset-block-end: 0;
+    inset-inline: 0;
+    justify-content: center;
+    gap: 0.5rem;
     padding: 0.4rem;
-    padding-inline-end: max(0.4rem, env(safe-area-inset-right));
+    padding-block-end: max(0.4rem, env(safe-area-inset-bottom));
+    background-color: color-mix(in oklch, var(--color-surface) 90%, transparent);
+    backdrop-filter: blur(8px);
   }
 
   .readingHeader[data-hidden="true"] .readingTools {
-    transform: translateY(-130%);
+    transform: translateY(130%);
     opacity: 0;
   }
 }
