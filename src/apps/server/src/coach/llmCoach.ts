@@ -1,5 +1,6 @@
 import {
   parseAnalyzeRoundResult,
+  parseCoachConverseResult,
   type AnalyzeRoundRequest,
   type AnalyzeRoundResult,
   type AuthorCaseBrief,
@@ -56,6 +57,23 @@ function extractJson(text: string): unknown {
   return JSON.parse(text.slice(start, end + 1));
 }
 
+// The in-flow conversational turn (#242): brief the coach with the adaptive knobs (band, challenge/
+// support, register, pace) and the history, and ask for one natural next line that keeps the learner
+// producing — a light implicit recast only on a real breakdown, never a grade mid-flow. Strict JSON.
+function conversePrompt(request: CoachConverseRequest): string {
+  const transcript = request.history.map((turn) => `${turn.role}: ${turn.text}`).join("\n");
+  const { knobs } = request;
+
+  return [
+    "You are an English speaking coach in a live call. Stay in flow: reply with the next natural line",
+    "for the situation, never a score. Add a gentle recast ONLY on a real breakdown (stuck/unintelligible).",
+    `Register: ${knobs.register}. Pace: ${knobs.pace}. Band: ${knobs.targetBand}. Length tracks the band.`,
+    `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`,
+    'Reply with ONLY JSON: {"say", optional "repair":{"reason","recast"}}.',
+    `Conversation:\n${transcript}`
+  ].join("\n");
+}
+
 // A real coach whose end-of-round analysis is LLM-backed: prompt the model, parse strict JSON to the
 // contract. Any model/parse failure degrades to the deterministic fallback so a round always grades.
 export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvider {
@@ -71,8 +89,15 @@ export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvide
     },
     authorCase: (brief: AuthorCaseBrief): Promise<AuthorCaseResult> =>
       dependencies.fallback.authorCase(brief),
-    converse: (request: CoachConverseRequest): Promise<CoachConverseResult> =>
-      dependencies.fallback.converse(request),
+    async converse(request: CoachConverseRequest): Promise<CoachConverseResult> {
+      try {
+        return parseCoachConverseResult(
+          extractJson(await dependencies.chat(conversePrompt(request)))
+        );
+      } catch {
+        return dependencies.fallback.converse(request);
+      }
+    },
     gradeForScheduler: (judgement: ProductionJudgement): ReviewGrade =>
       dependencies.fallback.gradeForScheduler(judgement),
     judgeProduction: (request: JudgeProductionRequest): Promise<ProductionJudgement> =>
