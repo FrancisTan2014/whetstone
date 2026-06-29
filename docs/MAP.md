@@ -100,8 +100,13 @@ can navigate them from another package.
     English target; `englishShare(userTurn)` is recorded per turn on `session_exchanges` as the level signal.
     The verdict
     -> SM-2 grade map is pure in `@whetstone/domain`
-    (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`). No real
-    adapter or network yet; consumers go only through the seam.
+    (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`).
+    `coachAdapters.ts` wires the real tiers — **cheap = local Ollama** (`llama3.1:8b` on
+    `127.0.0.1:11434`), **strong = cloud** — each composed over the fake so any model/parse failure
+    still grades the round. `coachHealth.ts` is the boot probe (`checkCoachHealth`): it pings the
+    local model on startup and reports `local_ready` / `local_unavailable` (with an `ollama pull`
+    hint) / `cloud_only` / `fake`, so a missing model degrades cleanly to the fake instead of
+    crashing. Deploy + provisioning steps: `docs/COACH.md`.
 - Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe(audio) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
