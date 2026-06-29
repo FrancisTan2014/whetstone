@@ -55,17 +55,24 @@ async function buildDb(seed = true): Promise<DbClient> {
 
 // Seed a reading capture for userA: a block entry, a note + its template, and the selected-text anchor,
 // so the harvest on-ramp (#243) has a recent capture to seed a case from.
-async function seedCapture(selectedText: string, blockId: string): Promise<void> {
+async function seedCapture(
+  selectedText: string,
+  blockId: string,
+  noteId = "note-1",
+  createdAt: Date = t0
+): Promise<void> {
   await db.insert(entries).values([
     { id: blockId, type: "block" },
-    { id: "note-1", type: "note" }
+    { id: noteId, type: "note" }
   ]);
   await db
     .insert(noteTemplates)
-    .values({ fieldsJson: [], id: "vocab", name: "Vocab", orderIndex: 0 });
+    .values({ fieldsJson: [], id: "vocab", name: "Vocab", orderIndex: 0 })
+    .onConflictDoNothing();
   await db.insert(notes).values({
     answersJson: {},
-    entryId: "note-1",
+    createdAt,
+    entryId: noteId,
     markdownBody: "x",
     templateId: "vocab",
     userId: userA
@@ -73,7 +80,7 @@ async function seedCapture(selectedText: string, blockId: string): Promise<void>
   await db.insert(noteAnchors).values({
     blockEntryId: blockId,
     contextSnapshot: "from the book",
-    noteEntryId: "note-1",
+    noteEntryId: noteId,
     selectedText
   });
 }
@@ -117,6 +124,15 @@ describe("startSession", () => {
 
     expect(plan.cues[0]?.target).toBe("thrive under pressure");
     expect(plan.cues[0]?.chunkId).toContain("harvest-chunk-");
+  });
+
+  it("seeds from the newest capture by time, even when its id sorts earlier (#243)", async () => {
+    // "aaa" sorts before "zzz" lexicographically, but is the newer capture by createdAt.
+    await seedCapture("older phrase", "blk-old", "zzz-old", new Date("2026-01-01T00:00:00Z"));
+    await seedCapture("newer phrase", "blk-new", "aaa-new", new Date("2026-02-01T00:00:00Z"));
+
+    const plan = await startSession(makeDeps(), userA, t0);
+    expect(plan.cues[0]?.target).toBe("newer phrase");
   });
   it("does not harvest a case when there are no domains to attach it to", async () => {
     const empty = await buildDb(false);

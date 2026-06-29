@@ -140,6 +140,9 @@ export const noteTemplates = pgTable("note_templates", {
 // answers keyed by template field id; `markdown_body` is the rendered note body.
 export const notes = pgTable("notes", {
   answersJson: jsonb("answers_json").notNull(),
+  // Creation time, so reading-capture recency is a durable signal (#243): note ids are uuids, not
+  // time-ordered, so the harvest must order by this, not by id.
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
   entryId: text("entry_id")
     .primaryKey()
     .references(() => entries.id),

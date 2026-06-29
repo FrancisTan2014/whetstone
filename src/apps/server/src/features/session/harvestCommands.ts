@@ -30,7 +30,7 @@ export async function harvestReadingCase(
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
     .where(eq(notes.userId, userId))
-    .orderBy(desc(notes.entryId))
+    .orderBy(desc(notes.createdAt), desc(notes.entryId))
     .limit(1);
   const capture = captures[0];
   if (capture === undefined) {
