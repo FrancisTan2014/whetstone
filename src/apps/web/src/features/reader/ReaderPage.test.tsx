@@ -402,6 +402,39 @@ const xrefContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+const xrefCaptionContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "figure",
+          entryId: toEntryId("b-1"),
+          mdast: {
+            children: [
+              { type: "text", value: "Figure 1; " },
+              { children: [{ type: "text", value: "see Table 2" }], type: "link", url: "#tbl-2" }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          plaintext: "Figure 1; see Table 2"
+        },
+        {
+          anchorId: "tbl-2",
+          blockType: "paragraph",
+          entryId: toEntryId("b-2"),
+          mdast: { children: [{ type: "text", value: "Table 2 contents." }], type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "Table 2 contents."
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 function firstTextNode(blockElement: HTMLElement): Text {
   const walker = document.createTreeWalker(blockElement, NodeFilter.SHOW_TEXT);
   const node = walker.nextNode();
@@ -848,6 +881,19 @@ describe("ReaderPage", () => {
     await user.click(screen.getByRole("button", { name: "the figure" }));
 
     // The target block is marked born (the jump highlight), proving the reference resolved + jumped.
+    await waitFor(() =>
+      expect(blockElement(container, "b-2").getAttribute("data-born")).toBe("true")
+    );
+  });
+
+  it("makes a same-work cross-reference inside a figure caption a live jump (#252)", async () => {
+    seedWorkContent(xrefCaptionContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Table 2 contents.");
+
+    await user.click(screen.getByRole("button", { name: "see Table 2" }));
+
     await waitFor(() =>
       expect(blockElement(container, "b-2").getAttribute("data-born")).toBe("true")
     );

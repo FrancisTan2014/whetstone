@@ -1224,10 +1224,12 @@ type ReaderBlockViewProps = Readonly<{
 // and annotatable through the normal block selection flow; the image carries no text.
 function ReaderFigure({
   block,
-  marks
+  marks,
+  onActivateAnchor
 }: {
   block: ReaderBlock;
   marks: ReadonlyArray<NoteMark>;
+  onActivateAnchor: (anchorId: string) => void;
 }): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
   const imageSrc =
@@ -1249,7 +1251,7 @@ function ReaderFigure({
       ) : null}
       {hasCaption ? (
         <figcaption className="readerFigureCaption">
-          <BlockContent marks={marks} node={block.mdast} />
+          <BlockContent marks={marks} node={block.mdast} onActivateAnchor={onActivateAnchor} />
         </figcaption>
       ) : null}
     </figure>
@@ -1342,7 +1344,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
   const body = (
     <>
       {block.blockType === "figure" ? (
-        <ReaderFigure block={block} marks={marks} />
+        <ReaderFigure block={block} marks={marks} onActivateAnchor={onActivateAnchor} />
       ) : (
         <BlockContent marks={marks} node={block.mdast} onActivateAnchor={onActivateAnchor} />
       )}
