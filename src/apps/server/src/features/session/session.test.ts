@@ -9,6 +9,7 @@ import { createLoggerOptions } from "../../config/serverConfig.js";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { errorPatterns, recallItems, sessionExchanges, turnOutcomes } from "../../db/schema.js";
+import { entries, noteAnchors, notes, noteTemplates } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
 import { depositTurnOutcome } from "../learner/learnerCommands.js";
@@ -52,6 +53,38 @@ async function buildDb(seed = true): Promise<DbClient> {
   return client;
 }
 
+// Seed a reading capture for userA: a block entry, a note + its template, and the selected-text anchor,
+// so the harvest on-ramp (#243) has a recent capture to seed a case from.
+async function seedCapture(
+  selectedText: string,
+  blockId: string,
+  noteId = "note-1",
+  createdAt: Date = t0
+): Promise<void> {
+  await db.insert(entries).values([
+    { id: blockId, type: "block" },
+    { id: noteId, type: "note" }
+  ]);
+  await db
+    .insert(noteTemplates)
+    .values({ fieldsJson: [], id: "vocab", name: "Vocab", orderIndex: 0 })
+    .onConflictDoNothing();
+  await db.insert(notes).values({
+    answersJson: {},
+    createdAt,
+    entryId: noteId,
+    markdownBody: "x",
+    templateId: "vocab",
+    userId: userA
+  });
+  await db.insert(noteAnchors).values({
+    blockEntryId: blockId,
+    contextSnapshot: "from the book",
+    noteEntryId: noteId,
+    selectedText
+  });
+}
+
 beforeEach(async () => {
   sequence = 0;
   db = await buildDb();
@@ -83,6 +116,37 @@ describe("startSession", () => {
       await empty.$client.close();
     }
   });
+
+  it("seeds the first cue from a recent reading capture, targeting the captured text (#243)", async () => {
+    await seedCapture("thrive under pressure", "blk-1");
+
+    const plan = await startSession(makeDeps(), userA, t0);
+
+    expect(plan.cues[0]?.target).toBe("thrive under pressure");
+    expect(plan.cues[0]?.chunkId).toContain("harvest-chunk-");
+  });
+
+  it("seeds from the newest capture by time, even when its id sorts earlier (#243)", async () => {
+    // "aaa" sorts before "zzz" lexicographically, but is the newer capture by createdAt.
+    await seedCapture("older phrase", "blk-old", "zzz-old", new Date("2026-01-01T00:00:00Z"));
+    await seedCapture("newer phrase", "blk-new", "aaa-new", new Date("2026-02-01T00:00:00Z"));
+
+    const plan = await startSession(makeDeps(), userA, t0);
+    expect(plan.cues[0]?.target).toBe("newer phrase");
+  });
+  it("does not harvest a case when there are no domains to attach it to", async () => {
+    const empty = await buildDb(false);
+    const previous = db;
+    db = empty;
+    try {
+      await seedCapture("thrive under pressure", "blk-1");
+      const deps: SessionDependencies = { ...makeDeps(), db: empty };
+      expect(await startSession(deps, userA, t0)).toEqual({ cues: [] });
+    } finally {
+      db = previous;
+      await empty.$client.close();
+    }
+  });
 });
 
 describe("submitTurn", () => {
@@ -94,6 +158,26 @@ describe("submitTurn", () => {
     }
     return { chunkId: cue.chunkId, target: cue.target };
   }
+
+  it("links a harvested round's deposit back to the source block (#243)", async () => {
+    await seedCapture("thrive under pressure", "blk-1");
+    const plan = await startSession(makeDeps(), userA, t0);
+    const cue = plan.cues[0];
+    if (cue === undefined) {
+      throw new Error("expected a harvested cue");
+    }
+
+    const outcome = await submitTurn(
+      makeDeps(),
+      { chunkId: cue.chunkId, transcript: cue.target },
+      userA,
+      t0
+    );
+    expect(outcome.status).toBe("ok");
+
+    const items = await db.select().from(recallItems).where(eq(recallItems.chunkId, cue.chunkId));
+    expect(items[0]?.provenanceEntryId).toBe("blk-1");
+  });
 
   it("grades a perfect typed production, enrolls + schedules the chunk, and deposits the outcome", async () => {
     const { chunkId, target } = await firstCue();
@@ -224,6 +308,24 @@ describe("converseTurn", () => {
 });
 
 describe("endSession", () => {
+  it("links a harvested chunk's end-of-round deposit to the source block (#243)", async () => {
+    await seedCapture("thrive under pressure", "blk-1");
+    const deps = makeDeps();
+    const plan = await startSession(deps, userA, t0);
+    const cue = plan.cues[0];
+    if (cue === undefined) {
+      throw new Error("expected a harvested cue");
+    }
+
+    await converseTurn(deps, { caseId: cue.caseId, transcript: cue.target }, userA, t0);
+    expect((await endSession(deps, { caseId: cue.caseId, words: [] }, userA, t0)).status).toBe(
+      "ok"
+    );
+
+    const items = await db.select().from(recallItems).where(eq(recallItems.chunkId, cue.chunkId));
+    expect(items[0]?.provenanceEntryId).toBe("blk-1");
+  });
+
   it("runs one analysis pass and moves all four deposits, returning the debrief", async () => {
     const deps = makeDeps();
     const plan = await startSession(deps, userA, t0);

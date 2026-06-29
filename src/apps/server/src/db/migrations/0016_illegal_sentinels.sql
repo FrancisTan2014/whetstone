@@ -1,0 +1,2 @@
+ALTER TABLE "chunks" ADD COLUMN "source_block_entry_id" text;--> statement-breakpoint
+ALTER TABLE "chunks" ADD CONSTRAINT "chunks_source_block_entry_id_entries_id_fk" FOREIGN KEY ("source_block_entry_id") REFERENCES "public"."entries"("id") ON DELETE no action ON UPDATE no action;

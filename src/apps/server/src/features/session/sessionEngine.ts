@@ -24,6 +24,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import { cases, chunks, sessionExchanges } from "../../db/schema.js";
 import { depositTurnOutcome, updateLearnerProfile } from "../learner/learnerCommands.js";
 import { compileContext } from "../learner/learnerQueries.js";
+import { harvestReadingCase } from "./harvestCommands.js";
 import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
 import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
 import type { SpeechInput } from "../../speech/speechInput.js";
@@ -80,10 +81,18 @@ export async function startSession(
   userId: string,
   now: Date
 ): Promise<SessionPlanDto> {
+  // The reading -> speaking on-ramp (#243): a recent reading capture seeds a case whose first cue is
+  // that text, so practice opens on what the learner just read; authored cues fill the rest.
+  const harvested = await harvestReadingCase(
+    { createId: dependencies.createId, db: dependencies.db },
+    userId
+  );
+  const harvestedCue = harvested ? [{ ...harvested, timerSeconds: CUE_TIMER_SECONDS }] : [];
+
   const context = await compileContext(dependencies.db, userId, now, { chunkLimit: SESSION_SIZE });
   const chunkIds = context.rankedChunks.map((ranked) => ranked.chunkId);
   if (chunkIds.length === 0) {
-    return { cues: [] };
+    return { cues: harvestedCue };
   }
 
   const rows = await dependencies.db
@@ -108,7 +117,7 @@ export async function startSession(
     timerSeconds: CUE_TIMER_SECONDS
   }));
 
-  return { cues };
+  return { cues: [...harvestedCue, ...cues] };
 }
 
 // Run one turn: transcribe the production (STT seam, or the typed fallback), judge + grade it (#206),
@@ -121,7 +130,11 @@ export async function submitTurn(
   now: Date
 ): Promise<SubmitTurnOutcome> {
   const rows = await dependencies.db
-    .select({ situation: cases.situation, target: chunks.text })
+    .select({
+      situation: cases.situation,
+      sourceBlockEntryId: chunks.sourceBlockEntryId,
+      target: chunks.text
+    })
     .from(chunks)
     .innerJoin(cases, eq(chunks.caseId, cases.id))
     .where(eq(chunks.id, request.chunkId))
@@ -147,7 +160,12 @@ export async function submitTurn(
     existing ??
     (await enrollRecallItem(
       recallDeps,
-      { chunkId: request.chunkId, kind: "chunk", text: row.target },
+      {
+        chunkId: request.chunkId,
+        kind: "chunk",
+        ...(row.sourceBlockEntryId === null ? {} : { provenanceEntryId: row.sourceBlockEntryId }),
+        text: row.target
+      },
       userId,
       now
     ));
@@ -255,7 +273,11 @@ export async function endSession(
   }
 
   const targetChunks = await dependencies.db
-    .select({ chunkId: chunks.id, text: chunks.text })
+    .select({
+      chunkId: chunks.id,
+      sourceBlockEntryId: chunks.sourceBlockEntryId,
+      text: chunks.text
+    })
     .from(chunks)
     .where(eq(chunks.caseId, request.caseId))
     .orderBy(asc(chunks.orderIndex), asc(chunks.id));
@@ -279,6 +301,9 @@ export async function endSession(
 
   const learnerDeps = { createId: dependencies.createId, db: dependencies.db };
   const textByChunkId = new Map(targetChunks.map((chunk) => [chunk.chunkId, chunk.text]));
+  const blockByChunkId = new Map(
+    targetChunks.map((chunk) => [chunk.chunkId, chunk.sourceBlockEntryId])
+  );
 
   // Deposit 1: each chunk grade schedules its recall item (enrolling on first practice), which advances
   // case mastery and the map.
@@ -291,12 +316,23 @@ export async function endSession(
     if (text === undefined) {
       continue;
     }
+    const sourceBlock = blockByChunkId.get(chunkId);
     // The schema bounds grade to an integer 0..5, the SM-2 ReviewGrade range.
     const grade = chunkGrade.grade as ReviewGrade;
     const existing = await getRecallItemByChunkForUser(dependencies.db, userId, chunkId);
     const item =
       existing ??
-      (await enrollRecallItem(learnerDeps, { chunkId, kind: "chunk", text }, userId, now));
+      (await enrollRecallItem(
+        learnerDeps,
+        {
+          chunkId,
+          kind: "chunk",
+          ...(sourceBlock ? { provenanceEntryId: sourceBlock } : {}),
+          text
+        },
+        userId,
+        now
+      ));
     const dueAt = scheduleReview(item.review, grade, now).dueAt;
     await recordRecallReview(learnerDeps, item.id, grade, userId, now);
     due.push({ dueAt, text });

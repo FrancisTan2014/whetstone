@@ -120,6 +120,7 @@ export async function authorCase(
     gloss: chunk.gloss,
     id: dependencies.createChunkId(),
     orderIndex: index,
+    sourceBlockEntryId: null,
     text: chunk.text,
     usageNote: chunk.usageNote
   }));

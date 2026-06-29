@@ -140,6 +140,9 @@ export const noteTemplates = pgTable("note_templates", {
 // answers keyed by template field id; `markdown_body` is the rendered note body.
 export const notes = pgTable("notes", {
   answersJson: jsonb("answers_json").notNull(),
+  // Creation time, so reading-capture recency is a durable signal (#243): note ids are uuids, not
+  // time-ordered, so the harvest must order by this, not by id.
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
   entryId: text("entry_id")
     .primaryKey()
     .references(() => entries.id),
@@ -250,6 +253,9 @@ export const chunks = pgTable(
     gloss: text("gloss"),
     id: text("id").primaryKey(),
     orderIndex: integer("order_index").notNull(),
+    // The reading block this chunk was harvested from (#243), so a round seeded from reading deposits
+    // recall items linked back to the source block. Null for authored/seed chunks.
+    sourceBlockEntryId: text("source_block_entry_id").references(() => entries.id),
     text: text("text").notNull(),
     usageNote: text("usage_note")
   },

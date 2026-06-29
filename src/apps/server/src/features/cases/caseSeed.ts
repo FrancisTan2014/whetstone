@@ -32,6 +32,7 @@ export async function seedCaseCorpus(db: DbClient): Promise<void> {
         gloss: chunk.gloss ?? null,
         id: chunk.id,
         orderIndex: index,
+        sourceBlockEntryId: null,
         text: chunk.text,
         usageNote: chunk.usageNote ?? null
       }))
