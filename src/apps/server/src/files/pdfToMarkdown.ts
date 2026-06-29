@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { PdfOcr } from "./pdfOcr.js";
+
 // The PDF-to-Markdown seam (#15): PDF ingestion converges on the existing Markdown -> mdast ->
 // decompose -> blocks pipeline. Conversion is one-shot — a born-digital PDF is rendered to clean
 // Markdown — behind this interface so the keyless gate builds and stays green with no Python present
@@ -56,6 +58,18 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
       } finally {
         await rm(dir, { force: true, recursive: true });
       }
+    }
+  });
+}
+
+// Compose an OCR pre-pass (#261) ahead of a PDF-to-Markdown converter: the bytes are OCR'd first
+// (adding a text layer to scanned pages; a no-op for born-digital text), then converted. A scanned
+// PDF therefore reaches the same Markdown -> blocks funnel as a born-digital one.
+export function composePdfToMarkdown(ocr: PdfOcr, inner: PdfToMarkdown): PdfToMarkdown {
+  return Object.freeze({
+    async convert(bytes: Uint8Array): Promise<string> {
+      const ocrated = await ocr.process(bytes);
+      return inner.convert(ocrated);
     }
   });
 }
