@@ -27,7 +27,10 @@ import { depositTurnOutcome, updateLearnerProfile } from "../learner/learnerComm
 import { compileContext } from "../learner/learnerQueries.js";
 import { harvestReadingCase } from "./harvestCommands.js";
 import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
-import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
+import {
+  getRecallItemByChunkForUser,
+  getRecallItemByTextForUser
+} from "../recall/recallQueries.js";
 import type { SpeechInput } from "../../speech/speechInput.js";
 
 // How many cues a session proposes, and the soft per-cue timer (mild time pressure).
@@ -261,6 +264,7 @@ export async function converseTurn(
     {
       caseId: request.caseId,
       createdAt: now,
+      englishTarget: reply.englishTarget ?? null,
       id: dependencies.createId(),
       orderIndex: prior.length + 1,
       repairJson: reply.repair ?? null,
@@ -361,6 +365,35 @@ export async function endSession(
     const dueAt = scheduleReview(item.review, grade, now).dueAt;
     await recordRecallReview(learnerDeps, item.id, grade, userId, now);
     due.push({ dueAt, text });
+  }
+
+  // Deposit 1b: the bilingual coach's pushed English targets (#270). A mostly-L1 turn earns one
+  // English chunk to retry; deposit it as recall practice so it is scheduled, not just shown/spoken.
+  // It has no case-chunk FK (the coach generated it), so enroll it as an LLM-supplied phrase, deduped
+  // by text within the round and across rounds so repeated pushes keep one item.
+  const pushedTargets = await dependencies.db
+    .select({ englishTarget: sessionExchanges.englishTarget })
+    .from(sessionExchanges)
+    .where(and(eq(sessionExchanges.userId, userId), eq(sessionExchanges.caseId, request.caseId)))
+    .orderBy(asc(sessionExchanges.orderIndex));
+  const seenTargets = new Set<string>();
+  for (const row of pushedTargets) {
+    const target = row.englishTarget;
+    if (target === null || seenTargets.has(target)) {
+      continue;
+    }
+    seenTargets.add(target);
+    const existing = await getRecallItemByTextForUser(dependencies.db, userId, target);
+    if (existing !== undefined) {
+      continue;
+    }
+    const item = await enrollRecallItem(
+      learnerDeps,
+      { chunkId: null, kind: "phrase", text: target },
+      userId,
+      now
+    );
+    due.push({ dueAt: item.review.dueAt, text: target });
   }
 
   // Deposit 2: each tagged mistake increments its error-pattern count and logs an outcome.

@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CoachKnobs, Transcription } from "@whetstone/contracts";
@@ -16,7 +16,10 @@ import { depositTurnOutcome } from "../learner/learnerCommands.js";
 import { getLearnerProfile } from "../learner/learnerQueries.js";
 import { compileProgressMap } from "../map/mapQueries.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
-import { getRecallItemByChunkForUser } from "../recall/recallQueries.js";
+import {
+  getRecallItemByChunkForUser,
+  getRecallItemByTextForUser
+} from "../recall/recallQueries.js";
 import {
   converseTurn,
   endSession,
@@ -451,6 +454,93 @@ describe("endSession", () => {
       .flatMap((domain) => domain.cases)
       .find((mapCase) => mapCase.caseId === cue.caseId);
     expect(afterCase?.mastery.newChunks).toBeLessThan(beforeCase?.mastery.newChunks ?? 0);
+  });
+
+  it("deposits the bilingual coach's pushed English target as recall practice, deduped (#270)", async () => {
+    const deps = makeDeps();
+    const plan = await startSession(deps, userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    // Two mostly-Chinese turns each earn the same pushed English target ("Let's try that in
+    // English." from the fake coach), so the round-end deposit must dedupe to a single recall item.
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    await converseTurn(
+      deps,
+      { caseId, transcript: "再来一个 thanks" },
+      userA,
+      new Date(t0.getTime() + 30_000)
+    );
+
+    const outcome = await endSession(
+      deps,
+      { caseId, words: [] },
+      userA,
+      new Date(t0.getTime() + 60_000)
+    );
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // The pushed target is now durable recall material: an LLM-supplied phrase with no chunk FK,
+    // surfaced as due practice in the debrief.
+    const item = await getRecallItemByTextForUser(db, userA, "Let's try that in English.");
+    expect(item?.kind).toBe("phrase");
+    expect(item?.chunkId).toBeNull();
+    expect(outcome.debrief.due.some((entry) => entry.text === "Let's try that in English.")).toBe(
+      true
+    );
+    // Deduped within the round despite two pushes.
+    const phrases = await db
+      .select()
+      .from(recallItems)
+      .where(
+        and(eq(recallItems.userId, userA), eq(recallItems.text, "Let's try that in English."))
+      );
+    expect(phrases).toHaveLength(1);
+  });
+
+  it("does not re-deposit a pushed English target already enrolled from an earlier round (#270)", async () => {
+    const deps = makeDeps();
+    const plan = await startSession(deps, userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    await endSession(deps, { caseId, words: [] }, userA, new Date(t0.getTime() + 60_000));
+
+    // A later round pushes the same target again...
+    await converseTurn(
+      deps,
+      { caseId, transcript: "我想点菜 again please" },
+      userA,
+      new Date(t0.getTime() + 120_000)
+    );
+    const second = await endSession(
+      deps,
+      { caseId, words: [] },
+      userA,
+      new Date(t0.getTime() + 180_000)
+    );
+    if (second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // ...so the existing recall item is reused, not duplicated, and the debrief does not re-surface it.
+    const phrases = await db
+      .select()
+      .from(recallItems)
+      .where(
+        and(eq(recallItems.userId, userA), eq(recallItems.text, "Let's try that in English."))
+      );
+    expect(phrases).toHaveLength(1);
+    expect(second.debrief.due.some((entry) => entry.text === "Let's try that in English.")).toBe(
+      false
+    );
   });
 
   it("returns case_not_found for an unknown case", async () => {

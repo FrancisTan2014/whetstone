@@ -95,6 +95,24 @@ export async function getRecallItemByChunkForUser(
   return rows[0] === undefined ? undefined : toRecallItemDto(rows[0]);
 }
 
+// The user's most-recent recall item with this exact text, if any. Used to dedupe LLM-supplied items
+// (e.g. the bilingual coach's pushed English target, #270) that have no chunk FK to match on, so a
+// learner who is pushed the same retry chunk across rounds keeps one recall item, not a pile.
+export async function getRecallItemByTextForUser(
+  db: DbClient,
+  userId: string,
+  text: string
+): Promise<RecallItemDto | undefined> {
+  const rows = await db
+    .select()
+    .from(recallItems)
+    .where(and(eq(recallItems.userId, userId), eq(recallItems.text, text)))
+    .orderBy(desc(recallItems.createdAt), asc(recallItems.id))
+    .limit(1);
+
+  return rows[0] === undefined ? undefined : toRecallItemDto(rows[0]);
+}
+
 // The user's items due for review at `now` (due_at <= now), soonest-due first, capped at `limit`.
 // Backed by the (user_id, due_at) index.
 export async function listDueRecallItems(

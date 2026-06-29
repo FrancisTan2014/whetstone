@@ -427,6 +427,9 @@ export const sessionExchanges = pgTable(
     // The English share of a user turn (#270): the bilingual-dial level signal, recorded per turn so
     // the trend can be read over rounds. Null on coach turns.
     englishShare: doublePrecision("english_share"),
+    // The one English chunk the bilingual coach pushed for the learner to retry (#270), recorded on
+    // the coach turn so it can be deposited as recall practice at end of round. Null otherwise.
+    englishTarget: text("english_target"),
     repairJson: jsonb("repair_json"),
     role: text("role", { enum: ["user", "coach"] as const }).notNull(),
     text: text("text").notNull(),
