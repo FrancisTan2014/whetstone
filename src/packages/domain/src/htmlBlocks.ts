@@ -24,7 +24,7 @@ type HastTree = Parameters<typeof htmlProcessor.runSync>[0];
 // `<img>`'s src/alt — so figure detection avoids depending on hast's full type union.
 type HastNode = {
   children?: HastNode[];
-  properties?: Record<string, unknown>;
+  properties: Record<string, unknown>;
   tagName?: string;
   type: string;
   value?: string;
@@ -104,9 +104,29 @@ function captionOf(figure: HastNode): { mdast: RootContent; plaintext: string } 
   return { mdast: paragraph, plaintext: mdastToString(paragraph) };
 }
 
+// The reference an image element points at: <img src>, an SVG <image xlink:href|href>, or <object
+// data>. hast camelCases xlink:href -> xlinkHref. Matches the src epubSource extracts for the manifest.
+function imageSrcOf(node: HastNode): string | undefined {
+  const props = node.properties;
+  return (
+    stringProperty(props.src) ??
+    stringProperty(props.xLinkHref) ??
+    stringProperty(props.href) ??
+    stringProperty(props.data)
+  );
+}
+
+// The first image-bearing descendant: <img>, an SVG <image>, or an <object> embed (DDIA wraps
+// diagrams as <svg><image xlink:href>), so figure detection sees those, not just <img>.
+function findImageElement(node: HastNode): HastNode | undefined {
+  return (
+    findDescendant(node, "img") ?? findDescendant(node, "image") ?? findDescendant(node, "object")
+  );
+}
+
 function figureBlock(img: HastNode, figure: HastNode): DecomposedBlock {
-  const src = stringProperty(img.properties?.src);
-  const alt = stringProperty(img.properties?.alt);
+  const src = imageSrcOf(img);
+  const alt = stringProperty(img.properties.alt);
   const caption = captionOf(figure);
   const image: DecomposedFigureImage | undefined =
     src === undefined ? undefined : alt === undefined ? { src } : { alt, src };
@@ -119,26 +139,25 @@ function figureBlock(img: HastNode, figure: HastNode): DecomposedBlock {
   });
 }
 
-// Detect the structural figures the reader anchors to: a `<figure>` containing an `<img>` (with an
-// optional `<figcaption>`), a bare top-level `<img>`, or an image-only wrapper (`<p>`/`<div>` whose
-// sole content is an `<img>`, as DDIA emits) — so a standalone image becomes a figure block instead
-// of being dropped by the mdast pipeline. A wrapper with real text is left to that pipeline.
+// Detect the structural figures the reader anchors to: a `<figure>` containing an image element, a
+// bare top-level image, or an image-only wrapper (`<p>`/`<div>`/`<svg>` whose sole content is an image)
+// — covering <img>, SVG <image xlink:href>, and <object>. A wrapper with real text is left to mdast.
 function figureFromHast(node: HastNode): DecomposedBlock | undefined {
   if (node.type !== "element") {
     return undefined;
   }
 
   if (node.tagName === "figure") {
-    const img = findDescendant(node, "img");
+    const img = findImageElement(node);
 
     return img === undefined ? undefined : figureBlock(img, node);
   }
 
-  if (node.tagName === "img") {
+  if (node.tagName === "img" || node.tagName === "image" || node.tagName === "object") {
     return figureBlock(node, node);
   }
 
-  const img = findDescendant(node, "img");
+  const img = findImageElement(node);
 
   return img !== undefined && hasOnlyWhitespaceText(node) ? figureBlock(img, node) : undefined;
 }
