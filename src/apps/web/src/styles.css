@@ -649,6 +649,53 @@ code {
   margin-top: 1rem;
 }
 
+/* Foot-of-chapter pager (#232): Previous/Next within the reading measure; tokenized for Day/Night,
+   ≥44px targets. A spacer holds one side so the lone control keeps its edge (Next stays right). */
+.readerPager {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block-start: 3rem;
+  border-block-start: 1px solid var(--color-border);
+  padding-block-start: 1.5rem;
+}
+
+.readerPagerSpacer {
+  flex: 0 0 auto;
+}
+
+.readerPagerLink {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 44px;
+  max-width: 48%;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: start;
+}
+
+.readerPagerLink--next {
+  text-align: end;
+}
+
+.readerPagerDir {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.readerPagerTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .readerBlockNotesPanel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);

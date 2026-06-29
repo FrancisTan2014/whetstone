@@ -13,6 +13,7 @@ import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass, noteMarkHueClass } from "./annotationHue.tokens";
+import { ChapterPager } from "./ChapterPager";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
@@ -1047,6 +1048,11 @@ function renderViewing(
               handlers,
               chrome.language
             )}
+            <ChapterPager
+              activeUnitIndex={activeUnitIndex}
+              onSelectUnit={onSelectUnit}
+              structure={structure}
+            />
           </div>
         </motion.div>
       </div>
