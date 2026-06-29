@@ -116,6 +116,37 @@ describe("decomposeHtmlChapter", () => {
     expect(unit.blocks[0]?.image).toEqual({ alt: "nested", src: "img/z.gif" });
   });
 
+  it("emits an image-only figure block for an <img> wrapped in a <p> (standalone figure)", () => {
+    const unit = decomposeHtmlChapter('<p><img src="img/p.png" alt="diagram"/></p>');
+
+    expect(unit.blocks.map((block) => block.blockType)).toEqual(["figure"]);
+    expect(unit.blocks[0]?.image).toEqual({ alt: "diagram", src: "img/p.png" });
+  });
+
+  it("captures a standalone <img> and keeps an adjacent caption paragraph", () => {
+    const unit = decomposeHtmlChapter(
+      '<div><img src="img/q.png" alt="d"/></div><p>FIGURE 5-2. The plan.</p>'
+    );
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["figure", ""],
+      ["paragraph", "FIGURE 5-2. The plan."]
+    ]);
+    expect(unit.blocks[0]?.image).toEqual({ alt: "d", src: "img/q.png" });
+  });
+
+  it("leaves a paragraph with text and an inline image to the mdast pipeline (not a figure)", () => {
+    const unit = decomposeHtmlChapter('<p>See <img src="img/i.png"/> here.</p>');
+
+    expect(unit.blocks.some((block) => block.blockType === "figure")).toBe(false);
+  });
+
+  it("leaves a wrapper with a nested-element caption and image to the pipeline (not a figure)", () => {
+    const unit = decomposeHtmlChapter('<p><span>Figure A</span><img src="img/n.png"/></p>');
+
+    expect(unit.blocks.some((block) => block.blockType === "figure")).toBe(false);
+  });
+
   it("passes a <figure> without an <img> through the mdast pipeline (no figure block)", () => {
     const unit = decomposeHtmlChapter("<figure><figcaption>orphan</figcaption></figure>");
 
