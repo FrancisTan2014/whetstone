@@ -66,14 +66,16 @@ export function parseLookupResponse(value: unknown): LookupResponse {
 }
 
 // Lookup sources the reader can show as independent tabs: WordNet (offline, instant) and Wiktionary
-// (rich, networked) for English; CC-CEDICT for Chinese. Each tab fetches its source alone so one
-// being slow/down/empty never freezes or empties the popover (#196).
-export const lookupSourceIds = ["wordnet", "wiktionary", "cedict"] as const;
+// (rich, networked) for English; for Chinese, 萌典/moedict (Chinese definitions, primary) and
+// CC-CEDICT (English glosses, secondary). Each tab fetches its source alone so one being
+// slow/down/empty never freezes or empties the popover (#196).
+export const lookupSourceIds = ["wordnet", "wiktionary", "cedict", "moedict"] as const;
 
 export type LookupSourceId = (typeof lookupSourceIds)[number];
 
 const sourceLabels: Readonly<Record<LookupSourceId, string>> = {
   cedict: "CC-CEDICT",
+  moedict: "萌典",
   wiktionary: "Wiktionary",
   wordnet: "WordNet"
 };
@@ -84,12 +86,13 @@ export function lookupSourceLabel(id: LookupSourceId): string {
 
 const sourcesByLanguage: Readonly<Record<string, ReadonlyArray<LookupSourceId>>> = {
   en: ["wordnet", "wiktionary"],
-  "zh-CN": ["cedict"],
-  "zh-TW": ["cedict"]
+  "zh-CN": ["moedict", "cedict"],
+  "zh-TW": ["moedict", "cedict"]
 };
 
 // The ordered tabs to fetch for a work language; the first is the default. English leads with the
-// always-resolving offline WordNet so the popover is never stuck on the networked source.
+// always-resolving offline WordNet; Chinese leads with 萌典's Chinese definitions (#272), demoting
+// CC-CEDICT's English glosses to a secondary tab, with both as mutual fallbacks.
 export function lookupSourcesForLanguage(language: string): ReadonlyArray<LookupSourceId> {
   return sourcesByLanguage[language] ?? [];
 }
