@@ -1,4 +1,5 @@
-import { preselectTemplateId } from "@whetstone/domain";
+import { preselectTemplateId, toEntryId } from "@whetstone/domain";
+import type { NoteAnchorDto } from "@whetstone/contracts";
 
 // A draft captured from a reader selection: which block was selected, the selected text
 // and surrounding block context for the anchor, the sub-block offset range (omitted for
@@ -45,6 +46,23 @@ export function captureBlockSelection(
   }
 
   return { ...base, endOffset: mapped.endOffset, startOffset: mapped.startOffset };
+}
+
+// The note anchor payload for a captured draft: the block id, the context + selected-text snapshots,
+// and the sub-block offsets (omitted for a whole-block selection). Shared by the note editor's create
+// request and the one-tap mark (#255) so a note and a mark anchor identically.
+export function draftToAnchor(draft: NoteDraft): NoteAnchorDto {
+  const base = {
+    blockEntryId: toEntryId(draft.blockEntryId),
+    contextSnapshot: draft.contextSnapshot,
+    selectedTextSnapshot: draft.selectedText
+  };
+
+  if (draft.startOffset === undefined || draft.endOffset === undefined) {
+    return base;
+  }
+
+  return { ...base, endOffset: draft.endOffset, startOffset: draft.startOffset };
 }
 
 // The plaintext-relative anchor for a DOM selection, found by non-whitespace alignment.

@@ -12,16 +12,19 @@ function renderToolbar(
     onClose?: () => void;
     onConfirm?: () => void;
     onLookup?: () => void;
+    onMark?: () => void;
   } = {}
 ): {
   onClose: () => void;
   onConfirm: () => void;
   onLookup: () => void;
+  onMark: () => void;
   user: ReturnType<typeof userEvent.setup>;
 } {
   const onClose = overrides.onClose ?? vi.fn();
   const onConfirm = overrides.onConfirm ?? vi.fn();
   const onLookup = overrides.onLookup ?? vi.fn();
+  const onMark = overrides.onMark ?? vi.fn();
   const user = userEvent.setup();
 
   render(
@@ -31,11 +34,12 @@ function renderToolbar(
       onClose={onClose}
       onConfirm={onConfirm}
       onLookup={onLookup}
+      onMark={onMark}
       prefersReducedMotion={false}
     />
   );
 
-  return { onClose, onConfirm, onLookup, user };
+  return { onClose, onConfirm, onLookup, onMark, user };
 }
 
 afterEach(() => {
@@ -43,12 +47,27 @@ afterEach(() => {
 });
 
 describe("SelectionToolbar", () => {
-  it("shows exactly two primary actions plus a dismiss control", () => {
+  it("shows the primary actions (Add note, Mark, Look up) plus a dismiss control", () => {
     renderToolbar();
 
     const buttons = screen.getAllByRole("button");
-    expect(buttons.map((button) => button.textContent)).toEqual(["Add note", "Look up", "✕"]);
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Add note",
+      "Mark",
+      "Look up",
+      "✕"
+    ]);
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeDefined();
+  });
+
+  it("marks the selection without opening the editor or looking up", async () => {
+    const { onConfirm, onLookup, onMark, user } = renderToolbar();
+
+    await user.click(screen.getByRole("button", { name: "Mark" }));
+
+    expect(onMark).toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onLookup).not.toHaveBeenCalled();
   });
 
   it("confirms to open the editor", async () => {
@@ -92,15 +111,21 @@ describe("SelectionToolbar", () => {
     expect(screen.getByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
   });
 
-  it("disables Add note with a hint when the selection overlaps an annotation, keeping Look up", async () => {
-    const { onConfirm, onLookup, user } = renderToolbar({ disabledHint: "Notes can't overlap" });
+  it("disables Add note and Mark with a hint when the selection overlaps an annotation, keeping Look up", async () => {
+    const { onConfirm, onLookup, onMark, user } = renderToolbar({
+      disabledHint: "Notes can't overlap"
+    });
 
     const addNote = screen.getByRole("button", { name: "Add note" }) as HTMLButtonElement;
     expect(addNote.disabled).toBe(true);
+    const mark = screen.getByRole("button", { name: "Mark" }) as HTMLButtonElement;
+    expect(mark.disabled).toBe(true);
     expect(screen.getByText("Notes can't overlap")).toBeDefined();
 
     await user.click(addNote);
     expect(onConfirm).not.toHaveBeenCalled();
+    await user.click(mark);
+    expect(onMark).not.toHaveBeenCalled();
 
     // Look up stays available even when the selection overlaps.
     const lookUp = screen.getByRole("button", { name: "Look up" }) as HTMLButtonElement;

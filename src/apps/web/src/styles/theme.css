@@ -55,6 +55,12 @@
   --color-anno-thought: oklch(0.5 0.18 295);
   --color-anno-thought-wash: #efe7fd;
   --color-anno-thought-wash: oklch(0.95 0.03 300);
+  /* The Gem hue for a mark-only highlight (#255): a distinct rose, apart from the three template
+   * hues (amber / teal-green / violet). Day values; the .dark block overrides them. */
+  --color-anno-gem: #be123c;
+  --color-anno-gem: oklch(0.55 0.18 12);
+  --color-anno-gem-wash: #ffe4e6;
+  --color-anno-gem-wash: oklch(0.95 0.03 12);
 
   /* Part-of-speech hues for the dictionary lookup (restrained: noun blue, verb green,
    * adjective amber, adverb violet). Day values; the .dark block overrides them. */
@@ -121,6 +127,10 @@
   --color-anno-thought: oklch(0.8 0.1 295);
   --color-anno-thought-wash: #2a2342;
   --color-anno-thought-wash: oklch(0.3 0.05 300);
+  --color-anno-gem: #fda4af;
+  --color-anno-gem: oklch(0.8 0.1 12);
+  --color-anno-gem-wash: #3a1620;
+  --color-anno-gem-wash: oklch(0.3 0.05 12);
   --color-pos-noun: #93b4fc;
   --color-pos-noun: oklch(0.74 0.12 260);
   --color-pos-noun-wash: #1a2540;
@@ -352,6 +362,10 @@
   border-inline-start-color: var(--color-anno-thought);
 }
 
+.readerBlock--gem {
+  border-inline-start-color: var(--color-anno-gem);
+}
+
 /*
  * A sub-block note marks exactly its anchored characters with a delicate underline in the template
  * hue — the hue carries the meaning, not the weight. `text-decoration: underline` follows wrapped
@@ -375,6 +389,10 @@
 
 .noteMark--thought {
   text-decoration-color: var(--color-anno-thought);
+}
+
+.noteMark--gem {
+  text-decoration-color: var(--color-anno-gem);
 }
 
 .noteMark:focus-visible {

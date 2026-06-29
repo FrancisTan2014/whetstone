@@ -8,28 +8,31 @@ export type SelectionToolbarProps = Readonly<{
   onClose: () => void;
   onConfirm: () => void;
   onLookup: () => void;
+  onMark: () => void;
   prefersReducedMotion: boolean;
 }>;
 
-// A floating toolbar anchored to the current selection. It offers exactly two primary
-// actions — "Add note" (opens the editor, where the size-preselected template is chosen
-// or confirmed) and "Look up" (opens the view-only definition panel) — plus a dismiss
-// control; the template choice lives in the note editor, not here. Positioned from a rect
-// captured off the selection Range; springs in and honors reduced motion.
+// A floating toolbar anchored to the current selection. It offers three primary actions — "Add
+// note" (opens the editor, where the size-preselected template is chosen or confirmed), "Mark" (a
+// one-tap highlight with no note body, a "Gem" #255), and "Look up" (opens the view-only definition
+// panel) — plus a dismiss control; the template choice lives in the note editor, not here.
+// Positioned from a rect captured off the selection Range; springs in and honors reduced motion.
 //
-// When `disabledHint` is set the selection overlaps an existing annotation: notes are disjoint
-// (#163), so "Add note" is disabled and the hint explains why, while "Look up" stays available.
+// When `disabledHint` is set the selection overlaps an existing annotation: annotations are disjoint
+// (#163), so "Add note" and "Mark" are disabled and the hint explains why, while "Look up" stays
+// available.
 export function SelectionToolbar({
   anchorRect,
   disabledHint,
   onClose,
   onConfirm,
   onLookup,
+  onMark,
   prefersReducedMotion
 }: SelectionToolbarProps): React.JSX.Element {
   const positioned =
     anchorRect === undefined ? {} : { style: { left: anchorRect.left, top: anchorRect.bottom } };
-  const addNoteDisabled = disabledHint !== undefined;
+  const overlapsAnnotation = disabledHint !== undefined;
 
   return (
     <motion.div
@@ -43,11 +46,19 @@ export function SelectionToolbar({
     >
       <button
         className="selectionToolbarAction"
-        disabled={addNoteDisabled}
+        disabled={overlapsAnnotation}
         onClick={onConfirm}
         type="button"
       >
         Add note
+      </button>
+      <button
+        className="selectionToolbarAction selectionToolbarAction--mark"
+        disabled={overlapsAnnotation}
+        onClick={onMark}
+        type="button"
+      >
+        Mark
       </button>
       <button
         className="selectionToolbarAction selectionToolbarAction--secondary"
@@ -64,7 +75,7 @@ export function SelectionToolbar({
       >
         ✕
       </button>
-      {addNoteDisabled ? (
+      {overlapsAnnotation ? (
         <p className="selectionToolbarHint" role="note">
           {disabledHint}
         </p>

@@ -43,50 +43,59 @@ export function NoteList({
 
   return (
     <ul className="noteList">
-      {notes.map((note) => (
-        <li className="noteCard" key={note.entryId}>
-          <div className="noteCardHeader">
-            <span className={`noteCardChip ${templateSwatchClass(note.templateId)}`}>
-              {templateName(templates, note.templateId)}
-            </span>
-          </div>
-          <p className="noteCardSnippet">“{note.anchor.selectedTextSnapshot}”</p>
-          <div className="noteCardBody">
-            <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
-              {note.markdown}
-            </Markdown>
-          </div>
-          <div className="noteCardActions">
-            <Button
-              aria-label={`Jump to text: ${note.anchor.selectedTextSnapshot}`}
-              onClick={() => onJump(note)}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              Jump to text
-            </Button>
-            <Button
-              aria-label={`Edit note: ${note.anchor.selectedTextSnapshot}`}
-              onClick={() => onEdit(note)}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Edit
-            </Button>
-            <Button
-              aria-label={`Delete note: ${note.anchor.selectedTextSnapshot}`}
-              onClick={() => onDelete(note)}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Delete
-            </Button>
-          </div>
-        </li>
-      ))}
+      {notes.map((note) => {
+        const templateId = note.templateId;
+        const isMark = templateId === null;
+
+        return (
+          <li className="noteCard" key={note.entryId}>
+            <div className="noteCardHeader">
+              <span className={`noteCardChip ${templateSwatchClass(templateId)}`}>
+                {isMark ? "Gem" : templateName(templates, templateId)}
+              </span>
+            </div>
+            <p className="noteCardSnippet">“{note.anchor.selectedTextSnapshot}”</p>
+            {isMark ? null : (
+              <div className="noteCardBody">
+                <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
+                  {note.markdown}
+                </Markdown>
+              </div>
+            )}
+            <div className="noteCardActions">
+              <Button
+                aria-label={`Jump to text: ${note.anchor.selectedTextSnapshot}`}
+                onClick={() => onJump(note)}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                Jump to text
+              </Button>
+              {isMark ? null : (
+                <Button
+                  aria-label={`Edit note: ${note.anchor.selectedTextSnapshot}`}
+                  onClick={() => onEdit(note)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Edit
+                </Button>
+              )}
+              <Button
+                aria-label={`Delete ${isMark ? "mark" : "note"}: ${note.anchor.selectedTextSnapshot}`}
+                onClick={() => onDelete(note)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Delete
+              </Button>
+            </div>
+          </li>
+        );
+      })}
     </ul>
   );
 }

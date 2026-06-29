@@ -6,7 +6,12 @@ import {
   type EntryId,
   type NoteAnchor
 } from "@whetstone/domain";
-import type { CreateNoteRequest, NoteDto, UpdateNoteRequest } from "@whetstone/contracts";
+import type {
+  CreateMarkRequest,
+  CreateNoteRequest,
+  NoteDto,
+  UpdateNoteRequest
+} from "@whetstone/contracts";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -25,6 +30,13 @@ export type CreateNoteResult =
   | Readonly<{ status: "template_not_found" }>
   | Readonly<{ status: "block_not_found" }>
   | Readonly<{ reason: "empty" | "unknown_field"; status: "invalid_answers" }>
+  | Readonly<{ status: "anchor_out_of_range" }>;
+
+// A mark (#255) skips the template, so it has no template/answer failure modes — only the shared
+// anchor checks a templated note also runs.
+export type CreateMarkResult =
+  | Readonly<{ note: NoteDto; status: "created" }>
+  | Readonly<{ status: "block_not_found" }>
   | Readonly<{ status: "anchor_out_of_range" }>;
 
 export type UpdateNoteResult =
@@ -82,26 +94,13 @@ export async function createNote(
   const anchor = request.anchor;
   const markdown = renderNoteMarkdown(template, validation.answers);
 
-  await dependencies.db.transaction(async (tx) => {
-    await tx.insert(entries).values({ id: noteEntryId, type: "note" });
-    await tx.insert(notes).values({
-      answersJson: validation.answers,
-      entryId: noteEntryId,
-      markdownBody: markdown,
-      templateId: template.id,
-      userId
-    });
-    await tx.insert(noteAnchors).values({
-      blockEntryId: anchor.blockEntryId,
-      contextSnapshot: anchor.contextSnapshot,
-      endOffset: anchor.endOffset ?? null,
-      noteEntryId,
-      selectedText: anchor.selectedTextSnapshot,
-      startOffset: anchor.startOffset ?? null
-    });
-    await tx
-      .insert(entryLinks)
-      .values({ fromEntryId: noteEntryId, toEntryId: anchor.blockEntryId, type: "annotates" });
+  await persistNoteWithAnchor(dependencies.db, {
+    answers: validation.answers,
+    anchor,
+    markdown,
+    noteEntryId,
+    templateId: template.id,
+    userId
   });
 
   return {
@@ -112,6 +111,89 @@ export async function createNote(
       entryId: noteEntryId,
       markdown,
       templateId: template.id
+    },
+    status: "created"
+  };
+}
+
+// Insert a note (templated or a mark) with its anchor and `annotates` link in one transaction.
+// `templateId` is null and `markdown`/`answers` empty for a mark (#255); a templated note passes its
+// rendered body and validated answers. Single owner of note row + anchor + link creation.
+async function persistNoteWithAnchor(
+  db: DbClient,
+  params: Readonly<{
+    answers: Readonly<Record<string, string>>;
+    anchor: NoteAnchor;
+    markdown: string;
+    noteEntryId: EntryId;
+    templateId: string | null;
+    userId: string;
+  }>
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: params.noteEntryId, type: "note" });
+    await tx.insert(notes).values({
+      answersJson: params.answers,
+      entryId: params.noteEntryId,
+      markdownBody: params.markdown,
+      templateId: params.templateId,
+      userId: params.userId
+    });
+    await tx.insert(noteAnchors).values({
+      blockEntryId: params.anchor.blockEntryId,
+      contextSnapshot: params.anchor.contextSnapshot,
+      endOffset: params.anchor.endOffset ?? null,
+      noteEntryId: params.noteEntryId,
+      selectedText: params.anchor.selectedTextSnapshot,
+      startOffset: params.anchor.startOffset ?? null
+    });
+    await tx.insert(entryLinks).values({
+      fromEntryId: params.noteEntryId,
+      toEntryId: params.anchor.blockEntryId,
+      type: "annotates"
+    });
+  });
+}
+
+// Create a mark (#255): a one-tap highlight with no template or body. Runs the same block + anchor
+// checks a templated note does, then persists a note with a null template and empty body/answers, so
+// it reuses the anchor, overlap, list, and delete model with no new entity.
+export async function createMark(
+  dependencies: NotesDependencies,
+  workEntryId: EntryId,
+  request: CreateMarkRequest,
+  userId: string
+): Promise<CreateMarkResult> {
+  const block = await findBlockInWork(dependencies.db, workEntryId, request.anchor.blockEntryId);
+
+  if (block === undefined) {
+    return { status: "block_not_found" };
+  }
+
+  if (!anchorFitsBlock(request.anchor, block.plaintext)) {
+    return { status: "anchor_out_of_range" };
+  }
+
+  const noteEntryId = toEntryId(dependencies.createEntryId());
+  const anchor = request.anchor;
+
+  await persistNoteWithAnchor(dependencies.db, {
+    answers: {},
+    anchor,
+    markdown: "",
+    noteEntryId,
+    templateId: null,
+    userId
+  });
+
+  return {
+    note: {
+      anchor,
+      answers: {},
+      blockEntryId: anchor.blockEntryId,
+      entryId: noteEntryId,
+      markdown: "",
+      templateId: null
     },
     status: "created"
   };

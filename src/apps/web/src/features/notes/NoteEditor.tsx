@@ -1,12 +1,12 @@
 import { useState } from "react";
 
 import type { CreateNoteRequest, NoteDto, NoteTemplateDto } from "@whetstone/contracts";
-import { toEntryId } from "@whetstone/domain";
+import { preselectTemplateId } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
 import { createNote, updateNote } from "./notesApi";
-import type { NoteDraft } from "./noteCapture";
+import { draftToAnchor, type NoteDraft } from "./noteCapture";
 import { templateSwatchClass } from "./templateHue.tokens";
 
 // The editor opens either to capture a new note from a reader selection, or to edit an
@@ -37,35 +37,17 @@ function buildCreateRequest(
   templateId: string,
   answers: Record<string, string>
 ): CreateNoteRequest {
-  const blockEntryId = toEntryId(draft.blockEntryId);
-
-  if (draft.startOffset === undefined || draft.endOffset === undefined) {
-    return {
-      answers,
-      anchor: {
-        blockEntryId,
-        contextSnapshot: draft.contextSnapshot,
-        selectedTextSnapshot: draft.selectedText
-      },
-      templateId
-    };
-  }
-
-  return {
-    answers,
-    anchor: {
-      blockEntryId,
-      contextSnapshot: draft.contextSnapshot,
-      endOffset: draft.endOffset,
-      selectedTextSnapshot: draft.selectedText,
-      startOffset: draft.startOffset
-    },
-    templateId
-  };
+  return { answers, anchor: draftToAnchor(draft), templateId };
 }
 
 function preselectionFor(target: NoteEditorTarget): string {
-  return target.kind === "create" ? target.draft.preselectedTemplateId : target.note.templateId;
+  if (target.kind === "create") {
+    return target.draft.preselectedTemplateId;
+  }
+
+  // A mark (null template) has no Edit affordance in the UI; if one is ever edited, fall back to the
+  // size-based preselection so the editor still opens on a sensible template.
+  return target.note.templateId ?? preselectTemplateId(target.note.anchor.selectedTextSnapshot);
 }
 
 function selectionTextFor(target: NoteEditorTarget): string {

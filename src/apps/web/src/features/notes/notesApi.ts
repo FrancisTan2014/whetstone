@@ -1,4 +1,5 @@
 import type {
+  CreateMarkRequest,
   CreateNoteRequest,
   NoteDto,
   NoteListDto,
@@ -39,6 +40,18 @@ export async function createNote(
   request: CreateNoteRequest
 ): Promise<NoteDto> {
   return requestJson<NoteDto>(`/api/works/${encodeURIComponent(workEntryId)}/notes`, {
+    body: JSON.stringify(request),
+    headers: jsonHeaders,
+    method: "POST"
+  });
+}
+
+// Save a mark-only highlight (a "Gem", #255): one POST with just the anchor, no template/body.
+export async function createMark(
+  workEntryId: string,
+  request: CreateMarkRequest
+): Promise<NoteDto> {
+  return requestJson<NoteDto>(`/api/works/${encodeURIComponent(workEntryId)}/marks`, {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "POST"

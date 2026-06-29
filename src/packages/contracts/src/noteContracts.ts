@@ -46,6 +46,17 @@ export const createNoteRequestSchema = z
 
 export type CreateNoteRequest = z.infer<typeof createNoteRequestSchema>;
 
+// A mark-only highlight (a "Gem", #255): one tap saves a highlight with no template or body, so the
+// request carries only the anchor. The mark reuses the note anchor + overlap + delete model; it is
+// stored as a note with a null template and empty body.
+export const createMarkRequestSchema = z
+  .object({
+    anchor: noteAnchorDtoSchema
+  })
+  .strict();
+
+export type CreateMarkRequest = z.infer<typeof createMarkRequestSchema>;
+
 // Editing a note changes its template and answers; the anchor (which block and where) is
 // fixed at capture time, so it is not part of the update.
 export const updateNoteRequestSchema = z
@@ -63,7 +74,9 @@ export type NoteDto = Readonly<{
   blockEntryId: EntryId;
   entryId: EntryId;
   markdown: string;
-  templateId: string;
+  // Null for a mark-only highlight (a "Gem", #255), which has no template or body; a string for a
+  // templated note. The reader picks the gem hue for a null template.
+  templateId: string | null;
 }>;
 
 export type NoteListDto = Readonly<{
@@ -90,6 +103,10 @@ export type NoteTemplateListDto = Readonly<{
 
 export function parseCreateNoteRequest(value: unknown): CreateNoteRequest {
   return createNoteRequestSchema.parse(value);
+}
+
+export function parseCreateMarkRequest(value: unknown): CreateMarkRequest {
+  return createMarkRequestSchema.parse(value);
 }
 
 export function parseUpdateNoteRequest(value: unknown): UpdateNoteRequest {

@@ -93,4 +93,28 @@ describe("NoteList", () => {
     await user.click(screen.getByRole("button", { name: "Delete note: fox" }));
     expect(onDelete).toHaveBeenCalledWith(note);
   });
+
+  it("renders a mark (null template) as a Gem card with no body or edit, still removable", async () => {
+    const onDelete = vi.fn();
+    const onEdit = vi.fn();
+    const mark = makeNote({
+      answers: {},
+      entryId: toEntryId("mark-1"),
+      markdown: "",
+      templateId: null
+    });
+    const user = userEvent.setup();
+    renderList([mark], { onDelete, onEdit });
+
+    // A dedicated "Gem" chip with its gem swatch, the snippet, and no Edit control.
+    const chip = screen.getByText("Gem");
+    expect(chip.className).toContain("templateHue--gem");
+    expect(screen.getByText(/fox/)).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Edit note: fox" })).toBeNull();
+
+    // Removable via its delete control.
+    await user.click(screen.getByRole("button", { name: "Delete mark: fox" }));
+    expect(onDelete).toHaveBeenCalledWith(mark);
+    expect(onEdit).not.toHaveBeenCalled();
+  });
 });

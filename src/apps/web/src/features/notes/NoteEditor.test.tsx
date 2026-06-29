@@ -315,6 +315,18 @@ describe("NoteEditor edit mode", () => {
     expect((screen.getByLabelText("Memory hook") as HTMLInputElement).value).toBe("fox = sly");
   });
 
+  it("falls back to the size-based template when editing a mark with no template (#255)", () => {
+    renderEditor({
+      target: {
+        kind: "edit",
+        note: { ...existingNote, answers: {}, markdown: "", templateId: null }
+      }
+    });
+
+    // A mark stores no template; the editor preselects from the selected text ("fox" → Vocabulary).
+    expect(selectedTemplate()).toBe("Vocabulary");
+  });
+
   it("saves edited answers through the update endpoint", async () => {
     const updated = { ...existingNote, answers: { meaning: "a cunning animal" } } as NoteDto;
     mockedUpdateNote.mockResolvedValue(updated);

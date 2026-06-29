@@ -261,15 +261,18 @@ export type {
   WorkListItemDto
 } from "./libraryContracts.js";
 export {
+  createMarkRequestSchema,
   createNoteRequestSchema,
   noteFieldTypeDtoSchema,
   noteTemplateDtoSchema,
+  parseCreateMarkRequest,
   parseCreateNoteRequest,
   parseNoteTemplateDto,
   parseUpdateNoteRequest,
   updateNoteRequestSchema
 } from "./noteContracts.js";
 export type {
+  CreateMarkRequest,
   CreateNoteRequest,
   NoteDto,
   NoteListDto,
