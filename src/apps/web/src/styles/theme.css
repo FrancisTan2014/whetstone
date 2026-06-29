@@ -395,7 +395,7 @@
   margin-block-start: 0.5rem;
   color: var(--color-text-muted);
   font-family: var(--font-sans);
-  font-size: var(--text-scale-sm);
+  font-size: 0.85em; /* em (not --text-scale-sm) so the caption scales with --reading-size on A+/A− (#233). */
   text-align: center;
 }
 
@@ -445,7 +445,8 @@
  * Day and Night. Headings are sans (vs the serif reading body), with a non-increasing size h1->h6
  * (strictly decreasing here), reinforcing weight, and a section-break space above. h5/h6 drop below
  * body size but stay heavier and use uppercase tracking + a muted tone. Color is tonal only — no hue
- * — so the hierarchy holds in both themes. The largest level (the chapter title) caps at 3xl.
+ * — so the hierarchy holds in both themes. The largest level (the chapter title) caps at 3xl. Sizes
+ * are em (relative to --reading-size) so A+/A− scales headings with the body, not just text (#233).
  */
 .reader :where(h1, h2, h3, h4, h5, h6) {
   color: var(--color-text);
@@ -455,37 +456,37 @@
 
 .reader h1 {
   margin-block-start: 2.5rem;
-  font-size: var(--text-scale-3xl);
+  font-size: 2em;
   font-weight: 700;
 }
 
 .reader h2 {
   margin-block-start: 2rem;
-  font-size: var(--text-scale-2xl);
+  font-size: 1.6em;
   font-weight: 700;
 }
 
 .reader h3 {
   margin-block-start: 1.5rem;
-  font-size: var(--text-scale-xl);
+  font-size: 1.3em;
   font-weight: 600;
 }
 
 .reader h4 {
   margin-block-start: 1.25rem;
-  font-size: var(--text-scale-lg);
+  font-size: 1.15em;
   font-weight: 700;
 }
 
 .reader h5 {
   margin-block-start: 1.25rem;
-  font-size: var(--text-scale-base);
+  font-size: 1em;
   font-weight: 700;
 }
 
 .reader h6 {
   margin-block-start: 1.25rem;
-  font-size: var(--text-scale-sm);
+  font-size: 0.875em;
   font-weight: 700;
 }
 
