@@ -52,6 +52,7 @@ async function resolveBlock(
   if (block.blockType !== "figure") {
     return {
       alt: null,
+      anchorId: block.anchorId ?? null,
       blockType: block.blockType,
       imageResourceId: null,
       mdast: block.mdast,
@@ -68,6 +69,7 @@ async function resolveBlock(
 
   return {
     alt: imageResourceId === null ? null : (block.image?.alt ?? null),
+    anchorId: block.anchorId ?? null,
     blockType: "figure",
     imageResourceId,
     mdast: block.mdast,

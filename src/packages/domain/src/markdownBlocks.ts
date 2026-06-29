@@ -14,6 +14,7 @@ import type { BlockType } from "./block.js";
 export type DecomposedFigureImage = Readonly<{ alt?: string; src: string }>;
 
 export type DecomposedBlock = Readonly<{
+  anchorId?: string;
   blockType: BlockType;
   image?: DecomposedFigureImage;
   mdast: RootContent;

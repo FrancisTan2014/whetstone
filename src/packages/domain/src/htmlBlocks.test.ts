@@ -172,6 +172,22 @@ describe("decomposeHtmlChapter", () => {
     expect(unit.blocks.some((block) => block.blockType === "figure")).toBe(false);
   });
 
+  it("preserves a host element id as the block's anchor for in-work cross-references (#252)", () => {
+    const unit = decomposeHtmlChapter(
+      '<p id="intro">An opening.</p>' +
+        '<figure id="fig5"><img src="img/f.png"/><figcaption>Figure 5-2.</figcaption></figure>' +
+        "<p>No id here.</p>"
+    );
+
+    const byId = new Map(unit.blocks.map((block) => [block.anchorId, block.plaintext]));
+    expect(byId.get("intro")).toBe("An opening.");
+    expect(byId.get("fig5")).toBe("Figure 5-2.");
+    // A block without a source id carries no anchor.
+    expect(
+      unit.blocks.find((block) => block.plaintext === "No id here.")?.anchorId
+    ).toBeUndefined();
+  });
+
   it("emits a caption-only figure when the <img> has no src", () => {
     const unit = decomposeHtmlChapter(
       "<figure><img alt='x'/><figcaption>Caption</figcaption></figure>"

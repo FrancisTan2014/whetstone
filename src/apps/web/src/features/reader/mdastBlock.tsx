@@ -18,17 +18,36 @@ const sanitizeSchema: Schema = {
   tagNames: (defaultSchema.tagNames as string[]).filter((tagName) => tagName !== "img")
 };
 
-// In-content links render as non-navigating text: a live `<a href>` would hijack the click,
-// navigating the hash-router SPA away and stealing the click from the lookup/annotation
-// selection. Keep the link text; drop the navigation. `unwrapBlockLinks` (below) guarantees a
-// link only ever wraps phrasing content, so this inline `<span>` never contains block content.
-const components = {
-  a: ({ children }: { children?: React.ReactNode }): React.JSX.Element => (
-    <span className="readerLink">{children}</span>
-  )
-};
+// In-content links render as non-navigating text by default — a live `<a href>` would hijack the click,
+// navigating the hash-router SPA away and stealing the click from the lookup/annotation selection. But
+// a SAME-WORK `#id` link whose target is an addressable block becomes a live internal jump (#252): tap
+// scrolls to that block + highlights it, reusing the reader's block-jump. All other links stay text.
+function buildComponents(onActivateAnchor: ((anchorId: string) => void) | undefined) {
+  return {
+    a: ({ children, href }: { children?: React.ReactNode; href?: string }): React.JSX.Element => {
+      const anchorId = href?.startsWith("#") ? href.slice(1) : undefined;
+      if (anchorId !== undefined && onActivateAnchor !== undefined) {
+        return (
+          <button
+            className="readerLink readerXref"
+            onClick={() => onActivateAnchor(anchorId)}
+            type="button"
+          >
+            {children}
+          </button>
+        );
+      }
+      return <span className="readerLink">{children}</span>;
+    }
+  };
+}
 
-export type BlockContentProps = Readonly<{ marks?: ReadonlyArray<NoteMark>; node: unknown }>;
+export type BlockContentProps = Readonly<{
+  marks?: ReadonlyArray<NoteMark>;
+  node: unknown;
+  // Resolve+jump a same-work `#id` anchor to its target block; absent leaves all links inert text.
+  onActivateAnchor?: (anchorId: string) => void;
+}>;
 
 // Render a block straight from its stored mdast: mdast → hast (raw HTML dropped) → sanitize →
 // note marks → React, converted once with no Markdown re-parse. This replaces the mdast → Markdown
@@ -45,7 +64,8 @@ export type BlockContentProps = Readonly<{ marks?: ReadonlyArray<NoteMark>; node
 // range with the rendered inline content, so the underline lands on exactly the anchored span.
 export const BlockContent = memo(function BlockContent({
   marks,
-  node
+  node,
+  onActivateAnchor
 }: BlockContentProps): React.JSX.Element {
   const safeNode = unwrapBlockLinks(node as RootContent);
   const hast: HastNodes = toHast({ type: "root", children: [safeNode] });
@@ -54,7 +74,7 @@ export const BlockContent = memo(function BlockContent({
 
   return toJsxRuntime(marked, {
     Fragment,
-    components,
+    components: buildComponents(onActivateAnchor),
     jsx,
     jsxs
   }) as React.JSX.Element;

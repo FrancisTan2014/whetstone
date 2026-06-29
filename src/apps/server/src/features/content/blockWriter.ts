@@ -11,6 +11,7 @@ type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 // whose image was not stored.
 export type PersistableBlock = Readonly<{
   alt: string | null;
+  anchorId: string | null;
   blockType: BlockType;
   imageResourceId: string | null;
   mdast: unknown;
@@ -54,6 +55,7 @@ export async function writeReadingUnits(
   }[] = [];
   const blockRows: {
     alt: string | null;
+    anchorId: string | null;
     blockType: BlockType;
     entryId: string;
     imageResourceId: string | null;
@@ -81,6 +83,7 @@ export async function writeReadingUnits(
       entryRows.push({ id: blockEntryId, type: "block" });
       blockRows.push({
         alt: block.alt,
+        anchorId: block.anchorId,
         blockType: block.blockType,
         entryId: blockEntryId,
         imageResourceId: block.imageResourceId,
