@@ -488,6 +488,24 @@ describe("content routes", () => {
     expect(source?.sha256).not.toBe(hashMarkdown("Intro.\n\n# Chapter\n\n- a"));
   });
 
+  it("re-uploading an equivalent PDF is a no-op that leaves one source and no orphan file", async () => {
+    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
+    const workEntryId = await createWork();
+
+    expect((await ingestPdf(workEntryId, Buffer.from("%PDF first"))).statusCode).toBe(201);
+    // A different PDF payload converting to the same Markdown re-ingests to identical blocks: a no-op.
+    expect((await ingestPdf(workEntryId, Buffer.from("%PDF second"))).statusCode).toBe(201);
+
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, workEntryId));
+    expect(sources).toHaveLength(1);
+    expect(
+      (await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))
+    ).toHaveLength(1);
+  });
+
   it("returns 422 when the PDF worker fails to convert", async () => {
     pdfResponder = async () => Promise.reject(new Error("docling absent"));
     const workEntryId = await createWork();

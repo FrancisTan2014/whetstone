@@ -60,15 +60,13 @@ export async function ingestPdf(
     return { status: "empty_content" };
   }
 
-  // Provenance is the original PDF: store the bytes with their PDF sha256, not the converted Markdown,
-  // so the uploaded source is retained per PRODUCT.md and idempotence keys off the PDF payload (#15).
+  // Provenance is the original PDF, written only on the persist path (the builder runs after the
+  // no-op/idempotence check) so an equivalent re-upload never orphans a PDF file. sha256 is the PDF
+  // payload, so retention and idempotence key off the bytes, not the converted Markdown (#15).
   const sourceId = dependencies.createSourceId();
-  const written = await dependencies.sourceFileStore.writePdfSource({ bytes, id: sourceId });
-  const provenance: Provenance = {
-    fileName,
-    filePath: written.path,
-    sha256: written.sha256,
-    sourceText: null
+  const buildPdfProvenance = async (): Promise<Provenance> => {
+    const written = await dependencies.sourceFileStore.writePdfSource({ bytes, id: sourceId });
+    return { fileName, filePath: written.path, sha256: written.sha256, sourceText: null };
   };
 
   return ingestMarkdown(
@@ -76,7 +74,7 @@ export async function ingestPdf(
     workEntryId,
     { fileName, kind: "upload", markdown },
     sourceId,
-    provenance
+    buildPdfProvenance
   );
 }
 
@@ -96,7 +94,7 @@ export async function ingestMarkdown(
   workEntryId: EntryId,
   source: IngestMarkdownRequest,
   sourceIdOverride?: string,
-  provenanceOverride?: Provenance
+  buildProvenanceOverride?: () => Promise<Provenance>
 ): Promise<IngestMarkdownResult> {
   if (!(await workExists(dependencies.db, workEntryId))) {
     return { status: "work_not_found" };
@@ -128,7 +126,9 @@ export async function ingestMarkdown(
 
   const sourceId = sourceIdOverride ?? dependencies.createSourceId();
   const provenance =
-    provenanceOverride ?? (await buildProvenance(dependencies.sourceFileStore, sourceId, source));
+    buildProvenanceOverride !== undefined
+      ? await buildProvenanceOverride()
+      : await buildProvenance(dependencies.sourceFileStore, sourceId, source);
 
   const oldBlocks = current.readingUnits.flatMap((unit) =>
     unit.blocks.map((block) => ({ id: block.entryId, plaintext: block.plaintext }))
