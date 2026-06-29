@@ -32,7 +32,9 @@ type Status =
 type LiveSession = Readonly<{ capture: LiveCapture; voice: VoiceOut }>;
 
 // The browser-dependent halves of the loop, injected so the page is testable with fakes: mic capture +
-// endpointing (#219) and TTS out (#221). Absent = no-mic, typed-only fallback.
+// endpointing (#219) and TTS out (#221). Absent = no-mic, typed-only fallback. `supported` is the
+// feature-detect (`navigator.mediaDevices?.getUserMedia`): false on a non-secure context or no device,
+// so the voice path is hidden and the call opens typed-only — never a fatal screen.
 export type LiveDependencies = Readonly<{
   createCapture: (callbacks: {
     onUtterance: (audio: Blob) => void;
@@ -40,6 +42,7 @@ export type LiveDependencies = Readonly<{
     onUtteranceStart?: () => void;
   }) => LiveCapture;
   createVoiceOut: () => VoiceOut;
+  supported: boolean;
 }>;
 
 type SessionPageProps = Readonly<{
@@ -66,6 +69,7 @@ export function SessionPage({
   const [captions, setCaptions] = useState<ReadonlyArray<Caption>>([]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [started, setStarted] = useState(false);
+  const [micUnavailable, setMicUnavailable] = useState(false);
   const [wrapUp, setWrapUp] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const liveRef = useRef<LiveSession | null>(null);
@@ -124,22 +128,30 @@ export function SessionPage({
     await runTurn(call, transcript);
   }
 
+  // Open the live call. A mic-start failure (denied/absent device, or a non-secure context where
+  // `getUserMedia` rejects) is NOT fatal: tear the capture half down and stay active, typed-only, with a
+  // calm notice. Only genuine session API failures (transcribe/say/end) reach `guarded`'s fatal screen.
   function startCall(call: CallContext, deps: LiveDependencies): Promise<void> {
-    return guarded(async () => {
-      const voice = deps.createVoiceOut();
-      const capture = deps.createCapture({
-        onBargeIn: () => {
-          voice.cancel();
-          capture.setCoachPlaying(false);
-          setPhase("listening");
-        },
-        onUtterance: (audio) => void guarded(() => onUtterance(call, audio))
-      });
-      liveRef.current = { capture, voice };
-      await capture.start();
-      setStarted(true);
-      setPhase("listening");
+    const voice = deps.createVoiceOut();
+    const capture = deps.createCapture({
+      onBargeIn: () => {
+        voice.cancel();
+        capture.setCoachPlaying(false);
+        setPhase("listening");
+      },
+      onUtterance: (audio) => void guarded(() => onUtterance(call, audio))
     });
+    liveRef.current = { capture, voice };
+    return capture.start().then(
+      () => {
+        setStarted(true);
+        setPhase("listening");
+      },
+      () => {
+        teardown();
+        setMicUnavailable(true);
+      }
+    );
   }
 
   // End the round: tear down the live call, run the one analysis pass + deposit (server), and show the
@@ -174,6 +186,7 @@ export function SessionPage({
         setCaptions([]);
         setPhase("idle");
         setStarted(false);
+        setMicUnavailable(false);
         setWrapUp(false);
         wordsRef.current = [];
         setStatus({
@@ -244,6 +257,7 @@ export function SessionPage({
       captions={captions}
       endCall={() => void endCall(status.call)}
       liveDeps={live}
+      micUnavailable={micUnavailable}
       onSend={(transcript) => void guarded(() => runTurn(status.call, transcript))}
       onStart={(deps) => void startCall(status.call, deps)}
       phase={phase}
@@ -269,6 +283,7 @@ function CallView({
   captions,
   endCall,
   liveDeps,
+  micUnavailable,
   onSend,
   onStart,
   phase,
@@ -279,6 +294,7 @@ function CallView({
   captions: ReadonlyArray<Caption>;
   endCall: () => void;
   liveDeps: LiveDependencies | undefined;
+  micUnavailable: boolean;
   onSend: (transcript: string) => void;
   onStart: (deps: LiveDependencies) => void;
   phase: Phase;
@@ -287,6 +303,9 @@ function CallView({
 }>): React.JSX.Element {
   const [typed, setTyped] = useState("");
   const busy = phase === "thinking" || phase === "speaking";
+  // Offer voice only when the browser supports capture and a previous start hasn't already degraded to
+  // typed-only; otherwise the call runs on the typed box, which is always present.
+  const canStart = liveDeps?.supported === true && !started && !micUnavailable;
 
   function submitTyped(): void {
     const transcript = typed.trim();
@@ -314,6 +333,15 @@ function CallView({
           </p>
         ) : null}
 
+        {micUnavailable ? (
+          <p
+            className="rounded border border-border bg-surface px-3 py-2 text-sm text-text-muted"
+            role="status"
+          >
+            Mic unavailable — type your reply, or enable the mic and reload.
+          </p>
+        ) : null}
+
         {started ? <p className="text-sm font-medium text-text">{phaseLabels[phase]}</p> : null}
 
         <ul aria-label="Conversation" aria-live="polite" className="flex flex-col gap-2">
@@ -335,7 +363,7 @@ function CallView({
         </ul>
 
         <div className="flex flex-wrap gap-2">
-          {liveDeps !== undefined && !started ? (
+          {liveDeps !== undefined && canStart ? (
             <Button onClick={() => onStart(liveDeps)} type="button">
               Start call
             </Button>
