@@ -18,8 +18,11 @@ self-hosted runner, the tunnel, and persistence.
 - The **app** is a `launchd` service running the built `src/apps/server/dist/index.js`. It **runs DB
   migrations on boot** and **serves the built web client and the API from one port** (single origin),
   so there is no separate web server and no SPA-fallback config (the client uses a hash router).
-- **`cloudflared`** (another `launchd` service) maps a public HTTPS hostname to `http://localhost:<port>`
-  — free, no port-forwarding, automatic TLS.
+- A **named Cloudflare Tunnel** (a `launchd` service running `cloudflared tunnel run --token …`) maps a
+  **fixed** public HTTPS hostname (`whetstone.<your-domain>`) to `http://localhost:<port>` — free, no
+  port-forwarding, automatic TLS, and the **same URL across reboots** (unlike a quick tunnel). No
+  domain? **Tailscale Funnel** is the fallback, giving a stable `*.ts.net` URL. The token/hostname live
+  in env / the Cloudflare dashboard — never committed.
 - **Persistence:** `DATABASE_DIR` (and the source/image folders) live outside the runner workspace, so
   notes and reading position survive every redeploy.
 
@@ -125,41 +128,89 @@ curl -fsS http://127.0.0.1:3000/health                     # {"service":"whetsto
 > health-check use them: `gh variable set WHETSTONE_PORT --body <port>` and
 > `gh variable set WHETSTONE_SERVICE_LABEL --body <label>`.
 
-## 5. The Cloudflare Tunnel `launchd` service
+## 5. A stable public URL (named Cloudflare Tunnel, token-based)
 
-**Quick test (no domain)** — a throwaway `https://<random>.trycloudflare.com` URL:
+A **named** tunnel keeps the **same hostname across reboots** — unlike a quick tunnel, whose
+`trycloudflare.com` URL is random on every start. The modern token-based setup needs **no
+`credentials-file` and no committed config**: Cloudflare stores the routing, and the Mac only holds a
+token (kept in env, never in the repo).
+
+**One-time setup** (domain must be on Cloudflare — added as a zone in your account):
+
+1. Create the tunnel and bind a fixed hostname in the Cloudflare **Zero Trust** dashboard
+   (**Networks → Tunnels → Create a tunnel → Cloudflared**): name it `whetstone`, then under
+   **Public Hostname** add `whetstone.<your-domain>` → service `http://localhost:3000`. The dashboard
+   shows the tunnel's **token** (a long `eyJ…` string) on the install screen — copy it.
+
+   _(CLI alternative: `cloudflared tunnel login`, `cloudflared tunnel create whetstone`,
+   `cloudflared tunnel route dns whetstone whetstone.<your-domain>`, then read the token with
+   `cloudflared tunnel token whetstone`.)_
+
+2. Run the tunnel as a `launchd` service that reads the token **from the environment** — no secret in
+   the repo, no machine path in any tracked file. Create
+   `~/Library/LaunchAgents/com.whetstone.tunnel.plist` (replace `<YOU>`; paste your token):
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+     <key>Label</key>
+     <string>com.whetstone.tunnel</string>
+     <key>ProgramArguments</key>
+     <array>
+       <string>/opt/homebrew/bin/cloudflared</string>
+       <string>tunnel</string>
+       <string>--no-autoupdate</string>
+       <string>run</string>
+       <string>--token</string>
+       <string>TUNNEL_TOKEN_PLACEHOLDER</string>
+     </array>
+     <key>KeepAlive</key><true/>
+     <key>RunAtLoad</key><true/>
+     <key>StandardOutPath</key><string>/Users/<YOU>/whetstone/tunnel.log</string>
+     <key>StandardErrorPath</key><string>/Users/<YOU>/whetstone/tunnel.err.log</string>
+   </dict>
+   </plist>
+   ```
+
+   > Keep the real token out of anything you commit. The plist lives only on the Mac. If you prefer not
+   > to inline it, store it in a file the service sources (e.g. `~/whetstone/tunnel.env`) and launch
+   > `cloudflared` from a tiny wrapper that exports it — either way the token stays on the host.
+
+   Load it (`cloudflared` path is `$(brew --prefix)/bin/cloudflared`):
+
+   ```bash
+   launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.whetstone.tunnel.plist
+   launchctl kickstart -k "gui/$(id -u)/com.whetstone.tunnel"
+   ```
+
+Your app is now permanently at `https://whetstone.<your-domain>` — the **same URL after every reboot**.
+
+### Fallback: Tailscale Funnel (no domain needed)
+
+No Cloudflare-managed domain? **Tailscale Funnel** gives a stable `https://<machine>.<tailnet>.ts.net`
+URL for free:
+
+```bash
+brew install tailscale
+sudo tailscale up
+tailscale funnel --bg 3000      # serves localhost:3000 at https://<machine>.<tailnet>.ts.net
+tailscale funnel status         # shows the fixed URL
+```
+
+The `.ts.net` hostname is tied to the machine, so it is also **stable across reboots** (re-run
+`tailscale funnel --bg 3000` once; it persists). Use this instead of the Cloudflare service above —
+pick one.
+
+### Quick tunnel (throwaway test only)
+
+For a one-off smoke test with **no** setup — note the URL is random and changes on every start, so it
+is **not** for the real deploy:
 
 ```bash
 cloudflared tunnel --url http://localhost:3000
 ```
-
-**Stable URL with your domain** (domain must be on Cloudflare):
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create whetstone
-cloudflared tunnel route dns whetstone reader.<your-domain>
-```
-
-Create `~/.cloudflared/config.yml`:
-
-```yaml
-tunnel: whetstone
-credentials-file: /Users/<YOU>/.cloudflared/<TUNNEL-UUID>.json
-ingress:
-  - hostname: reader.<your-domain>
-    service: http://localhost:3000
-  - service: http_status:404
-```
-
-Run it as a service so the URL is up whenever the Mac is awake:
-
-```bash
-sudo cloudflared service install     # installs a launchd service from ~/.cloudflared/config.yml
-sudo launchctl kickstart -k system/com.cloudflare.cloudflared
-```
-
-Your app is now at `https://reader.<your-domain>`.
 
 ## 6. Keep the Mac awake while you want the URL up
 
@@ -186,8 +237,9 @@ merge before any of the above is set up.
 1. Merge any PR to `main` (or push a trivial change).
 2. **Repo → Actions → Deploy** — watch the run land on your self-hosted runner: install → build →
    restart → health check (green).
-3. On your **phone**, open the Cloudflare URL (`https://reader.<your-domain>` or the `trycloudflare`
-   URL). The reader loads over HTTPS.
+3. On your **phone**, open your stable URL (`https://whetstone.<your-domain>`, or the Tailscale
+   `https://<machine>.<tailnet>.ts.net`). The reader loads over HTTPS, and it is the **same URL after
+   every reboot**.
 4. **Add to Home Screen** (Safari → Share → Add to Home Screen). _(Full PWA install polish — manifest,
    iOS icons — is a separate follow-up, not part of #184.)_
 5. Create a note / scroll, merge another change to trigger a redeploy, and confirm the note and your
@@ -199,8 +251,10 @@ merge before any of the above is set up.
 - **Job waits forever ("Waiting for a runner"):** the runner service isn't running — `cd ~/actions-runner && ./svc.sh status`.
 - **Health check fails:** read `~/whetstone/app.err.log`; confirm the `node` path and `WEB_DIR` in the
   plist, and that `dist/` exists (a deploy has built it).
-- **URL unreachable from the phone:** the Mac is asleep, or `cloudflared` isn't running —
-  `sudo launchctl print system/com.cloudflare.cloudflared`.
+- **URL unreachable from the phone:** the Mac is asleep, or the tunnel isn't running — check the
+  named Cloudflare tunnel with `launchctl print "gui/$(id -u)/com.whetstone.tunnel"` (or
+  `tailscale funnel status` if you used the Funnel fallback). A bad/expired token shows in
+  `~/whetstone/tunnel.err.log`.
 - **Brief 404s right after a merge:** expected — the runner cleans then rebuilds the workspace during a
   deploy; the app restarts onto the new build within a minute.
 
