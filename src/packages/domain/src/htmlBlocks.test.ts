@@ -116,6 +116,25 @@ describe("decomposeHtmlChapter", () => {
     expect(unit.blocks[0]?.image).toEqual({ alt: "nested", src: "img/z.gif" });
   });
 
+  it("captures a figure whose image is an SVG <image xlink:href> wrapper (DDIA)", () => {
+    const unit = decomposeHtmlChapter(
+      '<figure><svg><image xlink:href="img/f5.png"/></svg><figcaption>Figure 5-1.</figcaption></figure>'
+    );
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["figure", "Figure 5-1."]
+    ]);
+    expect(unit.blocks[0]?.image).toEqual({ src: "img/f5.png" });
+  });
+
+  it("captures a bare <svg><image href> wrapper and an <object data> embed as figures", () => {
+    const svgUnit = decomposeHtmlChapter('<p><svg><image href="img/g.png"/></svg></p>');
+    expect(svgUnit.blocks[0]?.image).toEqual({ src: "img/g.png" });
+
+    const objUnit = decomposeHtmlChapter('<object data="img/o.png"></object>');
+    expect(objUnit.blocks[0]?.image).toEqual({ src: "img/o.png" });
+  });
+
   it("emits an image-only figure block for an <img> wrapped in a <p> (standalone figure)", () => {
     const unit = decomposeHtmlChapter('<p><img src="img/p.png" alt="diagram"/></p>');
 

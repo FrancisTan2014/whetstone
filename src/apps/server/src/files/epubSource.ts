@@ -34,12 +34,18 @@ export type ParsedEpub = Readonly<{
 // while the real `@lingo-reader/epub-parser` integration is covered separately.
 export type EpubParser = (bytes: Uint8Array) => Promise<ParsedEpub>;
 
-// The parser rewrites each `<img src>` to an absolute, double-quoted path; capture it.
-const imgSrcPattern = /<img\b[^>]*?\ssrc="([^"]*)"/gi;
+// The parser rewrites each image reference to an absolute, double-quoted path; capture it from <img
+// src>, an SVG <image xlink:href|href> (O'Reilly/DDIA wrap diagrams this way), and <object data>.
+const imageSrcPatterns = [
+  /<img\b[^>]*?\ssrc="([^"]*)"/gi,
+  /<image\b[^>]*?\s(?:xlink:href|href)="([^"]*)"/gi,
+  /<object\b[^>]*?\sdata="([^"]*)"/gi
+];
 
 function extractImageSrcs(html: string): string[] {
-  // Group 1 is always present when the pattern matches, so the src is never undefined.
-  return Array.from(html.matchAll(imgSrcPattern), (match) => match[1] as string);
+  return imageSrcPatterns.flatMap((pattern) =>
+    Array.from(html.matchAll(pattern), (match) => match[1] as string)
+  );
 }
 
 // The parser saves each manifest resource under `resourceSaveDir`, naming it by the
