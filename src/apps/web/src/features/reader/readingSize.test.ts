@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   defaultReadingSize,
+  isLargestReadingSize,
+  isSmallestReadingSize,
   largerReadingSize,
   readingSizeToRem,
   readingSizes,
@@ -26,5 +28,14 @@ describe("readingSize", () => {
     expect(smallerReadingSize("xl")).toBe("lg");
     expect(smallerReadingSize("md")).toBe("sm");
     expect(smallerReadingSize("sm")).toBe("sm");
+  });
+
+  it("recognizes only the first/last steps as the min/max bounds", () => {
+    expect(isSmallestReadingSize("sm")).toBe(true);
+    expect(isSmallestReadingSize("md")).toBe(false);
+    expect(isSmallestReadingSize("xl")).toBe(false);
+    expect(isLargestReadingSize("xl")).toBe(true);
+    expect(isLargestReadingSize("lg")).toBe(false);
+    expect(isLargestReadingSize("sm")).toBe(false);
   });
 });

@@ -1,6 +1,12 @@
 import { Button } from "../../shared/ui/Button";
 import { ThemeToggle } from "../../shared/theme/ThemeToggle";
-import { largerReadingSize, smallerReadingSize, type ReadingSize } from "./readingSize";
+import {
+  isLargestReadingSize,
+  isSmallestReadingSize,
+  largerReadingSize,
+  smallerReadingSize,
+  type ReadingSize
+} from "./readingSize";
 
 export type ReadingHeaderProps = Readonly<{
   hasToc: boolean;
@@ -86,7 +92,9 @@ export function ReadingHeader({
       <div aria-label="Reading tools" className="readingTools" role="group">
         <div aria-label="Reading text size" className="readingSizeControl" role="group">
           <Button
+            aria-disabled={isSmallestReadingSize(size)}
             aria-label="Decrease reading text size"
+            disabled={isSmallestReadingSize(size)}
             onClick={() => onSizeChange(smallerReadingSize(size))}
             size="sm"
             variant="ghost"
@@ -94,7 +102,9 @@ export function ReadingHeader({
             A−
           </Button>
           <Button
+            aria-disabled={isLargestReadingSize(size)}
             aria-label="Increase reading text size"
+            disabled={isLargestReadingSize(size)}
             onClick={() => onSizeChange(largerReadingSize(size))}
             size="sm"
             variant="ghost"

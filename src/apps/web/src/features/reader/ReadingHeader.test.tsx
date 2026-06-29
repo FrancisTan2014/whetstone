@@ -53,6 +53,34 @@ describe("ReadingHeader", () => {
     expect(props.onSizeChange).toHaveBeenCalledWith("sm");
   });
 
+  it("disables A− at the smallest size, keeping A+ usable", async () => {
+    const user = userEvent.setup();
+    const props = renderHeader({ size: "sm" });
+
+    const decrease = screen.getByRole("button", { name: "Decrease reading text size" });
+    const increase = screen.getByRole("button", { name: "Increase reading text size" });
+    expect(decrease.hasAttribute("disabled")).toBe(true);
+    expect(decrease.getAttribute("aria-disabled")).toBe("true");
+    expect(increase.hasAttribute("disabled")).toBe(false);
+
+    await user.click(decrease);
+    expect(props.onSizeChange).not.toHaveBeenCalled();
+  });
+
+  it("disables A+ at the largest size, keeping A− usable", async () => {
+    const user = userEvent.setup();
+    const props = renderHeader({ size: "xl" });
+
+    const increase = screen.getByRole("button", { name: "Increase reading text size" });
+    const decrease = screen.getByRole("button", { name: "Decrease reading text size" });
+    expect(increase.hasAttribute("disabled")).toBe(true);
+    expect(increase.getAttribute("aria-disabled")).toBe("true");
+    expect(decrease.hasAttribute("disabled")).toBe(false);
+
+    await user.click(increase);
+    expect(props.onSizeChange).not.toHaveBeenCalled();
+  });
+
   it("includes the Day/Night theme toggle in the tool strip", () => {
     renderHeader();
 
