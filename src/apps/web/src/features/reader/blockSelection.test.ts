@@ -119,8 +119,17 @@ describe("isCrossBlockSelection", () => {
     const blockA = document.querySelector('[data-block-id="b1"]') as Element;
     const blockB = document.querySelector('[data-block-id="b2"]') as Element;
 
-    // Element containers (not text nodes) exercise the `node instanceof Element` path.
-    expect(isCrossBlockSelection(selectAcross(blockA, 0, blockB, 0))).toBe(true);
+    // Element containers (not text nodes) exercise the `node instanceof Element` path; a non-zero end
+    // offset means content in b2 is genuinely selected.
+    expect(isCrossBlockSelection(selectAcross(blockA, 0, blockB, 1))).toBe(true);
+  });
+
+  it("treats a whole-block selection ending at offset 0 of the next block as single-block (#260)", () => {
+    const { a, b } = buildTwoBlocks();
+
+    // Selecting to a paragraph's end lands the range end at offset 0 of the next block with nothing
+    // selected there — that is the whole first block, not a cross-block selection.
+    expect(isCrossBlockSelection(selectAcross(a, 0, b, 0))).toBe(false);
   });
 
   it("is false for a selection contained in a single block", () => {
