@@ -193,7 +193,8 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
   **recedes while reading** and is **toggled by tapping the center**. Tools are **icon-based** (the table
   of contents is a labelled **icon**, not the literal "目录" text). There is **no in-reader work-picker and no
   page heading**; a work is opened from the Library (or "Continue reading"). A subtle **progress indicator**
-  shows place in the work.
+  shows place in the work. Chapter-to-chapter movement is a **foot-of-chapter pager** (Previous / Next
+  with the adjacent unit title) below the text, alongside the 目录, so navigation never depends on the menu.
 - Markdown is rendered safely — no raw/unsafe HTML execution. Each rendered block carries its block id so
   selection maps deterministically to a block.
 - Empty / loading / error states are explicit.
