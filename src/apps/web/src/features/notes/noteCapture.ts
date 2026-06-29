@@ -1,12 +1,14 @@
 import { preselectTemplateId, toEntryId } from "@whetstone/domain";
 import type { NoteAnchorDto } from "@whetstone/contracts";
 
-// A draft captured from a reader selection: which block was selected, the selected text
-// and surrounding block context for the anchor, the sub-block offset range (omitted for
-// a whole-block selection), and the size-based template preselection.
+// A draft captured from a reader selection: which block was selected (and, for a cross-block span,
+// the end block), the selected text and surrounding block context for the anchor, the offset range
+// (startOffset within the start block, endOffset within the end block; omitted for a whole single
+// block), and the size-based template preselection.
 export type NoteDraft = Readonly<{
   blockEntryId: string;
   contextSnapshot: string;
+  endBlockEntryId?: string;
   endOffset?: number;
   preselectedTemplateId: string;
   selectedText: string;
@@ -48,13 +50,15 @@ export function captureBlockSelection(
   return { ...base, endOffset: mapped.endOffset, startOffset: mapped.startOffset };
 }
 
-// The note anchor payload for a captured draft: the block id, the context + selected-text snapshots,
-// and the sub-block offsets (omitted for a whole-block selection). Shared by the note editor's create
-// request and the one-tap mark (#255) so a note and a mark anchor identically.
+// The note anchor payload for a captured draft: the start block (and end block for a cross-block
+// span, defaulting to the start block), the context + selected-text snapshots, and the offset range
+// (omitted for a whole single block). Shared by the note editor's create request and the one-tap
+// mark (#255) so a note and a mark anchor identically.
 export function draftToAnchor(draft: NoteDraft): NoteAnchorDto {
   const base = {
     blockEntryId: toEntryId(draft.blockEntryId),
     contextSnapshot: draft.contextSnapshot,
+    endBlockEntryId: toEntryId(draft.endBlockEntryId ?? draft.blockEntryId),
     selectedTextSnapshot: draft.selectedText
   };
 
@@ -63,6 +67,45 @@ export function draftToAnchor(draft: NoteDraft): NoteAnchorDto {
   }
 
   return { ...base, endOffset: draft.endOffset, startOffset: draft.startOffset };
+}
+
+// Build a cross-block note draft (#257) from a selection that spans two blocks. The start block's
+// portion runs from the selection start to the block end; the end block's from its start to the
+// selection end. Each portion is aligned onto its block's plaintext with the same non-whitespace
+// logic as a single-block capture, yielding the start offset (in the start block) and end offset (in
+// the end block). The full selected text and the start block's plaintext are the anchor snapshots.
+// Returns undefined when either portion does not line up with its block's plaintext.
+export function captureCrossBlockSelection(
+  startBlockEntryId: string,
+  startBlockText: string,
+  startBlockPrecedingText: string,
+  startBlockSelectedText: string,
+  endBlockEntryId: string,
+  endBlockText: string,
+  endBlockSelectedText: string,
+  fullSelectedText: string
+): NoteDraft | undefined {
+  const startCapture = captureBlockSelection(
+    startBlockEntryId,
+    startBlockText,
+    startBlockPrecedingText,
+    startBlockSelectedText
+  );
+  const endCapture = captureBlockSelection(endBlockEntryId, endBlockText, "", endBlockSelectedText);
+
+  if (startCapture === undefined || endCapture === undefined) {
+    return undefined;
+  }
+
+  return {
+    blockEntryId: startBlockEntryId,
+    contextSnapshot: startBlockText,
+    endBlockEntryId,
+    endOffset: endCapture.endOffset ?? endBlockText.length,
+    preselectedTemplateId: preselectTemplateId(fullSelectedText),
+    selectedText: fullSelectedText,
+    startOffset: startCapture.startOffset ?? 0
+  };
 }
 
 // The plaintext-relative anchor for a DOM selection, found by non-whitespace alignment.

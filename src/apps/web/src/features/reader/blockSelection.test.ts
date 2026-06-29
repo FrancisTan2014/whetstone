@@ -5,8 +5,11 @@ import {
   eventTargetClosest,
   isCrossBlockSelection,
   readBlockSelection,
+  readCrossBlockDraft,
+  readCrossBlockSelection,
   releasedBlockElement
 } from "./blockSelection";
+import type { ReaderBlock } from "./readerModel";
 
 function selectRange(node: Node, start: number, end: number): Selection {
   const range = document.createRange();
@@ -266,5 +269,102 @@ describe("releasedBlockElement", () => {
     const selection = selectIn(gap.firstChild as Node, 0, 1);
 
     expect(releasedBlockElement(gap, selection, [block])).toBeUndefined();
+  });
+});
+
+describe("readCrossBlockSelection", () => {
+  function buildTwoBlocks(): { a: Node; b: Node } {
+    document.body.innerHTML =
+      '<div class="reader">' +
+      '<div data-block-id="b1"><p>first block</p></div>' +
+      '<div data-block-id="b2"><p>second block</p></div>' +
+      "</div>";
+
+    return {
+      a: document.querySelector('[data-block-id="b1"] p')?.firstChild as Node,
+      b: document.querySelector('[data-block-id="b2"] p')?.firstChild as Node
+    };
+  }
+
+  it("reads each end block's portion of a genuine cross-block selection (#257)", () => {
+    const { a, b } = buildTwoBlocks();
+    // From offset 6 of "first block" ("block") to offset 6 of "second block" ("second").
+    const cross = readCrossBlockSelection(selectAcross(a, 6, b, 6));
+
+    expect(cross).toMatchObject({
+      endBlockEntryId: "b2",
+      endBlockSelectedText: "second",
+      startBlockEntryId: "b1",
+      startBlockPrecedingText: "first ",
+      startBlockSelectedText: "block"
+    });
+  });
+
+  it("returns undefined for a single-block selection (#257)", () => {
+    const { a } = buildTwoBlocks();
+
+    expect(readCrossBlockSelection(selectAcross(a, 0, a, 5))).toBeUndefined();
+  });
+
+  it("returns undefined for a null selection (#257)", () => {
+    expect(readCrossBlockSelection(null)).toBeUndefined();
+  });
+});
+
+describe("readCrossBlockDraft", () => {
+  const mkBlock = (entryId: string, plaintext: string): ReaderBlock => ({
+    blockType: "paragraph",
+    entryId,
+    isHeading: false,
+    mdast: {},
+    plaintext
+  });
+  const blocks = [mkBlock("b1", "first block"), mkBlock("b2", "second block")];
+
+  function buildTwoBlocks(): { a: Node; b: Node } {
+    document.body.innerHTML =
+      '<div class="reader">' +
+      '<div data-block-id="b1"><p>first block</p></div>' +
+      '<div data-block-id="b2"><p>second block</p></div>' +
+      "</div>";
+
+    return {
+      a: document.querySelector('[data-block-id="b1"] p')?.firstChild as Node,
+      b: document.querySelector('[data-block-id="b2"] p')?.firstChild as Node
+    };
+  }
+
+  it("aligns a cross-block selection onto its blocks' plaintext (#257)", () => {
+    const { a, b } = buildTwoBlocks();
+    const draft = readCrossBlockDraft(selectAcross(a, 6, b, 6), blocks);
+
+    expect(draft).toMatchObject({
+      blockEntryId: "b1",
+      endBlockEntryId: "b2",
+      endOffset: 6,
+      selectedText: "blocksecond",
+      startOffset: 6
+    });
+  });
+
+  it("returns undefined when the selection is not cross-block (#257)", () => {
+    const { a } = buildTwoBlocks();
+
+    expect(readCrossBlockDraft(selectAcross(a, 0, a, 5), blocks)).toBeUndefined();
+  });
+
+  it("returns undefined when an endpoint block is not in the unit (#257)", () => {
+    const { a, b } = buildTwoBlocks();
+
+    // The unit has no blocks, so the end block's plaintext cannot be resolved.
+    expect(readCrossBlockDraft(selectAcross(a, 6, b, 6), [])).toBeUndefined();
+  });
+
+  it("returns undefined when a portion cannot align to its block's plaintext (#257)", () => {
+    const { a, b } = buildTwoBlocks();
+    // The second block's stored plaintext does not contain the selected text.
+    const mismatched = [mkBlock("b1", "first block"), mkBlock("b2", "ZZZ")];
+
+    expect(readCrossBlockDraft(selectAcross(a, 6, b, 6), mismatched)).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { captureBlockSelection } from "./noteCapture";
+import { captureBlockSelection, captureCrossBlockSelection, draftToAnchor } from "./noteCapture";
 
 const blockText = "The quick brown fox jumps over the lazy dog.";
 
@@ -90,5 +90,88 @@ describe("captureBlockSelection", () => {
 
   it("ignores a selection whose text does not match the block at that position", () => {
     expect(captureBlockSelection("block-1", blockText, "", "absent")).toBeUndefined();
+  });
+});
+
+describe("draftToAnchor", () => {
+  it("defaults the end block to the start block for a single-block draft", () => {
+    const anchor = draftToAnchor({
+      blockEntryId: "b1",
+      contextSnapshot: "ctx",
+      endOffset: 5,
+      preselectedTemplateId: "vocabulary",
+      selectedText: "ctx",
+      startOffset: 0
+    });
+
+    expect(anchor.endBlockEntryId).toBe("b1");
+    expect(anchor.startOffset).toBe(0);
+  });
+
+  it("keeps a distinct end block and both offsets for a cross-block draft", () => {
+    const anchor = draftToAnchor({
+      blockEntryId: "b1",
+      contextSnapshot: "ctx",
+      endBlockEntryId: "b2",
+      endOffset: 4,
+      preselectedTemplateId: "expression",
+      selectedText: "spanned",
+      startOffset: 10
+    });
+
+    expect(anchor.blockEntryId).toBe("b1");
+    expect(anchor.endBlockEntryId).toBe("b2");
+    expect(anchor.startOffset).toBe(10);
+    expect(anchor.endOffset).toBe(4);
+  });
+});
+
+describe("captureCrossBlockSelection", () => {
+  const startText = "The quick brown fox.";
+  const endText = "Jumps over the lazy dog.";
+
+  it("aligns each end block's portion and joins the selected text (#257)", () => {
+    const draft = captureCrossBlockSelection(
+      "b1",
+      startText,
+      "The quick ",
+      "brown fox.",
+      "b2",
+      endText,
+      "Jumps over",
+      "brown fox. Jumps over"
+    );
+
+    expect(draft).toMatchObject({
+      blockEntryId: "b1",
+      contextSnapshot: startText,
+      endBlockEntryId: "b2",
+      endOffset: 10,
+      selectedText: "brown fox. Jumps over",
+      startOffset: 10
+    });
+  });
+
+  it("falls back to whole-block bounds when each end is fully selected (#257)", () => {
+    const draft = captureCrossBlockSelection(
+      "b1",
+      startText,
+      "",
+      startText,
+      "b2",
+      endText,
+      endText,
+      `${startText} ${endText}`
+    );
+
+    // The start block is selected whole (offset 0); the end block whole (offset = its length).
+    expect(draft?.startOffset).toBe(0);
+    expect(draft?.endOffset).toBe(endText.length);
+  });
+
+  it("returns undefined when a portion does not line up with its block (#257)", () => {
+    expect(
+      captureCrossBlockSelection("b1", startText, "", "absent", "b2", endText, "Jumps", "x")
+    ).toBeUndefined();
   });
 });

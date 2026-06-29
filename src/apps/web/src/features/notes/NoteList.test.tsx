@@ -20,6 +20,7 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
     anchor: {
       blockEntryId: toEntryId("block-1"),
       contextSnapshot: "The quick brown fox.",
+      endBlockEntryId: toEntryId("block-1"),
       selectedTextSnapshot: "fox"
     },
     answers: { meaning: "a sly animal" },

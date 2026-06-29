@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import { createNoteAnchor, toEntryId, type CreateNoteAnchorInput } from "./index.js";
 
 const blockEntryId = toEntryId("block-1");
+const endBlockEntryId = toEntryId("block-2");
+
+function crossBlockAnchor(overrides: Partial<CreateNoteAnchorInput> = {}): CreateNoteAnchorInput {
+  return {
+    blockEntryId,
+    contextSnapshot: "The quick brown fox.",
+    endBlockEntryId,
+    endOffset: 4,
+    selectedTextSnapshot: "fox … the cat",
+    startOffset: 10,
+    ...overrides
+  };
+}
 
 function subBlockAnchor(overrides: Partial<CreateNoteAnchorInput> = {}): CreateNoteAnchorInput {
   return {
@@ -22,6 +35,7 @@ describe("createNoteAnchor", () => {
     expect(anchor).toEqual({
       blockEntryId,
       contextSnapshot: "The quick brown fox jumps over the lazy dog.",
+      endBlockEntryId: blockEntryId,
       endOffset: 19,
       selectedTextSnapshot: "brown fox",
       startOffset: 10
@@ -50,6 +64,7 @@ describe("createNoteAnchor", () => {
     expect(anchor).toEqual({
       blockEntryId,
       contextSnapshot: "brown fox",
+      endBlockEntryId: blockEntryId,
       selectedTextSnapshot: "brown fox"
     });
     expect("startOffset" in anchor).toBe(false);
@@ -95,5 +110,43 @@ describe("createNoteAnchor", () => {
     expect(() =>
       createNoteAnchor(subBlockAnchor({ contextSnapshot: "No matching text here." }))
     ).toThrow("NoteAnchor contextSnapshot must contain selectedTextSnapshot.");
+  });
+
+  it("creates an immutable cross-block span with an offset on each end block (#257)", () => {
+    const anchor = createNoteAnchor(crossBlockAnchor());
+
+    expect(anchor).toEqual({
+      blockEntryId,
+      contextSnapshot: "The quick brown fox.",
+      endBlockEntryId,
+      endOffset: 4,
+      selectedTextSnapshot: "fox … the cat",
+      startOffset: 10
+    });
+    expect(Object.isFrozen(anchor)).toBe(true);
+  });
+
+  it("allows a cross-block end offset that is not greater than the start offset (#257)", () => {
+    // The offsets index different blocks, so the same-block endOffset > startOffset rule does not
+    // apply; nor does the context-contains-selected-text rule across blocks.
+    const anchor = createNoteAnchor(
+      crossBlockAnchor({ contextSnapshot: "unrelated context", endOffset: 3, startOffset: 10 })
+    );
+
+    expect(anchor.endBlockEntryId).toBe(endBlockEntryId);
+    expect(anchor.endOffset).toBe(3);
+    expect(anchor.startOffset).toBe(10);
+  });
+
+  it("rejects a cross-block span missing an offset (#257)", () => {
+    expect(() => createNoteAnchor(crossBlockAnchor({ endOffset: undefined }))).toThrow(
+      "NoteAnchor cross-block span must provide startOffset and endOffset."
+    );
+  });
+
+  it("rejects a cross-block span with a negative offset (#257)", () => {
+    expect(() => createNoteAnchor(crossBlockAnchor({ startOffset: -1 }))).toThrow(
+      "NoteAnchor startOffset must be non-negative."
+    );
   });
 });

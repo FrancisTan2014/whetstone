@@ -75,6 +75,7 @@ type NoteRow = Readonly<{
   answersJson: unknown;
   blockEntryId: string;
   contextSnapshot: string;
+  endBlockEntryId: string;
   endOffset: number | null;
   entryId: string;
   markdownBody: string;
@@ -87,6 +88,7 @@ const noteColumns = {
   answersJson: notes.answersJson,
   blockEntryId: noteAnchors.blockEntryId,
   contextSnapshot: noteAnchors.contextSnapshot,
+  endBlockEntryId: noteAnchors.endBlockEntryId,
   endOffset: noteAnchors.endOffset,
   entryId: notes.entryId,
   markdownBody: notes.markdownBody,
@@ -99,6 +101,7 @@ function toNoteAnchor(row: NoteRow): NoteAnchor {
   const base = {
     blockEntryId: toEntryId(row.blockEntryId),
     contextSnapshot: row.contextSnapshot,
+    endBlockEntryId: toEntryId(row.endBlockEntryId),
     selectedTextSnapshot: row.selectedText
   };
 

@@ -264,6 +264,34 @@ const crossBlockContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A two-block work whose second block's stored plaintext does not match its rendered text, so a
+// cross-block selection cannot be aligned onto it and no note can be anchored (#257).
+const crossBlockMismatchContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-1"),
+          mdast: { children: [{ type: "text", value: "First block text." }], type: "paragraph" },
+          orderIndex: 0,
+          plaintext: "First block text."
+        },
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-2"),
+          mdast: { children: [{ type: "text", value: "Second block text." }], type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "ZZZ"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 // A block whose serialized Markdown contains an image, to confirm the reader's sanitize
 // schema strips it (defense in depth — ingestion already drops images).
 const imageContent: WorkContentDto = {
@@ -984,15 +1012,35 @@ describe("ReaderPage", () => {
     expect(screen.getByText(/Selected: Intro/)).toBeDefined();
   });
 
-  it("explains the unsupported selection (and opens no toolbar) for a cross-block selection", async () => {
+  it("captures a cross-block selection and saves a span note via Mark (#257)", async () => {
     seedWorkContent(crossBlockContent);
+    const spanNote = {
+      anchor: {
+        blockEntryId: toEntryId("b-1"),
+        contextSnapshot: "First block text.",
+        endBlockEntryId: toEntryId("b-2"),
+        endOffset: 6,
+        selectedTextSnapshot: "block text.Second",
+        startOffset: 6
+      },
+      answers: {},
+      blockEntryId: toEntryId("b-1"),
+      entryId: toEntryId("span-1"),
+      markdown: "",
+      templateId: null
+    } as NoteDto;
+    mockedCreateMark.mockResolvedValue(spanNote);
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
+    mockedFetchNotes.mockResolvedValueOnce({ notes: [spanNote] });
+    const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("First block text.");
 
     const blockA = blockElement(container, "b-1");
     const blockB = blockElement(container, "b-2");
     const range = document.createRange();
-    range.setStart(firstTextNode(blockA), 0);
+    // From "block text." in the first block to "Second" in the second block.
+    range.setStart(firstTextNode(blockA), 6);
     range.setEnd(firstTextNode(blockB), "Second".length);
     const selection = window.getSelection() as Selection;
     selection.removeAllRanges();
@@ -1000,8 +1048,79 @@ describe("ReaderPage", () => {
     // The pointer is released in the second block, so its per-block handler runs the capture.
     fireEvent.mouseUp(blockB);
 
-    expect(await screen.findByText("Select within a single block to add a note.")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "Add note" })).toBeNull();
+    // The toolbar opens for the span (no longer an unsupported-selection error).
+    await user.click(await screen.findByRole("button", { name: "Mark" }));
+
+    expect(mockedCreateMark).toHaveBeenCalledWith("work-1", {
+      anchor: expect.objectContaining({
+        blockEntryId: "b-1",
+        endBlockEntryId: "b-2",
+        endOffset: 6,
+        startOffset: 6
+      })
+    });
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
+    );
+  });
+
+  it("does not open the toolbar for a cross-block selection that cannot be anchored (#257)", async () => {
+    seedWorkContent(crossBlockMismatchContent);
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("First block text.");
+
+    const blockA = blockElement(container, "b-1");
+    const blockB = blockElement(container, "b-2");
+    const range = document.createRange();
+    range.setStart(firstTextNode(blockA), 6);
+    range.setEnd(firstTextNode(blockB), "Second".length);
+    const selection = window.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.mouseUp(blockB);
+
+    // The end block's stored plaintext ("ZZZ") does not contain the selected text, so the span cannot
+    // be aligned and no toolbar appears.
+    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
+  });
+
+  it("highlights every block a cross-block note intersects, and removes it from any block (#257)", async () => {
+    const spanNote = {
+      anchor: {
+        blockEntryId: toEntryId("b-1"),
+        contextSnapshot: "First block text.",
+        endBlockEntryId: toEntryId("b-2"),
+        endOffset: 6,
+        selectedTextSnapshot: "block text.Second",
+        startOffset: 6
+      },
+      answers: {},
+      blockEntryId: toEntryId("b-1"),
+      entryId: toEntryId("span-1"),
+      markdown: "",
+      templateId: null
+    } as NoteDto;
+    seedWorkContent(crossBlockContent);
+    mockedFetchNotes.mockResolvedValue({ notes: [spanNote] });
+    mockedDeleteNote.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await waitFor(() => expect(blockElement(container, "b-2")).not.toBeNull());
+
+    // The span underlines both intersected blocks.
+    const markA = blockElement(container, "b-1").querySelector(".noteMark");
+    const markB = blockElement(container, "b-2").querySelector(".noteMark");
+    expect(markA).not.toBeNull();
+    expect(markB).not.toBeNull();
+    expect(markA?.getAttribute("data-note-id")).toBe("span-1");
+    expect(markB?.getAttribute("data-note-id")).toBe("span-1");
+
+    // Tapping the mark on the end block (not the note's start block) still opens its card.
+    fireEvent.click(markB as Element);
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    await user.click(within(panel).getByRole("button", { name: "Delete mark: block text.Second" }));
+
+    expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "span-1");
   });
 
   it("suppresses the context menu and callout in the reading area while keeping text selectable", async () => {
@@ -1042,6 +1161,7 @@ describe("ReaderPage", () => {
       anchor: {
         blockEntryId: "b-rep",
         contextSnapshot: "the cat sat on the mat",
+        endBlockEntryId: "b-rep",
         endOffset: 18,
         selectedTextSnapshot: "the",
         startOffset: 15
@@ -1095,6 +1215,7 @@ describe("ReaderPage", () => {
       anchor: {
         blockEntryId: toEntryId("b-1"),
         contextSnapshot: "Intro paragraph.",
+        endBlockEntryId: toEntryId("b-1"),
         endOffset: 5,
         selectedTextSnapshot: "Intro",
         startOffset: 0
@@ -1122,6 +1243,7 @@ describe("ReaderPage", () => {
       anchor: {
         blockEntryId: "b-1",
         contextSnapshot: "Intro paragraph.",
+        endBlockEntryId: "b-1",
         endOffset: 5,
         selectedTextSnapshot: "Intro",
         startOffset: 0
@@ -1337,6 +1459,7 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
     anchor: {
       blockEntryId: toEntryId("b-1"),
       contextSnapshot: "Intro paragraph.",
+      endBlockEntryId: toEntryId("b-1"),
       selectedTextSnapshot: "Intro"
     },
     answers: { meaning: "the beginning" },
@@ -1355,6 +1478,7 @@ function subBlockNote(overrides: Partial<NoteDto> = {}): NoteDto {
     anchor: {
       blockEntryId: toEntryId("b-1"),
       contextSnapshot: "Intro paragraph.",
+      endBlockEntryId: toEntryId("b-1"),
       endOffset: 5,
       selectedTextSnapshot: "Intro",
       startOffset: 0
@@ -1427,6 +1551,7 @@ describe("ReaderPage note management", () => {
         anchor: {
           blockEntryId: toEntryId("b-1"),
           contextSnapshot: "Intro paragraph.",
+          endBlockEntryId: toEntryId("b-1"),
           endOffset: 15,
           selectedTextSnapshot: "paragraph",
           startOffset: 6
@@ -1452,6 +1577,7 @@ describe("ReaderPage note management", () => {
         anchor: {
           blockEntryId: toEntryId("b-1"),
           contextSnapshot: "Intro paragraph.",
+          endBlockEntryId: toEntryId("b-1"),
           endOffset: 15,
           selectedTextSnapshot: "paragraph",
           startOffset: 6
@@ -1595,6 +1721,7 @@ describe("ReaderPage note management", () => {
       anchor: {
         blockEntryId: toEntryId("b-1"),
         contextSnapshot: "Intro paragraph.",
+        endBlockEntryId: toEntryId("b-1"),
         selectedTextSnapshot: "paragraph"
       },
       entryId: toEntryId("note-2")
@@ -1713,6 +1840,7 @@ describe("ReaderPage note management", () => {
       anchor: {
         blockEntryId: toEntryId("b-2"),
         contextSnapshot: "Heading text",
+        endBlockEntryId: toEntryId("b-2"),
         selectedTextSnapshot: "Heading"
       },
       blockEntryId: toEntryId("b-2")
@@ -2400,6 +2528,7 @@ describe("ReaderPage lazy unit loading", () => {
       anchor: {
         blockEntryId: toEntryId("b-gone"),
         contextSnapshot: "Intro paragraph.",
+        endBlockEntryId: toEntryId("b-gone"),
         selectedTextSnapshot: "Intro"
       },
       blockEntryId: toEntryId("b-gone")

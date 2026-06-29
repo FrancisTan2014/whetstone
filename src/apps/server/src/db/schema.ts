@@ -201,6 +201,11 @@ export const noteAnchors = pgTable(
       .notNull()
       .references(() => entries.id),
     contextSnapshot: text("context_snapshot").notNull(),
+    // The end block of a (possibly cross-block) note span (#257); equals `block_entry_id` for a
+    // single-block note. `start_offset` is on the start block, `end_offset` on the end block.
+    endBlockEntryId: text("end_block_entry_id")
+      .notNull()
+      .references(() => entries.id),
     endOffset: integer("end_offset"),
     noteEntryId: text("note_entry_id")
       .primaryKey()
