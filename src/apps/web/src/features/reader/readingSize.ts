@@ -29,3 +29,11 @@ export function smallerReadingSize(size: ReadingSize): ReadingSize {
 
   return index <= 0 ? size : (readingSizes[index - 1] as ReadingSize);
 }
+
+export function isSmallestReadingSize(size: ReadingSize): boolean {
+  return size === readingSizes[0];
+}
+
+export function isLargestReadingSize(size: ReadingSize): boolean {
+  return size === readingSizes[readingSizes.length - 1];
+}
