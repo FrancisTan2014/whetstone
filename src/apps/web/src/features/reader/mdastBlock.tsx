@@ -15,6 +15,12 @@ import { unwrapBlockLinks } from "./phrasingLinks";
 // reader never executes raw markup — the same safety the previous react-markdown path enforced.
 const sanitizeSchema: Schema = {
   ...defaultSchema,
+  // Allow the `data-noteref` hint (#250) to survive sanitize on a link so the reader can render a
+  // footnote marker as a superscript control; the value is a fixed flag, never user markup.
+  attributes: {
+    ...defaultSchema.attributes,
+    a: [...(defaultSchema.attributes?.a ?? []), "dataNoteref"]
+  },
   tagNames: (defaultSchema.tagNames as string[]).filter((tagName) => tagName !== "img")
 };
 
@@ -22,12 +28,20 @@ const sanitizeSchema: Schema = {
 // navigating the hash-router SPA away and stealing the click from the lookup/annotation selection. But
 // a SAME-WORK `#id` link whose target is an addressable block becomes a live internal jump (#252): tap
 // scrolls to that block + highlights it, reusing the reader's block-jump. All other links stay text.
+// A footnote marker (`data-noteref`, #250) renders that live jump as a quiet superscript control.
 function buildComponents(onActivateAnchor: ((anchorId: string) => void) | undefined) {
   return {
-    a: ({ children, href }: { children?: React.ReactNode; href?: string }): React.JSX.Element => {
+    a: ({
+      children,
+      href,
+      ...rest
+    }: {
+      children?: React.ReactNode;
+      href?: string;
+    }): React.JSX.Element => {
       const anchorId = href?.startsWith("#") ? href.slice(1) : undefined;
       if (anchorId !== undefined && onActivateAnchor !== undefined) {
-        return (
+        const jump = (
           <button
             className="readerLink readerXref"
             onClick={() => onActivateAnchor(anchorId)}
@@ -36,6 +50,8 @@ function buildComponents(onActivateAnchor: ((anchorId: string) => void) | undefi
             {children}
           </button>
         );
+        const isNoteref = (rest as Record<string, unknown>)["data-noteref"] !== undefined;
+        return isNoteref ? <sup className="readerNoteref">{jump}</sup> : jump;
       }
       return <span className="readerLink">{children}</span>;
     }

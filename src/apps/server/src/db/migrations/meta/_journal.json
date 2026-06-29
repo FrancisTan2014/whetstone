@@ -134,6 +134,13 @@
       "when": 1782734527081,
       "tag": "0018_majestic_morlocks",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1782740165518,
+      "tag": "0019_exotic_king_cobra",
+      "breakpoints": true
     }
   ]
 }

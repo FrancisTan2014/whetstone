@@ -72,6 +72,9 @@ export const blocks = pgTable(
     // The host element's id at ingest, an in-work cross-reference target (e.g. a figure or heading id)
     // so a same-work `#id` link resolves to this block (#252). Null when the source had no id.
     anchorId: text("anchor_id"),
+    // A footnote/endnote block's back-link: the anchor id of the marker (noteref) that points here, so
+    // the reader renders a jump-back affordance (#250). Null on ordinary blocks.
+    backlinkAnchorId: text("backlink_anchor_id"),
     blockType: text("block_type", {
       enum: ["paragraph", "heading", "list", "blockquote", "code", "table", "figure"] as const
     }).notNull(),

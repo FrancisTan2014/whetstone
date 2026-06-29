@@ -15,6 +15,9 @@ export type DecomposedFigureImage = Readonly<{ alt?: string; src: string }>;
 
 export type DecomposedBlock = Readonly<{
   anchorId?: string;
+  // A footnote/endnote block's back-link: the anchor id of the marker (noteref) that points here, so
+  // the reader renders a back-arrow that jumps to the marker's block (#250). Absent on ordinary blocks.
+  backlinkAnchorId?: string;
   blockType: BlockType;
   image?: DecomposedFigureImage;
   mdast: RootContent;

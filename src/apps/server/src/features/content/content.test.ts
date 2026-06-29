@@ -948,6 +948,26 @@ describe("EPUB ingestion routes", () => {
     expect(blocks.find((block) => block.plaintext === "Plain.")?.anchorId).toBeUndefined();
   });
 
+  it("persists and serves a footnote pair's two-way anchors (#250)", async () => {
+    epubResponder = async () =>
+      figureChapter(
+        '<p>Replication keeps a copy<sup><a epub:type="noteref" href="#fn-i" id="ref-i">i</a></sup>.</p>' +
+          '<aside epub:type="footnote" id="fn-i"><p>There are other reasons too.</p></aside>',
+        []
+      );
+
+    const body = await figureBlocksOf("epub-footnote");
+    const blocks = body.content.readingUnits[0]?.blocks ?? [];
+    const marker = blocks.find((block) => block.plaintext.startsWith("Replication"));
+    const note = blocks.find((block) => block.plaintext.startsWith("There are other"));
+
+    // The marker block is addressable by the marker id; the note carries a back-link to it.
+    expect(marker?.anchorId).toBe("ref-i");
+    expect(marker?.backlinkAnchorId).toBeUndefined();
+    expect(note?.anchorId).toBe("fn-i");
+    expect(note?.backlinkAnchorId).toBe("ref-i");
+  });
+
   it("ingests a bare <img> as an image-only figure block (no caption)", async () => {
     const png = pngBytes();
     epubResponder = async () =>
