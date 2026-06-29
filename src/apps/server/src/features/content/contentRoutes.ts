@@ -1,8 +1,8 @@
-import { epubContentType, ingestMarkdownRequestSchema } from "@whetstone/contracts";
+import { epubContentType, ingestMarkdownRequestSchema, pdfContentType } from "@whetstone/contracts";
 import { blocksToMarkdown, toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
-import { ingestMarkdown, type ContentDependencies } from "./contentCommands.js";
+import { ingestMarkdown, ingestPdf, type ContentDependencies } from "./contentCommands.js";
 import { ingestEpub } from "./epubCommands.js";
 import {
   loadReadingUnitContent,
@@ -14,6 +14,7 @@ import {
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 const invalidEpubBody = { error: "invalid_epub" } as const;
+const invalidPdfBody = { error: "invalid_pdf" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 const emptyContentBody = { error: "empty_content" } as const;
 const unitNotFoundBody = { error: "unit_not_found" } as const;
@@ -28,6 +29,10 @@ export function registerContentRoutes(
   dependencies: ContentDependencies
 ): void {
   server.addContentTypeParser(epubContentType, { parseAs: "buffer" }, (_request, body, done) =>
+    done(null, body)
+  );
+
+  server.addContentTypeParser(pdfContentType, { parseAs: "buffer" }, (_request, body, done) =>
     done(null, body)
   );
 
@@ -93,7 +98,45 @@ export function registerContentRoutes(
     return reply.code(201).send(result.content);
   });
 
-  // The lightweight outline a lazy-loading reader fetches first: units + block counts, no content.
+  // PDF upload: the doc-AI worker converts the PDF to Markdown, which is ingested through the same
+  // pipeline as a .md upload (#15) — so a born-digital PDF and the equivalent .md decompose alike.
+  server.post<{ Params: WorkParams }>(
+    "/api/works/:workEntryId/content/pdf",
+    { bodyLimit: dependencies.epubUploadLimitBytes },
+    async (request, reply) => {
+      const body = request.body;
+
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const workEntryId = toEntryId(request.params.workEntryId);
+      const result = await ingestPdf(dependencies, workEntryId, "upload.pdf", new Uint8Array(body));
+
+      if (result.status === "work_not_found") {
+        return reply.code(404).send(workNotFoundBody);
+      }
+
+      if (result.status === "invalid_pdf") {
+        return reply.code(422).send(invalidPdfBody);
+      }
+
+      if (result.status === "empty_content") {
+        return reply.code(422).send(emptyContentBody);
+      }
+
+      request.log.info(
+        {
+          readingUnitCount: result.content.readingUnits.length,
+          route: "POST /api/works/:workEntryId/content/pdf",
+          workEntryId
+        },
+        "work_pdf_ingested"
+      );
+
+      return reply.code(201).send(result.content);
+    }
+  );
   server.get<{ Params: WorkParams }>(
     "/api/works/:workEntryId/structure",
     async (request, reply) => {

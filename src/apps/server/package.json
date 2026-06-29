@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b tsconfig.json && node -e \"const fs=require('node:fs');fs.cpSync('src/db/migrations','dist/db/migrations',{recursive:true});fs.cpSync('src/lookup/data','dist/lookup/data',{recursive:true})\"",
+    "build": "tsc -b tsconfig.json && node -e \"const fs=require('node:fs');fs.cpSync('src/db/migrations','dist/db/migrations',{recursive:true});fs.cpSync('src/lookup/data','dist/lookup/data',{recursive:true});fs.copyFileSync('src/files/pdf_to_markdown.py','dist/files/pdf_to_markdown.py')\"",
     "dev": "tsx watch --env-file-if-exists=../../../.env dev-server.mjs",
     "mcp": "node --env-file-if-exists=../../../.env dist/mcp/main.js",
     "start": "node --env-file-if-exists=../../../.env dist/index.js",

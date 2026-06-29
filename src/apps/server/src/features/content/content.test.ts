@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   epubContentType,
+  pdfContentType,
   type BlockUnitLocatorDto,
   type IngestEpubResultDto,
   type ReadingUnitContentDto,
@@ -43,6 +44,7 @@ type TestContext = Readonly<{
 
 let context: TestContext;
 let epubResponder: (bytes: Uint8Array) => Promise<ParsedEpub>;
+let pdfResponder: () => Promise<string>;
 let epubUploadLimitBytes: number;
 
 function twoChapterEpub(): ParsedEpub {
@@ -80,6 +82,7 @@ async function buildContext(): Promise<TestContext> {
     epubParser: (bytes) => epubResponder(bytes),
     epubUploadLimitBytes,
     imageResourceStore: createImageResourceStore(imagesDir),
+    pdfToMarkdown: { convert: () => pdfResponder() },
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
@@ -112,6 +115,15 @@ function ingest(workEntryId: string, payload: unknown): ReturnType<typeof contex
     method: "POST",
     payload,
     url: `/api/works/${workEntryId}/content`
+  });
+}
+
+function ingestPdf(workEntryId: string, bytes: Buffer): ReturnType<typeof context.server.inject> {
+  return context.server.inject({
+    headers: { "content-type": pdfContentType },
+    method: "POST",
+    payload: bytes,
+    url: `/api/works/${workEntryId}/content/pdf`
   });
 }
 
@@ -148,6 +160,7 @@ async function createAuthorNamed(name: string): Promise<string> {
 
 beforeEach(async () => {
   epubResponder = async () => twoChapterEpub();
+  pdfResponder = async () => "# PDF\n\nConverted body.";
   epubUploadLimitBytes = 50 * 1024 * 1024;
   context = await buildContext();
 });
@@ -432,6 +445,92 @@ describe("content routes", () => {
 
     const onDisk = await readFile(join(context.sourcesDir, "source-1.md"), "utf8");
     expect(onDisk).toBe(markdown);
+  });
+
+  it("ingests a PDF to identical blocks as the equivalent Markdown upload (golden)", async () => {
+    const pdfMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
+    pdfResponder = async () => pdfMarkdown;
+
+    const pdfWork = await createWork();
+    expect((await ingestPdf(pdfWork, Buffer.from("%PDF-1.7 bytes"))).statusCode).toBe(201);
+
+    const mdWork = await createWork();
+    await ingest(mdWork, { kind: "manual", markdown: pdfMarkdown });
+
+    const fromPdf = await getContent(pdfWork);
+    const fromMd = await getContent(mdWork);
+    const plaintexts = (content: WorkContentDto): string[] =>
+      content.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext));
+    expect(plaintexts(fromPdf)).toEqual(plaintexts(fromMd));
+    expect(fromPdf.readingUnits.map((unit) => unit.title)).toEqual(
+      fromMd.readingUnits.map((unit) => unit.title)
+    );
+  });
+
+  it("retains the uploaded PDF source with a .pdf path and the PDF byte hash, not Markdown", async () => {
+    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
+    const workEntryId = await createWork();
+    const pdfBytes = Buffer.from("%PDF-1.7 original bytes");
+
+    expect((await ingestPdf(workEntryId, pdfBytes)).statusCode).toBe(201);
+
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, workEntryId));
+    const source = sources[0];
+    expect(source?.kind).toBe("upload");
+    expect(source?.fileName).toBe("upload.pdf");
+    expect(source?.filePath?.endsWith(".pdf")).toBe(true);
+    expect(source?.sourceText).toBeNull();
+    // Provenance hashes the original PDF payload, not the converted Markdown.
+    expect(source?.sha256).toBe(hashBytes(new Uint8Array(pdfBytes)));
+    expect(source?.sha256).not.toBe(hashMarkdown("Intro.\n\n# Chapter\n\n- a"));
+  });
+
+  it("re-uploading an equivalent PDF is a no-op that leaves one source and no orphan file", async () => {
+    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
+    const workEntryId = await createWork();
+
+    expect((await ingestPdf(workEntryId, Buffer.from("%PDF first"))).statusCode).toBe(201);
+    // A different PDF payload converting to the same Markdown re-ingests to identical blocks: a no-op.
+    expect((await ingestPdf(workEntryId, Buffer.from("%PDF second"))).statusCode).toBe(201);
+
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, workEntryId));
+    expect(sources).toHaveLength(1);
+    expect(
+      (await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))
+    ).toHaveLength(1);
+  });
+
+  it("returns 422 when the PDF worker fails to convert", async () => {
+    pdfResponder = async () => Promise.reject(new Error("docling absent"));
+    const workEntryId = await createWork();
+
+    const response = await ingestPdf(workEntryId, Buffer.from("%PDF"));
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "invalid_pdf" });
+  });
+
+  it("rejects an empty PDF body with 400", async () => {
+    const workEntryId = await createWork();
+    expect((await ingestPdf(workEntryId, Buffer.alloc(0))).statusCode).toBe(400);
+  });
+
+  it("returns 422 for a PDF whose Markdown has no readable blocks", async () => {
+    pdfResponder = async () => "![only image](x.png)";
+    const workEntryId = await createWork();
+    expect((await ingestPdf(workEntryId, Buffer.from("%PDF"))).statusCode).toBe(422);
+    // No work_sources row would exist, so no PDF file may be orphaned on disk.
+    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
+  });
+
+  it("returns 404 ingesting a PDF into a missing work", async () => {
+    expect((await ingestPdf("missing-work", Buffer.from("%PDF"))).statusCode).toBe(404);
+    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
   it("rejects image-only Markdown that has no supported blocks and records no source", async () => {

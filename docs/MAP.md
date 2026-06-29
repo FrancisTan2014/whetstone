@@ -154,11 +154,11 @@ can navigate them from another package.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`, `search/`). Routes stay thin; logic lives in
-  commands/queries. `content/` ingests Markdown and EPUB uploads. Markdown re-ingestion REPLACES a
+  commands/queries. `content/` ingests Markdown, EPUB, and PDF uploads. Markdown re-ingestion REPLACES a
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
   new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id` — and clears
   the work's `reading_positions` so deleting the replaced unit entries cannot dangle their FK); identical
-  source is a no-op. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
+  source is a no-op. PDF uploads (`POST …/content/pdf`) converge on the Markdown pipeline: `src/files/pdfToMarkdown.ts` (`PdfToMarkdown` seam) converts a PDF to Markdown one-shot — production spawns the isolated Docling worker (`src/files/pdf_to_markdown.py`, MIT, permissive); a deterministic fake keeps the keyless gate green with no Python — then `ingestPdf` reuses `ingestMarkdown` (golden: a PDF ≡ the equivalent `.md`). EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
   sha256-idempotent, persisting via `blockWriter.ts`. Figure blocks have their transient image src
   resolved against the parser's extracted chapter images and stored content-addressed
   (`figureImageResolver.ts` → `imageResourceStore`), stamping `image_resource_id` + `alt`; an

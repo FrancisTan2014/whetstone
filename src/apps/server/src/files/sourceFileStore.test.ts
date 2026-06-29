@@ -97,4 +97,15 @@ describe("createSourceFileStore", () => {
       store.writeEpubSource({ bytes: new Uint8Array([1]), id: "../evil" })
     ).rejects.toThrow();
   });
+
+  it("writes PDF bytes to a .pdf path and reports the PDF byte sha256", async () => {
+    const store = createSourceFileStore(directory);
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 9, 8, 7]);
+
+    const written = await store.writePdfSource({ bytes, id: "source-3" });
+
+    expect(written.path).toBe("source-3.pdf");
+    expect(written.sha256).toBe(hashBytes(bytes));
+    expect(new Uint8Array(await readFile(join(directory, "source-3.pdf")))).toEqual(bytes);
+  });
 });

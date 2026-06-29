@@ -176,7 +176,8 @@ export type {
 export {
   epubContentType,
   ingestMarkdownRequestSchema,
-  parseIngestMarkdownRequest
+  parseIngestMarkdownRequest,
+  pdfContentType
 } from "./contentContracts.js";
 export type {
   BlockDto,

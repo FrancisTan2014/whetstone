@@ -8,6 +8,7 @@ export type ServerConfig = Readonly<{
   host: string;
   imageResourcesDir: string;
   logLevel: ServerLogLevel;
+  pdfPythonBinary: string;
   port: number;
   sourceFilesDir: string;
   webDir: string | undefined;
@@ -19,6 +20,7 @@ const defaultServerConfig: ServerConfig = {
   host: "127.0.0.1",
   imageResourcesDir: "./.data/images",
   logLevel: "info",
+  pdfPythonBinary: "python",
   port: 3000,
   sourceFilesDir: "./.data/sources",
   webDir: undefined
@@ -45,6 +47,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     host: env.HOST ?? defaultServerConfig.host,
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
     logLevel,
+    pdfPythonBinary: env.PDF_PYTHON_BINARY ?? defaultServerConfig.pdfPythonBinary,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
     webDir: env.WEB_DIR ?? defaultServerConfig.webDir
