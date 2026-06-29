@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
+import { lookupSourceLabel, lookupSourcesForLanguage } from "@whetstone/contracts";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
@@ -12,7 +13,7 @@ import { captureBlockSelection, type NoteDraft } from "../notes/noteCapture";
 import { deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass, noteMarkHueClass } from "./annotationHue.tokens";
-import { LookupPanel, type LookupState } from "../lookup/LookupPanel";
+import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
   eventTargetClosest,
@@ -316,7 +317,11 @@ type ReaderPageProps = Readonly<{
 
 // A view-only vocabulary lookup driven from the selection toolbar: the selected term and
 // its fetch state. Lookup never creates, pre-fills, or edits a note.
-type LookupView = Readonly<{ anchorRect?: DOMRect | undefined; state: LookupState; term: string }>;
+type LookupView = Readonly<{
+  anchorRect?: DOMRect | undefined;
+  tabs: ReadonlyArray<LookupTab>;
+  term: string;
+}>;
 
 // The active reading slice needed to capture a selection from a document-level listener (a
 // pointer release that lands in the reading column but outside a block element): the rendered
@@ -743,17 +748,35 @@ export function ReaderPage({
     const term = active.draft.selectedText;
     const anchorRect = active.anchorRect;
     setCapture(undefined);
-    setLookup({ anchorRect, state: { status: "loading" }, term });
 
-    lookupTerm(term, active.language)
-      .then((response) => {
-        setLookup({
-          anchorRect,
-          state: response.found ? { entry: response.entry, status: "loaded" } : { status: "empty" },
-          term
-        });
-      })
-      .catch(() => setLookup({ anchorRect, state: { status: "error" }, term }));
+    const sources = lookupSourcesForLanguage(active.language);
+    const initialTabs: LookupTab[] = sources.map((id) => ({
+      id,
+      label: lookupSourceLabel(id),
+      state: { status: "loading" }
+    }));
+    setLookup({ anchorRect, tabs: initialTabs, term });
+
+    // Each source is fetched independently and writes only its own tab, so a slow/down/empty source
+    // never freezes or empties the others — WordNet resolves at once, Wiktionary lands or errors alone.
+    const setTabState = (id: (typeof sources)[number], state: LookupState): void => {
+      setLookup((prev) =>
+        prev === undefined
+          ? prev
+          : { ...prev, tabs: prev.tabs.map((tab) => (tab.id === id ? { ...tab, state } : tab)) }
+      );
+    };
+
+    for (const id of sources) {
+      lookupTerm(term, active.language, id)
+        .then((response) =>
+          setTabState(
+            id,
+            response.found ? { entry: response.entry, status: "loaded" } : { status: "empty" }
+          )
+        )
+        .catch(() => setTabState(id, { status: "error" }));
+    }
   }
 
   const onOpenBlockNotes = useCallback(
@@ -859,7 +882,7 @@ export function ReaderPage({
           anchorRect={lookup.anchorRect}
           onOpenChange={() => setLookup(undefined)}
           open={true}
-          state={lookup.state}
+          tabs={lookup.tabs}
           term={lookup.term}
         />
       )}

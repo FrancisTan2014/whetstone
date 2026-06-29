@@ -1770,17 +1770,18 @@ describe("ReaderPage vocabulary lookup", () => {
 
     expect(await screen.findByText("an introduction")).toBeDefined();
     expect(screen.getByText("From a source.")).toBeDefined();
-    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en");
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wordnet");
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wiktionary");
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
     expect(mockedCreateNote).not.toHaveBeenCalled();
   });
 
-  it("shows an empty state when no definition is found", async () => {
+  it("shows a combined error when every source is empty", async () => {
     mockedLookupTerm.mockResolvedValue({ found: false });
 
     await selectAndLookup();
 
-    expect(await screen.findByText("No definition found.")).toBeDefined();
+    expect(await screen.findByText(/Could not look up/)).toBeDefined();
   });
 
   it("shows an error state when the lookup request fails", async () => {
@@ -1815,7 +1816,7 @@ describe("ReaderPage vocabulary lookup", () => {
     await user.click(await screen.findByRole("button", { name: "Look up" }));
 
     expect(await screen.findByText("hello; hi")).toBeDefined();
-    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN");
+    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "cedict");
   });
 
   it("dismisses the lookup panel when closed", async () => {
@@ -1836,6 +1837,23 @@ describe("ReaderPage vocabulary lookup", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByText("an introduction")).toBeNull();
+  });
+
+  it("ignores a source that resolves after the panel was closed", async () => {
+    let resolveLookup: ((value: { found: false }) => void) | undefined;
+    mockedLookupTerm.mockReturnValue(
+      new Promise((resolve) => {
+        resolveLookup = resolve;
+      })
+    );
+
+    const user = await selectAndLookup();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    // The in-flight source resolves after dismissal: the update is dropped, no panel resurrected.
+    resolveLookup?.({ found: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole("dialog", { name: /Look up/ })).toBeNull();
   });
 });
 

@@ -1,10 +1,11 @@
 import * as Popover from "@radix-ui/react-popover";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import type {
   DictionaryEntry,
   DictionaryPartOfSpeech,
-  DictionarySense
+  DictionarySense,
+  LookupSourceId
 } from "@whetstone/contracts";
 
 import { Sheet } from "../../shared/ui/Sheet";
@@ -28,13 +29,17 @@ export type LookupState =
   | Readonly<{ status: "empty" }>
   | Readonly<{ entry: DictionaryEntry; status: "loaded" }>;
 
+// One independently-fetched source rendered as a tab: WordNet, Wiktionary, or CC-CEDICT. Each carries
+// its own loading/empty/error/loaded state so a slow or down source fails to its tab, never the panel.
+export type LookupTab = Readonly<{ id: LookupSourceId; label: string; state: LookupState }>;
+
 export type LookupPanelProps = Readonly<{
   // The selection's viewport rect; the desktop popover anchors to it so the card sits near
   // the selection (and flips/offsets near viewport edges) without covering it.
   anchorRect?: DOMRect | undefined;
   onOpenChange: (open: boolean) => void;
   open: boolean;
-  state: LookupState;
+  tabs: ReadonlyArray<LookupTab>;
   term: string;
 }>;
 
@@ -192,12 +197,67 @@ function renderState(state: LookupState): React.JSX.Element {
     case "loading":
       return <p role="status">Looking up…</p>;
     case "error":
-      return <p role="alert">Could not look up this word. Please try again.</p>;
+      return <p role="alert">This source is unavailable. Try another tab.</p>;
     case "empty":
       return <p>No definition found.</p>;
     case "loaded":
       return renderEntry(state.entry);
   }
+}
+
+// The first tab worth showing once a tab is open: prefer a loaded source (instant offline WordNet),
+// otherwise fall through to a still-loading one, otherwise the first — so a tab whose source is empty
+// or down never traps the panel on a dead source. The reader can still switch tabs explicitly.
+function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
+  const loaded = tabs.findIndex((tab) => tab.state.status === "loaded");
+  if (loaded !== -1) {
+    return loaded;
+  }
+  const loading = tabs.findIndex((tab) => tab.state.status === "loading");
+  return loading === -1 ? 0 : loading;
+}
+
+// The tabbed lookup body: each source fetched independently, with a >=44px tab strip when there is
+// more than one. When every source resolved to empty/error, show one explicit failure instead of a
+// dead tab. A single-source language (CJK) shows no strip — just that source's state.
+function LookupTabs({ tabs }: Readonly<{ tabs: ReadonlyArray<LookupTab> }>): React.JSX.Element {
+  const [selected, setSelected] = useState<LookupSourceId | undefined>(undefined);
+  const settled =
+    tabs.length > 1 &&
+    tabs.every((tab) => tab.state.status === "error" || tab.state.status === "empty");
+
+  const activeIndex = useMemo(() => {
+    const chosen = tabs.findIndex((tab) => tab.id === selected);
+    return chosen === -1 ? preferredTab(tabs) : chosen;
+  }, [selected, tabs]);
+
+  if (tabs.length === 0 || settled) {
+    return <p role="alert">Could not look up this word. Please try again.</p>;
+  }
+
+  const active = tabs[activeIndex] as LookupTab;
+
+  return (
+    <div className="lookupTabsRoot">
+      {tabs.length > 1 ? (
+        <div className="lookupTabs" role="tablist">
+          {tabs.map((tab) => (
+            <button
+              aria-selected={tab.id === active.id}
+              className="lookupTab"
+              key={tab.id}
+              onClick={() => setSelected(tab.id)}
+              role="tab"
+              type="button"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {renderState(active.state)}
+    </div>
+  );
 }
 
 // Position an invisible Radix anchor over the selection's rect so the popover opens beside
@@ -224,7 +284,7 @@ function LookupPopover({
   anchorRect,
   onOpenChange,
   open,
-  state,
+  tabs,
   term
 }: LookupPanelProps): React.JSX.Element {
   return (
@@ -245,7 +305,9 @@ function LookupPopover({
               ✕
             </Popover.Close>
           </div>
-          <div className="lookupPanel">{renderState(state)}</div>
+          <div className="lookupPanel">
+            <LookupTabs tabs={tabs} />
+          </div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
@@ -257,25 +319,26 @@ function LookupPopover({
 function LookupSheet({
   onOpenChange,
   open,
-  state,
+  tabs,
   term
 }: Omit<LookupPanelProps, "anchorRect">): React.JSX.Element {
   return (
     <Sheet onOpenChange={onOpenChange} open={open} side="bottom" title={`Look up: ${term}`}>
-      <div className="lookupPanel">{renderState(state)}</div>
+      <div className="lookupPanel">
+        <LookupTabs tabs={tabs} />
+      </div>
     </Sheet>
   );
 }
 
 // A view-only definition surface. On desktop/tablet it is a compact popover anchored near
-// the selection; on narrow screens it is a content-height bottom sheet. It renders the
-// headword, pronunciation, senses, and required attribution, with explicit loading / empty
-// / error states. The note editor keeps using the shared Sheet — only lookup is a popover.
+// the selection; on narrow screens it is a content-height bottom sheet. Each source is its own
+// tab, fetched independently, so one being slow/down/empty never freezes the panel (#196).
 export function LookupPanel({
   anchorRect,
   onOpenChange,
   open,
-  state,
+  tabs,
   term
 }: LookupPanelProps): React.JSX.Element {
   const isDesktop = useMediaQuery("(min-width: 768px)");
@@ -286,11 +349,11 @@ export function LookupPanel({
         anchorRect={anchorRect}
         onOpenChange={onOpenChange}
         open={open}
-        state={state}
+        tabs={tabs}
         term={term}
       />
     );
   }
 
-  return <LookupSheet onOpenChange={onOpenChange} open={open} state={state} term={term} />;
+  return <LookupSheet onOpenChange={onOpenChange} open={open} tabs={tabs} term={term} />;
 }
