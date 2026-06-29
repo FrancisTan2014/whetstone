@@ -78,3 +78,35 @@ describe("createLlmCoach analyze", () => {
     ).toBe("native_like");
   });
 });
+
+describe("createLlmCoach converse", () => {
+  const converseRequest = {
+    communicativeFunction: "Offering food",
+    context: { focus: "table", recentTargets: [] },
+    history: [{ role: "user" as const, text: "I want give you food" }],
+    knobs,
+    situation: "At the table"
+  };
+
+  it("returns the model's in-flow line with a recast on breakdown, no grade", async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValue(
+        '{"say":"Nice — would you offer some?","repair":{"reason":"stuck","recast":"Try: help yourself"}}'
+      );
+    const coach = createLlmCoach({ chat, fallback: createFakeCoach() });
+
+    const result = await coach.converse(converseRequest);
+    expect(result.say).toContain("offer");
+    expect(result.repair?.recast).toContain("help yourself");
+    expect((chat.mock.calls[0]?.[0] as string).toLowerCase()).toContain("register");
+  });
+
+  it("falls back to the deterministic turn when output is unusable", async () => {
+    const coach = createLlmCoach({
+      chat: vi.fn().mockResolvedValue("???"),
+      fallback: createFakeCoach()
+    });
+    expect((await coach.converse(converseRequest)).say.length).toBeGreaterThan(0);
+  });
+});
