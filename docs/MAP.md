@@ -172,8 +172,13 @@ can navigate them from another package.
   resolved against the parser's extracted chapter images and stored content-addressed
   (`figureImageResolver.ts` → `imageResourceStore`), stamping `image_resource_id` + `alt`; an
   unsupported (e.g. SVG) or missing image degrades the block to caption-only, and a figure with neither
-  a stored image nor a caption is dropped. Both writers bulk-insert through
-  `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
+  a stored image nor a caption is dropped. Between decompose and block-write, EPUB units pass through a
+  composable clean-plugin pipeline (`contentFilters.ts`, #275): ordered, individually-toggleable
+  `ContentFilter` plugins (`units -> units`) registered in one place (`defaultContentFilters`); no
+  filter is the identity. The first plugin (`dropPublisherBoilerplateFilter`) drops high-confidence
+  publisher front/back matter units (公版书/关于我们/制作说明/联系/7sbook markers in a unit's title or
+  text) so real chapters stay intact; the Markdown path can reuse the same pipeline later. Both writers
+  bulk-insert through `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
   bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
   rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on
   soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported

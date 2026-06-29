@@ -6,6 +6,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import { authors, entries, workMeta, workSources } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
 import type { ContentDependencies } from "./contentCommands.js";
+import { applyContentFilters, defaultContentFilters } from "./contentFilters.js";
 import { resolveChapters } from "./figureImageResolver.js";
 import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent } from "./contentQueries.js";
@@ -41,8 +42,10 @@ export async function ingestEpub(
   const sourceId = dependencies.createSourceId();
   const written = await dependencies.sourceFileStore.writeEpubSource({ bytes, id: sourceId });
   // Figure images are stored (content-addressed) up front so each figure block can be
-  // stamped with its resolved imageResourceId before the content is written.
-  const units = await resolveChapters(parsed.chapters, dependencies.imageResourceStore);
+  // stamped with its resolved imageResourceId before the content is written. The clean-plugin
+  // pipeline (#275) then trims publisher boilerplate units before they reach block-write.
+  const resolved = await resolveChapters(parsed.chapters, dependencies.imageResourceStore);
+  const units = applyContentFilters(resolved, defaultContentFilters);
 
   const workEntryId = toEntryId(dependencies.createEntryId());
   const authorId = await dependencies.db.transaction(async (tx) => {
