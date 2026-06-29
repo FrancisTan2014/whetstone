@@ -1,0 +1,80 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { AnalyzeRoundRequest, CoachKnobs } from "@whetstone/contracts";
+
+import { createFakeCoach } from "./fakeCoach.js";
+import { createLlmCoach } from "./llmCoach.js";
+
+const knobs: CoachKnobs = {
+  challenge: "medium",
+  focus: "kitchen.offering-food",
+  pace: "steady",
+  probeErrorPatterns: [],
+  register: "neutral",
+  support: "medium",
+  targetBand: "intermediate"
+};
+
+const request: AnalyzeRoundRequest = {
+  communicativeFunction: "Offering food",
+  context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
+  history: [{ role: "user", text: "Help yourself to some rice" }],
+  knobs,
+  situation: "At the table",
+  targetChunks: [{ chunkId: "c1", text: "Help yourself." }],
+  words: []
+};
+
+const judgeJson =
+  '{"chunkGrades":[{"chunkId":"c1","grade":5}],"mistakes":[],"wins":["Clear and natural"],' +
+  '"upgrade":{"said":"help yourself","native":"Help yourself."},"encouragement":"Understood you."}';
+
+describe("createLlmCoach analyze", () => {
+  it("grades an intelligible-but-accented attempt high, parsing the model's JSON", async () => {
+    const chat = vi.fn().mockResolvedValue(`Here you go: ${judgeJson} done.`);
+    const coach = createLlmCoach({ chat, fallback: createFakeCoach() });
+
+    const result = await coach.analyze(request);
+    expect(result.chunkGrades).toEqual([{ chunkId: "c1", grade: 5 }]);
+    expect(result.encouragement).toBe("Understood you.");
+    // The prompt is intelligibility-first and never penalizes accent.
+    expect((chat.mock.calls[0]?.[0] as string).toLowerCase()).toContain("intelligibility");
+  });
+
+  it("degrades to the deterministic fallback when the model output is unusable", async () => {
+    const coach = createLlmCoach({
+      chat: vi.fn().mockResolvedValue("not json"),
+      fallback: createFakeCoach()
+    });
+
+    const result = await coach.analyze(request);
+    // Fallback graded the produced chunk, so the round still grades.
+    expect(result.chunkGrades).toHaveLength(1);
+  });
+
+  it("delegates non-analyze calls to the fallback", async () => {
+    const coach = createLlmCoach({ chat: vi.fn(), fallback: createFakeCoach() });
+    expect(
+      (await coach.proposeNext({ focus: "x", recentTargets: [] })).target.length
+    ).toBeGreaterThan(0);
+    expect(coach.gradeForScheduler({ category: "good", issues: [], natural: 1 })).toBeGreaterThan(
+      0
+    );
+    expect((await coach.authorCase({ communicativeFunction: "f", situation: "s" })).situation).toBe(
+      "s"
+    );
+    expect((await coach.converse({ ...request, history: [] })).say.length).toBeGreaterThan(0);
+    expect(
+      (
+        await coach.judgeProduction({
+          context:
+            request.context.profile === null
+              ? { focus: "x", recentTargets: [] }
+              : { focus: "x", recentTargets: [] },
+          target: "hi",
+          transcript: "hi"
+        })
+      ).category
+    ).toBe("native_like");
+  });
+});

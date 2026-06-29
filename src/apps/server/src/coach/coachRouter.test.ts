@@ -63,19 +63,13 @@ const analyzeRequest = {
 describe("createRoutedCoach (default routing)", () => {
   const coach = createRoutedCoach({ cheap, routing: defaultCostRouting, strong });
 
-  it("routes judge to the strong tier", async () => {
-    expect((await coach.judgeProduction(request)).issues[0]?.note).toBe("strong");
-  });
-
-  it("routes converse to the strong tier", async () => {
-    expect((await coach.converse(converseRequest)).say).toBe("strong");
-  });
-
-  it("routes analyze to the strong tier", async () => {
+  it("routes only analyze to the strong tier (the one paid judge call), converse cheap", async () => {
     expect((await coach.analyze(analyzeRequest)).encouragement).toBe("strong");
+    expect((await coach.converse(converseRequest)).say).toBe("cheap");
   });
 
-  it("routes propose and author to the cheap tier", async () => {
+  it("routes judge, propose, and author to the cheap tier", async () => {
+    expect((await coach.judgeProduction(request)).issues[0]?.note).toBe("cheap");
     expect((await coach.proposeNext({ focus: "", recentTargets: [] })).target).toBe("cheap");
     expect((await coach.authorCase({ communicativeFunction: "f", situation: "s" })).situation).toBe(
       "cheap"

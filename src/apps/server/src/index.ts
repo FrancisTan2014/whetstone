@@ -27,6 +27,7 @@ import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvide
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
+import { createCoachAdapters } from "./coach/coachAdapters.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
@@ -72,7 +73,11 @@ const lookupService = createLookupService({
 // The coach (#206) and speech (#207) seams: config-gated and absent-config-safe, so with no API key
 // and no Whisper they stay on the deterministic fakes (the keyless dev/practice path). When Whisper is
 // configured (WHISPER_BINARY + WHISPER_MODEL_PATH), the real local adapter transcribes spoken turns (#236).
-const coach = resolveCoach({ config: readCoachConfig(), fake: createFakeCoach() });
+const coach = resolveCoach({
+  config: readCoachConfig(),
+  createAdapters: (apiKey) => createCoachAdapters(apiKey),
+  fake: createFakeCoach()
+});
 const speech = resolveSpeechInput({
   config: readSpeechConfig(),
   createWhisper: (config) => createWhisperSpeechInput({ config }),

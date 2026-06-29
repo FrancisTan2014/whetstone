@@ -15,8 +15,9 @@ import type { ReviewGrade } from "@whetstone/domain";
 import type { CoachProvider } from "./coachProvider.js";
 
 // Cost-routing is a config seam, not a hardcoded model choice: each model-calling operation is routed
-// to a "strong" or "cheap" tier per call type. The default routes the few coaching calls (judge,
-// converse, analyze) to the strong model and the bulk (propose/author) to the cheap one — overridable.
+// to a "strong" or "cheap" tier per call type. The judge that turns the loop honest — the end-of-round
+// `analyze` — is the one paid strong call per round; everything else (converse/judge/propose/author)
+// runs cheap (local). Overridable per call type via env.
 export const coachCallTypes = ["judge", "propose", "author", "converse", "analyze"] as const;
 
 export type CoachCallType = (typeof coachCallTypes)[number];
@@ -30,8 +31,8 @@ export type CostRouting = Readonly<Record<CoachCallType, CoachTier>>;
 export const defaultCostRouting: CostRouting = Object.freeze({
   analyze: "strong",
   author: "cheap",
-  converse: "strong",
-  judge: "strong",
+  converse: "cheap",
+  judge: "cheap",
   propose: "cheap"
 });
 
