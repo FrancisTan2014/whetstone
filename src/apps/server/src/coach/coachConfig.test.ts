@@ -85,12 +85,12 @@ describe("resolveCoach", () => {
 
     expect(coach).not.toBe(fake);
     expect(createAdapters).toHaveBeenCalledOnce();
-    // Default routing sends judge to the strong tier.
+    // Default routing sends only analyze to the strong tier.
     const judgement = await coach.judgeProduction({
       context: { focus: "", recentTargets: [] },
       target: "x",
       transcript: "x"
     });
-    expect(judgement.issues[0]?.note).toBe("strong");
+    expect(judgement.issues[0]?.note).toBe("cheap");
   });
 });
