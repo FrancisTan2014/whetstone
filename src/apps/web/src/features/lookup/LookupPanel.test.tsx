@@ -205,10 +205,52 @@ describe("LookupPanel content", () => {
     expect(screen.getByText("Synonyms").textContent).toBe("Synonyms");
   });
 
-  it("numbers senses within a part of speech using an ordered list", () => {
-    renderPanel(loadedEntry, { matchers: desktop });
+  it("numbers each sense with a quiet ordinal before its gloss, examples nested under it", () => {
+    renderPanel(
+      {
+        entry: {
+          headword: "set",
+          partsOfSpeech: [
+            {
+              partOfSpeech: "verb",
+              senses: [
+                { definition: "to put in place", examples: ["set it down"], synonyms: [] },
+                { definition: "to fix firmly", examples: [], synonyms: [] }
+              ]
+            },
+            {
+              partOfSpeech: "noun",
+              senses: [{ definition: "a group of things", examples: [], synonyms: [] }]
+            }
+          ],
+          pronunciations: [],
+          sources: []
+        },
+        status: "loaded"
+      },
+      { matchers: desktop }
+    );
 
-    expect(document.querySelector("ol.lookupSenses")).not.toBeNull();
+    const lists = document.querySelectorAll("ol.lookupSenses");
+    const verbList = lists[0] as HTMLElement;
+    const items = within(verbList).getAllByRole("listitem");
+
+    // Ordinals count up within the part of speech.
+    expect(items.map((item) => item.querySelector(".lookupSenseOrdinal")?.textContent)).toEqual([
+      "1.",
+      "2."
+    ]);
+
+    // The ordinal precedes the gloss, and the example stays nested inside the same sense.
+    const first = items[0] as HTMLElement;
+    expect(first.textContent?.indexOf("1.")).toBeLessThan(
+      first.textContent?.indexOf("to put in place") ?? -1
+    );
+    expect(within(first).getByText("“set it down”")).toBeDefined();
+
+    // A single-sense part of speech still numbers from 1.
+    const nounList = lists[1] as HTMLElement;
+    expect(within(nounList).getByText("1.")).toBeDefined();
   });
 
   it("collapses and expands a part-of-speech group, toggling aria-expanded", async () => {
