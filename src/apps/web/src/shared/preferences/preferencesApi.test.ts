@@ -9,6 +9,13 @@ afterEach(() => {
 });
 
 describe("fetchPreferences", () => {
+  it("saves with no in-flight fetch, using the seeded defaults", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    await savePreferences({ readingSize: "lg" });
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("PUT");
+  });
+
   it("returns the validated record from the server", async () => {
     vi.stubGlobal(
       "fetch",
@@ -65,5 +72,35 @@ describe("savePreferences", () => {
   it("swallows a failed save so reading is never blocked", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     await expect(savePreferences({ theme: "night" })).resolves.toBeUndefined();
+  });
+
+  it("waits for an in-flight fetch so a single-field save keeps the server's other field", async () => {
+    let resolveFetch: ((value: unknown) => void) | undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = resolve as never;
+          })
+      )
+      .mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const load = fetchPreferences();
+    // Save reading size before the load resolves; the server has theme night, size md.
+    const save = savePreferences({ readingSize: "xl" });
+    resolveFetch?.({
+      json: () => Promise.resolve({ preferences: { readingSize: "md", theme: "night" } }),
+      ok: true
+    });
+    await load;
+    await save;
+
+    const put = fetchMock.mock.calls.find((call) => (call[1] as RequestInit)?.method === "PUT");
+    expect(JSON.parse((put?.[1] as RequestInit).body as string)).toEqual({
+      readingSize: "xl",
+      theme: "night"
+    });
   });
 });
