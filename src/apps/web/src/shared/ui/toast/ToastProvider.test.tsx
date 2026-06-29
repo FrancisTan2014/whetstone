@@ -99,6 +99,16 @@ describe("ToastProvider", () => {
     expect(clearSpy).toHaveBeenCalled();
   });
 
+  it("collapses a duplicate identical toast instead of stacking", () => {
+    renderHarness();
+
+    fireEvent.click(screen.getByText("add-error"));
+    fireEvent.click(screen.getByText("add-error"));
+
+    // Two identical errors (e.g. one per spanned block on a cross-block selection) show as one (#258).
+    expect(screen.getAllByText("Failed")).toHaveLength(1);
+  });
+
   it("throws when the hook is used outside a provider", () => {
     function Outside(): React.JSX.Element {
       useToast();

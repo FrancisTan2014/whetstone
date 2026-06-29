@@ -51,13 +51,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }): Reac
 
   const enqueue = useCallback(
     (message: string, intent: ToastIntent) => {
+      // Collapse a duplicate already on screen: a cross-block selection can report the same hint once
+      // per spanned block, but the reader should see a single toast, not a stack (#258).
       const id = nextId.current;
-      nextId.current += 1;
-      timers.current.set(
-        id,
-        setTimeout(() => dismiss(id), autoDismissMs)
-      );
-      setToasts((current) => [...current, { id, intent, message }]);
+      setToasts((current) => {
+        if (current.some((toast) => toast.intent === intent && toast.message === message)) {
+          return current;
+        }
+        nextId.current += 1;
+        timers.current.set(
+          id,
+          setTimeout(() => dismiss(id), autoDismissMs)
+        );
+        return [...current, { id, intent, message }];
+      });
     },
     [dismiss]
   );
