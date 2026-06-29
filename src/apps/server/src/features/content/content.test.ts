@@ -750,6 +750,28 @@ describe("EPUB ingestion routes", () => {
     ]);
   });
 
+  it("trims publisher boilerplate units at ingest, leaving the actual work intact (#275)", async () => {
+    epubResponder = async () => ({
+      chapters: [
+        { html: "<h1>关于我们</h1><p>本书由 7sbook 制作。</p>", images: [] },
+        { html: "<h1>世说新语·德行</h1><p>陈仲举言为士则。</p>", images: [] },
+        { html: "<h1>制作说明</h1><p>排版与校对说明。</p>", images: [] },
+        { html: "<h1>世说新语·言语</h1><p>边文礼见袁奉高。</p>", images: [] }
+      ],
+      metadata: { author: "刘义庆", language: "zh-CN", title: "世说新语" }
+    });
+
+    const response = await ingestEpub(Buffer.from("epub-7sbook-boilerplate"));
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as IngestEpubResultDto;
+    // The 关于我们 / 制作说明 publisher pages are gone; both real chapters remain, in order.
+    expect(body.content.readingUnits.map((unit) => [unit.title, unit.orderIndex])).toEqual([
+      ["世说新语·德行", 0],
+      ["世说新语·言语", 1]
+    ]);
+  });
+
   it("skips EPUB chapters that decompose to zero supported blocks", async () => {
     epubResponder = async () => ({
       chapters: [
