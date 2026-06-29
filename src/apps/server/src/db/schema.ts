@@ -250,6 +250,9 @@ export const chunks = pgTable(
     gloss: text("gloss"),
     id: text("id").primaryKey(),
     orderIndex: integer("order_index").notNull(),
+    // The reading block this chunk was harvested from (#243), so a round seeded from reading deposits
+    // recall items linked back to the source block. Null for authored/seed chunks.
+    sourceBlockEntryId: text("source_block_entry_id").references(() => entries.id),
     text: text("text").notNull(),
     usageNote: text("usage_note")
   },
