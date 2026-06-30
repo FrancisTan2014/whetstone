@@ -361,7 +361,10 @@ be clean and consistent:
   blockquotes/epigraphs, and footnotes are styled for readability.
 - **Figures** (EPUB images) render as a real figure — the image sized to the reading measure with its
   caption beneath (never a stray heading); a missing or unsupported image degrades to its caption alone.
-  The image is display-only; its caption is selectable text you can take notes on.
+  The image is display-only (not annotatable); its caption is selectable text you can take notes on.
+  **Tapping or clicking the image opens it larger in a lightbox** — a centered overlay that fits the image
+  to the viewport over a dimmed backdrop, dismissed by Escape, the backdrop, or a close button (it never
+  navigates away) — so diagrams and dense figures stay legible beyond the reading column.
 - Front matter (title/copyright/dedication units) is de-emphasized, not rendered as giant repeated
   headings.
 - Typography targets: reading measure ~66ch (Latin), line-height >= 1.5, comfortable body size (~18px),
@@ -637,8 +640,9 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
 - No daily routine; no complicated settings.
 - No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
 - No remote (`http`) images, SVG, or manual/Markdown image upload in v0: figure support is **EPUB-only**,
-  served from bytes extracted at ingestion. The figure **image** is display-only and not annotatable; its
-  **caption** stays selectable and annotatable like any text. These are deferred, not permanent exclusions.
+  served from bytes extracted at ingestion. The figure **image** is display-only and not annotatable (you can
+  enlarge it in a lightbox to view, but not pan, pinch-zoom, or step through a gallery — those are deferred);
+  its **caption** stays selectable and annotatable like any text. These are deferred, not permanent exclusions.
 - No authentication or login UI in v0: a single default user (one active person; "admin" and "reader" are
   one person in different modes). The data model still carries a **user dimension for personal data** (see
   Identity & ownership) so multi-user is a clean future migration, not a retrofit. No sign-in, sessions, or
