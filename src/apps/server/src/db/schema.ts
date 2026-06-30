@@ -43,9 +43,14 @@ export const workMeta = pgTable(
 
 // Ordered reading units within a work. The work containment edge is also recorded
 // in `entry_links`; `work_entry_id` keeps the per-work ordering scope queryable.
+// `doc_json` carries the chapter's whole ProseMirror/Tiptap document (#311), whose
+// top-level children are the stably-id'd blocks — a transitional dual-write: the reader
+// still renders the `blocks.mdast_json` rows below, and #312 switches it to this document,
+// after which mdast block storage is retired. Nullable: the Markdown path has no PM doc yet.
 export const readingUnits = pgTable(
   "reading_units",
   {
+    docJson: jsonb("doc_json"),
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),

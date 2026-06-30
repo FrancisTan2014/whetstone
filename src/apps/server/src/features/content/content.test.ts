@@ -15,6 +15,7 @@ import {
   type WorkStructureDto
 } from "@whetstone/contracts";
 import { decomposeHtmlChapter, decomposeMarkdown, toEntryId } from "@whetstone/domain";
+import { isValidDocument, parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -26,12 +27,14 @@ import {
   readingUnits,
   workSources
 } from "../../db/schema.js";
+import { writeReadingUnits } from "./blockWriter.js";
 import { loadWorkContent } from "./contentQueries.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
+import type { IngestionEvidence } from "./htmlToDocument.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
 type TestContext = Readonly<{
@@ -46,6 +49,7 @@ let context: TestContext;
 let epubResponder: (bytes: Uint8Array) => Promise<ParsedEpub>;
 let pdfResponder: () => Promise<string>;
 let epubUploadLimitBytes: number;
+let loggedEvidence: IngestionEvidence[];
 
 function twoChapterEpub(): ParsedEpub {
   return {
@@ -82,6 +86,7 @@ async function buildContext(): Promise<TestContext> {
     epubParser: (bytes) => epubResponder(bytes),
     epubUploadLimitBytes,
     imageResourceStore: createImageResourceStore(imagesDir),
+    ingestionLogger: (records) => loggedEvidence.push(...records),
     pdfToMarkdown: { convert: () => pdfResponder() },
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
@@ -162,6 +167,7 @@ beforeEach(async () => {
   epubResponder = async () => twoChapterEpub();
   pdfResponder = async () => "# PDF\n\nConverted body.";
   epubUploadLimitBytes = 50 * 1024 * 1024;
+  loggedEvidence = [];
   context = await buildContext();
 });
 
@@ -859,7 +865,10 @@ describe("EPUB ingestion routes", () => {
     expect(body.content.readingUnits).toHaveLength(chapterCount);
     expect(returnedBlockCount).toBe(expectedBlockCount);
     expect(await context.db.select().from(blocks)).toHaveLength(expectedBlockCount);
-  }, 30000);
+    // Stress test: ~7s in isolation but highly sensitive to parallel-suite CPU contention — every
+    // EPUB chapter now also runs jsdom-based htmlToDocument for the #311 dual-write, and this may run
+    // on a shared machine, so it carries a generous wall-clock timeout rather than the default.
+  }, 120000);
 
   it("round-trips a figure block's image, alt, and caption through the content query", async () => {
     const workEntryId = "fig-work";
@@ -1090,6 +1099,74 @@ describe("EPUB ingestion routes", () => {
     expect(figure?.plaintext).toBe("Missing bytes.");
     expect(figure?.imageResourceId).toBeUndefined();
     expect(await readdir(context.imagesDir)).toEqual([]);
+  });
+
+  it("dual-writes the chapter's PM document and logs fail-loud evidence in the real flow (#311)", async () => {
+    const png = pngBytes();
+    epubResponder = async () =>
+      figureChapter(
+        '<figure><img src="img/p.png" alt="A dot"/><figcaption>A caption.</figcaption></figure>' +
+          "<dl><dt>Term</dt><dd>Definition.</dd></dl>" +
+          '<div data-type="note"><p>An admonition.</p></div>' +
+          '<video src="clip.mp4"></video>',
+        [{ bytes: png, contentType: "image/png", src: "img/p.png" }]
+      );
+
+    await figureBlocksOf("epub-pm-dualwrite");
+
+    // The legacy mdast block rows still persist for the current reader (retired in #312).
+    expect((await context.db.select().from(blocks)).length).toBeGreaterThan(0);
+
+    // The chapter's PM document is dual-written alongside, as a valid round-trippable document.
+    const units = await context.db.select().from(readingUnits);
+    const docJson = units[0]?.docJson as DocumentNodeJSON;
+    expect(isValidDocument(docJson)).toBe(true);
+    expect(() => parseDocument(docJson)).not.toThrow();
+
+    // Its top-level children carry stable string ids and include the recognized and unknown nodes.
+    const children = (docJson.content ?? []) as ReadonlyArray<DocumentNodeJSON>;
+    expect(children.every((child) => typeof child.attrs?.["id"] === "string")).toBe(true);
+    expect(children.map((child) => child.type)).toEqual(
+      expect.arrayContaining(["figure", "definitionList", "callout", "unknown"])
+    );
+
+    // The injected fail-loud sink received the <video> evidence, proving the path runs end to end.
+    const videoEvidence = loggedEvidence.find((record) => record.tag === "video");
+    expect(videoEvidence?.attributes["src"]).toBe("clip.mp4");
+  });
+
+  it("persists doc_json as null for a reading unit written without a PM document", async () => {
+    const workEntryId = await createWork();
+    let nextId = 0;
+    await context.db.transaction(async (tx) => {
+      await writeReadingUnits(tx, {
+        createEntryId: () => `null-doc-${(nextId += 1)}`,
+        startOrder: 0,
+        units: [
+          {
+            blocks: [
+              {
+                alt: null,
+                anchorId: null,
+                backlinkAnchorId: null,
+                blockType: "paragraph",
+                imageResourceId: null,
+                mdast: { type: "paragraph" },
+                plaintext: "No PM document here."
+              }
+            ],
+            evidence: [],
+            title: "Mdast only"
+          }
+        ],
+        workEntryId: toEntryId(workEntryId)
+      });
+    });
+
+    const unit = (await context.db.select().from(readingUnits)).find(
+      (row) => row.title === "Mdast only"
+    );
+    expect(unit?.docJson).toBeNull();
   });
 
   const structureMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";

@@ -2,6 +2,8 @@ import type { BlockType, EntryId } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import type { DocumentNodeJSON } from "@whetstone/document";
+import type { IngestionEvidence } from "./htmlToDocument.js";
 import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -21,6 +23,14 @@ export type PersistableBlock = Readonly<{
 
 export type PersistableReadingUnit = Readonly<{
   blocks: ReadonlyArray<PersistableBlock>;
+  // The chapter's whole ProseMirror/Tiptap document (#311), persisted to `reading_units.doc_json`.
+  // Transitional dual-write: the reader still renders the mdast `blocks` rows; #312 switches it to
+  // this document, after which mdast block storage is retired. Undefined on paths with no PM doc.
+  docJson?: DocumentNodeJSON;
+  // Fail-loud evidence for this chapter's unrecognized block-level elements (#311). Transient: it
+  // rides along so surviving units' evidence reaches the ingestion logger after filtering, and is
+  // never written to a column. Defaults to an empty array so callers can flat-map without a guard.
+  evidence: ReadonlyArray<IngestionEvidence>;
   title: string | undefined;
 }>;
 
@@ -49,6 +59,7 @@ export async function writeReadingUnits(
 
   const entryRows: { id: string; type: "reading_unit" | "block" }[] = [];
   const readingUnitRows: {
+    docJson: DocumentNodeJSON | null;
     entryId: string;
     orderIndex: number;
     title: string | null;
@@ -73,6 +84,8 @@ export async function writeReadingUnits(
     const unitEntryId = input.createEntryId();
     entryRows.push({ id: unitEntryId, type: "reading_unit" });
     readingUnitRows.push({
+      // Dual-write the chapter's PM document (#311); the still-mdast reader ignores it until #312.
+      docJson: unit.docJson ?? null,
       entryId: unitEntryId,
       orderIndex: input.startOrder + unitIndex,
       title: unit.title ?? null,

@@ -21,7 +21,7 @@ function block(plaintext: string): PersistableBlock {
 }
 
 function unit(title: string | undefined, ...texts: string[]): PersistableReadingUnit {
-  return { blocks: texts.map(block), title };
+  return { blocks: texts.map(block), evidence: [], title };
 }
 
 const dropAll: ContentFilter = { apply: () => [], enabled: true, id: "drop-all" };
