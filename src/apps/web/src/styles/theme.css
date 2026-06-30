@@ -799,6 +799,12 @@
     background-color: color-mix(in oklch, var(--color-surface) 80%, transparent);
     backdrop-filter: blur(8px);
   }
+
+  /* Stack A-/A+ in the same vertical column as the other tools so the rail is one narrow icon
+     column (#298), instead of the size pill sitting two icons wide. Mobile keeps the row. */
+  .readingSizeControl {
+    flex-direction: column;
+  }
 }
 
 /* The title recedes upward with the rest of the chrome. */
