@@ -61,10 +61,54 @@ template breadth beyond the seeded set. A usable app beats a complete feature.
   cache, never the v0 source of truth.
 - Backend: Node.js TypeScript + Fastify + PostgreSQL (via Drizzle). Validation with Zod. Tests with Vitest.
 - **The PostgreSQL database is the source of truth for content.** Content is stored as discrete
-  **Block** rows (see content model); Markdown is an import/export format, not the stored form.
+  **Block** rows carrying the **ProseMirror/Tiptap document node** (see "Architecture" below);
+  Markdown/mdast is an import/export format, not the stored form.
 - The **original uploaded file** (`.md`/`.epub`/later `.pdf`) is retained on the server filesystem /
   object storage for provenance and re-ingestion (path + sha256 recorded in the database). It is not
   the source of truth; the decomposed blocks are.
+
+## Architecture: the document-model bedrock (committed)
+
+whetstone's content representation is a **schema-based block document** — the ProseMirror model,
+adopted via **Tiptap** (MIT) — replacing the earlier **mdast** (a Markdown AST), which silently dropped
+real publisher constructs (figure, definition list, callout, footnote) and is now **import/export
+only**. Chosen after a verified deep dive: ProseMirror is Atlassian-grade but its own repos are
+archived, so we consume it through the actively-maintained MIT **Tiptap**. (BlockNote rejected —
+MPL-2.0 core + GPL-3.0 packages; Lexical rejected — not a block-document model. No paid Tiptap Pro
+features used.)
+
+**One model is the spine; every capability is an expression of it** — ingest writes the doc, the editor
+writes it, the reader renders it, notes/comments/connections decorate it, "share a card" renders a
+slice. Validated against essays, comments, ebook ingest, social cards, and cross-work (cross-language)
+connections — each reuses the same primitives: **addressable blocks + an external personal relation +
+decorations**.
+
+Four layers:
+
+1. **Ingestion (server + jsdom).** Source HTML (EPUB; later PDF→HTML via Docling) → PM doc via each
+   node's `parseDOM`. **Fail-loud invariant:** ProseMirror's DOMParser silently descends unknown tags,
+   so a pre-parse walk + the `ruleFromNode` intercept wraps any unrecognized element in a conservative
+   **`unknown`** node (raw subtree preserved) and emits a **structured evidence log**
+   (tag/attrs/location/neighbours). Nothing is silently dropped; the logged gaps are the backlog that
+   drives schema growth.
+2. **Storage (Postgres, source of truth).** `prosemirror-model` runs in Node (the JSON path is pure;
+   jsdom is needed only at HTML import). Content stays **decomposed block rows** (right for per-block
+   notes, reading position, and search) carrying the PM node + a **stable node id** (Tiptap UniqueID).
+   Ingested content is regenerable from the retained source; **authored** content (essays) is itself
+   canonical.
+3. **Reader.** `@tiptap/static-renderer` renders the PM doc to React/HTML **without a browser**,
+   replacing the mdast→hast renderer; the same doc becomes editable later (Notion-like blocks).
+4. **Annotation.** Notes, marks, comments, and connections live **outside** the content doc
+   (personal data, `user_id`) and render as ProseMirror **Decorations** — never marks (marks would
+   contaminate shared content and die on re-ingest). Anchors are block-id + offset with a **W3C
+   TextQuote fallback** (Hypothesis / apache-annotator, BSD/Apache) so they survive edits and
+   re-ingestion; cross-block ranges are native in PM's flat positions. **Connections** across works
+   (including cross-language) are the same anchor pointing at two blocks.
+
+**No migration** — there is no real data yet (in-memory dev runs), so this is a **clean build on the
+new bedrock**, not a migration. Deprecated and replaced: mdast as the stored form, the hand-rolled
+HTML→mdast figure/dl/callout/footnote detection, the mdast→hast renderer, and the hast-tree-walk
+highlight application. Permissive licenses only (MIT/Apache/BSD); no GPL/AGPL, no paid lock-in.
 
 ## v0 design language (UX)
 
@@ -421,14 +465,12 @@ upgrade, and a self-tuning (eval-driven) coach.
 - Semantic search (`pgvector` embeddings).
 - A block-based editor (future) and LLM-assisted note drafting remain future, not v0. Language
   practice & recall is **now an active module** — see "Language practice & recall" above.
-- **Editing & the document model (direction).** whetstone is a **personal learning environment where
-  the same person reads *and writes* on it** — so a Notion-like block **editor is a near-term first-class
-  direction**, not a distant maybe. This tilts the internal representation away from **mdast** (a Markdown
-  AST that silently drops rich constructs — figure, definition list, callout, footnote) toward a
-  **schema-based block document** (e.g. ProseMirror / Lexical / BlockNote) where those constructs are
-  first-class node types and **annotation + editing are native** (positions/marks, incl. cross-block
-  spans). Markdown/mdast becomes import/export only. EPUB ingestion then *maps* HTML to schema nodes
-  instead of flattening it. Framework choice + migration plan are pending a **design spike**.
+- **Editing & the document model — committed** (see "Architecture: the document-model bedrock"
+  above). whetstone is a personal learning environment where the same person reads *and writes*, so a
+  Notion-like block editor is a near-term direction. The content bedrock is the **Tiptap/ProseMirror
+  document model** (mdast retired to import/export); the editor is the same model made editable. Build
+  in slices: schema/node-specs → fidelity ingestion (fail-loud + log) → static-renderer reader →
+  annotation decorations → editor.
 
 ## v0 non-goals
 
