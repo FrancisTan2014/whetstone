@@ -52,3 +52,19 @@ Issue sizing guardrails:
 - If the developer would need to choose architecture not already in `PRODUCT.md`, keep it in design.
 - If the developer would need to choose project structure or engineering convention not already in `GUIDELINES.md`, keep it in design.
 - If the reviewer would need to understand multiple unrelated features to review it, split it.
+
+How the queue consumes your issues (so you sequence by design, not by luck):
+
+- The developer picks work as a **pure function of the queue**, never "latest": among `ready-for-dev`,
+  dependency-ready issues, **all `[Bug]`s are taken before any `[Task]`**, and within each group the
+  **lowest issue number wins** (`scripts/pick-next-issue.mjs`). So a foundation filed as a high number
+  is picked *last* among tasks, and any open bug preempts your tasks.
+- `blocked` + `Depends on: #N` **freezes** an issue until every referenced issue closes; the reviewer's
+  deterministic **unblock step then auto-flips it to `ready-for-dev`** (`scripts/unblock-ready-issues.mjs`).
+  You never re-touch it.
+- **This is your sequencing lever.** To make a multi-slice effort build contiguously, chain each slice
+  `Depends on:` the previous. To make a foundation lead, ensure nothing lower-numbered or any open bug
+  competes — or freeze competitors behind the effort's **last** slice with `Depends on:`. To freeze
+  ongoing work during an architecture pivot, mark it `blocked` + `Depends on:` the pivot's final issue
+  so it resumes automatically when the pivot lands. Order lives in labels + dependencies; the queue
+  obeys them deterministically.

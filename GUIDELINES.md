@@ -395,6 +395,10 @@ Block storage rules:
   removed blocks are soft-deleted so note anchors stay valid.
 - Multi-step writes (Work + ReadingUnits + Blocks) that must stay consistent use transactions.
 - Markdown export serializes the document model (Markdown stays import/export only).
+- **Fidelity fixtures mirror real publisher markup.** Verify ingestion/rendering against real-world
+  EPUBs (the DDIA / O'Reilly corpus is the reference) locally; commit **synthetic fixtures that
+  reproduce their real construct shapes** — nested `<figure><div><img><h6>`, `<dl><dt><dd>`, O'Reilly
+  callouts, bracketed noterefs — never idealized HTML, and never the copyrighted books themselves.
 
 Original-file storage rules:
 
