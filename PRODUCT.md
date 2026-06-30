@@ -21,6 +21,10 @@ retention, real-world use), never by streaks or volume. Language is v0's **first
 architecture — capture → model → push → internalize → grow — is domain-general. The name says it: you sharpen
 *yourself* against the text.
 
+**因材施教 — for everyone.** Confucius taught *to the student*; but a tutor who reads one learner and adapts to
+them was, for most of history, a privilege of the rich. The LLM makes **因材施教 universal** — a patient tutor
+that knows *your* gaps, *your* materials, *your* energy. That democratization is whetstone's reason to exist.
+
 **The scope test (so the app cannot sprawl into a mix):** every feature is either
 - **(a) capture** — it records your activity/knowledge into the structured learner model, or
 - **(b) coach** — it is the LLM reading that model to give feedback, suggestions, or connections.
@@ -57,6 +61,35 @@ existing surface*, not a new app:
 
 These are **principles, not v0 scope**: v0 stays the small assistant; they fix what every surface is *for* and
 how to judge it — by internalization and growth, not activity.
+
+## The arranger — discipline as the product
+
+The hardest part of self-learning is not capability; it is **showing up, sustainably, without self-reproach**. A
+motivated learner can read a classic to recitation and still **stall for months** on planning, gathering,
+reflecting, and recovering when energy dips. So beneath capture and coach, whetstone's first job is to be the
+**arranger** — the external executive function a solo learner lacks — so you spend willpower on *real learning*,
+not logistics.
+
+This reframes the Today home: it is not a feed of proposals but a **finite, clearable daily board**. Clear it,
+then rest and play **freely, with no self-reproach** — *rest is earned, not stolen*. A small, finishable day
+answers procrastination (one clear next action) and guilt (a defined "done") at once.
+
+The **risk it must avoid**: an arranger that becomes a *new* chore or a *new* guilt machine. Arrangement must be
+**light, adaptive, and compassionate** — it relieves pressure, never adds it. If Today ever feels like another
+boss, it has failed. Four principles hold the line:
+
+- **Compassion, never punishment.** No shame, no punishing streaks; a missed day or a binge week is *recovered
+  from*, treated as **energy data, not a moral failure** (this is *why* v0 rejects streaks and gamification).
+- **Small & compounding over intensity.** Size the day to be clearable *even on a low day* — `(1.01)^365`, not
+  heroic bursts that collapse and breed guilt.
+- **Energy-aware & relapse-tolerant.** Low energy *shrinks* the board, offers lighter work, or blesses rest; it
+  bends, it does not break.
+- **Scaffolding that fades.** It externalizes discipline *until the habit is internalized*, then steps back —
+  growing your capacity to self-direct is itself part of growing into a better person.
+
+**Breadth = the whole 六艺, language first.** The arranger spans the real curriculum — classical-Chinese
+recitation, English reading, CS, general reading, diary — and is **domain-general by design**, but v0 **proves
+it on one domain** (language) before widening. This breadth is vision, not v0 scope.
 
 **v0 is a usable personal learning assistant — not only the on-ramp.** The reading + annotation loop is the
 *on-ramp* that begins the learner model (read source materials, break them into addressable blocks, attach
@@ -517,8 +550,12 @@ upgrade, a self-tuning (eval-driven) coach, and the reverse practice→reading "
 
 The North Star is *proactive*, so v0 gives the assistant a **front door**: a **Today** home that is the app's
 landing. It surfaces *what to do today* by reading the already-built learner model, and the **reading surface
-stays calm** (no capture/recall/practice inside the reader; standing non-goal). Three arms, one restrained
-surface:
+stays calm** (no capture/recall/practice inside the reader; standing non-goal).
+
+**Today is a finite, clearable daily board** (see "The arranger"), not an endless feed: a small, energy-aware
+set you can actually finish. When it is cleared, a calm **"done for today"** invites you to rest and play
+**freely — no streak, no guilt, no back-judge** (*rest is earned, not stolen*). On a low day the board
+**shrinks**; a missed day is recovered from, never punished. Three arms, one restrained surface:
 
 - **Capture — voice diary.** Tap and talk; each voice note → STT → an LLM **tidy pass (never a polish or
   rewrite)** → one **block under today's date**. Un-anchored, any language, edit/delete. Every entry
