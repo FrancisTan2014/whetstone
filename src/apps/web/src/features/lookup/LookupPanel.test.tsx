@@ -97,7 +97,10 @@ describe("LookupPanel content", () => {
     expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["Longman", "https://www.ldoceonline.com/dictionary/set"],
       ["Merriam-Webster", "https://www.merriam-webster.com/dictionary/set"],
-      ["Oxford Learner's", "https://www.oxfordlearnersdictionaries.com/definition/english/set"]
+      [
+        "Oxford Learner's",
+        "https://www.oxfordlearnersdictionaries.com/search/english/direct/?q=set"
+      ]
     ]);
     for (const link of links) {
       expect(link.getAttribute("target")).toBe("_blank");
