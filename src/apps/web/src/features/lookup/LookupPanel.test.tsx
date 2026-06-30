@@ -41,6 +41,13 @@ const loadedEntry: LookupState = {
   status: "loaded"
 };
 
+// A found entry that carries no part-of-speech groups: the response contract permits found:true with
+// an empty partsOfSpeech array, so the panel must treat it as "no content" (#306).
+const emptyButLoaded: LookupState = {
+  entry: { headword: "versus", partsOfSpeech: [], pronunciations: [], sources: ["From WordNet."] },
+  status: "loaded"
+};
+
 function renderPanel(
   state: LookupState,
   options: { anchorRect?: DOMRect; matchers: Record<string, boolean>; onOpenChange?: () => void }
@@ -347,6 +354,50 @@ describe("LookupPanel content", () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual(["WordNet", "Wiktionary"]);
     // WordNet loaded -> shown by default; the still-loading Wiktionary doesn't trap the panel.
     expect(screen.getByText("to put in place")).toBeDefined();
+  });
+
+  it("auto-selects Wiktionary when WordNet has no entry for a function word (#306)", () => {
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: { status: "empty" } },
+      { id: "wiktionary", label: "Wiktionary", state: loadedEntry }
+    ]);
+
+    // 'versus'/'against' have no WordNet entry; the panel opens on the populated Wiktionary tab
+    // instead of stranding the reader on WordNet's "No definition found".
+    expect(screen.getByText("to put in place")).toBeDefined();
+    expect(screen.queryByText("No definition found.")).toBeNull();
+  });
+
+  it("treats an empty-but-loaded default as no content and falls through (#306)", () => {
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: emptyButLoaded },
+      { id: "wiktionary", label: "Wiktionary", state: loadedEntry }
+    ]);
+
+    // A found-but-content-less entry (no part-of-speech groups) carries nothing to read, so the
+    // default skips it and lands on the populated Wiktionary tab.
+    expect(screen.getByText("to put in place")).toBeDefined();
+    expect(screen.queryByText("No definition found.")).toBeNull();
+  });
+
+  it("shows the no-match state when the reader opens an empty-but-loaded tab (#306)", async () => {
+    const user = userEvent.setup();
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: emptyButLoaded },
+      { id: "wiktionary", label: "Wiktionary", state: loadedEntry }
+    ]);
+
+    await user.click(screen.getByRole("tab", { name: "WordNet" }));
+    expect(screen.getByText("No definition found.")).toBeDefined();
+  });
+
+  it("shows one explicit error when every source is empty, errored, or empty-but-loaded (#306)", () => {
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: emptyButLoaded },
+      { id: "wiktionary", label: "Wiktionary", state: { status: "empty" } }
+    ]);
+
+    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
   });
 
   it("keeps the Chinese 萌典 tab as the default while it loads, even when CC-CEDICT resolves first (#272)", () => {
