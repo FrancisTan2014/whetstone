@@ -42,7 +42,7 @@ export function AppShell(): React.JSX.Element {
       <div className="flex flex-1 flex-col bg-bg text-text md:flex-row">
         <nav
           aria-label="Primary"
-          className="order-last flex shrink-0 gap-1 border-t border-border bg-surface p-2 md:order-first md:w-56 md:flex-col md:border-t-0 md:border-r"
+          className="order-last flex flex-wrap shrink-0 gap-1 border-t border-border bg-surface p-2 md:order-first md:w-56 md:flex-col md:flex-nowrap md:border-t-0 md:border-r"
         >
           {navDestinations.map((destination) => (
             <NavLink
