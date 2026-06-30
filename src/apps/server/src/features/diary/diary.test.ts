@@ -9,6 +9,7 @@ import { diaryEntries } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { DiaryDependencies } from "./diaryCommands.js";
+import { createDiaryTidy } from "./diaryTidy.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
 
 // A deterministic stand-in for the LLM tidy pass: drop standalone fillers (um/uh/er) and collapse
@@ -110,6 +111,35 @@ describe("POST /api/diary/entries", () => {
     // Fillers gone, the doubled words collapsed once — but every meaningful word is preserved in order
     // and none is upgraded or rephrased.
     expect(entry.text).toBe("I really enjoyed it today");
+  });
+
+  it("still saves the entry with the raw transcript when the tidy model fails (capture is never lossy)", async () => {
+    // A server whose tidy wraps an unavailable model (Ollama down): createDiaryTidy must degrade to the
+    // raw transcript so POST /entries still files the entry rather than 500ing and losing the capture.
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    const db = createDbClient(pglite);
+    const failingServer = createServer({
+      diary: {
+        createId: () => "diary-fail-1",
+        db,
+        now: () => new Date("2026-06-30T20:38:00.000Z"),
+        tidy: createDiaryTidy(() => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:11434")))
+      },
+      logger: false
+    });
+
+    const response = await failingServer.inject({
+      method: "POST",
+      payload: { transcript: "um today I went to the park" },
+      url: "/api/diary/entries"
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as DiaryEntryDto).text).toBe("um today I went to the park");
+    expect(await listDiaryEntriesForUser(db, DEFAULT_USER_ID)).toHaveLength(1);
+
+    await failingServer.close();
   });
 
   it("rejects a blank transcript", async () => {

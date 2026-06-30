@@ -7,12 +7,20 @@ import type { ChatModel } from "../../coach/llmCoach.js";
 // a deterministic fake. Kept as an injected dependency so the diary command stays pure and testable.
 export type DiaryTidy = (transcript: string) => Promise<string>;
 
-// Wrap a chat model as a diary tidier: build the tidy prompt, call the model, and trim the reply. If the
-// model returns nothing usable (blank), fall back to the raw transcript so a flaky model never empties an
-// entry — the worst case is an un-tidied but faithful entry, which still honors "preserve the wording".
+// Wrap a chat model as a diary tidier: build the tidy prompt, call the model, and trim the reply. Tidy
+// must NEVER make capture fail: if the model is unavailable (Ollama down / not pulled), the request
+// errors, or the reply is blank, fall back to the raw transcript. The worst case is an un-tidied but
+// faithful entry — which still honors "preserve the wording" — never a lost entry (#246).
 export function createDiaryTidy(chat: ChatModel): DiaryTidy {
   return async (transcript) => {
-    const tidied = (await chat(buildDiaryTidyPrompt(transcript))).trim();
+    let tidied: string;
+
+    try {
+      tidied = (await chat(buildDiaryTidyPrompt(transcript))).trim();
+    } catch {
+      return transcript;
+    }
+
     return tidied.length > 0 ? tidied : transcript;
   };
 }

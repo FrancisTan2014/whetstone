@@ -20,4 +20,14 @@ describe("createDiaryTidy", () => {
 
     await expect(tidy("the original words")).resolves.toBe("the original words");
   });
+
+  it("falls back to the raw transcript when the model call fails, so tidy never breaks capture", async () => {
+    // Ollama down / not pulled / fetch or parse error: tidy degrades to the faithful raw transcript
+    // rather than throwing and failing the save (#246).
+    const tidy = createDiaryTidy(async () => {
+      throw new Error("ECONNREFUSED 127.0.0.1:11434");
+    });
+
+    await expect(tidy("the original words")).resolves.toBe("the original words");
+  });
 });
