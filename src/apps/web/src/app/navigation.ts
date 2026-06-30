@@ -5,10 +5,11 @@ export type NavDestination = Readonly<{
   to: string;
 }>;
 
-// The primary navigation modes. Library and Reader mount existing screens; Notes and
-// Search are placeholder regions until their feature slices land.
+// The primary navigation modes. Today is the proactive landing (index route); Library and Reader
+// mount existing screens; Notes and Search are placeholder regions until their feature slices land.
 export const navDestinations: ReadonlyArray<NavDestination> = [
-  { end: true, label: "Library", to: "/" },
+  { end: true, label: "Today", to: "/" },
+  { label: "Library", to: "/library" },
   { label: "Reader", to: "/reader" },
   { label: "Practice", to: "/practice" },
   { label: "Progress", to: "/progress" },

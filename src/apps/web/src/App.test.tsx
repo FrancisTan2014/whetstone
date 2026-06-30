@@ -25,7 +25,7 @@ describe("App shell and routes", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain('aria-label="Primary"');
-    for (const label of ["Library", "Reader", "Recall", "Notes", "Search"]) {
+    for (const label of ["Today", "Library", "Reader", "Recall", "Notes", "Search"]) {
       expect(markup).toContain(label);
     }
   });
@@ -48,8 +48,17 @@ describe("App shell and routes", () => {
     expect(markup).toContain('aria-current="page"');
   });
 
-  it("mounts the existing Library screens at the index route", () => {
+  it("lands on the proactive Today home at the index route", () => {
     const markup = renderAt("/");
+
+    expect(markup).toContain('id="today-heading"');
+    expect(markup).toContain("Capture a thought");
+    // Today is the landing now — the Library no longer mounts at the index route.
+    expect(markup).not.toContain("Work detail");
+  });
+
+  it("mounts the existing Library screens at the /library route", () => {
+    const markup = renderAt("/library");
 
     expect(markup).toContain(">Library<");
     expect(markup).toContain("Work detail");
@@ -61,8 +70,10 @@ describe("App shell and routes", () => {
     expect(markup).toContain('aria-label="Reader"');
     expect(markup).not.toContain("Work detail");
     expect(markup).not.toContain('aria-label="Primary"');
-    // The reading surface stays calm: no recall UI lives in the reader.
+    // The reading surface stays calm: no recall UI and no Today chrome live in the reader.
     expect(markup).not.toContain("Due to recall");
+    expect(markup).not.toContain('id="today-heading"');
+    expect(markup).not.toContain("Capture a thought");
   });
 
   it("resolves the recall route to the due-recall page", () => {

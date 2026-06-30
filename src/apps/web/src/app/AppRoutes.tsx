@@ -11,13 +11,15 @@ import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { RecallPage } from "../features/recall/RecallPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { SessionPage } from "../features/session/SessionPage.js";
+import { TodayPage } from "../features/today/TodayPage.js";
 import { createLiveCapture, isVoiceCaptureSupported } from "../features/session/liveCapture.js";
 import { createBrowserVoiceOut } from "../features/session/browserVoiceOut.js";
 import { AppShell } from "./AppShell.js";
 
-// The Library mode keeps the existing admin + content screens mounted together; screen
-// redesign happens in later slices. It lifts the just-created work's entry id so the content
-// panel refreshes and selects a newly added/imported work without a page reload.
+// The Library mode keeps the existing admin + content screens mounted together; it now lives at
+// `/library` because the proactive Today home (#319) is the app's landing. It lifts the just-created
+// work's entry id so the content panel refreshes and selects a newly added/imported work without a
+// page reload.
 function LibraryMode(): React.JSX.Element {
   const [focusWorkEntryId, setFocusWorkEntryId] = useState<string | undefined>(undefined);
 
@@ -49,7 +51,8 @@ export function AppRoutes(): React.JSX.Element {
   return (
     <Routes>
       <Route element={<AppShell />} path="/">
-        <Route element={<LibraryMode />} index />
+        <Route element={<TodayPage />} index />
+        <Route element={<LibraryMode />} path="library" />
         <Route element={<ReaderRoute />} path="reader" />
         <Route
           element={
