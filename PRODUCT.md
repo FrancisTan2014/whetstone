@@ -20,10 +20,15 @@ slice of your history for each suggestion. Reading is the on-ramp, not the desti
 
 If a feature is neither, it is out of scope.
 
-**v0 is the on-ramp:** a usable reading + annotation loop that *begins* the learner model — read source
-materials, break them into addressable blocks, attach notes, connect ideas across works. Writing/speaking
-practice and the proactive LLM coach are the direction v0 builds toward, **not yet built**. The detailed v0
-scope and content model below remain the source of truth for what to build now.
+**v0 is a usable personal learning assistant — not only the on-ramp.** The reading + annotation loop is the
+*on-ramp* that begins the learner model (read source materials, break them into addressable blocks, attach
+notes, connect ideas across works). v0 now also delivers the **assistant loop the North Star promises**: a
+proactive **Today home** that **captures** (a tap-and-talk voice diary), **proposes recall** (due items from
+the built SM-2 scheduler), and **surfaces practice** (the reading→practice nudge). The coach/recall *engine*
+(SM-2, recall store, the live coach, the learner model, the fog-of-war map) is **already built** — v0 adds the
+**proactive surfaces** that make it usable. The reading surface itself stays calm; the assistant lives in its
+own home (see "v0 assistant home (Today)"). The detailed scope and content model below remain the source of
+truth for what to build now.
 
 ## v0 scope
 
@@ -33,6 +38,16 @@ scope and content model below remain the source of truth for what to build now.
 3. **Annotate** — select any text (a word, phrase, or longer passage) to create a note anchored to
    the exact source block.
 4. **Find** — search across the library at block granularity.
+5. **Capture by voice** — a tap-and-talk **voice diary**: each voice note is transcribed, lightly **tidied
+   (never polished)**, and saved as a **block under the current date**, deposited into the learner history
+   the coach reads.
+6. **Recall** — surface **due** items (the built SM-2 scheduler) as **gentle, capped, snoozeable proposals**;
+   completing one feeds its grade back to the scheduler.
+7. **A proactive Today home** — the assistant's front door, composing capture + recall + the
+   reading→practice nudge; it is the app's landing. The reader stays calm (none of this lives in it).
+
+Items 1–4 are the **on-ramp**; 5–7 are the **assistant loop** over the already-built coach/recall engine
+(see "v0 assistant home (Today)" and "Language practice & recall").
 
 Manual input remains a first-class v0 path; file upload exists because manually typing a whole work
 (e.g. 《史记》) is infeasible.
@@ -454,8 +469,37 @@ and how it gets smarter.
 deterministic-recall + LLM-grades, voice-first input, the fog-of-war content navigation, bounded
 pre-cooked content, the thin-app + rich-context + cost-routed model seam, and **the real-time spoken talk
 loop with its end-of-round analysis → deposit → debrief, the voice-in / voice-out plumbing, and
-coach-evolves-by-briefing + knobs.** Open: pronunciation / prosody scoring, the neural-voice (TTS)
-upgrade, and a self-tuning (eval-driven) coach.
+coach-evolves-by-briefing + knobs.** Settled too — the **proactive reading→practice nudge**: a recent
+reading capture surfaced as a single, value-ranked (gap × frequency + recency), decaying, cooldown-gated
+prompt on the **Today home** (and the Practice entry) — **never in the reader**,
+no separate inbox, no push notifications. Open: pronunciation / prosody scoring, the neural-voice (TTS)
+upgrade, a self-tuning (eval-driven) coach, and the reverse practice→reading "re-read pointer".
+
+## v0 assistant home (Today)
+
+The North Star is *proactive*, so v0 gives the assistant a **front door**: a **Today** home that is the app's
+landing. It surfaces *what to do today* by reading the already-built learner model, and the **reading surface
+stays calm** (no capture/recall/practice inside the reader; standing non-goal). Three arms, one restrained
+surface:
+
+- **Capture — voice diary.** Tap and talk; each voice note → STT → an LLM **tidy pass (never a polish or
+  rewrite)** → one **block under today's date**. Un-anchored, any language, edit/delete. Every entry
+  **deposits into the learner history the coach reads**, so capture compounds — it is not a write-only journal.
+- **Coach — recall proposals.** Today's **due** items (the built **SM-2** scheduler + recall store) surfaced as
+  a **gentle, capped, snoozeable proposal** — *proposals, not an obligation*; a backlog never piles into a
+  wall. Completing an item feeds its grade back to SM-2. **FSRS is a future swap behind the same grade-driven
+  scheduler seam** — SM-2 is what ships.
+- **Practice — the reading nudge.** The reading→practice nudge (a recent capture → "practise it") renders as a
+  Today card; its restraint model lives under "Language practice & recall → Settled vs open".
+
+**Tidy, not polish (the diary's invariant).** Tidy = drop fillers/false starts/repeats and lightly reorder for
+readability while **preserving the speaker's wording, meaning, and voice** — never upgrade vocabulary, "fix"
+phrasing to native, or translate. Polishing would erase the raw production signal the coach needs.
+
+**Why a home, not scattered surfaces.** A proactive assistant needs one place that reaches you; without it the
+engine only speaks when you walk into Practice and recall has no surface at all. The Today home **supersedes**
+the earlier "quiet Library-landing pointer" — that pointer becomes a Today card. Each arm stays capped and
+calm: one restrained front door, never a metrics dashboard, streaks, or gamification.
 
 ## Future direction protected by v0
 
