@@ -159,6 +159,11 @@ const server = createServer({
   },
   readingPosition: { db },
   preferences: { db },
+  recall: {
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date()
+  },
   search: { db },
   session: {
     coach,

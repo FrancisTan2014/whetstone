@@ -33,6 +33,8 @@ import { registerSessionRoutes } from "../features/session/sessionRoutes.js";
 import type { SessionDependencies } from "../features/session/sessionEngine.js";
 import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
 import type { DiaryDependencies } from "../features/diary/diaryCommands.js";
+import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
+import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
@@ -61,6 +63,7 @@ export type CreateServerOptions = Readonly<{
   notes?: NotesDependencies;
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
+  recall?: RecallRouteDependencies;
   search?: SearchDependencies;
   session?: SessionDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
@@ -126,6 +129,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.diary !== undefined) {
     registerDiaryRoutes(server, options.diary);
+  }
+
+  if (options.recall !== undefined) {
+    registerRecallRoutes(server, options.recall);
   }
 
   if (options.images !== undefined) {
