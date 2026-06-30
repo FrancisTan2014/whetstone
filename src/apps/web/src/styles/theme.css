@@ -454,6 +454,14 @@
   padding-inline-start: 1.5rem;
 }
 
+/* Reader paragraphs bind to the inherited --reading-size so A+/A− resizes the body copy, the same
+   way the em-sized headings below scale (#330). Without this, the global `p { font-size }` element
+   rule (styles.css) overrides the size inherited from `.reading-surface` — a direct element rule
+   beats an inherited value regardless of the specificity that set it — pinning body text at 17px. */
+.reader p {
+  font-size: 1em;
+}
+
 .reader ul {
   list-style: disc;
 }

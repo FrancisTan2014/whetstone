@@ -63,4 +63,24 @@ test.describe("core reader loop", () => {
     // A real definition rendered — not the loading, empty, or error state (`.lookupGloss` is a sense).
     await expect(lookup.locator(".lookupGloss").first()).toBeVisible();
   });
+
+  test("A+ resizes the body paragraph text, not just the heading (#330)", async ({ page, setup }) => {
+    await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
+    const paragraph = page.locator(`${blockWith("p")} p`).first();
+    await expect(paragraph).toBeVisible();
+
+    const fontSizePx = () =>
+      paragraph.evaluate((node) => Number.parseFloat(getComputedStyle(node).fontSize));
+
+    // Default reading size ("md") binds the body <p> to --reading-size (1.125rem = 18px). The defect
+    // was the global `p { font-size }` rule pinning it at 17px regardless of the control.
+    await expect.poll(fontSizePx).toBeCloseTo(18, 0);
+
+    // Two A+ clicks step the size to "xl" (1.5rem = 24px); the body paragraph must follow, not freeze.
+    const increase = page.getByRole("button", { name: "Increase reading text size" });
+    await increase.click();
+    await increase.click();
+
+    await expect.poll(fontSizePx).toBeCloseTo(24, 0);
+  });
 });
