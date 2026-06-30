@@ -10,6 +10,27 @@ it. Newest first.
 
 ---
 
+## D3 — Loop dispatch: external/background coordinator → in-session self-paced foreground loop
+
+**Status:** Superseded (the first harness's coordinator role + background dispatch).
+**Replaced by:** each role runs its own in-session, self-paced **foreground** loop (the `## Run
+automatically` sections of the agent docs; `scripts/run-*-auto.cmd`).
+
+**What it was.** A **coordinator role** dispatched the developer/reviewer/tester by starting them as
+**background tasks**.
+
+**Why superseded.** **Background tasks fail silently** — a dispatched role could die or stall with no
+signal, wedging the loop with no error surfaced. An external coordinator is a fragile single point of
+failure.
+
+**What replaced it.** No coordinator. Each role drives itself with Copilot's scheduled-task feature as a
+**foreground, single-threaded, self-re-arming** loop: visible, never silently dropped, and stateless
+between ticks (it re-derives everything from GitHub — see D2). The accepted trade-off is some context
+accumulation within a long-lived session, bounded by the read-minimum discipline + runtime compaction —
+robustness and visibility beat leanness. **Do not reintroduce an external or background coordinator.**
+
+---
+
 ## D2 — Workflow status: local state machine → GitHub issues as the source of truth
 
 **Status:** Superseded (the first harness's local state machine).
