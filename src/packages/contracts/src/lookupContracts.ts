@@ -66,10 +66,17 @@ export function parseLookupResponse(value: unknown): LookupResponse {
 }
 
 // Lookup sources the reader can show as independent tabs: WordNet (offline, instant) and Wiktionary
-// (rich, networked) for English; for Chinese, 萌典/moedict (Chinese definitions, primary) and
-// CC-CEDICT (English glosses, secondary). Each tab fetches its source alone so one being
-// slow/down/empty never freezes or empties the popover (#196).
-export const lookupSourceIds = ["wordnet", "wiktionary", "cedict", "moedict"] as const;
+// (rich, networked) for English; for Chinese, 萌典/moedict (Chinese definitions, primary),
+// zh.Wiktionary (rich classical senses/古義/etymology, secondary), and CC-CEDICT (English glosses,
+// tertiary). Each tab fetches its source alone so one being slow/down/empty never freezes or empties
+// the popover (#196).
+export const lookupSourceIds = [
+  "wordnet",
+  "wiktionary",
+  "cedict",
+  "moedict",
+  "zhwiktionary"
+] as const;
 
 export type LookupSourceId = (typeof lookupSourceIds)[number];
 
@@ -77,7 +84,8 @@ const sourceLabels: Readonly<Record<LookupSourceId, string>> = {
   cedict: "CC-CEDICT",
   moedict: "萌典",
   wiktionary: "Wiktionary",
-  wordnet: "WordNet"
+  wordnet: "WordNet",
+  zhwiktionary: "中文維基詞典"
 };
 
 export function lookupSourceLabel(id: LookupSourceId): string {
@@ -86,13 +94,14 @@ export function lookupSourceLabel(id: LookupSourceId): string {
 
 const sourcesByLanguage: Readonly<Record<string, ReadonlyArray<LookupSourceId>>> = {
   en: ["wordnet", "wiktionary"],
-  "zh-CN": ["moedict", "cedict"],
-  "zh-TW": ["moedict", "cedict"]
+  "zh-CN": ["moedict", "zhwiktionary", "cedict"],
+  "zh-TW": ["moedict", "zhwiktionary", "cedict"]
 };
 
 // The ordered tabs to fetch for a work language; the first is the default. English leads with the
-// always-resolving offline WordNet; Chinese leads with 萌典's Chinese definitions (#272), demoting
-// CC-CEDICT's English glosses to a secondary tab, with both as mutual fallbacks.
+// always-resolving offline WordNet; Chinese leads with 萌典's Chinese definitions (#272), then
+// zh.Wiktionary's richer classical senses, demoting CC-CEDICT's English glosses to the last tab,
+// with all three as mutual fallbacks (#306 auto-selects the first non-empty tab).
 export function lookupSourcesForLanguage(language: string): ReadonlyArray<LookupSourceId> {
   return sourcesByLanguage[language] ?? [];
 }

@@ -295,11 +295,17 @@ can navigate them from another package.
   `import.meta.url`) and `pnpm build` copies `src/lookup/data` into `dist/lookup/data`. For Chinese
   the lookup is **Chinese-first** (#272): `moedictProvider.ts` is the networked 萌典 (moedict) provider
   over the open `https://www.moedict.tw/{word}.json` API — it strips the HTML markup, groups 釋義 by
-  詞性 with 例句/書證 as examples, and time-boxes the request — surfaced as the primary tab, with
-  CC-CEDICT's English glosses demoted to a secondary fallback tab (`zh-CN`/`zh-TW` →
-  `["moedict", "cedict"]`). Each
+  詞性 with 例句/書證 as examples, and time-boxes the request — surfaced as the primary tab.
+  `zhWiktionaryProvider.ts` is a second Chinese tab (#296): the networked zh.Wiktionary provider over
+  the MediaWiki `action=parse&prop=wikitext` API (CC BY-SA), whose pure `parseZhWiktionary` extracts
+  the 漢語/汉语 language section, groups each part-of-speech subsection's `# ` definitions (markup
+  stripped via `stripWikiMarkup`, capped) and an optional 詞源 etymology — richer classical senses
+  than 萌典; a no-Chinese-section/no-sense page is `null` (empty tab, #306) but a transport failure
+  throws so the lookup surfaces that tab's error only (#196). CC-CEDICT's English glosses are the last
+  tab (`zh-CN`/`zh-TW` → `["moedict", "zhwiktionary", "cedict"]`). Each
   `LookupSource` declares the `languages` it serves; `lookupService.ts` resolves the one requested
-  source+language tab (English → WordNet/Wiktionary; Chinese → 萌典/CC-CEDICT), returns its composed
+  source+language tab (English → WordNet/Wiktionary; Chinese → 萌典/zh.Wiktionary/CC-CEDICT), returns
+  its composed
   `DictionaryEntry`, and caches by `language:source:term`. Every contributing source's attribution
   rides in
   the entry's `sources`. `wordpos` runs its bundled-index build step via pnpm's `allowBuilds` in
@@ -458,7 +464,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   source in that order so the language's lead source stays the default — 萌典's Chinese definitions for
   Chinese (#272), offline WordNet for English — without trapping on a dead/empty source. `lookupApi.ts`
   calls `GET /api/lookup`. The reader passes the open work's language so Chinese selections lead with
-  萌典 and fall back to CC-CEDICT automatically. Lookup never creates, pre-fills, or edits a note.
+  萌典, then zh.Wiktionary, then CC-CEDICT automatically. `externalDictionaries.ts` builds the header's
+  "Open in" deep-links and is **language-aware** (#296/#302): an English headword gets the English
+  learner dictionaries (Longman/Merriam-Webster/Oxford, #254/#303), a Chinese (CJK) headword gets the
+  Chinese ones (汉典/萌典/ctext/国学大师) — `isEnglishHeadword` is the discriminator. Lookup never
+  creates, pre-fills, or edits a note.
   `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,

@@ -30,13 +30,29 @@ describe("externalDictionaryLinks", () => {
     ]);
   });
 
-  it("returns no links for a Chinese (CJK) headword, where English dictionaries are useless (#302)", () => {
-    expect(externalDictionaryLinks("曰")).toEqual([]);
-    expect(externalDictionaryLinks("汉典")).toEqual([]);
+  it("links a Chinese (CJK) headword to 汉典, 萌典, ctext, and 国学大师, URL-encoded and not lowercased (#296)", () => {
+    const encoded = encodeURIComponent("曰");
+    expect(externalDictionaryLinks("曰")).toEqual([
+      { label: "汉典", url: `https://www.zdic.net/hans/${encoded}` },
+      { label: "萌典", url: `https://www.moedict.tw/#${encoded}` },
+      { label: "ctext", url: `https://ctext.org/dictionary.pl?if=gb&char=${encoded}` },
+      {
+        label: "国学大师",
+        url: `https://www.guoxuedashi.net/so.php?sokeyzi=${encoded}&submit=&kind=zi`
+      }
+    ]);
   });
 
-  it("returns no links for a mixed headword that contains any CJK ideograph (#302)", () => {
-    expect(externalDictionaryLinks("set 曰")).toEqual([]);
+  it("routes a mixed headword containing any CJK ideograph to the Chinese dictionaries (#302)", () => {
+    expect(externalDictionaryLinks("set 曰").map((link) => link.label)).toEqual([
+      "汉典",
+      "萌典",
+      "ctext",
+      "国学大师"
+    ]);
+    expect(externalDictionaryLinks("set 曰")[0]?.url).toBe(
+      `https://www.zdic.net/hans/${encodeURIComponent("set 曰")}`
+    );
   });
 });
 

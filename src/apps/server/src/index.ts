@@ -26,6 +26,7 @@ import { createInMemoryLookupCache } from "./lookup/lookupCache.js";
 import { createLookupService, type LookupSource } from "./lookup/lookupService.js";
 import { createMoedictProvider } from "./lookup/moedictProvider.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
+import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
@@ -73,6 +74,16 @@ const lookupSources: LookupSource[] = [
 // dist/lookup/data).
 const moedict = createMoedictProvider({ httpClient });
 lookupSources.push({ id: "moedict", languages: ["zh-CN", "zh-TW"], lookup: moedict.lookup });
+
+// zh.Wiktionary (#296): the networked Chinese Wiktionary over the MediaWiki action=parse API, a
+// second Chinese tab with richer classical senses/古義/詞源 than 萌典. Time-boxed; a fetch failure
+// surfaces as that tab's error (its lookup throws), never emptying the panel (#196/#306).
+const zhWiktionary = createZhWiktionaryProvider({ httpClient });
+lookupSources.push({
+  id: "zhwiktionary",
+  languages: ["zh-CN", "zh-TW"],
+  lookup: zhWiktionary.lookup
+});
 
 const cedictPath = new URL("./lookup/data/cedict.u8.gz", import.meta.url);
 const cedictText = gunzipSync(readFileSync(cedictPath)).toString("utf8");
