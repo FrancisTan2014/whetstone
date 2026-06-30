@@ -4,6 +4,16 @@ This is the single durable engineering and review guide for whetstone. It exists
 
 These guidelines are inspired by practical TypeScript style guides such as the Google TypeScript Style Guide, then adapted to whetstone's product, stack, and local-agent workflow. When a rule here conflicts with a generic external style guide, this file wins for this repository.
 
+## Working philosophy: design-led, integrate over reinvent
+
+whetstone is built like a small, **design-led product team** (think Apple): the bar is a crafted, coherent whole assembled from **mature, proven components**, not a pile of bespoke code. This is the project's posture; the rules below operationalize it.
+
+- **Design leads.** Start from the product/UX/experience and the durable bedrock, not from what is quickest to hand-code. The reviewer and developer serve that intent.
+- **Integrate, don't reinvent.** Default to adopting a mature framework/library through its designed seams and combining proven pieces with taste. Hand-rolling a solution to a solved problem (parsing, document model, editing, tree traversal) is the **exception**, and the PR must justify why no mature option fit.
+- **Strong bedrock first; depth over deadline.** Foundational/architecture choices (storage, document model, ingestion) are near-irreversible — research them against real inputs and prove them on a hard real case before adopting. It is acceptable to delay a milestone to get the bedrock right.
+- **Taste is restraint.** Prefer fewer, well-resolved elements that fit one coherent design language; reject sprawl, speculative abstraction, and per-case special-casing.
+- **Fail loud, evolve by evidence.** Where inputs are open-ended (e.g. real-world source ingestion), degrade conservatively and **log the unhandled case with context** rather than silently dropping it; the logged gaps are the backlog that guides what to build next.
+
 ## Authority and conflict resolution
 
 Use this order when rules appear to conflict:
