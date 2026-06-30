@@ -22,21 +22,7 @@ export function useNoteHighlights(
       return undefined;
     }
 
-    let cleanup = (): void => {};
-    let cancelled = false;
-
-    void applyNoteHighlights(container, notes).then((remove) => {
-      if (cancelled) {
-        remove();
-      } else {
-        cleanup = remove;
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      cleanup();
-    };
+    return applyNoteHighlights(container, notes);
     // `renderKey` re-applies the highlights after the rendered blocks change (unit switch / born
     // remount); `notes` re-applies when the annotations themselves change.
   }, [notes, renderKey]);

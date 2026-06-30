@@ -1,9 +1,9 @@
-import { createTextQuoteSelectorMatcher, highlightText } from "@apache-annotator/dom";
 import { splitSpanIntoBlockRanges } from "@whetstone/domain";
 import type { NoteDto } from "@whetstone/contracts";
 
 import { noteMarkHueClass } from "./annotationHue.tokens";
 import { blockTextContent, rangeWithinElement } from "./blockText";
+import { textQuoteRange, wrapRange } from "./textHighlight";
 
 // Render note annotations as render-time DOM decorations over the PM-rendered reader (#313),
 // REPLACING the old hast-tree-walk mark application. A note is never a mark in the stored document;
@@ -11,8 +11,8 @@ import { blockTextContent, rangeWithinElement } from "./blockText";
 // external highlight span. Cross-block anchors are first-class — they highlight the start block's
 // tail, every middle block in full, and the end block's head. Resolution per anchor is: (a) the
 // block id + offset against the rendered block(s); (b) on failure (block missing or offsets out of
-// range after a doc edit / re-ingest), a W3C TextQuote re-anchor via `@apache-annotator/dom` using
-// the stored snapshots. The pure descriptor step is unit-tested; the DOM application is thin.
+// range after a doc edit / re-ingest), a dependency-free W3C TextQuote re-anchor (`textHighlight.ts`)
+// using the stored snapshots. The pure descriptor step is unit-tested; the DOM application is thin.
 
 // The TextQuote context window: how many characters of the stored block context to keep on each side
 // of the exact quote, so the re-anchor can disambiguate a repeated phrase without demanding that the
@@ -145,35 +145,27 @@ function rangesByOffset(
   return ranges;
 }
 
-// Re-anchor a descriptor by its stored TextQuote, returning the first matching range in the reader,
-// or undefined when the quote is not found (so a note whose text no longer exists is simply not
+// Re-anchor a descriptor by its stored TextQuote, returning the matching range in the reader, or
+// undefined when the quote is not found (so a note whose text no longer exists is simply not
 // highlighted rather than mis-placed).
-async function rangesByQuote(
+function rangesByQuote(
   descriptor: NoteHighlightDescriptor,
   container: Element
-): Promise<ReadonlyArray<Range> | undefined> {
-  const matcher = createTextQuoteSelectorMatcher({
+): ReadonlyArray<Range> | undefined {
+  const range = textQuoteRange(container, {
     exact: descriptor.exact,
     prefix: descriptor.prefix,
-    suffix: descriptor.suffix,
-    type: "TextQuoteSelector"
+    suffix: descriptor.suffix
   });
 
-  for await (const range of matcher(container)) {
-    return [range];
-  }
-
-  return undefined;
+  return range === undefined ? undefined : [range];
 }
 
 // Apply every note's highlight over the reader's rendered blocks and return a cleanup that removes
 // them. Each note resolves by block id + offset first, then by TextQuote; the resolved range(s) are
 // wrapped in an external `noteMark` span carrying the hue, the note id, and the accessible label.
 // Wrapping preserves the rendered text, so later notes still resolve against unchanged offsets.
-export async function applyNoteHighlights(
-  container: Element,
-  notes: ReadonlyArray<NoteDto>
-): Promise<() => void> {
+export function applyNoteHighlights(container: Element, notes: ReadonlyArray<NoteDto>): () => void {
   const descriptors = noteHighlightDescriptors(notes);
   const removers: Array<() => void> = [];
 
@@ -191,14 +183,14 @@ export async function applyNoteHighlights(
   for (const descriptor of descriptors) {
     const ranges =
       rangesByOffset(descriptor, orderedIds, lengthById, blockById) ??
-      (await rangesByQuote(descriptor, container));
+      rangesByQuote(descriptor, container);
 
     if (ranges === undefined) {
       continue;
     }
 
     for (const range of ranges) {
-      removers.push(highlightText(range, "span", highlightAttributes(descriptor)));
+      removers.push(wrapRange(range, highlightAttributes(descriptor)));
     }
   }
 

@@ -4,10 +4,6 @@ packages:
 # esbuild ships a prebuilt platform binary as an optional dependency; approving
 # its (otherwise harmless) postinstall keeps pnpm install from failing on an
 # unapproved build script under pnpm 11. CI installs with --frozen-lockfile.
-# core-js-pure (pulled in transitively by @apache-annotator/dom) only prints a
-# funding notice in its postinstall — nothing the runtime needs — so its build
-# is declined.
 allowBuilds:
-  core-js-pure: false
   esbuild: true
   wordpos: true

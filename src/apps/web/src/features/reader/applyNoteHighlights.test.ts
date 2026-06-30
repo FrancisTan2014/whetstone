@@ -102,10 +102,10 @@ describe("applyNoteHighlights", () => {
     '<div data-block-id="b1">First block text.</div>' +
     '<div data-block-id="b2">Second block text.</div>';
 
-  it("wraps exactly the anchored text in an interactive highlight span (block-id + offset)", async () => {
+  it("wraps exactly the anchored text in an interactive highlight span (block-id + offset)", () => {
     const container = reader(twoBlocks);
 
-    const cleanup = await applyNoteHighlights(container, [
+    const cleanup = applyNoteHighlights(container, [
       note(
         {
           blockEntryId: toEntryId("b1"),
@@ -130,10 +130,10 @@ describe("applyNoteHighlights", () => {
     expect(container.querySelector('[data-block-id="b1"]')?.textContent).toBe("First block text.");
   });
 
-  it("highlights a cross-block span: the start tail and the end head", async () => {
+  it("highlights a cross-block span: the start tail and the end head", () => {
     const container = reader(twoBlocks);
 
-    await applyNoteHighlights(container, [
+    applyNoteHighlights(container, [
       note(
         {
           blockEntryId: toEntryId("b1"),
@@ -153,10 +153,10 @@ describe("applyNoteHighlights", () => {
     expect(b2Mark?.textContent).toBe("Second");
   });
 
-  it("re-anchors via the TextQuote snapshot when the block id no longer resolves", async () => {
+  it("re-anchors via the TextQuote snapshot when the block id no longer resolves", () => {
     const container = reader('<div data-block-id="b1">The clever different fox.</div>');
 
-    await applyNoteHighlights(container, [
+    applyNoteHighlights(container, [
       note(
         {
           blockEntryId: toEntryId("gone"),
@@ -175,10 +175,10 @@ describe("applyNoteHighlights", () => {
     expect(mark?.getAttribute("data-note-id")).toBe("n3");
   });
 
-  it("re-anchors via TextQuote when the stored offsets fall outside the rendered block", async () => {
+  it("re-anchors via TextQuote when the stored offsets fall outside the rendered block", () => {
     const container = reader('<div data-block-id="b1">A short edited line.</div>');
 
-    await applyNoteHighlights(container, [
+    applyNoteHighlights(container, [
       note({
         blockEntryId: toEntryId("b1"),
         contextSnapshot: "edited",
@@ -192,10 +192,10 @@ describe("applyNoteHighlights", () => {
     expect(marks(container)[0]?.textContent).toBe("edited");
   });
 
-  it("leaves nothing highlighted when the snapshot text is gone entirely", async () => {
+  it("leaves nothing highlighted when the snapshot text is gone entirely", () => {
     const container = reader('<div data-block-id="b1">Nothing matches here.</div>');
 
-    await applyNoteHighlights(container, [
+    applyNoteHighlights(container, [
       note({
         blockEntryId: toEntryId("gone"),
         contextSnapshot: "absent",
@@ -209,10 +209,10 @@ describe("applyNoteHighlights", () => {
     expect(marks(container)).toHaveLength(0);
   });
 
-  it("highlights only the offset notes and skips whole-block notes in the same set", async () => {
+  it("highlights only the offset notes and skips whole-block notes in the same set", () => {
     const container = reader(twoBlocks);
 
-    await applyNoteHighlights(container, [
+    applyNoteHighlights(container, [
       note({
         blockEntryId: toEntryId("b1"),
         contextSnapshot: "First block text.",
@@ -237,10 +237,10 @@ describe("applyNoteHighlights", () => {
     expect(all[0]?.textContent).toBe("block");
   });
 
-  it("returns a no-op cleanup and adds nothing when every note is whole-block", async () => {
+  it("returns a no-op cleanup and adds nothing when every note is whole-block", () => {
     const container = reader(twoBlocks);
 
-    const cleanup = await applyNoteHighlights(container, [
+    const cleanup = applyNoteHighlights(container, [
       note({
         blockEntryId: toEntryId("b1"),
         contextSnapshot: "First block text.",

@@ -369,8 +369,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   matched range(s) in an external `noteMark` span (`applyNoteHighlights.ts`); clicking or pressing
   Enter on a highlight opens its note. Resolution is block-id + offset first (`blockText.ts` maps the
   shared character-offset model to/from DOM ranges, `spanMarks.ts` splits a span across blocks), then
-  a W3C **TextQuote** re-anchor via `@apache-annotator/dom` using the stored `selectedTextSnapshot`
-  (+ `contextSnapshot` as prefix/suffix) when the offsets no longer fit (doc edit / re-ingest).
+  a W3C **TextQuote** re-anchor (`textHighlight.ts`, dependency-free) using the stored
+  `selectedTextSnapshot` (+ `contextSnapshot` as prefix/suffix) when the offsets no longer fit (doc
+  edit / re-ingest); `textHighlight.ts` also wraps a resolved range's text nodes in the highlight
+  span(s).
   Cross-block notes are first-class — highlighted from the start block's tail through every middle
   block to the end block's head. A whole-block note (no offsets) shows a restrained hue gutter bar
   with a "View note" affordance instead of an underline. The reader opens the

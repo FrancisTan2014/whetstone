@@ -126,14 +126,14 @@ describe("useNoteHighlights", () => {
     expect(document.querySelector(".noteMark")).toBeNull();
   });
 
-  it("removes a highlight resolved after the effect was torn down", async () => {
+  it("removes the highlights it applied when the effect is torn down", async () => {
     const onActivate = vi.fn();
-    const { unmount } = render(<Reader notes={[note()]} onActivate={onActivate} />);
-
-    // Tear down before the async apply resolves, so the resolved cleanup runs against a cancelled
-    // effect and removes the spans it would otherwise have left behind.
-    unmount();
+    const { container, unmount } = render(<Reader notes={[note()]} onActivate={onActivate} />);
     await flush();
+    expect(container.querySelector(".noteMark")).not.toBeNull();
+
+    // Tearing down the effect runs its cleanup, which unwraps every span it injected.
+    unmount();
 
     expect(document.querySelector(".noteMark")).toBeNull();
   });
