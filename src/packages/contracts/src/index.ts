@@ -314,6 +314,9 @@ export type {
   UpdateNoteRequest
 } from "./noteContracts.js";
 export {
+  latestReadingPositionDtoSchema,
+  latestReadingPositionResponseSchema,
+  parseLatestReadingPositionResponse,
   parseReadingPositionResponse,
   parseUpsertReadingPositionRequest,
   readingPositionDtoSchema,
@@ -321,6 +324,8 @@ export {
   upsertReadingPositionRequestSchema
 } from "./readingPositionContracts.js";
 export type {
+  LatestReadingPositionDto,
+  LatestReadingPositionResponse,
   ReadingPositionDto,
   ReadingPositionResponse,
   UpsertReadingPositionRequest

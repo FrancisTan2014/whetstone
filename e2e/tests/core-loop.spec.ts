@@ -9,7 +9,7 @@ const toolbar = { name: "Annotate selection" } as const;
 
 test.describe("core reader loop", () => {
   test("opens a work from the library into its chapter content", async ({ page, setup }) => {
-    await page.goto(setup.baseURL);
+    await page.goto(`${setup.baseURL}#/library`);
 
     await expect(page.getByRole("heading", { name: setup.epub.title }).first()).toBeVisible();
     await page

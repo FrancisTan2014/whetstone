@@ -41,10 +41,38 @@ export const readingPositionResponseSchema = z
 
 export type ReadingPositionResponse = z.infer<typeof readingPositionResponseSchema>;
 
+// The Today home's "Continue reading" seam: the user's single most-recently-updated position across
+// ALL works (the per-work GET above is keyed to one work), carrying the work title so the card can
+// name the work without a second fetch. `anchorBlockEntryId` is null/absent = top of the unit.
+export const latestReadingPositionDtoSchema = z
+  .object({
+    anchorBlockEntryId: z.string().nullish(),
+    unitEntryId: z.string(),
+    workEntryId: z.string(),
+    workTitle: z.string()
+  })
+  .strict();
+
+export type LatestReadingPositionDto = z.infer<typeof latestReadingPositionDtoSchema>;
+
+// The GET /latest result: the most-recent position, or an explicit null so the client renders a quiet
+// "nothing to continue" line instead of guessing from an empty body.
+export const latestReadingPositionResponseSchema = z
+  .object({
+    position: latestReadingPositionDtoSchema.nullable()
+  })
+  .strict();
+
+export type LatestReadingPositionResponse = z.infer<typeof latestReadingPositionResponseSchema>;
+
 export function parseUpsertReadingPositionRequest(value: unknown): UpsertReadingPositionRequest {
   return upsertReadingPositionRequestSchema.parse(value);
 }
 
 export function parseReadingPositionResponse(value: unknown): ReadingPositionResponse {
   return readingPositionResponseSchema.parse(value);
+}
+
+export function parseLatestReadingPositionResponse(value: unknown): LatestReadingPositionResponse {
+  return latestReadingPositionResponseSchema.parse(value);
 }

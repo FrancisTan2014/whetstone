@@ -257,6 +257,10 @@ can navigate them from another package.
   the last open reading unit + an optional block anchor — in `reading_positions` (composite
   `(user_id, work_entry_id)` PK), upserted via `PUT` and read via `GET /api/works/:id/reading-position`;
   the server is the source of truth so resume survives a localStorage clear / new browser / other device.
+  `getLatestReadingPosition` adds the cross-work seam the Today home composes — the user's single
+  most-recently-`updated_at` position joined to `work_meta` for the title — served user-scoped via
+  `GET /api/reading-position/latest` (`{ position }` or an explicit null when none); the upsert bumps
+  `updated_at` so "most recent" tracks the last save.
   `search/` is read-only block-level library search: `GET /api/search?q=` validates the query, then
   `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over each unit's
   rendered substrate — the PM `doc_blocks` for a unit that has any (EPUB), else the legacy mdast
@@ -324,7 +328,8 @@ can navigate them from another package.
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
-  route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Practice =
+  route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
+  `AdminLibraryPage` + `WorkContentPanel` at `/library`, Reader = `ReaderPage`, Practice =
   `SessionPage`, Progress = `ProgressMapPage`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
   `NotesPage`, Diary = `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
@@ -492,6 +497,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   controls (Again/Hard/Good/Easy → `gradeFromRating` → an SM-2 grade) and a Snooze; grading or snoozing
   advances past the item, with explicit loading/error/empty ("all caught up") states. The reader stays
   calm — recall lives only here. `recallApi.ts` calls `/api/recall/*` and parses via `recallContracts`.
+  `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
+  finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
+  already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,
+  a restrained Recall card (`fetchDueRecall`: the first due item at a glance + a Review link to
+  `/recall`, else a quiet "caught up" line), a Continue-reading card (`todayApi.fetchLatestReadingPosition`
+  → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), and a
+  marked-but-empty practice-nudge seam (#245 not built). When the actionable arms clear it shows a
+  compassionate "done for today" — NO streak/guilt/penalty. The two async arms load independently so
+  one failing never blanks the page; the reader stays calm.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

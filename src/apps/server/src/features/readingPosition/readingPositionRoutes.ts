@@ -1,4 +1,8 @@
-import { upsertReadingPositionRequestSchema, type ReadingPositionDto } from "@whetstone/contracts";
+import {
+  upsertReadingPositionRequestSchema,
+  type LatestReadingPositionDto,
+  type ReadingPositionDto
+} from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
@@ -6,7 +10,7 @@ import {
   upsertReadingPosition,
   type ReadingPositionDependencies
 } from "./readingPositionCommands.js";
-import { getReadingPosition } from "./readingPositionQueries.js";
+import { getLatestReadingPosition, getReadingPosition } from "./readingPositionQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 
@@ -16,6 +20,25 @@ export function registerReadingPositionRoutes(
   server: FastifyInstance,
   dependencies: ReadingPositionDependencies
 ): void {
+  server.get("/api/reading-position/latest", async (request) => {
+    const stored = await getLatestReadingPosition(
+      dependencies.db,
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    const position: LatestReadingPositionDto | null =
+      stored === undefined
+        ? null
+        : {
+            anchorBlockEntryId: stored.anchorBlockEntryId,
+            unitEntryId: stored.unitEntryId,
+            workEntryId: stored.workEntryId,
+            workTitle: stored.workTitle
+          };
+
+    return { position };
+  });
+
   server.get<{ Params: WorkParams }>(
     "/api/works/:workEntryId/reading-position",
     async (request) => {
