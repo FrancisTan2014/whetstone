@@ -4,7 +4,7 @@
     "composite": true,
     "declaration": true,
     "declarationMap": true,
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",
@@ -14,5 +14,9 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "src/**/*.test.ts"],
-  "references": [{ "path": "../../packages/domain" }, { "path": "../../packages/contracts" }]
+  "references": [
+    { "path": "../../packages/document" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/contracts" }
+  ]
 }
