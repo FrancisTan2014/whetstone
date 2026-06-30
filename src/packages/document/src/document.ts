@@ -56,6 +56,18 @@ export function serializeDocument(node: ProseMirrorNode): DocumentNodeJSON {
   return node.toJSON() as DocumentNodeJSON;
 }
 
+// The plaintext of a document node: the in-order concatenation of its descendant text, with no
+// structural whitespace inserted between blocks or inline runs — the same character stream a renderer
+// paints. Pure and DOM-free, so the server can derive a stored PM block's searchable/anchorable
+// plaintext straight from its node JSON, and a reader can align selection offsets against it.
+export function documentText(node: DocumentNodeJSON): string {
+  if (node.text !== undefined) {
+    return node.text;
+  }
+
+  return (node.content ?? []).map(documentText).join("");
+}
+
 // Whether a JSON value is a valid document for the schema, without throwing.
 export function isValidDocument(json: unknown): boolean {
   try {

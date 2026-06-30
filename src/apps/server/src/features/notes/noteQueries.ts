@@ -7,10 +7,10 @@ import {
 import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
+import { addressableBlocks } from "../../db/addressableBlocks.js";
 import type { DbClient } from "../../db/dbClient.js";
 import {
   authors,
-  blocks,
   noteAnchors,
   noteTemplates,
   notes,
@@ -64,26 +64,29 @@ export type BlockInWork = Readonly<{
 
 // A note may only annotate an active block that belongs to the named work; this single
 // lookup both confirms the block exists (and is not soft-deleted) and scopes it to the
-// work via the block's own `work_entry_id`. The join to its reading unit yields the unit's
-// order index, so callers can compare two blocks' reading-order position.
+// work via the block's own `work_entry_id`. The block is resolved over both substrates
+// (legacy mdast `blocks` and PM `doc_blocks`) so a note anchored to a PM-rendered block id
+// resolves too (#312). The join to its reading unit yields the unit's order index, so callers
+// can compare two blocks' reading-order position.
 export async function findBlockInWork(
   db: DbClient,
   workEntryId: EntryId,
   blockEntryId: EntryId
 ): Promise<BlockInWork | undefined> {
+  const addressable = addressableBlocks(db);
   const rows = await db
     .select({
-      orderIndex: blocks.orderIndex,
-      plaintext: blocks.plaintext,
+      orderIndex: addressable.orderIndex,
+      plaintext: addressable.plaintext,
       unitOrderIndex: readingUnits.orderIndex
     })
-    .from(blocks)
-    .innerJoin(readingUnits, eq(blocks.readingUnitEntryId, readingUnits.entryId))
+    .from(addressable)
+    .innerJoin(readingUnits, eq(addressable.readingUnitEntryId, readingUnits.entryId))
     .where(
       and(
-        eq(blocks.entryId, blockEntryId),
-        eq(blocks.workEntryId, workEntryId),
-        isNull(blocks.deletedAt)
+        eq(addressable.entryId, blockEntryId),
+        eq(addressable.workEntryId, workEntryId),
+        isNull(addressable.deletedAt)
       )
     )
     .limit(1);
@@ -154,12 +157,13 @@ export async function listNotesForWork(
   workEntryId: EntryId,
   userId: string
 ): Promise<ReadonlyArray<NoteDto>> {
+  const addressable = addressableBlocks(db);
   const rows = await db
     .select(noteColumns)
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
-    .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
-    .where(and(eq(blocks.workEntryId, workEntryId), eq(notes.userId, userId)))
+    .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
+    .where(and(eq(addressable.workEntryId, workEntryId), eq(notes.userId, userId)))
     .orderBy(asc(notes.entryId));
 
   return rows.map(toNoteDto);
@@ -172,13 +176,6 @@ type NoteOverviewRow = NoteRow &
     workTitle: string;
   }>;
 
-const noteOverviewColumns = {
-  ...noteColumns,
-  authorName: authors.name,
-  workEntryId: blocks.workEntryId,
-  workTitle: workMeta.title
-} as const;
-
 function toNoteOverviewDto(row: NoteOverviewRow): NoteOverviewDto {
   return {
     ...toNoteDto(row),
@@ -190,18 +187,25 @@ function toNoteOverviewDto(row: NoteOverviewRow): NoteOverviewDto {
 
 // Every note the user owns, across all works, for the Notes mode. Joined to the anchor for the
 // snapshot and to the work + author for grouping and deep-linking. Scoped through the block's
-// `work_entry_id` (notes on soft-deleted blocks stay listed, matching `listNotesForWork`) and
-// filtered to the user. Ordered by work title then note id so the client can group by work.
+// `work_entry_id` (resolved over both legacy and PM blocks; notes on soft-deleted blocks stay listed,
+// matching `listNotesForWork`) and filtered to the user. Ordered by work title then note id so the
+// client can group by work.
 export async function listNotesForUser(
   db: DbClient,
   userId: string
 ): Promise<ReadonlyArray<NoteOverviewDto>> {
+  const addressable = addressableBlocks(db);
   const rows = await db
-    .select(noteOverviewColumns)
+    .select({
+      ...noteColumns,
+      authorName: authors.name,
+      workEntryId: addressable.workEntryId,
+      workTitle: workMeta.title
+    })
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
-    .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
-    .innerJoin(workMeta, eq(workMeta.entryId, blocks.workEntryId))
+    .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
+    .innerJoin(workMeta, eq(workMeta.entryId, addressable.workEntryId))
     .innerJoin(authors, eq(authors.id, workMeta.authorId))
     .where(eq(notes.userId, userId))
     .orderBy(asc(workMeta.title), asc(notes.entryId));
@@ -211,22 +215,24 @@ export async function listNotesForUser(
 
 // A single note scoped to the work AND the current user, used to authorize edits and deletes
 // against a forged or cross-work note id, or another user's note. Scoped through the block's
-// `work_entry_id` so a note on a soft-deleted block stays editable/deletable for its work.
+// `work_entry_id` (resolved over both legacy and PM blocks) so a note on a soft-deleted block stays
+// editable/deletable for its work.
 export async function getNoteForWork(
   db: DbClient,
   workEntryId: EntryId,
   noteEntryId: EntryId,
   userId: string
 ): Promise<NoteDto | undefined> {
+  const addressable = addressableBlocks(db);
   const rows = await db
     .select(noteColumns)
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
-    .innerJoin(blocks, eq(blocks.entryId, noteAnchors.blockEntryId))
+    .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
     .where(
       and(
         eq(notes.entryId, noteEntryId),
-        eq(blocks.workEntryId, workEntryId),
+        eq(addressable.workEntryId, workEntryId),
         eq(notes.userId, userId)
       )
     )

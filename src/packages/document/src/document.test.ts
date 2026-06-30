@@ -5,6 +5,7 @@ import {
   type DocumentNodeJSON,
   documentNodeNames,
   documentSchema,
+  documentText,
   DocumentValidationError,
   isValidDocument,
   parseDocument,
@@ -213,6 +214,31 @@ describe("stable ids", () => {
     const once = assignNodeIds(richDoc);
     const twice = assignNodeIds(once);
     expect(twice).toEqual(once);
+  });
+});
+
+describe("documentText", () => {
+  it("concatenates descendant text in order across nested blocks", () => {
+    const doc: DocumentNodeJSON = {
+      content: [
+        { content: [{ text: "Title", type: "text" }], type: "heading" },
+        {
+          content: [
+            { text: "Hello ", type: "text" },
+            { text: "world", type: "text" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+
+    expect(documentText(doc)).toBe("TitleHello world");
+  });
+
+  it("returns an empty string for a leaf node with neither text nor content", () => {
+    // An image is a childless, textless atom — the content-absent branch must default to no text.
+    expect(documentText({ type: "image" })).toBe("");
   });
 });
 

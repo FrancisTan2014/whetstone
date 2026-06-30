@@ -1,0 +1,1 @@
+ALTER TABLE "doc_blocks" ADD COLUMN "plaintext" text NOT NULL;

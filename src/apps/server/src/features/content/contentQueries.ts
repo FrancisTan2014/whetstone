@@ -11,6 +11,7 @@ import type {
 import { and, asc, count, eq, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
+import { addressableBlocks } from "../../db/addressableBlocks.js";
 import { blocks, docBlocks, readingUnits, workMeta, workSources } from "../../db/schema.js";
 
 type ReadingUnitRow = Readonly<{
@@ -252,22 +253,25 @@ export async function loadReadingUnitContent(
   return unit.title === null ? base : { ...base, title: unit.title };
 }
 
-// The reading unit owning a non-deleted block within the work, or `undefined` when the block does
-// not exist, is soft-deleted/detached, or is not part of the work.
+// The reading unit owning an addressable block within the work, or `undefined` when the block does
+// not exist, is soft-deleted/detached, or is not part of the work. The block is resolved over both
+// substrates (legacy mdast `blocks` and PM `doc_blocks`) so a jump / scroll-to-block / reading-position
+// restore keyed on a PM-rendered block id resolves its unit too (#312).
 export async function locateBlockUnit(
   db: DbClient,
   workEntryId: EntryId,
   blockEntryId: EntryId
 ): Promise<EntryId | undefined> {
+  const addressable = addressableBlocks(db);
   const rows = await db
     .select({ unitEntryId: readingUnits.entryId })
-    .from(blocks)
-    .innerJoin(readingUnits, eq(blocks.readingUnitEntryId, readingUnits.entryId))
+    .from(addressable)
+    .innerJoin(readingUnits, eq(addressable.readingUnitEntryId, readingUnits.entryId))
     .where(
       and(
-        eq(blocks.entryId, blockEntryId),
-        eq(blocks.workEntryId, workEntryId),
-        isNull(blocks.deletedAt)
+        eq(addressable.entryId, blockEntryId),
+        eq(addressable.workEntryId, workEntryId),
+        isNull(addressable.deletedAt)
       )
     )
     .limit(1);

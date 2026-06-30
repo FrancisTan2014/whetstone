@@ -201,9 +201,13 @@ can navigate them from another package.
   for mdast figures, via `figureImageResolver.ts`) and stamps the resolved store id onto the node's
   `imageResourceId` attr (#310/#312), then the document's top-level PM nodes are dual-written at the
   block-row boundary to the `doc_blocks` table (one row per node, keyed by the node's stable id from
-  `assignNodeIds`, with `node_json` carrying the PM node) alongside the existing mdast `blocks` rows
-  (the reader renders these PM block rows for EPUB content (#312); mdast block storage stays as the
-  Markdown fallback until Markdown ingestion also writes `doc_blocks`); the
+  `assignNodeIds`, with `node_json` carrying the PM node and a `plaintext` column — the in-order
+  concatenation of the node's descendant text via `@whetstone/document`'s `documentText`) alongside the
+  existing mdast `blocks` rows; each `doc_blocks` row is also registered as a first-class `entries` row
+  (`type: "block"`) under a `contains` link from its unit, so a PM block id is an addressable anchor
+  (the reader renders these PM block rows for EPUB content (#312) and stamps the id as `data-block-id`;
+  mdast block storage stays as the Markdown fallback until Markdown ingestion also writes `doc_blocks`);
+  the
   surviving units' fail-loud evidence is logged through the injected
   `ContentDependencies.ingestionLogger`. Both writers
   bulk-insert through `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
@@ -215,8 +219,12 @@ can navigate them from another package.
   (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit`): `GET …/structure` (units +
   block counts, no content), `GET …/units/:unitId/content` (one unit's ordered blocks — both the mdast
   `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`, the reader's render source),
-  and `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note), each 404ing an
-  unknown/out-of-work target. (The whole-work `GET …/content` route was removed; admin composes
+  and `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note, via
+  `locateBlockUnit`), each 404ing an unknown/out-of-work target. A block id is resolved over **both**
+  substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
+  union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
+  resolve a PM-rendered block id wherever a legacy block id resolves (#312). (Search still scans only
+  mdast `blocks`; deep-linking a PM-id search hit is a follow-up.) (The whole-work `GET …/content` route was removed; admin composes
   structure + per-unit client-side.) `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`),
   and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →

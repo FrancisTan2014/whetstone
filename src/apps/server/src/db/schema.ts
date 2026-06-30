@@ -60,17 +60,22 @@ export const readingUnits = pgTable(
 
 // Decomposed ProseMirror/Tiptap block rows (#311): one row per top-level PM node of a chapter's
 // fidelity-ingested document, keyed by the node's stable id (from `assignNodeIds`). `node_json`
-// carries that PM node (with its nested stable ids). This is the transitional bedrock content
-// storage — the reader still renders the mdast `blocks` rows above until #312 switches it to these
-// PM blocks, after which mdast block storage is retired. Written alongside `blocks` (dual-write) by
-// EPUB ingestion; the Markdown path writes none yet. Full Entry/`entry_links` integration is a later
-// storage slice, so these rows are not yet `entries`.
+// carries that PM node (with its nested stable ids). The reader renders these PM blocks via
+// `@tiptap/static-renderer` (#312). Written alongside `blocks` (dual-write) by EPUB ingestion; the
+// Markdown path writes none yet. Each row is also a first-class `entries` row (`type: "block"`)
+// linked under its reading unit (a `contains` `entry_links` edge), so a PM block id is an
+// addressable anchor: notes / reading positions FK to it and locate / note-listing resolve it
+// through the shared `addressableBlocks` union, exactly as for a legacy `blocks` row (#312).
 export const docBlocks = pgTable(
   "doc_blocks",
   {
     id: text("id").primaryKey(),
     nodeJson: jsonb("node_json").notNull(),
     orderIndex: integer("order_index").notNull(),
+    // The block's plaintext (the in-order concatenation of its PM node's descendant text), so a PM
+    // `doc_blocks` id is a first-class addressable block: notes and reading positions anchor to it and
+    // search/locate read its text, exactly as for a legacy `blocks` row (#312).
+    plaintext: text("plaintext").notNull(),
     readingUnitEntryId: text("reading_unit_entry_id")
       .notNull()
       .references(() => entries.id),
