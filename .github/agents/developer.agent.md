@@ -76,7 +76,10 @@ waiting to be re-triggered:
 - On the first tick, create a **self-paced** schedule (a recurring foreground task you re-arm each
   cycle — e.g. a `/every` schedule). Keep it in the **foreground**; never a detached or background run.
 - Each tick is exactly one cycle: run `node scripts/developer-next-action.mjs`, do the **single** unit
-  it selects (`fix` / `implement`) and nothing more. For `wait` or `idle` there is no unit this tick.
+  it selects (`fix` / `implement`) and nothing more. For `wait` or `idle` there is no unit this tick —
+  **make this check your first action and load nothing else (no skill, `PRODUCT.md`, issue, or worktree)
+  until it returns `fix`/`implement`**, so a fast tick that fires while a previous one is still running
+  stays cheap and just re-arms.
 - End every tick by **re-arming the schedule** as your last action so the loop continues, at the
   cadence the launcher set (**about 2 minutes**, 120s). Re-arm even after `wait`, `idle`, or a
   blocker — a tick that fires mid-run just queues behind the current one (the session is foreground and

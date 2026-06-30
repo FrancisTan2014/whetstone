@@ -110,8 +110,10 @@ waiting to be re-triggered:
 
 - On the first tick, create a **self-paced** schedule (a recurring foreground task you re-arm each
   cycle — e.g. a `/every` schedule). Keep it in the **foreground**; never a detached or background run.
-- Each tick: run `node scripts/reviewer-next-action.mjs`. On `review <pr>`, review **that one** PR and
-  record your verdict (labels + the `reviewer-run-reviewed` marker). On `idle`, review nothing.
+- Each tick: run `node scripts/reviewer-next-action.mjs` **first, and load no other context (skill,
+  `GUIDELINES.md`, the PR diff) until it returns `review <pr>`** — so a fast tick that fires while a
+  previous one is still running stays cheap. On `review <pr>`, review **that one** PR and record your
+  verdict (labels + the `reviewer-run-reviewed` marker). On `idle`, review nothing (and load nothing).
 - Whether you reviewed or it was `idle`, run the deterministic merge step
   `node scripts/merge-approved-prs.mjs`, then the deterministic unblock step
   `node scripts/unblock-ready-issues.mjs` — they, not you, decide merges and dependency unblocks from
