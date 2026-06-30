@@ -170,6 +170,8 @@ function renderPronunciation(headword: string) {
 }
 
 function renderEntry(entry: DictionaryEntry): React.JSX.Element {
+  const externalLinks = externalDictionaryLinks(entry.headword);
+
   return (
     <div className="lookupEntry">
       <header className="lookupHeader">
@@ -179,20 +181,22 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
             {entry.pronunciations.map(renderPronunciation(entry.headword))}
           </div>
         )}
-        <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
-          <span className="lookupExternalLabel">Open in</span>
-          {externalDictionaryLinks(entry.headword).map((link) => (
-            <a
-              className="lookupExternalLink"
-              href={link.url}
-              key={link.label}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              {link.label}
-            </a>
-          ))}
-        </nav>
+        {externalLinks.length === 0 ? null : (
+          <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
+            <span className="lookupExternalLabel">Open in</span>
+            {externalLinks.map((link) => (
+              <a
+                className="lookupExternalLink"
+                href={link.url}
+                key={link.label}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                {link.label}
+              </a>
+            ))}
+          </nav>
+        )}
       </header>
       <div className="lookupGroups">
         {entry.partsOfSpeech.map((part, index) => (

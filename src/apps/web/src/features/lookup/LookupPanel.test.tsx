@@ -111,6 +111,24 @@ describe("LookupPanel content", () => {
     ).toBe(true);
   });
 
+  it("hides the external English-dictionary row for a Chinese (CJK) headword (#302)", () => {
+    renderPanel(
+      {
+        entry: {
+          headword: "曰",
+          partsOfSpeech: [{ senses: [{ definition: "to say", examples: [], synonyms: [] }] }],
+          pronunciations: [],
+          sources: ["From 萌典."]
+        },
+        status: "loaded"
+      },
+      { matchers: desktop }
+    );
+
+    expect(screen.getByText("曰")).toBeDefined();
+    expect(screen.queryByRole("navigation", { name: "Open in external dictionary" })).toBeNull();
+  });
+
   it("color-codes each part-of-speech section with a tokenized hue class", () => {
     renderPanel(loadedEntry, { matchers: desktop });
     const groups = document.querySelectorAll(".lookupGroup");
