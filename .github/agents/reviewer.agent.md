@@ -65,6 +65,9 @@ acceptance criteria. In particular check:
   partial reimplementation or another special-case stacked on a bespoke workaround.
 - **Tests** — the risky parts are tested; included source is at 100% coverage with no assertion-free
   padding; any exclusion is narrow, commented, and justified.
+- **Bug regression guard** — a `[Bug]` PR includes a test that reproduces the reported scenario (would
+  fail on the pre-fix code, passes after), exercising the real path including wiring/composition roots
+  (e.g. `index.ts`), not just maintaining coverage. A fix with no scenario-reproducing test is a block.
 
 Do not comment on style, formatting, or speculative future-proofing.
 
