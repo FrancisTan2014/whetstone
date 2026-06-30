@@ -410,6 +410,12 @@ upgrade, and a self-tuning (eval-driven) coach.
 
 - The Entry/link + Block model supports future rich connections between materials, notes, concepts,
   and review items (block references, backlinks, transclusion) — none built in v0.
+- **Internal cross-reference links (settled).** A work's own `#id` references — footnote/endnote
+  markers, "see Figure 5-2", chapter cross-refs — are **one** capability: blocks already have stable
+  ids, so any same-work anchor resolves to a target block and becomes a live **jump** (scroll + brief
+  highlight); footnotes add a back-link, figure/section refs reuse the same jump. **Cross-document and
+  web links stay inert** (text only). The enabler is preserving element ids at ingest before mdast
+  flattens them; footnotes (#250) are the first slice on top.
 - **PDF / scanned ingestion** via an isolated Python document-AI worker (e.g. Docling + PaddleOCR),
   with admin review of extracted content. Permissive licenses only; AGPL/GPL tools avoided.
 - Semantic search (`pgvector` embeddings).
