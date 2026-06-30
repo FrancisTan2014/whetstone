@@ -223,8 +223,8 @@ can navigate them from another package.
   `locateBlockUnit`), each 404ing an unknown/out-of-work target. A block id is resolved over **both**
   substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
   union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
-  resolve a PM-rendered block id wherever a legacy block id resolves (#312). (Search still scans only
-  mdast `blocks`; deep-linking a PM-id search hit is a follow-up.) (The whole-work `GET …/content` route was removed; admin composes
+  resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
+  way per unit (its rendered substrate; see `search/`). (The whole-work `GET …/content` route was removed; admin composes
   structure + per-unit client-side.) `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`),
   and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →
@@ -235,9 +235,13 @@ can navigate them from another package.
   `(user_id, work_entry_id)` PK), upserted via `PUT` and read via `GET /api/works/:id/reading-position`;
   the server is the source of truth so resume survives a localStorage clear / new browser / other device.
   `search/` is read-only block-level library search: `GET /api/search?q=` validates the query, then
-  `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over non-deleted blocks'
-  `plaintext` (joined to work + author, capped at `searchResultLimit`, LIKE wildcards escaped); v0 is a
-  substring scan, not ranked FTS (PRODUCT.md "v0 search").
+  `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over each unit's
+  rendered substrate — the PM `doc_blocks` for a unit that has any (EPUB), else the legacy mdast
+  `blocks` (Markdown) — as a `UNION` whose legacy half excludes units that already have `doc_blocks`
+  (a `NOT EXISTS` guard), so a hit's `blockEntryId` equals the reader's rendered `data-block-id` and
+  deep-links to the right block (#312). Joined to work + author, ordered by reading order, capped at
+  `searchResultLimit`, LIKE wildcards escaped; v0 is a substring scan, not ranked FTS
+  (PRODUCT.md "v0 search").
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary

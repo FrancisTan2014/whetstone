@@ -1,10 +1,20 @@
 import { PGlite } from "@electric-sql/pglite";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { epubContentType } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { authors, blocks, entries, readingUnits, workMeta } from "../../db/schema.js";
+import { authors, blocks, docBlocks, entries, readingUnits, workMeta } from "../../db/schema.js";
+import { createImageResourceStore } from "../../files/imageResourceStore.js";
+import { createSourceFileStore } from "../../files/sourceFileStore.js";
+import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
+import type { ContentDependencies } from "../content/contentCommands.js";
+import type { LibraryDependencies } from "../library/libraryCommands.js";
 import { escapeLikePattern, searchBlocks } from "./searchQueries.js";
 
 let db: DbClient;
@@ -248,5 +258,104 @@ describe("GET /api/search", () => {
     const response = await server.inject({ method: "GET", url: "/api/search?q=%20%20" });
 
     expect(response.statusCode).toBe(400);
+  });
+});
+
+// A PM-backed (EPUB) work renders its `doc_blocks`, so search must return the doc_block id — the id
+// the reader stamps as `data-block-id` — not the legacy mdast block id, or a result would deep-link
+// to a block the reader never renders and scroll-to-block would no-op (#312).
+describe("searchBlocks over PM-backed (EPUB) units", () => {
+  type EpubContext = Readonly<{
+    db: DbClient;
+    imagesDir: string;
+    server: ReturnType<typeof createServer>;
+    sourcesDir: string;
+  }>;
+
+  let epub: EpubContext;
+
+  // One EPUB chapter whose ingestion dual-writes a legacy mdast block AND a PM doc_block per node, so
+  // the same paragraph text exists in both substrates — the case the per-unit preference must resolve.
+  function brownFoxEpub(): ParsedEpub {
+    return {
+      chapters: [{ html: "<h1>Chapter One</h1><p>The quick brown fox.</p>", images: [] }],
+      metadata: { author: "Aesop", language: "en", title: "Fables" }
+    };
+  }
+
+  async function buildEpubContext(): Promise<EpubContext> {
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    const database = createDbClient(pglite);
+    const sourcesDir = await mkdtemp(join(tmpdir(), "whetstone-search-epub-"));
+    const imagesDir = await mkdtemp(join(tmpdir(), "whetstone-search-epub-img-"));
+
+    let workSequence = 0;
+    let entrySequence = 0;
+    let sourceSequence = 0;
+    let authorSequence = 0;
+    const library: LibraryDependencies = {
+      createAuthorId: () => `author-${(workSequence += 1)}`,
+      createEntryId: () => `work-${workSequence}`,
+      db: database
+    };
+    const content: ContentDependencies = {
+      createAuthorId: () => `epub-author-${(authorSequence += 1)}`,
+      createEntryId: () => `entry-${(entrySequence += 1)}`,
+      createSourceId: () => `source-${(sourceSequence += 1)}`,
+      db: database,
+      epubParser: async () => brownFoxEpub(),
+      imageResourceStore: createImageResourceStore(imagesDir),
+      ingestionLogger: () => {},
+      sourceFileStore: createSourceFileStore(sourcesDir)
+    };
+
+    return {
+      db: database,
+      imagesDir,
+      server: createServer({ content, library, logger: false, search: { db: database } }),
+      sourcesDir
+    };
+  }
+
+  beforeEach(async () => {
+    epub = await buildEpubContext();
+  });
+
+  afterEach(async () => {
+    await epub.server.close();
+    await rm(epub.sourcesDir, { force: true, recursive: true });
+    await rm(epub.imagesDir, { force: true, recursive: true });
+  });
+
+  it("returns the rendered doc_block id for an EPUB hit, never the legacy mdast block id", async () => {
+    const response = await epub.server.inject({
+      headers: { "content-type": epubContentType },
+      method: "POST",
+      payload: Buffer.from("epub-search-fox"),
+      url: "/api/works/epub"
+    });
+    expect(response.statusCode).toBe(201);
+
+    // The paragraph exists in both substrates: the PM doc_block the reader renders and the legacy
+    // mdast block search used to return. The fix returns the doc_block id and excludes the legacy one.
+    const [docBlockRow] = (await epub.db.select().from(docBlocks)).filter((row) =>
+      row.plaintext.includes("quick")
+    );
+    const [legacyRow] = (await epub.db.select().from(blocks)).filter((row) =>
+      row.plaintext.includes("quick")
+    );
+    expect(docBlockRow).toBeDefined();
+    expect(legacyRow).toBeDefined();
+    expect(docBlockRow?.id).not.toBe(legacyRow?.entryId);
+
+    const results = await searchBlocks(epub.db, "quick");
+    const ids = results.map((result) => result.blockEntryId);
+
+    expect(ids).toContain(docBlockRow?.id);
+    expect(ids).not.toContain(legacyRow?.entryId);
+    expect(results.find((result) => result.blockEntryId === docBlockRow?.id)?.plaintext).toBe(
+      "The quick brown fox."
+    );
   });
 });
