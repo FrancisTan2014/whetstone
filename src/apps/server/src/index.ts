@@ -29,9 +29,15 @@ import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvide
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
-import { createCoachAdapters, defaultCheapModel, probeOllamaModel } from "./coach/coachAdapters.js";
+import {
+  createCoachAdapters,
+  createOllamaChat,
+  defaultCheapModel,
+  probeOllamaModel
+} from "./coach/coachAdapters.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { checkCoachHealth } from "./coach/coachHealth.js";
+import { createDiaryTidy } from "./features/diary/diaryTidy.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { createWhisperSpeechInput } from "./speech/whisperSpeechInput.js";
@@ -119,6 +125,14 @@ const server = createServer({
     sourceFileStore
   },
   currentUser: createDefaultCurrentUserProvider(),
+  // The diary "tidy" seam (#246): reuse the cheap-tier local Ollama model behind the same chat boundary
+  // the coach uses, wrapped with the tidy-not-polish prompt. Local + private, like the rest of v0.
+  diary: {
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date(),
+    tidy: createDiaryTidy(createOllamaChat(defaultCheapModel))
+  },
   images: { imageResourceStore },
   library: {
     createAuthorId: () => randomUUID(),

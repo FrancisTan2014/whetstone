@@ -39,6 +39,10 @@ export default defineConfig({
         // Browser speechSynthesis wiring for voice-out (#221): touches window.speechSynthesis and the
         // SpeechSynthesisUtterance constructor, absent in jsdom; the logic is in createVoiceOut, covered.
         "**/features/session/browserVoiceOut.ts",
+        // Browser audio boundary for the tap-and-talk diary (#246): wraps the same MediaRecorder/Web
+        // Audio live-capture seam into a one-shot record/stop, not exercisable in jsdom; the diary's own
+        // logic (DiaryPage, diaryApi) is covered.
+        "**/features/diary/diaryCapture.ts",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
         // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.

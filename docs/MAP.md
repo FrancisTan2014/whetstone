@@ -38,7 +38,10 @@ title/author/language), `blockMarkdown.ts` (serialize a block's mdast back to Ma
 rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`, `work.ts`,
 `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
-(anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`. Tests
+(anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
+`diaryTimeline.ts` (#246 voice-diary pure date logic — `toDayKey`/`isDayKey`/`toMonthKey`, `groupByDayDesc`
+day-grouping newest-first, and `monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar) and
+`diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
@@ -47,7 +50,9 @@ Zod request/response contracts shared by client and server. Public surface is `s
 Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`,
 `noteContracts.ts`, `lookupContracts.ts` (the lookup route query validator + the shared
 `NormalizedEntry` shape and `LookupResponse` DTO rendered by the reader), `searchContracts.ts`
-(the `/api/search` query validator + the block-level `SearchResultsDto`), `health.ts`. Tests colocated.
+(the `/api/search` query validator + the block-level `SearchResultsDto`), `diaryContracts.ts` (#246
+voice-diary create/edit/timeline-page/calendar DTOs + query validators; the timeline is a generic
+dated-trace shape with a `kind` discriminator so other deposits can join later), `health.ts`. Tests colocated.
 Invariant: types resolve through built `dist` — run `pnpm build` (or `tsc -b`) before VS Code/tsc
 can navigate them from another package.
 
@@ -172,6 +177,20 @@ can navigate them from another package.
   encouragement, the few moments (said -> native + why), the one upgrade, and what is now due to recall.
   After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
   nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
+- Voice diary: `src/features/diary/` (#246) — tap-and-talk capture that REUSES the session STT seam
+  (`transcribe`) and the local-LLM seam, then files a tidied, timestamped block under today's date in the
+  coach-readable learner history. `diaryTidy.ts` `createDiaryTidy(chat: ChatModel)` wraps the injected
+  Ollama chat with the `@whetstone/domain` tidy prompt (drop fillers/false starts/repeats + light reorder,
+  but preserve wording/meaning/voice — never upgrade vocabulary or translate; language-agnostic);
+  `diaryCommands.ts` (`createDiaryEntry` runs the tidy then persists, server-owned `entry_date`=today +
+  `created_at`; `updateDiaryEntry`/`deleteDiaryEntry` are user-scoped → 404 otherwise),
+  `diaryQueries.ts` (`listTimelinePage` pages distinct days newest-first via the exclusive `before`
+  day-key cursor bounded by `limit` days; `listCalendarDates` returns days-with-entries in a range;
+  `listDiaryEntriesForUser` is the coach-readable facet). `diaryRoutes.ts`:
+  `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`, `GET /api/diary/calendar?from&to`,
+  `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). Storage is the
+  `diary_entries` table; the tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaChat(...))`.
+  Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
@@ -296,7 +315,8 @@ can navigate them from another package.
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Practice =
-  `SessionPage`, Progress = `ProgressMapPage`, Search = `SearchPage`, Notes = `NotesPage`); `AppShell.tsx` is the responsive frame (one `Primary`
+  `SessionPage`, Progress = `ProgressMapPage`, Search = `SearchPage`, Notes = `NotesPage`, Diary =
+  `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
   destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
@@ -323,7 +343,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button mounted in the shell footer); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
   the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
-  `reader/`, `notes/`, `lookup/`, `search/`). `search/` is the Search mode: `SearchPage.tsx` is a query
+  `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
   field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each
   deep-link the reader to the work/block (`#/reader?work=&block=`), with explicit empty/error states.
   `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
@@ -443,6 +463,16 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
   deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,
   and a units/blocks overview; `contentApi.ts` calls the content/ingest endpoints.
+  `diary/` is the Diary mode (#246): `DiaryPage.tsx` is the tap-and-talk surface — a record button
+  (reusing the session capture seam, injected via `createDiaryCapture` in the coverage-excluded
+  `diaryCapture.ts`; falls back to an always-present typed box when capture is unsupported) that records →
+  `transcribe` (the session STT seam) → `createDiaryEntry`, with explicit recording/transcribing/saving/
+  error states. Below it a **Timeline** history groups entries by day newest-first (pure `groupByDayDesc`)
+  with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
+  → next `before` page), and a **date-jump mini-calendar** marks days-with-entries (from the calendar
+  endpoint, pure `monthGrid`/`monthBounds`/`shiftMonth`) and scrolls to a chosen day (loading older pages
+  until it is present); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
+  `/api/diary/*` endpoints and parses every response through `diaryContracts`.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

@@ -59,6 +59,17 @@ export type {
   ProficiencyLevel,
   RankedChunk
 } from "./learnerModel.js";
+export { buildDiaryTidyPrompt, diaryTidyInstructions } from "./diaryTidy.js";
+export {
+  groupByDayDesc,
+  isDayKey,
+  monthBounds,
+  monthGrid,
+  shiftMonth,
+  toDayKey,
+  toMonthKey
+} from "./diaryTimeline.js";
+export type { DatedEntry, DayGroup } from "./diaryTimeline.js";
 export { caseLightLevel, caseLightLevels } from "./progressMap.js";
 export type { CaseLightLevel } from "./progressMap.js";
 export { mistakeCategoryFromIssues } from "./mistakeCategory.js";

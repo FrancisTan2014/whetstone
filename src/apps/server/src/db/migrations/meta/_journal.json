@@ -183,6 +183,13 @@
       "when": 1782812474133,
       "tag": "0025_chunky_juggernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1782823890515,
+      "tag": "0026_funny_landau",
+      "breakpoints": true
     }
   ]
 }

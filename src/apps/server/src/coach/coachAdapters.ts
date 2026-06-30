@@ -11,7 +11,7 @@ export const defaultCheapModel = "llama3.1:8b";
 export const ollamaBaseUrl = "http://127.0.0.1:11434";
 
 /* v8 ignore start -- network boundaries, exercised via the injected ChatModel in tests */
-function createOllamaChat(model: string): ChatModel {
+export function createOllamaChat(model: string): ChatModel {
   return async (prompt) => {
     const response = await fetch(`${ollamaBaseUrl}/api/generate`, {
       body: JSON.stringify({ model, prompt, stream: false }),
