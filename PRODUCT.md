@@ -421,6 +421,14 @@ upgrade, and a self-tuning (eval-driven) coach.
 - Semantic search (`pgvector` embeddings).
 - A block-based editor (future) and LLM-assisted note drafting remain future, not v0. Language
   practice & recall is **now an active module** — see "Language practice & recall" above.
+- **Editing & the document model (direction).** whetstone is a **personal learning environment where
+  the same person reads *and writes* on it** — so a Notion-like block **editor is a near-term first-class
+  direction**, not a distant maybe. This tilts the internal representation away from **mdast** (a Markdown
+  AST that silently drops rich constructs — figure, definition list, callout, footnote) toward a
+  **schema-based block document** (e.g. ProseMirror / Lexical / BlockNote) where those constructs are
+  first-class node types and **annotation + editing are native** (positions/marks, incl. cross-block
+  spans). Markdown/mdast becomes import/export only. EPUB ingestion then *maps* HTML to schema nodes
+  instead of flattening it. Framework choice + migration plan are pending a **design spike**.
 
 ## v0 non-goals
 
