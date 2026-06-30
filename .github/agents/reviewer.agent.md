@@ -117,7 +117,7 @@ waiting to be re-triggered:
   `node scripts/unblock-ready-issues.mjs` — they, not you, decide merges and dependency unblocks from
   the GUIDELINES gates and `Depends on:` references.
 - End every tick by **re-arming the schedule** as your last action, at the cadence the launcher set
-  (**about 10 minutes**, 600s). Re-arm even after `idle`, a pending-checks PR, or a blocker — a tick
+  (**about 2 minutes**, 120s). Re-arm even after `idle`, a pending-checks PR, or a blocker — a tick
   that fires mid-run just queues behind the current one (foreground, single-threaded), so it never
   interrupts the review in progress.
 - One PR per tick; never overlap ticks or merge by hand. The schedule provides the recurrence; stop

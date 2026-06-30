@@ -10,6 +10,27 @@ it. Newest first.
 
 ---
 
+## D2 — Workflow status: local state machine → GitHub issues as the source of truth
+
+**Status:** Superseded (the first harness's local state machine).
+**Replaced by:** GitHub issues / labels / PRs as the single source of truth
+(`.github/copilot-instructions.md`; the agent loop in `scripts/`).
+
+**What it was.** The first workflow tracked run/queue status in a **local state machine** (shared local
+status/state on disk).
+
+**Why superseded.** A local state machine is **fragile**: it desyncs from reality, can't be trusted
+across crashes/restarts, and — critically — **cannot coordinate parallel workers**.
+
+**What replaced it.** **GitHub issues are the authoritative status** — labels are the queue state, the
+issue is the spec, the PR + review comment are the handoff. Agents are stateless between ticks and
+re-derive everything from GitHub. This made the loop **robust and trustworthy** (it clears the queue
+unattended) and is exactly what makes **horizontal scaling safe**: multiple developer/reviewer workers
+coordinate through one authoritative store, with no fragile shared local state. (Speed is then a pure
+function of tick cadence + worker count, not correctness.)
+
+---
+
 ## D1 — Content representation: mdast block storage + HTML→mdast pipeline + react-markdown rendering
 
 **Status:** Superseded 2026-06-30.
