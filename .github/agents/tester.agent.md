@@ -115,6 +115,15 @@ renders blank where it should be full, overlapping/clipped/cut-off elements, an 
 a mis-applied theme. Unit tests (no CSS) and the E2E console-gate cannot catch these — **you** are the
 layer that can, because you hold the rendered pixels.
 
+**Prefer computed facts over impressions (reliability).** A screenshot judged by eye is the *least*
+reliable oracle — it is how the "reader corruption" false positive recurred four times. So for anything
+that can be **measured**, measure it in-page (`page.evaluate`) and file on the **number**, not the look:
+**contrast** (computed text color vs background → WCAG ratio; flag `< 4.5:1`), **geometry**
+(`getBoundingClientRect` for off-screen / overlap / clipped / `< 44px` targets), and **content present**
+(non-empty text / non-zero rendered height). A visual `[Bug]` must cite a **computed value or rect, or
+exact quoted on-screen text** — never an unquantified impression. Reserve subjective judgment for
+genuinely subjective polish.
+
 So never treat "no console error" as "looks fine". **Open and look at every screenshot you capture**
 (reader Day *and* Night, lookup, notes panel, 目录, mobile) and judge each as a human reader would:
 
