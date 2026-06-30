@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./src/packages/document" },
     { "path": "./src/packages/domain" },
     { "path": "./src/packages/contracts" },
     { "path": "./src/apps/server" },

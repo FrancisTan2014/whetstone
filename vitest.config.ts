@@ -6,12 +6,16 @@ const domainSource = fileURLToPath(new URL("./src/packages/domain/src/index.ts",
 const contractsSource = fileURLToPath(
   new URL("./src/packages/contracts/src/index.ts", import.meta.url)
 );
+const documentSource = fileURLToPath(
+  new URL("./src/packages/document/src/index.ts", import.meta.url)
+);
 
 export default defineConfig({
   resolve: {
     alias: {
-      "@whetstone/domain": domainSource,
-      "@whetstone/contracts": contractsSource
+      "@whetstone/contracts": contractsSource,
+      "@whetstone/document": documentSource,
+      "@whetstone/domain": domainSource
     }
   },
   test: {
