@@ -786,7 +786,7 @@ describe("EPUB ingestion routes", () => {
     ]);
   });
 
-  it("skips EPUB chapters that decompose to zero supported blocks", async () => {
+  it("persists an unknown-only chapter's PM node in doc_blocks while keeping it out of the mdast reader", async () => {
     epubResponder = async () => ({
       chapters: [
         { html: "<hr>", images: [] },
@@ -799,14 +799,35 @@ describe("EPUB ingestion routes", () => {
 
     expect(response.statusCode).toBe(201);
     const body = response.json() as IngestEpubResultDto;
+    // The mdast reader is unchanged: the <hr> chapter has no renderable mdast block, so only the real
+    // chapter is returned, in order.
     expect(body.content.readingUnits.map((unit) => unit.title)).toEqual(["Real"]);
     expect(body.content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual([
       "heading",
       "paragraph"
     ]);
+
+    // The structure view mirrors the content view: the empty-mdast <hr> unit is excluded, leaving
+    // only the real chapter with its block count.
+    const structure = await getStructure(body.content.workEntryId);
+    expect((structure.json() as WorkStructureDto).readingUnits.map((unit) => unit.title)).toEqual([
+      "Real"
+    ]);
+
+    // Fail-loud (#311): the <hr> still persists as an `unknown` PM block row, not silently dropped.
+    const unknownRows = (await context.db.select().from(docBlocks)).filter(
+      (row) => row.type === "unknown"
+    );
+    expect(unknownRows).toHaveLength(1);
+    const unknownRow = unknownRows[0];
+    expect((unknownRow?.nodeJson as PmNode).attrs?.["id"]).toBe(unknownRow?.id);
+    expect(String((unknownRow?.nodeJson as PmNode).attrs?.["html"])).toContain("<hr");
+
+    // ...and its evidence reached the injected fail-loud sink.
+    expect(loggedEvidence.some((record) => record.tag === "hr")).toBe(true);
   });
 
-  it("creates a work without a 500 when every chapter lacks supported blocks", async () => {
+  it("persists every chapter's unknown PM node when all chapters lack supported blocks (no 500)", async () => {
     epubResponder = async () => ({
       chapters: [
         { html: "<hr>", images: [] },
@@ -818,10 +839,44 @@ describe("EPUB ingestion routes", () => {
     const response = await ingestEpub(Buffer.from("epub-all-empty"));
 
     expect(response.statusCode).toBe(201);
+    // The mdast reader shows no units (both chapters are unknown-only), but the work exists and the
+    // .epub is retained (written before the transaction); the empty-mdast path must not throw and
+    // orphan that file.
     expect((response.json() as IngestEpubResultDto).content.readingUnits).toEqual([]);
-    // The .epub is retained (written before the transaction); the empty-block path must
-    // not throw and orphan that file.
     expect(await context.db.select().from(workSources)).toHaveLength(1);
+
+    // Fail-loud (#311): both <hr> chapters persist their `unknown` PM nodes, and both logged evidence.
+    const unknownRows = (await context.db.select().from(docBlocks)).filter(
+      (row) => row.type === "unknown"
+    );
+    expect(unknownRows).toHaveLength(2);
+    expect(loggedEvidence.filter((record) => record.tag === "hr")).toHaveLength(2);
+  });
+
+  it("persists a <video> chapter's unknown PM node alongside its mdast block, never dropping it (#311 fail-loud)", async () => {
+    epubResponder = async () => figureChapter('<video src="clip.mp4"></video>', []);
+
+    const response = await ingestEpub(Buffer.from("epub-video-only"));
+
+    expect(response.statusCode).toBe(201);
+    // The mdast decomposer turns a bare <video> into an empty paragraph block, so this chapter is NOT
+    // mdast-empty: the reader still shows its one (empty) unit, unaffected by the fidelity path. (The
+    // genuinely PM-only retention path — an mdast-empty chapter kept solely for its PM nodes — is
+    // covered by the <hr>-only tests above.)
+    const content = (response.json() as IngestEpubResultDto).content;
+    expect(content.readingUnits).toHaveLength(1);
+    expect(content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual(["paragraph"]);
+
+    // ...and the <video> is NOT dropped: it persists as a single `unknown` PM block row whose stable
+    // id is its node id, with the original markup kept verbatim.
+    const rows = await context.db.select().from(docBlocks);
+    expect(rows.map((row) => row.type)).toEqual(["unknown"]);
+    const row = rows[0];
+    expect((row?.nodeJson as PmNode).attrs?.["id"]).toBe(row?.id);
+    expect(String((row?.nodeJson as PmNode).attrs?.["html"])).toContain("<video");
+
+    // ...and its evidence reached the injected fail-loud sink.
+    expect(loggedEvidence.some((record) => record.tag === "video")).toBe(true);
   });
 
   it("accepts an EPUB upload larger than Fastify's default 1 MiB body limit", async () => {
@@ -1224,6 +1279,23 @@ describe("EPUB ingestion routes", () => {
         (row) => row.plaintext === "Mdast only, no PM blocks."
       )
     ).toBe(true);
+  });
+
+  it("writes nothing when a reading unit has neither mdast blocks nor PM blocks", async () => {
+    // Covers the fail-loud filter's both-empty path: a unit with no mdast blocks AND no PM docBlocks
+    // is dropped entirely, so writeReadingUnits early-returns without creating a reading_units row.
+    const workEntryId = await createWork();
+    await context.db.transaction(async (tx) => {
+      await writeReadingUnits(tx, {
+        createEntryId: () => "should-not-be-used",
+        startOrder: 0,
+        units: [{ blocks: [], docBlocks: [], evidence: [], title: "Empty" }],
+        workEntryId: toEntryId(workEntryId)
+      });
+    });
+
+    expect(await context.db.select().from(readingUnits)).toEqual([]);
+    expect(await context.db.select().from(docBlocks)).toEqual([]);
   });
 
   const structureMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
