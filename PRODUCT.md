@@ -14,6 +14,13 @@ the learner; the LLM is the always-available tutor a solo learner otherwise lack
 sees everything" (that hits the context wall) but the **learner model + retrieval** that assembles the right
 slice of your history for each suggestion. Reading is the on-ramp, not the destination.
 
+**The final goal is growth, not activity.** whetstone is a **self-betterment instrument**: the learner model
+exists not to log what you did but to **change you** — to move what you encounter from effortful and translated
+to **owned, automatic, and used in real life**. Success is judged by **internalization and growth** (transfer,
+retention, real-world use), never by streaks or volume. Language is v0's **first proving ground**; the
+architecture — capture → model → push → internalize → grow — is domain-general. The name says it: you sharpen
+*yourself* against the text.
+
 **The scope test (so the app cannot sprawl into a mix):** every feature is either
 - **(a) capture** — it records your activity/knowledge into the structured learner model, or
 - **(b) coach** — it is the LLM reading that model to give feedback, suggestions, or connections.
@@ -29,6 +36,27 @@ un-anchored. Every personal surface is a **view of the one model** — **Today**
 your trace*, never a per-feature page (the diary's history is the Timeline's first facet). **Reading is the
 on-ramp; the model is the destination.** The model compounds only as fast as it is fed, and the **feed
 (capture) side is deliberately thin in v0** — it is the growth frontier (see "Future direction → more feeders").
+
+## Internalization & growth (the back half of the loop)
+
+The loop is **capture → model → push → internalize → grow** — the first three are machinery, the last two are
+the point. v0's back half is **thin**: the app measures and schedules *in-app performance* (intervals, case
+scores, mastery) but under-verifies **internalization** and barely reflects **growth**. The strict test it
+mostly skips is **transfer**: you have internalized something when you deploy it **spontaneously in a situation
+you were never drilled on** — ultimately, in real life. Four principles correct this — each a *sharpening of an
+existing surface*, not a new app:
+
+- **Ownership = transfer, not interval.** A chunk counts as owned (lit on the Map) only when produced
+  **unprompted in a context it was not taught in**; the coach deliberately probes transfer. Mastery is
+  *demonstrated*, not *scheduled*.
+- **Close the loop to life.** Pair the "I couldn't say X" feeder with its mirror, **"I used X for real"** — the
+  truest internalization signal and the truest growth metric.
+- **Reflect becoming, not doing.** The Timeline matures from a log into a **growth arc** (was-weak → now-owned,
+  latency down, range up); seeing growth reinforces it (metacognition) and is the "better person" made visible.
+- **Push by internalization value** — due × real-life value × *not-yet-transferred*, not mere due-ness.
+
+These are **principles, not v0 scope**: v0 stays the small assistant; they fix what every surface is *for* and
+how to judge it — by internalization and growth, not activity.
 
 **v0 is a usable personal learning assistant — not only the on-ramp.** The reading + annotation loop is the
 *on-ramp* that begins the learner model (read source materials, break them into addressable blocks, attach
@@ -516,7 +544,7 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
 - **More feeders (the growth frontier).** The moat compounds with what it is fed, and v0's feed side is thin —
   reading-notes, the reading→chunk harvest, speech-practice deposits, the voice diary. Future **capture
   sources** thicken the model behind the same scope test: e.g. a fast **"I couldn't say X" real-life jot** (the
-  strongest next feeder — already a fog-of-war seed), a **web/article clipper** for reading done outside the
+  strongest next feeder — already a fog-of-war seed) and its mirror **"I used X for real"** (an internalization / growth signal), a **web/article clipper** for reading done outside the
   app, and **importing prior highlights/notes** to bootstrap. Each must *feed the model* (capture), never
   merely store content.
 - The Entry/link + Block model supports future rich connections between materials, notes, concepts,
