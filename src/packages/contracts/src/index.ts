@@ -377,3 +377,10 @@ export {
   searchResultsDtoSchema
 } from "./searchContracts.js";
 export type { SearchRequest, SearchResultDto, SearchResultsDto } from "./searchContracts.js";
+export {
+  nudgeDtoSchema,
+  nudgeResponseSchema,
+  parseNudgeDto,
+  parseNudgeResponse
+} from "./nudgeContracts.js";
+export type { NudgeDto, NudgeResponse } from "./nudgeContracts.js";

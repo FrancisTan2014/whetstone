@@ -76,7 +76,8 @@ can navigate them from another package.
   `notes` is the first user-owned table: note routes resolve the current user via
   `request.server.currentUser` and stamp `notes.user_id` on create / filter note reads by it
   (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; `recall_items`
-  - `recall_reviews` (the recall store, below) are user-owned the same way; shared
+  - `recall_reviews` (the recall store, below) and `nudge_state` (the reading→practice nudge cooldown,
+    below) are user-owned the same way; shared
     content tables stay unowned.
 - Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
   listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
@@ -88,6 +89,22 @@ can navigate them from another package.
   never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
   row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
   `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
+- Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
+  cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
+  `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's
+  work for the title) and shapes each as the SAME deterministic harvest case/chunk ids
+  (`harvestCaseId`/`harvestChunkId` = `harvest-<noteId>` / `harvest-chunk-<noteId>`, reused by
+  `harvestReadingCase`). `nudgeCommands.ts` `selectReadingNudgeCapture` ranks the captures via the pure
+  domain `rankReadingNudges`/`topReadingNudge` (`@whetstone/domain` `readingNudge.ts`, score = gap ×
+  frequency + a bounded recency boost that halves every 7 days; reading captures use neutral frequency 1
+  and a derived live mastery status) after excluding any chunk in cooldown, and is shared by BOTH the
+  nudge endpoint and the practice lead so they propose the same case. `computeReadingNudge` returns the
+  top as a `NudgeDto` (and records `last_surfaced_at`); `dismissReadingNudge` = cooldown (`dismissed_until`
+  = now + `NUDGE_COOLDOWN_DAYS` = 3). The only persisted state is `nudge_state` (PK `(user_id, chunk_id)`,
+  nullable `dismissed_until`/`last_surfaced_at`) — user-owned, ranking derived live each time. Routes
+  (`nudgeRoutes.ts`, current-user scoped, Zod-validated, `now` injected): `GET /api/nudge` →
+  `{ nudge: NudgeDto | null }`, `POST /api/nudge/:chunkId/dismiss` → 204; wired in `createServer.ts` /
+  `index.ts`. DTO in `@whetstone/contracts` (`nudgeContracts.ts`).
 - Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
   `caseQueries.ts` `listDomains`/`listCasesInDomain`/`getCaseDetail`) over shared `domains` -> `cases`
   -> `chunks`. The case detail returns the chunk inventory plus a per-user mastery summary COMPUTED
@@ -155,7 +172,11 @@ can navigate them from another package.
   coach (#206) and speech (#207) seams + #205/#208/#189: `startSession` proposes cues (top gap x
   frequency chunks; English situation, native target hidden), `submitTurn` judges + grades the
   submitted transcript and DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on first
-  practice, + records the turn outcome with its mistake category #208). `converseTurn` (#220) holds a
+  practice, + records the turn outcome with its mistake category #208). The harvested first cue (#243):
+  `harvestReadingCase(db, userId, now)` no longer leads with the strictly-newest capture — it reuses the
+  nudge's `selectReadingNudgeCapture` (ranked gap×freq+recency, cooldown-excluded), so the Practice lead
+  and the Today nudge propose the SAME case; when nothing qualifies (cold start / all in cooldown) it
+  harvests nothing and the session falls back to authored cases. `converseTurn` (#220) holds a
   conversational coach turn: it loads the case, rebuilds the conversation from the persisted
   `session_exchanges` rows (append-only, user+case scoped, ordered by `order_index`), calls the coach's
   `converse`, persists the learner line + coach reply, and returns the reply (no per-turn grading).
@@ -502,10 +523,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,
   a restrained Recall card (`fetchDueRecall`: the first due item at a glance + a Review link to
   `/recall`, else a quiet "caught up" line), a Continue-reading card (`todayApi.fetchLatestReadingPosition`
-  → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), and a
-  marked-but-empty practice-nudge seam (#245 not built). When the actionable arms clear it shows a
-  compassionate "done for today" — NO streak/guilt/penalty. The two async arms load independently so
-  one failing never blanks the page; the reader stays calm.
+  → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), and the
+  reading→practice nudge card (#245) in its `nudge/` slice: `nudgeApi.ts` `fetchNudge` (`GET /api/nudge`,
+  null → undefined) renders ONE quiet, dismissible card — "Practise _‹snippet›_ from _‹work›_" with an
+  accept link to `/practice` (where `startSession` leads with the same proposed case) and a ✕ that calls
+  `dismissNudge` (`POST /api/nudge/:chunkId/dismiss`, cooldown) and removes the card at once; absent on
+  null/loading/error (no placeholder). When the actionable arms clear (no recall due AND no present
+  nudge) it shows a compassionate "done for today" — NO streak/guilt/penalty. Each async arm loads
+  independently so one failing never blanks the page; the reader stays calm.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

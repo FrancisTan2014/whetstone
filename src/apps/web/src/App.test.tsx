@@ -70,8 +70,11 @@ describe("App shell and routes", () => {
     expect(markup).toContain('aria-label="Reader"');
     expect(markup).not.toContain("Work detail");
     expect(markup).not.toContain('aria-label="Primary"');
-    // The reading surface stays calm: no recall UI and no Today chrome live in the reader.
+    // The reading surface stays calm: no recall UI, no practice-nudge UI, and no Today chrome
+    // live in the reader.
     expect(markup).not.toContain("Due to recall");
+    expect(markup).not.toContain('aria-label="Practice nudge"');
+    expect(markup).not.toContain("Practise now");
     expect(markup).not.toContain('id="today-heading"');
     expect(markup).not.toContain("Capture a thought");
   });

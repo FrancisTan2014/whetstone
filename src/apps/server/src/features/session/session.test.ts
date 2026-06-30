@@ -130,12 +130,15 @@ describe("startSession", () => {
     expect(plan.cues[0]?.chunkId).toContain("harvest-chunk-");
   });
 
-  it("seeds from the newest capture by time, even when its id sorts earlier (#243)", async () => {
-    // "aaa" sorts before "zzz" lexicographically, but is the newer capture by createdAt.
-    await seedCapture("older phrase", "blk-old", "zzz-old", new Date("2026-01-01T00:00:00Z"));
-    await seedCapture("newer phrase", "blk-new", "aaa-new", new Date("2026-02-01T00:00:00Z"));
+  it("leads with the top-ranked capture by recency, not id order (#245)", async () => {
+    // "zzz-new" sorts AFTER "aaa-old" lexicographically, but is the newer capture by createdAt, so the
+    // recency-weighted ranking leads with it despite its id sorting later (and despite the id tie-break
+    // preferring the older one on an exact tie).
+    await seedCapture("older phrase", "blk-old", "aaa-old", new Date("2026-01-01T00:00:00Z"));
+    await seedCapture("newer phrase", "blk-new", "zzz-new", new Date("2026-02-01T00:00:00Z"));
 
-    const plan = await startSession(makeDeps(), userA, t0);
+    const now = new Date("2026-03-01T00:00:00Z");
+    const plan = await startSession(makeDeps(), userA, now);
     expect(plan.cues[0]?.target).toBe("newer phrase");
   });
   it("does not harvest a case when there are no domains to attach it to", async () => {

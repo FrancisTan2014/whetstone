@@ -105,11 +105,9 @@ export async function startSession(
   now: Date
 ): Promise<SessionPlanDto> {
   // The reading -> speaking on-ramp (#243): a recent reading capture seeds a case whose first cue is
-  // that text, so practice opens on what the learner just read; authored cues fill the rest.
-  const harvested = await harvestReadingCase(
-    { createId: dependencies.createId, db: dependencies.db },
-    userId
-  );
+  // that text, so practice opens on what the learner just read; authored cues fill the rest. The
+  // capture is chosen by the #245 value ranking + cooldown (the proposed case), not strictly the newest.
+  const harvested = await harvestReadingCase(dependencies.db, userId, now);
   const harvestedCue = harvested ? [{ ...harvested, timerSeconds: CUE_TIMER_SECONDS }] : [];
 
   const context = await compileContext(dependencies.db, userId, now, { chunkLimit: SESSION_SIZE });
