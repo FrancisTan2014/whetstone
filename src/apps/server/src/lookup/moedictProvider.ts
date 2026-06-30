@@ -119,7 +119,10 @@ export function adaptMoedict(payload: unknown, term: string): DictionaryEntry | 
     return null;
   }
 
-  const headword = asString(field(payload, "title")) ?? term;
+  // moedict's `title` carries the same `<a href="./#…">` cross-reference anchors as its definitions
+  // for multi-character headwords (e.g. 儒者 -> `<a href="./#儒">儒</a><a href="./#者">者</a>`), so it
+  // is stripped to plain text here exactly like every other field — never rendered raw (#297).
+  const headword = plainText(asString(field(payload, "title")) ?? term);
 
   return {
     headword,

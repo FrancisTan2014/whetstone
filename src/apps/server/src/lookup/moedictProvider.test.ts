@@ -76,6 +76,24 @@ describe("adaptMoedict", () => {
     });
   });
 
+  it("strips <a href> cross-reference markup from a multi-character headword (#297)", () => {
+    const entry = adaptMoedict(
+      {
+        heteronyms: [
+          {
+            bopomofo: "ㄖㄨˊ",
+            definitions: [{ def: "研究儒家學術的人。", type: "名" }],
+            pinyin: "rú zhě"
+          }
+        ],
+        title: '<a href="./#儒">儒</a><a href="./#者">者</a>'
+      },
+      "儒者"
+    );
+
+    expect(entry?.headword).toBe("儒者");
+  });
+
   it("skips definitions without a def field and ignores non-string examples", () => {
     const entry = adaptMoedict(
       {
