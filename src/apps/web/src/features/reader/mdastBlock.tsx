@@ -6,7 +6,6 @@ import { toHast } from "mdast-util-to-hast";
 import { memo } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
-import { applyNoteMarks, type NoteMark } from "./noteMarks";
 import { unwrapBlockLinks } from "./phrasingLinks";
 
 // rehype-sanitize's schema is hast-util-sanitize's `defaultSchema`. We additionally drop `img`
@@ -61,36 +60,32 @@ function buildComponents(onActivateAnchor: ((anchorId: string) => void) | undefi
 }
 
 export type BlockContentProps = Readonly<{
-  marks?: ReadonlyArray<NoteMark>;
   node: unknown;
   // Resolve+jump a same-work `#id` anchor to its target block; absent leaves all links inert text.
   onActivateAnchor?: (anchorId: string) => void;
 }>;
 
 // Render a block straight from its stored mdast: mdast → hast (raw HTML dropped) → sanitize →
-// note marks → React, converted once with no Markdown re-parse. This replaces the mdast → Markdown
-// → react-markdown round trip so a unit renders cheaply and scrolling stays smooth. Memoized so a
-// block only re-converts when its mdast identity or its marks change.
+// React, converted once with no Markdown re-parse. This replaces the mdast → Markdown →
+// react-markdown round trip so a unit renders cheaply and scrolling stays smooth. Memoized so a
+// block only re-converts when its mdast identity changes.
 //
 // `unwrapBlockLinks` first repairs EPUB links that wrap block content, so the inline link
 // rendering never nests a `<li>` (or other block) inside a `<span>` — which would be invalid
 // HTML and trigger a React DOM-nesting/hydration error.
 //
-// Note underlines are applied *after* sanitize: the mark spans carry interactive attributes
-// (`role`, `tabindex`, `aria-label`, `data-note-id`) that the sanitizer would otherwise strip, and
-// the text they wrap is already sanitized. `applyNoteMarks` aligns each mark's plaintext offset
-// range with the rendered inline content, so the underline lands on exactly the anchored span.
+// Note annotations are NOT applied here: they are render-time DOM decorations injected over the
+// rendered output from the external anchor store (#313, `applyNoteHighlights`), never marks in the
+// stored document.
 export const BlockContent = memo(function BlockContent({
-  marks,
   node,
   onActivateAnchor
 }: BlockContentProps): React.JSX.Element {
   const safeNode = unwrapBlockLinks(node as RootContent);
   const hast: HastNodes = toHast({ type: "root", children: [safeNode] });
   const sanitized = sanitize(hast, sanitizeSchema) as Root;
-  const marked = applyNoteMarks(sanitized, marks ?? []);
 
-  return toJsxRuntime(marked, {
+  return toJsxRuntime(sanitized, {
     Fragment,
     components: buildComponents(onActivateAnchor),
     jsx,

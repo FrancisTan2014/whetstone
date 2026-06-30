@@ -11,6 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@apache-annotator/dom": "^0.2.0",
+    "@apache-annotator/selector": "^0.2.0",
     "@fontsource-variable/inter": "^5.2.5",
     "@fontsource-variable/source-serif-4": "^5.2.5",
     "@radix-ui/react-dialog": "^1.1.6",

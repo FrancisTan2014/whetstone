@@ -10,7 +10,7 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
-import { captureBlockSelection, draftToAnchor, type NoteDraft } from "../notes/noteCapture";
+import { draftToAnchor, type NoteDraft } from "../notes/noteCapture";
 import { createMark, deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass } from "./annotationHue.tokens";
@@ -18,18 +18,13 @@ import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
-import {
-  eventTargetClosest,
-  isCrossBlockSelection,
-  readBlockSelection,
-  readCrossBlockDraft,
-  releasedBlockElement
-} from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { BlockContent } from "./mdastBlock";
 import { PmBlock } from "./PmDocument";
 import { draftOverlapsNotes, indexBlocks } from "./readerMarks";
 import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
+import { captureSelectionAnchor, eventTargetClosest } from "./selectionCapture";
+import { useNoteHighlights } from "./useNoteHighlights";
 import {
   buildReaderStructure,
   toReaderBlocks,
@@ -287,13 +282,6 @@ type SelectionCapture = Readonly<{
 type ReaderHandlers = Readonly<{
   bornBlockEntryId?: string | undefined;
   notes: ReadonlyArray<NoteDto>;
-  onCaptureSelection: (
-    blockElement: HTMLElement,
-    block: ReaderBlock,
-    workEntryId: string,
-    language: string,
-    unitBlocks: ReadonlyArray<ReaderBlock>
-  ) => void;
   onDeleteNote: (workEntryId: string, note: NoteDto) => void;
   onEditNote: (workEntryId: string, note: NoteDto) => void;
   onJumpToBlock: (note: NoteDto) => void;
@@ -631,60 +619,6 @@ export function ReaderPage({
     [jumpToBlock]
   );
 
-  const onCaptureSelection = useCallback(
-    (
-      blockElement: HTMLElement,
-      block: ReaderBlock,
-      workEntryId: string,
-      language: string,
-      unitBlocks: ReadonlyArray<ReaderBlock>
-    ): void => {
-      const selection = window.getSelection();
-
-      // A selection spanning two blocks captures a cross-block span (#257): align each end block's
-      // portion onto its own plaintext, using the active unit's blocks for the end block's text.
-      if (isCrossBlockSelection(selection)) {
-        const crossDraft = readCrossBlockDraft(selection, unitBlocks);
-
-        if (crossDraft !== undefined) {
-          setCapture({
-            anchorRect: selectionRect(selection),
-            draft: crossDraft,
-            language,
-            workEntryId
-          });
-        }
-
-        return;
-      }
-
-      const blockSelection = readBlockSelection(blockElement, selection);
-
-      if (blockSelection === undefined) {
-        return;
-      }
-
-      const draft = captureBlockSelection(
-        block.entryId,
-        block.plaintext,
-        blockSelection.precedingText,
-        blockSelection.selectedText
-      );
-
-      if (draft === undefined) {
-        return;
-      }
-
-      setCapture({
-        anchorRect: selectionRect(selection),
-        draft,
-        language,
-        workEntryId
-      });
-    },
-    []
-  );
-
   // The open work's language (for routing a lookup), derived for every ready state so an idle
   // reader resolves it the same way — no open work falls back to English.
   const readerLanguage = useMemo((): string => {
@@ -722,10 +656,11 @@ export function ReaderPage({
     [selectionContext]
   );
 
-  // Capture fallback: a pointer release that lands in the reading column but outside a block
-  // (e.g. just past a block edge) — the per-block handlers already cover a release on the block
-  // itself. Resolve the selection's owning block and capture, so the toolbar appears regardless
-  // of where the pointer is released.
+  // Capture a reader selection as a PM-position note draft (#313): a pointer/touch/keyboard release
+  // anywhere in the reading column reads the whole selection (single block, whole block, or
+  // cross-block) from the rendered DOM via the shared offset model, so the toolbar appears wherever
+  // the release lands. A release outside the reader, or one whose selection is empty/whitespace,
+  // captures nothing.
   useEffect(() => {
     if (selectionContext === undefined) {
       return;
@@ -733,38 +668,38 @@ export function ReaderPage({
 
     const context = selectionContext;
 
-    function onReleaseOutsideBlock(event: Event): void {
-      const blockElement = releasedBlockElement(
-        event.target,
-        window.getSelection(),
-        Array.from(document.querySelectorAll<HTMLElement>(".reader [data-block-id]"))
-      );
+    function onRelease(event: Event): void {
+      const container = eventTargetClosest(event.target, ".reader");
 
-      if (blockElement === undefined) {
+      if (container === null) {
         return;
       }
 
-      const block = context.blocks.find((item) => item.entryId === blockElement.dataset.blockId);
+      const selection = window.getSelection();
+      const draft = captureSelectionAnchor(selection, container);
 
-      if (block !== undefined) {
-        onCaptureSelection(
-          blockElement,
-          block,
-          context.workEntryId,
-          readerLanguage,
-          context.blocks
-        );
+      if (draft === undefined) {
+        return;
       }
+
+      setCapture({
+        anchorRect: selectionRect(selection),
+        draft,
+        language: readerLanguage,
+        workEntryId: context.workEntryId
+      });
     }
 
-    document.addEventListener("mouseup", onReleaseOutsideBlock);
-    document.addEventListener("touchend", onReleaseOutsideBlock);
+    document.addEventListener("mouseup", onRelease);
+    document.addEventListener("touchend", onRelease);
+    document.addEventListener("keyup", onRelease);
 
     return () => {
-      document.removeEventListener("mouseup", onReleaseOutsideBlock);
-      document.removeEventListener("touchend", onReleaseOutsideBlock);
+      document.removeEventListener("mouseup", onRelease);
+      document.removeEventListener("touchend", onRelease);
+      document.removeEventListener("keyup", onRelease);
     };
-  }, [selectionContext, readerLanguage, onCaptureSelection]);
+  }, [selectionContext, readerLanguage]);
 
   // Dismiss the toolbar across its whole lifecycle: a pointer press anywhere outside the toolbar
   // closes it, as does clearing the selection. The explicit ✕ / confirm / lookup still close it.
@@ -833,6 +768,7 @@ export function ReaderPage({
 
   // A one-tap mark (#255): save a highlight with no editor, born it, and refresh so it renders in the
   // gem hue and the notes list. The toolbar disables this when the selection overlaps an annotation.
+  // On success the born highlight is the only confirmation — no toast (#300); a failure still toasts.
   async function markSelection(active: SelectionCapture): Promise<void> {
     setCapture(undefined);
 
@@ -845,7 +781,6 @@ export function ReaderPage({
     }
 
     setBornBlockEntryId(note.blockEntryId);
-    toast.success("Marked.");
     await refreshNotes(active.workEntryId);
   }
 
@@ -896,10 +831,11 @@ export function ReaderPage({
     setPanel({ kind: "edit", note, workEntryId });
   }
 
+  // On a successful save the rebuilt highlight's born underline animation is the only confirmation —
+  // no success toast (#300). A save failure still surfaces an error toast from the editor.
   async function onSavedNote(workEntryId: string, note: NoteDto): Promise<void> {
     setPanel(undefined);
     setBornBlockEntryId(note.blockEntryId);
-    toast.success("Note saved.");
     await refreshNotes(workEntryId);
   }
 
@@ -921,10 +857,41 @@ export function ReaderPage({
   const handleSaved = (workEntryId: string, note: NoteDto): void =>
     void onSavedNote(workEntryId, note);
 
+  // Open the note behind a highlight the reader clicked or pressed Enter on (#313): resolve the
+  // note from its id and reuse the per-block notes panel. No open work, or an unknown id, does
+  // nothing.
+  const activeWorkEntryId = selectionContext?.workEntryId;
+  const onActivateNote = useCallback(
+    (noteId: string): void => {
+      const note = notes.find((candidate) => candidate.entryId === noteId);
+
+      /* v8 ignore next 3 -- a highlight only exists while a work is open and its note is in `notes`,
+         so this narrows away the stale-id / no-open-work cases the UI cannot produce. */
+      if (note === undefined || activeWorkEntryId === undefined) {
+        return;
+      }
+
+      onOpenBlockNotes(note.blockEntryId, activeWorkEntryId);
+    },
+    [notes, activeWorkEntryId, onOpenBlockNotes]
+  );
+
+  // Re-apply the highlights when the rendered blocks change, not only when the notes do: the active
+  // unit's block ids (a unit switch) and the briefly-remounted born block both change this key, so a
+  // remount that drops a block's injected highlight spans is immediately restored.
+  const highlightRenderKey = useMemo(
+    () =>
+      `${bornBlockEntryId ?? ""}|${(selectionContext?.blocks ?? [])
+        .map((block) => block.entryId)
+        .join(",")}`,
+    [bornBlockEntryId, selectionContext]
+  );
+
+  useNoteHighlights(notes, onActivateNote, highlightRenderKey);
+
   const handlers: ReaderHandlers = {
     bornBlockEntryId,
     notes,
-    onCaptureSelection,
     onDeleteNote: handleDelete,
     onEditNote,
     onJumpToBlock: (note) => jumpToBlock(note.blockEntryId),
@@ -1137,14 +1104,7 @@ function renderViewing(
           transition={entrance.transition}
         >
           <div className="reading-surface readerPaper" lang={chrome.language}>
-            {renderActiveUnit(
-              structure,
-              activeUnit,
-              workEntryId,
-              onRetryUnit,
-              handlers,
-              chrome.language
-            )}
+            {renderActiveUnit(structure, activeUnit, workEntryId, onRetryUnit, handlers)}
             <ChapterPager
               activeUnitIndex={activeUnitIndex}
               onSelectUnit={onSelectUnit}
@@ -1177,8 +1137,7 @@ function renderActiveUnit(
   activeUnit: ActiveUnit,
   workEntryId: string,
   onRetryUnit: () => void,
-  handlers: ReaderHandlers,
-  language: string
+  handlers: ReaderHandlers
 ): React.JSX.Element {
   if (structure.units.length === 0) {
     return <p>This work has no content yet.</p>;
@@ -1197,15 +1156,14 @@ function renderActiveUnit(
         </div>
       );
     case "loaded":
-      return renderReaderView(activeUnit.unit, workEntryId, handlers, language);
+      return renderReaderView(activeUnit.unit, workEntryId, handlers);
   }
 }
 
 function renderReaderView(
   unit: ReaderUnit,
   workEntryId: string,
-  handlers: ReaderHandlers,
-  language: string
+  handlers: ReaderHandlers
 ): React.JSX.Element {
   // Only the current reading unit is rendered, so a whole book never mounts at once.
   // The reading area is whetstone's own selection surface: suppress the right-click context
@@ -1218,7 +1176,7 @@ function renderReaderView(
       className="reader"
       onContextMenu={(event) => event.preventDefault()}
     >
-      {renderUnit(unit, workEntryId, handlers, language)}
+      {renderUnit(unit, workEntryId, handlers)}
     </article>
   );
 }
@@ -1226,8 +1184,7 @@ function renderReaderView(
 function renderUnit(
   unit: ReaderUnit,
   workEntryId: string,
-  handlers: ReaderHandlers,
-  language: string
+  handlers: ReaderHandlers
 ): React.JSX.Element {
   // The unit title renders as an eyebrow, except when the unit's first heading already says
   // the same thing (then showing both would duplicate it).
@@ -1245,13 +1202,10 @@ function renderUnit(
             block={block}
             born={born}
             key={born ? `${block.entryId}-born` : block.entryId}
-            language={language}
             notes={handlers.notes}
             onActivateAnchor={handlers.onActivateAnchor}
-            onCaptureSelection={handlers.onCaptureSelection}
             onOpenBlockNotes={handlers.onOpenBlockNotes}
             prefersReducedMotion={handlers.prefersReducedMotion}
-            unitBlocks={unit.blocks}
             workEntryId={workEntryId}
           />
         );
@@ -1263,19 +1217,10 @@ function renderUnit(
 type ReaderBlockViewProps = Readonly<{
   block: ReaderBlock;
   born: boolean;
-  language: string;
   notes: ReadonlyArray<NoteDto>;
   onActivateAnchor: (anchorId: string) => void;
-  onCaptureSelection: (
-    blockElement: HTMLElement,
-    block: ReaderBlock,
-    workEntryId: string,
-    language: string,
-    unitBlocks: ReadonlyArray<ReaderBlock>
-  ) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
-  unitBlocks: ReadonlyArray<ReaderBlock>;
   workEntryId: string;
 }>;
 
@@ -1352,13 +1297,10 @@ function FigureCaption({
 const ReaderBlockView = memo(function ReaderBlockView({
   block,
   born,
-  language,
   notes,
   onActivateAnchor,
-  onCaptureSelection,
   onOpenBlockNotes,
   prefersReducedMotion,
-  unitBlocks,
   workEntryId
 }: ReaderBlockViewProps): React.JSX.Element {
   const blockNotes = useMemo(() => notesForBlock(notes, block.entryId), [notes, block.entryId]);
@@ -1375,11 +1317,6 @@ const ReaderBlockView = memo(function ReaderBlockView({
     wholeBlockNote === undefined
       ? "readerBlock"
       : `readerBlock readerBlock--annotated ${blockGutterHueClass(wholeBlockNote.templateId)}`;
-
-  // Keyboard and touch open the editor too, not just the mouse: a selection inside a
-  // focusable block is captured on key-up and touch-end as well as mouse-up.
-  const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
-    onCaptureSelection(event.currentTarget, block, workEntryId, language, unitBlocks);
 
   const body = (
     <>
@@ -1420,9 +1357,6 @@ const ReaderBlockView = memo(function ReaderBlockView({
     "data-block-id": block.entryId,
     "data-born": born ? "true" : undefined,
     "data-has-notes": annotated ? "true" : undefined,
-    onKeyUp: capture,
-    onMouseUp: capture,
-    onTouchEnd: capture,
     tabIndex: 0
   } as const;
 
