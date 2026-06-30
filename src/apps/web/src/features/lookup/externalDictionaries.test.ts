@@ -9,16 +9,24 @@ describe("externalDictionaryLinks", () => {
       { label: "Merriam-Webster", url: "https://www.merriam-webster.com/dictionary/colophon" },
       {
         label: "Oxford Learner's",
-        url: "https://www.oxfordlearnersdictionaries.com/definition/english/colophon"
+        url: "https://www.oxfordlearnersdictionaries.com/search/english/direct/?q=colophon"
       }
     ]);
   });
 
-  it("URL-encodes a multi-word or punctuated headword into the path", () => {
+  it("lowercases the headword and sends an inflected form to each site, which lemmatizes it (#303)", () => {
+    expect(externalDictionaryLinks("Viewpoints").map((link) => link.url)).toEqual([
+      "https://www.ldoceonline.com/dictionary/viewpoints",
+      "https://www.merriam-webster.com/dictionary/viewpoints",
+      "https://www.oxfordlearnersdictionaries.com/search/english/direct/?q=viewpoints"
+    ]);
+  });
+
+  it("joins a multi-word headword with a hyphen for Longman's path and encodes the space elsewhere", () => {
     expect(externalDictionaryLinks("ad hoc").map((link) => link.url)).toEqual([
-      "https://www.ldoceonline.com/dictionary/ad%20hoc",
+      "https://www.ldoceonline.com/dictionary/ad-hoc",
       "https://www.merriam-webster.com/dictionary/ad%20hoc",
-      "https://www.oxfordlearnersdictionaries.com/definition/english/ad%20hoc"
+      "https://www.oxfordlearnersdictionaries.com/search/english/direct/?q=ad%20hoc"
     ]);
   });
 
