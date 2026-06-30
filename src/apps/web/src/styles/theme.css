@@ -602,6 +602,60 @@
   font-size: var(--text-scale-sm);
 }
 
+/*
+ * New document-model constructs surfaced by the read-only PM renderer (`PmDocument.tsx`, #312):
+ * definition lists, callouts, and rendered footnote targets. Styled from the same semantic tokens as
+ * the rest of the reading body so Day/Night and the reading measure hold with no per-theme logic.
+ */
+.reader dl {
+  margin-block: 0;
+}
+
+.reader dt {
+  font-weight: 600;
+}
+
+.reader dd {
+  margin-inline-start: 1.5rem;
+  color: var(--color-text-muted);
+}
+
+/* A callout/admonition box reads as a set-off aside; the optional numbered marker leads it. */
+.readerCallout {
+  display: flow-root;
+  padding: 0.75rem 1rem;
+  border-inline-start: 3px solid var(--color-border);
+  border-radius: 0.25rem;
+  background-color: var(--color-surface);
+}
+
+.readerCalloutMarker {
+  display: inline-block;
+  margin-inline-end: 0.5rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-weight: 700;
+}
+
+/* A rendered footnote/endnote target: quieter, smaller, set off from the reading body. */
+.readerFootnoteTarget {
+  margin-block-start: 1rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-scale-sm);
+}
+
+.readerFootnoteLabel {
+  margin-inline-end: 0.5rem;
+  font-family: var(--font-sans);
+  font-weight: 700;
+}
+
+/* The fail-loud `unknown` fallback prints its preserved raw markup as inert, escaped text on the
+   same code surface as `pre`, visually flagged so it never passes for body prose. */
+.readerUnknown {
+  border: 1px dashed var(--color-border);
+}
+
 /* Reading chrome (WeRead-style): a fixed overlay whose children position independently so the
    reading column underneath is never pushed or split. Pointer events are off on the overlay and
    back on for each control. The whole chrome recedes while reading via `data-hidden`. */

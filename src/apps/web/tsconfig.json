@@ -11,5 +11,9 @@
     "types": ["vite/client", "vitest"]
   },
   "include": ["src", "vite.config.ts"],
-  "references": [{ "path": "../../packages/domain" }, { "path": "../../packages/contracts" }]
+  "references": [
+    { "path": "../../packages/document" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/contracts" }
+  ]
 }

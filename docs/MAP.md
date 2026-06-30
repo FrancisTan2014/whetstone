@@ -338,7 +338,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   v0 has no cross-document in-book link resolution. A `figure` block instead renders a real `<figure>`
   (`ReaderFigure` in `ReaderPage.tsx`): the stored image from `GET /api/images/:id` (lazy, display-only,
   not selectable) above its still-selectable/annotatable caption, degrading to caption-only when the
-  image is absent (unsupported/missing at ingest) or fails to load at runtime. Opening the
+  image is absent (unsupported/missing at ingest) or fails to load at runtime. Alongside this mdast
+  path, `PmDocument.tsx` is the read-only `@tiptap/static-renderer` renderer (MIT, no browser) for a
+  stored `@whetstone/document` PM/Tiptap doc (#312): since the #310 specs carry no `renderHTML`, it
+  supplies an explicit per-node React mapping covering every node type, stamps `data-block-id` on each
+  top-level block (the stable UniqueID, so notes/position/search can anchor), keeps links/images inert
+  (no fetch), and prints the `unknown` fallback as inert escaped text (never `dangerouslySetInnerHTML`).
+  It reuses the `.reader` typography/theme classes and is the eventual replacement for `mdastBlock`;
+  the live reader swap + annotation decorations are the next slice (#313). `PmDocument.tokens.ts` holds
+  its presentational heading-tag/callout-kind class maps. Opening the
   `?work=`/`?block=` target on arrival via
   `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, and underlines each note's
   anchored span in its template hue (`noteMarks.ts` maps the plaintext `[startOffset,endOffset)`
