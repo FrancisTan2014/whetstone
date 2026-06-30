@@ -2,8 +2,6 @@ import { splitSpanIntoBlockRanges } from "@whetstone/domain";
 import type { NoteDto } from "@whetstone/contracts";
 
 import type { NoteDraft } from "../notes/noteCapture";
-import { noteMarkHueClass } from "./annotationHue.tokens";
-import type { NoteMark } from "./noteMarks";
 import { blockRangesOverlap, type BlockRange } from "./noteOverlap";
 import type { ReaderBlock } from "./readerModel";
 
@@ -49,39 +47,6 @@ function anchorBlockRanges(anchor: AnchorLike, index: UnitBlockIndex): ReadonlyA
     index.orderedIds,
     index.lengthById
   );
-}
-
-// The underline marks for one block: every note's span range that falls in this block, in the note's
-// template hue (#257). A note may contribute a range to several blocks (a cross-block span); a
-// whole-block note (no offsets) is excluded — it shows the gutter bar instead.
-export function spanMarksForBlock(
-  blockEntryId: string,
-  notes: ReadonlyArray<NoteDto>,
-  index: UnitBlockIndex
-): ReadonlyArray<NoteMark> {
-  const marks: NoteMark[] = [];
-
-  for (const note of notes) {
-    const { anchor } = note;
-
-    if (anchor.startOffset === undefined || anchor.endOffset === undefined) {
-      continue;
-    }
-
-    for (const range of anchorBlockRanges(anchor, index)) {
-      if (range.blockEntryId === blockEntryId) {
-        marks.push({
-          ariaLabel: `Note on '${anchor.selectedTextSnapshot}'`,
-          className: noteMarkHueClass(note.templateId),
-          endOffset: range.endOffset,
-          noteId: note.entryId,
-          startOffset: range.startOffset
-        });
-      }
-    }
-  }
-
-  return marks;
 }
 
 // Whether a captured draft overlaps any existing note across its whole (possibly cross-block) span,

@@ -264,34 +264,6 @@ const crossBlockContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
-// A two-block work whose second block's stored plaintext does not match its rendered text, so a
-// cross-block selection cannot be aligned onto it and no note can be anchored (#257).
-const crossBlockMismatchContent: WorkContentDto = {
-  readingUnits: [
-    {
-      blocks: [
-        {
-          blockType: "paragraph",
-          entryId: toEntryId("b-1"),
-          mdast: { children: [{ type: "text", value: "First block text." }], type: "paragraph" },
-          orderIndex: 0,
-          plaintext: "First block text."
-        },
-        {
-          blockType: "paragraph",
-          entryId: toEntryId("b-2"),
-          mdast: { children: [{ type: "text", value: "Second block text." }], type: "paragraph" },
-          orderIndex: 1,
-          plaintext: "ZZZ"
-        }
-      ],
-      entryId: toEntryId("u-1"),
-      orderIndex: 0
-    }
-  ],
-  workEntryId: toEntryId("work-1")
-};
-
 // A block whose serialized Markdown contains an image, to confirm the reader's sanitize
 // schema strips it (defense in depth — ingestion already drops images).
 const imageContent: WorkContentDto = {
@@ -1122,27 +1094,7 @@ describe("ReaderPage", () => {
     );
   });
 
-  it("does not open the toolbar for a cross-block selection that cannot be anchored (#257)", async () => {
-    seedWorkContent(crossBlockMismatchContent);
-    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
-    await screen.findByText("First block text.");
-
-    const blockA = blockElement(container, "b-1");
-    const blockB = blockElement(container, "b-2");
-    const range = document.createRange();
-    range.setStart(firstTextNode(blockA), 6);
-    range.setEnd(firstTextNode(blockB), "Second".length);
-    const selection = window.getSelection() as Selection;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    fireEvent.mouseUp(blockB);
-
-    // The end block's stored plaintext ("ZZZ") does not contain the selected text, so the span cannot
-    // be aligned and no toolbar appears.
-    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
-  });
-
-  it("flags the home block of a cross-block note but draws no underline this slice (#257/#313)", async () => {
+  it("highlights a cross-block note across both blocks as render-time decorations (#313)", async () => {
     const spanNote = {
       anchor: {
         blockEntryId: toEntryId("b-1"),
@@ -1163,11 +1115,18 @@ describe("ReaderPage", () => {
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await waitFor(() => expect(blockElement(container, "b-2")).not.toBeNull());
 
-    // The note's home block carries the has-notes flag; the underline decoration (and the
-    // cross-block second-block highlight) is deferred to #313, so neither block renders a `.noteMark`.
+    // The note's home block carries the has-notes flag; the cross-block span is highlighted as an
+    // external decoration over both blocks — the start block's tail and the end block's head.
     expect(blockElement(container, "b-1").getAttribute("data-has-notes")).toBe("true");
-    expect(blockElement(container, "b-1").querySelector(".noteMark")).toBeNull();
-    expect(blockElement(container, "b-2").querySelector(".noteMark")).toBeNull();
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").querySelector(".noteMark")?.textContent).toBe(
+        "block text."
+      )
+    );
+    expect(blockElement(container, "b-2").querySelector(".noteMark")?.textContent).toBe("Second");
+    expect(
+      blockElement(container, "b-1").querySelector(".noteMark")?.getAttribute("data-note-id")
+    ).toBe("span-1");
   });
 
   it("suppresses the context menu and callout in the reading area while keeping text selectable", async () => {
@@ -1202,19 +1161,20 @@ describe("ReaderPage", () => {
     await user.type(await screen.findByLabelText("Meaning in this context"), "definite article");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    expect(await screen.findByText("Note saved.")).toBeDefined();
-    expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
-      answers: { meaning: "definite article" },
-      anchor: {
-        blockEntryId: "b-rep",
-        contextSnapshot: "the cat sat on the mat",
-        endBlockEntryId: "b-rep",
-        endOffset: 18,
-        selectedTextSnapshot: "the",
-        startOffset: 15
-      },
-      templateId: "vocabulary"
-    });
+    await waitFor(() =>
+      expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
+        answers: { meaning: "definite article" },
+        anchor: {
+          blockEntryId: "b-rep",
+          contextSnapshot: "the cat sat on the mat",
+          endBlockEntryId: "b-rep",
+          endOffset: 18,
+          selectedTextSnapshot: "the",
+          startOffset: 15
+        },
+        templateId: "vocabulary"
+      })
+    );
   });
 
   it("does not open the toolbar when there is no selection", async () => {
@@ -1252,8 +1212,8 @@ describe("ReaderPage", () => {
     await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    expect(await screen.findByText("Note saved.")).toBeDefined();
-    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
+    // No success toast (#300): the editor simply closes once the save resolves.
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "New note" })).toBeNull());
   });
 
   it("marks the selection in one tap: born highlight, no editor (#255)", async () => {
@@ -1298,13 +1258,14 @@ describe("ReaderPage", () => {
     });
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
 
-    // Confirmed and born; the gem underline decoration is deferred to #313, so the block no longer
-    // renders a `.noteMark` — only the born highlight and the captured note remain this slice.
-    expect(await screen.findByText("Marked.")).toBeDefined();
+    // No success toast (#300): the born highlight is the only confirmation. The mark anchors a
+    // sub-block span ("Intro"), so #313 renders it as an external `.noteMark` decoration.
     await waitFor(() =>
       expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
     );
-    expect(container.querySelector(".noteMark")).toBeNull();
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").querySelector(".noteMark")?.textContent).toBe("Intro")
+    );
   });
 
   it("shows an error and opens no editor when a mark fails to save (#255)", async () => {
@@ -1457,7 +1418,7 @@ describe("ReaderPage selection toolbar", () => {
     expect(await screen.findByRole("toolbar", { name: "Annotate selection" })).toBeDefined();
   });
 
-  it("births the saved block's highlight and confirms with a toast", async () => {
+  it("births the saved block's highlight as the only confirmation (#300)", async () => {
     mockedCreateNote.mockResolvedValue(makeNote());
     const { container, user } = await openHuedReader();
     const block = blockElement(container, "b-1");
@@ -1468,11 +1429,14 @@ describe("ReaderPage selection toolbar", () => {
     await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    expect(await screen.findByText("Note saved.")).toBeDefined();
-    expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true");
+    // No success toast (#300): the born highlight animation alone confirms the save.
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
+    );
+    expect(screen.queryByText("Note saved.")).toBeNull();
   });
 
-  it("shows the highlight instantly and still toasts under reduced motion", async () => {
+  it("shows the highlight instantly with no toast under reduced motion (#300)", async () => {
     const original = window.matchMedia;
     window.matchMedia = ((query: string) => ({
       addEventListener: vi.fn(),
@@ -1494,8 +1458,11 @@ describe("ReaderPage selection toolbar", () => {
       await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
       await user.click(screen.getByRole("button", { name: "Save note" }));
 
-      expect(await screen.findByText("Note saved.")).toBeDefined();
-      expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true");
+      // No success toast (#300); the highlight is born immediately (no entrance animation).
+      await waitFor(() =>
+        expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
+      );
+      expect(screen.queryByText("Note saved.")).toBeNull();
     } finally {
       window.matchMedia = original;
     }
@@ -1576,17 +1543,34 @@ describe("ReaderPage note management", () => {
     expect(plain.className).not.toContain("readerBlock--annotated");
   });
 
-  it("draws no underline for a sub-block note this slice, but flags the block (#313)", async () => {
+  it("highlights a sub-block note as a render-time decoration and flags the block (#313)", async () => {
     const container = await openWorkWithSubBlockNotes([subBlockNote()]);
 
-    // The note-highlight Decorations (the underline marks) are deferred to #313: a sub-block note
-    // renders no `.noteMark` and no whole-block gutter/"View note" affordance, but the block still
-    // carries the has-notes flag so capture/overlap logic and the indicator keep working.
+    // The note's anchored span ("Intro" [0,5)) is highlighted as an external `.noteMark` decoration.
+    // The block still carries the has-notes flag, but a sub-block note shows no whole-block gutter or
+    // "View note" affordance — those belong to whole-block notes.
     const block = blockElement(container, "b-1");
-    expect(block.querySelectorAll(".noteMark")).toHaveLength(0);
+    await waitFor(() => expect(block.querySelector(".noteMark")?.textContent).toBe("Intro"));
     expect(block.getAttribute("data-has-notes")).toBe("true");
     expect(block.className).not.toContain("readerBlock--annotated");
     expect(screen.queryByRole("button", { name: "View note" })).toBeNull();
+  });
+
+  it("opens the note behind a highlight when its decoration is clicked (#313)", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+    const user = userEvent.setup();
+
+    const block = blockElement(container, "b-1");
+    const mark = await waitFor(() => {
+      const found = block.querySelector(".noteMark");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+
+    await user.click(mark);
+
+    // Clicking the render-time highlight resolves the note from its id and opens its block panel.
+    expect(await screen.findByRole("complementary", { name: "Block notes" })).toBeDefined();
   });
 
   it("disables Add note when the selection overlaps an existing annotation", async () => {
@@ -1651,8 +1635,8 @@ describe("ReaderPage note management", () => {
     await user.type(field, "a fresh start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    expect(await screen.findByText("Note saved.")).toBeDefined();
-    expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull();
+    // No success toast (#300): the editor closes once the update resolves.
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull());
     expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
       answers: { meaning: "a fresh start" },
       templateId: "vocabulary"
@@ -1717,11 +1701,13 @@ describe("ReaderPage note management", () => {
     expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    expect(await screen.findByText("Note saved.")).toBeDefined();
-    expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
-      answers: { meaning: "the beginning" },
-      templateId: "vocabulary"
-    });
+    // No success toast (#300): the per-work edit closes silently on success.
+    await waitFor(() =>
+      expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
+        answers: { meaning: "the beginning" },
+        templateId: "vocabulary"
+      })
+    );
   });
 
   it("deletes a note from the per-work note list", async () => {
@@ -2783,23 +2769,6 @@ describe("ReaderPage selection toolbar lifecycle", () => {
 
     window.getSelection()?.removeAllRanges();
     fireEvent.mouseUp(screen.getByRole("article", { name: "Reading" }));
-
-    expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
-  });
-
-  it("ignores a release whose selected block is not part of the active unit", async () => {
-    seedWorkContent(multiUnitContent);
-    render(<ReaderPage initialWorkEntryId="work-1" />);
-    await screen.findByText("Intro paragraph.");
-
-    const reading = screen.getByRole("article", { name: "Reading" });
-    // A stray block-like element that is not one of the rendered unit's blocks.
-    const stray = document.createElement("div");
-    stray.setAttribute("data-block-id", "not-a-real-block");
-    stray.textContent = "Ghost text";
-    reading.appendChild(stray);
-    selectRangeIn(stray.firstChild as Node, 0, 5);
-    fireEvent.mouseUp(reading);
 
     expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
   });

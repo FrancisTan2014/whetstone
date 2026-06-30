@@ -363,23 +363,34 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `figureCaption` child; for an mdast figure from the block's image fields. Either way the image is
   served from `GET /api/images/:id` (lazy, display-only, not selectable) above its
   still-selectable/annotatable caption, degrading to caption-only when the image is absent
-  (unsupported/missing at ingest) or fails to load at runtime. **Note-highlight underlines are deferred
-  to #313:** this slice renders PM content and keeps selection + note CAPTURE working, but no longer
-  draws existing notes' underline marks (`noteMarks.ts` is unused by the reader now); they return as
-  ProseMirror Decorations anchored by block-id + offset in the annotation slice. A whole-block note
-  still shows a restrained hue gutter bar with a "View note" affordance. The reader opens the
+  (unsupported/missing at ingest) or fails to load at runtime. **Note highlights are render-time DOM
+  decorations from the external anchor store (#313), never marks in the stored document:** at load
+  `useNoteHighlights.ts` resolves each note's anchor over the rendered `.reader` blocks and wraps the
+  matched range(s) in an external `noteMark` span (`applyNoteHighlights.ts`); clicking or pressing
+  Enter on a highlight opens its note. Resolution is block-id + offset first (`blockText.ts` maps the
+  shared character-offset model to/from DOM ranges, `spanMarks.ts` splits a span across blocks), then
+  a W3C **TextQuote** re-anchor (`textHighlight.ts`, dependency-free) using the stored
+  `selectedTextSnapshot` (+ `contextSnapshot` as prefix/suffix) when the offsets no longer fit (doc
+  edit / re-ingest); `textHighlight.ts` also wraps a resolved range's text nodes in the highlight
+  span(s).
+  Cross-block notes are first-class — highlighted from the start block's tail through every middle
+  block to the end block's head. A whole-block note (no offsets) shows a restrained hue gutter bar
+  with a "View note" affordance instead of an underline. The reader opens the
   `?work=`/`?block=` target on arrival via `AppRoutes`' `ReaderRoute`. The reading `article` is whetstone's own
   selection surface: it prevents the right-click `contextmenu` and uses `-webkit-touch-callout: none`
   with `user-select: text` so the mobile/Capacitor long-press callout doesn't collide with the
   toolbar while text stays selectable (the desktop browser selection mini-menu is a user setting,
-  out of scope). Selecting text (`blockSelection.ts`
-  reads the selected text and its offset from the live Range; `selectionRect.ts` reads the
-  Range rect for anchoring) opens a floating `SelectionToolbar` (two primary actions — Add note
-  and Look up) on mouse-up, key-up, or touch-end; annotations are disjoint, so a selection
-  overlapping an existing note disables Add note with a hint while Look up stays (`noteOverlap.ts`).
-  Confirming opens the `notes/` editor (where the
+  out of scope). `selectionCapture.ts` captures a selection as PM positions
+  (`{blockEntryId,endBlockEntryId,startOffset,endOffset}` + text snapshots) straight from the rendered
+  DOM via the same `blockText.ts` offset model the highlight resolver reads — so capture and re-anchor
+  agree — supporting whole-block and cross-block selections; `selectionRect.ts` reads the
+  Range rect for anchoring. A document-level mouse-up/key-up/touch-end release inside `.reader` opens a
+  floating `SelectionToolbar` (Add note, Mark, and Look up); annotations are disjoint, so a selection
+  overlapping an existing note disables Add note with a hint while Look up stays (`noteOverlap.ts`,
+  `readerMarks.ts` `draftOverlapsNotes`). Confirming opens the `notes/` editor (where the
   size-preselected template is chosen), and a saved
-  block's highlight is "born" via `highlightBirth.ts`. The per-work note list ("Your notes") opens
+  block's highlight is "born" via `highlightBirth.ts` — the born animation is the only save
+  confirmation (no success toast, #300; a failed save still toasts an error). The per-work note list ("Your notes") opens
   in a toggled `Sheet` panel from the ReadingHeader notes tool (no longer pinned to the reading
   column); jumping back from a note card loads the unit holding the block (when it differs
   from the open one) then scrolls/focuses it via `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
@@ -391,7 +402,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). The whole
   chrome recedes as one through the `data-hidden` flag. `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its hue key
-  for the underline (`noteMark--<hue>`) and whole-block gutter (`readerBlock--<hue>`) classes.
+  for the highlight (`noteMark--<hue>`, applied by `applyNoteHighlights.ts`) and whole-block gutter
+  (`readerBlock--<hue>`) classes.
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
   targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored
   list markers, monospace code surface, ~66ch measure); `readerHeadings.ts` decides when a unit's
@@ -404,8 +416,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   source of truth, so resume survives a localStorage clear / new browser / other device), and
   `useReadingPositionWriter.ts` saves the current unit + best-effort block anchor (immediately on
   unit change, debounced on scroll) so reopening a work resumes where it left off.
-  `notes/` is the note feature: `noteCapture.ts` turns a block selection into a
-  draft, `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.tokens.ts` maps a template to
+  `notes/` is the note feature: `noteCapture.ts` holds the `NoteDraft` type and `draftToAnchor`
+  (the captured draft → note-anchor payload; the reader captures the draft from the DOM in
+  `reader/selectionCapture.ts`), `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.tokens.ts` maps a template to
   its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
   `Sheet` with a hued segmented template control, `NoteList.tsx` renders notes as hued cards
   (template chip + snippet + answers) with jump-back/edit/delete,

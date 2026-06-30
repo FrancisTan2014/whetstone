@@ -9,30 +9,6 @@ afterEach(() => {
 });
 
 describe("BlockContent", () => {
-  it("underlines a note's anchored range when marks are supplied", () => {
-    const { container } = render(
-      <BlockContent
-        marks={[
-          {
-            ariaLabel: "Note on 'brown'",
-            className: "noteMark--vocab",
-            endOffset: 7,
-            noteId: "n1",
-            startOffset: 2
-          }
-        ]}
-        node={{ children: [{ type: "text", value: "A brown fox." }], type: "paragraph" }}
-      />
-    );
-
-    const mark = container.querySelector(".noteMark") as HTMLElement;
-    expect(mark.textContent).toBe("brown");
-    expect(mark.getAttribute("data-note-id")).toBe("n1");
-    expect(mark.getAttribute("aria-label")).toBe("Note on 'brown'");
-    // The mark span survives sanitize (applied after it) with its interactive attributes intact.
-    expect(mark.getAttribute("role")).toBe("button");
-  });
-
   it("makes a same-work #id link a live cross-reference that jumps; external links stay inert", async () => {
     const userEvent = (await import("@testing-library/user-event")).default;
     const onActivateAnchor = vi.fn();
