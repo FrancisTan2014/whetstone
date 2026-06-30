@@ -1,9 +1,8 @@
 import type { BlockType, EntryId } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
-import type { DocumentNodeJSON } from "@whetstone/document";
-import type { IngestionEvidence } from "./htmlToDocument.js";
+import { blocks, docBlocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import type { IngestedBlock, IngestionEvidence } from "./htmlToDocument.js";
 import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -23,10 +22,11 @@ export type PersistableBlock = Readonly<{
 
 export type PersistableReadingUnit = Readonly<{
   blocks: ReadonlyArray<PersistableBlock>;
-  // The chapter's whole ProseMirror/Tiptap document (#311), persisted to `reading_units.doc_json`.
-  // Transitional dual-write: the reader still renders the mdast `blocks` rows; #312 switches it to
-  // this document, after which mdast block storage is retired. Undefined on paths with no PM doc.
-  docJson?: DocumentNodeJSON;
+  // The chapter's decomposed ProseMirror/Tiptap block rows (#311): one entry per top-level PM node,
+  // each carrying its stable id, type, and node JSON. Persisted to `doc_blocks` as a transitional
+  // dual-write — the reader still renders the mdast `blocks` rows; #312 switches it to these PM
+  // blocks, after which mdast block storage is retired. Empty on paths with no PM document.
+  docBlocks: ReadonlyArray<IngestedBlock>;
   // Fail-loud evidence for this chapter's unrecognized block-level elements (#311). Transient: it
   // rides along so surviving units' evidence reaches the ingestion logger after filtering, and is
   // never written to a column. Defaults to an empty array so callers can flat-map without a guard.
@@ -59,7 +59,6 @@ export async function writeReadingUnits(
 
   const entryRows: { id: string; type: "reading_unit" | "block" }[] = [];
   const readingUnitRows: {
-    docJson: DocumentNodeJSON | null;
     entryId: string;
     orderIndex: number;
     title: string | null;
@@ -78,20 +77,41 @@ export async function writeReadingUnits(
     readingUnitEntryId: string;
     workEntryId: EntryId;
   }[] = [];
+  // Transitional PM block rows (#311): one row per top-level PM node, keyed by its stable id.
+  const docBlockRows: {
+    id: string;
+    nodeJson: unknown;
+    orderIndex: number;
+    readingUnitEntryId: string;
+    type: string;
+    workEntryId: EntryId;
+  }[] = [];
   const linkRows: { fromEntryId: string; toEntryId: string; type: "contains" }[] = [];
 
   units.forEach((unit, unitIndex) => {
     const unitEntryId = input.createEntryId();
     entryRows.push({ id: unitEntryId, type: "reading_unit" });
     readingUnitRows.push({
-      // Dual-write the chapter's PM document (#311); the still-mdast reader ignores it until #312.
-      docJson: unit.docJson ?? null,
       entryId: unitEntryId,
       orderIndex: input.startOrder + unitIndex,
       title: unit.title ?? null,
       workEntryId: input.workEntryId
     });
     linkRows.push({ fromEntryId: input.workEntryId, toEntryId: unitEntryId, type: "contains" });
+
+    // Dual-write the chapter's decomposed PM block rows (#311), preserving the stable PM node id as
+    // the row id so #312 can map a block row back to its document node. No `entries`/`entry_links`
+    // rows yet — full graph integration is a later storage slice.
+    unit.docBlocks.forEach((docBlock, docBlockIndex) => {
+      docBlockRows.push({
+        id: docBlock.id,
+        nodeJson: docBlock.node,
+        orderIndex: docBlockIndex,
+        readingUnitEntryId: unitEntryId,
+        type: docBlock.type,
+        workEntryId: input.workEntryId
+      });
+    });
 
     unit.blocks.forEach((block, blockIndex) => {
       const blockEntryId = input.createEntryId();
@@ -118,5 +138,6 @@ export async function writeReadingUnits(
   await insertInBatches(entryRows, (batch) => tx.insert(entries).values(batch));
   await insertInBatches(readingUnitRows, (batch) => tx.insert(readingUnits).values(batch));
   await insertInBatches(blockRows, (batch) => tx.insert(blocks).values(batch));
+  await insertInBatches(docBlockRows, (batch) => tx.insert(docBlocks).values(batch));
   await insertInBatches(linkRows, (batch) => tx.insert(entryLinks).values(batch));
 }

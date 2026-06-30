@@ -1,5 +1,5 @@
 {
-  "id": "368518c2-5a16-4d15-a38e-9d49ee3e4f89",
+  "id": "ca59af53-0a81-44d6-a178-d5e4ec92c0b4",
   "prevId": "04b86167-b83a-425a-bb62-aa53d7ca2cbe",
   "version": "7",
   "dialect": "postgresql",
@@ -370,6 +370,113 @@
           "tableTo": "entries",
           "columnsFrom": [
             "source_block_entry_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.doc_blocks": {
+      "name": "doc_blocks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "node_json": {
+          "name": "node_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_index": {
+          "name": "order_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reading_unit_entry_id": {
+          "name": "reading_unit_entry_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "work_entry_id": {
+          "name": "work_entry_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "doc_blocks_reading_unit_idx": {
+          "name": "doc_blocks_reading_unit_idx",
+          "columns": [
+            {
+              "expression": "reading_unit_entry_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "doc_blocks_work_idx": {
+          "name": "doc_blocks_work_idx",
+          "columns": [
+            {
+              "expression": "work_entry_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "doc_blocks_reading_unit_entry_id_entries_id_fk": {
+          "name": "doc_blocks_reading_unit_entry_id_entries_id_fk",
+          "tableFrom": "doc_blocks",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "reading_unit_entry_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "doc_blocks_work_entry_id_entries_id_fk": {
+          "name": "doc_blocks_work_entry_id_entries_id_fk",
+          "tableFrom": "doc_blocks",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "work_entry_id"
           ],
           "columnsTo": [
             "id"
@@ -972,12 +1079,6 @@
       "name": "reading_units",
       "schema": "",
       "columns": {
-        "doc_json": {
-          "name": "doc_json",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "entry_id": {
           "name": "entry_id",
           "type": "text",

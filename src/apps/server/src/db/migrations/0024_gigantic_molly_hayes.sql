@@ -1,1 +1,0 @@
-ALTER TABLE "reading_units" ADD COLUMN "doc_json" jsonb;

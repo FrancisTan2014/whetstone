@@ -43,14 +43,9 @@ export const workMeta = pgTable(
 
 // Ordered reading units within a work. The work containment edge is also recorded
 // in `entry_links`; `work_entry_id` keeps the per-work ordering scope queryable.
-// `doc_json` carries the chapter's whole ProseMirror/Tiptap document (#311), whose
-// top-level children are the stably-id'd blocks — a transitional dual-write: the reader
-// still renders the `blocks.mdast_json` rows below, and #312 switches it to this document,
-// after which mdast block storage is retired. Nullable: the Markdown path has no PM doc yet.
 export const readingUnits = pgTable(
   "reading_units",
   {
-    docJson: jsonb("doc_json"),
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),
@@ -61,6 +56,33 @@ export const readingUnits = pgTable(
       .references(() => entries.id)
   },
   (table) => [index("reading_units_work_idx").on(table.workEntryId)]
+);
+
+// Decomposed ProseMirror/Tiptap block rows (#311): one row per top-level PM node of a chapter's
+// fidelity-ingested document, keyed by the node's stable id (from `assignNodeIds`). `node_json`
+// carries that PM node (with its nested stable ids). This is the transitional bedrock content
+// storage — the reader still renders the mdast `blocks` rows above until #312 switches it to these
+// PM blocks, after which mdast block storage is retired. Written alongside `blocks` (dual-write) by
+// EPUB ingestion; the Markdown path writes none yet. Full Entry/`entry_links` integration is a later
+// storage slice, so these rows are not yet `entries`.
+export const docBlocks = pgTable(
+  "doc_blocks",
+  {
+    id: text("id").primaryKey(),
+    nodeJson: jsonb("node_json").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    readingUnitEntryId: text("reading_unit_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    type: text("type").notNull(),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id)
+  },
+  (table) => [
+    index("doc_blocks_reading_unit_idx").on(table.readingUnitEntryId),
+    index("doc_blocks_work_idx").on(table.workEntryId)
+  ]
 );
 
 // Atomic, stably-identified content blocks. `mdast_json` stores the block's mdast

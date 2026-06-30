@@ -22,6 +22,7 @@ import { runMigrations } from "../../db/migrate.js";
 import {
   authors,
   blocks,
+  docBlocks,
   entries,
   readingPositions,
   readingUnits,
@@ -43,6 +44,13 @@ type TestContext = Readonly<{
   pglite: PGlite;
   server: ReturnType<typeof createServer>;
   sourcesDir: string;
+}>;
+
+// A minimal view of a persisted PM node's JSON, for asserting the decomposed doc_blocks rows.
+type PmNode = Readonly<{
+  attrs?: Record<string, unknown>;
+  content?: ReadonlyArray<PmNode>;
+  type: string;
 }>;
 
 let context: TestContext;
@@ -1101,46 +1109,91 @@ describe("EPUB ingestion routes", () => {
     expect(await readdir(context.imagesDir)).toEqual([]);
   });
 
-  it("dual-writes the chapter's PM document and logs fail-loud evidence in the real flow (#311)", async () => {
+  it("dual-writes decomposed PM block rows carrying stable ids and the real flow's evidence (#311)", async () => {
     const png = pngBytes();
     epubResponder = async () =>
       figureChapter(
         '<figure><img src="img/p.png" alt="A dot"/><figcaption>A caption.</figcaption></figure>' +
           "<dl><dt>Term</dt><dd>Definition.</dd></dl>" +
           '<div data-type="note"><p>An admonition.</p></div>' +
+          '<p>Some claim<a data-type="noteref" href="#fn1">1</a>.</p>' +
+          '<aside data-type="footnote" id="fn1"><p>The note body.</p></aside>' +
           '<video src="clip.mp4"></video>',
         [{ bytes: png, contentType: "image/png", src: "img/p.png" }]
       );
 
-    await figureBlocksOf("epub-pm-dualwrite");
+    await figureBlocksOf("epub-pm-docblocks");
 
     // The legacy mdast block rows still persist for the current reader (retired in #312).
     expect((await context.db.select().from(blocks)).length).toBeGreaterThan(0);
 
-    // The chapter's PM document is dual-written alongside, as a valid round-trippable document.
-    const units = await context.db.select().from(readingUnits);
-    const docJson = units[0]?.docJson as DocumentNodeJSON;
-    expect(isValidDocument(docJson)).toBe(true);
-    expect(() => parseDocument(docJson)).not.toThrow();
-
-    // Its top-level children carry stable string ids and include the recognized and unknown nodes.
-    const children = (docJson.content ?? []) as ReadonlyArray<DocumentNodeJSON>;
-    expect(children.every((child) => typeof child.attrs?.["id"] === "string")).toBe(true);
-    expect(children.map((child) => child.type)).toEqual(
-      expect.arrayContaining(["figure", "definitionList", "callout", "unknown"])
+    // The chapter's PM nodes are dual-written at the block-row boundary, one row per top-level node.
+    const rows = (await context.db.select().from(docBlocks)).sort(
+      (a, b) => a.orderIndex - b.orderIndex
     );
+    const byType = (type: string): PmNode | undefined =>
+      rows.find((row) => row.type === type)?.nodeJson as PmNode | undefined;
+
+    // Every recognized and unknown block type is present as its own row.
+    expect(rows.map((row) => row.type)).toEqual(
+      expect.arrayContaining([
+        "figure",
+        "definitionList",
+        "callout",
+        "paragraph",
+        "footnoteTarget",
+        "unknown"
+      ])
+    );
+
+    // Each row's id is a non-empty string equal to its node's stable attrs.id (PM id -> row mapping).
+    for (const row of rows) {
+      expect(typeof row.id).toBe("string");
+      expect(row.id.length).toBeGreaterThan(0);
+      expect((row.nodeJson as PmNode).attrs?.["id"]).toBe(row.id);
+    }
+
+    // The figure node keeps its image child and the resolved src.
+    const figureImage = byType("figure")?.content?.find((child) => child.type === "image");
+    expect(figureImage?.attrs?.["src"]).toBe("img/p.png");
+
+    // The definition list keeps its term/description children (not flattened into empty bullets).
+    expect(byType("definitionList")?.content?.map((child) => child.type)).toEqual([
+      "definitionTerm",
+      "definitionDescription"
+    ]);
+
+    // The callout carries its kind, and the footnote target its refId.
+    expect(byType("callout")?.attrs?.["kind"]).toBe("note");
+    expect(byType("footnoteTarget")?.attrs?.["refId"]).toBe("fn1");
+
+    // The unknown node preserves the original markup verbatim, fail-loud rather than dropped.
+    expect(String(byType("unknown")?.attrs?.["html"])).toContain("<video");
+
+    // The paragraph that hosted the noteref carries a footnoteMarker inline node referencing fn1.
+    const marker = byType("paragraph")?.content?.find((child) => child.type === "footnoteMarker");
+    expect(marker?.attrs?.["refId"]).toBe("fn1");
+    expect(marker?.attrs?.["label"]).toBe("1");
+
+    // The reassembled document round-trips through the pure package, proving the nodes are valid.
+    const reassembled = {
+      content: rows.map((row) => row.nodeJson),
+      type: "doc"
+    } as DocumentNodeJSON;
+    expect(isValidDocument(reassembled)).toBe(true);
+    expect(() => parseDocument(reassembled)).not.toThrow();
 
     // The injected fail-loud sink received the <video> evidence, proving the path runs end to end.
     const videoEvidence = loggedEvidence.find((record) => record.tag === "video");
     expect(videoEvidence?.attributes["src"]).toBe("clip.mp4");
   });
 
-  it("persists doc_json as null for a reading unit written without a PM document", async () => {
+  it("writes no doc_blocks rows for a reading unit with no PM blocks", async () => {
     const workEntryId = await createWork();
     let nextId = 0;
     await context.db.transaction(async (tx) => {
       await writeReadingUnits(tx, {
-        createEntryId: () => `null-doc-${(nextId += 1)}`,
+        createEntryId: () => `no-doc-${(nextId += 1)}`,
         startOrder: 0,
         units: [
           {
@@ -1152,9 +1205,10 @@ describe("EPUB ingestion routes", () => {
                 blockType: "paragraph",
                 imageResourceId: null,
                 mdast: { type: "paragraph" },
-                plaintext: "No PM document here."
+                plaintext: "Mdast only, no PM blocks."
               }
             ],
+            docBlocks: [],
             evidence: [],
             title: "Mdast only"
           }
@@ -1163,10 +1217,13 @@ describe("EPUB ingestion routes", () => {
       });
     });
 
-    const unit = (await context.db.select().from(readingUnits)).find(
-      (row) => row.title === "Mdast only"
-    );
-    expect(unit?.docJson).toBeNull();
+    // The mdast block row persists, but the empty docBlocks path writes nothing to doc_blocks.
+    expect(await context.db.select().from(docBlocks)).toEqual([]);
+    expect(
+      (await context.db.select().from(blocks)).some(
+        (row) => row.plaintext === "Mdast only, no PM blocks."
+      )
+    ).toBe(true);
   });
 
   const structureMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";

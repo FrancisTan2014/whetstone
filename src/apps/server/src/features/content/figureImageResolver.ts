@@ -93,9 +93,9 @@ export async function resolveChapters(
   for (const chapter of chapters) {
     const decomposed = decomposeHtmlChapter(chapter.html);
     // Alongside the mdast block decomposition (still read by the reader), run the server-side
-    // fidelity ingestion (#311) over the same chapter HTML to build the PM/Tiptap document and its
-    // fail-loud evidence. One chapter == one reading unit, so doc and evidence ride on this unit;
-    // #312 switches the reader to this document.
+    // fidelity ingestion (#311) over the same chapter HTML to build the PM/Tiptap block rows and the
+    // fail-loud evidence. One chapter == one reading unit, so its decomposed PM blocks and evidence
+    // ride on this unit; #312 switches the reader to these PM blocks.
     const ingested = htmlToDocument(chapter.html);
     const imageBySrc = new Map(chapter.images.map((image) => [image.src, image]));
     const blocks: PersistableBlock[] = [];
@@ -110,7 +110,7 @@ export async function resolveChapters(
 
     units.push({
       blocks,
-      docJson: ingested.doc,
+      docBlocks: ingested.blocks,
       evidence: ingested.evidence,
       title: decomposed.title
     });
