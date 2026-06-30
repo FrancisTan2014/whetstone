@@ -224,20 +224,32 @@ function renderState(state: LookupState): React.JSX.Element {
     case "empty":
       return <p>No definition found.</p>;
     case "loaded":
-      return renderEntry(state.entry);
+      // An "empty-but-loaded" entry (found, yet no part-of-speech groups) carries no readable
+      // definition: the response contract permits found:true with an empty partsOfSpeech, so a tab
+      // the reader opens explicitly still shows the no-match state rather than a bare headword (#306).
+      return stateHasContent(state) ? renderEntry(state.entry) : <p>No definition found.</p>;
   }
 }
 
-// The default tab once a tab is open: the first source in declared order that is loaded OR still
-// loading — skipping only leading tabs that resolved to error/empty. This keeps the language's
-// preferred lead source (offline WordNet for English; 萌典's Chinese definitions for Chinese, #272)
-// as the default even when a later, faster source (the offline CC-CEDICT) returns first, while never
-// trapping the panel on a dead source. Each networked source is time-boxed, so a leading "loading"
-// tab is transient — it resolves to content or falls through to the next source. The reader can
-// still switch tabs explicitly.
+// A tab carries readable content only when it has loaded AND its entry has at least one
+// part-of-speech group. A loaded-but-content-less entry (the contract allows found:true with an
+// empty partsOfSpeech array) counts as no content, so tab selection and the all-failed state treat
+// it the same as an empty or errored source (#306).
+function stateHasContent(state: LookupState): boolean {
+  return state.status === "loaded" && state.entry.partsOfSpeech.length > 0;
+}
+
+// The default tab once a tab is open: the first source that has readable content OR is still
+// loading — skipping any leading tab that resolved to error, empty, or empty-but-loaded (no
+// part-of-speech groups, #306). This keeps the language's preferred lead source (offline WordNet for
+// English; 萌典's Chinese definitions for Chinese, #272) as the default even when a later, faster
+// source returns first, while never trapping the panel on a source that has nothing to show — a
+// function word like "versus" that WordNet has no entry for falls through to Wiktionary. Each
+// networked source is time-boxed, so a leading "loading" tab is transient: it resolves to content or
+// falls through to the next source. The reader can still switch tabs explicitly.
 function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
   const usable = tabs.findIndex(
-    (tab) => tab.state.status === "loaded" || tab.state.status === "loading"
+    (tab) => stateHasContent(tab.state) || tab.state.status === "loading"
   );
   return usable === -1 ? 0 : usable;
 }
@@ -247,9 +259,11 @@ function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
 // dead tab. A single-source language (CJK) shows no strip — just that source's state.
 function LookupTabs({ tabs }: Readonly<{ tabs: ReadonlyArray<LookupTab> }>): React.JSX.Element {
   const [selected, setSelected] = useState<LookupSourceId | undefined>(undefined);
+  // Every source has settled with nothing to show: none is still loading and none has content (each
+  // resolved to error, empty, or empty-but-loaded). Show one explicit failure instead of a dead tab.
   const settled =
     tabs.length > 1 &&
-    tabs.every((tab) => tab.state.status === "error" || tab.state.status === "empty");
+    tabs.every((tab) => tab.state.status !== "loading" && !stateHasContent(tab.state));
 
   const activeIndex = useMemo(() => {
     const chosen = tabs.findIndex((tab) => tab.id === selected);
