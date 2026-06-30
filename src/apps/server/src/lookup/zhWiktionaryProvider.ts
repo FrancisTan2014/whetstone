@@ -161,11 +161,28 @@ export function parseZhWiktionary(wikitext: string, term: string): DictionaryEnt
   const etymologyLines: string[] = [];
   let currentPartOfSpeech: string | null = null;
   let inEtymology = false;
+  // A nested foreign-language/dialect subsection under 漢語 (e.g. `===日語===`, a romanization or
+  // dialect reading) can itself carry POS headings (`====名詞====`) — those senses are NOT Chinese.
+  // An unrecognized (non-POS, non-etymology) heading opens such an excluded subtree at its level;
+  // everything more deeply nested is skipped until a heading at or above that level exits it. So only
+  // POS subsections that are direct, recognized children of the Chinese section contribute senses.
+  let excludedLevel = 0;
 
   for (const line of lines) {
     const heading = parseHeading(line);
 
     if (heading !== null) {
+      // A heading at or above the excluded subtree's level ends it; process that heading normally.
+      if (excludedLevel > 0 && heading.level <= excludedLevel) {
+        excludedLevel = 0;
+      }
+
+      if (excludedLevel > 0) {
+        currentPartOfSpeech = null;
+        inEtymology = false;
+        continue;
+      }
+
       if (partOfSpeechHeadings.has(heading.text)) {
         currentPartOfSpeech = heading.text;
         inEtymology = false;
@@ -174,9 +191,15 @@ export function parseZhWiktionary(wikitext: string, term: string): DictionaryEnt
           byPartOfSpeech.set(currentPartOfSpeech, []);
           order.push(currentPartOfSpeech);
         }
-      } else {
+      } else if (etymologyHeadings.has(heading.text)) {
         currentPartOfSpeech = null;
-        inEtymology = etymologyHeadings.has(heading.text);
+        inEtymology = true;
+      } else {
+        // An unrecognized subsection (a nested language/dialect, pronunciation, translations, …):
+        // its descendants are not Chinese POS, so open an excluded subtree at this level.
+        currentPartOfSpeech = null;
+        inEtymology = false;
+        excludedLevel = heading.level;
       }
 
       continue;

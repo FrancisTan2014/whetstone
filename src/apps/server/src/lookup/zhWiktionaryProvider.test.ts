@@ -151,6 +151,39 @@ describe("parseZhWiktionary", () => {
     const wikitext = ["==漢語==", "===動詞===", ...defs].join("\n");
     expect(parseZhWiktionary(wikitext, "多")?.partsOfSpeech[0]?.senses).toHaveLength(6);
   });
+
+  it("ignores a non-Chinese subsection's nested POS under 漢語 (returns null with no Chinese senses)", () => {
+    // A nested foreign-language section (===日語===) under ==漢語== may carry its own POS headings;
+    // those senses are Japanese, not Chinese, and must not be collected (#296).
+    const wikitext = ["==漢語==", "===日語===", "====名詞====", "# Japanese-only sense"].join("\n");
+    expect(parseZhWiktionary(wikitext, "字")).toBeNull();
+  });
+
+  it("collects only the Chinese POS, excluding a foreign subsection's nested POS between them", () => {
+    // A foreign subsection (===日語===) sits between two Chinese POS: its nested ====名詞==== is
+    // skipped, and the following ===動詞=== (a sibling at the foreign section's level) exits the
+    // exclusion and is collected — so only the two Chinese senses survive.
+    const wikitext = [
+      "==漢語==",
+      "===名詞===",
+      "# 真正的漢語名詞釋義",
+      "===日語===",
+      "====名詞====",
+      "# Japanese-only sense",
+      "===動詞===",
+      "# 另一個漢語動詞釋義"
+    ].join("\n");
+    expect(parseZhWiktionary(wikitext, "京")?.partsOfSpeech).toEqual([
+      {
+        partOfSpeech: "名詞",
+        senses: [{ definition: "真正的漢語名詞釋義", examples: [], synonyms: [] }]
+      },
+      {
+        partOfSpeech: "動詞",
+        senses: [{ definition: "另一個漢語動詞釋義", examples: [], synonyms: [] }]
+      }
+    ]);
+  });
 });
 
 describe("createZhWiktionaryProvider", () => {
