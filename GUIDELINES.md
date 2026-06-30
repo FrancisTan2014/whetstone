@@ -20,6 +20,8 @@ Tie-breakers:
 - **Simplicity beats generic architecture slogans.** Do not add interfaces, factories, abstract classes, inheritance, or dependency injection containers only to satisfy SOLID wording.
 - **Testability through boundaries beats test-only exposure.** Do not expose private mutable state or create fake abstractions only for tests.
 - **Meaningful coverage beats coverage gaming.** Keep 100% source coverage, but tests must assert behavior/invariants rather than merely executing lines.
+- **Fakes share the real contract.** Where a seam has a fake and a real adapter (coach, speech, dictionary), both must pass one shared contract suite; the real adapter's run skips cleanly without creds so the keyless gate stays green. 100% coverage proves code ran, not that a fake matches reality — pin them to the same behaviour.
+- **Mature, ecosystem-native solutions beat ad-hoc patches.** Solve a problem through the designed seams of a library already in the stack (e.g. `unified`/`rehype-remark` handlers, `unist-util-visit` traversal) rather than hand-rolling a partial reimplementation around it. When a fix touches an area built on a bespoke workaround, retire the workaround instead of stacking another special-case on top.
 - **Safe observability beats verbose logs.** Log useful operational context, but never log secrets, full Markdown, note bodies, selected text snapshots, or template answers.
 - **Server source of truth beats client convenience.** Client storage/caches must not become v0's authority.
 
@@ -102,7 +104,7 @@ Default v0 choices:
 
 The baseline dependencies listed above are approved for the scaffold/foundation work that introduces them. After that, do not add a runtime dependency unless the issue needs it and the PR explains why. Prefer established OSS libraries for text selection, annotation, and Markdown rendering when those issues arrive.
 
-**Choose OSS by reliability, not arbitrarily.** For a non-trivial standard problem (parsing, format handling, and similar), prefer a well-established, actively maintained OSS library over a hand-rolled or arbitrarily-picked one. Evaluate candidates on reliability evidence — maintenance recency, adoption, issue health, spec coverage, and **correctness on real-world inputs** — and record the rationale in the PR. Match the runtime to the problem's genuine need (for example, a Python worker for document-AI/OCR PDF work), not to community size in the abstract; do not introduce a separate runtime or process when an in-process library already does the job correctly.
+**Choose OSS by reliability, not arbitrarily.** For a non-trivial standard problem (parsing, format handling, and similar), prefer a well-established, actively maintained OSS library over a hand-rolled or arbitrarily-picked one. Evaluate candidates on reliability evidence — maintenance recency, adoption, issue health, spec coverage, and **correctness on real-world inputs** — and record the rationale in the PR. Match the runtime to the problem's genuine need (for example, a Python worker for document-AI/OCR PDF work), not to community size in the abstract; do not introduce a separate runtime or process when an in-process library already does the job correctly. **And use the library you already have through its designed extension points** (handlers, visitors, plugins) — do not hand-roll a partial walk or transform around it, then special-case the gaps.
 
 ## Design principles
 

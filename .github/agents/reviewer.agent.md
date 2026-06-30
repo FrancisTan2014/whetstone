@@ -60,6 +60,9 @@ acceptance criteria. In particular check:
   filesystem-Markdown model.
 - **Design rules** (GUIDELINES / skill) — smallest public API, pure `domain`, boundary validation,
   no fake abstractions or interfaces added only for tests.
+- **Mature over ad-hoc** — when a library already in the stack owns the problem (e.g. `unified`
+  parsing/transform), the fix uses its designed seams (handlers, visitors, plugins), not a hand-rolled
+  partial reimplementation or another special-case stacked on a bespoke workaround.
 - **Tests** — the risky parts are tested; included source is at 100% coverage with no assertion-free
   padding; any exclusion is narrow, commented, and justified.
 
