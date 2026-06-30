@@ -181,22 +181,20 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
             {entry.pronunciations.map(renderPronunciation(entry.headword))}
           </div>
         )}
-        {externalLinks.length === 0 ? null : (
-          <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
-            <span className="lookupExternalLabel">Open in</span>
-            {externalLinks.map((link) => (
-              <a
-                className="lookupExternalLink"
-                href={link.url}
-                key={link.label}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                {link.label}
-              </a>
-            ))}
-          </nav>
-        )}
+        <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
+          <span className="lookupExternalLabel">Open in</span>
+          {externalLinks.map((link) => (
+            <a
+              className="lookupExternalLink"
+              href={link.url}
+              key={link.label}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              {link.label}
+            </a>
+          ))}
+        </nav>
       </header>
       <div className="lookupGroups">
         {entry.partsOfSpeech.map((part, index) => (

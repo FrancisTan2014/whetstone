@@ -121,7 +121,7 @@ describe("LookupPanel content", () => {
     ).toBe(true);
   });
 
-  it("hides the external English-dictionary row for a Chinese (CJK) headword (#302)", () => {
+  it("shows Chinese external dictionary links for a Chinese (CJK) headword (#296)", () => {
     renderPanel(
       {
         entry: {
@@ -136,7 +136,15 @@ describe("LookupPanel content", () => {
     );
 
     expect(screen.getByText("曰")).toBeDefined();
-    expect(screen.queryByRole("navigation", { name: "Open in external dictionary" })).toBeNull();
+    const links = within(
+      screen.getByRole("navigation", { name: "Open in external dictionary" })
+    ).getAllByRole("link");
+
+    expect(links.map((link) => link.textContent)).toEqual(["汉典", "萌典", "ctext", "国学大师"]);
+    for (const link of links) {
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toContain("noopener");
+    }
   });
 
   it("color-codes each part-of-speech section with a tokenized hue class", () => {
