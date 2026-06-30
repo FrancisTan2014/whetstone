@@ -1,6 +1,7 @@
 import { toEntryId, type EntryId } from "@whetstone/domain";
 import type {
   BlockDto,
+  DocBlockDto,
   ReadingUnitContentDto,
   ReadingUnitDto,
   ReadingUnitStructureDto,
@@ -10,7 +11,8 @@ import type {
 import { and, asc, count, eq, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, readingUnits, workMeta, workSources } from "../../db/schema.js";
+import { addressableBlocks } from "../../db/addressableBlocks.js";
+import { blocks, docBlocks, readingUnits, workMeta, workSources } from "../../db/schema.js";
 
 type ReadingUnitRow = Readonly<{
   entryId: string;
@@ -31,6 +33,14 @@ type BlockRow = Readonly<{
   readingUnitEntryId: string | null;
 }>;
 
+type DocBlockRow = Readonly<{
+  entryId: string;
+  node: unknown;
+  orderIndex: number;
+  readingUnitEntryId: string;
+  type: string;
+}>;
+
 // The block columns a BlockDto is built from, shared by the whole-work and per-unit queries.
 const blockColumns = {
   alt: blocks.alt,
@@ -43,6 +53,16 @@ const blockColumns = {
   orderIndex: blocks.orderIndex,
   plaintext: blocks.plaintext,
   readingUnitEntryId: blocks.readingUnitEntryId
+} as const;
+
+// The PM `doc_blocks` columns a DocBlockDto is built from (#312): the stable PM node id, the node
+// JSON the reader renders via `@tiptap/static-renderer`, and ordering, shared by both content queries.
+const docBlockColumns = {
+  entryId: docBlocks.id,
+  node: docBlocks.nodeJson,
+  orderIndex: docBlocks.orderIndex,
+  readingUnitEntryId: docBlocks.readingUnitEntryId,
+  type: docBlocks.type
 } as const;
 
 export async function workExists(db: DbClient, workEntryId: EntryId): Promise<boolean> {
@@ -85,14 +105,24 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
     .where(and(eq(readingUnits.workEntryId, workEntryId), isNull(blocks.deletedAt)))
     .orderBy(asc(blocks.orderIndex));
 
+  const docBlockRows = await db
+    .select(docBlockColumns)
+    .from(docBlocks)
+    .innerJoin(readingUnits, eq(docBlocks.readingUnitEntryId, readingUnits.entryId))
+    .where(eq(readingUnits.workEntryId, workEntryId))
+    .orderBy(asc(docBlocks.orderIndex));
+
   const readingUnitDtos = unitRows.flatMap((unit) => {
     const unitBlocks = blockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
+    const unitDocBlocks = docBlockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
 
     // A reading unit with no non-deleted mdast blocks — an unknown-only / PM-only chapter (#311,
     // persisted so its `doc_blocks` can reference the unit) or a unit whose blocks were all
-    // soft-deleted — has nothing the mdast reader can render, so it is excluded here. The reader is
-    // mdast until #312 switches it to the PM `doc_blocks` rows.
-    return unitBlocks.length === 0 ? [] : [toReadingUnitDto(unit, unitBlocks.map(toBlockDto))];
+    // soft-deleted — has nothing the reader can render, so it is excluded here. Every readable EPUB
+    // chapter carries mdast blocks, so all real chapters surface and render via their `doc_blocks`.
+    return unitBlocks.length === 0
+      ? []
+      : [toReadingUnitDto(unit, unitBlocks.map(toBlockDto), unitDocBlocks.map(toDocBlockDto))];
   });
 
   return { readingUnits: readingUnitDtos, workEntryId };
@@ -100,15 +130,26 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
 
 function toReadingUnitDto(
   unit: ReadingUnitRow,
-  unitBlocks: ReadonlyArray<BlockDto>
+  unitBlocks: ReadonlyArray<BlockDto>,
+  unitDocBlocks: ReadonlyArray<DocBlockDto>
 ): ReadingUnitDto {
   const base = {
     blocks: unitBlocks,
+    docBlocks: unitDocBlocks,
     entryId: toEntryId(unit.entryId),
     orderIndex: unit.orderIndex
   };
 
   return unit.title === null ? base : { ...base, title: unit.title };
+}
+
+function toDocBlockDto(block: DocBlockRow): DocBlockDto {
+  return {
+    entryId: toEntryId(block.entryId),
+    node: block.node,
+    orderIndex: block.orderIndex,
+    type: block.type
+  };
 }
 
 function toBlockDto(block: BlockRow): BlockDto {
@@ -196,8 +237,15 @@ export async function loadReadingUnitContent(
     .where(and(eq(blocks.readingUnitEntryId, unitEntryId), isNull(blocks.deletedAt)))
     .orderBy(asc(blocks.orderIndex));
 
+  const docBlockRows = await db
+    .select(docBlockColumns)
+    .from(docBlocks)
+    .where(eq(docBlocks.readingUnitEntryId, unitEntryId))
+    .orderBy(asc(docBlocks.orderIndex));
+
   const base = {
     blocks: blockRows.map(toBlockDto),
+    docBlocks: docBlockRows.map(toDocBlockDto),
     entryId: toEntryId(unit.entryId),
     orderIndex: unit.orderIndex
   };
@@ -205,22 +253,25 @@ export async function loadReadingUnitContent(
   return unit.title === null ? base : { ...base, title: unit.title };
 }
 
-// The reading unit owning a non-deleted block within the work, or `undefined` when the block does
-// not exist, is soft-deleted/detached, or is not part of the work.
+// The reading unit owning an addressable block within the work, or `undefined` when the block does
+// not exist, is soft-deleted/detached, or is not part of the work. The block is resolved over both
+// substrates (legacy mdast `blocks` and PM `doc_blocks`) so a jump / scroll-to-block / reading-position
+// restore keyed on a PM-rendered block id resolves its unit too (#312).
 export async function locateBlockUnit(
   db: DbClient,
   workEntryId: EntryId,
   blockEntryId: EntryId
 ): Promise<EntryId | undefined> {
+  const addressable = addressableBlocks(db);
   const rows = await db
     .select({ unitEntryId: readingUnits.entryId })
-    .from(blocks)
-    .innerJoin(readingUnits, eq(blocks.readingUnitEntryId, readingUnits.entryId))
+    .from(addressable)
+    .innerJoin(readingUnits, eq(addressable.readingUnitEntryId, readingUnits.entryId))
     .where(
       and(
-        eq(blocks.entryId, blockEntryId),
-        eq(blocks.workEntryId, workEntryId),
-        isNull(blocks.deletedAt)
+        eq(addressable.entryId, blockEntryId),
+        eq(addressable.workEntryId, workEntryId),
+        isNull(addressable.deletedAt)
       )
     )
     .limit(1);

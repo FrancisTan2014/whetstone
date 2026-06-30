@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 
 import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
 import { lookupSourceLabel, lookupSourcesForLanguage } from "@whetstone/contracts";
+import type { DocumentNodeJSON } from "@whetstone/document";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
@@ -26,8 +27,8 @@ import {
 } from "./blockSelection";
 import { highlightBirthMotion } from "./highlightBirth";
 import { BlockContent } from "./mdastBlock";
-import type { NoteMark } from "./noteMarks";
-import { draftOverlapsNotes, indexBlocks, spanMarksForBlock } from "./readerMarks";
+import { PmBlock } from "./PmDocument";
+import { draftOverlapsNotes, indexBlocks } from "./readerMarks";
 import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
 import {
   buildReaderStructure,
@@ -261,16 +262,14 @@ export function viewingPosition(
 }
 
 // At most one note panel is open at a time: capturing a new note, editing an existing one, or
-// listing the notes anchored to a single block (reopened from its highlight). `noteEntryId` scopes
-// a reopened block panel to a single note — the case where the reader activates one note's
-// underline rather than the whole-block "View note" affordance.
+// listing the notes anchored to a single block (reopened from its whole-block "View note"
+// affordance).
 type NotePanel =
   | Readonly<{ draft: NoteDraft; kind: "create"; workEntryId: string }>
   | Readonly<{ kind: "edit"; note: NoteDto; workEntryId: string }>
   | Readonly<{
       blockEntryId: string;
       kind: "block";
-      noteEntryId?: string | undefined;
       workEntryId: string;
     }>;
 
@@ -300,7 +299,7 @@ type ReaderHandlers = Readonly<{
   onJumpToBlock: (note: NoteDto) => void;
   // Activate a same-work internal cross-reference: jump to the block whose anchor id matches (#252).
   onActivateAnchor: (anchorId: string) => void;
-  onOpenBlockNotes: (blockEntryId: string, workEntryId: string, noteEntryId?: string) => void;
+  onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
 }>;
@@ -887,12 +886,9 @@ export function ReaderPage({
     }
   }
 
-  const onOpenBlockNotes = useCallback(
-    (blockEntryId: string, workEntryId: string, noteEntryId?: string): void => {
-      setPanel({ blockEntryId, kind: "block", noteEntryId, workEntryId });
-    },
-    []
-  );
+  const onOpenBlockNotes = useCallback((blockEntryId: string, workEntryId: string): void => {
+    setPanel({ blockEntryId, kind: "block", workEntryId });
+  }, []);
 
   function onEditNote(workEntryId: string, note: NoteDto): void {
     // Editing opens its own Sheet; close the notes panel so the two do not stack.
@@ -1277,7 +1273,7 @@ type ReaderBlockViewProps = Readonly<{
     language: string,
     unitBlocks: ReadonlyArray<ReaderBlock>
   ) => void;
-  onOpenBlockNotes: (blockEntryId: string, workEntryId: string, noteEntryId?: string) => void;
+  onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
   unitBlocks: ReadonlyArray<ReaderBlock>;
   workEntryId: string;
@@ -1286,22 +1282,19 @@ type ReaderBlockViewProps = Readonly<{
 // A figure block renders as a real `<figure>`: the stored image (served by #101 at
 // `/api/images/:id`, lazy-loaded and display-only) above its caption. The image degrades out —
 // leaving the caption alone — when there is no stored image (unsupported/missing at ingest) or it
-// fails to load at runtime. The caption keeps the block's mdast/plaintext, so it stays selectable
-// and annotatable through the normal block selection flow; the image carries no text.
+// fails to load at runtime. The caption keeps the block's text, so it stays selectable and
+// annotatable through the normal block selection flow; the image carries no text.
 function ReaderFigure({
   block,
-  marks,
   onActivateAnchor
 }: {
   block: ReaderBlock;
-  marks: ReadonlyArray<NoteMark>;
   onActivateAnchor: (anchorId: string) => void;
 }): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
   const imageSrc =
     block.imageResourceId === undefined ? undefined : `/api/images/${block.imageResourceId}`;
   const showImage = imageSrc !== undefined && !imageFailed;
-  const hasCaption = block.plaintext.trim().length > 0;
 
   return (
     <figure className="readerFigure">
@@ -1315,12 +1308,39 @@ function ReaderFigure({
           src={imageSrc}
         />
       ) : null}
-      {hasCaption ? (
-        <figcaption className="readerFigureCaption">
-          <BlockContent marks={marks} node={block.mdast} onActivateAnchor={onActivateAnchor} />
-        </figcaption>
-      ) : null}
+      <FigureCaption block={block} onActivateAnchor={onActivateAnchor} />
     </figure>
+  );
+}
+
+// A PM figure's caption is its `figureCaption` child (the leading child is the image); the figure
+// always carries a content array (schema `image figureCaption?`), so the lookup is total.
+function figureCaptionNode(node: unknown): DocumentNodeJSON | undefined {
+  const { content } = node as { content: ReadonlyArray<{ type?: string }> };
+
+  return content.find((child) => child.type === "figureCaption") as DocumentNodeJSON | undefined;
+}
+
+// The figure's caption: rendered from the PM `figureCaption` child (#312) through `PmBlock` when the
+// block is PM-backed, else from the stored mdast caption (Markdown fallback). An image-only figure
+// (no caption) renders nothing.
+function FigureCaption({
+  block,
+  onActivateAnchor
+}: {
+  block: ReaderBlock;
+  onActivateAnchor: (anchorId: string) => void;
+}): React.ReactNode {
+  if (block.node !== undefined) {
+    const caption = figureCaptionNode(block.node);
+
+    return caption === undefined ? null : <PmBlock node={caption} />;
+  }
+
+  return block.plaintext.trim().length === 0 ? null : (
+    <figcaption className="readerFigureCaption">
+      <BlockContent node={block.mdast} onActivateAnchor={onActivateAnchor} />
+    </figcaption>
   );
 }
 
@@ -1342,13 +1362,6 @@ const ReaderBlockView = memo(function ReaderBlockView({
   workEntryId
 }: ReaderBlockViewProps): React.JSX.Element {
   const blockNotes = useMemo(() => notesForBlock(notes, block.entryId), [notes, block.entryId]);
-  // The block index is keyed on the (stable) unit blocks, so the span-mark memo only recomputes when
-  // the notes change — opening the toolbar/lookup keeps every block flat (#72/#257).
-  const index = useMemo(() => indexBlocks(unitBlocks), [unitBlocks]);
-  const marks = useMemo(
-    () => spanMarksForBlock(block.entryId, notes, index),
-    [block.entryId, notes, index]
-  );
   const annotated = blockNotes.length > 0;
 
   // A whole-block note (no sub-block offsets) gets a restrained hue gutter bar instead of an
@@ -1368,47 +1381,14 @@ const ReaderBlockView = memo(function ReaderBlockView({
   const capture = (event: React.SyntheticEvent<HTMLElement>): void =>
     onCaptureSelection(event.currentTarget, block, workEntryId, language, unitBlocks);
 
-  // Activating an underline opens *that* note (resolved from the mark's `data-note-id`), not the
-  // whole block's notes. A plain tap (collapsed selection) on the underline span — or Enter/Space
-  // while it is focused — opens it; a drag-selection that happens to end on an underline still
-  // becomes a new selection, so creation is never hijacked.
-  const openNoteFrom = (target: EventTarget): boolean => {
-    const mark = (target as Element).closest(".noteMark");
-
-    if (mark === null) {
-      return false;
-    }
-
-    onOpenBlockNotes(block.entryId, workEntryId, mark.getAttribute("data-note-id") as string);
-    return true;
-  };
-
-  const onClickBlock = (event: React.MouseEvent<HTMLElement>): void => {
-    const selection = window.getSelection();
-
-    if (selection !== null && !selection.isCollapsed && selection.toString().length > 0) {
-      return;
-    }
-
-    openNoteFrom(event.target);
-  };
-
-  const onKeyDownBlock = (event: React.KeyboardEvent<HTMLElement>): void => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-
-    if (openNoteFrom(event.target)) {
-      event.preventDefault();
-    }
-  };
-
   const body = (
     <>
       {block.blockType === "figure" ? (
-        <ReaderFigure block={block} marks={marks} onActivateAnchor={onActivateAnchor} />
+        <ReaderFigure block={block} onActivateAnchor={onActivateAnchor} />
+      ) : block.node !== undefined ? (
+        <PmBlock node={block.node as DocumentNodeJSON} />
       ) : (
-        <BlockContent marks={marks} node={block.mdast} onActivateAnchor={onActivateAnchor} />
+        <BlockContent node={block.mdast} onActivateAnchor={onActivateAnchor} />
       )}
       {backlinkAnchorId === undefined ? null : (
         <button
@@ -1440,8 +1420,6 @@ const ReaderBlockView = memo(function ReaderBlockView({
     "data-block-id": block.entryId,
     "data-born": born ? "true" : undefined,
     "data-has-notes": annotated ? "true" : undefined,
-    onClick: onClickBlock,
-    onKeyDown: onKeyDownBlock,
     onKeyUp: capture,
     onMouseUp: capture,
     onTouchEnd: capture,
@@ -1478,13 +1456,7 @@ function renderPanel(
   }
 
   if (panel.kind === "block") {
-    // A block panel reopened from a single note's underline shows just that note — resolved by id
-    // across all notes so a cross-block span's mark opens it from any intersected block (#257). The
-    // whole-block "View note" affordance opens with no `noteEntryId`, listing every note on the block.
-    const shown =
-      panel.noteEntryId === undefined
-        ? notesForBlock(notes, panel.blockEntryId)
-        : notes.filter((note) => note.entryId === panel.noteEntryId);
+    const shown = notesForBlock(notes, panel.blockEntryId);
 
     return (
       <aside aria-label="Block notes" className="readerBlockNotesPanel">

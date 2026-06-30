@@ -16,8 +16,9 @@ The Tiptap/ProseMirror schema for whetstone content (PRODUCT "Architecture: the 
 bedrock"). Pure and Node-runnable (no DOM; HTML parsing/rendering belong to the ingestion/reader
 slices). Public surface is `src/index.ts`. Units: `nodes.ts` (Tiptap `Node.create` specs for doc,
 text, prose blocks, nesting lists, tables, figures, definition lists, callout, footnote marker/target,
-and a raw-HTML `unknown` fallback; `documentExtensions` couples the specs with the UniqueID id
-attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
+and a raw-HTML `unknown` fallback — the `image` node carries an `imageResourceId` attr (default null)
+so a resolved EPUB image can be referenced by the reader; `documentExtensions` couples the specs with
+the UniqueID id attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
 (`parseDocument`/`serializeDocument`/`isValidDocument`/`assignNodeIds` JSON round-trip + validation,
 `DocumentValidationError`). Stable node ids use Tiptap UniqueID's server-side generator. Tests
 colocated. Invariant: depends on nothing outward; no UI, ingestion, or editing here.
@@ -195,11 +196,18 @@ can navigate them from another package.
   rules array bound to `documentSchema` (the pure package carries no `parseDOM` specs), decomposed into
   block rows; fail-loud — any unrecognized block-level element becomes an `unknown` node (raw HTML kept
   verbatim) and emits a structured evidence record, so nothing is silently dropped. `ingestEpub` wires
-  this into the real flow: `resolveChapters` runs `htmlToDocument` per chapter and the document's
-  top-level PM nodes are dual-written at the block-row boundary to the `doc_blocks` table (one row per
-  node, keyed by the node's stable id from `assignNodeIds`, with `node_json` carrying the PM node)
-  alongside the existing mdast `blocks` rows (transitional — the reader still renders the mdast blocks
-  until #312 swaps it to these PM block rows, after which mdast block storage is retired); the
+  this into the real flow: `resolveChapters` runs `htmlToDocument` per chapter, resolves each PM
+  `image` node's `src` against that chapter's stored content-addressed images (the same resolution used
+  for mdast figures, via `figureImageResolver.ts`) and stamps the resolved store id onto the node's
+  `imageResourceId` attr (#310/#312), then the document's top-level PM nodes are dual-written at the
+  block-row boundary to the `doc_blocks` table (one row per node, keyed by the node's stable id from
+  `assignNodeIds`, with `node_json` carrying the PM node and a `plaintext` column — the in-order
+  concatenation of the node's descendant text via `@whetstone/document`'s `documentText`) alongside the
+  existing mdast `blocks` rows; each `doc_blocks` row is also registered as a first-class `entries` row
+  (`type: "block"`) under a `contains` link from its unit, so a PM block id is an addressable anchor
+  (the reader renders these PM block rows for EPUB content (#312) and stamps the id as `data-block-id`;
+  mdast block storage stays as the Markdown fallback until Markdown ingestion also writes `doc_blocks`);
+  the
   surviving units' fail-loud evidence is logged through the injected
   `ContentDependencies.ingestionLogger`. Both writers
   bulk-insert through `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
@@ -209,9 +217,14 @@ can navigate them from another package.
   (`GET /api/works/:id/content/markdown`, which keeps `loadWorkContent` server-side). The reader no
   longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
   (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit`): `GET …/structure` (units +
-  block counts, no content), `GET …/units/:unitId/content` (one unit's blocks), and
-  `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note), each 404ing an
-  unknown/out-of-work target. (The whole-work `GET …/content` route was removed; admin composes
+  block counts, no content), `GET …/units/:unitId/content` (one unit's ordered blocks — both the mdast
+  `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`, the reader's render source),
+  and `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note, via
+  `locateBlockUnit`), each 404ing an unknown/out-of-work target. A block id is resolved over **both**
+  substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
+  union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
+  resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
+  way per unit (its rendered substrate; see `search/`). (The whole-work `GET …/content` route was removed; admin composes
   structure + per-unit client-side.) `notes/` serves note templates and creates, lists, edits,
   and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`),
   and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →
@@ -222,9 +235,13 @@ can navigate them from another package.
   `(user_id, work_entry_id)` PK), upserted via `PUT` and read via `GET /api/works/:id/reading-position`;
   the server is the source of truth so resume survives a localStorage clear / new browser / other device.
   `search/` is read-only block-level library search: `GET /api/search?q=` validates the query, then
-  `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over non-deleted blocks'
-  `plaintext` (joined to work + author, capped at `searchResultLimit`, LIKE wildcards escaped); v0 is a
-  substring scan, not ranked FTS (PRODUCT.md "v0 search").
+  `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over each unit's
+  rendered substrate — the PM `doc_blocks` for a unit that has any (EPUB), else the legacy mdast
+  `blocks` (Markdown) — as a `UNION` whose legacy half excludes units that already have `doc_blocks`
+  (a `NOT EXISTS` guard), so a hit's `blockEntryId` equals the reader's rendered `data-block-id` and
+  deep-links to the right block (#312). Joined to work + author, ordered by reading order, capped at
+  `searchResultLimit`, LIKE wildcards escaped; v0 is a substring scan, not ranked FTS
+  (PRODUCT.md "v0 search").
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
@@ -328,22 +345,30 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   "Open a work from your Library" empty state), with a back-to-Library hash anchor always reachable. It
   keeps an `activeUnitIndex` and the active unit's load state, fetches that unit's blocks when it opens
   (TOC select / jump / deep-link / position restore all switch the unit then scroll once its blocks land),
-  renders only that unit safely by converting each block's stored mdast straight to React
-  (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → note-mark underlines
-  (`noteMarks.ts`, applied post-sanitize so the interactive mark spans survive) →
-  `hast-util-to-jsx-runtime`, no
-  Markdown re-parse), with a sanitize schema that also disallows
-  `img`, so no inline image is fetched/rendered; an `a` component override renders the source's in-content
-  links as non-navigating `readerLink` spans so a click selects text instead of hijacking navigation —
-  v0 has no cross-document in-book link resolution. A `figure` block instead renders a real `<figure>`
-  (`ReaderFigure` in `ReaderPage.tsx`): the stored image from `GET /api/images/:id` (lazy, display-only,
-  not selectable) above its still-selectable/annotatable caption, degrading to caption-only when the
-  image is absent (unsupported/missing at ingest) or fails to load at runtime. Opening the
-  `?work=`/`?block=` target on arrival via
-  `AppRoutes`' `ReaderRoute`), tags each block with `data-block-id`, and underlines each note's
-  anchored span in its template hue (`noteMarks.ts` maps the plaintext `[startOffset,endOffset)`
-  onto the rendered inline content; a whole-block note shows a restrained hue gutter bar instead).
-  The underline is the tap/keyboard target that reopens the block's notes. The reading `article` is whetstone's own
+  renders only that unit. The reader's render path is now the **PM document model** (#312 live swap):
+  each block's persisted ProseMirror node (the unit's `doc_blocks`, #311, served as the content DTO's
+  `docBlocks`) is rendered to React through `@tiptap/static-renderer` via `PmDocument.tsx` — the
+  per-block `PmBlock` export (so `ReaderBlockView` stays memoized per block, perf #72, rather than
+  re-rendering the whole unit). `PmDocument` supplies an explicit per-node React mapping covering every
+  #310 node type (the specs carry no `renderHTML`), stamps `data-block-id` = the PM node's stable
+  UniqueID on each top-level block (so notes/position/search/selection anchor by block + offset), keeps
+  links inert (no in-content navigation; v0 has no cross-document in-book link resolution), and prints
+  the `unknown` fallback as inert escaped text (never `dangerouslySetInnerHTML`, no fetch). It reuses the
+  `.reader` typography/theme classes; `PmDocument.tokens.ts` holds its presentational
+  heading-tag/callout-kind class maps. A Markdown work with no PM blocks falls back to the legacy mdast
+  path (`mdastBlock.tsx`: `mdast-util-to-hast` → `hast-util-sanitize` → `hast-util-to-jsx-runtime`, no
+  Markdown re-parse, sanitize schema disallows `img`) until Markdown ingestion also writes `doc_blocks`.
+  A `figure` block renders a real `<figure>` (`ReaderFigure` in `ReaderPage.tsx`): for a PM figure the
+  stored image is read from the PM `image` node's `imageResourceId` (+ `alt`) and the caption from its
+  `figureCaption` child; for an mdast figure from the block's image fields. Either way the image is
+  served from `GET /api/images/:id` (lazy, display-only, not selectable) above its
+  still-selectable/annotatable caption, degrading to caption-only when the image is absent
+  (unsupported/missing at ingest) or fails to load at runtime. **Note-highlight underlines are deferred
+  to #313:** this slice renders PM content and keeps selection + note CAPTURE working, but no longer
+  draws existing notes' underline marks (`noteMarks.ts` is unused by the reader now); they return as
+  ProseMirror Decorations anchored by block-id + offset in the annotation slice. A whole-block note
+  still shows a restrained hue gutter bar with a "View note" affordance. The reader opens the
+  `?work=`/`?block=` target on arrival via `AppRoutes`' `ReaderRoute`. The reading `article` is whetstone's own
   selection surface: it prevents the right-click `contextmenu` and uses `-webkit-touch-callout: none`
   with `user-select: text` so the mobile/Capacitor long-press callout doesn't collide with the
   toolbar while text stays selectable (the desktop browser selection mini-menu is a user setting,

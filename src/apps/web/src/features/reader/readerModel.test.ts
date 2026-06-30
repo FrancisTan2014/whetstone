@@ -110,3 +110,130 @@ describe("toReaderBlocks", () => {
     expect(heading?.alt).toBeUndefined();
   });
 });
+
+// A unit ingested with PM `doc_blocks` (#311/#312) renders through the static-renderer instead of
+// mdast. The blocks are intentionally out of order and exercise every field the reader derives from
+// a PM node: heading vs paragraph vs figure, plaintext from the node's text, and a figure's image
+// reference + alt (read from the figure's leading `image` child), present and absent.
+const pmUnit: ReadingUnitContentDto = {
+  blocks: [],
+  docBlocks: [
+    {
+      entryId: toEntryId("pm-p"),
+      node: {
+        attrs: { id: "pm-p" },
+        content: [{ text: "Hello world", type: "text" }],
+        type: "paragraph"
+      },
+      orderIndex: 1,
+      type: "paragraph"
+    },
+    {
+      entryId: toEntryId("pm-f1"),
+      node: {
+        attrs: { id: "pm-f1" },
+        content: [
+          { attrs: { alt: "A chart", imageResourceId: "img-9", src: null }, type: "image" },
+          { content: [{ text: "Caption.", type: "text" }], type: "figureCaption" }
+        ],
+        type: "figure"
+      },
+      orderIndex: 2,
+      type: "figure"
+    },
+    {
+      entryId: toEntryId("pm-f2"),
+      node: {
+        attrs: { id: "pm-f2" },
+        content: [{ attrs: { alt: null, imageResourceId: null, src: null }, type: "image" }],
+        type: "figure"
+      },
+      orderIndex: 3,
+      type: "figure"
+    },
+    {
+      entryId: toEntryId("pm-f3"),
+      node: {
+        attrs: { id: "pm-f3" },
+        content: [{ content: [{ text: "Orphan caption.", type: "text" }], type: "figureCaption" }],
+        type: "figure"
+      },
+      orderIndex: 4,
+      type: "figure"
+    },
+    {
+      entryId: toEntryId("pm-h"),
+      node: {
+        attrs: { id: "pm-h", level: 2 },
+        content: [{ text: "Chapter One", type: "text" }],
+        type: "heading"
+      },
+      orderIndex: 0,
+      type: "heading"
+    }
+  ],
+  entryId: toEntryId("u-pm"),
+  orderIndex: 0
+};
+
+describe("toReaderBlocks (PM doc blocks, #312)", () => {
+  it("renders from PM doc blocks when present, ordered by orderIndex, carrying the PM node", () => {
+    const blocks = toReaderBlocks(pmUnit);
+
+    expect(blocks.map((block) => block.entryId)).toEqual([
+      "pm-h",
+      "pm-p",
+      "pm-f1",
+      "pm-f2",
+      "pm-f3"
+    ]);
+    expect(blocks[0]?.node).toBe(pmUnit.docBlocks?.[4]?.node);
+    expect(blocks.every((block) => block.mdast === undefined)).toBe(true);
+  });
+
+  it("derives plaintext from the PM node's text, including figure captions and image-only figures", () => {
+    const blocks = toReaderBlocks(pmUnit);
+
+    expect(blocks.map((block) => block.plaintext)).toEqual([
+      "Chapter One",
+      "Hello world",
+      "Caption.",
+      "",
+      "Orphan caption."
+    ]);
+  });
+
+  it("maps PM node types onto the reader's block kind and heading flag", () => {
+    const blocks = toReaderBlocks(pmUnit);
+
+    expect(blocks.map((block) => block.blockType)).toEqual([
+      "heading",
+      "paragraph",
+      "figure",
+      "figure",
+      "figure"
+    ]);
+    expect(blocks.map((block) => block.isHeading)).toEqual([true, false, false, false, false]);
+  });
+
+  it("reads a figure image's stored reference and alt, omitting them when absent or imageless", () => {
+    const blocks = toReaderBlocks(pmUnit);
+    const withImage = blocks[2];
+    const nulledImage = blocks[3];
+    const noImage = blocks[4];
+
+    expect(withImage?.imageResourceId).toBe("img-9");
+    expect(withImage?.alt).toBe("A chart");
+    expect(nulledImage?.imageResourceId).toBeUndefined();
+    expect(nulledImage?.alt).toBeUndefined();
+    expect(noImage?.imageResourceId).toBeUndefined();
+    expect(noImage?.alt).toBeUndefined();
+  });
+
+  it("falls back to mdast blocks when the unit has an empty doc-block list", () => {
+    const blocks = toReaderBlocks({ ...unorderedUnit, docBlocks: [] });
+
+    expect(blocks.map((block) => block.entryId)).toEqual(["b-2a", "b-2b", "b-2c"]);
+    expect(blocks[0]?.mdast).toBe(chapterHeading);
+  });
+});

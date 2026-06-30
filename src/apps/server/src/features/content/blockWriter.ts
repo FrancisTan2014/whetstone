@@ -1,4 +1,5 @@
 import type { BlockType, EntryId } from "@whetstone/domain";
+import { documentText } from "@whetstone/document";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { blocks, docBlocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
@@ -23,9 +24,9 @@ export type PersistableBlock = Readonly<{
 export type PersistableReadingUnit = Readonly<{
   blocks: ReadonlyArray<PersistableBlock>;
   // The chapter's decomposed ProseMirror/Tiptap block rows (#311): one entry per top-level PM node,
-  // each carrying its stable id, type, and node JSON. Persisted to `doc_blocks` as a transitional
-  // dual-write — the reader still renders the mdast `blocks` rows; #312 switches it to these PM
-  // blocks, after which mdast block storage is retired. Empty on paths with no PM document.
+  // each carrying its stable id, type, and node JSON. Persisted to `doc_blocks` (the reader renders
+  // these via `@tiptap/static-renderer`, #312) and registered as addressable Entries so notes and
+  // reading positions can anchor to them. Empty on paths with no PM document.
   docBlocks: ReadonlyArray<IngestedBlock>;
   // Fail-loud evidence for this chapter's unrecognized block-level elements (#311). Transient: it
   // rides along so surviving units' evidence reaches the ingestion logger after filtering, and is
@@ -85,6 +86,7 @@ export async function writeReadingUnits(
     id: string;
     nodeJson: unknown;
     orderIndex: number;
+    plaintext: string;
     readingUnitEntryId: string;
     type: string;
     workEntryId: EntryId;
@@ -103,13 +105,18 @@ export async function writeReadingUnits(
     linkRows.push({ fromEntryId: input.workEntryId, toEntryId: unitEntryId, type: "contains" });
 
     // Dual-write the chapter's decomposed PM block rows (#311), preserving the stable PM node id as
-    // the row id so #312 can map a block row back to its document node. No `entries`/`entry_links`
-    // rows yet — full graph integration is a later storage slice.
+    // the row id so #312 can map a block row back to its document node. Each PM block is also a
+    // first-class Entry — an `entries` row plus a `contains` link from its unit — so a note anchor or
+    // reading position can reference it (their FKs target `entries.id`) exactly like a legacy block,
+    // and its plaintext is derived from the node so search/locate resolve it (#312 addressability).
     unit.docBlocks.forEach((docBlock, docBlockIndex) => {
+      entryRows.push({ id: docBlock.id, type: "block" });
+      linkRows.push({ fromEntryId: unitEntryId, toEntryId: docBlock.id, type: "contains" });
       docBlockRows.push({
         id: docBlock.id,
         nodeJson: docBlock.node,
         orderIndex: docBlockIndex,
+        plaintext: documentText(docBlock.node),
         readingUnitEntryId: unitEntryId,
         type: docBlock.type,
         workEntryId: input.workEntryId

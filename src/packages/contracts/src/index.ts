@@ -184,6 +184,7 @@ export {
 export type {
   BlockDto,
   BlockUnitLocatorDto,
+  DocBlockDto,
   IngestEpubResultDto,
   IngestMarkdownRequest,
   ReadingUnitContentDto,

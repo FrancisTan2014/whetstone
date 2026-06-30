@@ -59,8 +59,23 @@ export type BlockDto = Readonly<{
   plaintext: string;
 }>;
 
+// One reading unit's ProseMirror/Tiptap block (#311): the persisted document node the read-only
+// reader renders directly via `@tiptap/static-renderer` (#312), replacing the mdast render path.
+// `entryId` is the block's stable PM node id (its `data-block-id` in the reader); `node` is the
+// persisted node JSON (a figure/image node carries `imageResourceId` for the stored EPUB image);
+// blocks travel in `orderIndex` order. Additive to the mdast `blocks`, which search still consumes.
+export type DocBlockDto = Readonly<{
+  entryId: EntryId;
+  node: unknown;
+  orderIndex: number;
+  type: string;
+}>;
+
 export type ReadingUnitDto = Readonly<{
   blocks: ReadonlyArray<BlockDto>;
+  // The unit's PM `doc_blocks` (#311): populated for an EPUB unit, empty for a Markdown unit. Optional
+  // so the field stays additive — pre-#312 payloads and test fixtures may omit it (read as empty).
+  docBlocks?: ReadonlyArray<DocBlockDto>;
   entryId: EntryId;
   orderIndex: number;
   title?: string;
@@ -87,9 +102,12 @@ export type WorkStructureDto = Readonly<{
 }>;
 
 // One reading unit's content, fetched on demand: the unit's ordering metadata plus its ordered,
-// non-deleted blocks.
+// non-deleted blocks — both the mdast `blocks` (search/legacy) and the PM `docBlocks` the reader renders.
 export type ReadingUnitContentDto = Readonly<{
   blocks: ReadonlyArray<BlockDto>;
+  // The unit's PM `doc_blocks` (#311): populated for an EPUB unit, empty for a Markdown unit (see
+  // `ReadingUnitDto.docBlocks`). The reader renders these when non-empty, else falls back to mdast.
+  docBlocks?: ReadonlyArray<DocBlockDto>;
   entryId: EntryId;
   orderIndex: number;
   title?: string;

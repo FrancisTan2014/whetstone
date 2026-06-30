@@ -84,7 +84,7 @@ function figureContent(figure: Partial<BlockDto> & Pick<BlockDto, "plaintext">):
 function renderReader(content: WorkContentDto): ReturnType<typeof rtlRender> {
   mockedFetchWorkStructure.mockResolvedValue({
     readingUnits: content.readingUnits.map((unit) => ({
-      blockCount: unit.blocks.length,
+      blockCount: (unit.docBlocks ?? []).length + unit.blocks.length,
       entryId: unit.entryId,
       orderIndex: unit.orderIndex
     })),
@@ -161,6 +161,81 @@ describe("ReaderPage figure blocks", () => {
     const image = container.querySelector("img") as HTMLImageElement;
     expect(image.getAttribute("src")).toBe("/api/images/solo999");
     expect(image.getAttribute("alt")).toBe("");
+    expect(container.querySelector("figcaption")).toBeNull();
+  });
+});
+
+// A PM-backed reading unit (#311 `doc_blocks`): the reader builds the figure from the PM `figure`
+// node, reading the image's stored reference + alt and the `figureCaption` child — replacing the
+// mdast render path while preserving the same `<figure>`/image/caption experience.
+function pmFigureContent(
+  image: { alt?: string; imageResourceId?: string } | undefined
+): WorkContentDto {
+  const imageAttrs: Record<string, unknown> = {};
+  if (image?.imageResourceId !== undefined) {
+    imageAttrs["imageResourceId"] = image.imageResourceId;
+  }
+  if (image?.alt !== undefined) {
+    imageAttrs["alt"] = image.alt;
+  }
+
+  const caption =
+    image === undefined
+      ? []
+      : [{ content: [{ text: "PM caption.", type: "text" }], type: "figureCaption" }];
+  const node = {
+    attrs: { id: "pm-fig-1" },
+    content: [{ attrs: imageAttrs, type: "image" }, ...caption],
+    type: "figure"
+  };
+
+  return {
+    readingUnits: [
+      {
+        blocks: [],
+        docBlocks: [{ entryId: toEntryId("pm-fig-1"), node, orderIndex: 0, type: "figure" }],
+        entryId: toEntryId("u-1"),
+        orderIndex: 0
+      }
+    ],
+    workEntryId: toEntryId("work-1")
+  };
+}
+
+describe("ReaderPage PM figure blocks", () => {
+  it("renders a PM figure as a lazy image from /api/images/:id with its caption", async () => {
+    renderReader(pmFigureContent({ alt: "A dot", imageResourceId: "abc123" }));
+
+    const figure = (await screen.findByText("PM caption.")).closest("figure") as HTMLElement;
+    const image = within(figure).getByRole("img");
+    expect(image.getAttribute("src")).toBe("/api/images/abc123");
+    expect(image.getAttribute("alt")).toBe("A dot");
+    expect(image.getAttribute("loading")).toBe("lazy");
+    // The figure block stamps its addressable id from the PM node.
+    expect(figure.closest("[data-block-id]")?.getAttribute("data-block-id")).toBe("pm-fig-1");
+  });
+
+  it("degrades a PM figure to caption-only when the image fails to load", async () => {
+    const { container } = renderReader(pmFigureContent({ imageResourceId: "abc123" }));
+
+    await screen.findByText("PM caption.");
+    fireEvent.error(container.querySelector("img") as HTMLImageElement);
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("PM caption.")).not.toBeNull();
+  });
+
+  it("renders a PM figure caption-only when the image carries no stored reference", async () => {
+    const { container } = renderReader(pmFigureContent({ alt: "no ref" }));
+
+    await screen.findByText("PM caption.");
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("renders an image-only PM figure with no caption", async () => {
+    const { container } = renderReader(pmFigureContent(undefined));
+
+    await screen.findByRole("figure");
     expect(container.querySelector("figcaption")).toBeNull();
   });
 });
