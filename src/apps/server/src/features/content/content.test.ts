@@ -1208,9 +1208,11 @@ describe("EPUB ingestion routes", () => {
       expect((row.nodeJson as PmNode).attrs?.["id"]).toBe(row.id);
     }
 
-    // The figure node keeps its image child and the resolved src.
+    // The figure node keeps its image child and the resolved src, now stamped with the stored-image
+    // reference (#312) so the read-only reader can serve it from the image store.
     const figureImage = byType("figure")?.content?.find((child) => child.type === "image");
     expect(figureImage?.attrs?.["src"]).toBe("img/p.png");
+    expect(figureImage?.attrs?.["imageResourceId"]).toBe(hashBytes(png));
 
     // The definition list keeps its term/description children (not flattened into empty bullets).
     expect(byType("definitionList")?.content?.map((child) => child.type)).toEqual([
@@ -1241,6 +1243,42 @@ describe("EPUB ingestion routes", () => {
     // The injected fail-loud sink received the <video> evidence, proving the path runs end to end.
     const videoEvidence = loggedEvidence.find((record) => record.tag === "video");
     expect(videoEvidence?.attributes["src"]).toBe("clip.mp4");
+  });
+
+  it("serves a reading unit's PM doc blocks on demand (#312), including a figure image's stored reference", async () => {
+    const png = pngBytes();
+    epubResponder = async () =>
+      figureChapter(
+        '<h1>Plate</h1><figure><img src="img/p.png" alt="A dot"/><figcaption>The caption.</figcaption></figure>',
+        [{ bytes: png, contentType: "image/png", src: "img/p.png" }]
+      );
+
+    const body = await figureBlocksOf("epub-pm-unit-content");
+    const unit = body.content.readingUnits[0];
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${body.content.workEntryId}/units/${unit?.entryId}/content`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const served = response.json() as ReadingUnitContentDto;
+
+    // The mdast blocks still travel (search/legacy), additive to the PM doc blocks the reader renders.
+    expect(served.blocks.length).toBeGreaterThan(0);
+
+    // The PM doc blocks are served in reading order, each row's entryId equal to its node's stable id.
+    expect(served.docBlocks.map((block) => block.type)).toEqual(["heading", "figure"]);
+    for (const docBlock of served.docBlocks) {
+      expect((docBlock.node as PmNode).attrs?.["id"]).toBe(docBlock.entryId);
+    }
+
+    // The figure's image node carries the stored-image reference the read-only reader serves (#312).
+    const figureNode = served.docBlocks.find((block) => block.type === "figure")?.node as
+      | PmNode
+      | undefined;
+    const image = figureNode?.content?.find((child) => child.type === "image");
+    expect(image?.attrs?.["imageResourceId"]).toBe(hashBytes(png));
   });
 
   it("writes no doc_blocks rows for a reading unit with no PM blocks", async () => {
@@ -1361,6 +1399,10 @@ describe("EPUB ingestion routes", () => {
     const introBody = introResponse.json() as ReadingUnitContentDto;
     expect(introBody.title).toBeUndefined();
     expect(introBody.blocks.map((block) => block.plaintext)).toEqual(["Intro."]);
+
+    // A Markdown work has no PM `doc_blocks` yet (the Markdown -> PM ingestion is a later slice), so
+    // the additive PM block list is empty; the reader falls back to its mdast blocks for such units.
+    expect(introBody.docBlocks).toEqual([]);
   });
 
   it("returns 404 for a unit that is not part of the requested work", async () => {

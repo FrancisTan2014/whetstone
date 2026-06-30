@@ -212,3 +212,16 @@ export function PmDocument({ document }: PmDocumentProps): React.ReactElement {
   const content = document as unknown as JSONNodeType;
   return <>{renderDocument({ content })}</>;
 }
+
+export interface PmBlockProps {
+  readonly node: DocumentNodeJSON;
+}
+
+// Render a single stored PM block node (not the whole doc) to React, reusing the same per-node
+// mapping. The live reader memoizes one of these per block (#72) and stamps the addressable
+// `data-block-id` on its own wrapper element, so the block's own element stays unaddressed here
+// (`topLevelBlockAttrs` only addresses a child of a `doc`, and this node has no `doc` parent).
+export function PmBlock({ node }: PmBlockProps): React.ReactElement {
+  const content = node as unknown as JSONNodeType;
+  return <>{renderDocument({ content })}</>;
+}

@@ -87,7 +87,9 @@ const table = Node.create({ content: "tableRow+", group: "block", name: "table" 
 // figure; a missing image degrades to its caption at render time, never a stray heading.
 const image = Node.create({
   addAttributes() {
-    return { alt: { default: null }, src: { default: null } };
+    // `imageResourceId` references a stored, content-addressed EPUB image (resolved at ingest, #311/#312)
+    // so the read-only reader can serve it from the image store; `src` is the transient source href.
+    return { alt: { default: null }, imageResourceId: { default: null }, src: { default: null } };
   },
   name: "image"
 });

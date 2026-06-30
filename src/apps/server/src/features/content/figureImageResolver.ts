@@ -4,6 +4,7 @@ import {
   type DecomposedBlock,
   type DecomposedFigureImage
 } from "@whetstone/domain";
+import type { DocumentNodeJSON } from "@whetstone/document";
 
 import type { ParsedEpubChapter, ParsedEpubImage } from "../../files/epubSource.js";
 import {
@@ -11,7 +12,7 @@ import {
   type ImageResourceStore
 } from "../../files/imageResourceStore.js";
 import type { PersistableBlock, PersistableReadingUnit } from "./blockWriter.js";
-import { htmlToDocument } from "./htmlToDocument.js";
+import { htmlToDocument, type IngestedBlock } from "./htmlToDocument.js";
 
 type ImageStore = Pick<ImageResourceStore, "store">;
 
@@ -43,6 +44,44 @@ async function storeFigureImage(
   const stored = await store.store({ bytes, contentType: resource.contentType });
 
   return stored.id;
+}
+
+// The transient `src` of a PM `image` node, or null when it carries none. Image nodes always come
+// from `htmlToDocument`'s parse rule, so `attrs` is present; a missing/empty `src` resolves to null.
+function readImageSrc(attrs: Record<string, unknown>): string | null {
+  const src = attrs["src"];
+  return typeof src === "string" ? src : null;
+}
+
+// Stamp every PM `image` node in a chapter's decomposed blocks with `imageResourceId`: the same
+// content-addressed resolution applied to the mdast figure blocks, so the persisted `doc_blocks`
+// figure/image nodes (#311) carry a stored-image reference the read-only reader serves (#312).
+// Display-only and EPUB-only — an unresolvable image keeps its null reference and degrades to caption.
+async function stampDocBlockImages(
+  blocks: ReadonlyArray<IngestedBlock>,
+  imageBySrc: ReadonlyMap<string, ParsedEpubImage>,
+  store: ImageStore
+): Promise<void> {
+  const images: DocumentNodeJSON[] = [];
+  const collect = (node: DocumentNodeJSON): void => {
+    if (node.type === "image") {
+      images.push(node);
+    }
+    for (const child of node.content ?? []) {
+      collect(child);
+    }
+  };
+  for (const block of blocks) {
+    collect(block.node);
+  }
+
+  for (const image of images) {
+    // Image nodes always carry attrs (id + the parse-rule src/alt), so reading them is unconditional.
+    const src = readImageSrc(image.attrs!);
+    const imageResourceId =
+      src === null ? null : await storeFigureImage({ src }, imageBySrc, store);
+    image.attrs = { ...image.attrs, imageResourceId };
+  }
 }
 
 async function resolveBlock(
@@ -99,6 +138,10 @@ export async function resolveChapters(
     const ingested = htmlToDocument(chapter.html);
     const imageBySrc = new Map(chapter.images.map((image) => [image.src, image]));
     const blocks: PersistableBlock[] = [];
+
+    // Stamp the PM figure/image nodes with their stored-image ids before they become doc_blocks (#312),
+    // reusing this chapter's image map and store — the same resolution the mdast figure blocks get.
+    await stampDocBlockImages(ingested.blocks, imageBySrc, store);
 
     for (const block of decomposed.blocks) {
       const resolved = await resolveBlock(block, imageBySrc, store);

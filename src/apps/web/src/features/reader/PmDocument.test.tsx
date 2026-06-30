@@ -2,7 +2,7 @@
 import { cleanup, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PmDocument } from "./PmDocument";
+import { PmBlock, PmDocument } from "./PmDocument";
 import { assignNodeIds, type DocumentNodeJSON } from "@whetstone/document";
 
 // A hand-built PM document that exercises every node type at least once with its attributes present:
@@ -406,5 +406,50 @@ describe("PmDocument theme-agnostic structure", () => {
 
     // Day/Night is purely CSS variables on an ancestor; the rendered markup never branches on theme.
     expect(nightHtml).toBe(dayHtml);
+  });
+});
+
+describe("PmBlock single-node rendering", () => {
+  it("renders one block node directly, without the doc wrapper", () => {
+    const node = {
+      attrs: { id: "blk-1" },
+      content: [{ text: "Just a paragraph.", type: "text" }],
+      type: "paragraph"
+    } as unknown as DocumentNodeJSON;
+
+    const { container } = render(<PmBlock node={node} />);
+    const paragraph = container.querySelector("p");
+
+    expect(paragraph?.textContent).toBe("Just a paragraph.");
+    // No `.pmDocument` doc root and no inline addressable id: the live reader wraps each block in its
+    // own element and stamps `data-block-id` there (a per-block render has no `doc` parent).
+    expect(container.querySelector(".pmDocument")).toBeNull();
+    expect(paragraph?.getAttribute("data-block-id")).toBeNull();
+  });
+
+  it("renders a heading block at its level", () => {
+    const node = {
+      attrs: { id: "blk-h", level: 3 },
+      content: [{ text: "Section", type: "text" }],
+      type: "heading"
+    } as unknown as DocumentNodeJSON;
+
+    const { container } = render(<PmBlock node={node} />);
+
+    expect(container.querySelector("h3")?.textContent).toBe("Section");
+  });
+
+  it("renders an unknown block's raw markup as inert escaped text", () => {
+    const node = {
+      attrs: { html: "<script>alert(1)</script>", id: "blk-u" },
+      type: "unknown"
+    } as unknown as DocumentNodeJSON;
+
+    const { container } = render(<PmBlock node={node} />);
+    const pre = container.querySelector("pre.readerUnknown");
+
+    expect(pre?.textContent).toBe("<script>alert(1)</script>");
+    // The markup is shown as text, never parsed into a live element.
+    expect(container.querySelector("script")).toBeNull();
   });
 });
