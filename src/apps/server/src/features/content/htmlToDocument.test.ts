@@ -1,0 +1,265 @@
+import { describe, expect, it } from "vitest";
+
+import { isValidDocument, parseDocument, type DocumentNodeJSON } from "@whetstone/document";
+
+import { htmlToDocument } from "./htmlToDocument.js";
+
+// Synthetic, structurally-faithful O'Reilly HTMLBook fixtures with neutral placeholder text. The real
+// DDIA HTML is copyrighted, so these reproduce the publisher's element shapes (figures, definition
+// lists, admonitions, calloutlists, endnote markers) without any of its prose.
+
+// Concatenate the text of a node's whole subtree, so assertions check captured text without depending
+// on the exact inline-node shape.
+function textOf(node: DocumentNodeJSON): string {
+  if (node.text !== undefined) {
+    return node.text;
+  }
+
+  return (node.content ?? []).map(textOf).join("");
+}
+
+function blocksOfType(
+  blocks: ReadonlyArray<{ type: string; node: DocumentNodeJSON }>,
+  type: string
+) {
+  return blocks.filter((block) => block.type === type);
+}
+
+function childrenOf(node: DocumentNodeJSON): DocumentNodeJSON[] {
+  return node.content ?? [];
+}
+
+function findDescendant(node: DocumentNodeJSON, type: string): DocumentNodeJSON | undefined {
+  if (node.type === type) {
+    return node;
+  }
+
+  for (const child of childrenOf(node)) {
+    const found = findDescendant(child, type);
+
+    if (found !== undefined) {
+      return found;
+    }
+  }
+
+  return undefined;
+}
+
+describe("htmlToDocument", () => {
+  it("decomposes O'Reilly figures into figure/image/caption blocks, including a bare figure", () => {
+    const captioned = Array.from(
+      { length: 14 },
+      (_unused, index) =>
+        `<figure><img src="fig-${index}.png" alt="Figure ${index} alt"/>` +
+        `<figcaption>Caption ${index} text.</figcaption></figure>`
+    ).join("");
+    const html = `${captioned}<figure><img src="bare.png"/></figure>`;
+
+    const { blocks, doc, evidence } = htmlToDocument(html);
+    const figures = blocksOfType(blocks, "figure");
+
+    expect(figures).toHaveLength(15);
+
+    const first = figures[0]!.node;
+    const image = findDescendant(first, "image")!;
+
+    expect(image.attrs).toMatchObject({ alt: "Figure 0 alt", src: "fig-0.png" });
+    expect(textOf(findDescendant(first, "figureCaption")!)).toBe("Caption 0 text.");
+
+    const withCaption = figures.filter(
+      (figure) => findDescendant(figure.node, "figureCaption") !== undefined
+    );
+
+    expect(withCaption).toHaveLength(14);
+
+    const bare = figures.find(
+      (figure) => findDescendant(figure.node, "figureCaption") === undefined
+    )!;
+
+    expect(findDescendant(bare.node, "image")!.attrs).toMatchObject({ alt: null, src: "bare.png" });
+    expect(evidence).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("ingests a definition list, an admonition callout, and calloutlist/ordered lists", () => {
+    const html =
+      "<dl><dt>Services</dt><dd>Online request/response.</dd>" +
+      "<dt>Batch</dt><dd>Bounded input.</dd>" +
+      "<dt>Stream</dt><dd>Unbounded input.</dd></dl>" +
+      '<div data-type="note"><p>This is an admonition.</p></div>' +
+      "<ul><li>A bullet.</li></ul>" +
+      '<ol class="calloutlist"><li>First step.</li><li>Second step.</li></ol>' +
+      '<ol start="5"><li>Continues.</li></ol>';
+
+    const { blocks, doc, evidence } = htmlToDocument(html);
+
+    const list = blocksOfType(blocks, "definitionList")[0]!.node;
+    const childTypes = childrenOf(list).map((child) => child.type);
+
+    expect(childTypes).toEqual([
+      "definitionTerm",
+      "definitionDescription",
+      "definitionTerm",
+      "definitionDescription",
+      "definitionTerm",
+      "definitionDescription"
+    ]);
+    expect(textOf(childrenOf(list)[0]!)).toBe("Services");
+    expect(textOf(childrenOf(list)[1]!)).toBe("Online request/response.");
+
+    const callout = blocksOfType(blocks, "callout")[0]!;
+
+    expect(callout.node.attrs).toMatchObject({ kind: "note", marker: null });
+    expect(textOf(callout.node)).toBe("This is an admonition.");
+
+    const orderedLists = blocksOfType(blocks, "orderedList");
+
+    expect(orderedLists[0]!.node.attrs).toMatchObject({ start: 1 });
+    const firstItem = childrenOf(orderedLists[0]!.node)[0]!;
+    expect(firstItem.type).toBe("listItem");
+    expect(childrenOf(firstItem)).toHaveLength(1);
+    expect(childrenOf(firstItem)[0]!.type).toBe("paragraph");
+    expect(textOf(firstItem)).toBe("First step.");
+    expect(orderedLists[1]!.node.attrs).toMatchObject({ start: 5 });
+
+    expect(blocksOfType(blocks, "bulletList")).toHaveLength(1);
+    expect(evidence).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("ingests heading, blockquote, and a table with spanned cells", () => {
+    const html =
+      "<h2>Chapter Heading</h2>" +
+      "<blockquote><p>Quoted line.</p></blockquote>" +
+      '<table><tr><th colspan="2">Header</th></tr>' +
+      '<tr><td>A</td><td rowspan="2">B</td></tr></table>';
+
+    const { blocks } = htmlToDocument(html);
+
+    const heading = blocksOfType(blocks, "heading")[0]!;
+
+    expect(heading.node.attrs).toMatchObject({ level: 2 });
+    expect(textOf(heading.node)).toBe("Chapter Heading");
+
+    expect(textOf(blocksOfType(blocks, "blockquote")[0]!.node)).toBe("Quoted line.");
+
+    const table = blocksOfType(blocks, "table")[0]!.node;
+    const header = findDescendant(table, "tableHeader")!;
+
+    expect(header.attrs).toMatchObject({ colspan: 2, rowspan: 1 });
+
+    const cells = childrenOf(childrenOf(table)[1]!);
+
+    expect(cells[0]!.attrs).toMatchObject({ colspan: 1, rowspan: 1 });
+    expect(cells[1]!.attrs).toMatchObject({ colspan: 1, rowspan: 2 });
+  });
+
+  it("reads code-block language from data attribute, language- class, or neither", () => {
+    const html =
+      '<pre data-code-language="python">print()</pre>' +
+      "<pre>plain text</pre>" +
+      '<pre class="hljs language-js">const x = 1;</pre>' +
+      '<pre class="sourcecode">no lang token</pre>';
+
+    const { blocks } = htmlToDocument(html);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+
+    expect(codeBlocks.map((block) => block.node.attrs?.["language"])).toEqual([
+      "python",
+      null,
+      "js",
+      null
+    ]);
+    expect(textOf(codeBlocks[0]!.node)).toBe("print()");
+  });
+
+  it("captures footnote markers (href, data-target, or unresolved) and their target", () => {
+    const html =
+      '<p>First reference<a data-type="noteref" href="#fn9">9</a>.</p>' +
+      '<p>Second reference<a data-type="noteref" data-target="fn12">12</a>.</p>' +
+      '<p>Third reference<a data-type="noteref" href="endnotes.html">x</a>.</p>' +
+      '<aside data-type="footnote" id="fn9"><p>The ninth note.</p></aside>';
+
+    const { blocks } = htmlToDocument(html);
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    const marker0 = findDescendant(paragraphs[0]!.node, "footnoteMarker")!;
+    expect(marker0.attrs).toMatchObject({ label: "9", noteKind: "footnote", refId: "fn9" });
+
+    const marker1 = findDescendant(paragraphs[1]!.node, "footnoteMarker")!;
+    expect(marker1.attrs).toMatchObject({ label: "12", refId: "fn12" });
+
+    const marker2 = findDescendant(paragraphs[2]!.node, "footnoteMarker")!;
+    expect(marker2.attrs).toMatchObject({ label: "x", refId: null });
+
+    const target = blocksOfType(blocks, "footnoteTarget")[0]!;
+    expect(target.node.attrs).toMatchObject({ refId: "fn9" });
+    expect(textOf(target.node)).toBe("The ninth note.");
+  });
+
+  it("flags an unknown block element with evidence and preserves its neighbors", () => {
+    const html =
+      "<p>Before the widget.</p>" +
+      '<video src="clip.mp4" controls>fallback</video>' +
+      "<p>After the widget.</p>";
+
+    const { blocks, doc, evidence } = htmlToDocument(html);
+
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "unknown", "paragraph"]);
+
+    const unknown = blocksOfType(blocks, "unknown")[0]!;
+
+    expect(unknown.node.attrs?.["tag"]).toBe("video");
+    expect(unknown.node.attrs?.["html"]).toContain("<video");
+    expect(unknown.node.attrs?.["html"]).toContain("clip.mp4");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("video");
+    expect(evidence[0]!.attributes["src"]).toBe("clip.mp4");
+    expect(evidence[0]!.path).toBe("body>video");
+    expect(evidence[0]!.adjacentText).toContain("Before the widget.");
+
+    expect(textOf(blocks[0]!.node)).toBe("Before the widget.");
+    expect(textOf(blocks[2]!.node)).toBe("After the widget.");
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("builds an nth-of-type path and empty adjacent text for a nested only-child unknown", () => {
+    const html =
+      '<div data-type="sidebar"><p>Sidebar copy.</p></div>' + "<div><canvas></canvas></div>";
+
+    const { blocks, evidence } = htmlToDocument(html);
+
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "unknown"]);
+    expect(textOf(blocks[0]!.node)).toBe("Sidebar copy.");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("canvas");
+    expect(evidence[0]!.path).toBe("body>div:nth-of-type(2)>canvas");
+    expect(evidence[0]!.adjacentText).toBe("");
+  });
+
+  it("preserves tolerated inline formatting as plain text (nothing dropped)", () => {
+    const html = "<p>Plain <em>emphasized</em> and <code>inline code</code> end.</p>";
+
+    const { blocks } = htmlToDocument(html);
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(textOf(paragraph.node)).toBe("Plain emphasized and inline code end.");
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace", "   \n  "]
+  ])("yields a valid empty paragraph with no evidence for %s input", (_label, html) => {
+    const { blocks, doc, evidence } = htmlToDocument(html);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.type).toBe("paragraph");
+    expect(blocks[0]!.node.content).toBeUndefined();
+    expect(blocks[0]!.id).toEqual(expect.any(String));
+    expect(evidence).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+    expect(() => parseDocument(doc)).not.toThrow();
+  });
+});

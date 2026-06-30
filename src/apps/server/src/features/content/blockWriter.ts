@@ -1,7 +1,8 @@
 import type { BlockType, EntryId } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { blocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import { blocks, docBlocks, entries, entryLinks, readingUnits } from "../../db/schema.js";
+import type { IngestedBlock, IngestionEvidence } from "./htmlToDocument.js";
 import { insertInBatches } from "./insertBatching.js";
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -21,6 +22,15 @@ export type PersistableBlock = Readonly<{
 
 export type PersistableReadingUnit = Readonly<{
   blocks: ReadonlyArray<PersistableBlock>;
+  // The chapter's decomposed ProseMirror/Tiptap block rows (#311): one entry per top-level PM node,
+  // each carrying its stable id, type, and node JSON. Persisted to `doc_blocks` as a transitional
+  // dual-write — the reader still renders the mdast `blocks` rows; #312 switches it to these PM
+  // blocks, after which mdast block storage is retired. Empty on paths with no PM document.
+  docBlocks: ReadonlyArray<IngestedBlock>;
+  // Fail-loud evidence for this chapter's unrecognized block-level elements (#311). Transient: it
+  // rides along so surviving units' evidence reaches the ingestion logger after filtering, and is
+  // never written to a column. Defaults to an empty array so callers can flat-map without a guard.
+  evidence: ReadonlyArray<IngestionEvidence>;
   title: string | undefined;
 }>;
 
@@ -34,14 +44,17 @@ export type WriteReadingUnitsInput = Readonly<{
 // Persist decomposed reading units and their blocks for a work, in a single batch,
 // continuing the work's reading-unit ordering from `startOrder`. Shared by every
 // format adapter (Markdown, EPUB) so block/link/entry creation has one owner.
-// Reading units that decompose to zero supported blocks (e.g. an EPUB image-only or
-// empty title page) carry no readable content, so they are skipped entirely rather
-// than persisted as empty units or sent to an empty `values()` insert.
+// A unit is kept when it has either legacy mdast blocks OR fidelity PM `docBlocks`:
+// dropping a unit with no mdast blocks would silently lose its PM nodes — e.g. an
+// unknown-only publisher construct (`<video>`) whose fidelity path emits an `unknown`
+// node — which would violate the #311 fail-loud invariant. A unit empty on both sides
+// (an EPUB image-only or empty title page) carries no content and is skipped, so no
+// empty unit or empty `values()` insert is produced.
 export async function writeReadingUnits(
   tx: Transaction,
   input: WriteReadingUnitsInput
 ): Promise<void> {
-  const units = input.units.filter((unit) => unit.blocks.length > 0);
+  const units = input.units.filter((unit) => unit.blocks.length > 0 || unit.docBlocks.length > 0);
 
   if (units.length === 0) {
     return;
@@ -67,6 +80,15 @@ export async function writeReadingUnits(
     readingUnitEntryId: string;
     workEntryId: EntryId;
   }[] = [];
+  // Transitional PM block rows (#311): one row per top-level PM node, keyed by its stable id.
+  const docBlockRows: {
+    id: string;
+    nodeJson: unknown;
+    orderIndex: number;
+    readingUnitEntryId: string;
+    type: string;
+    workEntryId: EntryId;
+  }[] = [];
   const linkRows: { fromEntryId: string; toEntryId: string; type: "contains" }[] = [];
 
   units.forEach((unit, unitIndex) => {
@@ -79,6 +101,20 @@ export async function writeReadingUnits(
       workEntryId: input.workEntryId
     });
     linkRows.push({ fromEntryId: input.workEntryId, toEntryId: unitEntryId, type: "contains" });
+
+    // Dual-write the chapter's decomposed PM block rows (#311), preserving the stable PM node id as
+    // the row id so #312 can map a block row back to its document node. No `entries`/`entry_links`
+    // rows yet — full graph integration is a later storage slice.
+    unit.docBlocks.forEach((docBlock, docBlockIndex) => {
+      docBlockRows.push({
+        id: docBlock.id,
+        nodeJson: docBlock.node,
+        orderIndex: docBlockIndex,
+        readingUnitEntryId: unitEntryId,
+        type: docBlock.type,
+        workEntryId: input.workEntryId
+      });
+    });
 
     unit.blocks.forEach((block, blockIndex) => {
       const blockEntryId = input.createEntryId();
@@ -105,5 +141,6 @@ export async function writeReadingUnits(
   await insertInBatches(entryRows, (batch) => tx.insert(entries).values(batch));
   await insertInBatches(readingUnitRows, (batch) => tx.insert(readingUnits).values(batch));
   await insertInBatches(blockRows, (batch) => tx.insert(blocks).values(batch));
+  await insertInBatches(docBlockRows, (batch) => tx.insert(docBlocks).values(batch));
   await insertInBatches(linkRows, (batch) => tx.insert(entryLinks).values(batch));
 }

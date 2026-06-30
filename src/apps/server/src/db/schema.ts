@@ -58,6 +58,33 @@ export const readingUnits = pgTable(
   (table) => [index("reading_units_work_idx").on(table.workEntryId)]
 );
 
+// Decomposed ProseMirror/Tiptap block rows (#311): one row per top-level PM node of a chapter's
+// fidelity-ingested document, keyed by the node's stable id (from `assignNodeIds`). `node_json`
+// carries that PM node (with its nested stable ids). This is the transitional bedrock content
+// storage — the reader still renders the mdast `blocks` rows above until #312 switches it to these
+// PM blocks, after which mdast block storage is retired. Written alongside `blocks` (dual-write) by
+// EPUB ingestion; the Markdown path writes none yet. Full Entry/`entry_links` integration is a later
+// storage slice, so these rows are not yet `entries`.
+export const docBlocks = pgTable(
+  "doc_blocks",
+  {
+    id: text("id").primaryKey(),
+    nodeJson: jsonb("node_json").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    readingUnitEntryId: text("reading_unit_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    type: text("type").notNull(),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id)
+  },
+  (table) => [
+    index("doc_blocks_reading_unit_idx").on(table.readingUnitEntryId),
+    index("doc_blocks_work_idx").on(table.workEntryId)
+  ]
+);
+
 // Atomic, stably-identified content blocks. `mdast_json` stores the block's mdast
 // node for safe rendering/export; `plaintext` backs search. A re-ingestion content
 // diff preserves `entry_id` for matched blocks; removed blocks are soft-deleted

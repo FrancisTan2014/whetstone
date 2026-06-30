@@ -47,6 +47,11 @@ export async function ingestEpub(
   const resolved = await resolveChapters(parsed.chapters, dependencies.imageResourceStore);
   const units = applyContentFilters(resolved, defaultContentFilters);
 
+  // Fail-loud (#311): surface every unrecognized block-level element from the surviving units to the
+  // injected sink, so a publisher construct the schema could not model is recorded, not dropped
+  // silently. Called unconditionally (an empty batch is a no-op) so the path runs in the real flow.
+  dependencies.ingestionLogger(units.flatMap((unit) => unit.evidence));
+
   const workEntryId = toEntryId(dependencies.createEntryId());
   const authorId = await dependencies.db.transaction(async (tx) => {
     const resolvedAuthorId = await resolveAuthorByName(tx, dependencies, parsed.metadata.author);

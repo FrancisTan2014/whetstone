@@ -85,12 +85,15 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
     .where(and(eq(readingUnits.workEntryId, workEntryId), isNull(blocks.deletedAt)))
     .orderBy(asc(blocks.orderIndex));
 
-  const readingUnitDtos = unitRows.map((unit) =>
-    toReadingUnitDto(
-      unit,
-      blockRows.filter((block) => block.readingUnitEntryId === unit.entryId).map(toBlockDto)
-    )
-  );
+  const readingUnitDtos = unitRows.flatMap((unit) => {
+    const unitBlocks = blockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
+
+    // A reading unit with no non-deleted mdast blocks — an unknown-only / PM-only chapter (#311,
+    // persisted so its `doc_blocks` can reference the unit) or a unit whose blocks were all
+    // soft-deleted — has nothing the mdast reader can render, so it is excluded here. The reader is
+    // mdast until #312 switches it to the PM `doc_blocks` rows.
+    return unitBlocks.length === 0 ? [] : [toReadingUnitDto(unit, unitBlocks.map(toBlockDto))];
+  });
 
   return { readingUnits: readingUnitDtos, workEntryId };
 }
@@ -149,7 +152,12 @@ export async function loadWorkStructure(
     .orderBy(asc(readingUnits.orderIndex));
 
   return {
-    readingUnits: rows.map((row) => toStructureDto(row, row.blockCount)),
+    // Exclude units with no renderable mdast blocks (an unknown-only / PM-only chapter persisted for
+    // its `doc_blocks`, or a unit whose blocks were all soft-deleted); the mdast reader shows only
+    // units with content until #312 swaps it to the PM block rows (mirrors loadWorkContent).
+    readingUnits: rows
+      .filter((row) => row.blockCount > 0)
+      .map((row) => toStructureDto(row, row.blockCount)),
     workEntryId
   };
 }

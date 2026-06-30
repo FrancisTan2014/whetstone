@@ -16,9 +16,15 @@
     "@lingo-reader/epub-parser": "^0.4.6",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@whetstone/contracts": "workspace:*",
+    "@whetstone/document": "workspace:*",
     "@whetstone/domain": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.5",
+    "jsdom": "^26.0.0",
+    "prosemirror-model": "^1.25.9",
     "wordpos": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7"
   }
 }

@@ -8,6 +8,7 @@ import type { PdfToMarkdown } from "../../files/pdfToMarkdown.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
 import { workSources } from "../../db/schema.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
+import type { IngestionEvidence } from "./htmlToDocument.js";
 import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
 
@@ -22,6 +23,10 @@ export type ContentDependencies = Readonly<{
   epubParser: EpubParser;
   epubUploadLimitBytes: number;
   imageResourceStore: Pick<ImageResourceStore, "store">;
+  // Fail-loud sink for the structured evidence of unrecognized block-level elements found during
+  // EPUB ingestion (#311). Injected so the ingestion flow records what it could not model rather
+  // than silently dropping it; the composition root logs through the server logger / console.
+  ingestionLogger: (records: ReadonlyArray<IngestionEvidence>) => void;
   pdfToMarkdown: PdfToMarkdown;
   sourceFileStore: SourceFileStore;
 }>;

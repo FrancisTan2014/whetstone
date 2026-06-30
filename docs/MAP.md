@@ -189,7 +189,19 @@ can navigate them from another package.
   `ContentFilter` plugins (`units -> units`) registered in one place (`defaultContentFilters`); no
   filter is the identity. The first plugin (`dropPublisherBoilerplateFilter`) drops high-confidence
   publisher front/back matter units (公版书/关于我们/制作说明/联系/7sbook markers in a unit's title or
-  text) so real chapters stay intact; the Markdown path can reuse the same pipeline later. Both writers
+  text) so real chapters stay intact; the Markdown path can reuse the same pipeline later.
+  `htmlToDocument.ts` is the server-side fidelity ingestion seam (#311, jsdom + prosemirror-model):
+  one chapter's XHTML → a `@whetstone/document` PM/Tiptap doc via a `DOMParser` built from an explicit
+  rules array bound to `documentSchema` (the pure package carries no `parseDOM` specs), decomposed into
+  block rows; fail-loud — any unrecognized block-level element becomes an `unknown` node (raw HTML kept
+  verbatim) and emits a structured evidence record, so nothing is silently dropped. `ingestEpub` wires
+  this into the real flow: `resolveChapters` runs `htmlToDocument` per chapter and the document's
+  top-level PM nodes are dual-written at the block-row boundary to the `doc_blocks` table (one row per
+  node, keyed by the node's stable id from `assignNodeIds`, with `node_json` carrying the PM node)
+  alongside the existing mdast `blocks` rows (transitional — the reader still renders the mdast blocks
+  until #312 swaps it to these PM block rows, after which mdast block storage is retired); the
+  surviving units' fail-loud evidence is logged through the injected
+  `ContentDependencies.ingestionLogger`. Both writers
   bulk-insert through `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
   bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
   rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on

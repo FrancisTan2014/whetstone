@@ -1,0 +1,394 @@
+import { JSDOM } from "jsdom";
+import { DOMParser, type ParseRule } from "prosemirror-model";
+
+import {
+  assignNodeIds,
+  documentSchema,
+  type DocumentNodeJSON,
+  serializeDocument
+} from "@whetstone/document";
+
+// Server-side fidelity ingestion: turn one source HTML fragment (an EPUB chapter's XHTML) into a
+// ProseMirror/Tiptap document for the whetstone content bedrock (#310), then decompose it into block
+// rows. The invariant is FAIL-LOUD: nothing a publisher wrote is silently dropped. Every block-level
+// element the schema does not recognize becomes a conservative `unknown` node (its raw HTML preserved
+// verbatim) AND emits a structured evidence record so the gap is visible, not invisible.
+//
+// Why the DOM work lives here and not in `@whetstone/document`: parse rules are DOM-typed
+// (`getAttrs` reads `HTMLElement` attributes) and depend on jsdom, so they belong to the ingestion
+// layer. The pure package stays `lib: ES2022` with no DOM and no `parseDOM` specs — its schema and
+// JSON round-trip never touch a browser. We therefore build the `DOMParser` from an EXPLICIT rules
+// array bound to `documentSchema`'s node types rather than `DOMParser.fromSchema` (which would need
+// `parseDOM` specs the pure package intentionally does not carry).
+
+// A record of one block-level element the schema did not recognize, captured so a publisher construct
+// is never dropped without a trace.
+export interface IngestionEvidence {
+  tag: string;
+  attributes: Record<string, string>;
+  path: string;
+  adjacentText: string;
+}
+
+// One top-level block of the ingested document: its stable id, node type, and the ProseMirror node
+// JSON to persist as a Block row.
+export interface IngestedBlock {
+  id: string;
+  type: string;
+  node: DocumentNodeJSON;
+}
+
+// The full result of ingesting one HTML fragment: the whole document, its decomposition into block
+// rows, and the fail-loud evidence log of unrecognized elements.
+export interface HtmlIngestionResult {
+  doc: DocumentNodeJSON;
+  blocks: IngestedBlock[];
+  evidence: IngestionEvidence[];
+}
+
+// Callout/admonition kinds the schema recognizes (O'Reilly-style `<div data-type="note">` boxes).
+const CALLOUT_KINDS = ["note", "warning", "tip", "caution", "important"] as const;
+
+// `data-type` values that mark an element as recognized regardless of its tag: the callout kinds plus
+// the footnote marker (`a[data-type=noteref]`) and footnote target (`*[data-type=footnote]`).
+const RECOGNIZED_DATA_TYPES = new Set<string>([...CALLOUT_KINDS, "noteref", "footnote"]);
+
+// Block-level tags that have a parse rule below. An element with one of these tags is recognized and
+// never flagged.
+const RECOGNIZED_TAGS = new Set<string>([
+  "blockquote",
+  "dd",
+  "dl",
+  "dt",
+  "figcaption",
+  "figure",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "img",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "table",
+  "td",
+  "th",
+  "tr",
+  "ul"
+]);
+
+// Inline/formatting and generic-container tags we descend through and keep the text of, but never
+// flag. Inline marks (em/strong/code/...) are intentionally not in the #310 schema yet (a later
+// slice), so tolerated inline formatting is descended and its text preserved as plain text.
+const TOLERATED_TAGS = new Set<string>([
+  "a",
+  "abbr",
+  "article",
+  "aside",
+  "b",
+  "br",
+  "cite",
+  "code",
+  "col",
+  "colgroup",
+  "del",
+  "div",
+  "em",
+  "footer",
+  "header",
+  "i",
+  "ins",
+  "kbd",
+  "main",
+  "mark",
+  "nav",
+  "q",
+  "s",
+  "samp",
+  "section",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "sup",
+  "tbody",
+  "tfoot",
+  "thead",
+  "time",
+  "u",
+  "var",
+  "wbr"
+]);
+
+const ADJACENT_TEXT_LIMIT = 80;
+
+type ElementKind = "recognized" | "tolerated" | "unknown";
+
+// Read a code block's language from `data-code-language`, then from a `language-<x>` class token
+// (the de-facto highlight.js convention), falling back to `null` when neither is present.
+function readCodeLanguage(element: HTMLElement): string | null {
+  const explicit = element.getAttribute("data-code-language");
+
+  if (explicit !== null) {
+    return explicit;
+  }
+
+  const className = element.getAttribute("class");
+
+  if (className === null) {
+    return null;
+  }
+
+  const prefix = "language-";
+  const token = className.split(/\s+/).find((part) => part.startsWith(prefix));
+
+  if (token === undefined) {
+    return null;
+  }
+
+  return token.slice(prefix.length);
+}
+
+// Read an ordered list's `start`, defaulting to 1 when absent.
+function readOrderedListAttrs(element: HTMLElement): { start: number } {
+  const start = element.getAttribute("start");
+
+  return { start: start === null ? 1 : Number.parseInt(start, 10) };
+}
+
+// Read a table cell/header span attribute, defaulting to 1 when absent.
+function readSpan(element: HTMLElement, name: string): number {
+  const value = element.getAttribute(name);
+
+  return value === null ? 1 : Number.parseInt(value, 10);
+}
+
+function readCellAttrs(element: HTMLElement): { colspan: number; rowspan: number } {
+  return { colspan: readSpan(element, "colspan"), rowspan: readSpan(element, "rowspan") };
+}
+
+function readImageAttrs(element: HTMLElement): { alt: string | null; src: string | null } {
+  return { alt: element.getAttribute("alt"), src: element.getAttribute("src") };
+}
+
+// A callout carries its kind (the `data-type` value); the optional numbered marker is wired by a
+// later slice, so it is null at ingestion.
+function readCalloutAttrs(element: HTMLElement): { kind: string | null; marker: null } {
+  return { kind: element.getAttribute("data-type"), marker: null };
+}
+
+// Element.textContent is typed `string | null`, but is always a string for an element; `String()`
+// normalizes it without an unreachable null-branch so branch coverage stays exact.
+function elementText(element: HTMLElement): string {
+  return String(element.textContent).trim();
+}
+
+// A footnote marker references its target by `refId`: a same-document `href="#id"`, else an explicit
+// `data-target`, else null (an out-of-document endnote the reader slice resolves separately).
+function readRefId(element: HTMLElement): string | null {
+  const href = element.getAttribute("href");
+
+  if (href !== null && href.startsWith("#")) {
+    return href.slice(1);
+  }
+
+  return element.getAttribute("data-target");
+}
+
+function readFootnoteMarkerAttrs(element: HTMLElement): {
+  label: string;
+  noteKind: string;
+  refId: string | null;
+} {
+  return { label: elementText(element), noteKind: "footnote", refId: readRefId(element) };
+}
+
+function readFootnoteTargetAttrs(element: HTMLElement): { refId: string | null } {
+  return { refId: element.getAttribute("id") };
+}
+
+// The unknown fallback reads back the raw HTML and original tag the pre-walk stamped onto the
+// sentinel, so the publisher construct is preserved verbatim in the model.
+function readUnknownAttrs(element: HTMLElement): { html: string | null; tag: string | null } {
+  return { html: element.getAttribute("data-raw"), tag: element.getAttribute("data-tag") };
+}
+
+// One parse rule per heading level so the level is a static attr rather than a parsed one.
+const headingRules: ParseRule[] = [1, 2, 3, 4, 5, 6].map((level) => ({
+  attrs: { level },
+  node: "heading",
+  tag: `h${level}`
+}));
+
+// One parse rule per callout kind, each stamping the kind from its `data-type`.
+const calloutRules: ParseRule[] = CALLOUT_KINDS.map((kind) => ({
+  getAttrs: readCalloutAttrs,
+  node: "callout",
+  tag: `div[data-type=${kind}]`
+}));
+
+// The explicit rules array bound to `documentSchema`'s node types (see file header for why this is
+// not `DOMParser.fromSchema`). Order matters only where selectors overlap; here they are disjoint.
+const RULES: ParseRule[] = [
+  ...headingRules,
+  { node: "paragraph", tag: "p" },
+  { node: "blockquote", tag: "blockquote" },
+  {
+    getAttrs: (element) => ({ language: readCodeLanguage(element) }),
+    node: "codeBlock",
+    preserveWhitespace: "full",
+    tag: "pre"
+  },
+  { node: "bulletList", tag: "ul" },
+  { getAttrs: readOrderedListAttrs, node: "orderedList", tag: "ol" },
+  { node: "listItem", tag: "li" },
+  { node: "table", tag: "table" },
+  { node: "tableRow", tag: "tr" },
+  { getAttrs: readCellAttrs, node: "tableCell", tag: "td" },
+  { getAttrs: readCellAttrs, node: "tableHeader", tag: "th" },
+  { node: "figure", tag: "figure" },
+  { getAttrs: readImageAttrs, node: "image", tag: "img" },
+  { node: "figureCaption", tag: "figcaption" },
+  { node: "definitionList", tag: "dl" },
+  { node: "definitionTerm", tag: "dt" },
+  { node: "definitionDescription", tag: "dd" },
+  ...calloutRules,
+  { getAttrs: readFootnoteMarkerAttrs, node: "footnoteMarker", tag: "a[data-type=noteref]" },
+  { getAttrs: readFootnoteTargetAttrs, node: "footnoteTarget", tag: "[data-type=footnote]" },
+  { getAttrs: readUnknownAttrs, node: "unknown", tag: "div[data-whetstone-unknown]" }
+];
+
+// Classify an element for the fail-loud pre-walk: recognized (has a parse rule), tolerated (descend
+// and keep text), or unknown (flag and replace with a sentinel).
+function classify(element: Element): ElementKind {
+  const tag = element.tagName.toLowerCase();
+  const dataType = element.getAttribute("data-type");
+
+  if (dataType !== null && RECOGNIZED_DATA_TYPES.has(dataType)) {
+    return "recognized";
+  }
+
+  if (RECOGNIZED_TAGS.has(tag)) {
+    return "recognized";
+  }
+
+  if (TOLERATED_TAGS.has(tag)) {
+    return "tolerated";
+  }
+
+  return "unknown";
+}
+
+// A simple DOM path segment for an element among its siblings, adding `:nth-of-type(n)` only when it
+// shares its tag with a sibling (e.g. `div:nth-of-type(2)`).
+function segmentFor(element: Element, parent: Element): string {
+  const tag = element.tagName.toLowerCase();
+  const sameType = Array.from(parent.children).filter(
+    (sibling) => sibling.tagName === element.tagName
+  );
+
+  if (sameType.length === 1) {
+    return tag;
+  }
+
+  return `${tag}:nth-of-type(${sameType.indexOf(element) + 1})`;
+}
+
+// Every attribute of an element as a plain record, for the evidence log.
+function attributesOf(element: Element): Record<string, string> {
+  const attributes: Record<string, string> = {};
+
+  for (const attribute of Array.from(element.attributes)) {
+    attributes[attribute.name] = attribute.value;
+  }
+
+  return attributes;
+}
+
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function siblingText(node: ChildNode | null): string {
+  if (node === null) {
+    return "";
+  }
+
+  return String(node.textContent);
+}
+
+// Trimmed, truncated text of the previous and next siblings, to give an unknown element's evidence a
+// human-readable anchor in the surrounding prose.
+function adjacentText(element: Element): string {
+  const surrounding = [siblingText(element.previousSibling), siblingText(element.nextSibling)];
+
+  return collapseWhitespace(surrounding.join(" ")).slice(0, ADJACENT_TEXT_LIMIT);
+}
+
+// Replace an unrecognized element with a sentinel `<div>` that preserves its original tag and raw
+// HTML verbatim, so the explicit `unknown` parse rule turns it into an `unknown` node (and the
+// pre-walk does not descend into it).
+function replaceWithSentinel(element: Element, ownerDocument: Document): void {
+  const sentinel = ownerDocument.createElement("div");
+
+  sentinel.setAttribute("data-whetstone-unknown", "true");
+  sentinel.setAttribute("data-tag", element.tagName.toLowerCase());
+  sentinel.setAttribute("data-raw", element.outerHTML);
+  element.replaceWith(sentinel);
+}
+
+// Depth-first pre-walk of the body subtree: descend through recognized and tolerated elements, and
+// for every unknown element record an evidence entry and replace it with a sentinel before parsing.
+function collectUnknowns(body: HTMLElement, ownerDocument: Document): IngestionEvidence[] {
+  const evidence: IngestionEvidence[] = [];
+
+  function walk(element: Element, path: string): void {
+    const children = Array.from(element.children).map((child) => ({
+      child,
+      childPath: `${path}>${segmentFor(child, element)}`
+    }));
+
+    for (const { child, childPath } of children) {
+      if (classify(child) === "unknown") {
+        evidence.push({
+          adjacentText: adjacentText(child),
+          attributes: attributesOf(child),
+          path: childPath,
+          tag: child.tagName.toLowerCase()
+        });
+        replaceWithSentinel(child, ownerDocument);
+        continue;
+      }
+
+      walk(child, childPath);
+    }
+  }
+
+  walk(body, "body");
+
+  return evidence;
+}
+
+// Top-level blocks always carry an id after `assignNodeIds`, so read it through a typed view rather
+// than an optional chain whose null branch could never be taken (keeps branch coverage exact).
+function toBlock(node: DocumentNodeJSON): IngestedBlock {
+  const attrs = node.attrs as Record<string, unknown>;
+
+  return { id: String(attrs["id"]), node, type: node.type };
+}
+
+// Convert one source HTML fragment into a whetstone document, its block-row decomposition, and the
+// fail-loud evidence log of unrecognized elements.
+export function htmlToDocument(html: string): HtmlIngestionResult {
+  const { window } = new JSDOM(html);
+  const { body } = window.document;
+  const evidence = collectUnknowns(body, window.document);
+  const parsed = new DOMParser(documentSchema, RULES).parse(body);
+  const doc = assignNodeIds(serializeDocument(parsed));
+  const blocks = (doc.content as DocumentNodeJSON[]).map(toBlock);
+
+  return { blocks, doc, evidence };
+}

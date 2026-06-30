@@ -102,6 +102,13 @@ const server = createServer({
     epubParser,
     epubUploadLimitBytes: config.epubUploadLimitBytes,
     imageResourceStore,
+    // Fail-loud (#311): record each unrecognized block-level element to stderr as a structured line
+    // so an unmodelled publisher construct is visible in logs rather than silently dropped.
+    ingestionLogger: (records) => {
+      for (const record of records) {
+        console.warn("[ingestion] unrecognized block element", JSON.stringify(record));
+      }
+    },
     pdfToMarkdown: composePdfToMarkdown(
       createOcrmypdfPreprocess({ ocrmypdfBinary: config.pdfOcrBinary }),
       createDoclingPdfToMarkdown({

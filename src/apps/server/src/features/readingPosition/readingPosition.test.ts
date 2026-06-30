@@ -46,6 +46,7 @@ async function buildContext(): Promise<TestContext> {
     createEntryId: () => `content-${(contentSequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
+    ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
