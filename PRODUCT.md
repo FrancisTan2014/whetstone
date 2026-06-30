@@ -616,6 +616,15 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
   document model** (mdast retired to import/export); the editor is the same model made editable. Build
   in slices: schema/node-specs → fidelity ingestion (fail-loud + log) → static-renderer reader →
   annotation decorations → editor.
+  - The editor's **first payoff is writing**: authoring an **owned Work** — the same block/document model as
+    an ingested one, but **authored** (canonical, not regenerated) and **owned** (a Work gains an `author`) —
+    composed in the Tiptap editor, read back in the same reader, and **feeding the learner model** (production
+    is capture). This adds a **third content category** beside *ingested* (shared, no owner) and *personal*
+    (notes, owned/private): **owned content that can later be shared**; and the **rich editor becomes a shared
+    capability** across writing, note bodies, and comments. **Sharing + comments are a later, separate social
+    layer** — comments are already modeled (decorations + `user_id`), but *shared* reading/commenting needs the
+    deferred **multi-user** step, so **authoring lands single-user first** (it crosses no new non-goal). All of
+    this sits **after the bedrock pivot** (the editor is its final slice).
 
 ## v0 non-goals
 
