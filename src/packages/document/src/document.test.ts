@@ -242,4 +242,12 @@ describe("validation failures", () => {
       expect((error as DocumentValidationError).cause).toBeDefined();
     }
   });
+
+  it("rejects a valid node that is not a document root", () => {
+    // A bare paragraph deserializes and checks on its own, but the document boundary stores JSON
+    // rooted at `doc`, so a block fragment is not a document.
+    const fragment = { content: [{ text: "hi", type: "text" }], type: "paragraph" };
+    expect(isValidDocument(fragment)).toBe(false);
+    expect(() => parseDocument(fragment)).toThrow(DocumentValidationError);
+  });
 });

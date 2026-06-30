@@ -25,9 +25,11 @@ export class DocumentValidationError extends Error {
   }
 }
 
-// Parse and validate a JSON value into a ProseMirror document node. `nodeFromJSON` rejects unknown
-// node/mark types, and `check` enforces every node's content/attribute rules; either failure surfaces
-// as a `DocumentValidationError` rather than a raw ProseMirror exception.
+// Parse and validate a JSON value into a ProseMirror document node rooted at `doc`. `nodeFromJSON`
+// rejects unknown node/mark types, `check` enforces every node's content/attribute rules, and the
+// root-type guard rejects a valid-but-non-document fragment (e.g. a bare paragraph) — the bedrock
+// stores and exchanges document JSON rooted at `doc`, so a block fragment is not a document. Any
+// failure surfaces as a `DocumentValidationError` rather than a raw ProseMirror exception.
 export function parseDocument(json: unknown): ProseMirrorNode {
   let node: ProseMirrorNode;
 
@@ -36,6 +38,14 @@ export function parseDocument(json: unknown): ProseMirrorNode {
     node.check();
   } catch (cause) {
     throw new DocumentValidationError(cause);
+  }
+
+  if (node.type.name !== documentSchema.topNodeType.name) {
+    throw new DocumentValidationError(
+      new RangeError(
+        `Expected a "${documentSchema.topNodeType.name}" root, got "${node.type.name}".`
+      )
+    );
   }
 
   return node;
