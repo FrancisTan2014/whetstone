@@ -23,7 +23,7 @@ run: whatever you load at startup stays resident in context and slows every late
   design rules, the `pnpm validate` gate, PR conventions). Invoke it; do not paste its contents.
 - `PRODUCT.md` — read the locked data model and the section for the feature you are building. The
   content model is **block-based**: `Author/Source -> Work -> ReadingUnit -> Block`, stored as **Block
-  rows in PostgreSQL** (mdast JSON + plaintext per block). Markdown and EPUB are import/export formats
+  rows in PostgreSQL** (the **ProseMirror/Tiptap document node** + plaintext per block — see PRODUCT "Architecture: the document-model bedrock"; the legacy **mdast** form is superseded and being replaced by #310–#313, do not extend it). Markdown and EPUB are import/export formats
   only; an uploaded file is kept for **provenance only**. Never build the old model where a reading
   unit points at a Markdown file as its content store.
 - `docs/MAP.md` — use it to jump straight to the files your slice touches; do not re-explore the tree.

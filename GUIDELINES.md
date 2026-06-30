@@ -390,11 +390,11 @@ import/export format, not the stored form. The original uploaded file is retaine
 Block storage rules:
 
 - Each `Block` is a row: stable id, owning `ReadingUnit`, order, block type, plaintext (for search),
-  and the block's mdast node (JSON) for rendering/export.
+  and the block's **ProseMirror node** (JSON) for rendering/export (mdast superseded — see `docs/DECISIONS.md` D1).
 - Block ids are stable (UUIDv7/cuid2) and preserved across re-ingestion via a content-similarity diff;
   removed blocks are soft-deleted so note anchors stay valid.
 - Multi-step writes (Work + ReadingUnits + Blocks) that must stay consistent use transactions.
-- Markdown export reassembles blocks via `remark-stringify`.
+- Markdown export serializes the document model (Markdown stays import/export only).
 
 Original-file storage rules:
 
@@ -660,7 +660,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 
 ### Block storage and original-file quality
 
-- Block rows carry a stable id, order, type, plaintext, and mdast content; multi-step Work/ReadingUnit/Block writes use transactions.
+- Block rows carry a stable id, order, type, plaintext, and the ProseMirror node (JSON) content; multi-step Work/ReadingUnit/Block writes use transactions.
 - Stable block ids are preserved across re-ingestion (content-similarity diff); removed blocks are soft-deleted so note anchors stay valid.
 - Retained original-file paths are generated or normalized by server code and cannot escape the configured data directory; user input is never used directly as a filesystem path.
 - Writes are safe against partial files where practical: write temp file then rename, or document why the simpler write is acceptable for v0.

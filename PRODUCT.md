@@ -186,13 +186,17 @@ chapters/passages -> blocks.
 
 ## v0 content ingestion
 
-Ingestion is a single boundary with pluggable **format adapters** that all normalize to the same
-intermediate (Markdown AST / mdast), which a shared step decomposes into ordered `Block` entities
-with inferred `ReadingUnit` boundaries and metadata:
+Ingestion is a single boundary with pluggable **format adapters** that map each source onto the
+**ProseMirror/Tiptap document** (see "Architecture: the document-model bedrock"): source HTML → document
+via per-node `parseDOM`, fail-loud (an unrecognized element becomes an `unknown` node + an evidence log
+record, never silently dropped). A shared step decomposes the document into ordered `Block` rows (the
+ProseMirror node + a stable id) with inferred `ReadingUnit` boundaries and metadata:
 
 ```
-upload/input -> adapter (md | epub | …) -> mdast -> Block entities (+ ReadingUnit, metadata)
+upload/input -> adapter (md | epub | …) -> ProseMirror document -> Block rows (+ ReadingUnit, metadata)
 ```
+
+(The earlier mdast-intermediate pipeline is superseded — see `docs/DECISIONS.md` D1.)
 
 Staged by difficulty and value:
 
@@ -360,13 +364,16 @@ does not change the "No LLM note drafting" non-goal.
 
 ## v0 technology choices (locked)
 
-- Markdown parsing / serialization: `remark-parse` + `remark-gfm` + `remark-stringify` (mdast).
-- EPUB parsing: `@lingo-reader/epub-parser`; chapter XHTML -> mdast via `rehype-parse` + `rehype-remark`.
-- Safe rendering: `react-markdown` + `rehype-sanitize` (no `dangerouslySetInnerHTML`; per-block
-  `data-block-id`).
+- Content document model: **ProseMirror via Tiptap** (MIT) — see "Architecture: the document-model
+  bedrock". Source HTML → document via `parseDOM`; `@tiptap/static-renderer` renders it; `prosemirror-
+  model` runs in Node (per-block `data-block-id` from the stable node id).
+- EPUB parsing: `@lingo-reader/epub-parser` provides chapter XHTML; Markdown import via `remark-parse`
+  + `remark-gfm`. Both feed the document model (no longer a stored mdast intermediate).
 - Search: PostgreSQL FTS + `pg_trgm` now; `pgvector` later (Drizzle has native `vector()` support;
   `tsvector` is set via raw SQL).
-- All chosen libraries are permissively licensed (MIT/Apache/BSD).
+- All chosen libraries are permissively licensed (MIT/Apache/BSD); no GPL/AGPL, no paid lock-in.
+- *Superseded* (mdast storage, `rehype-remark`→mdast, `react-markdown` rendering): see
+  `docs/DECISIONS.md` D1.
 
 ## Language practice & recall (the learning loop)
 
@@ -458,8 +465,9 @@ upgrade, and a self-tuning (eval-driven) coach.
   markers, "see Figure 5-2", chapter cross-refs — are **one** capability: blocks already have stable
   ids, so any same-work anchor resolves to a target block and becomes a live **jump** (scroll + brief
   highlight); footnotes add a back-link, figure/section refs reuse the same jump. **Cross-document and
-  web links stay inert** (text only). The enabler is preserving element ids at ingest before mdast
-  flattens them; footnotes (#250) are the first slice on top.
+  web links stay inert** (text only). The enabler is preserving element ids/anchors at ingest as
+  ProseMirror node attributes (via `parseDOM`), so footnote/figure/section jumps fall out of the
+  document model.
 - **PDF / scanned ingestion** via an isolated Python document-AI worker (e.g. Docling + PaddleOCR),
   with admin review of extracted content. Permissive licenses only; AGPL/GPL tools avoided.
 - Semantic search (`pgvector` embeddings).

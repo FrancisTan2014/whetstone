@@ -21,7 +21,7 @@ review subagent needs in order to act; it never overrides those documents.
 - `src/apps/server/` — Fastify API server.
 - `src/packages/domain/` — pure Entry/link/block/template/note-anchor logic (no React, Fastify, DB, or fs).
 - `src/packages/contracts/` — shared API schemas and DTOs (Zod).
-- Content is stored as **Block rows** in PostgreSQL via Drizzle (mdast JSON + plaintext per block),
+- Content is stored as **Block rows** in PostgreSQL via Drizzle (the **ProseMirror/Tiptap document node** + plaintext per block — see PRODUCT "Architecture: the document-model bedrock"; legacy mdast superseded, `docs/DECISIONS.md` D1),
   not as files. Markdown and EPUB are import/export formats; an uploaded source file is kept on disk
   for provenance only. PostgreSQL stores works, reading units, blocks, templates, notes, links, and
   search indexes.
