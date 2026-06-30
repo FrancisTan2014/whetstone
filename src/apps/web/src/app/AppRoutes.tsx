@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Route, Routes, useSearchParams } from "react-router-dom";
 
 import { WorkContentPanel } from "../features/content/WorkContentPanel.js";
+import { DiaryPage } from "../features/diary/DiaryPage.js";
+import { createDiaryCapture } from "../features/diary/diaryCapture.js";
 import { AdminLibraryPage } from "../features/library/AdminLibraryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
@@ -62,6 +64,7 @@ export function AppRoutes(): React.JSX.Element {
         />
         <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<NotesPage />} path="notes" />
+        <Route element={<DiaryPage capture={createDiaryCapture()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />
       </Route>
     </Routes>

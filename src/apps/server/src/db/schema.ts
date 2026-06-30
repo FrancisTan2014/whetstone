@@ -471,3 +471,23 @@ export const sessionExchanges = pgTable(
     index("session_exchanges_user_case_idx").on(table.userId, table.caseId, table.orderIndex)
   ]
 );
+
+// The voice diary (#246): one tidied entry per row, filed under the local day it was captured. This IS
+// the coach-readable learner-history facet for diary capture (un-anchored, any language) — persisted and
+// queryable by user. `entry_date` is the `YYYY-MM-DD` day (the server computes "today" at create);
+// `created_at` is the capture instant (timeline order within a day); `text` is the tidied entry;
+// `language` is the free-form detected/provided language (null when unknown in v0). User-owned: stamped
+// on create and filtered on every read. Indexed on (user, day) for the day-grouped Timeline and the
+// date-jump calendar's range scans.
+export const diaryEntries = pgTable(
+  "diary_entries",
+  {
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
+    entryDate: text("entry_date").notNull(),
+    id: text("id").primaryKey(),
+    language: text("language"),
+    text: text("text").notNull(),
+    userId: text("user_id").notNull()
+  },
+  (table) => [index("diary_entries_user_date_idx").on(table.userId, table.entryDate)]
+);

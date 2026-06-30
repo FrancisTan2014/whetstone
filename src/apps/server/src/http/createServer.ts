@@ -31,6 +31,8 @@ import { registerMapRoutes } from "../features/map/mapRoutes.js";
 import type { MapDependencies } from "../features/map/mapRoutes.js";
 import { registerSessionRoutes } from "../features/session/sessionRoutes.js";
 import type { SessionDependencies } from "../features/session/sessionEngine.js";
+import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
+import type { DiaryDependencies } from "../features/diary/diaryCommands.js";
 import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
@@ -50,6 +52,7 @@ export type CreateServerOptions = Readonly<{
   // The identity seam: the source of the current user id for user-owned reads/writes. Defaults to
   // the v0 DEFAULT_USER_ID provider; tests (and future auth) inject their own.
   currentUser?: CurrentUserProvider;
+  diary?: DiaryDependencies;
   images?: ImageDependencies;
   library?: LibraryDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
@@ -119,6 +122,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.session !== undefined) {
     registerSessionRoutes(server, options.session);
+  }
+
+  if (options.diary !== undefined) {
+    registerDiaryRoutes(server, options.diary);
   }
 
   if (options.images !== undefined) {

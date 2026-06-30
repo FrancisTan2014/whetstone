@@ -13,5 +13,6 @@ export const navDestinations: ReadonlyArray<NavDestination> = [
   { label: "Practice", to: "/practice" },
   { label: "Progress", to: "/progress" },
   { label: "Notes", to: "/notes" },
+  { label: "Diary", to: "/diary" },
   { label: "Search", to: "/search" }
 ];
