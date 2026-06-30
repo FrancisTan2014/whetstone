@@ -7,7 +7,12 @@ import type { EnrollRecallItemRequest } from "@whetstone/contracts";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { entries, recallReviews } from "../../db/schema.js";
-import { enrollRecallItem, recordRecallReview, type RecallDependencies } from "./recallCommands.js";
+import {
+  enrollRecallItem,
+  recordRecallReview,
+  snoozeRecallItem,
+  type RecallDependencies
+} from "./recallCommands.js";
 import { listDueRecallItems, listRecallItems, searchRecallItems } from "./recallQueries.js";
 
 const userA = "user-a";
@@ -136,6 +141,43 @@ describe("recordRecallReview", () => {
 
     const [item] = await listRecallItems(context.db, userA);
     expect(item?.review.repetitions).toBe(0);
+  });
+});
+
+describe("snoozeRecallItem", () => {
+  it("moves only the due date forward a day, leaving the SM-2 state untouched", async () => {
+    const enrolled = await enroll({ kind: "word", text: "later" }, userA, t0);
+
+    const result = await snoozeRecallItem(context.db, userA, enrolled.id, at(3));
+    if (result.status !== "snoozed") {
+      throw new Error("expected snoozed");
+    }
+    expect(result.item.review).toEqual({
+      dueAt: at(4).toISOString(),
+      easeFactor: 2.5,
+      intervalDays: 0,
+      lapses: 0,
+      lastReviewedAt: null,
+      repetitions: 0
+    });
+
+    const [persisted] = await listRecallItems(context.db, userA);
+    expect(persisted?.review.dueAt).toBe(at(4).toISOString());
+  });
+
+  it("returns not_found for a missing item", async () => {
+    expect(await snoozeRecallItem(context.db, userA, "nope", t0)).toEqual({ status: "not_found" });
+  });
+
+  it("returns not_found for another user's item and leaves it unchanged", async () => {
+    const enrolled = await enroll({ kind: "word", text: "later" }, userA, t0);
+
+    expect(await snoozeRecallItem(context.db, userB, enrolled.id, at(3))).toEqual({
+      status: "not_found"
+    });
+
+    const [item] = await listRecallItems(context.db, userA);
+    expect(item?.review.dueAt).toBe(t0.toISOString());
   });
 });
 

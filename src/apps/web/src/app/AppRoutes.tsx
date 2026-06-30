@@ -8,6 +8,7 @@ import { AdminLibraryPage } from "../features/library/AdminLibraryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
+import { RecallPage } from "../features/recall/RecallPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { SessionPage } from "../features/session/SessionPage.js";
 import { createLiveCapture, isVoiceCaptureSupported } from "../features/session/liveCapture.js";
@@ -63,6 +64,7 @@ export function AppRoutes(): React.JSX.Element {
           path="practice"
         />
         <Route element={<ProgressMapPage />} path="progress" />
+        <Route element={<RecallPage />} path="recall" />
         <Route element={<NotesPage />} path="notes" />
         <Route element={<DiaryPage capture={createDiaryCapture()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />

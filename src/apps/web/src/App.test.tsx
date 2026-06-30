@@ -25,7 +25,7 @@ describe("App shell and routes", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain('aria-label="Primary"');
-    for (const label of ["Library", "Reader", "Notes", "Search"]) {
+    for (const label of ["Library", "Reader", "Recall", "Notes", "Search"]) {
       expect(markup).toContain(label);
     }
   });
@@ -61,6 +61,14 @@ describe("App shell and routes", () => {
     expect(markup).toContain('aria-label="Reader"');
     expect(markup).not.toContain("Work detail");
     expect(markup).not.toContain('aria-label="Primary"');
+    // The reading surface stays calm: no recall UI lives in the reader.
+    expect(markup).not.toContain("Due to recall");
+  });
+
+  it("resolves the recall route to the due-recall page", () => {
+    const markup = renderAt("/recall");
+
+    expect(markup).toContain("Due to recall");
   });
 
   it("resolves the reader route with a work query param to the reader page", () => {

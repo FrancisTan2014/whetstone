@@ -83,7 +83,11 @@ can navigate them from another package.
   optional `provenance_entry_id` into the content graph, and an optional `chunk_id` link to a practice
   chunk (#205)) and `recall_reviews` (append-only history).
   Pure scheduling is `@whetstone/domain` SM-2; DTOs/validation in `@whetstone/contracts`
-  (`recallContracts.ts`). Data + operations layer only.
+  (`recallContracts.ts`). The web Recall surface is served by `recallRoutes.ts` (current-user scoped,
+  Zod-validated): `GET /api/recall/due` (today's due batch, capped at `DAILY_RECALL_CAP` = 20 so a backlog
+  never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
+  row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
+  `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
 - Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
   `caseQueries.ts` `listDomains`/`listCasesInDomain`/`getCaseDetail`) over shared `domains` -> `cases`
   -> `chunks`. The case detail returns the chunk inventory plus a per-user mastery summary COMPUTED
@@ -321,8 +325,8 @@ can navigate them from another package.
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Library = `AdminLibraryPage` + `WorkContentPanel`, Reader = `ReaderPage`, Practice =
-  `SessionPage`, Progress = `ProgressMapPage`, Search = `SearchPage`, Notes = `NotesPage`, Diary =
-  `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
+  `SessionPage`, Progress = `ProgressMapPage`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
+  `NotesPage`, Diary = `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
   `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
   destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
@@ -483,6 +487,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   endpoint, pure `monthGrid`/`monthBounds`/`shiftMonth`) and scrolls to a chosen day (loading older pages
   until it is present); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
   `/api/diary/*` endpoints and parses every response through `diaryContracts`.
+  `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** items (already capped
+  server-side) as gentle, snoozeable proposals — each card shows its text/gloss with four self-grade
+  controls (Again/Hard/Good/Easy → `gradeFromRating` → an SM-2 grade) and a Snooze; grading or snoozing
+  advances past the item, with explicit loading/error/empty ("all caught up") states. The reader stays
+  calm — recall lives only here. `recallApi.ts` calls `/api/recall/*` and parses via `recallContracts`.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

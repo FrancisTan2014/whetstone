@@ -23,6 +23,14 @@ export type RecordReviewResult =
   | Readonly<{ item: RecallItemDto; status: "recorded" }>
   | Readonly<{ status: "not_found" }>;
 
+export type SnoozeRecallResult =
+  | Readonly<{ item: RecallItemDto; status: "snoozed" }>
+  | Readonly<{ status: "not_found" }>;
+
+// How far a snooze defers an item: one day, so it leaves today's batch and reappears tomorrow.
+const SNOOZE_DEFER_DAYS = 1;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 // Enroll a recall item for a user, seeding its SM-2 review state (due immediately). Provenance and
 // gloss are optional; absent means jotted / LLM-supplied.
 export async function enrollRecallItem(
@@ -80,4 +88,30 @@ export async function recordRecallReview(
   });
 
   return { item: toRecallItemDto({ ...existing, ...columns }), status: "recorded" };
+}
+
+// Snooze defers an item OUT of today's batch by moving ONLY its `due_at` forward one day. A snooze is
+// NOT a grade: ease/interval/repetitions/lapses/lastReviewedAt are left untouched, so the SM-2 schedule
+// is unchanged — the item simply drops out of today and reappears tomorrow. Returns `not_found` for a
+// missing item or another user's.
+export async function snoozeRecallItem(
+  db: DbClient,
+  userId: string,
+  itemId: string,
+  now: Date
+): Promise<SnoozeRecallResult> {
+  const existing = await getRecallItemRowForUser(db, itemId, userId);
+
+  if (existing === undefined) {
+    return { status: "not_found" };
+  }
+
+  const dueAt = new Date(now.getTime() + SNOOZE_DEFER_DAYS * MS_PER_DAY);
+
+  await db
+    .update(recallItems)
+    .set({ dueAt })
+    .where(and(eq(recallItems.id, itemId), eq(recallItems.userId, userId)));
+
+  return { item: toRecallItemDto({ ...existing, dueAt }), status: "snoozed" };
 }
