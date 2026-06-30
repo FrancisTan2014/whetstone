@@ -62,34 +62,46 @@ existing surface*, not a new app:
 These are **principles, not v0 scope**: v0 stays the small assistant; they fix what every surface is *for* and
 how to judge it — by internalization and growth, not activity.
 
-## The arranger — discipline as the product
+## The arranger — guidance as the product
 
-The hardest part of self-learning is not capability; it is **showing up, sustainably, without self-reproach**. A
-motivated learner can read a classic to recitation and still **stall for months** on planning, gathering,
-reflecting, and recovering when energy dips. So beneath capture and coach, whetstone's first job is to be the
-**arranger** — the external executive function a solo learner lacks — so you spend willpower on *real learning*,
-not logistics.
+The hardest part of self-learning is often not capability or even discipline; a committed learner can still get
+only **single-dimensional, generic guidance** from stateless chat, which re-meets them every prompt. whetstone's
+moat — your learner model + history + **persona** — exists to give what chat structurally cannot:
+**multi-dimensional, persona-grounded guidance.** This is 因材施教 applied to your *life path*, not just your
+vocabulary, and it is the arranger's real job: turn big, long-horizon goals into a **disciplined daily routine**.
 
-This reframes the Today home: it is not a feed of proposals but a **finite, clearable daily board**. Clear it,
-then rest and play **freely, with no self-reproach** — *rest is earned, not stolen*. A small, finishable day
-answers procrastination (one clear next action) and guilt (a defined "done") at once.
+**The model is of you and your goals — as tracks.** Parallel tracks (a language, a craft, a domain to master, an
+early-childhood track…) each carry an **aim-high 上 goal → a persona-grounded path → today's small slice**.
+取法乎上，得乎中. The day is the unit; **10 minutes a day beats a 3-hour weekend**; consistency compounds. The
+arranger projects each track's daily slice onto the Today board.
 
-The **risk it must avoid**: an arranger that becomes a *new* chore or a *new* guilt machine. Arrangement must be
-**light, adaptive, and compassionate** — it relieves pressure, never adds it. If Today ever feels like another
-boss, it has failed. Four principles hold the line:
+**Planning is hybrid — never autonomous, never absent.** The arranger **proposes a persona-grounded path draft**;
+you **approve or edit** it; then it **owns the daily cadence and progress** against that path. Keeping you in the
+loop is what stops it drifting into the generic advice stateless chat gives — the plan is *grounded in your model
+and ratified by you*, not generated blind.
 
-- **Compassion, never punishment.** No shame, no punishing streaks; a missed day or a binge week is *recovered
-  from*, treated as **energy data, not a moral failure** (this is *why* v0 rejects streaks and gamification).
+**It defends against discouragement by design — not by mood.** Discouragement attaches to an *uncertain outcome*;
+the routine converts it into **controllable daily action** and resets the scoreboard: the 上 may be a goal you can
+be denied, but the **guaranteed 中 is who you become** — disciplined, capable, confident. This is the telos in
+operation (*growth, not activity*): aim high, and let the daily practice guarantee the growth regardless of the
+verdict.
+
+The arranger then reframes the **Today home**: not a feed of proposals but a **finite, clearable daily board** —
+clear it, then rest freely, *no back-judge*. Supporting constraints keep it humane, never a new boss:
+
+- **Compassion, never punishment.** No shame, no punishing streaks; a missed day or a low-energy week is
+  *recovered from*, treated as **energy data, not a moral failure** (this is *why* v0 rejects streaks and
+  gamification).
 - **Small & compounding over intensity.** Size the day to be clearable *even on a low day* — `(1.01)^365`, not
-  heroic bursts that collapse and breed guilt.
+  heroic bursts that collapse.
 - **Energy-aware & relapse-tolerant.** Low energy *shrinks* the board, offers lighter work, or blesses rest; it
   bends, it does not break.
 - **Scaffolding that fades.** It externalizes discipline *until the habit is internalized*, then steps back —
   growing your capacity to self-direct is itself part of growing into a better person.
 
-**Breadth = the whole 六艺, language first.** The arranger spans the real curriculum — classical-Chinese
-recitation, English reading, CS, general reading, diary — and is **domain-general by design**, but v0 **proves
-it on one domain** (language) before widening. This breadth is vision, not v0 scope.
+**Breadth = the whole 六艺, language first.** The arranger is meant to span the whole curriculum and is
+**domain-general by design**, but v0 **proves the pattern on one track (language)**, built **track-aware** so other
+tracks slot in cleanly. The multi-track life arranger is the vision; one disciplined track, end to end, is v0.
 
 **v0 is a usable personal learning assistant — not only the on-ramp.** The reading + annotation loop is the
 *on-ramp* that begins the learner model (read source materials, break them into addressable blocks, attach
