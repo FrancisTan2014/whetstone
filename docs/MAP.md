@@ -10,6 +10,18 @@ entry to a pointer.
 
 ## Packages
 
+### `src/packages/document/` — content document model (bedrock)
+
+The Tiptap/ProseMirror schema for whetstone content (PRODUCT "Architecture: the document-model
+bedrock"). Pure and Node-runnable (no DOM; HTML parsing/rendering belong to the ingestion/reader
+slices). Public surface is `src/index.ts`. Units: `nodes.ts` (Tiptap `Node.create` specs for doc,
+text, prose blocks, nesting lists, tables, figures, definition lists, callout, footnote marker/target,
+and a raw-HTML `unknown` fallback; `documentExtensions` couples the specs with the UniqueID id
+attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
+(`parseDocument`/`serializeDocument`/`isValidDocument`/`assignNodeIds` JSON round-trip + validation,
+`DocumentValidationError`). Stable node ids use Tiptap UniqueID's server-side generator. Tests
+colocated. Invariant: depends on nothing outward; no UI, ingestion, or editing here.
+
 ### `src/packages/domain/` — pure logic
 
 Entry/link/block/template/note-anchor rules with no React, Fastify, DB, fs, or env. Public surface is

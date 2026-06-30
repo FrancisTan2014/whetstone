@@ -15,7 +15,7 @@
     "format": "prettier --write \"src/apps/**/*.{ts,tsx,css,html,json}\" \"src/packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
     "format:check": "prettier --check \"src/apps/**/*.{ts,tsx,css,html,json}\" \"src/packages/**/*.{ts,json}\" \"*.{json,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \"README.md\"",
     "test": "vitest run --coverage",
-    "build": "pnpm --filter @whetstone/domain build && pnpm --filter @whetstone/contracts build && pnpm --filter @whetstone/server build && pnpm --filter @whetstone/web build",
+    "build": "pnpm --filter @whetstone/document build && pnpm --filter @whetstone/domain build && pnpm --filter @whetstone/contracts build && pnpm --filter @whetstone/server build && pnpm --filter @whetstone/web build",
     "smoke": "pnpm --filter @whetstone/web smoke",
     "size-limit": "size-limit",
     "lighthouse": "lhci autorun",
