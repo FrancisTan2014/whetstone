@@ -124,6 +124,20 @@ that can be **measured**, measure it in-page (`page.evaluate`) and file on the *
 exact quoted on-screen text** — never an unquantified impression. Reserve subjective judgment for
 genuinely subjective polish.
 
+**Use the shared probes — do not hand-roll the math.** `e2e/probes.ts` exports three deterministic
+probes plus an overlap helper, each self-contained for `page.evaluate`:
+
+- `contrast(selector)` → `{ minRatio, failures: [{ text, ratio, color, background }] }` — WCAG ratio of
+  text vs effective (ancestor-walked) background; `failures` are the pairs `< 4.5:1`.
+- `geometry(selector)` → `{ issues: [{ index, rect, flags }] }` — `flags` ⊆ `offScreen` / `clipped` /
+  `tooSmall` (interactive target under 44px).
+- `contentPresent(selector)` → `{ present, text, height }` — blank, zero-height surface ⇒ `present:false`.
+- `overlaps([selectorA, selectorB])` → `boolean` — any rect of A intersects any rect of B.
+
+Run them in-page (`await page.evaluate(contrast, ".reader p")`, `await page.evaluate(overlaps, [a, b])`)
+and file the bug on the **number/rect** they return — e.g. "text ratio 2.8 < 4.5 at `.reader p`",
+"button 32×32 < 44 at `.menu-toggle`", "surface blank: 0 text, 0 height at `main`" — not on a screenshot.
+
 So never treat "no console error" as "looks fine". **Open and look at every screenshot you capture**
 (reader Day *and* Night, lookup, notes panel, 目录, mobile) and judge each as a human reader would:
 
