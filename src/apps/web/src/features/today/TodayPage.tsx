@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import type { LatestReadingPositionDto, RecallItemDto } from "@whetstone/contracts";
+import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
 
 import { buttonVariants } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
+import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
 import { fetchLatestReadingPosition } from "./todayApi.js";
 
 // Today is a calm, finite, clearable daily board (PRODUCT.md "v0 assistant home (Today)" + "The
 // arranger") — never a dashboard, feed, streak, or metric. It COMPOSES already-built slices: the
-// voice diary (#246), recall (#318), and a Continue-reading seam over the latest reading position.
-// Each async arm loads independently so one failing never blanks the page, and the reader stays calm
-// (none of this lives in it).
+// voice diary (#246), recall (#318), a Continue-reading seam over the latest reading position, and
+// the reading→practice nudge (#245). Each async arm loads independently so one failing never blanks
+// the page, and the reader stays calm (none of this lives in it).
 
 type RecallState =
   | Readonly<{ status: "error" }>
@@ -24,9 +25,17 @@ type ContinueState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ position: LatestReadingPositionDto | undefined; status: "ready" }>;
 
+// The nudge surfaces at most one proposed capture. `nudge: undefined` (cold start / all in cooldown)
+// and the loading/error arms all render nothing — the slot simply stays empty, never a placeholder.
+type NudgeState =
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ nudge: NudgeDto | undefined; status: "ready" }>;
+
 export function TodayPage(): React.JSX.Element {
   const [recall, setRecall] = useState<RecallState>({ status: "loading" });
   const [reading, setReading] = useState<ContinueState>({ status: "loading" });
+  const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
 
   useEffect(() => {
     fetchDueRecall().then(
@@ -37,7 +46,18 @@ export function TodayPage(): React.JSX.Element {
       (position) => setReading({ position, status: "ready" }),
       () => setReading({ status: "error" })
     );
+    fetchNudge().then(
+      (value) => setNudge({ nudge: value, status: "ready" }),
+      () => setNudge({ status: "error" })
+    );
   }, []);
+
+  // Dismiss = cooldown: remove the card at once (a "not now" is honoured immediately) and tell the
+  // server in the background. A failed dismiss never blanks Today — the card is already gone.
+  function handleDismiss(chunkId: string): void {
+    setNudge({ nudge: undefined, status: "ready" });
+    void dismissNudge(chunkId).catch(() => undefined);
+  }
 
   return (
     <section aria-labelledby="today-heading" className="mx-auto max-w-2xl p-6">
@@ -54,12 +74,8 @@ export function TodayPage(): React.JSX.Element {
         <DiaryCaptureCard />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
-        {/*
-          Practice-nudge slot (#245 — the reading→practice nudge — is not built yet, so this renders
-          NOTHING: no empty placeholder). When #245 ships, drop its Today card here, between Continue
-          reading and the cleared state, so it joins the actionable arms the cleared state reads.
-        */}
-        <ClearedState recall={recall} />
+        <NudgeCard state={nudge} onDismiss={handleDismiss} />
+        <ClearedState recall={recall} nudge={nudge} />
       </div>
     </section>
   );
@@ -172,12 +188,70 @@ function renderReading(state: ContinueState): React.JSX.Element {
   );
 }
 
+// The reading→practice nudge (#245): a quiet, dismissible card proposing the single highest-value,
+// non-cooled-down recent reading capture to practise. Present -> a one-line invitation plus an accept
+// that opens Practice (where the session leads with this same proposed case) and a dismiss (✕) that
+// puts it in cooldown. Absent / loading / failed -> the slot renders nothing (no placeholder); a
+// nudge failure never blanks Today. One at a time, never spammy, never in the reader.
+const SNIPPET_MAX_CHARS = 80;
+
+function shortSnippet(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= SNIPPET_MAX_CHARS) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, SNIPPET_MAX_CHARS).trimEnd()}…`;
+}
+
+function activeNudge(state: NudgeState): NudgeDto | undefined {
+  return state.status === "ready" ? state.nudge : undefined;
+}
+
+function NudgeCard({
+  onDismiss,
+  state
+}: Readonly<{
+  onDismiss: (chunkId: string) => void;
+  state: NudgeState;
+}>): React.JSX.Element | null {
+  const nudge = activeNudge(state);
+  if (nudge === undefined) {
+    return null;
+  }
+
+  return (
+    <section aria-label="Practice nudge" className="rounded border border-border bg-surface p-4">
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="text-lg font-medium text-text">Practice</h2>
+        <button
+          aria-label="Dismiss this practice nudge"
+          className="text-text-muted hover:text-text"
+          onClick={() => onDismiss(nudge.chunkId)}
+          type="button"
+        >
+          ✕
+        </button>
+      </div>
+      <p className="mt-1 text-text">
+        Practise <em>{shortSnippet(nudge.text)}</em> from <em>{nudge.workTitle}</em>.
+      </p>
+      <Link className={`${buttonVariants({ variant: "primary" })} mt-3`} to="/practice">
+        Practise now
+      </Link>
+    </section>
+  );
+}
+
 // The arranger's compassion clause (PRODUCT.md "The arranger"): when the actionable arms are cleared
-// (no recall due; the practice nudge is not built, so it is always clear), Today shows a calm
-// "done for today" that frees the user — NO streak, NO guilt, NO back-judge, NO penalty. A low or
-// empty day is fine. Diary capture and Continue reading may still show — they are invitations.
-function ClearedState({ recall }: Readonly<{ recall: RecallState }>): React.JSX.Element | null {
-  if (recall.status !== "ready" || recall.items.length > 0) {
+// (no recall due AND no practice nudge to act on), Today shows a calm "done for today" that frees the
+// user — NO streak, NO guilt, NO back-judge, NO penalty. A low or empty day is fine. Diary capture and
+// Continue reading may still show — they are invitations.
+function ClearedState({
+  nudge,
+  recall
+}: Readonly<{ nudge: NudgeState; recall: RecallState }>): React.JSX.Element | null {
+  const recallCleared = recall.status === "ready" && recall.items.length === 0;
+  if (!recallCleared || activeNudge(nudge) !== undefined) {
     return null;
   }
 

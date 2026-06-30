@@ -59,6 +59,8 @@ export type {
   ProficiencyLevel,
   RankedChunk
 } from "./learnerModel.js";
+export { rankReadingNudges, recencyBoost, topReadingNudge } from "./readingNudge.js";
+export type { ReadingNudgeCandidate, RankedReadingNudge } from "./readingNudge.js";
 export { buildDiaryTidyPrompt, diaryTidyInstructions } from "./diaryTidy.js";
 export {
   groupByDayDesc,

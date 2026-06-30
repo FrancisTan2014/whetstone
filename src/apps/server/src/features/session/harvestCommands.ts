@@ -1,12 +1,16 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { cases, chunks, domains, noteAnchors, notes } from "../../db/schema.js";
+import { cases, chunks, domains } from "../../db/schema.js";
+import { selectReadingNudgeCapture } from "../nudge/nudgeCommands.js";
 
 // The reading -> speaking on-ramp (#243): the differentiator is that practice grows from what the user
-// just read. The most recent reading capture (a note with a selected-text anchor) seeds a case whose
-// target chunk IS that text, linked to the source block, so production recycles their reading. Seeding
-// is idempotent (keyed off the note), and returns null when there is no capture (fall back to authored).
+// just read. A recent reading capture (a note with a selected-text anchor) seeds a case whose target
+// chunk IS that text, linked to the source block, so production recycles their reading. The capture is
+// chosen by the SAME value ranking + cooldown as the Today nudge (#245) — the top-ranked, non-cooled
+// capture, not merely the newest — so the Practice entry leads with the proposed case. Seeding is
+// idempotent (keyed off the note), and returns null when there is no eligible capture (fall back to
+// authored), or when there are no domains to attach a harvested case to.
 export type HarvestedCue = Readonly<{
   caseId: string;
   chunkId: string;
@@ -15,29 +19,17 @@ export type HarvestedCue = Readonly<{
   target: string;
 }>;
 
-export type HarvestDependencies = Readonly<{ createId: () => string; db: DbClient }>;
-
 export async function harvestReadingCase(
-  dependencies: HarvestDependencies,
-  userId: string
+  db: DbClient,
+  userId: string,
+  now: Date
 ): Promise<HarvestedCue | null> {
-  const captures = await dependencies.db
-    .select({
-      blockEntryId: noteAnchors.blockEntryId,
-      noteEntryId: notes.entryId,
-      selectedText: noteAnchors.selectedText
-    })
-    .from(notes)
-    .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
-    .where(eq(notes.userId, userId))
-    .orderBy(desc(notes.createdAt), desc(notes.entryId))
-    .limit(1);
-  const capture = captures[0];
+  const capture = await selectReadingNudgeCapture(db, userId, now);
   if (capture === undefined) {
     return null;
   }
 
-  const domainRows = await dependencies.db
+  const domainRows = await db
     .select({ id: domains.id })
     .from(domains)
     .orderBy(asc(domains.orderIndex))
@@ -47,12 +39,11 @@ export async function harvestReadingCase(
     return null;
   }
 
-  const caseId = `harvest-${capture.noteEntryId}`;
-  const chunkId = `harvest-chunk-${capture.noteEntryId}`;
+  const { caseId, chunkId } = capture;
   const situation = "Use what you just read in a quick exchange.";
   const communicativeFunction = "Recycle a phrase from your reading";
 
-  await dependencies.db
+  await db
     .insert(cases)
     .values({
       briefKey: caseId,
@@ -63,16 +54,16 @@ export async function harvestReadingCase(
       situation
     })
     .onConflictDoNothing();
-  await dependencies.db
+  await db
     .insert(chunks)
     .values({
       caseId,
       id: chunkId,
       orderIndex: 0,
       sourceBlockEntryId: capture.blockEntryId,
-      text: capture.selectedText
+      text: capture.text
     })
     .onConflictDoNothing();
 
-  return { caseId, chunkId, communicativeFunction, situation, target: capture.selectedText };
+  return { caseId, chunkId, communicativeFunction, situation, target: capture.text };
 }

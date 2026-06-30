@@ -164,6 +164,10 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  nudge: {
+    db,
+    now: () => new Date()
+  },
   search: { db },
   session: {
     coach,
