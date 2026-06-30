@@ -20,6 +20,16 @@ slice of your history for each suggestion. Reading is the on-ramp, not the desti
 
 If a feature is neither, it is out of scope.
 
+**The spine — one model, many views.** There is **one learner model**, with two planes around it: a **shared
+source library** (what you read — ingested works/blocks, no owner) and your **personal trace** (what you've
+done — notes, diary, speech-practice deposits, recall — all `user_id`-owned, all feeding the model). Capture
+types differ only by **anchoring**: a note → a source block, a speech deposit → a case, a diary entry →
+un-anchored. Every personal surface is a **view of the one model** — **Today** (what's next), the fog-of-war
+**Map** (mastery), **Recall** (what's due), a **Timeline** (history, newest-first) — so "history" is a *view of
+your trace*, never a per-feature page (the diary's history is the Timeline's first facet). **Reading is the
+on-ramp; the model is the destination.** The model compounds only as fast as it is fed, and the **feed
+(capture) side is deliberately thin in v0** — it is the growth frontier (see "Future direction → more feeders").
+
 **v0 is a usable personal learning assistant — not only the on-ramp.** The reading + annotation loop is the
 *on-ramp* that begins the learner model (read source materials, break them into addressable blocks, attach
 notes, connect ideas across works). v0 now also delivers the **assistant loop the North Star promises**: a
@@ -503,6 +513,12 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
 
 ## Future direction protected by v0
 
+- **More feeders (the growth frontier).** The moat compounds with what it is fed, and v0's feed side is thin —
+  reading-notes, the reading→chunk harvest, speech-practice deposits, the voice diary. Future **capture
+  sources** thicken the model behind the same scope test: e.g. a fast **"I couldn't say X" real-life jot** (the
+  strongest next feeder — already a fog-of-war seed), a **web/article clipper** for reading done outside the
+  app, and **importing prior highlights/notes** to bootstrap. Each must *feed the model* (capture), never
+  merely store content.
 - The Entry/link + Block model supports future rich connections between materials, notes, concepts,
   and review items (block references, backlinks, transclusion) — none built in v0.
 - **Internal cross-reference links (settled).** A work's own `#id` references — footnote/endnote
