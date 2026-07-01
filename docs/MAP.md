@@ -330,12 +330,18 @@ can navigate them from another package.
   the 漢語/汉语 language section, groups each part-of-speech subsection's `# ` definitions (markup
   stripped via `stripWikiMarkup`, capped) and an optional 詞源 etymology — richer classical senses
   than 萌典; a no-Chinese-section/no-sense page is `null` (empty tab, #306) but a transport failure
-  throws so the lookup surfaces that tab's error only (#196). CC-CEDICT's English glosses are the last
-  tab (`zh-CN`/`zh-TW` → `["moedict", "zhwiktionary", "cedict"]`). Each
+  throws so the lookup surfaces that tab's error only (#196). CC-CEDICT's English glosses are the next
+  tab, then the optional local-LLM **"AI 解释"** aid last (`zh-CN`/`zh-TW` →
+  `["moedict", "zhwiktionary", "cedict", "llm"]`). `explainProvider.ts` is that pure LLM-explain seam
+  (#341): `resolveExplainer` yields a real Ollama-backed explainer only when `EXPLAIN_MODEL` is set (the
+  network call is wired in the coverage-excluded `index.ts`, like the coach's `createOllamaChat`), else
+  a provider that returns `null` so the tab shows an honest "unavailable" state — a labeled contextual
+  gloss (the selection's block text is passed as `context`), never an authoritative dictionary entry.
+  Each
   `LookupSource` declares the `languages` it serves; `lookupService.ts` resolves the one requested
-  source+language tab (English → WordNet/Wiktionary; Chinese → 萌典/zh.Wiktionary/CC-CEDICT), returns
-  its composed
-  `DictionaryEntry`, and caches by `language:source:term`. Every contributing source's attribution
+  source+language tab (English → WordNet/Wiktionary; Chinese → 萌典/zh.Wiktionary/CC-CEDICT/AI 解释),
+  returns its composed
+  `DictionaryEntry`, and caches by `language:source:term:context`. Every contributing source's attribution
   rides in
   the entry's `sources`. `wordpos` runs its bundled-index build step via pnpm's `allowBuilds` in
   `pnpm-workspace.yaml`. The adapters are pure (tested against canned data via the fake transport /

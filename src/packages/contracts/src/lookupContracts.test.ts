@@ -51,13 +51,24 @@ describe("parseLookupRequest", () => {
       parseLookupRequest({ extra: 1, language: "en", source: "wordnet", term: "word" })
     ).toThrow();
   });
+  it("appends the optional context and leaves it absent when omitted (#341)", () => {
+    expect(
+      parseLookupRequest({ context: "六艺者", language: "zh-CN", source: "llm", term: "六艺" })
+    ).toEqual({ context: "六艺者", language: "zh-CN", source: "llm", term: "六艺" });
+    // Existing sources are unaffected: context is optional and simply absent.
+    expect(parseLookupRequest({ language: "en", source: "wordnet", term: "word" })).toEqual({
+      language: "en",
+      source: "wordnet",
+      term: "word"
+    });
+  });
 });
 
 describe("lookupSourcesForLanguage", () => {
-  it("leads English with offline WordNet then Wiktionary, and Chinese with 萌典, zh.Wiktionary, CC-CEDICT", () => {
+  it("leads English with offline WordNet then Wiktionary, and Chinese with 萌典, zh.Wiktionary, CC-CEDICT, then the AI aid last", () => {
     expect(lookupSourcesForLanguage("en")).toEqual(["wordnet", "wiktionary"]);
-    expect(lookupSourcesForLanguage("zh-CN")).toEqual(["moedict", "zhwiktionary", "cedict"]);
-    expect(lookupSourcesForLanguage("zh-TW")).toEqual(["moedict", "zhwiktionary", "cedict"]);
+    expect(lookupSourcesForLanguage("zh-CN")).toEqual(["moedict", "zhwiktionary", "cedict", "llm"]);
+    expect(lookupSourcesForLanguage("zh-TW")).toEqual(["moedict", "zhwiktionary", "cedict", "llm"]);
     expect(lookupSourcesForLanguage("fr")).toEqual([]);
   });
 
@@ -67,6 +78,7 @@ describe("lookupSourcesForLanguage", () => {
     expect(lookupSourceLabel("cedict")).toBe("CC-CEDICT");
     expect(lookupSourceLabel("moedict")).toBe("萌典");
     expect(lookupSourceLabel("zhwiktionary")).toBe("中文維基詞典");
+    expect(lookupSourceLabel("llm")).toBe("AI 解释");
   });
 });
 

@@ -462,6 +462,19 @@ code {
   gap: 0.5rem;
 }
 
+/* The AI-generated caveat on the local-LLM "AI 解释" tab (#341): a persistent, visually distinct pill so
+   the contextual gloss is never mistaken for an authoritative dictionary entry. Tokenized for Day/Night. */
+.lookupAiBadge {
+  align-self: flex-start;
+  margin-bottom: 0.5rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background-color: color-mix(in oklch, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .lookupPronunciation {
   display: inline-flex;
   align-items: center;

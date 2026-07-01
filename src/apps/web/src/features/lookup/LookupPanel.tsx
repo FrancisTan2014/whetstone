@@ -206,9 +206,25 @@ function LookupNotFound({ term }: { term: string }): React.JSX.Element {
   );
 }
 
-function renderEntry(entry: DictionaryEntry): React.JSX.Element {
+// A persistent, visually distinct caveat on the local-LLM "AI 解释" tab (#341): the gloss is a labeled
+// contextual aid, never an authoritative dictionary entry, so this badge (with an accessible label)
+// rides every AI explanation. The attribution footer additionally names the local model.
+function LookupAiBadge(): React.JSX.Element {
+  return (
+    <p
+      aria-label="AI-generated explanation, may be imperfect"
+      className="lookupAiBadge"
+      role="note"
+    >
+      AI-generated — may be imperfect
+    </p>
+  );
+}
+
+function renderEntry(entry: DictionaryEntry, isAi: boolean): React.JSX.Element {
   return (
     <div className="lookupEntry">
+      {isAi ? <LookupAiBadge /> : null}
       <header className="lookupHeader">
         <p className="lookupHeadword">{entry.headword}</p>
         {entry.pronunciations.length === 0 ? null : (
@@ -235,7 +251,9 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
   );
 }
 
-function renderState(state: LookupState, term: string): React.JSX.Element {
+// Render one source's state. `isAi` marks the local-LLM "AI 解释" source (#341), so a resolved entry
+// carries the AI-generated badge; every other state is source-agnostic.
+function renderState(state: LookupState, term: string, isAi: boolean): React.JSX.Element {
   switch (state.status) {
     case "loading":
       return <p role="status">Looking up…</p>;
@@ -248,7 +266,11 @@ function renderState(state: LookupState, term: string): React.JSX.Element {
       // definition: the response contract permits found:true with an empty partsOfSpeech, so a tab
       // the reader opens explicitly still shows the no-match launchpad rather than a bare headword
       // (#306) — with the external links so it is never a dead-end (#339).
-      return stateHasContent(state) ? renderEntry(state.entry) : <LookupNotFound term={term} />;
+      return stateHasContent(state) ? (
+        renderEntry(state.entry, isAi)
+      ) : (
+        <LookupNotFound term={term} />
+      );
   }
 }
 
@@ -268,9 +290,15 @@ function stateHasContent(state: LookupState): boolean {
 // function word like "versus" that WordNet has no entry for falls through to Wiktionary. Each
 // networked source is time-boxed, so a leading "loading" tab is transient: it resolves to content or
 // falls through to the next source. The reader can still switch tabs explicitly.
+//
+// The optional local-LLM "AI 解释" tab (#341) is DELIBERATELY ineligible for auto-preference: it must
+// never become the default or a fall-through target (not when it has content, and not while it is still
+// loading), so dictionaries always lead and the AI explanation is opened only on purpose. Without this,
+// once every dictionary resolves empty/error while the trailing LLM tab is still loading, the panel
+// would auto-select it.
 function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
   const usable = tabs.findIndex(
-    (tab) => stateHasContent(tab.state) || tab.state.status === "loading"
+    (tab) => tab.id !== "llm" && (stateHasContent(tab.state) || tab.state.status === "loading")
   );
   return usable === -1 ? 0 : usable;
 }
@@ -319,7 +347,7 @@ function LookupTabs({
           ))}
         </div>
       ) : null}
-      {renderState(active.state, term)}
+      {renderState(active.state, term, active.id === "llm")}
     </div>
   );
 }

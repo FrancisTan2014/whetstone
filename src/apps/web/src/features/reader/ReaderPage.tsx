@@ -810,7 +810,10 @@ export function ReaderPage({
     };
 
     for (const id of sources) {
-      lookupTerm(term, active.language, id)
+      // The local-LLM "AI 解释" tab (#341) glosses the term in context, so it — and only it — is sent
+      // the selection's containing block text; dictionary lookups stay context-free.
+      const context = id === "llm" ? active.draft.contextSnapshot : undefined;
+      lookupTerm(term, active.language, id, context)
         .then((response) =>
           setTabState(
             id,

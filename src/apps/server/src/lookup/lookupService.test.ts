@@ -92,6 +92,37 @@ describe("createLookupService", () => {
 
     expect(second).toEqual({ entry: wordnetEntry, found: true });
     expect(wordnet.calls()).toBe(1);
-    expect(setSpy).toHaveBeenCalledWith("en:wordnet:word", lookupCacheTtlMs);
+    expect(setSpy).toHaveBeenCalledWith("en:wordnet:word:", lookupCacheTtlMs);
+  });
+
+  it("threads the request context and language to the source and keys the cache on the context (#341)", async () => {
+    const lookup = vi.fn().mockResolvedValue(wordnetEntry);
+    const setSpy = vi.fn();
+    const inner = createInMemoryLookupCache<LookupResponse>();
+    const cache: LookupCache<LookupResponse> = {
+      get: inner.get,
+      set: (key, value, ttlMs) => {
+        setSpy(key, ttlMs);
+        inner.set(key, value, ttlMs);
+      }
+    };
+    const service = createLookupService({
+      cache,
+      sources: [{ id: "llm", languages: ["zh-CN"], lookup }]
+    });
+
+    await service.lookup("六艺", "zh-CN", "llm", "六艺者，礼、乐、射、御、书、数也。");
+    expect(lookup).toHaveBeenCalledWith("六艺", {
+      context: "六艺者，礼、乐、射、御、书、数也。",
+      language: "zh-CN"
+    });
+    expect(setSpy).toHaveBeenCalledWith(
+      "zh-CN:llm:六艺:六艺者，礼、乐、射、御、书、数也。",
+      lookupCacheTtlMs
+    );
+
+    // A different surrounding context is a distinct cache key — a fresh gloss, never a stale hit.
+    await service.lookup("六艺", "zh-CN", "llm", "另一处的上下文。");
+    expect(lookup).toHaveBeenCalledTimes(2);
   });
 });

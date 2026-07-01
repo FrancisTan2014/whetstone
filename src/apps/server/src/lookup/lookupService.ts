@@ -8,12 +8,16 @@ export const lookupCacheTtlMs = 10 * 60 * 1000;
 
 const notFound: LookupResponse = { found: false };
 
-// One named lookup source the reader can show as its own tab (WordNet, Wiktionary, CC-CEDICT). Each
-// fetches independently, so one source being slow/down/empty fails to its own tab — never the popover.
+// One named lookup source the reader can show as its own tab (WordNet, Wiktionary, CC-CEDICT, and the
+// optional local-LLM "AI 解释"). Each fetches independently, so one source being slow/down/empty fails
+// to its own tab — never the popover. `options` carries the request language and the selection's
+// containing block text (`context`) for the LLM source (#341); dictionary sources ignore it.
+export type LookupOptions = Readonly<{ context: string | undefined; language: string }>;
+
 export type LookupSource = Readonly<{
   id: LookupSourceId;
   languages: ReadonlyArray<string>;
-  lookup: (term: string) => Promise<DictionaryEntry | null>;
+  lookup: (term: string, options: LookupOptions) => Promise<DictionaryEntry | null>;
 }>;
 
 export type LookupServiceDependencies = Readonly<{
@@ -22,16 +26,23 @@ export type LookupServiceDependencies = Readonly<{
 }>;
 
 export type LookupService = Readonly<{
-  lookup: (term: string, language: string, source: LookupSourceId) => Promise<LookupResponse>;
+  lookup: (
+    term: string,
+    language: string,
+    source: LookupSourceId,
+    context?: string
+  ) => Promise<LookupResponse>;
 }>;
 
 // Resolve a single requested source: the source whose id and language match. A missing source or
-// an empty result is not-found, cached by `language:source:term` so tabs and languages never collide.
+// an empty result is not-found, cached by `language:source:term:context` so tabs, languages, and
+// distinct contexts (the LLM aid glosses the same term differently per sentence) never collide.
 export function createLookupService(dependencies: LookupServiceDependencies): LookupService {
   async function resolve(
     term: string,
     language: string,
-    source: LookupSourceId
+    source: LookupSourceId,
+    context: string | undefined
   ): Promise<LookupResponse> {
     const matched = dependencies.sources.find(
       (candidate) => candidate.id === source && candidate.languages.includes(language)
@@ -41,23 +52,24 @@ export function createLookupService(dependencies: LookupServiceDependencies): Lo
       return notFound;
     }
 
-    const entry = await matched.lookup(term);
+    const entry = await matched.lookup(term, { context, language });
     return entry === null ? notFound : { entry, found: true };
   }
 
   async function lookup(
     term: string,
     language: string,
-    source: LookupSourceId
+    source: LookupSourceId,
+    context?: string
   ): Promise<LookupResponse> {
-    const key = `${language}:${source}:${term}`;
+    const key = `${language}:${source}:${term}:${context ?? ""}`;
     const cached = dependencies.cache.get(key);
 
     if (cached !== undefined) {
       return cached;
     }
 
-    const response = await resolve(term, language, source);
+    const response = await resolve(term, language, source, context);
     dependencies.cache.set(key, response, lookupCacheTtlMs);
     return response;
   }

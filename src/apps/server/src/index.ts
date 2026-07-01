@@ -27,6 +27,11 @@ import { createLookupService, type LookupSource } from "./lookup/lookupService.j
 import { createMoedictProvider } from "./lookup/moedictProvider.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
 import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
+import {
+  readExplainConfig,
+  resolveExplainer,
+  type ExplainModel
+} from "./lookup/explainProvider.js";
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
@@ -89,6 +94,39 @@ const cedictPath = new URL("./lookup/data/cedict.u8.gz", import.meta.url);
 const cedictText = gunzipSync(readFileSync(cedictPath)).toString("utf8");
 const cedict = createCedictProvider(parseCedict(cedictText));
 lookupSources.push({ id: "cedict", languages: ["zh-CN", "zh-TW"], lookup: cedict.lookup });
+
+// The optional local-LLM "AI 解释" contextual aid for Chinese (#341): a labeled, view-only explanation
+// of the selected span in its sentence, served by the local Ollama model named in EXPLAIN_MODEL. Absent
+// config resolves to an "unavailable" provider (the tab shows its honest empty state), so no model is
+// required for the deploy or the gate. The Ollama network boundary lives here in the wiring layer, like
+// the coach's createOllamaChat, and is time-boxed so an unreachable daemon can never hang the tab.
+const createOllamaExplainModel = (model: string): ExplainModel => {
+  return async (prompt) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch("http://127.0.0.1:11434/api/generate", {
+        body: JSON.stringify({ model, prompt, stream: false }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+        signal: controller.signal
+      });
+      const body = (await response.json()) as { response?: string };
+      return body.response ?? "";
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+};
+const explain = resolveExplainer({
+  config: readExplainConfig(),
+  createModel: createOllamaExplainModel
+});
+lookupSources.push({
+  id: "llm",
+  languages: ["zh-CN", "zh-TW"],
+  lookup: (term, options) => explain({ context: options.context, language: options.language, term })
+});
 
 const lookupService = createLookupService({
   cache: createInMemoryLookupCache(),
