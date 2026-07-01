@@ -443,6 +443,75 @@ describe("htmlToDocument CJK inter-character spacing (#340)", () => {
 
     expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("中文斜体混排");
   });
+
+  it("strips inter-CJK spaces that straddle an inline element boundary (#358)", () => {
+    const { blocks, evidence } = htmlToDocument("<p>使用 <b>传硕计划</b> 中的公版书</p>");
+
+    // Both boundary spaces around the <b>-wrapped proper noun are removed (the #340 per-node pass
+    // could not see the Han across the inline element).
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("使用传硕计划中的公版书");
+    expect(evidence).toHaveLength(0);
+  });
+
+  it.each([
+    ["i", "<p>见 <i>周髀</i> 之术</p>", "见周髀之术"],
+    ["em", "<p>见 <em>周髀</em> 之术</p>", "见周髀之术"],
+    ["strong", "<p>见 <strong>周髀</strong> 之术</p>", "见周髀之术"],
+    ["a", '<p>见 <a href="#x">周髀</a> 之术</p>', "见周髀之术"],
+    ["span", '<p>见 <span class="k">周髀</span> 之术</p>', "见周髀之术"],
+    ["sup", "<p>见 <sup>周髀</sup> 之术</p>", "见周髀之术"]
+  ])("strips inter-CJK spaces across an inline <%s> boundary", (_tag, html, expected) => {
+    const { blocks } = htmlToDocument(html);
+
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe(expected);
+  });
+
+  it("preserves a space between a Han character and Latin/digits across an inline boundary", () => {
+    const { blocks } = htmlToDocument('<p>见 <a href="#f">Figure 1</a> 处</p>');
+
+    // The <a> content is Latin/digits, so neither boundary space is inter-CJK — both are kept.
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("见 Figure 1 处");
+  });
+
+  it("does not touch the ideographic space U+3000 across an inline boundary", () => {
+    const { blocks } = htmlToDocument("<p>甲　<b>乙</b>丙</p>");
+
+    // U+3000 is not ASCII whitespace, so the inline-boundary pass leaves it, like #340.
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("甲　乙丙");
+  });
+
+  it("keeps whitespace inside inline <code> and never joins across it", () => {
+    const { blocks } = htmlToDocument("<p>甲 <code>x y</code> 乙</p>");
+
+    // <code> ends the inline run and its spacing is significant, so the code's internal space and the
+    // spaces flanking it are all preserved.
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toContain("x y");
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toContain("甲 ");
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toContain(" 乙");
+  });
+
+  it("keeps a <pre> block's inter-CJK spacing verbatim", () => {
+    const { blocks } = htmlToDocument("<pre>中 文 保留</pre>");
+
+    expect(textOf(blocksOfType(blocks, "codeBlock")[0]!.node)).toBe("中 文 保留");
+  });
+
+  it("never joins inter-CJK spacing across a block boundary", () => {
+    const { blocks } = htmlToDocument("<p>甲 </p><p> 乙</p>");
+
+    // Two separate paragraphs: the trailing/leading spaces are their own (ProseMirror trims them), and
+    // the Han of one block is never joined to the next.
+    expect(blocksOfType(blocks, "paragraph").map((block) => textOf(block.node))).toEqual([
+      "甲",
+      "乙"
+    ]);
+  });
+
+  it("treats an interleaved HTML comment as invisible, joining the Han around it", () => {
+    const { blocks } = htmlToDocument("<p>甲 <b>乙</b><!-- note -->丙</p>");
+
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("甲乙丙");
+  });
 });
 
 describe("htmlToDocument inline tolerance (#357)", () => {
