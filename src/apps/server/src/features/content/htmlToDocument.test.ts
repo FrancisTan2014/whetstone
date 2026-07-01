@@ -571,3 +571,58 @@ describe("htmlToDocument inline tolerance (#357)", () => {
     expect(evidence[0]!.tag).toBe("video");
   });
 });
+
+describe("htmlToDocument MathML tolerance (#361)", () => {
+  it("keeps inline <math> in one paragraph, showing its symbols as inline text", () => {
+    const { blocks, evidence } = htmlToDocument(
+      "<p>The heap holds <math><mi>n</mi></math> objects at time <math><mi>t</mi></math>.</p>"
+    );
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    // The sentence stays one paragraph; each formula's symbols (n, t) appear inline, not dropped.
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("The heap holds n objects at time t.");
+    // Handled, not dropped: no unknown block and no fail-loud evidence for <math> or its children.
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("renders display/block <math> as readable inline text, not a shattered opaque block", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p><math display="block"><mrow><mi>x</mi><mo>=</mo><mn>2</mn></mrow></math></p>'
+    );
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("x=2");
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("does not descend into MathML children, so nested elements never leak as unknown or raw markup", () => {
+    const { blocks, doc, evidence } = htmlToDocument(
+      "<p>Let <math><msup><mi>a</mi><mn>2</mn></msup><mo>+</mo><mfrac><mi>b</mi><mi>c</mi></mfrac></math> hold.</p>"
+    );
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    // The whole MathML subtree collapses to its concatenated symbol text; msup/mfrac/mi/mn/mo never
+    // surface as unknown blocks, evidence, or literal `<math>…</math>` markup.
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("Let a2+bc hold.");
+    expect(textOf(paragraphs[0]!.node)).not.toContain("<math");
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(evidence).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("still fails loud for a genuinely unknown block element alongside math (regression guard)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p>Value <math><mi>k</mi></math>.</p><video src="clip.mp4"></video>'
+    );
+
+    // Tolerating <math> did not weaken the block-level fail-loud invariant: <video> is still flagged.
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(1);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("video");
+  });
+});

@@ -142,6 +142,9 @@ const TOLERATED_TAGS = new Set<string>([
 
 const ADJACENT_TEXT_LIMIT = 80;
 
+// MathML is handled as a tolerated atom (its `textContent` is kept; its subtree is not descended).
+const MATH_TAG = "math";
+
 type ElementKind = "recognized" | "tolerated" | "unknown";
 
 // Read a code block's language from `data-code-language`, then from a `language-<x>` class token
@@ -565,6 +568,16 @@ function collectUnknowns(body: HTMLElement, ownerDocument: Document): IngestionE
     }));
 
     for (const { child, childPath } of children) {
+      // MathML is a structured subtree of its own unrecognized elements (mrow/mi/mo/mn/msup/...).
+      // Descending would classify those children as unknown and shatter the surrounding paragraph
+      // (like #357's `<tt>`), and tolerating `math` as a descent tag would do the same. So handle
+      // `<math>` as an atom: replace it with a text node of its concatenated symbols and never walk
+      // its internals. v0 shows the formula's symbols inline; true MathML rendering is deferred (#361).
+      if (child.tagName.toLowerCase() === MATH_TAG) {
+        child.replaceWith(ownerDocument.createTextNode(child.textContent as string));
+        continue;
+      }
+
       if (classify(child) === "unknown") {
         evidence.push({
           adjacentText: adjacentText(child),
