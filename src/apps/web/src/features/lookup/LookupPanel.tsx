@@ -290,9 +290,15 @@ function stateHasContent(state: LookupState): boolean {
 // function word like "versus" that WordNet has no entry for falls through to Wiktionary. Each
 // networked source is time-boxed, so a leading "loading" tab is transient: it resolves to content or
 // falls through to the next source. The reader can still switch tabs explicitly.
+//
+// The optional local-LLM "AI 解释" tab (#341) is DELIBERATELY ineligible for auto-preference: it must
+// never become the default or a fall-through target (not when it has content, and not while it is still
+// loading), so dictionaries always lead and the AI explanation is opened only on purpose. Without this,
+// once every dictionary resolves empty/error while the trailing LLM tab is still loading, the panel
+// would auto-select it.
 function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
   const usable = tabs.findIndex(
-    (tab) => stateHasContent(tab.state) || tab.state.status === "loading"
+    (tab) => tab.id !== "llm" && (stateHasContent(tab.state) || tab.state.status === "loading")
   );
   return usable === -1 ? 0 : usable;
 }

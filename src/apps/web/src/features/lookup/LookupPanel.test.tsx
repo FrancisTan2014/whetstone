@@ -605,6 +605,30 @@ describe("LookupPanel content", () => {
       screen.getByRole("note", { name: "AI-generated explanation, may be imperfect" })
     ).toBeDefined();
   });
+
+  it("never auto-selects AI 解释: dictionaries lead even while the LLM tab is still loading (#341)", async () => {
+    const user = userEvent.setup();
+    renderTabs(
+      [
+        { id: "moedict", label: "萌典", state: { status: "empty" } },
+        { id: "zhwiktionary", label: "中文維基詞典", state: { status: "error" } },
+        { id: "cedict", label: "CC-CEDICT", state: { status: "empty" } },
+        { id: "llm", label: "AI 解释", state: { status: "loading" } }
+      ],
+      desktop,
+      "六艺"
+    );
+
+    // Every dictionary resolved empty/error while the trailing LLM tab is still loading. The panel must
+    // NOT fall through to AI 解释: no "Looking up…" from an auto-selected LLM tab, and the leading
+    // dictionary's not-found launchpad shows instead.
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("No definition found for “六艺”.")).toBeDefined();
+
+    // The AI tab is still reachable — the reader opens it deliberately, and only then does it load.
+    await user.click(screen.getByRole("tab", { name: "AI 解释" }));
+    expect(screen.getByRole("status").textContent).toContain("Looking up");
+  });
 });
 
 describe("LookupPanel desktop popover", () => {
