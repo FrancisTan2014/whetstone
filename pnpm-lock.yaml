@@ -104,6 +104,9 @@ importers:
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       jsdom:
         specifier: ^26.0.0
         version: 26.1.0

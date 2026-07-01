@@ -20,6 +20,7 @@
     "@whetstone/domain": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.5",
+    "fflate": "^0.8.3",
     "jsdom": "^26.0.0",
     "prosemirror-model": "^1.25.9",
     "wordpos": "^2.1.0"
