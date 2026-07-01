@@ -583,7 +583,7 @@ function blockElement(container: HTMLElement, blockId: string): HTMLElement {
 async function openTocDrawer(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   await user.click(screen.getByRole("button", { name: "Table of contents" }));
 
-  return screen.getByRole("navigation", { name: "目录" });
+  return screen.getByRole("navigation", { name: "Table of Contents" });
 }
 
 // "Your notes" is no longer pinned to the reading column; it lives in a Sheet opened from the
@@ -934,7 +934,7 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("你好世界")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Table of contents" })).toBeNull();
-    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Table of Contents" })).toBeNull();
   });
 
   it("shows the untitled active unit without a heading", async () => {
@@ -1910,7 +1910,7 @@ describe("ReaderPage reading tools", () => {
     await user.click(within(toc).getByRole("button", { name: "Section Two" }));
 
     await screen.findByText("Heading text");
-    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Table of Contents" })).toBeNull();
   });
 
   it("dismisses the 目录 drawer from its backdrop", async () => {
@@ -1922,7 +1922,7 @@ describe("ReaderPage reading tools", () => {
     await openTocDrawer(user);
     await user.click(screen.getByRole("button", { name: "Close table of contents" }));
 
-    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Table of Contents" })).toBeNull();
   });
 });
 
