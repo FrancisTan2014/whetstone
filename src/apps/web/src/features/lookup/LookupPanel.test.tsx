@@ -67,10 +67,11 @@ function renderPanel(
 
 function renderTabs(
   tabs: ReadonlyArray<LookupTab>,
-  matchers: Record<string, boolean> = desktop
+  matchers: Record<string, boolean> = desktop,
+  term = "set"
 ): RenderResult {
   mockMatchMedia(matchers);
-  return render(<LookupPanel onOpenChange={() => undefined} open={true} tabs={tabs} term="set" />);
+  return render(<LookupPanel onOpenChange={() => undefined} open={true} tabs={tabs} term={term} />);
 }
 
 afterEach(() => {
@@ -346,10 +347,23 @@ describe("LookupPanel content", () => {
     expect(screen.getByRole("alert").textContent).toContain("unavailable");
   });
 
-  it("shows an empty state when no definition is found", () => {
+  it("shows the no-definition launchpad naming the term with external links when empty (#339)", () => {
     renderPanel({ status: "empty" }, { matchers: desktop });
 
-    expect(screen.getByText("No definition found.")).toBeDefined();
+    expect(screen.getByText("No definition found for “set”.")).toBeDefined();
+    // The same language-aware links as a resolved entry — a launchpad, not a dead-end.
+    const links = within(
+      screen.getByRole("navigation", { name: "Open in external dictionary" })
+    ).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Longman",
+      "Merriam-Webster",
+      "Oxford Learner's"
+    ]);
+    for (const link of links) {
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toContain("noopener");
+    }
   });
 
   it("offers a tab per source and auto-selects the first with content", () => {
@@ -396,16 +410,26 @@ describe("LookupPanel content", () => {
     ]);
 
     await user.click(screen.getByRole("tab", { name: "WordNet" }));
-    expect(screen.getByText("No definition found.")).toBeDefined();
+    expect(screen.getByText("No definition found for “set”.")).toBeDefined();
   });
 
-  it("shows one explicit error when every source is empty, errored, or empty-but-loaded (#306)", () => {
+  it("shows the no-definition launchpad when every source is empty, errored, or empty-but-loaded (#306/#339)", () => {
     renderTabs([
       { id: "wordnet", label: "WordNet", state: emptyButLoaded },
       { id: "wiktionary", label: "Wiktionary", state: { status: "empty" } }
     ]);
 
-    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
+    // No dead-end alert; the term is named and the external links are offered instead.
+    expect(screen.getByText("No definition found for “set”.")).toBeDefined();
+    expect(screen.queryByText(/Could not look up/)).toBeNull();
+    const links = within(
+      screen.getByRole("navigation", { name: "Open in external dictionary" })
+    ).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Longman",
+      "Merriam-Webster",
+      "Oxford Learner's"
+    ]);
   });
 
   it("keeps the Chinese 萌典 tab as the default while it loads, even when CC-CEDICT resolves first (#272)", () => {
@@ -465,18 +489,56 @@ describe("LookupPanel content", () => {
     expect(screen.getByRole("alert").textContent).toContain("unavailable");
   });
 
-  it("shows one explicit error when every source fails or is empty", () => {
+  it("shows the launchpad with Chinese external links when a CJK term has no definition (#339)", () => {
+    renderTabs(
+      [
+        { id: "moedict", label: "萌典", state: { status: "empty" } },
+        { id: "cedict", label: "CC-CEDICT", state: { status: "error" } }
+      ],
+      desktop,
+      "六爻"
+    );
+
+    expect(screen.getByText("No definition found for “六爻”.")).toBeDefined();
+    const links = within(
+      screen.getByRole("navigation", { name: "Open in external dictionary" })
+    ).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual(["汉典", "萌典", "ctext", "国学大师"]);
+    // The links point at the selected term and open safely in a new tab.
+    expect(links[0]?.getAttribute("href")).toContain(encodeURIComponent("六爻"));
+    for (const link of links) {
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toContain("noopener");
+    }
+  });
+
+  it("adds no panel-level fallback links when a source has readable content (#339)", () => {
+    renderTabs([
+      { id: "wordnet", label: "WordNet", state: loadedEntry },
+      { id: "wiktionary", label: "Wiktionary", state: { status: "empty" } }
+    ]);
+
+    // The loaded entry renders unchanged: no not-found launchpad, and exactly one external-links row
+    // (the entry header's) — never a duplicated panel-level fallback.
+    expect(screen.queryByText(/No definition found for/)).toBeNull();
+    expect(screen.getAllByRole("navigation", { name: "Open in external dictionary" })).toHaveLength(
+      1
+    );
+  });
+
+  it("shows the launchpad when every source fails or is empty", () => {
     renderTabs([
       { id: "wordnet", label: "WordNet", state: { status: "empty" } },
       { id: "wiktionary", label: "Wiktionary", state: { status: "error" } }
     ]);
 
-    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
+    expect(screen.getByText("No definition found for “set”.")).toBeDefined();
+    expect(screen.queryByText(/Could not look up/)).toBeNull();
   });
 
-  it("shows the combined error when there are no sources for the language", () => {
+  it("shows the launchpad when there are no sources for the language", () => {
     renderTabs([]);
-    expect(screen.getByRole("alert").textContent).toContain("Could not look up");
+    expect(screen.getByText("No definition found for “set”.")).toBeDefined();
   });
 });
 
