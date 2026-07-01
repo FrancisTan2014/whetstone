@@ -1,12 +1,13 @@
 # Deploy whetstone to your MacBook (continuous, on every merge to `main`)
 
 This is the step-by-step runbook for the deploy described in #184. Follow it once to stand up your
-Mac; after that, **every merge to `main` auto-builds and restarts the app**, served over HTTPS via a
-Cloudflare Tunnel and reachable from your phone at a stable URL.
+Mac; after that, **every merge to `main` auto-builds and restarts the app**, reachable from your phone
+over HTTPS at a stable URL — by default a private, fast **Tailscale** `.ts.net` address.
 
 It stays in sync with [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml): the workflow
-builds and restarts a `launchd` app service and health-checks it; this doc sets up that service, the
-self-hosted runner, the tunnel, and persistence.
+builds and restarts a `launchd` app service, health-checks it, and (when opted in) asserts the
+Tailscale `serve` mapping; this doc sets up that service, the self-hosted runner, the URL, and
+persistence.
 
 ## How it works
 
@@ -18,11 +19,11 @@ self-hosted runner, the tunnel, and persistence.
 - The **app** is a `launchd` service running the built `src/apps/server/dist/index.js`. It **runs DB
   migrations on boot** and **serves the built web client and the API from one port** (single origin),
   so there is no separate web server and no SPA-fallback config (the client uses a hash router).
-- A **named Cloudflare Tunnel** (a `launchd` service running `cloudflared tunnel run --token …`) maps a
-  **fixed** public HTTPS hostname (`whetstone.<your-domain>`) to `http://localhost:<port>` — free, no
-  port-forwarding, automatic TLS, and the **same URL across reboots** (unlike a quick tunnel). No
-  domain? **Tailscale Funnel** is the fallback, giving a stable `*.ts.net` URL. The token/hostname live
-  in env / the Cloudflare dashboard — never committed.
+- A **stable, fast public-to-you URL:** by default, **Tailscale `serve`** publishes the app on your
+  **tailnet** at a fixed `https://<machine>.<tailnet>.ts.net` over a **direct WireGuard** path (near-LAN
+  speed, private — your devices only), the **same URL across reboots**. A **named Cloudflare Tunnel**
+  (`whetstone.<your-domain>`) is the alternative if you have a Cloudflare domain; **Tailscale Funnel** is
+  the opt-in path to share the app **publicly**. Any tokens/keys live on the host — never committed.
 - **Persistence:** `DATABASE_DIR` (and the source/image folders) live outside the runner workspace, so
   notes and reading position survive every redeploy.
 
@@ -128,12 +129,60 @@ curl -fsS http://127.0.0.1:3000/health                     # {"service":"whetsto
 > health-check use them: `gh variable set WHETSTONE_PORT --body <port>` and
 > `gh variable set WHETSTONE_SERVICE_LABEL --body <label>`.
 
-## 5. A stable public URL (named Cloudflare Tunnel, token-based)
+## 5. A stable, fast URL (Tailscale `serve` — recommended)
 
-A **named** tunnel keeps the **same hostname across reboots** — unlike a quick tunnel, whose
-`trycloudflare.com` URL is random on every start. The modern token-based setup needs **no
-`credentials-file` and no committed config**: Cloudflare stores the routing, and the Mac only holds a
-token (kept in env, never in the repo).
+`tailscale serve` publishes the app on your **tailnet** (your own signed-in devices) at a fixed
+`https://<machine>.<tailnet>.ts.net`, over a **direct WireGuard** peer-to-peer path — near-LAN
+throughput, private by default, and the **same URL across reboots**. This is the recommended default
+for personal use: it is materially faster than any relayed tunnel (the quick tunnel is
+throughput-throttled) and it never exposes the reader to the public internet. To share the app
+publicly — with someone **off** your tailnet — use **Funnel** below instead; that is the only public
+option.
+
+**One-time host setup (on the Mac):**
+
+```bash
+brew install tailscale
+sudo tailscale up                 # opens a browser for SSO; sign in to your account
+```
+
+Then **disable node-key expiry** so the machine (and its `.ts.net` URL) never lapses — Tailscale keys
+otherwise expire ~6-monthly: in the admin console, **Machines → this Mac → ⋯ → Disable key expiry**.
+
+**Serve the app (persistent):**
+
+```bash
+tailscale serve --bg 3000         # serves 127.0.0.1:3000 at https://<machine>.<tailnet>.ts.net
+tailscale serve status            # shows the .ts.net URL → your local port
+```
+
+`serve` config persists across reboots, so this is a one-time command by hand. The deploy CI also
+re-asserts it after every healthy restart once you opt in (below), keeping the served port in sync with
+`WHETSTONE_PORT`.
+
+**Reach it from your phone:** install the **Tailscale** app on the phone and sign in to the **same
+account** (this adds the phone to your tailnet), then open `https://<machine>.<tailnet>.ts.net`. Because
+the phone is on your tailnet, the connection is direct and private — no public exposure.
+
+**Turn on the CI assertion:** set the repo variable so the deploy re-applies `serve` after each health
+check:
+
+```bash
+gh variable set TAILSCALE_SERVE_ENABLED --body true    # or: --repo FrancisTan2014/whetstone
+```
+
+With it set, `deploy.yml` runs `tailscale serve --bg "$WHETSTONE_PORT"` (idempotent) after the app is
+healthy, verifies the port is served via `tailscale serve status`, and best-effort curls the `.ts.net`
+`/health`. Unset/false → the step **skips** (it never queues and never fails), so deploys behave exactly
+as before. The one-time `tailscale up` SSO is a **host prerequisite**, not a CI secret; if you later
+automate it, pass a host-provided `TS_AUTHKEY` from the Mac's environment — never commit it.
+
+### Alternative: named Cloudflare Tunnel (if you have a Cloudflare domain)
+
+Prefer a custom domain over a `.ts.net` name? A **named** Cloudflare tunnel keeps the **same hostname
+across reboots** — unlike a quick tunnel, whose `trycloudflare.com` URL is random on every start. The
+modern token-based setup needs **no `credentials-file` and no committed config**: Cloudflare stores the
+routing, and the Mac only holds a token (kept in env, never in the repo).
 
 **One-time setup** (domain must be on Cloudflare — added as a zone in your account):
 
@@ -187,20 +236,22 @@ token (kept in env, never in the repo).
 
 Your app is now permanently at `https://whetstone.<your-domain>` — the **same URL after every reboot**.
 
-### Fallback: Tailscale Funnel (no domain needed)
+### Share publicly: Tailscale Funnel (opt-in)
 
-No Cloudflare-managed domain? **Tailscale Funnel** gives a stable `https://<machine>.<tailnet>.ts.net`
-URL for free:
+Need to share the reader with someone **off** your tailnet? **Tailscale Funnel** exposes it on the
+public internet at the same stable `https://<machine>.<tailnet>.ts.net` URL — but routed through
+Tailscale's public **DERP relays** (slower than `serve`'s direct path) and reachable by anyone with the
+link. Use it deliberately for sharing, not as your everyday personal path (prefer `serve` above):
 
 ```bash
 brew install tailscale
 sudo tailscale up
-tailscale funnel --bg 3000      # serves localhost:3000 at https://<machine>.<tailnet>.ts.net
-tailscale funnel status         # shows the fixed URL
+tailscale funnel --bg 3000      # PUBLIC: serves localhost:3000 at https://<machine>.<tailnet>.ts.net
+tailscale funnel status         # shows the fixed public URL
 ```
 
 The `.ts.net` hostname is tied to the machine, so it is also **stable across reboots** (re-run
-`tailscale funnel --bg 3000` once; it persists). Use this instead of the Cloudflare service above —
+`tailscale funnel --bg 3000` once; it persists). `serve` and `funnel` are mutually exclusive on a port —
 pick one.
 
 ### Quick tunnel (throwaway test only)
@@ -237,9 +288,9 @@ merge before any of the above is set up.
 1. Merge any PR to `main` (or push a trivial change).
 2. **Repo → Actions → Deploy** — watch the run land on your self-hosted runner: install → build →
    restart → health check (green).
-3. On your **phone**, open your stable URL (`https://whetstone.<your-domain>`, or the Tailscale
-   `https://<machine>.<tailnet>.ts.net`). The reader loads over HTTPS, and it is the **same URL after
-   every reboot**.
+3. On your **phone**, open your stable URL (the Tailscale `https://<machine>.<tailnet>.ts.net`, or your
+   named Cloudflare `https://whetstone.<your-domain>`). The reader loads over HTTPS, and it is the
+   **same URL after every reboot**.
 4. **Add to Home Screen** (Safari → Share → Add to Home Screen). _(Full PWA install polish — manifest,
    iOS icons — is a separate follow-up, not part of #184.)_
 5. Create a note / scroll, merge another change to trigger a redeploy, and confirm the note and your
@@ -251,10 +302,14 @@ merge before any of the above is set up.
 - **Job waits forever ("Waiting for a runner"):** the runner service isn't running — `cd ~/actions-runner && ./svc.sh status`.
 - **Health check fails:** read `~/whetstone/app.err.log`; confirm the `node` path and `WEB_DIR` in the
   plist, and that `dist/` exists (a deploy has built it).
-- **URL unreachable from the phone:** the Mac is asleep, or the tunnel isn't running — check the
-  named Cloudflare tunnel with `launchctl print "gui/$(id -u)/com.whetstone.tunnel"` (or
-  `tailscale funnel status` if you used the Funnel fallback). A bad/expired token shows in
-  `~/whetstone/tunnel.err.log`.
+- **URL unreachable from the phone:** the Mac is asleep, or the phone/Mac isn't connected. For the
+  Tailscale default, confirm both devices are up on the tailnet (`tailscale status`) and the mapping is
+  live (`tailscale serve status`); make sure the phone is signed in to the **same** Tailscale account.
+  For the Cloudflare alternative, check `launchctl print "gui/$(id -u)/com.whetstone.tunnel"` (a
+  bad/expired token shows in `~/whetstone/tunnel.err.log`); for public sharing, `tailscale funnel
+status`.
+- **Deploy's "Serve over Tailscale" step is "skipped":** `TAILSCALE_SERVE_ENABLED` isn't `true` (§5). If
+  it runs but fails, the machine isn't authed — run the one-time `sudo tailscale up` on the Mac (§5).
 - **Brief 404s right after a merge:** expected — the runner cleans then rebuilds the workspace during a
   deploy; the app restarts onto the new build within a minute.
 
