@@ -1,12 +1,54 @@
 import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import type { Nodes as HastNodes, Root } from "hast";
+import type { Element as HastElement, Nodes as HastNodes, Root } from "hast";
 import type { RootContent } from "mdast";
 import { toHast } from "mdast-util-to-hast";
 import { memo } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
 import { unwrapBlockLinks } from "./phrasingLinks";
+
+// Block containers into which `mdast-util-to-hast` inserts `"\n"` separator text nodes between their
+// block children (its readability `wrap`). Those newlines are structural, not content: they are absent
+// from the block's stored `plaintext` (`mdast-util-to-string`), so leaving them in the rendered DOM
+// makes `element.textContent` longer than the plaintext and shifts every capture/re-anchor offset —
+// which the server then rejects as `anchor_out_of_range` (#344). Phrasing containers (p, headings,
+// inline marks) are excluded, so a meaningful phrasing newline (a soft line break) is preserved.
+const BLOCK_WRAP_TAGS = new Set([
+  "blockquote",
+  "ul",
+  "ol",
+  "li",
+  "dl",
+  "table",
+  "thead",
+  "tbody",
+  "tfoot",
+  "tr",
+  "figure"
+]);
+
+// Drop the structural whitespace-only text nodes `mdast-util-to-hast` adds inside block containers, so
+// the rendered block's `textContent` equals its stored `plaintext` and offsets align (#344). Only
+// block-wrap containers are pruned, where a whitespace-only direct child is always a separator; text
+// inside phrasing content (including a soft break's `"\n"`) is never touched.
+function stripStructuralWhitespace(node: HastNodes): void {
+  if (node.type !== "root" && node.type !== "element") {
+    return;
+  }
+
+  const parent = node as Root | HastElement;
+
+  if (node.type === "element" && BLOCK_WRAP_TAGS.has(node.tagName)) {
+    parent.children = parent.children.filter(
+      (child) => !(child.type === "text" && child.value.trim() === "")
+    ) as typeof parent.children;
+  }
+
+  for (const child of parent.children) {
+    stripStructuralWhitespace(child as HastNodes);
+  }
+}
 
 // rehype-sanitize's schema is hast-util-sanitize's `defaultSchema`. We additionally drop `img`
 // (v0 has no image blocks) so no external image is ever fetched or rendered. Raw HTML never gets
@@ -83,6 +125,7 @@ export const BlockContent = memo(function BlockContent({
 }: BlockContentProps): React.JSX.Element {
   const safeNode = unwrapBlockLinks(node as RootContent);
   const hast: HastNodes = toHast({ type: "root", children: [safeNode] });
+  stripStructuralWhitespace(hast);
   const sanitized = sanitize(hast, sanitizeSchema) as Root;
 
   return toJsxRuntime(sanitized, {

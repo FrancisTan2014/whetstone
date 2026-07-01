@@ -51,6 +51,35 @@ test.describe("core reader loop", () => {
     await expect(page.getByRole("toolbar", toolbar)).toBeVisible();
   });
 
+  test("saves a note anchored inside a blockquote (no anchor_out_of_range, #344)", async ({
+    page,
+    setup
+  }) => {
+    await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
+    await expect(page.locator(anyBlock).first()).toBeVisible();
+
+    // Select a word inside the blockquote and save a note. Before #344 the blockquote's rendered
+    // textContent carried mdast-util-to-hast's structural "\n" separators, so the captured offsets did
+    // not match the stored plaintext and the server rejected the save with 400 anchor_out_of_range —
+    // the editor stayed open and no highlight appeared.
+    await selectWordIn(page, blockWith("blockquote"));
+    await expect(page.getByRole("toolbar", toolbar)).toBeVisible();
+
+    await page.getByRole("button", { name: "Add note" }).click();
+    const editor = page.getByRole("dialog");
+    await expect(editor).toBeVisible();
+    await editor.locator("textarea, input[type=text]").first().fill("Blockquote note.");
+    await page.getByRole("button", { name: "Save note" }).click();
+
+    // The note anchors and persists on the blockquote block, and it survives a reload.
+    const annotatedBlockquote = page.locator(`${blockWith("blockquote")}[data-has-notes="true"]`);
+    await expect(annotatedBlockquote).toBeVisible();
+
+    await page.reload();
+    await expect(page.locator(anyBlock).first()).toBeVisible();
+    await expect(annotatedBlockquote).toBeVisible();
+  });
+
   test("looks up a word and shows a definition", async ({ page, setup }) => {
     await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
     await expect(page.locator(anyBlock).first()).toBeVisible();

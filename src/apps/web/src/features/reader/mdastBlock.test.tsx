@@ -297,4 +297,93 @@ describe("BlockContent", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).not.toContain("__x");
   });
+
+  // The rendered block's textContent is the offset space capture, re-anchoring, and the server's
+  // anchor validation all index into; it must equal the block's stored plaintext. `mdast-util-to-hast`
+  // inserts structural "\n" separators inside block containers, which used to leak into textContent and
+  // shift every offset — so a blockquote/list/table selection was rejected as anchor_out_of_range
+  // (#344). These lock that the structural whitespace is stripped while meaningful phrasing whitespace
+  // is preserved.
+  it("renders a blockquote whose textContent has no structural newlines (#344)", () => {
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            {
+              children: [{ type: "text", value: "Quoted wisdom about practice and attention." }],
+              type: "paragraph"
+            }
+          ],
+          type: "blockquote"
+        }}
+      />
+    );
+
+    expect(container.querySelector("blockquote")).not.toBeNull();
+    // Matches the stored plaintext (mdast-util-to-string) exactly — no leading/trailing/inner newline.
+    expect(container.textContent).toBe("Quoted wisdom about practice and attention.");
+  });
+
+  it("renders a list whose textContent has no structural newlines between items (#344)", () => {
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            {
+              children: [{ children: [{ type: "text", value: "one" }], type: "paragraph" }],
+              type: "listItem"
+            },
+            {
+              children: [{ children: [{ type: "text", value: "two" }], type: "paragraph" }],
+              type: "listItem"
+            }
+          ],
+          ordered: false,
+          type: "list"
+        }}
+      />
+    );
+
+    expect(container.textContent).toBe("onetwo");
+  });
+
+  it("renders a table whose textContent has no structural newlines between cells (#344)", () => {
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            {
+              children: [
+                { children: [{ type: "text", value: "Term" }], type: "tableCell" },
+                { children: [{ type: "text", value: "Meaning" }], type: "tableCell" }
+              ],
+              type: "tableRow"
+            }
+          ],
+          type: "table"
+        }}
+      />
+    );
+
+    expect(container.textContent).toBe("TermMeaning");
+  });
+
+  it("preserves a meaningful phrasing newline (a soft line break) inside a paragraph (#344)", () => {
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            { type: "text", value: "a" },
+            { type: "text", value: "\n" },
+            { type: "text", value: "b" }
+          ],
+          type: "paragraph"
+        }}
+      />
+    );
+
+    // The paragraph is not a block-wrap container, so its whitespace — part of the stored plaintext —
+    // is kept, matching mdast-util-to-string's "a\nb".
+    expect(container.textContent).toBe("a\nb");
+  });
 });
