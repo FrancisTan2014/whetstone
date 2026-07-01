@@ -632,9 +632,17 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
   Footnote/endnote markers, "see Figure 5-2", and chapter cross-refs are the **same primitive**: an
   inline **reference** to another point in the *same work*, carrying a **target** (the source
   `id`/href) and a **role** (note → superscript + back-link; cross-ref → inline link). They are **not**
-  per-kind nodes re-implemented per renderer. The **keystone — historically missing, and the cause of
-  the repeated regressions — is a work anchor index** built at ingest: `(source file, anchor) →
-  (reading unit, block)` for the *whole* work. Resolution must be **work-scoped, not current-unit
+  per-kind nodes re-implemented per renderer. **Representation:** a reference *marker* (footnote/endnote
+  /callout superscript) is an inline **atom**; a reference *over existing prose text* (xref, figure
+  /section, chapter cross-ref, generic same-work `<a>`) is an inline **`link` mark** — the text stays in
+  the paragraph's inline run, so CJK microtypography (inter-CJK-space normalization) is never broken by
+  pulling link text out of flow. This is the content model's **first inline mark**, a deliberate
+  extension of the node-only schema; it does **not** contradict *annotations render as Decorations,
+  never marks* — that rule governs **personal overlay** (notes/comments, `user_id`), whereas a link is
+  **intrinsic content**. The **keystone — historically missing, and the cause of the repeated
+  regressions — is a work anchor index** built at ingest: `(source file, anchor) → (reading unit,
+  block)` for the *whole* work, keyed by **real per-unit source file** (not an anchor-only shortcut —
+  per-chapter ids like `#fn1` collide across files). Resolution must be **work-scoped, not current-unit
   DOM-scoped**: a reference resolves **across chapters**, so endnotes-at-the-end and chapter cross-refs
   work, not only same-chapter anchors. A **single resolver** turns any target into a cross-unit
   **jump** (scroll + brief highlight), reusing the block-jump; footnotes add a back-link. The reader
