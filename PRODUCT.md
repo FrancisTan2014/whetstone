@@ -359,6 +359,10 @@ be clean and consistent:
   flattened paragraphs.
 - Code blocks use monospace on a distinct surface; inline code is distinguished. Tables,
   blockquotes/epigraphs, and footnotes are styled for readability.
+- **Code callouts** (the ❶ ❷ ❸ markers technical books attach to code lines, paired with an
+  explanation list) keep the listing **one cohesive code block**: markers become inline circled-number
+  text at their position (verbatim whitespace preserved), never shattering the block into figures.
+  Non-interactive in v0 (no marker→explanation jump).
 - **Figures** (EPUB images) render as a real figure — the image sized to the reading measure with its
   caption beneath (never a stray heading); a missing or unsupported image degrades to its caption alone.
   The image is display-only (not annotatable); its caption is selectable text you can take notes on.
