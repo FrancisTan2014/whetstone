@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   epubContentType,
@@ -721,12 +721,19 @@ describe("EPUB ingestion routes", () => {
     epubResponder = async () => {
       throw new Error("corrupt epub");
     };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const response = await ingestEpub(Buffer.from("not-an-epub"));
 
     expect(response.statusCode).toBe(422);
     expect(response.json()).toEqual({ error: "invalid_epub" });
     expect(await context.db.select().from(workSources)).toHaveLength(0);
+    // The failure is logged (not swallowed) with the reason and the content hash of the bytes.
+    expect(warn).toHaveBeenCalledWith(
+      "[ingestion] EPUB could not be parsed",
+      expect.stringContaining("corrupt epub")
+    );
+    warn.mockRestore();
   });
 
   it("rejects an empty EPUB body", async () => {

@@ -35,7 +35,15 @@ export async function ingestEpub(
 
   try {
     parsed = await dependencies.epubParser(bytes);
-  } catch {
+  } catch (error) {
+    // Don't fail silently: a valid-looking upload the parser could not open is worth a log line so
+    // the failure is diagnosable (the sweep in #359 only found its two crashers because it captured
+    // the stack). Uploads carry no filename in v0, so the content hash identifies the failed bytes.
+    console.warn(
+      "[ingestion] EPUB could not be parsed",
+      JSON.stringify({ reason: String(error), sha256 })
+    );
+
     return { status: "invalid_epub" };
   }
 
