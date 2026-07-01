@@ -1279,7 +1279,9 @@ function FigureCaption({
   if (block.node !== undefined) {
     const caption = figureCaptionNode(block.node);
 
-    return caption === undefined ? null : <PmBlock node={caption} />;
+    return caption === undefined ? null : (
+      <PmBlock node={caption} onActivateAnchor={onActivateAnchor} />
+    );
   }
 
   return block.plaintext.trim().length === 0 ? null : (
@@ -1323,7 +1325,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
       {block.blockType === "figure" ? (
         <ReaderFigure block={block} onActivateAnchor={onActivateAnchor} />
       ) : block.node !== undefined ? (
-        <PmBlock node={block.node as DocumentNodeJSON} />
+        <PmBlock node={block.node as DocumentNodeJSON} onActivateAnchor={onActivateAnchor} />
       ) : (
         <BlockContent node={block.mdast} onActivateAnchor={onActivateAnchor} />
       )}

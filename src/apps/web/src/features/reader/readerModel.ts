@@ -6,6 +6,8 @@ import type {
   WorkStructureDto
 } from "@whetstone/contracts";
 
+import { stripFlankingFootnoteBrackets } from "./pmFootnotes";
+
 // The reader's view of a work: a lightweight structure (reading units + block counts) loaded
 // first, then each active unit's blocks fetched on demand and placed in reading order. A block
 // carries the persisted PM document node (`node`, #311 `doc_blocks`) the reader renders through
@@ -103,9 +105,13 @@ function pmBlockType(type: string): BlockDto["blockType"] {
 // Build a reader block from a persisted PM `doc_blocks` node (#311/#312): the addressable id is the
 // stored block id, the renderable content is the PM node itself, and a figure additionally surfaces
 // its image's stored reference + alt (read from the figure's leading `image` child) so the reader
-// serves it from `/api/images/:id`, degrading to caption-only when absent.
+// serves it from `/api/images/:id`, degrading to caption-only when absent. A `footnoteTarget` block is
+// made addressable by its `refId` and given a back-link to the marker's block (#335), reusing the
+// reader's block-jump so the two-way footnote navigation mirrors the mdast path.
 function toPmReaderBlock(docBlock: DocBlockDto): ReaderBlock {
-  const node = docBlock.node as PmJsonNode;
+  // Strip flanking footnote brackets once so the plaintext used for note-anchor offsets matches the
+  // stripped text the renderer paints (the reader renders through the same transform).
+  const node = stripFlankingFootnoteBrackets(docBlock.node) as PmJsonNode;
   const blockType = pmBlockType(node.type);
   const base = {
     blockType,
@@ -114,6 +120,13 @@ function toPmReaderBlock(docBlock: DocBlockDto): ReaderBlock {
     node: docBlock.node,
     plaintext: pmPlaintext(node)
   };
+
+  if (node.type === "footnoteTarget") {
+    const refId = stringAttr(node.attrs, "refId");
+    return refId === undefined
+      ? base
+      : { ...base, anchorId: refId, backlinkAnchorId: `${refId}-ref` };
+  }
 
   if (blockType !== "figure") {
     return base;

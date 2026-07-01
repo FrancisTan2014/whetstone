@@ -237,3 +237,64 @@ describe("toReaderBlocks (PM doc blocks, #312)", () => {
     expect(blocks[0]?.mdast).toBe(chapterHeading);
   });
 });
+
+describe("toReaderBlocks (PM footnotes, #335)", () => {
+  const footnoteUnit: ReadingUnitContentDto = {
+    blocks: [],
+    docBlocks: [
+      {
+        entryId: toEntryId("pm-mark"),
+        node: {
+          attrs: { id: "pm-mark" },
+          content: [
+            { text: "Data Guard [", type: "text" },
+            { attrs: { label: "2", refId: "fn2" }, type: "footnoteMarker" },
+            { text: "] and more.", type: "text" }
+          ],
+          type: "paragraph"
+        },
+        orderIndex: 0,
+        type: "paragraph"
+      },
+      {
+        entryId: toEntryId("pm-note"),
+        node: {
+          attrs: { id: "pm-note", label: "2", refId: "fn2" },
+          content: [{ content: [{ text: "The note.", type: "text" }], type: "paragraph" }],
+          type: "footnoteTarget"
+        },
+        orderIndex: 1,
+        type: "footnoteTarget"
+      },
+      {
+        entryId: toEntryId("pm-orphan"),
+        node: {
+          attrs: { id: "pm-orphan" },
+          content: [{ content: [{ text: "Loose.", type: "text" }], type: "paragraph" }],
+          type: "footnoteTarget"
+        },
+        orderIndex: 2,
+        type: "footnoteTarget"
+      }
+    ],
+    entryId: toEntryId("u-fn"),
+    orderIndex: 0
+  };
+
+  it("makes a footnoteTarget block addressable by its refId with a back-link to the marker", () => {
+    const [, note, orphan] = toReaderBlocks(footnoteUnit);
+
+    expect(note?.anchorId).toBe("fn2");
+    expect(note?.backlinkAnchorId).toBe("fn2-ref");
+    // A target with no refId stays unaddressable — the marker cannot resolve it, and no dead back-link.
+    expect(orphan?.anchorId).toBeUndefined();
+    expect(orphan?.backlinkAnchorId).toBeUndefined();
+  });
+
+  it("strips a marker's flanking brackets from the block plaintext so it matches the render", () => {
+    const [marker] = toReaderBlocks(footnoteUnit);
+
+    expect(marker?.plaintext).toBe("Data Guard  and more.");
+    expect(marker?.plaintext).not.toContain("[");
+  });
+});

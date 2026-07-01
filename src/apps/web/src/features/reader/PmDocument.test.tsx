@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PmBlock, PmDocument } from "./PmDocument";
 import { assignNodeIds, type DocumentNodeJSON } from "@whetstone/document";
@@ -451,5 +451,82 @@ describe("PmBlock single-node rendering", () => {
     expect(pre?.textContent).toBe("<script>alert(1)</script>");
     // The markup is shown as text, never parsed into a live element.
     expect(container.querySelector("script")).toBeNull();
+  });
+});
+
+describe("PmDocument footnote markers (#335)", () => {
+  // A paragraph whose footnote marker is wrapped in the O'Reilly `[`/`]` literals, plus an unrelated
+  // `[sic]` that must survive, and a marker that carries a real target id.
+  const bracketDoc = {
+    content: [
+      {
+        content: [
+          { text: "Data Guard [", type: "text" },
+          { attrs: { label: "2", refId: "fn2" }, type: "footnoteMarker" },
+          { text: "], noted [sic] again.", type: "text" }
+        ],
+        type: "paragraph"
+      }
+    ],
+    type: "doc"
+  } as unknown as DocumentNodeJSON;
+
+  it("wires a refId marker as an accent-styled jump control and fires the block-jump", () => {
+    const onActivateAnchor = vi.fn();
+    const { container } = render(
+      <PmDocument document={bracketDoc} onActivateAnchor={onActivateAnchor} />
+    );
+
+    const sup = container.querySelector("sup.readerNoteref");
+    const button = sup?.querySelector("button.readerXref");
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toBe("2");
+    // The control carries the derived `${refId}-ref` anchor so the target's back-link can return here.
+    expect(button?.getAttribute("data-anchor-id")).toBe("fn2-ref");
+
+    fireEvent.click(button as HTMLElement);
+    expect(onActivateAnchor).toHaveBeenCalledWith("fn2");
+  });
+
+  it("strips only the `[`/`]` pair directly flanking the marker, leaving `[sic]` intact", () => {
+    const { container } = render(<PmDocument document={bracketDoc} onActivateAnchor={vi.fn()} />);
+
+    const paragraph = container.querySelector("p");
+    // The flanking brackets are gone (clean superscript number); the unrelated `[sic]` is preserved.
+    expect(paragraph?.textContent).toBe("Data Guard 2, noted [sic] again.");
+    expect(paragraph?.textContent).not.toContain("[2");
+  });
+
+  it("renders an inert superscript for a marker with no resolvable refId even when wired", () => {
+    const noRefDoc = {
+      content: [
+        {
+          content: [
+            { text: "See ", type: "text" },
+            { attrs: { label: "3" }, type: "footnoteMarker" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    } as unknown as DocumentNodeJSON;
+
+    const { container } = render(<PmDocument document={noRefDoc} onActivateAnchor={vi.fn()} />);
+
+    const sup = container.querySelector("sup.readerNoteref");
+    expect(sup?.textContent).toBe("3");
+    expect(sup?.querySelector("button")).toBeNull();
+    expect(sup?.hasAttribute("data-footnote-ref")).toBe(false);
+  });
+
+  it("renders an inert superscript for a refId marker when no jump is wired", () => {
+    const { container } = render(<PmDocument document={bracketDoc} />);
+
+    const sup = container.querySelector("sup.readerNoteref");
+    expect(sup?.querySelector("button")).toBeNull();
+    expect(sup?.textContent).toBe("2");
+    expect(sup?.getAttribute("data-footnote-ref")).toBe("fn2");
+    // Brackets are still stripped: the clean superscript reads without its flanking `[`/`]`.
+    expect(container.querySelector("p")?.textContent).toBe("Data Guard 2, noted [sic] again.");
   });
 });
