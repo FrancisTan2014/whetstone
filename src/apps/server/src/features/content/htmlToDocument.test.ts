@@ -262,4 +262,123 @@ describe("htmlToDocument", () => {
     expect(isValidDocument(doc)).toBe(true);
     expect(() => parseDocument(doc)).not.toThrow();
   });
+
+  it("keeps a code listing with inline callout markers as one cohesive code block (#336)", () => {
+    const listing =
+      '<pre data-type="programlisting" data-code-language="ruby">' +
+      'counts = Hash.new(0) <a href="#co1"><img src="callouts/1.png" alt="1"/></a>\n' +
+      "\n" +
+      "File.open('/var/log/nginx/access.log') do |file|\n" +
+      "  file.each do |line|\n" +
+      '    url = line.split[6] <a href="#co2"><img src="callouts/2.png" alt="2"/></a>\n' +
+      '    counts[url] += 1 <a href="#co3"><img src="callouts/3.png" alt="3"/></a>\n' +
+      "  end\n" +
+      "end\n" +
+      "</pre>";
+
+    const { blocks, doc, evidence } = htmlToDocument(listing);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+
+    // Exactly one code block; nothing shattered into figure/image/unknown.
+    expect(codeBlocks).toHaveLength(1);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(blocks.every((block) => findDescendant(block.node, "image") === undefined)).toBe(true);
+
+    // Every source line, its indentation, and its newlines survive verbatim, with each marker inline
+    // at its original position as a circled-number glyph (none dropped, none merged).
+    expect(textOf(codeBlocks[0]!.node)).toBe(
+      "counts = Hash.new(0) ❶\n" +
+        "\n" +
+        "File.open('/var/log/nginx/access.log') do |file|\n" +
+        "  file.each do |line|\n" +
+        "    url = line.split[6] ❷\n" +
+        "    counts[url] += 1 ❸\n" +
+        "  end\n" +
+        "end\n"
+    );
+    expect(codeBlocks[0]!.node.attrs?.["language"]).toBe("ruby");
+    expect(evidence).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("keeps a following calloutlist as an orderedList and leaves marker-free code untouched", () => {
+    const html =
+      "<pre>plain code, no markers ❶ already text</pre>" +
+      '<ol class="calloutlist"><li>First explanation</li><li>Second explanation</li></ol>';
+
+    const { blocks, evidence } = htmlToDocument(html);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+    const orderedLists = blocksOfType(blocks, "orderedList");
+
+    // A pure-text listing (including a pre-existing Unicode glyph) is unchanged.
+    expect(codeBlocks).toHaveLength(1);
+    expect(textOf(codeBlocks[0]!.node)).toBe("plain code, no markers ❶ already text");
+    expect(orderedLists).toHaveLength(1);
+    expect(orderedLists[0]!.node.content).toHaveLength(2);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("maps marker numbers to glyphs by alt, wrapper, standalone img, span, and beyond-range", () => {
+    const html =
+      "<pre>" +
+      'a <a href="#co1"><img src="callouts/1.png" alt="1"/></a> ' + // wrapper, href#co
+      '<a><img alt="5"/></a> ' + // wrapper, no href/class → inner callout img
+      '<img src="callouts/9.png" alt="11"/> ' + // standalone img, 11–20 glyph
+      '<a class="co">21</a> ' + // anchor by class, beyond glyph range
+      '<span class="co">★</span> ' + // span, non-numeric label
+      '<span class="co">❷</span>' + // span, pre-existing glyph kept
+      "</pre>";
+
+    const { blocks, evidence } = htmlToDocument(html);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+
+    expect(codeBlocks).toHaveLength(1);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+    expect(textOf(codeBlocks[0]!.node)).toBe("a ❶ ❺ ⓫ (21) (★) ❷");
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("renders a callout with a non-positive number parenthesized via its label", () => {
+    const html = '<pre>x <img src="callouts/0.png" alt="0"/></pre>';
+
+    const { blocks } = htmlToDocument(html);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+
+    expect(codeBlocks).toHaveLength(1);
+    expect(textOf(codeBlocks[0]!.node)).toBe("x (0)");
+  });
+
+  it("recovers an unreadable callout marker by document order and records fail-loud evidence", () => {
+    const html = '<pre>code line <a href="#co1"><img src="callouts/1.png" alt=""/></a></pre>';
+
+    const { blocks, evidence } = htmlToDocument(html);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+
+    // The block stays cohesive with an order-derived glyph — never shattered, never dropped.
+    expect(codeBlocks).toHaveLength(1);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+    expect(textOf(codeBlocks[0]!.node)).toBe("code line ❶");
+    // …but the unreadable marker is surfaced as evidence, preserving the fail-loud invariant.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("a");
+    expect(evidence[0]!.path).toBe("body>pre>a");
+    expect(evidence[0]!.attributes["href"]).toBe("#co1");
+  });
+
+  it("does not treat a non-callout image inside a pre as a marker (scoped normalization)", () => {
+    const html =
+      "<pre>text " +
+      '<a href="notes.html">ref</a> and ' +
+      '<a href="pages.html"><img src="pic.png" alt="diagram"/></a></pre>';
+
+    const { blocks, evidence } = htmlToDocument(html);
+
+    // A genuine (non-callout) image keeps its legacy handling: it is not rewritten to a glyph, so no
+    // evidence is emitted for it and its image survives as an image node; the plain link is untouched.
+    expect(evidence).toHaveLength(0);
+    expect(blocks.some((block) => findDescendant(block.node, "image") !== undefined)).toBe(true);
+    const codeBlocks = blocksOfType(blocks, "codeBlock");
+    expect(textOf(codeBlocks[0]!.node)).not.toContain("❶");
+  });
 });
