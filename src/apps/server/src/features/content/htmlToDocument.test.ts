@@ -382,3 +382,65 @@ describe("htmlToDocument", () => {
     expect(textOf(codeBlocks[0]!.node)).not.toContain("❶");
   });
 });
+
+describe("htmlToDocument CJK inter-character spacing (#340)", () => {
+  it("removes stray ASCII spaces between Han characters", () => {
+    const { blocks, evidence } = htmlToDocument("<p>以合六 爻之变</p>");
+
+    // Scan-noise spacing is stripped, and it is not a fidelity violation (no evidence).
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("以合六爻之变");
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("normalizes a bare-body chapter to zero inter-CJK spaces, preserving heading and paragraph", () => {
+    const html = "<h1>序</h1><p>以合六 爻之变。然后 两仪四象，按周公制礼而有 九数。</p>";
+
+    const { blocks } = htmlToDocument(html);
+    const headings = blocksOfType(blocks, "heading");
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(headings).toHaveLength(1);
+    expect(textOf(headings[0]!.node)).toBe("序");
+    expect(textOf(paragraph.node)).toBe("以合六爻之变。然后两仪四象，按周公制礼而有九数。");
+    // No ASCII space remains flanked by Han characters.
+    expect(textOf(paragraph.node)).not.toMatch(/[\u4e00-\u9fff] +[\u4e00-\u9fff]/);
+  });
+
+  it("collapses a run of multiple ASCII spaces between CJK entirely", () => {
+    const { blocks } = htmlToDocument("<p>六  爻</p>");
+
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("六爻");
+  });
+
+  it("preserves a space between a Han character and a Latin letter or digit", () => {
+    const { blocks } = htmlToDocument("<p>公元 250 年</p>");
+
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("公元 250 年");
+  });
+
+  it("removes a space flanked by CJK punctuation but not the ideographic space U+3000", () => {
+    const { blocks } = htmlToDocument("<p>见《 九章》六　爻</p>");
+
+    // The ASCII space after 《 is stripped (《 is CJK-class); the U+3000 between 六 and 爻 is kept.
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("见《九章》六　爻");
+  });
+
+  it("preserves whitespace inside a code block verbatim", () => {
+    const { blocks } = htmlToDocument("<pre>中文 空格 保留</pre>");
+
+    expect(textOf(blocksOfType(blocks, "codeBlock")[0]!.node)).toBe("中文 空格 保留");
+  });
+
+  it("preserves whitespace inside inline code while normalizing surrounding prose", () => {
+    const { blocks } = htmlToDocument("<p>看 <code>字 元</code> 排</p>");
+
+    // <code> is skipped, so its internal CJK space survives verbatim.
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toContain("字 元");
+  });
+
+  it("normalizes text across nested inline elements without joining separate text nodes", () => {
+    const { blocks } = htmlToDocument("<p>中文<em>斜 体</em>混 排</p>");
+
+    expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("中文斜体混排");
+  });
+});
