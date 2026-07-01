@@ -24,7 +24,11 @@ import { BlockContent } from "./mdastBlock";
 import { PmBlock } from "./PmDocument";
 import { draftOverlapsNotes, indexBlocks } from "./readerMarks";
 import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
-import { captureSelectionAnchor, eventTargetClosest } from "./selectionCapture";
+import {
+  captureSelectionAnchor,
+  eventTargetClosest,
+  snapSelectionToWord
+} from "./selectionCapture";
 import { useNoteHighlights } from "./useNoteHighlights";
 import {
   buildReaderStructure,
@@ -677,6 +681,9 @@ export function ReaderPage({
       }
 
       const selection = window.getSelection();
+      // Snap a collapsed CJK tap to its segmented word (#342) so lookup queries a real word, not a raw
+      // tap fragment; a native drag (non-collapsed) is left as the user's custom range.
+      snapSelectionToWord(selection, container, readerLanguage);
       const draft = captureSelectionAnchor(selection, container);
 
       if (draft === undefined) {
