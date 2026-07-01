@@ -328,6 +328,202 @@ function adjacentText(element: Element): string {
   return collapseWhitespace(surrounding.join(" ")).slice(0, ADJACENT_TEXT_LIMIT);
 }
 
+// A body-rooted DOM path for an element (e.g. `body>pre>a:nth-of-type(2)`), for the evidence log.
+// Every element reached here lives inside `body`, so the ascent always terminates at the `body` tag.
+function pathOf(element: Element): string {
+  const segments: string[] = [];
+  let current = element;
+
+  while (current.tagName.toLowerCase() !== "body") {
+    const parent = current.parentElement as Element;
+    segments.unshift(segmentFor(current, parent));
+    current = parent;
+  }
+
+  return ["body", ...segments].join(">");
+}
+
+// --- Code-listing callout markers (#336) ------------------------------------------------------
+//
+// O'Reilly code listings annotate specific lines with inline callout markers (❶ ❷ ❸ …) — typically an
+// `<a><img alt="N"></a>` inside the `<pre>` — paired with a numbered explanation list below. Because
+// `codeBlock` is `text*` (no inline atoms, and no schema change here), ProseMirror's DOMParser would
+// otherwise close the code block at the first marker and auto-wrap the `<img>` in a `figure`, sweeping
+// the following code lines in as a centered caption — shattering the listing. So BEFORE parsing we
+// replace each inline marker with a plain-text circled-number glyph at its exact position; the `<pre>`
+// then parses to a single cohesive `codeBlock` with every line and marker preserved.
+
+// Filled (negative) circled-number glyphs: ❶..❿ (U+2776..U+277F, 1..10) and ⓫..⓴ (U+24EB..U+24F4,
+// 11..20). There is no single glyph beyond 20, so callers parenthesize the number instead.
+function calloutGlyph(value: number): string | undefined {
+  if (value >= 1 && value <= 10) {
+    return String.fromCodePoint(0x2775 + value);
+  }
+
+  if (value >= 11 && value <= 20) {
+    return String.fromCodePoint(0x24eb + (value - 11));
+  }
+
+  return undefined;
+}
+
+// Whether a label is already one of the circled-number glyphs this normalizer emits (1..20), so a
+// marker whose text is a pre-existing glyph is kept verbatim rather than parenthesized.
+function isCircledNumberGlyph(label: string): boolean {
+  for (let value = 1; value <= 20; value += 1) {
+    if (calloutGlyph(value) === label) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Parse a label that is entirely digits into a positive integer, else undefined.
+function positiveInteger(label: string): number | undefined {
+  if (!/^\d+$/.test(label)) {
+    return undefined;
+  }
+
+  const value = Number.parseInt(label, 10);
+
+  return value >= 1 ? value : undefined;
+}
+
+// A callout number as text: its circled glyph, or a parenthesized number beyond the glyph range.
+function numberedCalloutText(value: number): string {
+  return calloutGlyph(value) ?? `(${value})`;
+}
+
+// The inline text that replaces a callout marker, from its label and 1-based document order: a numeric
+// label maps to its circled glyph (a parenthesized number beyond the glyph range); a non-numeric label
+// is shown parenthesized (a pre-existing circled glyph kept as-is); an EMPTY label cannot be read
+// faithfully, so it recovers to the order glyph AND flags evidence (fail-loud — never vanish/shatter).
+function calloutReplacement(label: string, order: number): { text: string; unreadable: boolean } {
+  const numbered = positiveInteger(label);
+
+  if (numbered !== undefined) {
+    return { text: numberedCalloutText(numbered), unreadable: false };
+  }
+
+  if (label !== "") {
+    return { text: isCircledNumberGlyph(label) ? label : `(${label})`, unreadable: false };
+  }
+
+  return { text: numberedCalloutText(order), unreadable: true };
+}
+
+// An element attribute as a string, treating an absent attribute as empty — one place for the
+// null-normalization so callout predicates below read plain strings (keeps branch coverage exact).
+function attr(element: Element, name: string): string {
+  const value = element.getAttribute(name);
+
+  return value === null ? "" : value;
+}
+
+// Whether a class attribute carries the O'Reilly callout token `co`.
+function hasCalloutClass(className: string): boolean {
+  return className.split(/\s+/).includes("co");
+}
+
+// Whether an `<img>` is a callout image: a numeric `alt`, a `callouts/…` src, or the `co` class.
+function isCalloutImage(image: Element): boolean {
+  return (
+    positiveInteger(attr(image, "alt").trim()) !== undefined ||
+    /callout/i.test(attr(image, "src")) ||
+    hasCalloutClass(attr(image, "class"))
+  );
+}
+
+// Whether an `<a>` wraps a callout: the `co` class, an `#co…` href, or a nested callout image.
+function isCalloutAnchor(anchor: Element): boolean {
+  if (hasCalloutClass(attr(anchor, "class")) || attr(anchor, "href").startsWith("#co")) {
+    return true;
+  }
+
+  const innerImage = anchor.querySelector("img");
+
+  return innerImage !== null && isCalloutImage(innerImage);
+}
+
+// Whether an `<a>` / `<img>` / `<span>` inside a `<pre>` is a callout marker to normalize.
+function isPreCalloutMarker(element: Element): boolean {
+  const tag = element.tagName.toLowerCase();
+
+  if (tag === "a") {
+    return isCalloutAnchor(element);
+  }
+
+  if (tag === "img") {
+    return isCalloutImage(element);
+  }
+
+  return hasCalloutClass(attr(element, "class"));
+}
+
+// The callout markers within a `<pre>`, in document order, each taken at its outermost element so a
+// wrapping `<a>` and its nested `<img>` count once (the inner image is skipped as already contained).
+function collectPreMarkers(pre: Element): Element[] {
+  const markers: Element[] = [];
+
+  for (const candidate of Array.from(pre.querySelectorAll("a, img, span"))) {
+    if (markers.some((marker) => marker.contains(candidate))) {
+      continue;
+    }
+
+    if (isPreCalloutMarker(candidate)) {
+      markers.push(candidate);
+    }
+  }
+
+  return markers;
+}
+
+// A marker's label to interpret: an `<img>`'s own `alt`, else a wrapped image's `alt`, else its text.
+function markerLabel(marker: Element): string {
+  if (marker.tagName.toLowerCase() === "img") {
+    return attr(marker, "alt").trim();
+  }
+
+  const innerImage = marker.querySelector("img");
+
+  if (innerImage !== null) {
+    const alt = attr(innerImage, "alt").trim();
+
+    if (alt !== "") {
+      return alt;
+    }
+  }
+
+  return String(marker.textContent).trim();
+}
+
+// Replace every inline callout marker inside each `<pre>` with its plain-text circled-number glyph, so
+// the code block parses cohesively. An unreadable marker still resolves (by document order) but records
+// evidence, keeping the fail-loud invariant.
+function normalizeCodeCallouts(body: HTMLElement, ownerDocument: Document): IngestionEvidence[] {
+  const evidence: IngestionEvidence[] = [];
+
+  for (const pre of Array.from(body.querySelectorAll("pre"))) {
+    collectPreMarkers(pre).forEach((marker, index) => {
+      const { text, unreadable } = calloutReplacement(markerLabel(marker), index + 1);
+
+      if (unreadable) {
+        evidence.push({
+          adjacentText: adjacentText(marker),
+          attributes: attributesOf(marker),
+          path: pathOf(marker),
+          tag: marker.tagName.toLowerCase()
+        });
+      }
+
+      marker.replaceWith(ownerDocument.createTextNode(text));
+    });
+  }
+
+  return evidence;
+}
+
 // Replace an unrecognized element with a sentinel `<div>` that preserves its original tag and raw
 // HTML verbatim, so the explicit `unknown` parse rule turns it into an `unknown` node (and the
 // pre-walk does not descend into it).
@@ -385,7 +581,10 @@ function toBlock(node: DocumentNodeJSON): IngestedBlock {
 export function htmlToDocument(html: string): HtmlIngestionResult {
   const { window } = new JSDOM(html);
   const { body } = window.document;
-  const evidence = collectUnknowns(body, window.document);
+  // Normalize code-listing callout markers to inline text BEFORE the fail-loud walk and the parse, so
+  // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
+  const calloutEvidence = normalizeCodeCallouts(body, window.document);
+  const evidence = [...calloutEvidence, ...collectUnknowns(body, window.document)];
   const parsed = new DOMParser(documentSchema, RULES).parse(body);
   const doc = assignNodeIds(serializeDocument(parsed));
   const blocks = (doc.content as DocumentNodeJSON[]).map(toBlock);
