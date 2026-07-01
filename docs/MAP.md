@@ -425,7 +425,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `figureCaption` child; for an mdast figure from the block's image fields. Either way the image is
   served from `GET /api/images/:id` (lazy, display-only, not selectable) above its
   still-selectable/annotatable caption, degrading to caption-only when the image is absent
-  (unsupported/missing at ingest) or fails to load at runtime. **Note highlights are render-time DOM
+  (unsupported/missing at ingest) or fails to load at runtime. The image is a focusable `<button>`
+  trigger that opens `ImageLightbox.tsx` (#334) — a centered, fit-to-viewport `@radix-ui/react-dialog`
+  modal (Escape/backdrop/✕ dismissal, focus trap + scroll-lock, focus-return) over a dimmed+blurred
+  backdrop, showing the same `/api/images/:id` image enlarged with its caption; view-only, no route
+  change. **Note highlights are render-time DOM
   decorations from the external anchor store (#313), never marks in the stored document:** at load
   `useNoteHighlights.ts` resolves each note's anchor over the rendered `.reader` blocks and wraps the
   matched range(s) in an external `noteMark` span (`applyNoteHighlights.ts`); clicking or pressing

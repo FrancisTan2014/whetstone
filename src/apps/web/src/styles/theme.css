@@ -286,6 +286,98 @@
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
+/* Figure image lightbox (#334): the figure image is a transparent, keyboard-focusable button that opens
+   a centered fit-to-viewport modal. `zoom-in` cursor on fine pointers signals the enlarge affordance. */
+.readerFigureTrigger {
+  display: block;
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+@media (pointer: fine) {
+  .readerFigureTrigger {
+    cursor: zoom-in;
+  }
+}
+
+.readerFigureTrigger:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* Layered above the reading chrome (z 20) and any open Sheet (z 40/50) so the lightbox always sits on
+   top. The backdrop is a dimmed + blurred scrim (dark in both themes), so the enlarged image and its
+   light caption/close stay legible in Day and Night. */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background-color: rgb(0 0 0 / 0.6);
+  backdrop-filter: blur(8px);
+}
+
+/* A full-viewport centering layer that is click-through (pointer-events: none) EXCEPT its children, so a
+   click on the empty area around the image falls through to the overlay and Radix dismisses — while the
+   image, caption, and close button stay interactive. */
+.lightbox-content {
+  position: fixed;
+  inset: 0;
+  z-index: 71;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  pointer-events: none;
+}
+
+.lightbox-content > * {
+  pointer-events: auto;
+}
+
+.lightbox-image {
+  max-inline-size: 96vw;
+  max-block-size: 92vh;
+  object-fit: contain;
+}
+
+.lightbox-caption {
+  max-inline-size: 96vw;
+  margin: 0;
+  color: rgb(255 255 255 / 0.85);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+/* A ≥44×44px close target on its own scrim so it is legible over a light or dark image. */
+.lightbox-close {
+  position: absolute;
+  inset-block-start: max(1rem, env(safe-area-inset-top));
+  inset-inline-end: max(1rem, env(safe-area-inset-right));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  border: none;
+  border-radius: 999px;
+  background-color: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lightbox-close:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 /*
  * Reader redesign (#27): the calm paper reading experience. The reading column uses the
  * `.reading-surface` token utility (paper bg, serif, fixed measure, language-aware CJK
