@@ -1,8 +1,25 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
+
+function mockMatchMedia(matchers: Record<string, boolean> = {}): void {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    addEventListener: vi.fn(),
+    matches: matchers[query] ?? false,
+    media: query,
+    removeEventListener: vi.fn()
+  })) as unknown as typeof window.matchMedia;
+}
 
 function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
   return rtlRender(ui, {
@@ -105,6 +122,7 @@ function renderReader(content: WorkContentDto): ReturnType<typeof rtlRender> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockMatchMedia();
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
   mockedFetchWorks.mockResolvedValue({ works: [work] });
   mockedLocateBlockUnit.mockResolvedValue(undefined);
@@ -237,5 +255,147 @@ describe("ReaderPage PM figure blocks", () => {
 
     await screen.findByRole("figure");
     expect(container.querySelector("figcaption")).toBeNull();
+  });
+});
+
+describe("ReaderPage figure image lightbox (#334)", () => {
+  const captionedFigure = () =>
+    figureContent({ alt: "A dot", imageResourceId: "abc123", plaintext: "The caption." });
+
+  it("opens a centered lightbox with the enlarged image on click, without navigating (mdast)", async () => {
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+
+    const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
+    const hashBefore = window.location.hash;
+    await user.click(trigger);
+
+    const dialog = await screen.findByRole("dialog", { name: "A dot" });
+    const enlarged = dialog.querySelector("img.lightbox-image");
+    expect(enlarged?.getAttribute("src")).toBe("/api/images/abc123");
+    // The figure caption shows beneath the enlarged image (criterion 10).
+    expect(within(dialog).getByText("The caption.")).toBeDefined();
+    // View-only: no route change, no new page.
+    expect(window.location.hash).toBe(hashBefore);
+  });
+
+  it("opens the lightbox for a PM figure too (shared ReaderFigure)", async () => {
+    const user = userEvent.setup();
+    renderReader(pmFigureContent({ alt: "A dot", imageResourceId: "abc123" }));
+
+    await user.click(await screen.findByRole("button", { name: "View larger: A dot" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "A dot" });
+    expect(dialog.querySelector("img.lightbox-image")?.getAttribute("src")).toBe(
+      "/api/images/abc123"
+    );
+  });
+
+  it("opens on keyboard Enter from the focused trigger", async () => {
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+
+    const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByRole("dialog", { name: "A dot" })).toBeDefined();
+  });
+
+  it("labels an image-only figure trigger and dialog without alt text, and shows no caption", async () => {
+    const user = userEvent.setup();
+    renderReader(figureContent({ imageResourceId: "solo999", plaintext: "" }));
+
+    const trigger = await screen.findByRole("button", { name: "View image larger" });
+    await user.click(trigger);
+
+    const dialog = await screen.findByRole("dialog", { name: "Enlarged image" });
+    expect(dialog.querySelector("img.lightbox-image")?.getAttribute("src")).toBe(
+      "/api/images/solo999"
+    );
+    expect(dialog.querySelector(".lightbox-caption")).toBeNull();
+  });
+
+  it("closes on Escape and returns focus to the figure trigger", async () => {
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+
+    const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
+    await user.click(trigger);
+    await screen.findByRole("dialog", { name: "A dot" });
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("closes on the ✕ button and returns focus to the figure trigger", async () => {
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+
+    const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "A dot" });
+
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("closes on a backdrop click", async () => {
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+
+    await user.click(await screen.findByRole("button", { name: "View larger: A dot" }));
+    await screen.findByRole("dialog", { name: "A dot" });
+
+    await user.click(document.querySelector(".lightbox-overlay") as HTMLElement);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("renders no trigger for a caption-only figure", async () => {
+    renderReader(figureContent({ plaintext: "Caption without image." }));
+
+    await screen.findByText("Caption without image.");
+    expect(screen.queryByRole("button", { name: /^View / })).toBeNull();
+  });
+
+  it("renders no trigger once the image fails to load", async () => {
+    const { container } = renderReader(captionedFigure());
+
+    await screen.findByText("The caption.");
+    fireEvent.error(container.querySelector("img") as HTMLImageElement);
+
+    expect(screen.queryByRole("button", { name: /^View / })).toBeNull();
+  });
+
+  it("opens the lightbox on a narrow-screen tap without toggling the reading chrome (criterion 6)", async () => {
+    mockMatchMedia({ "(max-width: 55.999rem)": true });
+    const user = userEvent.setup();
+    const { container } = renderReader(captionedFigure());
+
+    const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
+    const header = container.querySelector(".readingHeader") as HTMLElement;
+    // On a narrow screen the chrome starts hidden; tapping the figure must not reveal it.
+    expect(header.getAttribute("data-hidden")).toBe("true");
+
+    await user.click(trigger);
+
+    expect(await screen.findByRole("dialog", { name: "A dot" })).toBeDefined();
+    expect(header.getAttribute("data-hidden")).toBe("true");
+  });
+
+  it("opens and closes under reduced motion (fade-only, no transform animation)", async () => {
+    mockMatchMedia({ "(prefers-reduced-motion: reduce)": true });
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+
+    const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
+    await user.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "A dot" })).toBeDefined();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

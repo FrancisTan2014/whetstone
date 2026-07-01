@@ -19,6 +19,7 @@ import { fetchPreferences, savePreferences } from "../../shared/preferences/pref
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import { highlightBirthMotion } from "./highlightBirth";
+import { ImageLightbox } from "./ImageLightbox";
 import { BlockContent } from "./mdastBlock";
 import { PmBlock } from "./PmDocument";
 import { draftOverlapsNotes, indexBlocks } from "./readerMarks";
@@ -1247,11 +1248,9 @@ function ReaderFigure({
   return (
     <figure className="readerFigure">
       {showImage ? (
-        <img
+        <ImageLightbox
           alt={block.alt ?? ""}
-          className="readerFigureImage"
-          draggable={false}
-          loading="lazy"
+          caption={block.plaintext}
           onError={() => setImageFailed(true)}
           src={imageSrc}
         />
