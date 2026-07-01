@@ -576,6 +576,52 @@ function toBlock(node: DocumentNodeJSON): IngestedBlock {
   return { id: String(attrs["id"]), node, type: node.type };
 }
 
+// --- CJK inter-character spacing (#340) -------------------------------------------------------
+//
+// Public-domain digitized Chinese EPUBs carry stray ASCII spaces between Han characters at the
+// original scan's line-wrap points (e.g. `以合六 爻之变`). Chinese has no inter-word spaces, so such a
+// space is pure digitization noise that renders as a visible mid-phrase gap. We strip it at ingestion
+// — standard CJK microtypography — while preserving every meaningful space (Latin/digit-adjacent, or
+// inside verbatim code). Non-destructive: the raw EPUB is retained, so this is regenerable and not a
+// fidelity violation (a space between two Han characters is not a publisher construct).
+
+// CJK-class characters: Han ideographs (all planes) plus CJK/fullwidth punctuation (《 》 ， 。 、 ； ：
+// （ ） 「 」 …). The ideographic space U+3000 is deliberately excluded (it can be intentional
+// indentation), so the punctuation range starts at U+3001.
+const CJK_CLASS = "\\p{Script=Han}\\u3001-\\u303F\\uFE30-\\uFE4F\\uFF00-\\uFFEF";
+
+// A run of ASCII whitespace flanked by CJK-class characters on both sides. The trailing character is
+// matched by lookahead so it can also open the next run (handles chains like `六 爻 之` and `六  爻`).
+const INTER_CJK_SPACE = new RegExp(`([${CJK_CLASS}])[\\t\\n\\v\\f\\r ]+(?=[${CJK_CLASS}])`, "gu");
+
+// Remove stray ASCII spaces between CJK characters, leaving every other space untouched.
+function stripInterCjkSpace(text: string): string {
+  return text.replace(INTER_CJK_SPACE, "$1");
+}
+
+// DOM node type for a text node (jsdom follows the DOM spec: Text === 3).
+const TEXT_NODE = 3;
+
+// Normalize stray inter-CJK ASCII spaces in every text node before parsing, skipping `<pre>`/`<code>`
+// subtrees where whitespace is significant. Emits no evidence — scan-noise spacing is not a construct.
+function normalizeCjkSpacing(element: Element): void {
+  const tag = element.tagName.toLowerCase();
+
+  if (tag === "pre" || tag === "code") {
+    return;
+  }
+
+  for (const child of Array.from(element.childNodes)) {
+    if (child.nodeType === TEXT_NODE) {
+      child.nodeValue = stripInterCjkSpace(String(child.nodeValue));
+    }
+  }
+
+  for (const child of Array.from(element.children)) {
+    normalizeCjkSpacing(child);
+  }
+}
+
 // Convert one source HTML fragment into a whetstone document, its block-row decomposition, and the
 // fail-loud evidence log of unrecognized elements.
 export function htmlToDocument(html: string): HtmlIngestionResult {
@@ -585,6 +631,8 @@ export function htmlToDocument(html: string): HtmlIngestionResult {
   // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
   const calloutEvidence = normalizeCodeCallouts(body, window.document);
   const evidence = [...calloutEvidence, ...collectUnknowns(body, window.document)];
+  // Strip stray inter-CJK digitization spaces from text nodes (skipping code) before parsing (#340).
+  normalizeCjkSpacing(body);
   const parsed = new DOMParser(documentSchema, RULES).parse(body);
   const doc = assignNodeIds(serializeDocument(parsed));
   const blocks = (doc.content as DocumentNodeJSON[]).map(toBlock);
