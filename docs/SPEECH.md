@@ -31,7 +31,26 @@ crashes for a missing model.
 A local Whisper is configured only when **both** `WHISPER_BINARY` and `WHISPER_MODEL_PATH` are
 present; otherwise resolution falls back to the fake.
 
-## Runtime + model
+## One-command setup (`pnpm setup --voice`)
+
+The fastest way to enable voice is the setup framework's voice step:
+
+```
+pnpm setup --voice
+```
+
+It installs `faster-whisper`, installs the bundled **`whetstone-whisper`** console-script wrapper
+(`scripts/setup/whisper-wrapper/`), pre-fetches the model (`WHISPER_MODEL`, default multilingual
+`small`; `base.en` for English-only), verifies the wrapper against a sample, and writes
+`WHISPER_BINARY` / `WHISPER_MODEL_PATH` / `WHISPER_LANGUAGE` to the root `.env`. `pnpm setup:doctor`
+reports voice readiness; each failure prints an actionable remedy and the step is re-runnable. This
+is optional and excluded from the base `pnpm setup` — the `pnpm validate` gate never needs a model.
+
+The wrapper is a pip package with a `console_scripts` entry point, so pip generates a native launcher
+executable on every OS that the server's `execFile` runs directly (a `.py`/`.cmd` cannot be
+`execFile`-d). It honours the arguments below and emits the JSON contract.
+
+## Runtime + model (manual)
 
 Use an OSS Whisper runtime, e.g.:
 

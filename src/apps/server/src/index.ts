@@ -46,6 +46,7 @@ import { checkCoachHealth } from "./coach/coachHealth.js";
 import { createDiaryTidy } from "./features/diary/diaryTidy.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
+import { checkSpeechHealth } from "./speech/speechHealth.js";
 import { createWhisperSpeechInput } from "./speech/whisperSpeechInput.js";
 
 const config = readServerConfig();
@@ -142,8 +143,9 @@ const coach = resolveCoach({
   createAdapters: (apiKey) => createCoachAdapters(apiKey),
   fake: createFakeCoach()
 });
+const speechConfig = readSpeechConfig();
 const speech = resolveSpeechInput({
-  config: readSpeechConfig(),
+  config: speechConfig,
   createWhisper: (config) => createWhisperSpeechInput({ config }),
   fake: createFakeSpeechInput({ transcript: "", words: [] })
 });
@@ -239,6 +241,15 @@ try {
     server.log.warn({ coach: coachHealth.status }, coachHealth.message);
   } else {
     server.log.info({ coach: coachHealth.status }, coachHealth.message);
+  }
+
+  // Report the Whisper STT wiring (#347): a clear "run pnpm setup --voice" hint when spoken practice
+  // would otherwise silently transcribe to empty, instead of an unexplained empty transcript.
+  const speechHealth = checkSpeechHealth({ config: speechConfig });
+  if (speechHealth.status === "fake") {
+    server.log.warn({ speech: speechHealth.status }, speechHealth.message);
+  } else {
+    server.log.info({ speech: speechHealth.status }, speechHealth.message);
   }
 } catch (error) {
   server.log.error({ err: error }, "server_start_failed");

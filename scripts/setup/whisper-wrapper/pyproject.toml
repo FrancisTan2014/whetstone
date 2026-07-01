@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whetstone-whisper"
+version = "0.1.0"
+description = "Local Whisper STT wrapper for whetstone: emits the docs/SPEECH.md word-timestamp JSON contract."
+requires-python = ">=3.9"
+dependencies = ["faster-whisper>=1.0"]
+
+# pip generates a native launcher executable for this entry point on every OS (`.../bin/whetstone-whisper`
+# or `...\Scripts\whetstone-whisper.exe`), which the server's execFile (no shell) can run directly —
+# unlike a `.py`/`.cmd`, which execFile cannot launch. `pnpm setup --voice` writes that launcher's path
+# to WHISPER_BINARY.
+[project.scripts]
+whetstone-whisper = "whetstone_whisper.cli:main"
+
+[tool.setuptools]
+packages = ["whetstone_whisper"]

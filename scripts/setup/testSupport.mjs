@@ -11,7 +11,12 @@ export function createFakeContext(overrides = {}) {
   const execCalls = [];
   /** @type {Array<[string, string]>} */
   const copies = [];
-  const files = new Set(overrides.files ?? []);
+  // Path -> UTF-8 content. Seed existence-only paths (from `files`) as empty strings, then apply any
+  // explicit contents (from `fileContents`).
+  const files = new Map((overrides.files ?? []).map((path) => [path, ""]));
+  for (const [path, content] of Object.entries(overrides.fileContents ?? {})) {
+    files.set(path, content);
+  }
   const execResults = overrides.execResults ?? {};
 
   const ctx = {
@@ -20,15 +25,28 @@ export function createFakeContext(overrides = {}) {
     env: overrides.env ?? {},
     exec(command, args) {
       execCalls.push([command, ...args]);
+      if (overrides.execHandler) {
+        const handled = overrides.execHandler(command, args);
+        if (handled) {
+          return handled;
+        }
+      }
       const key = [command, ...args].join(" ");
       const result = execResults[key] ?? execResults[command] ?? overrides.defaultExec;
       return result ?? { code: 0, stdout: "", stderr: "" };
     },
     fs: {
       exists: (path) => files.has(path),
+      readText: (path) => {
+        if (!files.has(path)) {
+          throw new Error(`ENOENT: ${path}`);
+        }
+        return files.get(path);
+      },
+      writeText: (path, content) => files.set(path, content),
       copyFile: (from, to) => {
         copies.push([from, to]);
-        files.add(to);
+        files.set(to, files.get(from) ?? "");
       }
     },
     log: (message) => logs.push(message)
