@@ -363,6 +363,11 @@ be clean and consistent:
   explanation list) keep the listing **one cohesive code block**: markers become inline circled-number
   text at their position (verbatim whitespace preserved), never shattering the block into figures.
   Non-interactive in v0 (no marker→explanation jump).
+- **CJK microtypography.** Digitized Chinese sources often carry stray ASCII spaces between characters
+  (scan line-wrap noise, e.g. `六 爻`, `然后 两仪`). Ingestion normalizes them away — an ASCII space
+  flanked by CJK on both sides is removed (Chinese has no inter-word spaces); spaces touching Latin/digits
+  and spaces inside verbatim code are kept. Not a fidelity loss (a space between two Han characters is not
+  a publisher construct); the raw source EPUB is retained.
 - **Figures** (EPUB images) render as a real figure — the image sized to the reading measure with its
   caption beneath (never a stray heading); a missing or unsupported image degrades to its caption alone.
   The image is display-only (not annotatable); its caption is selectable text you can take notes on.
