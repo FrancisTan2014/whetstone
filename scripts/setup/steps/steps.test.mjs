@@ -6,7 +6,7 @@ import { buildStep } from "./build.mjs";
 import { envStep } from "./env.mjs";
 import { steps } from "./index.mjs";
 import { installStep } from "./install.mjs";
-import { playwrightStep, resolvePlaywrightCacheDir } from "./playwright.mjs";
+import { parseChromiumInstallLocation, playwrightStep } from "./playwright.mjs";
 import { parseNodeMajor, toolchainStep } from "./toolchain.mjs";
 import { createFakeContext } from "../testSupport.mjs";
 
@@ -157,44 +157,67 @@ describe("build step", () => {
   });
 });
 
-describe("resolvePlaywrightCacheDir", () => {
-  it("honors an explicit PLAYWRIGHT_BROWSERS_PATH", () => {
-    expect(resolvePlaywrightCacheDir("linux", { PLAYWRIGHT_BROWSERS_PATH: "/custom" }, "/home")).toBe(
-      "/custom"
+describe("parseChromiumInstallLocation", () => {
+  const dryRun = [
+    "Chrome for Testing 149.0.7827.55 (playwright chromium v1228)",
+    "  Install location:    /home/u/.cache/ms-playwright/chromium-1228",
+    "  Download url:        https://example/chrome.zip",
+    "",
+    "FFmpeg (playwright ffmpeg v1011)",
+    "  Install location:    /home/u/.cache/ms-playwright/ffmpeg-1011",
+    "",
+    "Chrome Headless Shell (playwright chromium-headless-shell v1228)",
+    "  Install location:    /home/u/.cache/ms-playwright/chromium_headless_shell-1228"
+  ].join("\n");
+
+  it("returns the chromium browser location, not ffmpeg or the headless shell", () => {
+    expect(parseChromiumInstallLocation(dryRun)).toBe("/home/u/.cache/ms-playwright/chromium-1228");
+  });
+
+  it("matches Windows-style paths", () => {
+    const win = "  Install location:    C:\\Users\\u\\AppData\\Local\\ms-playwright\\chromium-1228";
+    expect(parseChromiumInstallLocation(win)).toBe(
+      "C:\\Users\\u\\AppData\\Local\\ms-playwright\\chromium-1228"
     );
   });
 
-  it("ignores the sentinel value 0 and uses the default", () => {
-    const dir = resolvePlaywrightCacheDir("linux", { PLAYWRIGHT_BROWSERS_PATH: "0" }, "/home");
-    expect(dir).toBe(join("/home", ".cache", "ms-playwright"));
-  });
-
-  it("uses LOCALAPPDATA on win32, falling back to AppData/Local", () => {
-    expect(resolvePlaywrightCacheDir("win32", { LOCALAPPDATA: "C:/lad" }, "C:/home")).toBe(
-      join("C:/lad", "ms-playwright")
-    );
-    expect(resolvePlaywrightCacheDir("win32", {}, "C:/home")).toBe(
-      join("C:/home", "AppData", "Local", "ms-playwright")
-    );
-  });
-
-  it("uses the macOS Caches path on darwin", () => {
-    expect(resolvePlaywrightCacheDir("darwin", {}, "/Users/x")).toBe(
-      join("/Users/x", "Library", "Caches", "ms-playwright")
-    );
+  it("returns null when no chromium browser line is present", () => {
+    expect(parseChromiumInstallLocation("FFmpeg\n  Install location: /x/ffmpeg-1011")).toBeNull();
+    expect(parseChromiumInstallLocation("no locations here")).toBeNull();
   });
 });
 
 describe("playwright step", () => {
-  const cacheDir = join("/home/user", ".cache", "ms-playwright");
+  const location = "/home/u/.cache/ms-playwright/chromium-1228";
+  const dryRunOk = { code: 0, stdout: `chromium v1228\n  Install location: ${location}`, stderr: "" };
+  const dryRun = { "pnpm exec playwright install chromium --dry-run": dryRunOk };
 
-  it("is ok when a chromium build is cached", () => {
-    const { ctx } = createFakeContext({ dirs: { [cacheDir]: ["chromium-1148", "ffmpeg-1011"] } });
+  it("is ok when the required revision's directory exists", () => {
+    const { ctx } = createFakeContext({ execResults: dryRun, files: [location] });
     expect(playwrightStep.check(ctx)).toEqual({ status: "ok" });
   });
 
-  it("is missing when the cache has no chromium build", () => {
-    const { ctx } = createFakeContext({ dirs: { [cacheDir]: ["firefox-1"] } });
+  it("is missing when a stale, unrelated chromium build exists but the required revision does not", () => {
+    // The shared cache holds chromium-1148 from another Playwright version, but this package needs
+    // chromium-1228 — whose directory is absent. The exact-revision check must still report missing.
+    const staleDryRun = {
+      "pnpm exec playwright install chromium --dry-run": {
+        code: 0,
+        stdout: `chromium v1228\n  Install location: ${location}`,
+        stderr: ""
+      }
+    };
+    const { ctx } = createFakeContext({
+      execResults: staleDryRun,
+      files: ["/home/u/.cache/ms-playwright/chromium-1148"]
+    });
+    expect(playwrightStep.check(ctx).status).toBe("missing");
+  });
+
+  it("is missing when Playwright cannot report the location (dry-run fails)", () => {
+    const { ctx } = createFakeContext({
+      execResults: { "pnpm exec playwright install chromium --dry-run": { code: 1, stdout: "", stderr: "boom" } }
+    });
     expect(playwrightStep.check(ctx).status).toBe("missing");
   });
 
@@ -215,10 +238,11 @@ describe("playwright step", () => {
     expect(result.remedy).toContain("net timeout");
   });
 
-  it("verify passes when chromium is cached, errors otherwise", () => {
-    const okCtx = createFakeContext({ dirs: { [cacheDir]: ["chromium-1"] } });
+  it("verify passes when the required revision is present, errors otherwise", () => {
+    const okCtx = createFakeContext({ execResults: dryRun, files: [location] });
     expect(playwrightStep.verify(okCtx.ctx)).toEqual({ status: "ok" });
-    expect(playwrightStep.verify(createFakeContext().ctx).status).toBe("error");
+    const missCtx = createFakeContext({ execResults: dryRun });
+    expect(playwrightStep.verify(missCtx.ctx).status).toBe("error");
   });
 });
 

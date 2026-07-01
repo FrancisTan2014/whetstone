@@ -12,12 +12,10 @@ export function createFakeContext(overrides = {}) {
   /** @type {Array<[string, string]>} */
   const copies = [];
   const files = new Set(overrides.files ?? []);
-  const dirs = overrides.dirs ?? {};
   const execResults = overrides.execResults ?? {};
 
   const ctx = {
     root: overrides.root ?? "/repo",
-    home: overrides.home ?? "/home/user",
     platform: overrides.platform ?? "linux",
     env: overrides.env ?? {},
     exec(command, args) {
@@ -28,7 +26,6 @@ export function createFakeContext(overrides = {}) {
     },
     fs: {
       exists: (path) => files.has(path),
-      readDir: (path) => dirs[path] ?? [],
       copyFile: (from, to) => {
         copies.push([from, to]);
         files.add(to);

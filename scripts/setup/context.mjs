@@ -4,8 +4,7 @@
 // from coverage for the same reason as `src/**/index.ts`: it is a boundary of un-fakeable Node I/O.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { copyFileSync, existsSync } from "node:fs";
 
 import { resolveCommand } from "./platform.mjs";
 
@@ -17,7 +16,6 @@ export function createContext(root) {
   const platform = process.platform;
   return {
     root,
-    home: homedir(),
     platform,
     env: process.env,
     exec(command, args) {
@@ -37,7 +35,6 @@ export function createContext(root) {
     },
     fs: {
       exists: (path) => existsSync(path),
-      readDir: (path) => (existsSync(path) ? readdirSync(path) : []),
       copyFile: (from, to) => copyFileSync(from, to)
     },
     log: (message) => console.log(message)

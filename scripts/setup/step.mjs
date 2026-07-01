@@ -30,7 +30,6 @@
  *
  * @typedef {object} SetupContext
  * @property {string} root        Absolute repository root the commands run in.
- * @property {string} home        The user's home directory (for locating tool caches).
  * @property {NodeJS.Platform} platform  `process.platform` (steps branch win32/posix through helpers).
  * @property {Record<string, string | undefined>} env  Environment variables.
  * @property {(command: string, args: string[]) => ExecResult} exec  Run an external command synchronously.
@@ -48,7 +47,6 @@
 /**
  * @typedef {object} SetupFs
  * @property {(path: string) => boolean} exists
- * @property {(path: string) => string[]} readDir  Directory entry names (empty array when absent).
  * @property {(from: string, to: string) => void} copyFile
  */
 
