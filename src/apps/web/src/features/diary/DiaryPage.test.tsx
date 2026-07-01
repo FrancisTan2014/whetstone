@@ -78,12 +78,17 @@ class StubObserver {
   }
 }
 
-function latestObserver(): FakeIntersectionObserver {
-  const observer = observers.at(-1);
-  if (observer === undefined) {
-    throw new Error("no IntersectionObserver was created");
-  }
-  return observer;
+async function waitForObserver(): Promise<FakeIntersectionObserver> {
+  // The sentinel's IntersectionObserver is created in a post-load effect, so it may not exist the
+  // instant the initial render settles. Wait for it rather than reading synchronously (which raced
+  // under parallel load and flaked with "no IntersectionObserver was created").
+  return waitFor(() => {
+    const observer = observers.at(-1);
+    if (observer === undefined) {
+      throw new Error("no IntersectionObserver was created");
+    }
+    return observer;
+  });
 }
 
 function makeCapture(
@@ -376,13 +381,14 @@ describe("DiaryPage lazy-load", () => {
     expect(screen.getByText("entry 22")).toBeTruthy();
 
     // Not intersecting: nothing fetched.
+    const observer = await waitForObserver();
     await act(async () => {
-      latestObserver().trigger(false);
+      observer.trigger(false);
     });
     expect(mockedTimeline).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      latestObserver().trigger(true);
+      observer.trigger(true);
     });
 
     await screen.findByText("entry 21");
@@ -402,9 +408,10 @@ describe("DiaryPage lazy-load", () => {
 
     await renderReady(makeCapture().capture);
 
+    const observer = await waitForObserver();
     await act(async () => {
-      latestObserver().trigger(true);
-      latestObserver().trigger(true);
+      observer.trigger(true);
+      observer.trigger(true);
     });
 
     expect(mockedTimeline).toHaveBeenCalledTimes(2);
@@ -419,8 +426,9 @@ describe("DiaryPage lazy-load", () => {
     mockedTimeline.mockRejectedValueOnce(new Error("page failed"));
 
     await renderReady(makeCapture().capture);
+    const observer = await waitForObserver();
     await act(async () => {
-      latestObserver().trigger(true);
+      observer.trigger(true);
     });
 
     await screen.findByText(/Couldn't load older entries/);
