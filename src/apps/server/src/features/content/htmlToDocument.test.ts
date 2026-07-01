@@ -444,3 +444,61 @@ describe("htmlToDocument CJK inter-character spacing (#340)", () => {
     expect(textOf(blocksOfType(blocks, "paragraph")[0]!.node)).toBe("中文斜体混排");
   });
 });
+
+describe("htmlToDocument inline tolerance (#357)", () => {
+  it("keeps inline <tt> in one paragraph, never shattering prose into unknown blocks", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p>Run <tt>ls -l</tt> then <tt class="cmd">grep foo</tt>.</p>'
+    );
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    // One sentence stays one paragraph, with the <tt> text preserved inline as plain text.
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("Run ls -l then grep foo.");
+    // No shattering: no unknown block and no fail-loud evidence for a tolerated inline element.
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it.each([
+    ["big", "<p>a <big>B</big> c</p>", "a B c"],
+    ["font", '<p>a <font color="red">B</font> c</p>', "a B c"],
+    ["strike", "<p>a <strike>B</strike> c</p>", "a B c"],
+    ["acronym", '<p>a <acronym title="x">B</acronym> c</p>', "a B c"],
+    ["dfn", "<p>a <dfn>B</dfn> c</p>", "a B c"],
+    ["bdi", "<p>a <bdi>B</bdi> c</p>", "a B c"],
+    ["bdo", '<p>a <bdo dir="rtl">B</bdo> c</p>', "a B c"],
+    // A CJK ruby annotation keeps its base + reading text inline; the paragraph is not split.
+    ["ruby", "<p>a <ruby>漢<rp>(</rp><rt>hàn</rt><rp>)</rp></ruby> c</p>", "a 漢(hàn) c"]
+  ])("tolerates inline <%s> without splitting the paragraph", (_tag, html, expected) => {
+    const { blocks, evidence } = htmlToDocument(html);
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe(expected);
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("tolerates <hr> as a silent drop — no unknown block and no fail-loud evidence", () => {
+    const { blocks, evidence } = htmlToDocument("<p>Before.</p><hr/><p>After.</p>");
+
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    expect(evidence).toHaveLength(0);
+    // The thematic break carries no text, so it simply drops; the surrounding prose is intact.
+    expect(blocksOfType(blocks, "paragraph").map((block) => textOf(block.node))).toEqual([
+      "Before.",
+      "After."
+    ]);
+  });
+
+  it("still fails loud for a genuinely unknown block element (regression guard)", () => {
+    const { blocks, evidence } = htmlToDocument('<p>Before.</p><video src="clip.mp4"></video>');
+
+    // An unmodeled block element (not inline) is still wrapped as unknown with evidence — inline
+    // tolerance did not weaken the block-level fail-loud invariant.
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(1);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("video");
+  });
+});

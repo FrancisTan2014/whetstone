@@ -789,7 +789,7 @@ describe("EPUB ingestion routes", () => {
   it("persists an unknown-only chapter's PM node in doc_blocks while keeping it out of the mdast reader", async () => {
     epubResponder = async () => ({
       chapters: [
-        { html: "<hr>", images: [] },
+        { html: "<canvas></canvas>", images: [] },
         { html: "<h1>Real</h1><p>Body.</p>", images: [] }
       ],
       metadata: { author: "Anon", language: "en", title: "Mixed" }
@@ -799,39 +799,40 @@ describe("EPUB ingestion routes", () => {
 
     expect(response.statusCode).toBe(201);
     const body = response.json() as IngestEpubResultDto;
-    // The mdast reader is unchanged: the <hr> chapter has no renderable mdast block, so only the real
-    // chapter is returned, in order.
+    // The mdast reader is unchanged: the <canvas> chapter has no renderable mdast block, so only the
+    // real chapter is returned, in order.
     expect(body.content.readingUnits.map((unit) => unit.title)).toEqual(["Real"]);
     expect(body.content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual([
       "heading",
       "paragraph"
     ]);
 
-    // The structure view mirrors the content view: the empty-mdast <hr> unit is excluded, leaving
+    // The structure view mirrors the content view: the empty-mdast <canvas> unit is excluded, leaving
     // only the real chapter with its block count.
     const structure = await getStructure(body.content.workEntryId);
     expect((structure.json() as WorkStructureDto).readingUnits.map((unit) => unit.title)).toEqual([
       "Real"
     ]);
 
-    // Fail-loud (#311): the <hr> still persists as an `unknown` PM block row, not silently dropped.
+    // Fail-loud (#311): the unknown block-level <canvas> still persists as an `unknown` PM block row,
+    // not silently dropped.
     const unknownRows = (await context.db.select().from(docBlocks)).filter(
       (row) => row.type === "unknown"
     );
     expect(unknownRows).toHaveLength(1);
     const unknownRow = unknownRows[0];
     expect((unknownRow?.nodeJson as PmNode).attrs?.["id"]).toBe(unknownRow?.id);
-    expect(String((unknownRow?.nodeJson as PmNode).attrs?.["html"])).toContain("<hr");
+    expect(String((unknownRow?.nodeJson as PmNode).attrs?.["html"])).toContain("<canvas");
 
     // ...and its evidence reached the injected fail-loud sink.
-    expect(loggedEvidence.some((record) => record.tag === "hr")).toBe(true);
+    expect(loggedEvidence.some((record) => record.tag === "canvas")).toBe(true);
   });
 
   it("persists every chapter's unknown PM node when all chapters lack supported blocks (no 500)", async () => {
     epubResponder = async () => ({
       chapters: [
-        { html: "<hr>", images: [] },
-        { html: "<hr>", images: [] }
+        { html: "<canvas></canvas>", images: [] },
+        { html: "<canvas></canvas>", images: [] }
       ],
       metadata: { author: "Anon", language: "en", title: "All empty" }
     });
@@ -845,12 +846,12 @@ describe("EPUB ingestion routes", () => {
     expect((response.json() as IngestEpubResultDto).content.readingUnits).toEqual([]);
     expect(await context.db.select().from(workSources)).toHaveLength(1);
 
-    // Fail-loud (#311): both <hr> chapters persist their `unknown` PM nodes, and both logged evidence.
+    // Fail-loud (#311): both <canvas> chapters persist their `unknown` PM nodes, and both logged evidence.
     const unknownRows = (await context.db.select().from(docBlocks)).filter(
       (row) => row.type === "unknown"
     );
     expect(unknownRows).toHaveLength(2);
-    expect(loggedEvidence.filter((record) => record.tag === "hr")).toHaveLength(2);
+    expect(loggedEvidence.filter((record) => record.tag === "canvas")).toHaveLength(2);
   });
 
   it("persists a <video> chapter's unknown PM node alongside its mdast block, never dropping it (#311 fail-loud)", async () => {

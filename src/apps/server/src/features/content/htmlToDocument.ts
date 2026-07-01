@@ -82,23 +82,35 @@ const RECOGNIZED_TAGS = new Set<string>([
 
 // Inline/formatting and generic-container tags we descend through and keep the text of, but never
 // flag. Inline marks (em/strong/code/...) are intentionally not in the #310 schema yet (a later
-// slice), so tolerated inline formatting is descended and its text preserved as plain text.
+// slice), so tolerated inline formatting is descended and its text preserved as plain text. This
+// includes the legacy monospace/formatting family (`tt`, `big`, `font`, `strike`, `acronym`) that
+// Calibre-converted EPUBs emit constantly and the CJK ruby group (`ruby`/`rt`/`rp`) — an inline
+// element NOT listed here would otherwise be treated as an unknown block and shatter its paragraph
+// (#357). `hr` is a decorative, textless block-level thematic break we tolerate as a silent drop (no
+// content to keep, and not a dropped publisher construct, so it emits no fail-loud evidence).
 const TOLERATED_TAGS = new Set<string>([
   "a",
   "abbr",
+  "acronym",
   "article",
   "aside",
   "b",
+  "bdi",
+  "bdo",
+  "big",
   "br",
   "cite",
   "code",
   "col",
   "colgroup",
   "del",
+  "dfn",
   "div",
   "em",
+  "font",
   "footer",
   "header",
+  "hr",
   "i",
   "ins",
   "kbd",
@@ -106,11 +118,15 @@ const TOLERATED_TAGS = new Set<string>([
   "mark",
   "nav",
   "q",
+  "rp",
+  "rt",
+  "ruby",
   "s",
   "samp",
   "section",
   "small",
   "span",
+  "strike",
   "strong",
   "sub",
   "sup",
@@ -118,6 +134,7 @@ const TOLERATED_TAGS = new Set<string>([
   "tfoot",
   "thead",
   "time",
+  "tt",
   "u",
   "var",
   "wbr"
