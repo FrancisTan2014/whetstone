@@ -163,7 +163,7 @@ describe("ReaderPage block memoization", () => {
     selectText(block, "Block");
     fireEvent.mouseUp(block);
     await user.click(await screen.findByRole("button", { name: "Look up" }));
-    await screen.findByText(/Could not look up/);
+    await screen.findByText(/No definition found for/);
 
     expect(blockContent.renders).toBe(afterMount);
   });

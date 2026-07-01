@@ -2162,20 +2162,23 @@ describe("ReaderPage vocabulary lookup", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /Look up/ })).toBeNull());
   });
 
-  it("shows a combined error when every source is empty", async () => {
+  it("offers the external-dictionary launchpad when every source is empty (#339)", async () => {
     mockedLookupTerm.mockResolvedValue({ found: false });
 
     await selectAndLookup();
 
-    expect(await screen.findByText(/Could not look up/)).toBeDefined();
+    expect(await screen.findByText(/No definition found for/)).toBeDefined();
+    expect(screen.getByRole("navigation", { name: "Open in external dictionary" })).toBeDefined();
   });
 
-  it("shows an error state when the lookup request fails", async () => {
+  it("offers the external-dictionary launchpad when the lookup request fails (#339)", async () => {
     mockedLookupTerm.mockRejectedValue(new Error("network"));
 
     await selectAndLookup();
 
-    expect(await screen.findByRole("alert")).toBeDefined();
+    // Every source errored, so the panel is a launchpad (named not-found + links), not a dead-end.
+    expect(await screen.findByText(/No definition found for/)).toBeDefined();
+    expect(screen.getByRole("navigation", { name: "Open in external dictionary" })).toBeDefined();
   });
 
   it("routes a Chinese work's selection to the work's language", async () => {

@@ -169,9 +169,44 @@ function renderPronunciation(headword: string) {
   };
 }
 
-function renderEntry(entry: DictionaryEntry): React.JSX.Element {
-  const externalLinks = externalDictionaryLinks(entry.headword);
+// The language-aware "Open in …" external-dictionary links for a term (#254): English →
+// Longman/Merriam-Webster/Oxford, a CJK term → 汉典/萌典/ctext/国学大师. Shared by a resolved entry's
+// header and the no-definition fallback (#339), so both render the identical quiet link row.
+function LookupExternalLinks({ term }: { term: string }): React.JSX.Element {
+  const links = externalDictionaryLinks(term);
 
+  return (
+    <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
+      <span className="lookupExternalLabel">Open in</span>
+      {links.map((link) => (
+        <a
+          className="lookupExternalLink"
+          href={link.url}
+          key={link.label}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          {link.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+// The no-definition state as a launchpad, not a dead-end (#339): a calm line naming the term, then the
+// same language-aware external-dictionary links — so a term the bundled dictionaries simply do not
+// carry (a classical-Chinese compound, a proper noun) still routes the reader to real dictionary
+// content instead of the misleading "Please try again."
+function LookupNotFound({ term }: { term: string }): React.JSX.Element {
+  return (
+    <div className="lookupNotFound">
+      <p>No definition found for “{term}”.</p>
+      <LookupExternalLinks term={term} />
+    </div>
+  );
+}
+
+function renderEntry(entry: DictionaryEntry): React.JSX.Element {
   return (
     <div className="lookupEntry">
       <header className="lookupHeader">
@@ -181,20 +216,7 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
             {entry.pronunciations.map(renderPronunciation(entry.headword))}
           </div>
         )}
-        <nav aria-label="Open in external dictionary" className="lookupExternalLinks">
-          <span className="lookupExternalLabel">Open in</span>
-          {externalLinks.map((link) => (
-            <a
-              className="lookupExternalLink"
-              href={link.url}
-              key={link.label}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              {link.label}
-            </a>
-          ))}
-        </nav>
+        <LookupExternalLinks term={entry.headword} />
       </header>
       <div className="lookupGroups">
         {entry.partsOfSpeech.map((part, index) => (
@@ -213,19 +235,20 @@ function renderEntry(entry: DictionaryEntry): React.JSX.Element {
   );
 }
 
-function renderState(state: LookupState): React.JSX.Element {
+function renderState(state: LookupState, term: string): React.JSX.Element {
   switch (state.status) {
     case "loading":
       return <p role="status">Looking up…</p>;
     case "error":
       return <p role="alert">This source is unavailable. Try another tab.</p>;
     case "empty":
-      return <p>No definition found.</p>;
+      return <LookupNotFound term={term} />;
     case "loaded":
       // An "empty-but-loaded" entry (found, yet no part-of-speech groups) carries no readable
       // definition: the response contract permits found:true with an empty partsOfSpeech, so a tab
-      // the reader opens explicitly still shows the no-match state rather than a bare headword (#306).
-      return stateHasContent(state) ? renderEntry(state.entry) : <p>No definition found.</p>;
+      // the reader opens explicitly still shows the no-match launchpad rather than a bare headword
+      // (#306) — with the external links so it is never a dead-end (#339).
+      return stateHasContent(state) ? renderEntry(state.entry) : <LookupNotFound term={term} />;
   }
 }
 
@@ -253,12 +276,16 @@ function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
 }
 
 // The tabbed lookup body: each source fetched independently, with a >=44px tab strip when there is
-// more than one. When every source resolved to empty/error, show one explicit failure instead of a
-// dead tab. A single-source language (CJK) shows no strip — just that source's state.
-function LookupTabs({ tabs }: Readonly<{ tabs: ReadonlyArray<LookupTab> }>): React.JSX.Element {
+// more than one. When every source resolved to empty/error, show the no-definition launchpad (a
+// not-found line naming the term plus external-dictionary links, #339) instead of a dead tab. A
+// single-source language (CJK) shows no strip — just that source's state.
+function LookupTabs({
+  tabs,
+  term
+}: Readonly<{ tabs: ReadonlyArray<LookupTab>; term: string }>): React.JSX.Element {
   const [selected, setSelected] = useState<LookupSourceId | undefined>(undefined);
   // Every source has settled with nothing to show: none is still loading and none has content (each
-  // resolved to error, empty, or empty-but-loaded). Show one explicit failure instead of a dead tab.
+  // resolved to error, empty, or empty-but-loaded). Show the launchpad instead of a dead tab.
   const settled =
     tabs.length > 1 &&
     tabs.every((tab) => tab.state.status !== "loading" && !stateHasContent(tab.state));
@@ -269,7 +296,7 @@ function LookupTabs({ tabs }: Readonly<{ tabs: ReadonlyArray<LookupTab> }>): Rea
   }, [selected, tabs]);
 
   if (tabs.length === 0 || settled) {
-    return <p role="alert">Could not look up this word. Please try again.</p>;
+    return <LookupNotFound term={term} />;
   }
 
   const active = tabs[activeIndex] as LookupTab;
@@ -292,7 +319,7 @@ function LookupTabs({ tabs }: Readonly<{ tabs: ReadonlyArray<LookupTab> }>): Rea
           ))}
         </div>
       ) : null}
-      {renderState(active.state)}
+      {renderState(active.state, term)}
     </div>
   );
 }
@@ -343,7 +370,7 @@ function LookupPopover({
             </Popover.Close>
           </div>
           <div className="lookupPanel">
-            <LookupTabs tabs={tabs} />
+            <LookupTabs tabs={tabs} term={term} />
           </div>
         </Popover.Content>
       </Popover.Portal>
@@ -362,7 +389,7 @@ function LookupSheet({
   return (
     <Sheet onOpenChange={onOpenChange} open={open} side="bottom" title={`Look up: ${term}`}>
       <div className="lookupPanel">
-        <LookupTabs tabs={tabs} />
+        <LookupTabs tabs={tabs} term={term} />
       </div>
     </Sheet>
   );

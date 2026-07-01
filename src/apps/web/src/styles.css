@@ -453,6 +453,15 @@ code {
   }
 }
 
+/* The no-definition launchpad (#339): the calm not-found line stacked over the same external-dictionary
+   link row, so a term the bundled dictionaries do not carry still routes the reader out to real
+   content. Reuses the existing `.lookupExternalLinks` row — no new link styling. */
+.lookupNotFound {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .lookupPronunciation {
   display: inline-flex;
   align-items: center;
