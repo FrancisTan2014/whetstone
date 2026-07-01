@@ -628,13 +628,20 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
   merely store content.
 - The Entry/link + Block model supports future rich connections between materials, notes, concepts,
   and review items (block references, backlinks, transclusion) — none built in v0.
-- **Internal cross-reference links (settled).** A work's own `#id` references — footnote/endnote
-  markers, "see Figure 5-2", chapter cross-refs — are **one** capability: blocks already have stable
-  ids, so any same-work anchor resolves to a target block and becomes a live **jump** (scroll + brief
-  highlight); footnotes add a back-link, figure/section refs reuse the same jump. **Cross-document and
-  web links stay inert** (text only). The enabler is preserving element ids/anchors at ingest as
-  ProseMirror node attributes (via `parseDOM`), so footnote/figure/section jumps fall out of the
-  document model.
+- **Internal references — one work-level link graph (settled; the v0 build hardens it).**
+  Footnote/endnote markers, "see Figure 5-2", and chapter cross-refs are the **same primitive**: an
+  inline **reference** to another point in the *same work*, carrying a **target** (the source
+  `id`/href) and a **role** (note → superscript + back-link; cross-ref → inline link). They are **not**
+  per-kind nodes re-implemented per renderer. The **keystone — historically missing, and the cause of
+  the repeated regressions — is a work anchor index** built at ingest: `(source file, anchor) →
+  (reading unit, block)` for the *whole* work. Resolution must be **work-scoped, not current-unit
+  DOM-scoped**: a reference resolves **across chapters**, so endnotes-at-the-end and chapter cross-refs
+  work, not only same-chapter anchors. A **single resolver** turns any target into a cross-unit
+  **jump** (scroll + brief highlight), reusing the block-jump; footnotes add a back-link. The reader
+  renders **one document model** (the PM/Tiptap doc — mdast is import/export only), so reference
+  handling lives in **one place** and cannot drift between paths — the structural fix for the whack-a-
+  mole. **External / cross-work / web links stay inert** (text only). This is just the intra-work case
+  of the connection spine: an anchor pointing at a block.
 - **PDF / scanned ingestion** via an isolated Python document-AI worker (e.g. Docling + PaddleOCR),
   with admin review of extracted content. Permissive licenses only; AGPL/GPL tools avoided.
 - Semantic search (`pgvector` embeddings).
