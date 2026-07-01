@@ -71,3 +71,33 @@ jobs:
           done
           echo "App did not become healthy on port ${WHETSTONE_PORT} within 60s." >&2
           exit 1
+
+      - name: Serve over Tailscale (private, fast)
+        # Assert the persistent `tailscale serve` mapping so the app is reachable on the tailnet at a
+        # stable, fast, private https://<machine>.<tailnet>.ts.net — a DIRECT WireGuard path (near-LAN
+        # throughput), not the throttled Cloudflare quick tunnel. Tailnet-only: `serve` never exposes the
+        # app publicly (that is `funnel`, which stays opt-in). Idempotent — `serve` config persists, so
+        # re-asserting each deploy just keeps the served port in sync with WHETSTONE_PORT (no hardcoded
+        # 3000). Contains no secret: the one-time `tailscale up` SSO auth is a host prerequisite (see
+        # docs/DEPLOY.md), and any auth key would come from the host environment (TS_AUTHKEY), never the
+        # repo. Skips (does not queue or fail) until you opt in with the repo variable
+        # TAILSCALE_SERVE_ENABLED=true, so existing deploys behave exactly as today.
+        if: vars.TAILSCALE_SERVE_ENABLED == 'true'
+        run: |
+          tailscale serve --bg "${WHETSTONE_PORT}"
+          # Verify the mapping actually took, and fail the deploy if it did not.
+          if ! tailscale serve status | grep -q "${WHETSTONE_PORT}"; then
+            echo "tailscale serve did not map port ${WHETSTONE_PORT}:" >&2
+            tailscale serve status >&2 || true
+            exit 1
+          fi
+          # Best-effort reachability over the stable .ts.net hostname (non-fatal: DNS/propagation can lag).
+          ts_host="$(tailscale status --json | node -e 'let s="";process.stdin.on("data",d=>{s+=d}).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).Self.DNSName).replace(/\.$/,""))}catch{/* leave empty on parse failure */}})')"
+          if [ -n "${ts_host}" ]; then
+            echo "Serving at https://${ts_host}/"
+            if curl -fsS "https://${ts_host}/health" >/dev/null 2>&1; then
+              echo "Health OK over Tailscale."
+            else
+              echo "Health over Tailscale not confirmed (best-effort)." >&2
+            fi
+          fi
