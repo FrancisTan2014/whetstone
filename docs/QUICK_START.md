@@ -7,6 +7,34 @@ templated note.
 This guide covers what exists today: the library admin, the continuous reader, and selected-text
 note capture. It does not describe features that are not implemented yet.
 
+## Set up and run (one command)
+
+A fresh clone reaches a working app with **one command**, then one to run it:
+
+```powershell
+pnpm setup   # bootstrap: checks your toolchain, installs, builds, gets the E2E browser, scaffolds .env
+pnpm dev     # run the whole stack
+```
+
+`pnpm setup` runs a small set of declarative steps idempotently and is **self-guiding on failure**:
+if a step can't complete it prints exactly *what* went wrong and the *precise remedy*, then exits
+non-zero — fix it and re-run `pnpm setup`, which resumes from where it stopped (already-ready steps
+are skipped). To just check readiness without changing anything:
+
+```powershell
+pnpm setup:doctor   # report each capability as ready / optional-missing / failed; never mutates
+```
+
+Opt-in heavy capabilities are excluded from the base run; enable them with a flag (their own steps
+land with those features): `pnpm setup --voice`, `pnpm setup --coach`.
+
+No separate database server is required: v0 uses an embedded PostgreSQL engine
+([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no
+Postgres — you only need Node and pnpm.
+
+The rest of this guide explains the same steps in detail (useful when a `setup` step reports a
+problem, or to run pieces by hand).
+
 ## Prerequisites
 
 - **Node.js >= 22** (`node -v`).
@@ -22,6 +50,9 @@ No separate database server is required: v0 uses an embedded PostgreSQL engine
 pnpm.
 
 ## 1. Install dependencies
+
+> These next steps are what `pnpm setup` above does for you; run them by hand only if you skipped
+> `pnpm setup` or a setup step reported a problem.
 
 From the repository root:
 
