@@ -1,0 +1,45 @@
+name: Mutation testing (advisory)
+
+# Advisory mutation testing (issue #349) — automates the GUIDELINES mutation-resistance gate for the
+# pure @whetstone/domain + @whetstone/contracts packages. It is deliberately SEPARATE from the CI
+# merge gate (ci.yml): it runs nightly (and on demand), reports the score, and uploads the HTML
+# report, but never blocks a merge. Stryker's `break` threshold is unset, so a low score cannot fail.
+on:
+  schedule:
+    # 02:30 UTC daily.
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: Stryker (domain + contracts)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run mutation testing
+        run: pnpm mutation
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: warn

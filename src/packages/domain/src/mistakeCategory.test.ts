@@ -11,6 +11,7 @@ describe("mistakeCategoryFromIssues", () => {
     ["collocation", "wrong_collocation"],
     ["register", "register"],
     ["grammar", "other"],
+    ["other", "other"],
     ["word_choice", "other"],
     ["pronunciation", "other"]
   ] as const)("maps issue kind %s to %s", (kind, category) => {
