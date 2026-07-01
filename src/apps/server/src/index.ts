@@ -56,7 +56,12 @@ const db = createDbClient(pglite);
 await seedNoteTemplates(db);
 await seedCaseCorpus(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
-const epubParser = createEpubParser(join(config.sourceFilesDir, "epub-resources"));
+const epubParser = createEpubParser(
+  join(config.sourceFilesDir, "epub-resources"),
+  // Expected, recoverable ingestion events (e.g. a manifest resource whose bytes are missing, so the
+  // image is skipped) — logged at debug at the ingestion boundary, matching the ingestionLogger below.
+  (event, fields) => console.debug(`[epub] ${event}`, JSON.stringify(fields))
+);
 const imageResourceStore = createImageResourceStore(config.imageResourcesDir);
 
 const httpClient = createHttpClient();

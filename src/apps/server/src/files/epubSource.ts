@@ -73,9 +73,25 @@ function mediaTypeBySavedPath(
   return byPath;
 }
 
+// Read one manifest resource's bytes, tolerating the two ways a declared resource can be
+// effectively absent: `@lingo-reader/epub-parser` writes an **empty file** for a manifest resource
+// whose bytes are missing from the archive (rather than omitting it), and a genuinely absent file
+// makes `readFile` reject. Either way the resource is unusable, so return null and let the caller
+// skip it — a single missing image must not surface as a 0-byte phantom or fail the whole book
+// ("surface what you can", cf. the stray-`<img>` skip).
+export async function readResourceBytes(src: string): Promise<Uint8Array | null> {
+  try {
+    const bytes = await readFile(src);
+    return bytes.length === 0 ? null : bytes;
+  } catch {
+    return null;
+  }
+}
+
 async function extractChapterImages(
   html: string,
-  mediaTypes: Map<string, string>
+  mediaTypes: Map<string, string>,
+  onResourceSkipped: (src: string) => void
 ): Promise<ParsedEpubImage[]> {
   const images: ParsedEpubImage[] = [];
 
@@ -88,7 +104,15 @@ async function extractChapterImages(
       continue;
     }
 
-    images.push({ bytes: await readFile(src), contentType, src });
+    const bytes = await readResourceBytes(src);
+    // A declared resource whose bytes are missing (absent file, or the parser's empty-file
+    // fallback) is skipped so the chapter and the rest of the book still parse.
+    if (bytes === null) {
+      onResourceSkipped(src);
+      continue;
+    }
+
+    images.push({ bytes, contentType, src });
   }
 
   return images;
@@ -195,7 +219,16 @@ export function sanitizeEpubBytes(bytes: Uint8Array): Uint8Array {
   return zipSync(next);
 }
 
-export function createEpubParser(resourceSaveDir: string): EpubParser {
+// A debug-level sink for expected, recoverable ingestion events (a declared resource skipped). Kept
+// as an injected callback so this pure boundary reaches no global logger; the server wires it to its
+// logger at construction. `event` is a stable key; `fields` are safe, structured context (a resource
+// path — never content). See GUIDELINES logging rules ("expected validation failures — log at debug").
+export type EpubParserDebugLog = (event: string, fields: Record<string, unknown>) => void;
+
+export function createEpubParser(
+  resourceSaveDir: string,
+  logDebug: EpubParserDebugLog
+): EpubParser {
   return async function parseEpub(bytes: Uint8Array): Promise<ParsedEpub> {
     // The EPUB library hangs and emits a process-crashing unhandled rejection on non-ZIP input
     // (e.g. a non-EPUB file uploaded with a `.epub` extension), so reject those here — a settled
@@ -205,7 +238,17 @@ export function createEpubParser(resourceSaveDir: string): EpubParser {
     }
 
     await mkdir(resourceSaveDir, { recursive: true });
-    const epub = await initEpubFile(sanitizeEpubBytes(bytes), resourceSaveDir);
+
+    // A valid ZIP that is not a valid EPUB (missing container.xml/OPF, corrupt structure) makes the
+    // third-party parser throw an internal, cryptic error. Wrap it so any such failure settles as a
+    // single, clear rejection the ingest command maps to "invalid EPUB" — mirroring the non-ZIP
+    // guard's intent — instead of leaking the library's internals.
+    let epub: Awaited<ReturnType<typeof initEpubFile>>;
+    try {
+      epub = await initEpubFile(sanitizeEpubBytes(bytes), resourceSaveDir);
+    } catch (cause) {
+      throw new Error("The upload could not be parsed as a valid EPUB.", { cause });
+    }
 
     try {
       const metadata = normalizeEpubMetadata(epub.getMetadata());
@@ -220,7 +263,9 @@ export function createEpubParser(resourceSaveDir: string): EpubParser {
         const chapter = await epub.loadChapter(item.id);
         chapters.push({
           html: chapter.html,
-          images: await extractChapterImages(chapter.html, mediaTypes)
+          images: await extractChapterImages(chapter.html, mediaTypes, (src) =>
+            logDebug("epub_resource_skipped", { src })
+          )
         });
       }
 
