@@ -18,7 +18,7 @@ describe("ReaderToc", () => {
       <ReaderToc activeIndex={0} items={items} onClose={vi.fn()} onSelect={vi.fn()} open={false} />
     );
 
-    expect(screen.queryByRole("navigation", { name: "目录" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Table of Contents" })).toBeNull();
   });
 
   it("lists the units and marks the active one when open", () => {
@@ -26,7 +26,7 @@ describe("ReaderToc", () => {
       <ReaderToc activeIndex={1} items={items} onClose={vi.fn()} onSelect={vi.fn()} open={true} />
     );
 
-    const nav = screen.getByRole("navigation", { name: "目录" });
+    const nav = screen.getByRole("navigation", { name: "Table of Contents" });
     expect(nav.id).toBe("reader-toc-list");
     const buttons = nav.querySelectorAll("button");
     expect(Array.from(buttons).map((button) => button.textContent)).toEqual([

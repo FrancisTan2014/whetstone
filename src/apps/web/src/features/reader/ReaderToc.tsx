@@ -38,8 +38,10 @@ export function ReaderToc({
         onClick={onClose}
         type="button"
       />
-      <nav aria-label="目录" className="readerTocNav" id="reader-toc-list">
-        <p className="readerTocHeading">目录</p>
+      <nav aria-labelledby="reader-toc-heading" className="readerTocNav" id="reader-toc-list">
+        <p className="readerTocHeading" id="reader-toc-heading">
+          Table of Contents
+        </p>
         <ul className="readerTocList">
           {items.map((item, index) => (
             <li key={item.entryId}>
