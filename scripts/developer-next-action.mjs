@@ -8,7 +8,14 @@
 //
 //   * a workflow PR is open and labeled `changes-requested`  -> fix that PR (reviewer handed it back)
 //   * a workflow PR is open but not changes-requested        -> wait (in review or awaiting merge)
-//   * no workflow PR is open                                 -> implement the next dependency-ready issue
+//   * no workflow PR, but an issue is still `in-progress`     -> resume THAT issue (a prior run started it
+//                                                               but stopped before opening a PR). This is
+//                                                               the work-in-progress guard: without it,
+//                                                               selectNextIssue -- which only sees
+//                                                               `ready-for-dev` -- skips the started issue
+//                                                               and begins a SECOND one, leaving two issues
+//                                                               `in-progress` at once and orphaning the first.
+//   * no workflow PR and nothing in-progress                 -> implement the next dependency-ready issue
 //                                                               (ready `[Bug]`s before `[Task]`s; see
 //                                                               pick-next-issue.mjs `selectNextIssue`)
 //   * none of the above                                      -> idle (nothing to do)
@@ -66,6 +73,19 @@ function decide() {
   if (changesRequested.length > 0) return { action: 'fix', pr: changesRequested[0].number, open: mine };
   if (mine.length > 0) return { action: 'wait', pr: mine[0].number, open: mine };
 
+  // Work-in-progress guard (keeps WIP = 1). With no workflow PR open, an issue still labeled
+  // `in-progress` was started by a prior run that stopped before opening a PR (crash/abort). Resume
+  // THAT issue instead of letting selectNextIssue -- which only sees `ready-for-dev` -- skip it and
+  // start a second one. Skipping is exactly what leaves two issues `in-progress` at once and strands
+  // the first (it is no longer `ready-for-dev`, so it would never be picked again).
+  const inProgress = ghJson([
+    'issue', 'list', '--state', 'open', '--label', 'in-progress',
+    '--limit', '200', '--json', 'number',
+  ])
+    .map((i) => i.number)
+    .sort((a, b) => a - b);
+  if (inProgress.length > 0) return { action: 'implement', issue: inProgress[0], open: mine, resume: true };
+
   const { next } = selectNextIssue();
   if (next != null) return { action: 'implement', issue: next, open: [] };
   return { action: 'idle', open: [] };
@@ -95,7 +115,11 @@ switch (d.action) {
     console.log(`wait ${d.pr}`);
     break;
   case 'implement':
-    console.error(`developer-next-action: ${openSummary} -> implement issue #${d.issue}.`);
+    console.error(
+      `developer-next-action: ${openSummary} -> ${
+        d.resume ? `resume in-progress issue #${d.issue}` : `implement issue #${d.issue}`
+      }.`,
+    );
     console.log(`implement ${d.issue}`);
     break;
   default:
