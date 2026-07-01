@@ -30,6 +30,13 @@ export default defineConfig({
         "**/src/db/migrations/**",
         "**/src/db/schema.ts", // Drizzle table declarations are exercised through migrations and integration tests.
         "**/src/index.ts",
+        // The setup runner's real-I/O boundary: builds the SetupContext from Node's
+        // child_process/fs/os and is wiring-only (like src/**/index.ts). All setup decision logic
+        // lives in scripts/setup/runner.mjs and the steps, covered via fakes.
+        "scripts/setup/context.mjs",
+        // Setup test files and their shared fake-context/step scaffolding (test-only, not shipped).
+        "scripts/setup/**/*.{test,spec}.mjs",
+        "scripts/setup/testSupport.mjs",
         "**/src/mcp/main.ts", // MCP stdio bootstrap is wiring-only infrastructure (like index.ts).
         "**/src/main.tsx",
         // Browser Web Audio / MediaRecorder boundary for live turn-taking (#219): touches
@@ -50,7 +57,7 @@ export default defineConfig({
         "**/src/**/*.tokens.tsx",
         "**/src/vite-env.d.ts"
       ],
-      include: ["src/apps/*/src/**/*.{ts,tsx}", "src/packages/*/src/**/*.{ts,tsx}"],
+      include: ["src/apps/*/src/**/*.{ts,tsx}", "src/packages/*/src/**/*.{ts,tsx}", "scripts/setup/**/*.mjs"],
       provider: "v8",
       reporter: ["text", "json", "html"],
       thresholds: {
@@ -66,7 +73,7 @@ export default defineConfig({
     // 5s default and flake. A generous timeout keeps these real-database tests reliable without
     // weakening any assertion or coverage threshold.
     hookTimeout: 30000,
-    include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}"],
+    include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}", "scripts/setup/**/*.{test,spec}.mjs"],
     setupFiles: ["./vitest.setup.ts"],
     testTimeout: 30000
   }

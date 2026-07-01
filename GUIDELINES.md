@@ -689,6 +689,12 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Lockfile changes match dependency changes and do not include unrelated upgrades.
 - Tooling changes preserve strict TypeScript, lint, format, build, and test commands once introduced.
 
+### Setup steps (bootstrap framework)
+
+- Any change that introduces a **runtime dependency or external tool the app needs to run** (beyond what `pnpm install` provides — e.g. a browser, a local model, a system binary) MUST add a setup step under `scripts/setup/steps/` that **fails loud with an actionable remedy** (a `StepResult` carrying `what` + `remedy`, never a bare throw), is covered by `pnpm setup:doctor`, has tests for its failure paths, and is documented.
+- The reviewer **blocks** a change that adds such a dependency without a compliant setup step.
+- Steps stay independent and declarative (`{ id, title, optional?, check, provision?, verify? }`); the runner is not edited to add one. Heavy/optional capabilities are opt-in (an `optional` step behind a `--<capability>` flag), so the base `pnpm setup` stays fast with no heavy downloads. System prerequisites are checked and instructed, never force-installed.
+
 ### Durable-surface upkeep
 
 - A PR that changes an area's shape — what it owns, its entry points, an invariant, or where a subsystem lives — updates the matching surface (`docs/MAP.md`, the relevant `AGENTS.md`, or the constitution) in the same PR, as a concise pointer-level edit.
