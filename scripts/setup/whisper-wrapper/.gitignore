@@ -1,0 +1,7 @@
+# Python build/cache artifacts for the whetstone-whisper wrapper.
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/

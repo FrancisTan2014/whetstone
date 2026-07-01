@@ -47,6 +47,8 @@
 /**
  * @typedef {object} SetupFs
  * @property {(path: string) => boolean} exists
+ * @property {(path: string) => string} readText  UTF-8 contents (throws if absent).
+ * @property {(path: string, content: string) => void} writeText  Write UTF-8 contents.
  * @property {(from: string, to: string) => void} copyFile
  */
 

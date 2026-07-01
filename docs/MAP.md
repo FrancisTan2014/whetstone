@@ -151,7 +151,9 @@ can navigate them from another package.
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
   offline CLI args, validates the word-timestamped JSON at the boundary, maps to a `Transcription`),
   `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
-  safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured). The
+  safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured).
+  `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`, mirrors `checkCoachHealth`) logs a
+  boot warning when STT is on the fake, pointing at `pnpm setup --voice`. The
   latency/inter-word-pause derivation is pure in `@whetstone/domain` (`speechTiming.ts`); shapes in
   `@whetstone/contracts` (`speechContracts.ts`). Audio never leaves the machine; setup in
   `docs/SPEECH.md`.
@@ -548,7 +550,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.
 - Run/use walkthrough: `docs/QUICK_START.md` (install, env/data config, run server + web, first note flow).
-- Setup (one command): `pnpm setup` (`scripts/setup.mjs`) — a declarative, extensible bootstrap. The runner (`scripts/setup/runner.mjs`) runs each step (`scripts/setup/steps/*.mjs`: toolchain check, install, build, Playwright Chromium, `.env` scaffold) through `check -> provision -> verify`, idempotent and fail-loud (each non-ok `StepResult` carries `what` + `remedy`). `pnpm setup:doctor` (`--check`) reports readiness without mutating; `--voice`/`--coach` opt into optional capability steps. Real I/O is confined to `scripts/setup/context.mjs`. Adding a runtime dependency = drop one step file here (GUIDELINES "Setup steps" gate).
+- Setup (one command): `pnpm setup` (`scripts/setup.mjs`) — a declarative, extensible bootstrap. The runner (`scripts/setup/runner.mjs`) runs each step (`scripts/setup/steps/*.mjs`: toolchain check, install, build, Playwright Chromium, `.env` scaffold) through `check -> provision -> verify`, idempotent and fail-loud (each non-ok `StepResult` carries `what` + `remedy`). `pnpm setup:doctor` (`--check`) reports readiness without mutating; `--voice`/`--coach` opt into optional capability steps. The optional **voice** step (`scripts/setup/steps/voice.mjs`, `--voice`) installs faster-whisper + the bundled `whetstone-whisper` pip console-script wrapper (`scripts/setup/whisper-wrapper/`, emits the `docs/SPEECH.md` JSON contract), fetches the model, and writes `WHISPER_*` to `.env`. Real I/O is confined to `scripts/setup/context.mjs`. Adding a runtime dependency = drop one step file here (GUIDELINES "Setup steps" gate).
 - Dev (one command): `pnpm dev` (`scripts/dev.mjs`) builds the shared packages once, then runs the API server from source with reload (`tsx watch`) and the Vite web dev server together — route changes go live with no manual `build`. Production still runs the built `dist` via `pnpm --filter @whetstone/server start`.
 - Gate: `pnpm validate` (= `typecheck && lint && test && build && smoke && e2e`); mirrors `.github/workflows/ci.yml`. `smoke` (`src/apps/web/dev-smoke.mjs`) boots the Vite dev server and checks every dependency resolves at serve time — catching dev-only breakage that `build` (rolldown) does not.
 - Deploy (continuous, to a personal MacBook): `.github/workflows/deploy.yml` runs **only on push to `main`**, `runs-on: self-hosted`, gated on the `DEPLOY_ENABLED` repo variable (skips until set). It builds, then restarts a `launchd` app service that serves the single origin (web `dist` + `/api`) and migrates on boot; `DATABASE_DIR` persists across deploys; HTTPS via a Cloudflare Tunnel. Setup runbook: `docs/DEPLOY.md`.

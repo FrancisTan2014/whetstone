@@ -28,6 +28,20 @@ pnpm setup:doctor   # report each capability as ready / optional-missing / faile
 Opt-in heavy capabilities are excluded from the base run; enable them with a flag (their own steps
 land with those features): `pnpm setup --voice`, `pnpm setup --coach`.
 
+### Voice input (optional)
+
+Spoken practice transcribes locally with Whisper. It is **off by default** (the base run stays fast
+and offline), so with nothing configured a spoken turn transcribes to empty and the server logs a
+one-line boot warning telling you how to enable it. To turn it on:
+
+```powershell
+pnpm setup --voice   # installs faster-whisper + the whetstone-whisper wrapper, fetches the model, writes WHISPER_* to .env
+```
+
+Pick a different model with `WHISPER_MODEL` (default `small`, multilingual): e.g.
+`WHISPER_MODEL=base.en pnpm setup --voice` for English-only. After it finishes, restart `pnpm dev`
+and speaking yields a real transcript. Details and the STT contract: [docs/SPEECH.md](./SPEECH.md).
+
 No separate database server is required: v0 uses an embedded PostgreSQL engine
 ([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no
 Postgres — you only need Node and pnpm.

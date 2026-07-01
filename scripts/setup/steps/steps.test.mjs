@@ -11,11 +11,22 @@ import { parseNodeMajor, toolchainStep } from "./toolchain.mjs";
 import { createFakeContext } from "../testSupport.mjs";
 
 describe("registry", () => {
-  it("orders the base steps: toolchain, install, build, playwright, env", () => {
-    expect(steps.map((s) => s.id)).toEqual(["toolchain", "install", "build", "playwright", "env"]);
-    for (const step of steps) {
+  it("orders the base steps, then the optional voice step", () => {
+    expect(steps.map((s) => s.id)).toEqual([
+      "toolchain",
+      "install",
+      "build",
+      "playwright",
+      "env",
+      "voice"
+    ]);
+    const base = steps.filter((s) => s.id !== "voice");
+    for (const step of base) {
       expect(step.optional).toBeUndefined();
     }
+    const voice = steps.find((s) => s.id === "voice");
+    expect(voice?.optional).toBe(true);
+    expect(voice?.capability).toBe("voice");
   });
 });
 
