@@ -1,13 +1,16 @@
 import { initEpubFile } from "@lingo-reader/epub-parser";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { strToU8, zipSync } from "fflate";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createEpubParser, sanitizeEpubBytes } from "./epubSource.js";
+import { createEpubParser, readResourceBytes, sanitizeEpubBytes } from "./epubSource.js";
 
 let imagesDir: string;
+// A spy debug sink passed to every parser under test, so the "resource skipped" boundary log is
+// asserted rather than silently swallowed.
+let logDebug: ReturnType<typeof vi.fn>;
 
 const container = `<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -172,8 +175,35 @@ function buildMissingCssEpubBytes(): Uint8Array {
   });
 }
 
+// A manifest that declares an image resource + a chapter referencing it, but the image bytes are
+// omitted from the archive. @lingo-reader/epub-parser writes an empty file for the missing resource
+// (rather than failing), so without a guard the chapter would surface a 0-byte phantom image.
+function buildMissingResourceEpubBytes(): Uint8Array {
+  const body = "<h1>Plate</h1><p>See below.</p>" + '<img src="images/pixel.png" alt="dot"/>';
+
+  return zipSync({
+    mimetype: [strToU8("application/epub+zip"), { level: 0 }],
+    "META-INF/container.xml": strToU8(container),
+    "OEBPS/content.opf": strToU8(imageOpf),
+    "OEBPS/chap1.xhtml": strToU8(chapter("Plate", body))
+    // OEBPS/images/pixel.png intentionally omitted.
+  });
+}
+
+// A valid ZIP carrying the EPUB mimetype + a container that points at an OPF which is absent from
+// the archive — a real .zip that is not a valid EPUB. The third-party parser throws an internal,
+// cryptic error here; the parser must turn that into a settled, clear rejection.
+function buildValidZipInvalidEpubBytes(): Uint8Array {
+  return zipSync({
+    mimetype: [strToU8("application/epub+zip"), { level: 0 }],
+    "META-INF/container.xml": strToU8(container)
+    // OEBPS/content.opf intentionally omitted.
+  });
+}
+
 beforeEach(async () => {
   imagesDir = await mkdtemp(join(tmpdir(), "whetstone-epub-img-"));
+  logDebug = vi.fn();
 });
 
 afterEach(async () => {
@@ -182,7 +212,7 @@ afterEach(async () => {
 
 describe("createEpubParser", () => {
   it("extracts normalized metadata and ordered linear chapters from real EPUB bytes", async () => {
-    const parse = createEpubParser(imagesDir);
+    const parse = createEpubParser(imagesDir, logDebug);
 
     const parsed = await parse(buildEpubBytes());
 
@@ -193,7 +223,7 @@ describe("createEpubParser", () => {
   });
 
   it("surfaces no images for chapters that reference none", async () => {
-    const parse = createEpubParser(imagesDir);
+    const parse = createEpubParser(imagesDir, logDebug);
 
     const parsed = await parse(buildEpubBytes());
 
@@ -202,7 +232,7 @@ describe("createEpubParser", () => {
 
   it("surfaces a chapter's image with its rewritten src, bytes, and manifest media type", async () => {
     const png = pngBytes();
-    const parse = createEpubParser(imagesDir);
+    const parse = createEpubParser(imagesDir, logDebug);
 
     const parsed = await parse(buildImageEpubBytes(png));
 
@@ -219,13 +249,38 @@ describe("createEpubParser", () => {
   });
 
   it("rejects non-ZIP bytes with a settled error instead of hanging or crashing", async () => {
-    const parse = createEpubParser(imagesDir);
+    const parse = createEpubParser(imagesDir, logDebug);
     // A non-EPUB file uploaded with a .epub extension. The underlying library would otherwise leave
     // its promise unsettled and emit a process-crashing unhandled rejection; the parser must turn it
     // into a normal rejection the ingest command can map to "invalid EPUB".
     const notAnEpub = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
     await expect(parse(notAnEpub)).rejects.toThrow("not a ZIP archive");
+  });
+
+  it("rejects a valid ZIP that is not a valid EPUB with a settled, clear error", async () => {
+    const parse = createEpubParser(imagesDir, logDebug);
+    // A real ZIP whose container names an OPF that isn't present. Before the wrap the parser leaked
+    // the library's internal error ("Cannot read properties of null (reading 'package')"); it must
+    // instead settle as a single clear rejection the ingest command maps to "invalid EPUB".
+    await expect(parse(buildValidZipInvalidEpubBytes())).rejects.toThrow(
+      /could not be parsed as a valid EPUB/
+    );
+  });
+
+  it("skips a manifest image whose bytes are missing, still parsing the chapter (with a debug log)", async () => {
+    const parse = createEpubParser(imagesDir, logDebug);
+
+    const parsed = await parse(buildMissingResourceEpubBytes());
+
+    // The book still parses; the unreadable image is omitted rather than surfaced as a 0-byte
+    // phantom (the pre-change behavior) or failing the whole parse.
+    expect(parsed.chapters).toHaveLength(1);
+    expect(parsed.chapters[0]?.html).toContain("Plate");
+    expect(parsed.chapters[0]?.images).toEqual([]);
+    expect(logDebug).toHaveBeenCalledWith("epub_resource_skipped", {
+      src: resolve(imagesDir, "OEBPS_images_pixel.png")
+    });
   });
 
   it("ingests a nav-only EPUB3 whose spine toc points at a non-NCX resource (#359)", async () => {
@@ -240,7 +295,7 @@ describe("createEpubParser", () => {
       await rm(rawDir, { force: true, recursive: true });
     }
 
-    const parsed = await createEpubParser(imagesDir)(navOnly);
+    const parsed = await createEpubParser(imagesDir, logDebug)(navOnly);
 
     // Chapters come from the spine, in order — the NCX is never needed.
     expect(parsed.metadata).toEqual({ author: "Anon", language: "en", title: "Master TypeScript" });
@@ -262,7 +317,7 @@ describe("createEpubParser", () => {
       await rm(rawDir, { force: true, recursive: true });
     }
 
-    const parsed = await createEpubParser(imagesDir)(missingCss);
+    const parsed = await createEpubParser(imagesDir, logDebug)(missingCss);
 
     expect(parsed.chapters).toHaveLength(1);
     expect(parsed.chapters[0]?.html).toContain("Templates");
@@ -284,6 +339,27 @@ describe("createEpubParser", () => {
     }
 
     expect(sanitizeEpubBytes(archive)).toBe(archive);
+  });
+});
+
+describe("readResourceBytes", () => {
+  it("returns null for an absent file (readFile rejects)", async () => {
+    expect(await readResourceBytes(resolve(imagesDir, "does-not-exist.bin"))).toBeNull();
+  });
+
+  it("returns null for an empty file (the parser's missing-resource fallback)", async () => {
+    const path = join(imagesDir, "empty.bin");
+    await writeFile(path, new Uint8Array());
+
+    expect(await readResourceBytes(path)).toBeNull();
+  });
+
+  it("returns the bytes for a real resource", async () => {
+    const path = join(imagesDir, "real.bin");
+    await writeFile(path, Uint8Array.from([1, 2, 3]));
+
+    const bytes = await readResourceBytes(path);
+    expect(bytes && Array.from(bytes)).toEqual([1, 2, 3]);
   });
 });
 
