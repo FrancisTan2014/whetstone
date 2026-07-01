@@ -788,6 +788,21 @@
     transform: translateY(130%);
     opacity: 0;
   }
+
+  /* Mobile: the work title becomes a full-width top bar mirroring the bottom tools bar, so its
+     translucent blurred surface masks the body text beneath it instead of colliding with it (#343).
+     Safe-area aware at the top; left-aligned and still truncating with an ellipsis. It recedes upward
+     with the rest of the chrome via the shared `data-hidden` transition (no new toggle), and the thin
+     progress line — a later sibling — still paints over its top edge. */
+  .readingHeaderTitle {
+    inset-inline: 0;
+    max-inline-size: none;
+    padding-block-start: max(0.6rem, env(safe-area-inset-top));
+    padding-inline-end: max(1rem, env(safe-area-inset-right));
+    color: var(--color-text);
+    background-color: color-mix(in oklch, var(--color-surface) 90%, transparent);
+    backdrop-filter: blur(8px);
+  }
 }
 
 @media (min-width: 56rem) {
