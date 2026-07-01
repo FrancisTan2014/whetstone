@@ -639,6 +639,140 @@ function normalizeCjkSpacing(element: Element): void {
   }
 }
 
+// DOM node type for an element (jsdom follows the DOM spec: Element === 1).
+const ELEMENT_NODE = 1;
+
+// The within-text-node pass above misses a stray space that STRADDLES an inline element (#358): in
+// `使用 <b>传硕计划</b> 中`, the flanking spaces live in different text nodes (`使用 ` / ` 中`) whose
+// neighbouring Han lives across the `<b>`, so the per-node lookahead never sees a CJK on the far side.
+// The tags whose boundary keeps text in one inline flow (so a space across them is still inter-CJK).
+// `code`/`pre` (whitespace significant), `br` (a line break), and every block/container tag are NOT
+// here — they end the inline run, and a space is never joined across a block boundary.
+const INLINE_FLOW_TAGS = new Set<string>([
+  "a",
+  "abbr",
+  "b",
+  "bdi",
+  "bdo",
+  "big",
+  "cite",
+  "del",
+  "dfn",
+  "em",
+  "font",
+  "i",
+  "ins",
+  "kbd",
+  "mark",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "small",
+  "span",
+  "strike",
+  "strong",
+  "sub",
+  "sup",
+  "time",
+  "tt",
+  "u",
+  "var",
+  "wbr"
+]);
+
+// Matches a single CJK-class code point (the same class the within-node pass uses), so surrogate-pair
+// Han (astral planes) is matched as one character.
+const CJK_CHAR = new RegExp(`^[${CJK_CLASS}]$`, "u");
+const TRAILING_ASCII_SPACE = /[\t\n\v\f\r ]+$/;
+const LEADING_ASCII_SPACE = /^[\t\n\v\f\r ]+/;
+
+function isCjkChar(char: string | undefined): boolean {
+  // `String(undefined)` -> "undefined" (a multi-char string) never matches the single-code-point class,
+  // so an all-whitespace boundary (no real character) is simply not CJK — no separate undefined branch.
+  return CJK_CHAR.test(String(char));
+}
+
+// The last / first character of a string ignoring a trailing / leading ASCII-whitespace run, by code
+// point (so astral Han is whole), or undefined when the string is empty/all-whitespace.
+function lastNonSpaceChar(text: string): string | undefined {
+  return [...text.replace(TRAILING_ASCII_SPACE, "")].at(-1);
+}
+
+function firstNonSpaceChar(text: string): string | undefined {
+  return [...text.replace(LEADING_ASCII_SPACE, "")][0];
+}
+
+// One inline-flow run of text nodes (in document order). At each junction, when the run's last real
+// character before the gap and the first real character after it are BOTH CJK, the gap's ASCII spaces
+// (the left node's trailing run and the right node's leading run) are digitization noise and removed;
+// a Latin/digit on either side keeps the space, and U+3000 is never an ASCII space so it is untouched.
+function trimInlineBoundaries(segment: ReadonlyArray<Text>): void {
+  let previous: Text | undefined;
+
+  for (const node of segment) {
+    if (previous !== undefined) {
+      const leftText = String(previous.nodeValue);
+      const rightText = String(node.nodeValue);
+
+      if (isCjkChar(lastNonSpaceChar(leftText)) && isCjkChar(firstNonSpaceChar(rightText))) {
+        previous.nodeValue = leftText.replace(TRAILING_ASCII_SPACE, "");
+        node.nodeValue = rightText.replace(LEADING_ASCII_SPACE, "");
+      }
+    }
+
+    previous = node;
+  }
+}
+
+// Strip inter-CJK ASCII spaces that straddle inline element boundaries (#358). Walks in document order,
+// collecting each maximal inline-flow run of text nodes (descending through inline formatting tags) and
+// trimming its junctions; a block element, `<br>`, `<pre>`, or `<code>` ends the current run so the
+// join never crosses a block boundary or verbatim code.
+function joinInlineCjkSpacing(root: Element): void {
+  let segment: Text[] = [];
+
+  function flush(): void {
+    trimInlineBoundaries(segment);
+    segment = [];
+  }
+
+  function walk(element: Element): void {
+    for (const child of Array.from(element.childNodes)) {
+      if (child.nodeType === TEXT_NODE) {
+        segment.push(child as Text);
+        continue;
+      }
+
+      if (child.nodeType !== ELEMENT_NODE) {
+        // A comment / processing instruction is invisible: it neither contributes text nor breaks flow.
+        continue;
+      }
+
+      const el = child as Element;
+      const tag = el.tagName.toLowerCase();
+
+      if (INLINE_FLOW_TAGS.has(tag)) {
+        walk(el);
+        continue;
+      }
+
+      // A block boundary, <br>, <pre>, or <code>: end the current inline run. A block's own inline
+      // flows are collected on their own; verbatim code is never descended into.
+      flush();
+      if (tag !== "pre" && tag !== "code") {
+        walk(el);
+      }
+      flush();
+    }
+  }
+
+  walk(root);
+  flush();
+}
+
 // Convert one source HTML fragment into a whetstone document, its block-row decomposition, and the
 // fail-loud evidence log of unrecognized elements.
 export function htmlToDocument(html: string): HtmlIngestionResult {
@@ -648,8 +782,11 @@ export function htmlToDocument(html: string): HtmlIngestionResult {
   // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
   const calloutEvidence = normalizeCodeCallouts(body, window.document);
   const evidence = [...calloutEvidence, ...collectUnknowns(body, window.document)];
-  // Strip stray inter-CJK digitization spaces from text nodes (skipping code) before parsing (#340).
+  // Strip stray inter-CJK digitization spaces from text nodes (skipping code) before parsing (#340),
+  // then the spaces that straddle an inline element boundary (#358), so an emphasized/linked term
+  // mid-phrase (`使用 <b>传硕计划</b> 中`) does not leave a visible gap.
   normalizeCjkSpacing(body);
+  joinInlineCjkSpacing(body);
   const parsed = new DOMParser(documentSchema, RULES).parse(body);
   const doc = assignNodeIds(serializeDocument(parsed));
   const blocks = (doc.content as DocumentNodeJSON[]).map(toBlock);
