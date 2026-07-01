@@ -66,26 +66,64 @@ export function upsertEnvVars(content, vars) {
 }
 
 /**
- * Check that stdout is the docs/SPEECH.md contract shape (a string `text` + an array `segments`).
+ * Validate wrapper stdout against the **same strict contract the runtime adapter enforces** —
+ * `parseWhisperOutput` in `src/apps/server/src/speech/whisperSpeechInput.ts`: a string `text`, an
+ * array `segments`, each segment an object with a `words` array, each word an object with a string
+ * `word` and numeric `start`/`end` where `end` is not before `start`. Setup must not report ready
+ * for output the server would reject at transcribe time (e.g. `{"text":"","segments":[{}]}`).
+ *
+ * This mirror is intentionally self-contained (node-builtins only): the step registry imports this
+ * file during `pnpm setup` on a fresh clone *before* dependencies exist, so it cannot import the
+ * server/contracts packages. Keep it in lockstep with `parseWhisperOutput`; the regression tests in
+ * voice.test.mjs pin the malformed-segment/word cases.
  *
  * @param {string} stdout
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-export function parseContractShape(stdout) {
+export function validateWhisperContract(stdout) {
+  const isRecord = (value) =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const fail = (reason) => ({ ok: false, reason });
+
   let parsed;
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return { ok: false, reason: "output was not valid JSON" };
+    return fail("output was not valid JSON");
   }
-  if (typeof parsed !== "object" || parsed === null) {
-    return { ok: false, reason: "output was not a JSON object" };
+  if (!isRecord(parsed)) {
+    return fail("output was not a JSON object");
   }
   if (typeof parsed.text !== "string") {
-    return { ok: false, reason: 'missing string "text"' };
+    return fail('missing string "text"');
   }
   if (!Array.isArray(parsed.segments)) {
-    return { ok: false, reason: 'missing array "segments"' };
+    return fail('missing array "segments"');
+  }
+  for (const segment of parsed.segments) {
+    if (!isRecord(segment)) {
+      return fail("a segment was not an object");
+    }
+    if (!Array.isArray(segment.words)) {
+      return fail('a segment is missing a "words" array');
+    }
+    for (const word of segment.words) {
+      if (!isRecord(word)) {
+        return fail("a word was not an object");
+      }
+      if (typeof word.word !== "string") {
+        return fail('a word is missing a string "word"');
+      }
+      if (typeof word.start !== "number") {
+        return fail('a word is missing a numeric "start"');
+      }
+      if (typeof word.end !== "number") {
+        return fail('a word is missing a numeric "end"');
+      }
+      if (word.end < word.start) {
+        return fail("a word ends before it starts");
+      }
+    }
   }
   return { ok: true };
 }
@@ -239,7 +277,7 @@ export const voiceStep = {
         )
       );
     }
-    const shape = parseContractShape(result.stdout);
+    const shape = validateWhisperContract(result.stdout);
     if (!shape.ok) {
       return error(
         `The wrapper emitted off-contract output: ${shape.reason}.`,

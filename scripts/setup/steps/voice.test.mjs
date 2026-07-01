@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { createFakeContext } from "../testSupport.mjs";
 import {
-  parseContractShape,
-  parseEnvVars,
   upsertEnvVars,
+  validateWhisperContract,
+  parseEnvVars,
   voiceStep
 } from "./voice.mjs";
 
@@ -56,25 +56,50 @@ describe("upsertEnvVars", () => {
   });
 });
 
-describe("parseContractShape", () => {
-  it("accepts the docs/SPEECH.md shape", () => {
-    expect(parseContractShape('{"text":"","segments":[]}')).toEqual({ ok: true });
+describe("validateWhisperContract", () => {
+  const validWord = '{"word":"Help","start":0,"end":0.4}';
+  const valid = `{"text":"Help","segments":[{"words":[${validWord}]}]}`;
+
+  it("accepts the strict docs/SPEECH.md shape", () => {
+    expect(validateWhisperContract(valid)).toEqual({ ok: true });
+    expect(validateWhisperContract('{"text":"","segments":[]}')).toEqual({ ok: true });
   });
 
-  it("rejects invalid JSON", () => {
-    expect(parseContractShape("not json")).toMatchObject({ ok: false });
+  it("rejects invalid JSON and non-objects", () => {
+    expect(validateWhisperContract("not json").ok).toBe(false);
+    expect(validateWhisperContract("42").ok).toBe(false);
+    expect(validateWhisperContract("[]").ok).toBe(false);
   });
 
-  it("rejects a non-object", () => {
-    expect(parseContractShape("42")).toMatchObject({ ok: false });
+  it("rejects a missing text or segments", () => {
+    expect(validateWhisperContract('{"segments":[]}').ok).toBe(false);
+    expect(validateWhisperContract('{"text":"hi"}').ok).toBe(false);
   });
 
-  it("rejects a missing text field", () => {
-    expect(parseContractShape('{"segments":[]}')).toMatchObject({ ok: false });
+  it("rejects a segment that is present but malformed (no words array)", () => {
+    // The runtime parseWhisperOutput requires each segment to carry a words array; setup must not
+    // report ready for this output the server would reject.
+    const result = validateWhisperContract('{"text":"","segments":[{}]}');
+    expect(result).toMatchObject({ ok: false });
+    expect(result.reason).toContain('"words"');
   });
 
-  it("rejects a missing segments array", () => {
-    expect(parseContractShape('{"text":"hi"}')).toMatchObject({ ok: false });
+  it("rejects a non-object segment", () => {
+    expect(validateWhisperContract('{"text":"","segments":[1]}').ok).toBe(false);
+  });
+
+  it("rejects malformed words (non-object, missing word/start/end, or end before start)", () => {
+    const cases = [
+      '{"text":"","segments":[{"words":[1]}]}',
+      '{"text":"","segments":[{"words":[{"start":0,"end":1}]}]}',
+      '{"text":"","segments":[{"words":[{"word":"a","end":1}]}]}',
+      '{"text":"","segments":[{"words":[{"word":"a","start":0}]}]}',
+      '{"text":"","segments":[{"words":[{"word":"a","start":"0","end":1}]}]}',
+      '{"text":"","segments":[{"words":[{"word":"a","start":1,"end":0.5}]}]}'
+    ];
+    for (const stdout of cases) {
+      expect(validateWhisperContract(stdout).ok).toBe(false);
+    }
   });
 });
 
@@ -208,23 +233,27 @@ describe("voiceStep.verify", () => {
     expect(voiceStep.verify(ctx).what).toContain("failed on the sample");
   });
 
-  it("errors when the wrapper emits off-contract output", () => {
+  it("errors when the wrapper emits output the runtime adapter would reject (segment without words)", () => {
     const { ctx } = createFakeContext({
       fileContents: wired,
       execHandler: (command) =>
         command === LAUNCHER
-          ? { code: 0, stdout: "not json", stderr: "" }
+          ? { code: 0, stdout: '{"text":"","segments":[{}]}', stderr: "" }
           : { code: 0, stdout: "", stderr: "" }
     });
     expect(voiceStep.verify(ctx).what).toContain("off-contract");
   });
 
-  it("is ok when the wrapper emits valid contract JSON", () => {
+  it("is ok when the wrapper emits valid strict contract JSON", () => {
     const { ctx } = createFakeContext({
       fileContents: wired,
       execHandler: (command) =>
         command === LAUNCHER
-          ? { code: 0, stdout: '{"text":"","segments":[]}', stderr: "" }
+          ? {
+              code: 0,
+              stdout: '{"text":"Help","segments":[{"words":[{"word":"Help","start":0,"end":0.4}]}]}',
+              stderr: ""
+            }
           : { code: 0, stdout: "", stderr: "" }
     });
     expect(voiceStep.verify(ctx)).toEqual({ status: "ok" });
