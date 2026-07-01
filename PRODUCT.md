@@ -473,10 +473,22 @@ lookup shows real dictionary content, not a pre-digested analysis.
   dead-end — lookup never traps the reader, it always opens a path to real dictionary content. Outbound
   links only — never scraped or embedded.
 
-**LLM lookup is deliberately deferred.** An LLM could synthesize a "core meaning -> extensions" explainer,
-but having it analyze the word *for* the reader is shallow ("fake") learning — reading real senses and
-mapping the contextual meaning yourself is the point. It remains future, behind the same boundary, and
-does not change the "No LLM note drafting" non-goal.
+**Interpret the selection before looking it up (CJK segmentation).** A raw CJK selection is ambiguous —
+there are no word spaces — so a tap/selection is first *interpreted* into word spans: the reader snaps to
+the segmented word under the tap (六艺, not 六) and can grow/shrink to the neighbouring token
+(微信读书/Pleco-style), and lookup runs on that span. Driven by **native word segmentation**
+(`Intl.Segmenter`, zero-dependency) — **not** an LLM sub-word (BPE) tokenizer, whose statistical pieces do
+not respect word meaning; a classical-tuned segmenter (e.g. jiayan) is a later refinement.
+
+**LLM explanation — narrow, labeled, context-grounded (never a dictionary).** The default lookup stays real
+dictionary content the reader maps for themselves; an LLM pre-digest of ordinary vocabulary is shallow
+("fake") learning and stays deferred (the "No LLM note drafting" non-goal holds). But where dictionaries
+*structurally* miss — classical Chinese (文言文), 成語, allusions, proper nouns — the reader hits a dead end,
+so lookup offers an **optional** "explain in context" tab: a **local LLM** (Qwen/DeepSeek, via the existing
+coach model seam) glosses the selected span **using its surrounding sentence** — context a dictionary cannot
+use. It is a **reference of last resort** — clearly marked AI-generated and attributed, never dressed as an
+authoritative entry — and **off by default** (absent-config/fake-safe, so the gate is green with no model).
+Classical Chinese first.
 
 ## v0 technology choices (locked)
 
