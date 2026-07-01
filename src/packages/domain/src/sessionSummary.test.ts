@@ -31,4 +31,22 @@ describe("summarizeSessionTurns", () => {
       { category: "word_order", count: 1 }
     ]);
   });
+
+  it("sorts errors by descending count then alphabetically, regardless of first-appearance order", () => {
+    // word_order appears first but must sort last: article_drop wins on count, and the count-1 tie
+    // between register and word_order breaks alphabetically (register), not by insertion order. This
+    // forces the comparator to actually reorder, so a broken tie-break/count comparison is caught.
+    const summary = summarizeSessionTurns([
+      { errorCategory: "word_order", grade: 1 },
+      { errorCategory: "article_drop", grade: 1 },
+      { errorCategory: "article_drop", grade: 1 },
+      { errorCategory: "register", grade: 1 }
+    ]);
+
+    expect(summary.errorCounts).toEqual([
+      { category: "article_drop", count: 2 },
+      { category: "register", count: 1 },
+      { category: "word_order", count: 1 }
+    ]);
+  });
 });

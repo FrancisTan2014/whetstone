@@ -9,6 +9,8 @@ export default tseslint.config(
       "**/coverage/**",
       "**/dist/**",
       "**/node_modules/**",
+      "**/.stryker-tmp/**",
+      "**/reports/**",
       "**/*.d.ts",
       "**/*.tsbuildinfo"
     ]

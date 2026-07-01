@@ -90,6 +90,16 @@ A failure prints the measured size next to its limit (for example `Size: 280 kB 
 
 A separate [`Lighthouse (advisory)`](./.github/workflows/lighthouse.yml) workflow runs Lighthouse CI against the built web app on every pull request — collecting 3 runs and reporting the **median** Core Web Vitals / performance scores, with the report uploaded to LHCI temporary-public-storage (the URL is printed in the job log, reachable from the PR's checks). It is **informational only and never blocks merge**: runtime perf is flaky on shared CI runners, so it lives outside the required `quality` job, every Lighthouse assertion is `warn` (see [`.lighthouserc.json`](./.lighthouserc.json)), and both the job and its run step are `continue-on-error`. The deterministic merge gate is the bundle-size budget above; Lighthouse is the runtime signal, not a gate. To run it locally (needs Chrome): `pnpm build` then `pnpm lighthouse`.
 
+## Mutation testing (advisory, non-blocking)
+
+A separate [`Mutation testing (advisory)`](./.github/workflows/mutation.yml) workflow runs [Stryker](https://stryker-mutator.io) **nightly** over the two pure, logic-dense packages `@whetstone/domain` and `@whetstone/contracts` — planting representative bugs (mutants) and reporting which **survive** the tests. It objectively backs the mutation-resistance rule in [`GUIDELINES.md`](./GUIDELINES.md): a surviving mutant is a shallow / happy-path-only test that still hits 100% line coverage. It is **informational only and never blocks merge**: it is not part of `pnpm validate`, and Stryker's `break` threshold is unset (`thresholds.low` is only an advisory baseline floor). The nightly job uploads the HTML report as an artifact. To run it locally:
+
+```powershell
+pnpm mutation
+```
+
+It reads [`stryker.conf.mjs`](./stryker.conf.mjs) (scoped to domain + contracts; the Vitest runner uses [`vitest.stryker.config.ts`](./vitest.stryker.config.ts) so only those packages' fast tests run) and writes `reports/mutation/mutation.html` — open it to see each surviving mutant and the file/line it lives on, then strengthen the test that should have caught it. Chasing a specific score or an equivalent mutant is a non-goal; the value is surfacing genuinely shallow tests. Server/web are out of scope for v0 (slower, I/O-bound) — extend the `mutate` globs to add a package later.
+
 ## Screenshots (manual)
 
 `pnpm screenshots` boots the real stack against an ephemeral in-memory database, ingests the public-domain fixture EPUBs in [`fixtures/epub/`](./fixtures/epub/) through the live pipeline, serves the production web build with `vite preview`, and drives headless Chromium to write a labeled PNG for each stage (Library and Reader in Day/Night at desktop and mobile; the selection → note-editor → note-saved annotation moment) into `artifacts/screenshots/` (git-ignored).
