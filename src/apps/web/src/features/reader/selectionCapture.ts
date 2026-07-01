@@ -1,7 +1,8 @@
 import { preselectTemplateId } from "@whetstone/domain";
 
 import type { NoteDraft } from "../notes/noteCapture";
-import { blockTextContent, textOffsetOf } from "./blockText";
+import { isCjkText, segmentWordAt } from "../lookup/segmentWord";
+import { blockTextContent, rangeWithinElement, textOffsetOf } from "./blockText";
 
 // Capture a reader selection as a PM-position note draft (#313). Replaces the old plaintext
 // non-whitespace alignment: offsets are read straight from the rendered DOM via the shared
@@ -63,6 +64,46 @@ function singleBlockDraft(
   }
 
   return { ...base, endOffset, startOffset };
+}
+
+// Snap a collapsed CJK tap to the segmented word under the caret (#342): expand the live selection to
+// the word's DOM range so lookup queries a real word (六艺, not just 六). A non-collapsed selection —
+// an explicit drag — is left untouched so a native drag still selects a custom range. A no-op when the
+// segmenter is unavailable, the caret is not inside a block, the tap is not inside a CJK word, or the
+// word cannot be laid back out as a range — in every such case the caller keeps the raw selection.
+export function snapSelectionToWord(
+  selection: Selection | null,
+  container: Element,
+  locale: string
+): void {
+  if (selection === null || selection.rangeCount === 0 || !selection.isCollapsed) {
+    return;
+  }
+
+  const range = selection.getRangeAt(0);
+  const block = nodeBlockElement(range.startContainer, container);
+
+  if (block === undefined) {
+    return;
+  }
+
+  const offset = textOffsetOf(block, range.startContainer, range.startOffset);
+  const span = segmentWordAt(blockTextContent(block), offset, locale);
+
+  if (span === undefined || !isCjkText(span.text)) {
+    return;
+  }
+
+  const wordRange = rangeWithinElement(block, span.start, span.end);
+
+  /* v8 ignore next 3 -- `span` comes from this block's own text, so its offsets are always within the
+     block and `rangeWithinElement` resolves; the guard only narrows the type and is never taken. */
+  if (wordRange === undefined) {
+    return;
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(wordRange);
 }
 
 export function captureSelectionAnchor(

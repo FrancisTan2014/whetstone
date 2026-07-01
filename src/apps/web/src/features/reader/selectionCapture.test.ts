@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureSelectionAnchor, eventTargetClosest } from "./selectionCapture";
+import {
+  captureSelectionAnchor,
+  eventTargetClosest,
+  snapSelectionToWord
+} from "./selectionCapture";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -204,5 +208,97 @@ describe("captureSelectionAnchor", () => {
         container
       )
     ).toBeUndefined();
+  });
+});
+
+// A functional Selection over a single mutable range, supporting the mutators `snapSelectionToWord`
+// uses (removeAllRanges/addRange) so a snap's effect is observable via the resulting range.
+function liveSelectionOf(range: Range | undefined): Selection {
+  let current = range;
+
+  return {
+    addRange: (next: Range) => {
+      current = next;
+    },
+    getRangeAt: () => current as Range,
+    get isCollapsed() {
+      return current === undefined ? true : current.collapsed;
+    },
+    get rangeCount() {
+      return current === undefined ? 0 : 1;
+    },
+    removeAllRanges: () => {
+      current = undefined;
+    }
+  } as unknown as Selection;
+}
+
+describe("snapSelectionToWord", () => {
+  const cjkBlock = '<p data-block-id="b1">六艺者，礼乐射御。</p>';
+
+  it("snaps a collapsed CJK tap to the whole segmented word (六艺, not 六)", () => {
+    const container = reader(cjkBlock);
+    const text = firstText(container.querySelector('[data-block-id="b1"]') as Element);
+    const selection = liveSelectionOf(rangeIn(text, 1, text, 1));
+
+    snapSelectionToWord(selection, container, "zh");
+
+    expect(selection.isCollapsed).toBe(false);
+    expect(selection.getRangeAt(0).toString()).toBe("六艺");
+  });
+
+  it("leaves a native drag (non-collapsed selection) untouched", () => {
+    const container = reader(cjkBlock);
+    const text = firstText(container.querySelector('[data-block-id="b1"]') as Element);
+    const dragged = rangeIn(text, 0, text, 3);
+    const selection = liveSelectionOf(dragged);
+
+    snapSelectionToWord(selection, container, "zh");
+
+    expect(selection.getRangeAt(0)).toBe(dragged);
+    expect(selection.getRangeAt(0).toString()).toBe("六艺者");
+  });
+
+  it("does not snap a Latin tap (non-CJK stays a collapsed caret)", () => {
+    const container = reader('<p data-block-id="b1">hello world</p>');
+    const text = firstText(container.querySelector('[data-block-id="b1"]') as Element);
+    const selection = liveSelectionOf(rangeIn(text, 1, text, 1));
+
+    snapSelectionToWord(selection, container, "en");
+
+    expect(selection.isCollapsed).toBe(true);
+  });
+
+  it("does nothing when the caret is not inside a block", () => {
+    const container = reader("六艺");
+    const bare = firstText(container);
+    const selection = liveSelectionOf(rangeIn(bare, 1, bare, 1));
+
+    snapSelectionToWord(selection, container, "zh");
+
+    expect(selection.isCollapsed).toBe(true);
+  });
+
+  it("falls back to the raw selection when Intl.Segmenter is unavailable", () => {
+    const container = reader(cjkBlock);
+    const text = firstText(container.querySelector('[data-block-id="b1"]') as Element);
+    const selection = liveSelectionOf(rangeIn(text, 1, text, 1));
+    const intl = Intl as { Segmenter?: unknown };
+    const original = intl.Segmenter;
+    delete intl.Segmenter;
+
+    try {
+      snapSelectionToWord(selection, container, "zh");
+      expect(selection.isCollapsed).toBe(true);
+    } finally {
+      intl.Segmenter = original;
+    }
+  });
+
+  it("does nothing for a null or empty selection", () => {
+    const container = reader(cjkBlock);
+
+    expect(() => snapSelectionToWord(null, container, "zh")).not.toThrow();
+    expect(() => snapSelectionToWord(liveSelectionOf(undefined), container, "zh")).not.toThrow();
   });
 });
