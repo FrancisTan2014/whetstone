@@ -102,6 +102,24 @@ On boot the server probes the local model and logs the result; if Ollama is down
 unpulled it **warns with an `ollama pull` hint and keeps running on the fake** (no crash). Full
 detail — tiers, routing, and the boot health check — is in [docs/COACH.md](./COACH.md).
 
+### Lookup "AI 解释" tab (optional, Chinese only)
+
+For a Chinese selection, the reader's lookup popover offers an optional **"AI 解释 / Explain in context"**
+tab that sends the selected span plus its surrounding block to a **local** model and shows a short,
+clearly **AI-generated** contextual gloss — useful for classical-Chinese terms, 成語, allusions, and
+proper nouns the bundled dictionaries structurally miss. It reuses the same local Ollama daemon as the
+coach; point it at a 文言-strong model with `EXPLAIN_MODEL` (e.g. `qwen2.5`):
+
+```bash
+ollama pull qwen2.5
+export EXPLAIN_MODEL=qwen2.5
+```
+
+**Unset ⇒ the tab is absent/honest**: with no model configured it shows a plain "unavailable" state
+(never a hang, never a fabricated entry), the dictionary tabs still work, and `pnpm validate` stays
+green with no model. No cloud key is required. The gloss is a labeled reading aid, never an
+authoritative dictionary entry, and creates no note.
+
 ### Data directory
 
 For the iterative dev loop, run the server with `pnpm --filter @whetstone/server dev`. It

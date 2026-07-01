@@ -19,7 +19,12 @@ const foundResponse: LookupResponse = {
 };
 
 function buildServer(
-  lookup: (term: string, language: string, source: string) => Promise<LookupResponse>
+  lookup: (
+    term: string,
+    language: string,
+    source: string,
+    context?: string
+  ) => Promise<LookupResponse>
 ) {
   return createServer({ logger: false, lookup: { lookup } });
 }
@@ -37,7 +42,7 @@ describe("GET /api/lookup", () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual(foundResponse);
-      expect(lookup).toHaveBeenCalledWith("word", "en", "wordnet");
+      expect(lookup).toHaveBeenCalledWith("word", "en", "wordnet", undefined);
     } finally {
       await server.close();
     }
@@ -70,7 +75,24 @@ describe("GET /api/lookup", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(lookup).toHaveBeenCalledWith("你好", "zh-CN", "cedict");
+      expect(lookup).toHaveBeenCalledWith("你好", "zh-CN", "cedict", undefined);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("threads the optional context to the service for the local-LLM source (#341)", async () => {
+    const lookup = vi.fn().mockResolvedValue(foundResponse);
+    const server = buildServer(lookup);
+
+    try {
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/lookup?term=%E5%85%AD%E8%89%BA&language=zh-CN&source=llm&context=%E5%85%AD%E8%89%BA%E8%80%85"
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(lookup).toHaveBeenCalledWith("六艺", "zh-CN", "llm", "六艺者");
     } finally {
       await server.close();
     }

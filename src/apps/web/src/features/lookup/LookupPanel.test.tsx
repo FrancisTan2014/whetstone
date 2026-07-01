@@ -540,6 +540,71 @@ describe("LookupPanel content", () => {
     renderTabs([]);
     expect(screen.getByText("No definition found for “set”.")).toBeDefined();
   });
+
+  it("badges the local-LLM 'AI 解释' gloss as AI-generated, with the model attribution (#341)", () => {
+    const aiEntry: LookupState = {
+      entry: {
+        headword: "六艺",
+        partsOfSpeech: [
+          { senses: [{ definition: "在此句中指六种技艺。", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [],
+        sources: ["AI 解释 · qwen2.5 (local)"]
+      },
+      status: "loaded"
+    };
+    renderTabs([{ id: "llm", label: "AI 解释", state: aiEntry }], desktop, "六艺");
+
+    expect(screen.getByText("在此句中指六种技艺。")).toBeDefined();
+    const badge = screen.getByRole("note", { name: "AI-generated explanation, may be imperfect" });
+    expect(badge.textContent).toContain("AI-generated");
+    expect(screen.getByText("AI 解释 · qwen2.5 (local)")).toBeDefined();
+  });
+
+  it("does not default to the AI 解释 tab when a dictionary has content, and badges it only when opened (#341)", async () => {
+    const user = userEvent.setup();
+    const dictEntry: LookupState = {
+      entry: {
+        headword: "六艺",
+        partsOfSpeech: [
+          { senses: [{ definition: "六种技艺的辞书义。", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [],
+        sources: ["From 萌典."]
+      },
+      status: "loaded"
+    };
+    const aiEntry: LookupState = {
+      entry: {
+        headword: "六艺",
+        partsOfSpeech: [
+          { senses: [{ definition: "在此句中的解释。", examples: [], synonyms: [] }] }
+        ],
+        pronunciations: [],
+        sources: ["AI 解释 · qwen2.5 (local)"]
+      },
+      status: "loaded"
+    };
+    renderTabs(
+      [
+        { id: "moedict", label: "萌典", state: dictEntry },
+        { id: "llm", label: "AI 解释", state: aiEntry }
+      ],
+      desktop,
+      "六艺"
+    );
+
+    // The dictionary leads (preferredTab unchanged); the AI badge is absent until the reader opens it.
+    expect(screen.getByText("六种技艺的辞书义。")).toBeDefined();
+    expect(
+      screen.queryByRole("note", { name: "AI-generated explanation, may be imperfect" })
+    ).toBeNull();
+
+    await user.click(screen.getByRole("tab", { name: "AI 解释" }));
+    expect(
+      screen.getByRole("note", { name: "AI-generated explanation, may be imperfect" })
+    ).toBeDefined();
+  });
 });
 
 describe("LookupPanel desktop popover", () => {

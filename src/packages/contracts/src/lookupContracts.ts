@@ -75,13 +75,15 @@ export const lookupSourceIds = [
   "wiktionary",
   "cedict",
   "moedict",
-  "zhwiktionary"
+  "zhwiktionary",
+  "llm"
 ] as const;
 
 export type LookupSourceId = (typeof lookupSourceIds)[number];
 
 const sourceLabels: Readonly<Record<LookupSourceId, string>> = {
   cedict: "CC-CEDICT",
+  llm: "AI 解释",
   moedict: "萌典",
   wiktionary: "Wiktionary",
   wordnet: "WordNet",
@@ -94,23 +96,28 @@ export function lookupSourceLabel(id: LookupSourceId): string {
 
 const sourcesByLanguage: Readonly<Record<string, ReadonlyArray<LookupSourceId>>> = {
   en: ["wordnet", "wiktionary"],
-  "zh-CN": ["moedict", "zhwiktionary", "cedict"],
-  "zh-TW": ["moedict", "zhwiktionary", "cedict"]
+  "zh-CN": ["moedict", "zhwiktionary", "cedict", "llm"],
+  "zh-TW": ["moedict", "zhwiktionary", "cedict", "llm"]
 };
 
 // The ordered tabs to fetch for a work language; the first is the default. English leads with the
 // always-resolving offline WordNet; Chinese leads with 萌典's Chinese definitions (#272), then
-// zh.Wiktionary's richer classical senses, demoting CC-CEDICT's English glosses to the last tab,
-// with all three as mutual fallbacks (#306 auto-selects the first non-empty tab).
+// zh.Wiktionary's richer classical senses, then CC-CEDICT's English glosses, with the optional
+// local-LLM "AI 解释" contextual aid (#341) LAST — dictionaries lead and the reader opens the AI tab
+// deliberately (#306 auto-selects the first non-empty tab, never the trailing LLM).
 export function lookupSourcesForLanguage(language: string): ReadonlyArray<LookupSourceId> {
   return sourcesByLanguage[language] ?? [];
 }
 
 // The lookup route query: a non-empty (trimmed) term and a supported work language (English
 // or Chinese), so Chinese selections route to the CC-CEDICT provider. The term is trimmed
-// in-place so callers downstream receive the cleaned value.
+// in-place so callers downstream receive the cleaned value. `context` is the selection's containing
+// block text, sent only for the local-LLM source (#341) so it can gloss the term IN CONTEXT; it is
+// optional (existing sources/tests are unaffected) and length-bounded so a huge block cannot bloat the
+// request (the client also truncates before sending).
 export const lookupRequestSchema = z
   .object({
+    context: z.string().max(4000).optional(),
     language: z.enum(workLanguages),
     source: z.enum(lookupSourceIds),
     term: z.string().trim().min(1, { message: "term must be non-empty." })

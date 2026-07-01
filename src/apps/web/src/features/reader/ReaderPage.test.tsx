@@ -2130,8 +2130,8 @@ describe("ReaderPage vocabulary lookup", () => {
 
     expect(await screen.findByText("an introduction")).toBeDefined();
     expect(screen.getByText("From a source.")).toBeDefined();
-    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wordnet");
-    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wiktionary");
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wordnet", undefined);
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wiktionary", undefined);
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
     expect(mockedCreateNote).not.toHaveBeenCalled();
   });
@@ -2205,7 +2205,10 @@ describe("ReaderPage vocabulary lookup", () => {
     await user.click(await screen.findByRole("button", { name: "Look up" }));
 
     expect(await screen.findByText("hello; hi")).toBeDefined();
-    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "cedict");
+    // Dictionary sources are context-free; only the local-LLM "AI 解释" tab receives the selection's
+    // containing block text as context (#341).
+    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "cedict", undefined);
+    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "llm", "你好世界");
   });
 
   it("dismisses the lookup panel when closed", async () => {
