@@ -461,6 +461,12 @@ lookup shows real dictionary content, not a pre-digested analysis.
   consistent with the design system), **numbered senses** with indented examples, **synonyms** as chips,
   a quiet **etymology** section, and a **sources** footer; clear hierarchy and white space; scrolls for
   long entries.
+- **External dictionary jump-outs, and the not-found fallback.** Every entry deep-links to mature external
+  dictionaries for the same term, **language-aware** (English → Longman / Merriam-Webster / Oxford; Chinese →
+  汉典 / 萌典 / ctext / 国学大师). These are also the **not-found fallback**: when the bundled sources have no
+  entry (common for compounds and proper nouns like 六爻), the panel offers these links instead of a
+  dead-end — lookup never traps the reader, it always opens a path to real dictionary content. Outbound
+  links only — never scraped or embedded.
 
 **LLM lookup is deliberately deferred.** An LLM could synthesize a "core meaning -> extensions" explainer,
 but having it analyze the word *for* the reader is shallow ("fake") learning — reading real senses and
