@@ -451,6 +451,52 @@ const footnoteContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// The PM (#311 doc_blocks) equivalent of the footnote pair (#335): a paragraph block holds an inline
+// `footnoteMarker` wrapped in the O'Reilly `[`/`]` literals; the `footnoteTarget` block references it
+// by the shared `refId`. The reader derives the target's addressable anchor + back-link so the marker
+// jumps to the note and the note's back-arrow returns to the marker's block — no server field needed.
+const pmFootnoteContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-b1"),
+          node: {
+            attrs: { id: "pm-b1" },
+            content: [
+              { text: "Oracle Data Guard [", type: "text" },
+              { attrs: { label: "3", refId: "fn3" }, type: "footnoteMarker" },
+              { text: "], and more.", type: "text" }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          type: "paragraph"
+        },
+        {
+          entryId: toEntryId("pm-b2"),
+          node: {
+            attrs: { id: "pm-b2", label: "3", refId: "fn3" },
+            content: [
+              {
+                content: [{ text: "There are other reasons too.", type: "text" }],
+                type: "paragraph"
+              }
+            ],
+            type: "footnoteTarget"
+          },
+          orderIndex: 1,
+          type: "footnoteTarget"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 const xrefCaptionContent: WorkContentDto = {
   readingUnits: [
     {
@@ -572,8 +618,10 @@ beforeEach(() => {
   });
   mockedLocateBlockUnit.mockImplementation(
     async (_workEntryId: string, blockEntryId: string) =>
-      seededContent.readingUnits.find((unit) =>
-        unit.blocks.some((block) => block.entryId === blockEntryId)
+      seededContent.readingUnits.find(
+        (unit) =>
+          unit.blocks.some((block) => block.entryId === blockEntryId) ||
+          (unit.docBlocks ?? []).some((block) => block.entryId === blockEntryId)
       )?.entryId
   );
   mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
@@ -1024,6 +1072,30 @@ describe("ReaderPage", () => {
     await user.click(screen.getByRole("button", { name: "Back to reference" }));
     await waitFor(() =>
       expect(blockElement(container, "b-1").getAttribute("data-born")).toBe("true")
+    );
+  });
+
+  it("jumps marker→note and note→marker for a PM footnote pair, brackets stripped (#335)", async () => {
+    seedWorkContent(pmFootnoteContent);
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("There are other reasons too.");
+
+    // The PM marker is a clean, tappable superscript number with no full-size flanking brackets.
+    const marker = screen.getByRole("button", { name: "3" });
+    expect(marker.closest("sup.readerNoteref")).not.toBeNull();
+    expect(blockElement(container, "pm-b1").textContent).toBe("Oracle Data Guard 3, and more.");
+
+    // Tapping the marker jumps to the footnote target block (addressable by the shared refId).
+    await user.click(marker);
+    await waitFor(() =>
+      expect(blockElement(container, "pm-b2").getAttribute("data-born")).toBe("true")
+    );
+
+    // The target's back-arrow returns to the block that referenced it.
+    await user.click(screen.getByRole("button", { name: "Back to reference" }));
+    await waitFor(() =>
+      expect(blockElement(container, "pm-b1").getAttribute("data-born")).toBe("true")
     );
   });
 

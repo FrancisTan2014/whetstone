@@ -4,8 +4,10 @@ import {
   renderJSONContentToReactElement
 } from "@tiptap/static-renderer/json/react";
 import type { DocumentNodeJSON } from "@whetstone/document";
+import { createContext, useContext } from "react";
 
 import { calloutKindClass, headingTag } from "./PmDocument.tokens";
+import { stripFlankingFootnoteBrackets } from "./pmFootnotes";
 
 // Read-only renderer for a stored whetstone PM/Tiptap document (the #310 `@whetstone/document`
 // schema), built on `@tiptap/static-renderer` (MIT, no browser/editor). The #310 node specs carry no
@@ -31,6 +33,47 @@ function stringAttr(node: PmNode, key: string): string | undefined {
 function numberAttr(node: PmNode, key: string): number | undefined {
   const value = node.attrs?.[key];
   return typeof value === "number" ? value : undefined;
+}
+
+// The reader's block-jump, threaded to the module-level node mapping through context because
+// `@tiptap/static-renderer` builds its mapping once at module scope (#335). A footnote marker consumes
+// it to become a live internal jump; absent (a raw render with no reader wiring), markers stay inert.
+const ActivateAnchorContext = createContext<((anchorId: string) => void) | undefined>(undefined);
+
+// A footnote/endnote reference marker. With a `refId` and the reader's jump wired, it renders an
+// accent-styled, keyboard-focusable superscript control that scrolls+highlights its footnote target
+// (reusing `onActivateAnchor`, the same block-jump the mdast path uses); the target's own back-link
+// returns here via the derived `${refId}-ref` anchor stamped on the control. Without a resolvable
+// `refId` or a jump handler it is a clean, non-interactive superscript number — no dead button.
+function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
+  const label = stringAttr(node, "label");
+  const refId = stringAttr(node, "refId");
+  const onActivateAnchor = useContext(ActivateAnchorContext);
+  const text = label ?? refId ?? "";
+
+  if (refId === undefined || onActivateAnchor === undefined) {
+    return (
+      <sup
+        className="readerNoteref"
+        {...(refId === undefined ? {} : { "data-footnote-ref": refId })}
+      >
+        {text}
+      </sup>
+    );
+  }
+
+  return (
+    <sup className="readerNoteref" data-footnote-ref={refId}>
+      <button
+        className="readerXref"
+        data-anchor-id={`${refId}-ref`}
+        onClick={() => onActivateAnchor(refId)}
+        type="button"
+      >
+        {text}
+      </button>
+    </sup>
+  );
 }
 
 // Addressable id: only a top-level block (its parent is the `doc`) carries `data-block-id`, so
@@ -100,19 +143,7 @@ const nodeMapping: Record<string, PmNodeRenderer> = {
   figureCaption: ({ children }) => (
     <figcaption className="readerFigureCaption">{children}</figcaption>
   ),
-  footnoteMarker: ({ node }) => {
-    const label = stringAttr(node, "label");
-    const refId = stringAttr(node, "refId");
-
-    return (
-      <sup
-        className="readerNoteref"
-        {...(refId === undefined ? {} : { "data-footnote-ref": refId })}
-      >
-        {label ?? refId ?? ""}
-      </sup>
-    );
-  },
+  footnoteMarker: ({ node }) => <FootnoteMarker node={node} />,
   footnoteTarget: ({ children, node, parent }) => {
     const label = stringAttr(node, "label");
     const refId = stringAttr(node, "refId");
@@ -201,27 +232,40 @@ const renderDocument = renderJSONContentToReactElement({ markMapping: {}, nodeMa
 
 export interface PmDocumentProps {
   readonly document: DocumentNodeJSON;
+  // The reader's block-jump. When provided, footnote markers become live internal jumps; absent, a raw
+  // render leaves them inert. Absent by default so a bare `<PmDocument>` stays presentation-only.
+  readonly onActivateAnchor?: (anchorId: string) => void;
 }
 
 // Render a stored PM document to React. The doc root carries the `.reader` class so the existing
 // reader typography and Day/Night theme tokens (CSS variables on an ancestor) style the output with
-// no per-theme component logic.
-export function PmDocument({ document }: PmDocumentProps): React.ReactElement {
+// no per-theme component logic. Flanking footnote brackets are stripped at render (#335).
+export function PmDocument({ document, onActivateAnchor }: PmDocumentProps): React.ReactElement {
   // `DocumentNodeJSON` and the renderer's `JSONNodeType` are the same on-the-wire PM JSON; one
   // structural cast at the boundary lets the typed node handlers above drive the render.
-  const content = document as unknown as JSONNodeType;
-  return <>{renderDocument({ content })}</>;
+  const content = stripFlankingFootnoteBrackets(document) as unknown as JSONNodeType;
+  return (
+    <ActivateAnchorContext.Provider value={onActivateAnchor}>
+      {renderDocument({ content })}
+    </ActivateAnchorContext.Provider>
+  );
 }
 
 export interface PmBlockProps {
   readonly node: DocumentNodeJSON;
+  readonly onActivateAnchor?: (anchorId: string) => void;
 }
 
 // Render a single stored PM block node (not the whole doc) to React, reusing the same per-node
 // mapping. The live reader memoizes one of these per block (#72) and stamps the addressable
 // `data-block-id` on its own wrapper element, so the block's own element stays unaddressed here
-// (`topLevelBlockAttrs` only addresses a child of a `doc`, and this node has no `doc` parent).
-export function PmBlock({ node }: PmBlockProps): React.ReactElement {
-  const content = node as unknown as JSONNodeType;
-  return <>{renderDocument({ content })}</>;
+// (`topLevelBlockAttrs` only addresses a child of a `doc`, and this node has no `doc` parent). When
+// the reader wires `onActivateAnchor`, an in-block footnote marker becomes a live jump (#335).
+export function PmBlock({ node, onActivateAnchor }: PmBlockProps): React.ReactElement {
+  const content = stripFlankingFootnoteBrackets(node) as unknown as JSONNodeType;
+  return (
+    <ActivateAnchorContext.Provider value={onActivateAnchor}>
+      {renderDocument({ content })}
+    </ActivateAnchorContext.Provider>
+  );
 }
