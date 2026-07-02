@@ -45,6 +45,13 @@ describe("makeConfirm", () => {
     }
   });
 
+  it("declines when the prompt reports no interactive input (EOF / closed stdin returns null)", () => {
+    // Guards the boundary bug where a redirected/closed stdin (null line) mapped to the empty-line
+    // default and auto-consented: a null read must DECLINE, so `pnpm setup --voice < NUL` never installs.
+    const confirm = makeConfirm({ yes: false, isTTY: true, prompt: () => null });
+    expect(confirm("Install X now? [Y/n]")).toBe(false);
+  });
+
   it("forwards the question to the injected prompt", () => {
     let seen = "";
     const confirm = makeConfirm({

@@ -11,21 +11,22 @@ import { resolveCommand } from "./platform.mjs";
 
 /**
  * Read a single line from stdin synchronously (setup is spawnSync-synchronous throughout, so there
- * is no event loop to await). Prints the question, then blocks on one `readSync` from fd 0. Any read
- * error (closed/interrupted stdin) degrades to an empty line, which `makeConfirm` treats as the
- * `[Y/n]` default. Lives only in this excluded boundary — never in tested decision logic.
+ * is no event loop to await). Prints the question, then blocks on one `readSync` from fd 0. Returns
+ * `null` on EOF (zero bytes — closed/redirected stdin) or a read error, so `makeConfirm` DECLINES
+ * rather than treating an unavailable stdin as the `[Y/n]` empty-line default. Lives only in this
+ * excluded boundary — never in tested decision logic.
  *
  * @param {string} question
- * @returns {string}
+ * @returns {string | null}
  */
 function promptLine(question) {
   process.stdout.write(`${question} `);
   const buffer = Buffer.alloc(256);
   try {
     const bytes = readSync(0, buffer, 0, buffer.length, null);
-    return buffer.toString("utf8", 0, bytes);
+    return bytes === 0 ? null : buffer.toString("utf8", 0, bytes);
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -65,7 +66,10 @@ export function createContext(root, options = {}) {
     },
     confirm: makeConfirm({
       yes: options.yes === true,
-      isTTY: process.stdout.isTTY === true,
+      // Interactivity is gated on stdin (the line we read), not stdout: a redirected/closed stdin
+      // (e.g. `pnpm setup --voice < NUL`) must decline even when stdout is still a terminal, so a
+      // non-interactive run can never auto-consent to a system install. Require both to be safe.
+      isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
       prompt: promptLine
     }),
     log: (message) => console.log(message)
