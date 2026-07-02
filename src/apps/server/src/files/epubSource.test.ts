@@ -1,11 +1,16 @@
-import { initEpubFile } from "@lingo-reader/epub-parser";
+import { initEpubFile, type ManifestItem } from "@lingo-reader/epub-parser";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createEpubParser, readResourceBytes, sanitizeEpubBytes } from "./epubSource.js";
+import {
+  createEpubParser,
+  readNavDocument,
+  readResourceBytes,
+  sanitizeEpubBytes
+} from "./epubSource.js";
 
 let imagesDir: string;
 // A spy debug sink passed to every parser under test, so the "resource skipped" boundary log is
@@ -323,6 +328,26 @@ describe("createEpubParser", () => {
     expect(parsed.chapters[0]?.html).toContain("Templates");
   });
 
+  it("surfaces the authored nav document from the manifest (#379)", async () => {
+    const parse = createEpubParser(imagesDir, logDebug);
+
+    const parsed = await parse(buildEpubBytes());
+
+    // The nav is read from the archive and decoded to text for the nav parser; `path` is the nav item's
+    // own manifest href (the base entry hrefs resolve against), resolved against the OPF directory.
+    expect(parsed.nav?.kind).toBe("xhtml-nav");
+    expect(parsed.nav?.path).toBe("OEBPS/nav.xhtml");
+    expect(parsed.nav?.source).toContain('href="chap1.xhtml"');
+  });
+
+  it("omits nav when the manifest declares no nav resource (#379)", async () => {
+    const parse = createEpubParser(imagesDir, logDebug);
+
+    const parsed = await parse(buildImageEpubBytes(pngBytes()));
+
+    expect(parsed.nav).toBeUndefined();
+  });
+
   it("leaves non-ZIP-decodable archives to the parser to reject", () => {
     // A structurally valid ZIP (so `isZipArchive` accepts it) whose compression method fflate
     // cannot inflate. The sanitizer must fall back to the exact original bytes rather than throw,
@@ -380,5 +405,63 @@ describe("sanitizeEpubBytes", () => {
     const bytes = buildMissingCssEpubBytes();
 
     expect(sanitizeEpubBytes(bytes)).not.toBe(bytes);
+  });
+});
+
+// A manifest declaring an EPUB3 nav resource at OEBPS/nav.xhtml, plus a plain chapter item that omits
+// `properties` entirely (so the mapping covers both the present and absent `properties` cases).
+const navManifest: Record<string, ManifestItem> = {
+  c1: { href: "OEBPS/chap1.xhtml", id: "c1", mediaType: "application/xhtml+xml" },
+  nav: { href: "OEBPS/nav.xhtml", id: "nav", mediaType: "application/xhtml+xml", properties: "nav" }
+};
+
+// A ZIP archive carrying the nav resource (when `navBytes` is given) alongside a chapter, mirroring the
+// archive `createEpubParser` reads the nav bytes from.
+function navArchive(navBytes: Uint8Array | null): Uint8Array {
+  const entries: Record<string, Uint8Array> = { "OEBPS/chap1.xhtml": strToU8("<html/>") };
+
+  if (navBytes !== null) {
+    entries["OEBPS/nav.xhtml"] = navBytes;
+  }
+
+  return zipSync(entries);
+}
+
+describe("readNavDocument", () => {
+  it("decodes the nav resource named by the manifest to a nav document (#379)", () => {
+    const result = readNavDocument(navArchive(strToU8(nav)), navManifest);
+
+    expect(result).toEqual({ kind: "xhtml-nav", path: "OEBPS/nav.xhtml", source: nav });
+  });
+
+  it("returns undefined when the manifest declares no nav resource (#379)", () => {
+    const noNav: Record<string, ManifestItem> = {
+      c1: {
+        href: "OEBPS/chap1.xhtml",
+        id: "c1",
+        mediaType: "application/xhtml+xml",
+        properties: ""
+      }
+    };
+
+    expect(readNavDocument(navArchive(strToU8(nav)), noNav)).toBeUndefined();
+  });
+
+  it("returns undefined (fail-soft) when the archive cannot be unzipped (#379)", () => {
+    expect(readNavDocument(Uint8Array.from([1, 2, 3, 4]), navManifest)).toBeUndefined();
+  });
+
+  it("returns undefined (fail-soft) when the nav resource is absent from the archive (#379)", () => {
+    expect(readNavDocument(navArchive(null), navManifest)).toBeUndefined();
+  });
+
+  it("returns undefined (fail-soft) when the nav resource is empty (#379)", () => {
+    expect(readNavDocument(navArchive(new Uint8Array()), navManifest)).toBeUndefined();
+  });
+
+  it("returns undefined (fail-soft) when the nav resource is not decodable UTF-8 (#379)", () => {
+    expect(
+      readNavDocument(navArchive(Uint8Array.from([0xff, 0xfe, 0xfd])), navManifest)
+    ).toBeUndefined();
   });
 });

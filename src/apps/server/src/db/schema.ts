@@ -15,7 +15,12 @@ import {
 // here so migration generation does not depend on the domain package being built first.
 export const entries = pgTable("entries", {
   id: text("id").primaryKey(),
-  type: text("type", { enum: ["work", "reading_unit", "block", "note"] as const }).notNull()
+  // `toc_entry` (#379): a nav-derived table-of-contents entry is a first-class addressable Entry, like
+  // a work/reading unit/block, so the authored nav tree persists as its own `toc_entries` rows keyed
+  // by an `entries` id (mirroring how reading units register entries).
+  type: text("type", {
+    enum: ["work", "reading_unit", "block", "note", "toc_entry"] as const
+  }).notNull()
 });
 
 export const authors = pgTable("authors", {
@@ -61,6 +66,35 @@ export const readingUnits = pgTable(
       .references(() => entries.id)
   },
   (table) => [index("reading_units_work_idx").on(table.workEntryId)]
+);
+
+// The work's authored navigation tree (#379): one row per EPUB nav entry (`nav.xhtml`/`toc.ncx`),
+// persisted as an additive structure that points into reading units at anchors. Each row is also a
+// first-class `entries` row (`type: "toc_entry"`) so the entry is addressable. `parent_entry_id`
+// (an `entries` id, null at the root) plus `depth` capture the authored hierarchy, and `order_index`
+// is a work-global pre-order rank so serving the rows in `order_index` order yields the tree fully
+// expanded and correctly indented. `target_source_file` is the entry href resolved (relative to the
+// nav document) to a spine source-file identity — matched to `reading_units.source_file` at serve time
+// — and `target_anchor` is the href's `#fragment` (both null for a label-only/structural entry). The
+// nav tree has more entries than units (a chapter's sub-sections share one spine file), so it is a
+// separate structure, never a relabeling of units. Fail-soft: a work with no authored nav has no rows.
+export const tocEntries = pgTable(
+  "toc_entries",
+  {
+    depth: integer("depth").notNull(),
+    entryId: text("entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    label: text("label").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    parentEntryId: text("parent_entry_id").references(() => entries.id),
+    targetAnchor: text("target_anchor"),
+    targetSourceFile: text("target_source_file"),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id)
+  },
+  (table) => [index("toc_entries_work_idx").on(table.workEntryId)]
 );
 
 // Decomposed ProseMirror/Tiptap block rows (#311): one row per top-level PM node of a chapter's

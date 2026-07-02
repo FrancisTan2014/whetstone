@@ -246,8 +246,104 @@ const multiUnitContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
-// Two paragraph blocks in the same (first-opened) reading unit, so a selection can be dragged
-// from the first block into the second to exercise the cross-block path.
+// A nav-bearing EPUB (#379): two source-file-scoped units plus an authored TOC tree whose entries
+// map onto them — a label-only Part (no target → a no-op), two whole-file chapter entries, and a
+// Section entry carrying a `#fragment` that the work anchor index resolves to a specific block.
+const navContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-1"),
+          mdast: { children: [{ type: "text", value: "Chapter one body." }], type: "paragraph" },
+          orderIndex: 0,
+          plaintext: "Chapter one body."
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0,
+      sourceFile: "OEBPS/chap1.xhtml",
+      title: "Chapter One"
+    },
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("b-2"),
+          mdast: { children: [{ type: "text", value: "Chapter two intro." }], type: "paragraph" },
+          orderIndex: 0,
+          plaintext: "Chapter two intro."
+        },
+        {
+          anchorId: "sec-2",
+          blockType: "paragraph",
+          entryId: toEntryId("b-2b"),
+          mdast: { children: [{ type: "text", value: "Section two body." }], type: "paragraph" },
+          orderIndex: 1,
+          plaintext: "Section two body."
+        }
+      ],
+      entryId: toEntryId("u-2"),
+      orderIndex: 1,
+      sourceFile: "OEBPS/chap2.xhtml",
+      title: "Chapter Two"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
+const navTableOfContents: NonNullable<WorkStructureDto["tableOfContents"]> = [
+  { depth: 0, entryId: "t-part", label: "Part One", orderIndex: 0 },
+  {
+    depth: 1,
+    entryId: "t-c1",
+    label: "Chapter One",
+    orderIndex: 1,
+    parentEntryId: "t-part",
+    targetUnitEntryId: toEntryId("u-1")
+  },
+  {
+    depth: 1,
+    entryId: "t-c2",
+    label: "Chapter Two",
+    orderIndex: 2,
+    parentEntryId: "t-part",
+    targetUnitEntryId: toEntryId("u-2")
+  },
+  {
+    depth: 2,
+    entryId: "t-sec",
+    label: "Section 2.1",
+    orderIndex: 3,
+    parentEntryId: "t-c2",
+    targetAnchor: "sec-2",
+    targetUnitEntryId: toEntryId("u-2")
+  }
+];
+
+// Seed the nav-bearing work: its units, an authored TOC on the structure, and the anchor index that
+// resolves the Section entry's `#sec-2` fragment to block `b-2b` in the second unit's source file.
+function seedNavWork(): void {
+  seedWorkContent(navContent);
+  mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => ({
+    readingUnits: structureOf(navContent).readingUnits,
+    tableOfContents: navTableOfContents,
+    workEntryId: toEntryId(workEntryId)
+  }));
+  mockedFetchWorkAnchorIndex.mockImplementation(async (workEntryId: string) => ({
+    anchors: [
+      {
+        anchor: "sec-2",
+        blockEntryId: toEntryId("b-2b"),
+        sourceFile: "OEBPS/chap2.xhtml",
+        unitEntryId: toEntryId("u-2")
+      }
+    ],
+    workEntryId: toEntryId(workEntryId)
+  }));
+}
+
 const crossBlockContent: WorkContentDto = {
   readingUnits: [
     {
@@ -1060,6 +1156,101 @@ describe("ReaderPage", () => {
     expect(await screen.findByText("你好世界")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Table of contents" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Table of Contents" })).toBeNull();
+  });
+
+  it("renders the authored nav tree indented by depth instead of the Section N unit list", async () => {
+    seedNavWork();
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    const entries = Array.from(toc.querySelectorAll("button.readerTocEntry"));
+    expect(entries.map((entry) => entry.textContent)).toEqual([
+      "Part One",
+      "Chapter One",
+      "Chapter Two",
+      "Section 2.1"
+    ]);
+    expect(entries.map((entry) => entry.getAttribute("data-depth"))).toEqual(["0", "1", "1", "2"]);
+    // The authored labels replace the guessed "Section N" outline entirely.
+    expect(within(toc).queryByRole("button", { name: "Section 1" })).toBeNull();
+    expect(within(toc).queryByRole("button", { name: "Section 2" })).toBeNull();
+    // The entry that opens the active (first) unit is marked current.
+    expect(
+      within(toc).getByRole("button", { name: "Chapter One" }).getAttribute("aria-current")
+    ).toBe("true");
+  });
+
+  it("marks no nav entry current when the open unit is not an authored target", async () => {
+    // A nav tree whose only entry targets the second unit, while the reader opens the first — so no
+    // entry is active and none is marked current.
+    seedWorkContent(navContent);
+    mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => ({
+      readingUnits: structureOf(navContent).readingUnits,
+      tableOfContents: [
+        {
+          depth: 0,
+          entryId: "t-only",
+          label: "Only Chapter Two",
+          orderIndex: 0,
+          targetUnitEntryId: toEntryId("u-2")
+        }
+      ],
+      workEntryId: toEntryId(workEntryId)
+    }));
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    expect(
+      within(toc).getByRole("button", { name: "Only Chapter Two" }).getAttribute("aria-current")
+    ).toBeNull();
+  });
+
+  it("opens a whole-file nav entry's unit at its top", async () => {
+    seedNavWork();
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+
+    expect(await screen.findByText("Chapter two intro.")).toBeDefined();
+    expect(screen.queryByText("Chapter one body.")).toBeNull();
+    // A whole-file entry opens the unit directly, never routing through the block locator.
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
+  });
+
+  it("navigates a #fragment nav entry to its target block via the resolver", async () => {
+    seedNavWork();
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Section 2.1" }));
+
+    // The fragment resolves to block b-2b, which the reader jumps to (loading its owning unit).
+    await waitFor(() => expect(mockedLocateBlockUnit).toHaveBeenCalledWith("work-1", "b-2b"));
+    expect(await screen.findByText("Section two body.")).toBeDefined();
+  });
+
+  it("no-ops selecting a nav entry with no resolvable target", async () => {
+    seedNavWork();
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Part One" }));
+
+    // The label-only Part entry has no target, so the reader stays on the first unit.
+    expect(await screen.findByText("Chapter one body.")).toBeDefined();
+    expect(screen.queryByText("Chapter two intro.")).toBeNull();
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
   });
 
   it("shows the untitled active unit without a heading", async () => {
@@ -2076,7 +2267,12 @@ describe("ReaderPage note management", () => {
     const target = await screen.findByText("Heading text");
     expect(blockElement(container, "b-2")).not.toBeNull();
     expect(screen.queryByText("Intro paragraph.")).toBeNull();
-    expect(target.closest("[data-block-id]")?.scrollIntoView).toHaveBeenCalled();
+    // The scroll runs in a post-load effect after the holding unit's blocks render, so poll for it
+    // rather than asserting synchronously — a bare assert races the effect and flakes under parallel
+    // CI load (the block is present via findByText before the scroll effect has fired).
+    await waitFor(() =>
+      expect(target.closest("[data-block-id]")?.scrollIntoView).toHaveBeenCalled()
+    );
   });
 });
 

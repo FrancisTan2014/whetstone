@@ -221,7 +221,11 @@ can navigate them from another package.
   `diary_entries` table; the tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaChat(...))`.
   Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
 - Config: `src/config/serverConfig.ts`.
-- Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`.
+- Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
+  `entries` (the addressable-id spine), works/authors, `reading_units`, mdast `blocks` + PM `doc_blocks`,
+  `notes`/links/templates, `reading_positions`, search indexes, and `toc_entries` (a work's authored
+  nav-derived TOC: `entry_id` PK + `work_entry_id` FK to `entries`, `parent_entry_id`, `order_index`,
+  `depth`, `label`, nullable `target_source_file`/`target_anchor`, indexed by work; #379).
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`, `search/`). Routes stay thin; logic lives in
   commands/queries. `content/` ingests Markdown, EPUB, and PDF uploads. Markdown re-ingestion REPLACES a
@@ -260,7 +264,13 @@ can navigate them from another package.
   `ContentDependencies.ingestionLogger`. Both writers
   bulk-insert through `insertBatching.ts` (`insertInBatches` chunks every multi-row INSERT under PostgreSQL's 32767
   bind-parameter limit so large works persist; `assertContentPersisted` turns a silent zero-row
-  rollback into a 5xx instead of a false 201). Blocks carry `work_entry_id`, so notes on
+  rollback into a 5xx instead of a false 201). After the units are written (so `reading_units.source_file`
+  exists), EPUB ingest persists the authored **nav-derived TOC**: when `epubSource` surfaced a nav doc,
+  `tocWriter.ts` (`flattenNavTree` → `writeTocEntries`) parses it (`epubNav.parseNavDocument`), resolves
+  each entry href against the nav document's own path (`resolveRelativeHref`, #366) into a
+  `(target_source_file, target_anchor)`, and writes the flattened tree to `toc_entries` (pre-order
+  `order_index`, `depth`, `parent_entry_id`; each entry also a first-class `entries` row of type
+  `toc_entry`); fail-soft — no nav / empty parse persists nothing (#379). Blocks carry `work_entry_id`, so notes on
   soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
   (`GET /api/works/:id/content/markdown`, which keeps `loadWorkContent` server-side). The reader no
   longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
@@ -272,7 +282,11 @@ can navigate them from another package.
   addressable block keyed by `(reading_units.source_file, doc_blocks.anchor_id)` →
   `{ blockEntryId, unitEntryId }`, so an id reused across chapters resolves per source file, not by
   collision; backs work-scoped internal-reference resolution, #366), each 404ing an unknown/out-of-work
-  target. A block id is resolved over **both**
+  target. `GET …/structure` additively carries the work's nav-derived **table of contents** when it has
+  one (`tableOfContents?: TocEntryDto[]` — pre-order authored entries with `depth`/`parentEntryId`/`label`
+  and a `targetUnitEntryId` resolved from each entry's `target_source_file` via `reading_units.source_file`,
+  plus an optional `targetAnchor`; omitted, never empty, for a nav-less work, so `readingUnits` is
+  unchanged and the reader falls back to the flat unit list, #379). A block id is resolved over **both**
   substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
   union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
   resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
@@ -302,14 +316,18 @@ can navigate them from another package.
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
   (`@lingo-reader/epub-parser`): bytes in, normalized metadata and ordered chapter HTML out (injected
-  so commands test against a fake parser). It guards the upload with `src/files/zipArchive.ts`
+  so commands test against a fake parser); it additively surfaces the authored nav document
+  (`ParsedEpub.nav?`) via `readNavDocument`, reading the nav resource's bytes straight from the archive
+  (the manifest's `selectNavResource` item) and decoding UTF-8, fail-soft (#379). It guards the upload with `src/files/zipArchive.ts`
   (`isZipArchive`, a dependency-free ZIP signature/EOCD check) and rejects non-ZIP bytes before the
   library runs — the library otherwise hangs and emits a process-crashing unhandled rejection on
   non-EPUB input. `src/files/epubNav.ts` — a pure, no-I/O parser for an EPUB's authored navigation:
   `parseNavDocument` reads an EPUB3 `nav.xhtml` toc or an EPUB2 `toc.ncx` navMap into a normalized
   nested nav tree (`NavEntry{ label, href, children }`; fail-soft, never throws), and `selectNavResource`
   picks the nav resource from the OPF manifest (EPUB3 `properties~="nav"`, else the ncx media type).
-  Parsing only — no persistence/reader/href resolution (foundation for the nested nav-tree 目录, #379).
+  Parsing only — no persistence/reader/href resolution; consumed by the nested nav-tree 目录 (#379:
+  `epubSource` surfaces the nav doc → `tocWriter` persists `toc_entries` → `/structure` serves it →
+  `ReaderToc` renders it).
   `src/files/imageResourceStore.ts` — content-addressed image
   store (sha256-keyed, so identical bytes dedupe to one resource) under `imageResourcesDir`, with a
   write-time content-type allowlist (PNG/JPEG/GIF/WebP; SVG and others rejected); served read-only by
@@ -416,7 +434,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   progress) and `readingPosition.ts` resolves the opening unit (deep-link `?block=` via the locator,
   else saved position, else first); `ReaderToc.tsx` is the 目录 — a controlled,
   dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
-  sidebar) listing units with the current one marked. `ReaderPage.tsx` is the immersive single-column reading room: a work is opened from the
+  sidebar). When the structure carries a nav-derived `tableOfContents` (#379) it renders the **authored
+  nav tree** fully expanded — indented by `depth` (as `data-depth`), authored labels, current entry
+  `aria-current` — and selecting an entry navigates via the #366 resolver (`resolveTocEntryNavigation` in
+  `readerNavigation.ts` → open the target unit, and when the entry has a `targetAnchor` scroll+highlight
+  it, reusing `ReaderPage`'s `onActivateAnchor`/`jumpToBlock`; unresolvable entries no-op); a nav-less
+  work falls back to the flat unit list with the current one marked (the `Section N` label fallback stays
+  on that path only). `ReaderPage.tsx` is the immersive single-column reading room: a work is opened from the
   Library via `?work=` (no in-reader work-picker or page heading; with no work open it shows an explicit
   "Open a work from your Library" empty state), with a back-to-Library hash anchor always reachable. It
   keeps an `activeUnitIndex` and the active unit's load state, fetches that unit's blocks when it opens

@@ -4,7 +4,7 @@ declare const entryIdBrand: unique symbol;
 
 export type EntryId = string & { readonly [entryIdBrand]: "EntryId" };
 
-export const entryTypes = ["work", "reading_unit", "block", "note"] as const;
+export const entryTypes = ["work", "reading_unit", "block", "note", "toc_entry"] as const;
 
 export type EntryType = (typeof entryTypes)[number];
 

@@ -37,6 +37,7 @@ describe("entry contract schemas", () => {
 
     expect(parseEntryIdDto("entry-1")).toBe("entry-1");
     expect(parseEntryTypeDto("reading_unit")).toBe("reading_unit");
+    expect(parseEntryTypeDto("toc_entry")).toBe("toc_entry");
     expect(parseLinkTypeDto("related_to")).toBe("related_to");
     expect(parseWorkTypeDto("essay")).toBe("essay");
     expect(parseWorkLanguageDto("zh-TW")).toBe("zh-TW");

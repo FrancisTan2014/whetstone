@@ -27,6 +27,7 @@ import {
   entries,
   readingPositions,
   readingUnits,
+  tocEntries,
   workSources
 } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
@@ -1689,3 +1690,203 @@ describe("work-scoped reference foundation (#366)", () => {
     expect(response.json()).toEqual({ error: "work_not_found" });
   });
 });
+
+describe("nav-derived table of contents (#379)", () => {
+  // An EPUB3 authored nav (nav.xhtml) whose entries exercise every target shape: a label-only
+  // structural node (empty href), a whole-file entry, a same-file `#fragment`, a `../` relative href,
+  // and an entry pointing at a file with no reading unit (unresolvable). `path` is the nav document's
+  // own manifest href, the base each entry href resolves against (#366).
+  const navSource =
+    '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>' +
+    '<nav epub:type="toc"><ol>' +
+    '<li><a href="">Part One</a><ol>' +
+    '<li><a href="ch01.xhtml">Chapter One</a>' +
+    '<ol><li><a href="ch01.xhtml#sec-1">Section 1.1</a></li></ol></li>' +
+    "</ol></li>" +
+    '<li><a href="../text/ch02.xhtml">Chapter Two</a></li>' +
+    '<li><a href="ghost.xhtml">Missing</a></li>' +
+    "</ol></nav></body></html>";
+
+  function navEpub(): ParsedEpub {
+    return {
+      chapters: [
+        {
+          html: '<h1>Chapter One</h1><p id="sec-1">First section.</p>',
+          images: [],
+          sourceFile: "text/ch01.xhtml"
+        },
+        { html: "<h1>Chapter Two</h1><p>Second.</p>", images: [], sourceFile: "text/ch02.xhtml" }
+      ],
+      metadata: { author: "Anon", language: "en", title: "Nav Book" },
+      nav: { kind: "xhtml-nav", path: "text/nav.xhtml", source: navSource }
+    };
+  }
+
+  async function ingestNav(): Promise<string> {
+    epubResponder = async () => navEpub();
+    const response = await ingestEpub(Buffer.from("epub-nav"));
+    expect(response.statusCode).toBe(201);
+
+    return (response.json() as IngestEpubResultDto).work.entryId;
+  }
+
+  it("persists the authored nav tree as toc_entries with depth, order, parent, and targets", async () => {
+    const workEntryId = await ingestNav();
+
+    const rows = await context.db
+      .select()
+      .from(tocEntries)
+      .where(eq(tocEntries.workEntryId, workEntryId))
+      .orderBy(tocEntries.orderIndex);
+
+    const byLabel = new Map(rows.map((row) => [row.label, row]));
+    const row = (label: string): (typeof rows)[number] => {
+      const found = byLabel.get(label);
+      if (found === undefined) {
+        throw new Error(`no toc_entries row for ${label}`);
+      }
+      return found;
+    };
+
+    // Pre-order flattening with a work-global orderIndex, so serving in this order renders the tree
+    // fully expanded and correctly indented by depth.
+    expect(rows.map((entry) => entry.label)).toEqual([
+      "Part One",
+      "Chapter One",
+      "Section 1.1",
+      "Chapter Two",
+      "Missing"
+    ]);
+    expect(rows.map((entry) => entry.orderIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(rows.map((entry) => entry.depth)).toEqual([0, 1, 2, 0, 0]);
+
+    // Hierarchy is captured by parentEntryId (null at the roots).
+    expect(row("Part One").parentEntryId).toBeNull();
+    expect(row("Chapter One").parentEntryId).toBe(row("Part One").entryId);
+    expect(row("Section 1.1").parentEntryId).toBe(row("Chapter One").entryId);
+    expect(row("Chapter Two").parentEntryId).toBeNull();
+
+    // Targets: a structural node stays unresolved; a whole-file entry has no anchor; a `#fragment`
+    // splits into source file + anchor; a `../` href resolves against the nav document's directory.
+    expect(row("Part One")).toMatchObject({ targetAnchor: null, targetSourceFile: null });
+    expect(row("Chapter One")).toMatchObject({
+      targetAnchor: null,
+      targetSourceFile: "text/ch01.xhtml"
+    });
+    expect(row("Section 1.1")).toMatchObject({
+      targetAnchor: "sec-1",
+      targetSourceFile: "text/ch01.xhtml"
+    });
+    expect(row("Chapter Two")).toMatchObject({
+      targetAnchor: null,
+      targetSourceFile: "text/ch02.xhtml"
+    });
+  });
+
+  it("registers each toc entry as an addressable entries row of type toc_entry", async () => {
+    const workEntryId = await ingestNav();
+
+    const tocRows = await context.db
+      .select()
+      .from(tocEntries)
+      .where(eq(tocEntries.workEntryId, workEntryId));
+
+    for (const tocRow of tocRows) {
+      const entryRows = await context.db
+        .select()
+        .from(entries)
+        .where(eq(entries.id, tocRow.entryId));
+      expect(entryRows[0]?.type).toBe("toc_entry");
+    }
+  });
+
+  it("serves the tableOfContents additively with targetUnitEntryId resolved from source_file", async () => {
+    const workEntryId = await ingestNav();
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/structure`
+    });
+    const structure = response.json() as WorkStructureDto;
+
+    // The reading-unit list is unchanged by the additive TOC.
+    expect(structure.readingUnits.map((unit) => unit.sourceFile)).toEqual([
+      "text/ch01.xhtml",
+      "text/ch02.xhtml"
+    ]);
+    const unitBySource = new Map(
+      structure.readingUnits.map((unit) => [unit.sourceFile, unit.entryId])
+    );
+
+    const toc = structure.tableOfContents ?? [];
+    const entryByLabel = new Map(toc.map((entry) => [entry.label, entry]));
+    const tocEntry = (label: string): NonNullable<WorkStructureDto["tableOfContents"]>[number] => {
+      const found = entryByLabel.get(label);
+      if (found === undefined) {
+        throw new Error(`no toc entry for ${label}`);
+      }
+      return found;
+    };
+
+    expect(toc.map((entry) => entry.label)).toEqual([
+      "Part One",
+      "Chapter One",
+      "Section 1.1",
+      "Chapter Two",
+      "Missing"
+    ]);
+
+    // A whole-file entry resolves to its unit with no anchor; a `#fragment` carries the anchor through.
+    expect(tocEntry("Chapter One").targetUnitEntryId).toBe(unitBySource.get("text/ch01.xhtml"));
+    expect(tocEntry("Chapter One").targetAnchor).toBeUndefined();
+    expect(tocEntry("Section 1.1")).toMatchObject({
+      targetAnchor: "sec-1",
+      targetUnitEntryId: unitBySource.get("text/ch01.xhtml")
+    });
+    expect(tocEntry("Chapter Two").targetUnitEntryId).toBe(unitBySource.get("text/ch02.xhtml"));
+
+    // A structural node and an entry whose file has no reading unit both leave targetUnitEntryId unset.
+    expect(tocEntry("Part One").targetUnitEntryId).toBeUndefined();
+    expect(tocEntry("Missing").targetUnitEntryId).toBeUndefined();
+
+    // Depth is served as data so the reader can indent without re-deriving the tree.
+    expect(toc.map((entry) => entry.depth)).toEqual([0, 1, 2, 0, 0]);
+  });
+
+  it("omits tableOfContents and leaves readingUnits unchanged for a nav-less work", async () => {
+    epubResponder = async () => refsEpubNoNav();
+    const ingestResponse = await ingestEpub(Buffer.from("epub-no-nav"));
+    expect(ingestResponse.statusCode).toBe(201);
+    const workEntryId = (ingestResponse.json() as IngestEpubResultDto).work.entryId;
+
+    const tocRows = await context.db
+      .select()
+      .from(tocEntries)
+      .where(eq(tocEntries.workEntryId, workEntryId));
+    expect(tocRows).toEqual([]);
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/structure`
+    });
+    const structure = response.json() as WorkStructureDto;
+
+    expect(structure.tableOfContents).toBeUndefined();
+    expect(structure.readingUnits.map((unit) => unit.sourceFile)).toEqual([
+      "text/ch01.xhtml",
+      "text/ch02.xhtml"
+    ]);
+  });
+});
+
+// A nav-less two-chapter EPUB, to prove ingestion persists no toc_entries and the structure omits the
+// TOC when the parser surfaces no nav (#379).
+function refsEpubNoNav(): ParsedEpub {
+  return {
+    chapters: [
+      { html: "<h1>Chapter One</h1><p>First.</p>", images: [], sourceFile: "text/ch01.xhtml" },
+      { html: "<h1>Chapter Two</h1><p>Second.</p>", images: [], sourceFile: "text/ch02.xhtml" }
+    ],
+    metadata: { author: "Anon", language: "en", title: "No Nav" }
+  };
+}

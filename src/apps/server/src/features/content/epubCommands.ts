@@ -4,12 +4,14 @@ import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { authors, entries, workMeta, workSources } from "../../db/schema.js";
+import { parseNavDocument } from "../../files/epubNav.js";
 import { writeReadingUnits } from "./blockWriter.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import { applyContentFilters, defaultContentFilters } from "./contentFilters.js";
 import { resolveChapters } from "./figureImageResolver.js";
 import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent } from "./contentQueries.js";
+import { writeTocEntries } from "./tocWriter.js";
 
 export type IngestEpubResult =
   | Readonly<{ result: IngestEpubResultDto; status: "duplicate" }>
@@ -86,6 +88,18 @@ export async function ingestEpub(
       units,
       workEntryId
     });
+
+    // Persist the EPUB's authored nav tree (#379), after units exist so its entries can later be
+    // matched to reading units by `source_file` at serve time. Fail-soft: no nav — or an
+    // unparseable/empty one — persists no toc_entries and never fails the ingest.
+    if (parsed.nav !== undefined) {
+      await writeTocEntries(tx, {
+        createEntryId: dependencies.createEntryId,
+        navEntries: parseNavDocument(parsed.nav.source, parsed.nav.kind),
+        navPath: parsed.nav.path,
+        workEntryId
+      });
+    }
 
     return resolvedAuthorId;
   });

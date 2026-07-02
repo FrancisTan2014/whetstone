@@ -78,6 +78,49 @@ describe("buildReaderStructure", () => {
     expect(structure.units[0]?.title).toBeUndefined();
     expect(structure.units[1]?.title).toBe("Chapter One");
   });
+
+  it("omits tableOfContents when the structure has no authored nav", () => {
+    const structure = buildReaderStructure(unorderedStructure);
+
+    expect(structure.tableOfContents).toBeUndefined();
+  });
+
+  it("carries the authored TOC in pre-order, mapping each entry's target fields", () => {
+    const withToc: WorkStructureDto = {
+      readingUnits: unorderedStructure.readingUnits,
+      tableOfContents: [
+        { depth: 1, entryId: "t-chap", label: "Chapter", orderIndex: 1, parentEntryId: "t-part" },
+        {
+          depth: 0,
+          entryId: "t-part",
+          label: "Part One",
+          orderIndex: 0,
+          targetAnchor: "sec-1",
+          targetUnitEntryId: toEntryId("u-1")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    };
+
+    const structure = buildReaderStructure(withToc);
+
+    expect(structure.tableOfContents?.map((entry) => entry.entryId)).toEqual(["t-part", "t-chap"]);
+    expect(structure.tableOfContents?.[0]).toEqual({
+      depth: 0,
+      entryId: "t-part",
+      label: "Part One",
+      orderIndex: 0,
+      targetAnchor: "sec-1",
+      targetUnitEntryId: "u-1"
+    });
+    expect(structure.tableOfContents?.[1]).toEqual({
+      depth: 1,
+      entryId: "t-chap",
+      label: "Chapter",
+      orderIndex: 1,
+      parentEntryId: "t-part"
+    });
+  });
 });
 
 describe("toReaderBlocks", () => {
