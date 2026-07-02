@@ -227,7 +227,18 @@ async function settle(page) {
   await page.waitForTimeout(600);
 }
 
-async function captureLibraryAndReaders(browser, base, works) {
+// Wait for the locator that marks a route/stage as rendered, naming the route + stage on timeout so a
+// failed capture points straight at the remedy (which route/stage to inspect).
+async function waitForStage(locator, { route, stage, timeoutMs = 15000 }) {
+  try {
+    await locator.waitFor({ timeout: timeoutMs });
+  } catch (error) {
+    fail(`${stage} did not render at ${route} within ${timeoutMs}ms (${error.message}).`);
+  }
+}
+
+async function captureHomeAndReaders(browser, base, works) {
+  const libraryUrl = `${base}#/library`;
   for (const viewport of viewports) {
     for (const theme of themes) {
       const context = await browser.newContext({
@@ -237,14 +248,28 @@ async function captureLibraryAndReaders(browser, base, works) {
       try {
         // A fresh page per capture avoids stale content from a prior work leaking into the
         // shot; the chosen theme persists across pages via localStorage within the context.
+
+        // Today is the app's landing page at the root route (#319), so root captures Today.
+        const todayPage = await context.newPage();
+        await todayPage.goto(base, { waitUntil: "load" });
+        await applyTheme(todayPage, theme);
+        await waitForStage(todayPage.getByRole("heading", { level: 1, name: "Today" }), {
+          route: "/",
+          stage: `Today (${theme}/${viewport.name})`
+        });
+        await settle(todayPage);
+        await shot(todayPage, `today.${theme}.${viewport.name}`);
+        await todayPage.close();
+
+        // The Library moved off the root route to #/library when Today became the landing (#319).
         const libraryPage = await context.newPage();
-        await libraryPage.goto(base, { waitUntil: "load" });
+        await libraryPage.goto(libraryUrl, { waitUntil: "load" });
         await applyTheme(libraryPage, theme);
         for (const work of works) {
-          await libraryPage
-            .getByRole("heading", { name: work.title })
-            .first()
-            .waitFor({ timeout: 15000 });
+          await waitForStage(libraryPage.getByRole("heading", { name: work.title }).first(), {
+            route: "#/library",
+            stage: `Library (${theme}/${viewport.name}) — "${work.title}"`
+          });
         }
         await settle(libraryPage);
         await shot(libraryPage, `library.${theme}.${viewport.name}`);
@@ -256,10 +281,13 @@ async function captureLibraryAndReaders(browser, base, works) {
             waitUntil: "load"
           });
           await applyTheme(readerPage, theme);
-          await readerPage
-            .locator('article[aria-label="Reading"] [data-block-id]')
-            .first()
-            .waitFor({ timeout: 15000 });
+          await waitForStage(
+            readerPage.locator('article[aria-label="Reading"] [data-block-id]').first(),
+            {
+              route: `#/reader?work=${work.entryId}`,
+              stage: `Reader (${work.lang}/${theme}/${viewport.name})`
+            }
+          );
           await settle(readerPage);
           await shot(readerPage, `reader.${work.lang}.${theme}.${viewport.name}`);
           await readerPage.close();
@@ -281,8 +309,9 @@ async function captureAnnotation(browser, base, work) {
     await page.goto(`${base}#/reader?work=${encodeURIComponent(work.entryId)}`, {
       waitUntil: "load"
     });
-    await page.locator('article[aria-label="Reading"] [data-block-id]').first().waitFor({
-      timeout: 15000
+    await waitForStage(page.locator('article[aria-label="Reading"] [data-block-id]').first(), {
+      route: `#/reader?work=${work.entryId}`,
+      stage: "Annotation (day/desktop) reader"
     });
 
     // Select a word inside the longest (paragraph) block and raise mouseup so the reader's
@@ -332,8 +361,14 @@ async function captureAnnotation(browser, base, work) {
       .fill("A note captured by the screenshot harness.");
     await page.getByRole("button", { name: "Save note" }).click();
 
+    // A saved note has no success toast (#300) — the persisted highlight is the only confirmation.
+    // Wait for the block to be marked and its highlight decoration (`.noteMark`, #313) to render, then
+    // capture that state rather than a toast that no longer appears.
     await page.locator('[data-has-notes="true"]').first().waitFor({ timeout: 10000 });
-    await page.getByRole("status").waitFor({ timeout: 10000 });
+    await waitForStage(page.locator(".noteMark").first(), {
+      route: "#/reader (annotation)",
+      stage: "Saved-note highlight"
+    });
     await settle(page);
     await shot(page, "note-saved.day.desktop");
   } finally {
@@ -364,7 +399,7 @@ async function main() {
   const browser = await chromium.launch();
   cleanups.push(() => browser.close());
 
-  await captureLibraryAndReaders(browser, base, works);
+  await captureHomeAndReaders(browser, base, works);
   const englishWork = works.find((work) => work.lang === "en");
   await captureAnnotation(browser, base, englishWork);
 
