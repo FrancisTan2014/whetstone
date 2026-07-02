@@ -6,9 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../recall/recallApi", () => ({ fetchDueRecall: vi.fn() }));
 vi.mock("./todayApi", () => ({ fetchLatestReadingPosition: vi.fn() }));
 vi.mock("../nudge/nudgeApi", () => ({ dismissNudge: vi.fn(), fetchNudge: vi.fn() }));
+vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
 
-import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
+import type {
+  AuthorDto,
+  LatestReadingPositionDto,
+  NudgeDto,
+  RecallItemDto,
+  WorkDto,
+  WorkListDto
+} from "@whetstone/contracts";
 
+import { fetchWorks } from "../library/libraryApi";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
 import { fetchDueRecall } from "../recall/recallApi";
 import { fetchLatestReadingPosition } from "./todayApi";
@@ -18,6 +27,24 @@ const mockedRecall = vi.mocked(fetchDueRecall);
 const mockedReading = vi.mocked(fetchLatestReadingPosition);
 const mockedNudge = vi.mocked(fetchNudge);
 const mockedDismiss = vi.mocked(dismissNudge);
+const mockedWorks = vi.mocked(fetchWorks);
+
+const emptyWorks: WorkListDto = { works: [] };
+
+function makeWorkList(count: number): WorkListDto {
+  const works = Array.from({ length: count }, (_, index) => ({
+    author: { id: `author-${index}` as AuthorDto["id"], name: "Aesop" },
+    work: {
+      authorId: `author-${index}` as WorkDto["authorId"],
+      entryId: `work-${index}` as WorkDto["entryId"],
+      language: "en" as WorkDto["language"],
+      title: "Fables",
+      workType: "book" as WorkDto["workType"]
+    }
+  }));
+
+  return { works };
+}
 
 function makeItem(overrides: Partial<RecallItemDto> = {}): RecallItemDto {
   return {
@@ -79,6 +106,7 @@ beforeEach(() => {
   mockedRecall.mockReturnValue(pending<ReadonlyArray<RecallItemDto>>());
   mockedReading.mockReturnValue(pending<LatestReadingPositionDto | undefined>());
   mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
+  mockedWorks.mockReturnValue(pending<WorkListDto>());
 });
 
 afterEach(() => {
@@ -237,8 +265,11 @@ describe("TodayPage", () => {
   });
 
   it("shows a compassionate cleared state when nothing is due — no streak, guilt, or penalty", async () => {
+    // A learner with a work but nothing due: a truthful cleared board (not a cold start).
+    mockedWorks.mockResolvedValue(makeWorkList(1));
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     expect(await screen.findByText(/You’re done for today/)).toBeDefined();
@@ -264,5 +295,125 @@ describe("TodayPage", () => {
 
     await screen.findByText("thrive under pressure");
     expect(screen.queryByText(/You’re done for today/)).toBeNull();
+  });
+
+  it("shows a truthful first-run on-ramp on a cold start, hiding done-for-today", async () => {
+    // No works, no reading position, no recall due, no nudge: point to the on-ramp, not "done".
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    renderToday();
+
+    expect(await screen.findByText("Start with one source")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Open Library" }).getAttribute("href")).toBe(
+      "/library"
+    );
+    // The done-for-today message is untruthful here, so it stays hidden.
+    expect(screen.queryByText(/You’re done for today/)).toBeNull();
+  });
+
+  it("returns to the normal cleared board once the learner has at least one work", async () => {
+    mockedWorks.mockResolvedValue(makeWorkList(1));
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    renderToday();
+
+    expect(await screen.findByText(/You’re done for today/)).toBeDefined();
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+  });
+
+  it("does not show the first-run on-ramp when a learner trace exists though the library is empty", async () => {
+    // A due recall item is a trace: the learner is not truly at a cold start, so no on-ramp card.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([makeItem()]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    renderToday();
+
+    await screen.findByText("spill the beans");
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+    expect(screen.queryByText(/You’re done for today/)).toBeNull();
+  });
+
+  it("does not show the on-ramp when a practice nudge marks the learner though the library is empty", async () => {
+    // A present nudge is a trace/action: not a cold start, so the nudge shows and no on-ramp appears.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(makeNudge());
+    renderToday();
+
+    await screen.findByText("thrive under pressure");
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+    expect(screen.queryByText(/You’re done for today/)).toBeNull();
+  });
+
+  it("makes no state claim while the library load is still pending", async () => {
+    // Recall/reading/nudge are empty but the library is still loading: Today must not claim the
+    // first-run card NOR "done for today" — a done claim on unknown cold-start info is untruthful.
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    mockedWorks.mockReturnValue(pending<WorkListDto>());
+    renderToday();
+
+    await screen.findByText(/Nothing to continue yet/);
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+    expect(screen.queryByText(/You’re done for today/)).toBeNull();
+  });
+
+  it("makes no state claim when the library load fails", async () => {
+    // A failed library arm cannot confirm or rule out a cold start: neither the on-ramp card nor
+    // "done for today" appears, and the page does not blank.
+    mockedWorks.mockRejectedValue(new Error("boom"));
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    renderToday();
+
+    await screen.findByText(/Nothing to continue yet/);
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+    expect(screen.queryByText(/You’re done for today/)).toBeNull();
+    expect(screen.getByText("Capture a thought")).toBeDefined();
+  });
+
+  it("shows the cleared board for a returning learner known only by a reading position", async () => {
+    // A loaded reading position rules out a cold start even when the library request is empty.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(makePosition());
+    mockedNudge.mockResolvedValue(undefined);
+    renderToday();
+
+    expect(await screen.findByText(/You’re done for today/)).toBeDefined();
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+  });
+
+  it("does not claim a first-run state while the practice nudge is still loading", async () => {
+    // Nudge left pending (loading): the cold start is not confirmed, so no on-ramp card appears.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
+    renderToday();
+
+    await screen.findByText(/Nothing to continue yet/);
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+  });
+
+  it("does not claim a first-run state when the practice nudge fails to load", async () => {
+    // A failed nudge arm is not "empty": the cold start is unconfirmed, so no on-ramp card, and the
+    // page still does not blank.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    await screen.findByText(/Nothing to continue yet/);
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+    expect(screen.getByText("Capture a thought")).toBeDefined();
   });
 });
