@@ -4,6 +4,7 @@
 // browser -> env.
 
 import { buildStep } from "./build.mjs";
+import { coachStep } from "./coach.mjs";
 import { envStep } from "./env.mjs";
 import { installStep } from "./install.mjs";
 import { playwrightStep } from "./playwright.mjs";
@@ -11,4 +12,12 @@ import { toolchainStep } from "./toolchain.mjs";
 import { voiceStep } from "./voice.mjs";
 
 /** @type {import("../step.mjs").Step[]} */
-export const steps = [toolchainStep, installStep, buildStep, playwrightStep, envStep, voiceStep];
+export const steps = [
+  toolchainStep,
+  installStep,
+  buildStep,
+  playwrightStep,
+  envStep,
+  voiceStep,
+  coachStep
+];

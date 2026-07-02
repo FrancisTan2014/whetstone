@@ -11,22 +11,26 @@ import { parseNodeMajor, toolchainStep } from "./toolchain.mjs";
 import { createFakeContext } from "../testSupport.mjs";
 
 describe("registry", () => {
-  it("orders the base steps, then the optional voice step", () => {
+  it("orders the base steps, then the optional voice and coach steps", () => {
     expect(steps.map((s) => s.id)).toEqual([
       "toolchain",
       "install",
       "build",
       "playwright",
       "env",
-      "voice"
+      "voice",
+      "coach"
     ]);
-    const base = steps.filter((s) => s.id !== "voice");
+    const base = steps.filter((s) => s.id !== "voice" && s.id !== "coach");
     for (const step of base) {
       expect(step.optional).toBeUndefined();
     }
     const voice = steps.find((s) => s.id === "voice");
     expect(voice?.optional).toBe(true);
     expect(voice?.capability).toBe("voice");
+    const coach = steps.find((s) => s.id === "coach");
+    expect(coach?.optional).toBe(true);
+    expect(coach?.capability).toBe("coach");
   });
 });
 
