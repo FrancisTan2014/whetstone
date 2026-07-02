@@ -81,6 +81,38 @@ describe("NotesPage", () => {
     ).toBeDefined();
   });
 
+  it("narrows to a single work when a focus work is given", async () => {
+    mockedFetchAllNotes.mockResolvedValue({
+      notes: [
+        note("note-1", "block-1", "work-a", "Aesop Fables", "Aesop", "brown fox", "to outwit"),
+        note("note-2", "block-2", "work-b", "Zen Mind", "Suzuki", "beginner mind", "stay open")
+      ]
+    });
+
+    render(<NotesPage focusWorkEntryId="work-b" />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: /Zen Mind/ })).toBeDefined();
+    expect(screen.queryByRole("heading", { level: 2, name: /Aesop Fables/ })).toBeNull();
+    expect(screen.queryByText("“brown fox”")).toBeNull();
+    expect(screen.getByText("Every note you have saved in this work.")).toBeDefined();
+  });
+
+  it("shows a work-scoped empty state when the focused work has no notes", async () => {
+    mockedFetchAllNotes.mockResolvedValue({
+      notes: [
+        note("note-1", "block-1", "work-a", "Aesop Fables", "Aesop", "brown fox", "to outwit")
+      ]
+    });
+
+    render(<NotesPage focusWorkEntryId="work-missing" />);
+
+    expect(
+      await screen.findByText(
+        "No notes yet for this work. Open it in the Reader and select text to create one."
+      )
+    ).toBeDefined();
+  });
+
   it("shows an error state when notes fail to load", async () => {
     mockedFetchAllNotes.mockRejectedValue(new Error("boom"));
 

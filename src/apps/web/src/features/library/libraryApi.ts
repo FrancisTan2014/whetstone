@@ -8,6 +8,7 @@ import type {
   WorkListDto,
   WorkListItemDto
 } from "@whetstone/contracts";
+import { parseWorksWithReadingPositionResponse } from "@whetstone/contracts";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
@@ -27,6 +28,23 @@ export async function fetchAuthors(): Promise<AuthorListDto> {
 
 export async function fetchWorks(): Promise<WorkListDto> {
   return requestJson<WorkListDto>("/api/works");
+}
+
+// The set of works the current user has a saved reading position for, so each shelf card can offer
+// "Continue" only when one truly exists (and "Read" otherwise). One request answers the whole shelf;
+// the response is validated at the boundary before the shelf trusts it.
+export async function fetchWorksWithReadingPosition(): Promise<ReadonlySet<string>> {
+  const response = await fetch("/api/reading-position/works");
+
+  if (!response.ok) {
+    throw new Error(
+      `Request to /api/reading-position/works failed with status ${response.status}.`
+    );
+  }
+
+  const { workEntryIds } = parseWorksWithReadingPositionResponse(await response.json());
+
+  return new Set(workEntryIds);
 }
 
 export async function createAuthor(request: CreateAuthorRequest): Promise<AuthorDto> {

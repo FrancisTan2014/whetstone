@@ -5,8 +5,10 @@ import {
   parseLatestReadingPositionResponse,
   parseReadingPositionResponse,
   parseUpsertReadingPositionRequest,
+  parseWorksWithReadingPositionResponse,
   readingPositionResponseSchema,
-  upsertReadingPositionRequestSchema
+  upsertReadingPositionRequestSchema,
+  worksWithReadingPositionResponseSchema
 } from "./readingPositionContracts.js";
 
 describe("parseUpsertReadingPositionRequest", () => {
@@ -114,6 +116,30 @@ describe("parseLatestReadingPositionResponse", () => {
       latestReadingPositionResponseSchema.safeParse({
         position: { extra: 1, unitEntryId: "unit-1", workEntryId: "work-1", workTitle: "Fables" }
       }).success
+    ).toBe(false);
+  });
+});
+
+describe("parseWorksWithReadingPositionResponse", () => {
+  it("accepts a list of work entry ids", () => {
+    const response = { workEntryIds: ["work-1", "work-2"] };
+
+    expect(parseWorksWithReadingPositionResponse(response)).toEqual(response);
+  });
+
+  it("accepts an empty list", () => {
+    expect(parseWorksWithReadingPositionResponse({ workEntryIds: [] })).toEqual({
+      workEntryIds: []
+    });
+  });
+
+  it("rejects a missing workEntryIds field", () => {
+    expect(worksWithReadingPositionResponseSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects unknown keys", () => {
+    expect(
+      worksWithReadingPositionResponseSchema.safeParse({ extra: 1, workEntryIds: [] }).success
     ).toBe(false);
   });
 });

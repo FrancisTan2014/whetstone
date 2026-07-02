@@ -14,10 +14,17 @@ vi.mock("./libraryApi", () => ({
   createWork: vi.fn(),
   fetchAuthors: vi.fn(),
   fetchWorks: vi.fn(),
+  fetchWorksWithReadingPosition: vi.fn(),
   ingestEpub: vi.fn()
 }));
 
-import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
+import {
+  createWork,
+  fetchAuthors,
+  fetchWorks,
+  fetchWorksWithReadingPosition,
+  ingestEpub
+} from "./libraryApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
@@ -42,6 +49,7 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 
 const mockedFetchAuthors = vi.mocked(fetchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
+const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
 const mockedCreateWork = vi.mocked(createWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
 
@@ -88,15 +96,20 @@ beforeEach(() => {
   mockMatchMedia(false);
   mockedFetchAuthors.mockResolvedValue({ authors: [] });
   mockedFetchWorks.mockResolvedValue({ works: [] });
+  mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set());
 });
 
 afterEach(() => {
   cleanup();
 });
 
-async function renderReady(): Promise<ReturnType<typeof userEvent.setup>> {
+const noop = (): void => {};
+
+async function renderReady(
+  onManageContent: (workEntryId: string) => void = noop
+): Promise<ReturnType<typeof userEvent.setup>> {
   const user = userEvent.setup();
-  render(<AdminLibraryPage />);
+  render(<AdminLibraryPage onManageContent={onManageContent} />);
   await waitFor(() => {
     expect(screen.queryByText("Loading the library…")).toBeNull();
   });
@@ -126,7 +139,7 @@ describe("AdminLibraryPage", () => {
   });
 
   it("shows a loading state before the initial load resolves", async () => {
-    render(<AdminLibraryPage />);
+    render(<AdminLibraryPage onManageContent={noop} />);
 
     expect(screen.getByText("Loading the library…")).toBeDefined();
     await waitFor(() => {
@@ -137,12 +150,12 @@ describe("AdminLibraryPage", () => {
   it("shows an error state when the initial load fails", async () => {
     mockedFetchAuthors.mockRejectedValue(new Error("network"));
 
-    render(<AdminLibraryPage />);
+    render(<AdminLibraryPage onManageContent={noop} />);
 
     expect(await screen.findByText("Could not load the library.")).toBeDefined();
   });
 
-  it("groups works by author with a per-author count and reader/export affordances", async () => {
+  it("groups works by author with a per-author count and card affordances", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
     await renderReady();
 
@@ -154,11 +167,40 @@ describe("AdminLibraryPage", () => {
     expect(within(group).getByRole("heading", { name: "Animal Farm" })).toBeDefined();
     expect(within(group).getByText("essay · English")).toBeDefined();
 
-    const continueLinks = within(group).getAllByRole("link", { name: "Continue reading" });
-    expect(continueLinks[0]?.getAttribute("href")).toBe("#/reader?work=work-1");
+    // Default reader label is a truthful "Read" (no saved position seeded above).
+    const readLinks = within(group).getAllByRole("link", { name: "Read" });
+    expect(readLinks[0]?.getAttribute("href")).toBe("#/reader?work=work-1");
+
+    const notesLinks = within(group).getAllByRole("link", { name: "Notes" });
+    expect(notesLinks[0]?.getAttribute("href")).toBe("#/notes?work=work-1");
 
     const exportLinks = within(group).getAllByRole("link", { name: "Export Markdown" });
     expect(exportLinks[0]?.getAttribute("href")).toBe("/api/works/work-1/content/markdown");
+
+    expect(within(group).getAllByRole("button", { name: "Manage content" })).toHaveLength(2);
+  });
+
+  it("labels the reader link 'Continue' only for works with a saved reading position", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
+    mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set(["work-2"]));
+    await renderReady();
+
+    const group = await screen.findByRole("region", { name: "George Orwell" });
+    const continueLink = within(group).getByRole("link", { name: "Continue" });
+    expect(continueLink.getAttribute("href")).toBe("#/reader?work=work-2");
+    const readLink = within(group).getByRole("link", { name: "Read" });
+    expect(readLink.getAttribute("href")).toBe("#/reader?work=work-1");
+  });
+
+  it("asks the parent to open the manage-content surface for a work", async () => {
+    const onManageContent = vi.fn();
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    const group = await screen.findByRole("region", { name: "George Orwell" });
+    await user.click(within(group).getByRole("button", { name: "Manage content" }));
+
+    expect(onManageContent).toHaveBeenCalledWith("work-1");
   });
 
   it("renders a singular work count for an author with one work", async () => {
@@ -267,15 +309,11 @@ describe("AdminLibraryPage", () => {
     });
   });
 
-  it("notifies the parent of the created work so a sibling panel can refresh and select it", async () => {
-    const onWorkCreated = vi.fn();
+  it("opens the manage-content surface for a freshly created work", async () => {
+    const onManageContent = vi.fn();
     mockedCreateWork.mockResolvedValue(essayWorkItem);
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
-    const user = userEvent.setup();
-    render(<AdminLibraryPage onWorkCreated={onWorkCreated} />);
-    await waitFor(() => {
-      expect(screen.queryByText("Loading the library…")).toBeNull();
-    });
+    const user = await renderReady(onManageContent);
     await openAddWork(user);
 
     await user.type(screen.getByLabelText("Title"), "Politics and the English Language");
@@ -283,7 +321,7 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     await waitFor(() => {
-      expect(onWorkCreated).toHaveBeenCalledWith("work-1");
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
     });
   });
 
@@ -357,8 +395,8 @@ describe("AdminLibraryPage", () => {
     expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
   });
 
-  it("notifies the parent of an EPUB-imported work so a sibling panel can refresh and select it", async () => {
-    const onWorkCreated = vi.fn();
+  it("does not open the manage-content surface after an EPUB import", async () => {
+    const onManageContent = vi.fn();
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
     const epubWork: WorkListItemDto = {
       author: epubAuthor,
@@ -375,20 +413,15 @@ describe("AdminLibraryPage", () => {
       work: epubWork.work
     });
     mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
-    const user = userEvent.setup();
-    render(<AdminLibraryPage onWorkCreated={onWorkCreated} />);
-    await waitFor(() => {
-      expect(screen.queryByText("Loading the library…")).toBeNull();
-    });
+    const user = await renderReady(onManageContent);
 
     const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
       type: "application/epub+zip"
     });
     await user.upload(screen.getByLabelText("Upload EPUB"), file);
 
-    await waitFor(() => {
-      expect(onWorkCreated).toHaveBeenCalledWith("work-epub");
-    });
+    expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
+    expect(onManageContent).not.toHaveBeenCalled();
   });
 
   it("shows an error when the EPUB ingestion fails", async () => {

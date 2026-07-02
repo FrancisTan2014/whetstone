@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createAuthor, createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
+import {
+  createAuthor,
+  createWork,
+  fetchAuthors,
+  fetchWorks,
+  fetchWorksWithReadingPosition,
+  ingestEpub
+} from "./libraryApi";
 
 function stubFetch(response: {
   ok: boolean;
@@ -34,6 +41,23 @@ describe("libraryApi", () => {
 
     await expect(fetchWorks()).resolves.toEqual({ works: [] });
     expect(fetchMock).toHaveBeenCalledWith("/api/works", undefined);
+  });
+
+  it("fetches the set of works with a saved reading position", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { workEntryIds: ["work-1", "work-3"] } });
+
+    const set = await fetchWorksWithReadingPosition();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/reading-position/works");
+    expect([...set]).toEqual(["work-1", "work-3"]);
+    expect(set.has("work-1")).toBe(true);
+    expect(set.has("work-2")).toBe(false);
+  });
+
+  it("throws when the works-with-position request fails", async () => {
+    stubFetch({ ok: false, status: 503, body: undefined });
+
+    await expect(fetchWorksWithReadingPosition()).rejects.toThrow("failed with status 503");
   });
 
   it("posts a new author and returns the created author", async () => {

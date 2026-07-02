@@ -174,18 +174,33 @@ describe("WorkContentPanel", () => {
     expect(readerLink.getAttribute("href")).toBe("#/reader?work=work-1");
   });
 
-  it("lists a work's reading units and blocks in order", async () => {
+  it("summarizes reading units and block counts by default and reveals blocks on demand", async () => {
     mockedFetchWorkContent.mockResolvedValue(contentA);
 
-    await renderReady();
+    const user = await renderReady();
 
+    // Default view: reading-unit summary with block counts, no per-block plaintext/type rows.
     expect(screen.getByText("Untitled section")).toBeDefined();
     expect(screen.getByText("1 block")).toBeDefined();
     expect(screen.getByText("2 blocks")).toBeDefined();
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+    expect(screen.queryByText("More text.")).toBeNull();
+
+    const toggle = screen.getByRole("button", { name: "View blocks" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await user.click(toggle);
+
     expect(screen.getByText("Intro paragraph.")).toBeDefined();
     expect(screen.getByText("More text.")).toBeDefined();
     expect(screen.getByText("heading")).toBeDefined();
     expect(screen.getAllByText("paragraph")).toHaveLength(2);
+
+    const hide = screen.getByRole("button", { name: "Hide blocks" });
+    expect(hide.getAttribute("aria-expanded")).toBe("true");
+    await user.click(hide);
+
+    expect(screen.queryByText("Intro paragraph.")).toBeNull();
+    expect(screen.getByRole("button", { name: "View blocks" })).toBeDefined();
   });
 
   it("shows a no-content message for an empty work", async () => {
@@ -207,8 +222,8 @@ describe("WorkContentPanel", () => {
     await user.type(screen.getByLabelText("Markdown"), "# Hi");
     await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
 
-    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
-    expect(screen.getByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(screen.getByText("2 reading units · 3 blocks")).toBeDefined();
     expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
       kind: "manual",
       markdown: "# Hi"
@@ -263,8 +278,8 @@ describe("WorkContentPanel", () => {
     await user.upload(screen.getByLabelText("Upload a .md file"), file);
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
-    expect(await screen.findByText("Intro paragraph.")).toBeDefined();
-    expect(screen.getByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(screen.getByText("2 reading units · 3 blocks")).toBeDefined();
     expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
       fileName: "notes.md",
       kind: "upload",
@@ -317,14 +332,15 @@ describe("WorkContentPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Work B" }));
 
-    expect(await screen.findByText("Work B body.")).toBeDefined();
-    expect(screen.getByRole("heading", { level: 3, name: "Work B" })).toBeDefined();
+    expect(await screen.findByRole("heading", { level: 3, name: "Work B" })).toBeDefined();
     expect(
       screen.getByText("George Orwell · classical text · 中文（简体） Simplified Chinese")
     ).toBeDefined();
     expect(screen.getByRole("button", { name: "Work B" }).getAttribute("aria-pressed")).toBe(
       "true"
     );
+    await user.click(screen.getByRole("button", { name: "View blocks" }));
+    expect(screen.getByText("Work B body.")).toBeDefined();
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-2");
   });
 
@@ -361,7 +377,6 @@ describe("WorkContentPanel", () => {
     rerender(<WorkContentPanel focusWorkEntryId="work-2" />);
 
     expect(await screen.findByRole("heading", { level: 3, name: "Work B" })).toBeDefined();
-    expect(screen.getByText("Work B body.")).toBeDefined();
     expect(screen.getByRole("button", { name: "Work B" }).getAttribute("aria-pressed")).toBe(
       "true"
     );

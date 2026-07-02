@@ -17,7 +17,13 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { Spinner } from "../../shared/ui/Spinner";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
-import { createWork, fetchAuthors, fetchWorks, ingestEpub } from "./libraryApi";
+import {
+  createWork,
+  fetchAuthors,
+  fetchWorks,
+  fetchWorksWithReadingPosition,
+  ingestEpub
+} from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 
 const newAuthorOption = "new-author-or-source";
@@ -33,15 +39,16 @@ function workCountLabel(count: number): string {
 }
 
 type AdminLibraryPageProps = Readonly<{
-  // Called with a work's entry id right after it is created or imported, so a sibling
-  // panel (e.g. Work detail) can refresh and select the new work without a page reload.
-  onWorkCreated?: (workEntryId: string) => void;
+  // Opening a work's focused content-management surface (manual Markdown + `.md` upload) is owned by
+  // the app-level Library composition, so the shelf stays a calm list and only emits the intent.
+  onManageContent: (workEntryId: string) => void;
 }>;
 
-export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): React.JSX.Element {
+export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): React.JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [authors, setAuthors] = useState<ReadonlyArray<AuthorDto>>([]);
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
+  const [worksWithPosition, setWorksWithPosition] = useState<ReadonlySet<string>>(new Set());
 
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -58,9 +65,14 @@ export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): Reac
   const toast = useToast();
 
   async function reload(): Promise<void> {
-    const [authorList, workList] = await Promise.all([fetchAuthors(), fetchWorks()]);
+    const [authorList, workList, withPosition] = await Promise.all([
+      fetchAuthors(),
+      fetchWorks(),
+      fetchWorksWithReadingPosition()
+    ]);
     setAuthors(authorList.authors);
     setWorks(workList.works);
+    setWorksWithPosition(withPosition);
   }
 
   useEffect(() => {
@@ -112,7 +124,7 @@ export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): Reac
       setAddOpen(false);
       await reload();
       toast.success(`Added “${trimmedTitle}”.`);
-      onWorkCreated?.(created.work.entryId);
+      onManageContent(created.work.entryId);
     } catch {
       toast.error("Could not save the work. Please try again.");
     } finally {
@@ -134,7 +146,6 @@ export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): Reac
       const result = await ingestEpub(file);
       await reload();
       toast.success(`Imported “${result.work.title}”.`);
-      onWorkCreated?.(result.work.entryId);
     } catch {
       toast.error("Could not ingest the EPUB. Please try again.");
     } finally {
@@ -187,7 +198,14 @@ export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): Reac
       {loadState === "loading" ? <LoadingIndicator label="Loading the library…" /> : null}
       {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
 
-      {loadState === "ready" ? renderLibrary(groups, listVariants, cardVariants) : null}
+      {loadState === "ready"
+        ? renderLibrary(groups, {
+            cardVariants,
+            listVariants,
+            onManageContent,
+            worksWithPosition
+          })
+        : null}
 
       {addOpen ? (
         <Sheet onOpenChange={setAddOpen} open title="Add work">
@@ -278,10 +296,16 @@ export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): Reac
   );
 }
 
+type RenderLibraryOptions = Readonly<{
+  cardVariants: Variants;
+  listVariants: Variants;
+  onManageContent: (workEntryId: string) => void;
+  worksWithPosition: ReadonlySet<string>;
+}>;
+
 function renderLibrary(
   groups: ReadonlyArray<AuthorWorks>,
-  listVariants: Variants,
-  cardVariants: Variants
+  options: RenderLibraryOptions
 ): React.JSX.Element {
   if (groups.length === 0) {
     return (
@@ -305,38 +329,59 @@ function renderLibrary(
             animate="visible"
             className="grid gap-3 sm:grid-cols-2"
             initial="hidden"
-            variants={listVariants}
+            variants={options.listVariants}
           >
-            {group.works.map((item) => (
-              <motion.li
-                className="flex flex-col gap-2 rounded border border-border bg-surface p-4"
-                key={item.work.entryId}
-                variants={cardVariants}
-              >
-                <h3 className="font-serif text-lg text-text">{item.work.title}</h3>
-                <p className="text-sm text-text-muted">
-                  {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
-                </p>
-                <div className="mt-auto flex gap-4 text-sm">
-                  <a
-                    className="text-accent hover:text-accent-hover"
-                    href={`#/reader?work=${encodeURIComponent(item.work.entryId)}`}
-                  >
-                    Continue reading
-                  </a>
-                  <a
-                    className="text-accent hover:text-accent-hover"
-                    download={`${item.work.title}.md`}
-                    href={`/api/works/${item.work.entryId}/content/markdown`}
-                  >
-                    Export Markdown
-                  </a>
-                </div>
-              </motion.li>
-            ))}
+            {group.works.map((item) => renderWorkCard(item, options))}
           </motion.ul>
         </section>
       ))}
     </div>
+  );
+}
+
+function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): React.JSX.Element {
+  const workEntryId = item.work.entryId;
+  // "Continue" only when the reader has a saved position for this work; otherwise a truthful "Read".
+  const resumes = options.worksWithPosition.has(workEntryId);
+
+  return (
+    <motion.li
+      className="flex flex-col gap-2 rounded border border-border bg-surface p-4"
+      key={workEntryId}
+      variants={options.cardVariants}
+    >
+      <h3 className="font-serif text-lg text-text">{item.work.title}</h3>
+      <p className="text-sm text-text-muted">
+        {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
+      </p>
+      <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+        <a
+          className="font-medium text-accent hover:text-accent-hover"
+          href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
+        >
+          {resumes ? "Continue" : "Read"}
+        </a>
+        <button
+          className="text-accent hover:text-accent-hover"
+          onClick={() => options.onManageContent(workEntryId)}
+          type="button"
+        >
+          Manage content
+        </button>
+        <a
+          className="text-accent hover:text-accent-hover"
+          href={`#/notes?work=${encodeURIComponent(workEntryId)}`}
+        >
+          Notes
+        </a>
+        <a
+          className="text-accent hover:text-accent-hover"
+          download={`${item.work.title}.md`}
+          href={`/api/works/${workEntryId}/content/markdown`}
+        >
+          Export Markdown
+        </a>
+      </div>
+    </motion.li>
   );
 }

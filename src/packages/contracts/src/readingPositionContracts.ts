@@ -65,6 +65,19 @@ export const latestReadingPositionResponseSchema = z
 
 export type LatestReadingPositionResponse = z.infer<typeof latestReadingPositionResponseSchema>;
 
+// The Library shelf's "Read vs Continue" seam: the entry ids of the works the current user has a
+// saved reading position for, so each card can truthfully offer "Continue" only when one exists
+// (the per-work GET above answers one work; this answers the whole shelf in a single request).
+export const worksWithReadingPositionResponseSchema = z
+  .object({
+    workEntryIds: z.array(z.string())
+  })
+  .strict();
+
+export type WorksWithReadingPositionResponse = z.infer<
+  typeof worksWithReadingPositionResponseSchema
+>;
+
 export function parseUpsertReadingPositionRequest(value: unknown): UpsertReadingPositionRequest {
   return upsertReadingPositionRequestSchema.parse(value);
 }
@@ -75,4 +88,10 @@ export function parseReadingPositionResponse(value: unknown): ReadingPositionRes
 
 export function parseLatestReadingPositionResponse(value: unknown): LatestReadingPositionResponse {
   return latestReadingPositionResponseSchema.parse(value);
+}
+
+export function parseWorksWithReadingPositionResponse(
+  value: unknown
+): WorksWithReadingPositionResponse {
+  return worksWithReadingPositionResponseSchema.parse(value);
 }

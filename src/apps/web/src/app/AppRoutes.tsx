@@ -1,10 +1,7 @@
-import { useState } from "react";
 import { Route, Routes, useSearchParams } from "react-router-dom";
 
-import { WorkContentPanel } from "../features/content/WorkContentPanel.js";
 import { DiaryPage } from "../features/diary/DiaryPage.js";
 import { createDiaryCapture } from "../features/diary/diaryCapture.js";
-import { AdminLibraryPage } from "../features/library/AdminLibraryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
@@ -15,21 +12,7 @@ import { TodayPage } from "../features/today/TodayPage.js";
 import { createLiveCapture, isVoiceCaptureSupported } from "../features/session/liveCapture.js";
 import { createBrowserVoiceOut } from "../features/session/browserVoiceOut.js";
 import { AppShell } from "./AppShell.js";
-
-// The Library mode keeps the existing admin + content screens mounted together; it now lives at
-// `/library` because the proactive Today home (#319) is the app's landing. It lifts the just-created
-// work's entry id so the content panel refreshes and selects a newly added/imported work without a
-// page reload.
-function LibraryMode(): React.JSX.Element {
-  const [focusWorkEntryId, setFocusWorkEntryId] = useState<string | undefined>(undefined);
-
-  return (
-    <div className="mx-auto max-w-5xl p-4">
-      <AdminLibraryPage onWorkCreated={setFocusWorkEntryId} />
-      <WorkContentPanel focusWorkEntryId={focusWorkEntryId} />
-    </div>
-  );
-}
+import { LibraryMode } from "./LibraryMode.js";
 
 // The reader route opens straight into a work when the library passes `?work=<entryId>`;
 // an optional `?block=<entryId>` deep-links to a specific block. Without a work param the
@@ -43,6 +26,14 @@ function ReaderRoute(): React.JSX.Element {
       initialWorkEntryId={searchParams.get("work") ?? undefined}
     />
   );
+}
+
+// The Library's contextual "Notes" action routes to `#/notes?work=<entryId>`; the route reads that
+// param so the Notes list can narrow to a single work. Without it, Notes shows every saved note.
+function NotesRoute(): React.JSX.Element {
+  const [searchParams] = useSearchParams();
+
+  return <NotesPage focusWorkEntryId={searchParams.get("work") ?? undefined} />;
 }
 
 // Routes for the four navigation modes, all nested under the shell layout. Hash/memory
@@ -68,7 +59,7 @@ export function AppRoutes(): React.JSX.Element {
         />
         <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<RecallPage />} path="recall" />
-        <Route element={<NotesPage />} path="notes" />
+        <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createDiaryCapture()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />
       </Route>
