@@ -208,6 +208,7 @@ export {
   parseIngestMarkdownRequest,
   parseWorkAnchorIndex,
   pdfContentType,
+  tocEntryDtoSchema,
   workAnchorEntryDtoSchema,
   workAnchorIndexDtoSchema
 } from "./contentContracts.js";
@@ -220,6 +221,7 @@ export type {
   ReadingUnitContentDto,
   ReadingUnitDto,
   ReadingUnitStructureDto,
+  TocEntryDto,
   WorkAnchorEntryDto,
   WorkAnchorIndexDto,
   WorkContentDto,

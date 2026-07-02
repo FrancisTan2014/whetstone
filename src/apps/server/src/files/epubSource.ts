@@ -12,6 +12,7 @@ import {
 
 import { normalizeEpubMetadata, type NormalizedEpubMetadata } from "@whetstone/domain";
 
+import { selectNavResource } from "./epubNav.js";
 import { isZipArchive } from "./zipArchive.js";
 
 // One image referenced by a chapter: `src` is the rewritten `<img src>` exactly as it
@@ -35,9 +36,21 @@ export type ParsedEpubChapter = Readonly<{
   sourceFile: string;
 }>;
 
+// The EPUB's authored navigation document (#379), surfaced additively so ingestion can persist the
+// nav tree. `source` is the decoded document text (fed to `parseNavDocument`), `kind` selects the
+// grammar (EPUB3 `nav.xhtml` vs EPUB2 `toc.ncx`), and `path` is the nav document's own manifest href
+// — the base each entry href is resolved against to recover a spine source-file identity. Absent when
+// the EPUB declares no nav resource, or reading/decoding it failed (fail-soft, never a throw).
+export type ParsedEpubNav = Readonly<{
+  kind: "xhtml-nav" | "ncx";
+  path: string;
+  source: string;
+}>;
+
 export type ParsedEpub = Readonly<{
   chapters: ReadonlyArray<ParsedEpubChapter>;
   metadata: NormalizedEpubMetadata;
+  nav?: ParsedEpubNav;
 }>;
 
 // The EPUB parsing boundary: bytes in, normalized metadata and ordered chapter HTML +
@@ -59,6 +72,13 @@ function extractImageSrcs(html: string): string[] {
   );
 }
 
+// The saved-path scheme the parser uses for every manifest resource: the manifest href with `/`
+// replaced by `_`, under `resourceSaveDir`. Shared by the media-type map and the nav reader so both
+// resolve a manifest href to the file the parser wrote to disk.
+function savedResourcePath(href: string, resourceSaveDir: string): string {
+  return resolve(resourceSaveDir, href.replace(/\//g, "_"));
+}
+
 // The parser saves each manifest resource under `resourceSaveDir`, naming it by the
 // manifest href with `/` replaced by `_`, and rewrites chapter `<img src>` to that same
 // absolute path. Mapping saved path -> manifest media type lets a rewritten src resolve
@@ -70,10 +90,50 @@ function mediaTypeBySavedPath(
   const byPath = new Map<string, string>();
 
   for (const item of Object.values(manifest)) {
-    byPath.set(resolve(resourceSaveDir, item.href.replace(/\//g, "_")), item.mediaType);
+    byPath.set(savedResourcePath(item.href, resourceSaveDir), item.mediaType);
   }
 
   return byPath;
+}
+
+// Fail-fast UTF-8 decoder for the nav document: an undecodable nav resource must be omitted (fail-soft),
+// not surfaced as replacement characters, so the byte stream is decoded with `fatal` and the throw is
+// caught by the caller.
+const navTextDecoder = new TextDecoder("utf-8", { fatal: true });
+
+// Surface the EPUB's authored navigation document (#379) while the archive's resources are on disk.
+// Identify the nav resource from the manifest (`selectNavResource`: EPUB3 `nav` property wins over a
+// legacy NCX media type), read its saved bytes with the same path scheme as every other resource, and
+// decode to UTF-8. Fail-soft at every step — no nav resource, missing/empty bytes, or an undecodable
+// stream all yield `undefined` so ingestion simply persists no TOC, never a throw. `path` is the nav
+// resource's own manifest href, the base a nav entry's relative href resolves against.
+async function readNavDocument(
+  manifest: Record<string, ManifestItem>,
+  resourceSaveDir: string
+): Promise<ParsedEpubNav | undefined> {
+  const selected = selectNavResource(
+    Object.values(manifest).map((item) => ({
+      href: item.href,
+      ...(item.mediaType === undefined ? {} : { mediaType: item.mediaType }),
+      ...(item.properties === undefined ? {} : { properties: item.properties })
+    }))
+  );
+
+  if (selected === undefined) {
+    return undefined;
+  }
+
+  const bytes = await readResourceBytes(savedResourcePath(selected.href, resourceSaveDir));
+
+  if (bytes === null) {
+    return undefined;
+  }
+
+  try {
+    return { kind: selected.kind, path: selected.href, source: navTextDecoder.decode(bytes) };
+  } catch {
+    return undefined;
+  }
 }
 
 // Read one manifest resource's bytes, tolerating the two ways a declared resource can be
@@ -255,7 +315,8 @@ export function createEpubParser(
 
     try {
       const metadata = normalizeEpubMetadata(epub.getMetadata());
-      const mediaTypes = mediaTypeBySavedPath(epub.getManifest(), resourceSaveDir);
+      const manifest = epub.getManifest();
+      const mediaTypes = mediaTypeBySavedPath(manifest, resourceSaveDir);
       const chapters: ParsedEpubChapter[] = [];
 
       for (const item of epub.getSpine()) {
@@ -273,7 +334,12 @@ export function createEpubParser(
         });
       }
 
-      return Object.freeze({ chapters, metadata });
+      // The authored nav is read while the parser's saved resources are still on disk (they persist
+      // past `destroy()`, but reading here keeps the on-disk contract local). Fail-soft: `undefined`
+      // when the EPUB has no nav resource or it could not be read/decoded (#379).
+      const nav = await readNavDocument(manifest, resourceSaveDir);
+
+      return Object.freeze({ chapters, metadata, ...(nav === undefined ? {} : { nav }) });
     } finally {
       epub.destroy();
     }

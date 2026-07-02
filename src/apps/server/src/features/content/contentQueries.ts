@@ -5,6 +5,7 @@ import type {
   ReadingUnitContentDto,
   ReadingUnitDto,
   ReadingUnitStructureDto,
+  TocEntryDto,
   WorkAnchorEntryDto,
   WorkAnchorIndexDto,
   WorkContentDto,
@@ -14,7 +15,7 @@ import { and, asc, count, eq, isNotNull, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
-import { blocks, docBlocks, readingUnits, workMeta, workSources } from "../../db/schema.js";
+import { blocks, docBlocks, readingUnits, tocEntries, workMeta, workSources } from "../../db/schema.js";
 
 type ReadingUnitRow = Readonly<{
   entryId: string;
@@ -200,12 +201,79 @@ export async function loadWorkStructure(
     )
     .orderBy(asc(readingUnits.orderIndex));
 
+  const structureUnits = rows.filter((row) => row.blockCount > 0);
+  const tableOfContents = await loadTableOfContents(db, workEntryId, structureUnits);
+
   return {
     // Exclude units with no renderable mdast blocks (an unknown-only / PM-only chapter persisted for
     // its `doc_blocks`, or a unit whose blocks were all soft-deleted); the mdast reader shows only
     // units with content until #312 swaps it to the PM block rows (mirrors loadWorkContent).
-    readingUnits: rows.filter((row) => row.blockCount > 0).map(toStructureDto),
-    workEntryId
+    readingUnits: structureUnits.map(toStructureDto),
+    workEntryId,
+    // Additive nav-derived TOC (#379): present only for a work with an authored nav; omitted (never
+    // an empty array) otherwise, so the reader falls back to the flat reading-unit list.
+    ...(tableOfContents.length === 0 ? {} : { tableOfContents })
+  };
+}
+
+// The work's authored table of contents (#379): its persisted `toc_entries` in pre-order, each with
+// its target reading unit resolved from the entry's source-file identity. `targetUnitEntryId` is the
+// navigable unit whose `source_file` matches the entry's `target_source_file` (the first, matching the
+// reader's top-to-bottom order) — omitted when the entry has no source file or its file has no
+// navigable unit, so the reader no-ops that selection. Only units the reader actually lists (those
+// with renderable blocks) are eligible targets, so a resolved entry always opens a real unit.
+async function loadTableOfContents(
+  db: DbClient,
+  workEntryId: EntryId,
+  structureUnits: ReadonlyArray<{ entryId: string; sourceFile: string | null }>
+): Promise<ReadonlyArray<TocEntryDto>> {
+  const rows = await db
+    .select({
+      depth: tocEntries.depth,
+      entryId: tocEntries.entryId,
+      label: tocEntries.label,
+      orderIndex: tocEntries.orderIndex,
+      parentEntryId: tocEntries.parentEntryId,
+      targetAnchor: tocEntries.targetAnchor,
+      targetSourceFile: tocEntries.targetSourceFile
+    })
+    .from(tocEntries)
+    .where(eq(tocEntries.workEntryId, workEntryId))
+    .orderBy(asc(tocEntries.orderIndex));
+
+  const unitBySourceFile = new Map<string, string>();
+  for (const unit of structureUnits) {
+    if (unit.sourceFile !== null && !unitBySourceFile.has(unit.sourceFile)) {
+      unitBySourceFile.set(unit.sourceFile, unit.entryId);
+    }
+  }
+
+  return rows.map((row) => toTocEntryDto(row, unitBySourceFile));
+}
+
+function toTocEntryDto(
+  row: Readonly<{
+    depth: number;
+    entryId: string;
+    label: string;
+    orderIndex: number;
+    parentEntryId: string | null;
+    targetAnchor: string | null;
+    targetSourceFile: string | null;
+  }>,
+  unitBySourceFile: ReadonlyMap<string, string>
+): TocEntryDto {
+  const targetUnitEntryId =
+    row.targetSourceFile === null ? undefined : unitBySourceFile.get(row.targetSourceFile);
+
+  return {
+    depth: row.depth,
+    entryId: row.entryId,
+    label: row.label,
+    orderIndex: row.orderIndex,
+    ...(row.parentEntryId === null ? {} : { parentEntryId: row.parentEntryId }),
+    ...(targetUnitEntryId === undefined ? {} : { targetUnitEntryId }),
+    ...(row.targetAnchor === null ? {} : { targetAnchor: row.targetAnchor })
   };
 }
 

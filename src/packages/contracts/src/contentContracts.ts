@@ -102,8 +102,33 @@ export type ReadingUnitStructureDto = Readonly<{
   title?: string;
 }>;
 
+// One entry in a work's nav-derived table of contents (#379): an authored nav label plus where it
+// points. `depth` and `parentEntryId` capture the authored hierarchy; `orderIndex` is a work-global
+// pre-order rank so entries render fully expanded and correctly indented. `targetUnitEntryId` is the
+// reading unit the entry opens — resolved server-side from the entry's source-file identity via
+// `reading_units.source_file` (#366) — absent for a label-only/structural entry or one whose target
+// file has no navigable unit (its selection no-ops). `targetAnchor` is the `#fragment` to scroll to
+// within that unit; absent for a whole-file entry (open the unit top).
+export const tocEntryDtoSchema = z
+  .object({
+    depth: z.number().int(),
+    entryId: z.string(),
+    label: z.string(),
+    orderIndex: z.number().int(),
+    parentEntryId: z.string().optional(),
+    targetAnchor: z.string().optional(),
+    targetUnitEntryId: z.string().optional()
+  })
+  .strict();
+
+export type TocEntryDto = z.infer<typeof tocEntryDtoSchema>;
+
 export type WorkStructureDto = Readonly<{
   readingUnits: ReadonlyArray<ReadingUnitStructureDto>;
+  // The work's authored table of contents (#379), served additively alongside the spine-driven
+  // reading units. Present only for a work with an authored EPUB nav; absent for Markdown or a
+  // nav-less EPUB, where the reader falls back to the flat reading-unit list.
+  tableOfContents?: ReadonlyArray<TocEntryDto>;
   workEntryId: EntryId;
 }>;
 
