@@ -1,13 +1,15 @@
 import type { DictionaryEntry } from "@whetstone/contracts";
 
+import type { LlmModel } from "../llm/llmModel.js";
+
 // The lookup "Explain in context" seam (#341): an optional, local-first LLM aid for Chinese selections
 // that dictionaries structurally miss (classical-Chinese terms, 成語, allusions, proper nouns). It is a
 // clearly-labeled contextual explanation, NEVER dressed as an authoritative dictionary entry — its
 // superpower is explaining the selected span AS USED IN ITS SENTENCE, exactly where dictionaries dead
 // end. Absent-config-safe, mirroring the coach seam (#206): with no model configured it resolves to a
 // provider that returns null, so the tab shows the honest "unavailable" state and `pnpm validate` stays
-// green with no model. The network boundary (the real Ollama call) lives in the wiring layer
-// (index.ts), injected here as `ExplainModel`, so this module stays pure and fully testable.
+// green with no model. The network boundary (the real Ollama call) lives behind the shared `LlmModel`
+// seam (#385), injected here, so this module stays pure and fully testable.
 
 // One explanation request: the selected term, its containing block text (bounded context), and the
 // work language, so the prompt can ask for a brief 文言-aware gloss of the term in context.
@@ -16,10 +18,6 @@ export type ExplainRequest = Readonly<{
   language: string;
   term: string;
 }>;
-
-// The model-agnostic call: a prompt in, the model's raw text out. The concrete local (Ollama) or cloud
-// implementation is injected by the wiring layer; tests inject a deterministic fake.
-export type ExplainModel = (prompt: string) => Promise<string>;
 
 // An explanation source: the selected span explained in context, or null when there is nothing to show
 // (no model configured, a timeout/error, or an empty response) so the tab falls to its honest empty
@@ -71,7 +69,7 @@ export function formatExplanation(
 // aborts on timeout, the daemon is down, etc.) resolves to null so the tab shows its honest error state
 // rather than hanging or crashing — the fail-safe stance every lookup source takes.
 export function createLlmExplainer(dependencies: {
-  model: ExplainModel;
+  model: LlmModel;
   modelName: string;
 }): ExplainProvider {
   return async (request) => {
@@ -101,7 +99,7 @@ export function readExplainConfig(env: NodeJS.ProcessEnv = process.env): Explain
 // configured, exactly like the coach seam.
 export function resolveExplainer(dependencies: {
   config: ExplainConfig;
-  createModel?: (modelName: string) => ExplainModel;
+  createModel?: (modelName: string) => LlmModel;
 }): ExplainProvider {
   const { config, createModel } = dependencies;
 

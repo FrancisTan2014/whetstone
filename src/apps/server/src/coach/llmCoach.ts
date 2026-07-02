@@ -14,14 +14,14 @@ import {
 } from "@whetstone/contracts";
 import type { ReviewGrade } from "@whetstone/domain";
 
+import type { LlmModel } from "../llm/llmModel.js";
 import type { CoachProvider } from "./coachProvider.js";
 
-// The model boundary: prompt in, completion text out. Real adapters spawn a local Ollama or a cloud
-// API behind this; tests inject a deterministic fake, so the judge logic is exercised with no I/O.
-export type ChatModel = (prompt: string) => Promise<string>;
-
+// The model boundary: the shared `LlmModel` seam (#385) — prompt in, completion text out. Real adapters
+// run a local Ollama (or a cloud provider) behind it; tests inject a deterministic fake, so the judge
+// logic is exercised with no I/O.
 export type LlmCoachDependencies = Readonly<{
-  chat: ChatModel;
+  chat: LlmModel;
   // Everything except analyze (and gradeForScheduler) delegates here: in v0 only the end-of-round
   // judge is real; converse/judge/propose/author stay on the deterministic fallback (#241).
   fallback: CoachProvider;
