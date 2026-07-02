@@ -315,10 +315,21 @@ function CallView({
   wrapUp: boolean;
 }>): React.JSX.Element {
   const [typed, setTyped] = useState("");
+  const [showTyped, setShowTyped] = useState(false);
   const busy = phase === "thinking" || phase === "speaking";
-  // Offer voice only when the browser supports capture and a previous start hasn't already degraded to
-  // typed-only; otherwise the call runs on the typed box, which is always present.
-  const canStart = liveDeps?.supported === true && !started && !micUnavailable;
+  // Voice is the primary path when the browser supports capture and a start hasn't degraded to
+  // typed-only. When voice isn't an option (unsupported or a failed mic) the call runs typed-only, so
+  // the typed box is shown with a calm explanation; otherwise it stays hidden behind "Type instead".
+  const voiceSupported = liveDeps?.supported === true;
+  const typedOnly = !voiceSupported || micUnavailable;
+  const typedVisible = typedOnly || showTyped;
+  // The call surface (call-state, captions, End) is live once voice has started or the typed path is in
+  // play. Before that the page is a calm pre-call hero: the situation and one primary "Start call".
+  const underway = started || typedVisible;
+  // The concrete deps to start voice with, or undefined when Start shouldn't be offered — folding the
+  // guard into one value keeps the button unconditional (no unreachable branch) and typed for onStart.
+  const startDeps =
+    voiceSupported && !started && !micUnavailable && !showTyped ? liveDeps : undefined;
 
   function submitTyped(): void {
     const transcript = typed.trim();
@@ -332,10 +343,36 @@ function CallView({
   return (
     <Shell>
       <div className="flex flex-col gap-4">
-        <div className="rounded border border-border bg-surface p-4">
+        {/* The situation is the hero before the call, then recedes to a quiet strip once it's underway. */}
+        <div
+          className={
+            underway
+              ? "rounded border border-border bg-surface px-3 py-2"
+              : "rounded border border-border bg-surface p-4"
+          }
+        >
           <p className="text-sm text-text-muted">{call.communicativeFunction}</p>
-          <p className="text-lg text-text">{call.situation}</p>
+          <p className={underway ? "text-sm text-text-muted" : "text-lg text-text"}>
+            {call.situation}
+          </p>
         </div>
+
+        {!underway ? (
+          <p className="text-text">
+            When you&apos;re ready, start the call and just talk with your coach — no script.
+          </p>
+        ) : null}
+
+        {typedOnly ? (
+          <p
+            className="rounded border border-border bg-surface px-3 py-2 text-sm text-text-muted"
+            role="status"
+          >
+            {micUnavailable
+              ? "Mic unavailable — type your reply below, or enable the mic and reload."
+              : "Voice isn't available on this device — you can do the whole call by typing."}
+          </p>
+        ) : null}
 
         {wrapUp ? (
           <p
@@ -346,16 +383,11 @@ function CallView({
           </p>
         ) : null}
 
-        {micUnavailable ? (
-          <p
-            className="rounded border border-border bg-surface px-3 py-2 text-sm text-text-muted"
-            role="status"
-          >
-            Mic unavailable — type your reply, or enable the mic and reload.
+        {underway ? (
+          <p aria-live="polite" className="text-lg font-medium text-text">
+            {phaseLabels[phase]}
           </p>
         ) : null}
-
-        {started ? <p className="text-sm font-medium text-text">{phaseLabels[phase]}</p> : null}
 
         <ul aria-label="Conversation" aria-live="polite" className="flex flex-col gap-2">
           {captions.map((caption) => (
@@ -375,37 +407,50 @@ function CallView({
           ))}
         </ul>
 
-        <div className="flex flex-wrap gap-2">
-          {liveDeps !== undefined && canStart ? (
-            <Button onClick={() => onStart(liveDeps)} type="button">
+        <div className="flex flex-wrap items-center gap-3">
+          {startDeps !== undefined ? (
+            <Button onClick={() => onStart(startDeps)} type="button">
               Start call
             </Button>
           ) : null}
-          <Button onClick={endCall} type="button" variant="secondary">
-            End &amp; review
-          </Button>
+          {underway ? (
+            <Button onClick={endCall} type="button">
+              End &amp; review
+            </Button>
+          ) : null}
+          {voiceSupported && !typedVisible ? (
+            <button
+              className="text-sm text-text-muted underline underline-offset-2 hover:text-text"
+              onClick={() => setShowTyped(true)}
+              type="button"
+            >
+              Type instead
+            </button>
+          ) : null}
         </div>
 
-        <div className="flex flex-col gap-2 border-t border-border pt-4">
-          <label className="text-sm text-text-muted" htmlFor="session-typed">
-            Or type what you&apos;d say
-          </label>
-          <textarea
-            className="min-h-20 rounded border border-border bg-surface p-3 text-text"
-            id="session-typed"
-            onChange={(event) => setTyped(event.currentTarget.value)}
-            value={typed}
-          />
-          <Button
-            className="self-start"
-            onClick={submitTyped}
-            pending={busy}
-            type="button"
-            variant="secondary"
-          >
-            Send
-          </Button>
-        </div>
+        {typedVisible ? (
+          <div className="flex flex-col gap-2 border-t border-border pt-4">
+            <label className="text-sm text-text-muted" htmlFor="session-typed">
+              Or type what you&apos;d say
+            </label>
+            <textarea
+              className="min-h-20 rounded border border-border bg-surface p-3 text-text"
+              id="session-typed"
+              onChange={(event) => setTyped(event.currentTarget.value)}
+              value={typed}
+            />
+            <Button
+              className="self-start"
+              onClick={submitTyped}
+              pending={busy}
+              type="button"
+              variant="secondary"
+            >
+              Send
+            </Button>
+          </div>
+        ) : null}
       </div>
     </Shell>
   );
