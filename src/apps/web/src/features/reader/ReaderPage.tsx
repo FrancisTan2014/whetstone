@@ -1171,7 +1171,8 @@ function renderViewing(
           depth: entry.depth,
           entryId: entry.entryId,
           label: entry.label,
-          onSelect: () => onSelectTocEntry(structure, entry)
+          onSelect: () => onSelectTocEntry(structure, entry),
+          ...(entry.parentEntryId === undefined ? {} : { parentEntryId: entry.parentEntryId })
         }))}
         mode="tree"
         onClose={tools.onCloseToc}

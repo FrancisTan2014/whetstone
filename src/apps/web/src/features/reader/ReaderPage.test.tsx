@@ -1158,21 +1158,23 @@ describe("ReaderPage", () => {
     expect(screen.queryByRole("navigation", { name: "Table of Contents" })).toBeNull();
   });
 
-  it("renders the authored nav tree indented by depth instead of the Section N unit list", async () => {
+  it("renders the authored nav as a collapsible tree, auto-expanding the active branch", async () => {
     seedNavWork();
     const user = userEvent.setup();
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Chapter one body.");
 
     const toc = await openTocDrawer(user);
-    const entries = Array.from(toc.querySelectorAll("button.readerTocEntry"));
-    expect(entries.map((entry) => entry.textContent)).toEqual([
+    // The active unit is Chapter One, so its parent (Part One) auto-expands and it shows; the sibling
+    // Chapter Two stays collapsed, so its Section 2.1 child is not in the tree yet.
+    const nodes = Array.from(toc.querySelectorAll("li.readerTocNode"));
+    expect(nodes.map((node) => node.querySelector(".readerTocEntry")?.textContent)).toEqual([
       "Part One",
       "Chapter One",
-      "Chapter Two",
-      "Section 2.1"
+      "Chapter Two"
     ]);
-    expect(entries.map((entry) => entry.getAttribute("data-depth"))).toEqual(["0", "1", "1", "2"]);
+    expect(nodes.map((node) => node.getAttribute("data-depth"))).toEqual(["0", "1", "1"]);
+    expect(within(toc).queryByRole("button", { name: "Section 2.1" })).toBeNull();
     // The authored labels replace the guessed "Section N" outline entirely.
     expect(within(toc).queryByRole("button", { name: "Section 1" })).toBeNull();
     expect(within(toc).queryByRole("button", { name: "Section 2" })).toBeNull();
@@ -1180,6 +1182,11 @@ describe("ReaderPage", () => {
     expect(
       within(toc).getByRole("button", { name: "Chapter One" }).getAttribute("aria-current")
     ).toBe("true");
+
+    // Expanding Chapter Two reveals its nested Section 2.1 at depth 2.
+    await user.click(within(toc).getByRole("button", { name: "Expand Chapter Two" }));
+    const section = within(toc).getByRole("button", { name: "Section 2.1" });
+    expect(section.closest("li.readerTocNode")?.getAttribute("data-depth")).toBe("2");
   });
 
   it("marks no nav entry current when the open unit is not an authored target", async () => {
@@ -1231,6 +1238,8 @@ describe("ReaderPage", () => {
     await screen.findByText("Chapter one body.");
 
     const toc = await openTocDrawer(user);
+    // Section 2.1 is nested under the collapsed Chapter Two, so reveal it before selecting it.
+    await user.click(within(toc).getByRole("button", { name: "Expand Chapter Two" }));
     await user.click(within(toc).getByRole("button", { name: "Section 2.1" }));
 
     // The fragment resolves to block b-2b, which the reader jumps to (loading its owning unit).
