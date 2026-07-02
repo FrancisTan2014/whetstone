@@ -6,12 +6,14 @@
 
 import { fileURLToPath } from "node:url";
 
-import { error, missing, ok, withOutputTail } from "../step.mjs";
+import { installSystemTool } from "../installSystemTool.mjs";
+import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
 
 const DEFAULT_MODEL = "small";
 const WRAPPER_DIR = fileURLToPath(new URL("../whisper-wrapper", import.meta.url));
 const SAMPLE_AUDIO = fileURLToPath(new URL("./voice-sample.wav", import.meta.url));
 
+const PYTHON_DOCS = "https://www.python.org/downloads";
 const PYTHON_REMEDY =
   "Install Python 3 (https://www.python.org/downloads, or `winget install Python.Python.3` / " +
   "`brew install python`), then re-run `pnpm setup --voice`.";
@@ -144,6 +146,34 @@ function resolvePython(ctx) {
 }
 
 /**
+ * Readiness probe + install spec for the Python 3 system prerequisite, driven through the shared
+ * consent-gated `installSystemTool` seam. On win32/darwin it offers a native install after an
+ * explicit Y (or `--yes`); everywhere else — and on decline / no package manager — it falls back to
+ * the instruct-only `PYTHON_REMEDY`. `check` here is non-mutating (never installs).
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @returns {import("../step.mjs").StepResult}
+ */
+function pythonCheck(ctx) {
+  return resolvePython(ctx) === null
+    ? missing("Python 3 was not found (required for local Whisper STT).", PYTHON_REMEDY)
+    : ok();
+}
+
+/** @type {import("../installSystemTool.mjs").InstallSpec} */
+const PYTHON_SPEC = {
+  name: "Python 3",
+  check: pythonCheck,
+  remedy: PYTHON_REMEDY,
+  docs: PYTHON_DOCS,
+  question: "Install Python 3 now? [Y/n]",
+  plans: {
+    win32: { manager: "winget", args: ["install", "Python.Python.3"] },
+    darwin: { manager: "brew", args: ["install", "python"] }
+  }
+};
+
+/**
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {Record<string, string>}
  */
@@ -193,11 +223,18 @@ export const voiceStep = {
     return ok();
   },
   provision(ctx) {
+    // Consent-gated: offer to install Python 3 after an explicit Y (or `--yes`); on decline, no
+    // package manager, or a non-interactive run, fall back to the instruct-only remedy unchanged.
+    const pythonReady = installSystemTool(ctx, PYTHON_SPEC);
+    if (!isOk(pythonReady)) {
+      return pythonReady;
+    }
     const python = resolvePython(ctx);
     if (python === null) {
+      // The package manager reported success but Python is still not on this shell's PATH (common on
+      // Windows until a new terminal is opened): instruct the user to re-run in a fresh shell.
       return missing("Python 3 was not found (required for local Whisper STT).", PYTHON_REMEDY);
     }
-
     const pip = ctx.exec(python, ["-m", "pip", "install", "faster-whisper"]);
     if (pip.code !== 0) {
       return error(
