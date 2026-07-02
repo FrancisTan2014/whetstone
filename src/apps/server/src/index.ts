@@ -27,20 +27,12 @@ import { createLookupService, type LookupSource } from "./lookup/lookupService.j
 import { createMoedictProvider } from "./lookup/moedictProvider.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
 import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
-import {
-  readExplainConfig,
-  resolveExplainer,
-  type ExplainModel
-} from "./lookup/explainProvider.js";
+import { readExplainConfig, resolveExplainer } from "./lookup/explainProvider.js";
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
-import {
-  createCoachAdapters,
-  createOllamaChat,
-  defaultCheapModel,
-  probeOllamaModel
-} from "./coach/coachAdapters.js";
+import { createCoachAdapters, defaultCheapModel } from "./coach/coachAdapters.js";
+import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { checkCoachHealth } from "./coach/coachHealth.js";
 import { createDiaryTidy } from "./features/diary/diaryTidy.js";
@@ -104,29 +96,11 @@ lookupSources.push({ id: "cedict", languages: ["zh-CN", "zh-TW"], lookup: cedict
 // The optional local-LLM "AI 解释" contextual aid for Chinese (#341): a labeled, view-only explanation
 // of the selected span in its sentence, served by the local Ollama model named in EXPLAIN_MODEL. Absent
 // config resolves to an "unavailable" provider (the tab shows its honest empty state), so no model is
-// required for the deploy or the gate. The Ollama network boundary lives here in the wiring layer, like
-// the coach's createOllamaChat, and is time-boxed so an unreachable daemon can never hang the tab.
-const createOllamaExplainModel = (model: string): ExplainModel => {
-  return async (prompt) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    try {
-      const response = await fetch("http://127.0.0.1:11434/api/generate", {
-        body: JSON.stringify({ model, prompt, stream: false }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-        signal: controller.signal
-      });
-      const body = (await response.json()) as { response?: string };
-      return body.response ?? "";
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-};
+// required for the deploy or the gate. It shares the one `LlmModel` seam (#385) — the same time-boxed
+// local adapter the coach and diary use — so an unreachable daemon can never hang the tab.
 const explain = resolveExplainer({
   config: readExplainConfig(),
-  createModel: createOllamaExplainModel
+  createModel: createOllamaModel
 });
 lookupSources.push({
   id: "llm",
@@ -187,13 +161,14 @@ const server = createServer({
     sourceFileStore
   },
   currentUser: createDefaultCurrentUserProvider(),
-  // The diary "tidy" seam (#246): reuse the cheap-tier local Ollama model behind the same chat boundary
-  // the coach uses, wrapped with the tidy-not-polish prompt. Local + private, like the rest of v0.
+  // The diary "tidy" seam (#246): reuse the cheap-tier local model behind the shared `LlmModel` seam
+  // (#385) — the same time-boxed Ollama adapter the coach uses — wrapped with the tidy-not-polish
+  // prompt. Local + private, like the rest of v0.
   diary: {
     createId: () => randomUUID(),
     db,
     now: () => new Date(),
-    tidy: createDiaryTidy(createOllamaChat(defaultCheapModel))
+    tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
   },
   images: { imageResourceStore },
   library: {

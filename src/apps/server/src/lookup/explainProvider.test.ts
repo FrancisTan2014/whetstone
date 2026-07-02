@@ -5,9 +5,9 @@ import {
   createLlmExplainer,
   formatExplanation,
   readExplainConfig,
-  resolveExplainer,
-  type ExplainModel
+  resolveExplainer
 } from "./explainProvider.js";
+import type { LlmModel } from "../llm/llmModel.js";
 
 const request = {
   context: "六艺者，礼、乐、射、御、书、数也。",
@@ -54,7 +54,7 @@ describe("formatExplanation", () => {
 
 describe("createLlmExplainer", () => {
   it("prompts the model and formats its answer into an entry", async () => {
-    const model: ExplainModel = vi.fn().mockResolvedValue("在此句中指六种技艺。");
+    const model: LlmModel = vi.fn().mockResolvedValue("在此句中指六种技艺。");
     const explain = createLlmExplainer({ model, modelName: "qwen2.5" });
 
     const entry = await explain(request);
@@ -109,7 +109,7 @@ describe("resolveExplainer", () => {
   });
 
   it("builds the real explainer from the configured model when both are present", async () => {
-    const model: ExplainModel = async () => "语境中的解释。";
+    const model: LlmModel = async () => "语境中的解释。";
     const createModel = vi.fn().mockReturnValue(model);
     const explain = resolveExplainer({ config: { modelName: "qwen2.5" }, createModel });
 

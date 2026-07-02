@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createCoachAdapters, ollamaBaseUrl } from "./coachAdapters.js";
+import { createCoachAdapters, type CoachModelFactories } from "./coachAdapters.js";
 import { createFakeCoach } from "./fakeCoach.js";
+import type { LlmModel } from "../llm/llmModel.js";
 
-// A minimal valid analyze request — enough to drive a tier's analyze() through its ChatModel boundary.
+// A minimal valid analyze request — enough to drive a tier's analyze() through its LlmModel boundary.
 const knobs = {
   challenge: "medium" as const,
   focus: "f",
@@ -23,46 +24,62 @@ const analyzeRequest = {
   words: []
 };
 
-// Stub the network boundary so no real HTTP happens: an empty body makes each LLM tier's analyze parse
-// nothing and degrade to its deterministic fake fallback — while recording which endpoint it reached.
-function mockFetch(): ReturnType<typeof vi.spyOn> {
-  return vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue({ json: () => Promise.resolve({}) } as unknown as Response);
+// Fake the shared LlmModel seam — never the network. Each tier's model returns "" so its analyze parses
+// nothing and degrades to the deterministic fake fallback, while we record that the tier reached the
+// injected model (proving the seam is wired) and which factory built it.
+function fakeFactories(): {
+  cloudModel: ReturnType<typeof vi.fn>;
+  factories: CoachModelFactories;
+  localModel: ReturnType<typeof vi.fn>;
+} {
+  const localModel = vi.fn<LlmModel>(async () => "");
+  const cloudModel = vi.fn<LlmModel>(async () => "");
+  return {
+    cloudModel,
+    factories: { createCloud: vi.fn(() => cloudModel), createLocal: vi.fn(() => localModel) },
+    localModel
+  };
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
 describe("createCoachAdapters", () => {
-  it("keyless: strong is the deterministic fake (no cloud call), cheap is the local Ollama adapter", async () => {
-    const fetchSpy = mockFetch();
-    const adapters = createCoachAdapters(undefined);
+  it("keyless: cheap is the local seam adapter; strong is the deterministic fake (no cloud model built)", async () => {
+    const { cloudModel, factories, localModel } = fakeFactories();
+    const adapters = createCoachAdapters(undefined, "llama3.1:8b", factories);
 
-    // Strong with no key is the fake: analyze resolves deterministically with no network call.
+    // The cheap tier is built from the local factory for the configured model.
+    expect(factories.createLocal).toHaveBeenCalledWith("llama3.1:8b");
+
+    // Strong with no key is the fake: it grades deterministically without ever building/calling cloud.
     const strongResult = await adapters.strong.analyze(analyzeRequest);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(factories.createCloud).not.toHaveBeenCalled();
+    expect(cloudModel).not.toHaveBeenCalled();
     expect(strongResult).toEqual(await createFakeCoach().analyze(analyzeRequest));
 
-    // Cheap is the real local adapter: its analyze reaches the local Ollama endpoint.
+    // Cheap routes analyze through the local seam adapter (then degrades to the fake on empty output).
     await adapters.cheap.analyze(analyzeRequest);
-    expect(fetchSpy).toHaveBeenCalledWith(`${ollamaBaseUrl}/api/generate`, expect.anything());
+    expect(localModel).toHaveBeenCalledOnce();
   });
 
-  it("treats a blank key like no key: strong stays the fake", async () => {
-    const fetchSpy = mockFetch();
-    const adapters = createCoachAdapters("");
+  it("treats a blank key like no key: strong stays the fake, no cloud model built", async () => {
+    const { factories } = fakeFactories();
+    const adapters = createCoachAdapters("", "llama3.1:8b", factories);
 
     await adapters.strong.analyze(analyzeRequest);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(factories.createCloud).not.toHaveBeenCalled();
   });
 
-  it("with a key: strong is the cloud adapter (reaches the cloud endpoint)", async () => {
-    const fetchSpy = mockFetch();
-    const adapters = createCoachAdapters("sk-test", "llama3.1:8b");
+  it("with a key: strong is built from the cloud factory and routes analyze through it", async () => {
+    const { cloudModel, factories } = fakeFactories();
+    const adapters = createCoachAdapters("sk-test", "llama3.1:8b", factories);
 
+    expect(factories.createCloud).toHaveBeenCalledWith("sk-test");
     await adapters.strong.analyze(analyzeRequest);
-    expect(fetchSpy).toHaveBeenCalledWith("https://api.openai.com/v1/responses", expect.anything());
+    expect(cloudModel).toHaveBeenCalledOnce();
+  });
+
+  it("defaults to the real model factories when none are injected (production wiring)", () => {
+    // Building the adapters with the production defaults must not touch the network — the model is only
+    // called on analyze — so constructing them exercises the default wiring without any I/O.
+    expect(() => createCoachAdapters(undefined)).not.toThrow();
   });
 });

@@ -124,8 +124,14 @@ can navigate them from another package.
   `recallTools.ts` (five tools mapping 1:1 to the recall ops; validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
-- Coach LLM seam: `src/coach/` — the model-agnostic boundary the language loop calls (like the
-  dictionary seam). `coachProvider.ts` (the `CoachProvider` interface: judge / gradeForScheduler /
+- Shared LLM seam: `src/llm/` — the one model-agnostic prompt→text boundary every server LLM caller
+  (coach cheap tier, diary tidy, AI 解释) goes through. `llmModel.ts` exports the `LlmModel` type
+  (`(prompt: string) => Promise<string>`), `createOllamaModel(model)` (local Ollama via the Vercel AI
+  SDK over its OpenAI-compatible `/v1`, one shared `llmTimeoutMs`) and `probeOllamaModel(model)` (the
+  boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
+  base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
+- Coach LLM boundary: `src/coach/` — the coaching contract the language loop calls, composed over the
+  shared `src/llm/` seam. `coachProvider.ts` (the `CoachProvider` interface: judge / gradeForScheduler /
   propose / author / converse / analyze), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds
   and runs with no API key), `coachRouter.ts` (cost-routing — judge/converse/analyze=strong,
   propose/author=cheap, configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe
@@ -144,8 +150,9 @@ can navigate them from another package.
     The verdict
     -> SM-2 grade map is pure in `@whetstone/domain`
     (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`).
-    `coachAdapters.ts` wires the real tiers — **cheap = local Ollama** (`llama3.1:8b` on
-    `127.0.0.1:11434`), **strong = cloud** — each composed over the fake so any model/parse failure
+    `coachAdapters.ts` composes the real tiers over the shared `src/llm/` seam — **cheap = local Ollama**
+    (`llama3.1:8b` via `createOllamaModel`), **strong = cloud** — each wrapped over the fake so any
+    model/parse failure
     still grades the round. `coachHealth.ts` is the boot probe (`checkCoachHealth`): it pings the
     local model on startup and reports `local_ready` / `local_unavailable` (with an `ollama pull`
     hint) / `cloud_only` / `fake`, so a missing model degrades cleanly to the fake instead of
@@ -209,9 +216,9 @@ can navigate them from another package.
   After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
   nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
 - Voice diary: `src/features/diary/` (#246) — tap-and-talk capture that REUSES the session STT seam
-  (`transcribe`) and the local-LLM seam, then files a tidied, timestamped block under today's date in the
-  coach-readable learner history. `diaryTidy.ts` `createDiaryTidy(chat: ChatModel)` wraps the injected
-  Ollama chat with the `@whetstone/domain` tidy prompt (drop fillers/false starts/repeats + light reorder,
+  (`transcribe`) and the shared `src/llm/` seam, then files a tidied, timestamped block under today's date in the
+  coach-readable learner history. `diaryTidy.ts` `createDiaryTidy(chat: LlmModel)` wraps the injected
+  model with the `@whetstone/domain` tidy prompt (drop fillers/false starts/repeats + light reorder,
   but preserve wording/meaning/voice — never upgrade vocabulary or translate; language-agnostic);
   `diaryCommands.ts` (`createDiaryEntry` runs the tidy then persists, server-owned `entry_date`=today +
   `created_at`; `updateDiaryEntry`/`deleteDiaryEntry` are user-scoped → 404 otherwise),
@@ -220,7 +227,7 @@ can navigate them from another package.
   `listDiaryEntriesForUser` is the coach-readable facet). `diaryRoutes.ts`:
   `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`, `GET /api/diary/calendar?from&to`,
   `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). Storage is the
-  `diary_entries` table; the tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaChat(...))`.
+  `diary_entries` table; the tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`.
   Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
@@ -366,8 +373,9 @@ can navigate them from another package.
   throws so the lookup surfaces that tab's error only (#196). CC-CEDICT's English glosses are the next
   tab, then the optional local-LLM **"AI 解释"** aid last (`zh-CN`/`zh-TW` →
   `["moedict", "zhwiktionary", "cedict", "llm"]`). `explainProvider.ts` is that pure LLM-explain seam
-  (#341): `resolveExplainer` yields a real Ollama-backed explainer only when `EXPLAIN_MODEL` is set (the
-  network call is wired in the coverage-excluded `index.ts`, like the coach's `createOllamaChat`), else
+  (#341): `resolveExplainer` yields a real Ollama-backed explainer (built on the shared `src/llm/` seam via
+  `createOllamaModel`) only when `EXPLAIN_MODEL` is set (the network call is wired in the coverage-excluded
+  `index.ts`), else
   a provider that returns `null` so the tab shows an honest "unavailable" state — a labeled contextual
   gloss (the selection's block text is passed as `context`), never an authoritative dictionary entry.
   Each
