@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { withTimeout } from "./withTimeout.js";
+
 // The OCR pre-pass seam (#261): scanned PDFs carry no text layer, so before the Docling conversion
 // (#15) an OCR pass adds one. It returns PDF bytes — the same shape Docling already consumes — so a
 // scanned PDF joins the existing one-shot -> Markdown -> blocks funnel. Behind this interface the
@@ -23,6 +25,10 @@ export function createIdentityPdfOcr(): PdfOcr {
 
 export type OcrmypdfDependencies = Readonly<{
   ocrmypdfBinary: string;
+  // Wall-clock bound for the OCR pre-pass. OCRmyPDF/Tesseract can be slow or hang on a large/scanned
+  // PDF; without this the pre-pass runs unbounded and hangs the ingest request before the Docling
+  // timeout can ever fire (#403). Sourced from config — the same bound as the Docling conversion.
+  timeoutMs: number;
   // Run OCRmyPDF over the input PDF, writing the OCR'd PDF to the output path. Injected so the spawn
   // boundary is testable without a real OCRmyPDF/Tesseract install.
   run?: (inputPath: string, outputPath: string) => Promise<void>;
@@ -42,7 +48,13 @@ export function createOcrmypdfPreprocess(dependencies: OcrmypdfDependencies): Pd
         execFile(
           dependencies.ocrmypdfBinary,
           ["--skip-text", "--output-type", "pdf", inputPath, outputPath],
-          { maxBuffer: MAX_OCR_BUFFER_BYTES },
+          // Bound the subprocess itself: on timeout execFile sends killSignal, so a slow/hung OCR
+          // pass is killed (not abandoned) and the callback rejects → route maps it to 422 (#403).
+          {
+            killSignal: "SIGKILL",
+            maxBuffer: MAX_OCR_BUFFER_BYTES,
+            timeout: dependencies.timeoutMs
+          },
           /* v8 ignore next -- success path needs a real subprocess; the failure path is covered */
           (error) => (error === null ? resolve() : reject(error))
         );
@@ -55,7 +67,7 @@ export function createOcrmypdfPreprocess(dependencies: OcrmypdfDependencies): Pd
       const outputPath = join(dir, "output.pdf");
       try {
         await writeFile(inputPath, bytes);
-        await run(inputPath, outputPath);
+        await withTimeout(run(inputPath, outputPath), dependencies.timeoutMs, "PDF OCR pre-pass");
         return new Uint8Array(await readFile(outputPath));
       } finally {
         await rm(dir, { force: true, recursive: true });

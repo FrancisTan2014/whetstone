@@ -22,7 +22,12 @@ describe("createDoclingPdfToMarkdown", () => {
       expect(pdfPath.endsWith("source.pdf")).toBe(true);
       return "# From PDF\n";
     });
-    const bridge = createDoclingPdfToMarkdown({ pythonBinary: "python", run, scriptPath: "s.py" });
+    const bridge = createDoclingPdfToMarkdown({
+      pythonBinary: "python",
+      run,
+      scriptPath: "s.py",
+      timeoutMs: 60_000
+    });
 
     expect(await bridge.convert(new Uint8Array([0x25, 0x50, 0x44, 0x46]))).toBe("# From PDF\n");
     expect(run).toHaveBeenCalledOnce();
@@ -30,7 +35,12 @@ describe("createDoclingPdfToMarkdown", () => {
 
   it("cleans up the temp directory even when conversion fails", async () => {
     const run = vi.fn(() => Promise.reject(new Error("boom")));
-    const bridge = createDoclingPdfToMarkdown({ pythonBinary: "python", run, scriptPath: "s.py" });
+    const bridge = createDoclingPdfToMarkdown({
+      pythonBinary: "python",
+      run,
+      scriptPath: "s.py",
+      timeoutMs: 60_000
+    });
 
     await expect(bridge.convert(new Uint8Array([1]))).rejects.toThrow("boom");
   });
@@ -38,10 +48,27 @@ describe("createDoclingPdfToMarkdown", () => {
   it("spawns the configured python binary by default and rejects when it cannot run", async () => {
     const bridge = createDoclingPdfToMarkdown({
       pythonBinary: "whetstone-no-such-python",
-      scriptPath: "s.py"
+      scriptPath: "s.py",
+      timeoutMs: 60_000
     });
 
     await expect(bridge.convert(new Uint8Array([1]))).rejects.toThrow();
+  });
+
+  it("rejects at the configured timeout instead of hanging when the worker never resolves (#403)", async () => {
+    // A slow/oversized PDF would leave the subprocess running unbounded; the seam must reject so the
+    // route maps it to 422 rather than hang the ingest request. The timeout value comes from config.
+    const run = vi.fn(() => new Promise<string>(() => {}));
+    const bridge = createDoclingPdfToMarkdown({
+      pythonBinary: "python",
+      run,
+      scriptPath: "s.py",
+      timeoutMs: 20
+    });
+
+    await expect(bridge.convert(new Uint8Array([1]))).rejects.toThrow(
+      "PDF conversion timed out after 20ms."
+    );
   });
 });
 

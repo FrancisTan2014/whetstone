@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { PdfOcr } from "./pdfOcr.js";
+import { withTimeout } from "./withTimeout.js";
 
 // The PDF-to-Markdown seam (#15): PDF ingestion converges on the existing Markdown -> mdast ->
 // decompose -> blocks pipeline. Conversion is one-shot — a born-digital PDF is rendered to clean
@@ -28,6 +29,9 @@ export type DoclingDependencies = Readonly<{
   run?: (pdfPath: string) => Promise<string>;
   pythonBinary: string;
   scriptPath: string;
+  // Wall-clock bound for the conversion. Docling is slow on large/scanned PDFs; without this an
+  // oversized book runs unbounded and hangs the ingest request (#403). Sourced from config.
+  timeoutMs: number;
 }>;
 
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -42,7 +46,9 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
         execFile(
           dependencies.pythonBinary,
           [dependencies.scriptPath, pdfPath],
-          { maxBuffer: MAX_OUTPUT_BYTES },
+          // Bound the subprocess itself: on timeout execFile sends killSignal, so a slow/oversized
+          // PDF is killed (not abandoned) and the callback rejects → route maps it to 422 (#403).
+          { killSignal: "SIGKILL", maxBuffer: MAX_OUTPUT_BYTES, timeout: dependencies.timeoutMs },
           /* v8 ignore next -- success path needs a real subprocess; failure path is covered */
           (error, stdout) => (error === null ? resolve(stdout) : reject(error))
         );
@@ -54,7 +60,7 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
       const pdfPath = join(dir, "source.pdf");
       try {
         await writeFile(pdfPath, bytes);
-        return await run(pdfPath);
+        return await withTimeout(run(pdfPath), dependencies.timeoutMs, "PDF conversion");
       } finally {
         await rm(dir, { force: true, recursive: true });
       }
