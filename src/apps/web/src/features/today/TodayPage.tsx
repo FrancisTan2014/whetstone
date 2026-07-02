@@ -98,7 +98,7 @@ export function TodayPage(): React.JSX.Element {
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
-        <ClearedState firstRun={firstRun} recall={recall} nudge={nudge} />
+        <ClearedState library={library} reading={reading} recall={recall} nudge={nudge} />
       </div>
     </section>
   );
@@ -312,17 +312,32 @@ function NudgeCard({
 // (no recall due AND no practice nudge to act on), Today shows a calm "done for today" that frees the
 // user — NO streak, NO guilt, NO back-judge, NO penalty. A low or empty day is fine. Diary capture and
 // Continue reading may still show — they are invitations.
+//
+// "Done for today" is itself a state claim, so it may only appear once Today has positively ruled out
+// a cold start: a loaded non-empty library OR a loaded reading position. While the library (or every
+// arm) is still loading or has failed, neither this line nor the first-run card is shown — Today makes
+// no state claim on unknown information (#391).
 function ClearedState({
-  firstRun,
+  library,
   nudge,
+  reading,
   recall
 }: Readonly<{
-  firstRun: boolean;
+  library: LibraryState;
   nudge: NudgeState;
+  reading: ContinueState;
   recall: RecallState;
 }>): React.JSX.Element | null {
-  const recallCleared = recall.status === "ready" && recall.items.length === 0;
-  if (firstRun || !recallCleared || activeNudge(nudge) !== undefined) {
+  const actionableClear =
+    recall.status === "ready" &&
+    recall.items.length === 0 &&
+    nudge.status === "ready" &&
+    nudge.nudge === undefined;
+  const ruledOutColdStart =
+    (library.status === "ready" && library.hasWorks) ||
+    (reading.status === "ready" && reading.position !== undefined);
+
+  if (!actionableClear || !ruledOutColdStart) {
     return null;
   }
 
