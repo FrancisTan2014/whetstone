@@ -25,22 +25,23 @@ export async function checkCoachHealth(
 ): Promise<CoachHealthReport> {
   const { config, localModel, probeLocalModel } = dependencies;
 
-  // No key: the coach runs entirely on the deterministic fake (the keyless dev/practice path).
-  if (config.apiKey === undefined) {
-    return {
-      message: "COACH_API_KEY unset — coach runs on the deterministic fake.",
-      status: "fake"
-    };
-  }
-
-  // A key is present but nothing is routed to the cheap tier, so no local model is needed.
+  // Decide on ROUTING first, not the key: the cheap tier is local and needs no key. When nothing is
+  // routed to the cheap tier, no local model is needed — a key means cloud-only, no key means the
+  // coach is fully on the deterministic fake (nothing local, no cloud).
   if (!Object.values(config.routing).includes("cheap")) {
-    return {
-      message: "No call routed to the local tier — coach uses the cloud model only.",
-      status: "cloud_only"
-    };
+    return config.apiKey === undefined
+      ? {
+          message:
+            "No call routed to the local tier and no COACH_API_KEY — coach runs on the fake.",
+          status: "fake"
+        }
+      : {
+          message: "No call routed to the local tier — coach uses the cloud model only.",
+          status: "cloud_only"
+        };
   }
 
+  // Some call is routed to the local (cheap) tier, so probe the local model — with or without a key.
   const available = await probeLocalModel(localModel).catch(() => false);
   if (available) {
     return {

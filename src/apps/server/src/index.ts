@@ -139,13 +139,15 @@ const lookupService = createLookupService({
   sources: lookupSources
 });
 
-// The coach (#206) and speech (#207) seams: config-gated and absent-config-safe, so with no API key
-// and no Whisper they stay on the deterministic fakes (the keyless dev/practice path). When Whisper is
-// configured (WHISPER_BINARY + WHISPER_MODEL_PATH), the real local adapter transcribes spoken turns (#236).
+// The coach (#206) and speech (#207) seams: config-gated and absent-config-safe. With no key the
+// coach still runs its LOCAL cheap tier (routing sends converse/analyze there after `pnpm setup
+// --coach`); strong-routed calls with no key, and any model failure, degrade to the deterministic
+// fake. With no Whisper, speech stays on its fake; configured (WHISPER_BINARY + WHISPER_MODEL_PATH),
+// the real local adapter transcribes spoken turns (#236).
 const coachConfig = readCoachConfig();
 const coach = resolveCoach({
   config: coachConfig,
-  createAdapters: (apiKey) => createCoachAdapters(apiKey),
+  createAdapters: (apiKey) => createCoachAdapters(apiKey, coachConfig.converseModel),
   fake: createFakeCoach()
 });
 const speechConfig = readSpeechConfig();
@@ -239,7 +241,7 @@ try {
   // configured but its Ollama model is not serving, instead of a silent fallback to the fake.
   const coachHealth = await checkCoachHealth({
     config: coachConfig,
-    localModel: defaultCheapModel,
+    localModel: coachConfig.converseModel,
     probeLocalModel: probeOllamaModel
   });
   if (coachHealth.status === "local_unavailable") {

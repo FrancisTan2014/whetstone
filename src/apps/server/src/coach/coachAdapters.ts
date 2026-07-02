@@ -48,12 +48,20 @@ export async function probeOllamaModel(model: string): Promise<boolean> {
 }
 /* v8 ignore stop */
 
-// The cost tiers: cheap = local Ollama; strong = cloud (the one paid judge call/round). Both compose
-// the LLM judge over the deterministic fake, so any model/parse failure still grades the round.
-export function createCoachAdapters(apiKey: string, cheapModel = defaultCheapModel): CoachAdapters {
+// The cost tiers: cheap = local Ollama (never needs a key); strong = cloud (the one paid judge call/
+// round) only when a key is present, otherwise the deterministic fake. So a keyless dev still gets a
+// real LOCAL cheap tier, while any strong-routed call safely resolves to the fake — no key required.
+// The cheap tier composes the LLM judge over the fake, so any model/parse failure still grades the round.
+export function createCoachAdapters(
+  apiKey: string | undefined,
+  cheapModel = defaultCheapModel
+): CoachAdapters {
   const fallback = createFakeCoach();
   return {
     cheap: createLlmCoach({ chat: createOllamaChat(cheapModel), fallback }),
-    strong: createLlmCoach({ chat: createCloudChat(apiKey), fallback })
+    strong:
+      apiKey === undefined || apiKey.length === 0
+        ? createFakeCoach()
+        : createLlmCoach({ chat: createCloudChat(apiKey), fallback })
   };
 }
