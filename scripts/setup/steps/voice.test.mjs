@@ -150,6 +150,68 @@ describe("voiceStep.provision", () => {
     expect(voiceStep.provision(ctx).status).toBe("missing");
   });
 
+  it("installs Python via winget after consent, then provisions Whisper", () => {
+    let pythonPresent = false;
+    const { ctx, confirmCalls, execCalls } = createFakeContext({
+      platform: "win32",
+      confirm: true,
+      execHandler: (command, args) => {
+        if ((command === "python" || command === "python3") && args[0] === "--version") {
+          return { code: command === "python" && pythonPresent ? 0 : 1, stdout: "", stderr: "" };
+        }
+        if (command === "winget" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "install") {
+          pythonPresent = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return happyExec(command, args);
+      }
+    });
+    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
+    expect(confirmCalls).toContain("Install Python 3 now? [Y/n]");
+    expect(execCalls).toContainEqual(["winget", "install", "Python.Python.3"]);
+  });
+
+  it("falls back to the instruct-only Python remedy when consent is declined", () => {
+    const { ctx, confirmCalls } = createFakeContext({
+      platform: "win32",
+      confirm: false,
+      execHandler: (command, args) =>
+        command === "winget" && args[0] === "--version"
+          ? { code: 0, stdout: "", stderr: "" }
+          : { code: 1, stdout: "", stderr: "" }
+    });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.remedy).toContain("Python 3");
+    expect(confirmCalls).toEqual(["Install Python 3 now? [Y/n]"]);
+  });
+
+  it("falls back to the instruct-only Python remedy when no package manager is available", () => {
+    const { ctx, confirmCalls } = createFakeContext({
+      platform: "win32",
+      confirm: true,
+      execHandler: () => ({ code: 1, stdout: "", stderr: "" })
+    });
+    expect(voiceStep.provision(ctx).status).toBe("missing");
+    expect(confirmCalls).toEqual([]); // never asked — nothing to install with
+  });
+
+  it("reports missing when Python is still off PATH after a reported install", () => {
+    const { ctx } = createFakeContext({
+      platform: "darwin",
+      confirm: true,
+      execHandler: (command, args) => {
+        if (command === "brew" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
+        if (command === "brew" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
+        return { code: 1, stdout: "", stderr: "" }; // python never resolves on this shell
+      }
+    });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.remedy).toContain("Python 3");
+  });
+
   it("maps a failing `pip install faster-whisper` to an actionable error", () => {
     const { ctx } = createFakeContext({
       execHandler: (command, args) =>

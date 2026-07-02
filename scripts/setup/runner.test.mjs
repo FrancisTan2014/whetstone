@@ -10,7 +10,14 @@ import { createFakeContext, createFakeStep } from "./testSupport.mjs";
 
 describe("parseArgs", () => {
   it("defaults to no flags", () => {
-    expect(parseArgs([])).toEqual({ doctor: false, voice: false, coach: false, unknown: [] });
+    expect(parseArgs([])).toEqual({
+      doctor: false,
+      voice: false,
+      coach: false,
+      all: false,
+      yes: false,
+      unknown: []
+    });
   });
 
   it("maps --check and --doctor to doctor mode", () => {
@@ -23,8 +30,16 @@ describe("parseArgs", () => {
       doctor: false,
       voice: true,
       coach: true,
+      all: false,
+      yes: false,
       unknown: []
     });
+  });
+
+  it("recognizes --all and --yes for unattended, all-capability setup", () => {
+    expect(parseArgs(["--all"]).all).toBe(true);
+    expect(parseArgs(["--yes"]).yes).toBe(true);
+    expect(parseArgs(["--all", "--yes"])).toMatchObject({ all: true, yes: true, unknown: [] });
   });
 
   it("collects unrecognized flags", () => {
@@ -50,6 +65,14 @@ describe("selectSteps", () => {
 
   it("adds both when both flags are set", () => {
     expect(selectSteps(steps, { voice: true, coach: true })).toEqual([base, voice, coach]);
+  });
+
+  it("enables every optional capability under --all", () => {
+    expect(selectSteps(steps, { voice: false, coach: false, all: true })).toEqual([
+      base,
+      voice,
+      coach
+    ]);
   });
 });
 

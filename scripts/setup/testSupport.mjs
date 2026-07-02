@@ -3,7 +3,7 @@
 
 /**
  * @param {object} [overrides]
- * @returns {{ ctx: import("./step.mjs").SetupContext, logs: string[], execCalls: string[][], copies: Array<[string, string]> }}
+ * @returns {{ ctx: import("./step.mjs").SetupContext, logs: string[], execCalls: string[][], copies: Array<[string, string]>, confirmCalls: string[] }}
  */
 export function createFakeContext(overrides = {}) {
   const logs = [];
@@ -11,6 +11,8 @@ export function createFakeContext(overrides = {}) {
   const execCalls = [];
   /** @type {Array<[string, string]>} */
   const copies = [];
+  /** @type {string[]} */
+  const confirmCalls = [];
   // Path -> UTF-8 content. Seed existence-only paths (from `files`) as empty strings, then apply any
   // explicit contents (from `fileContents`).
   const files = new Map((overrides.files ?? []).map((path) => [path, ""]));
@@ -49,9 +51,19 @@ export function createFakeContext(overrides = {}) {
         files.set(to, files.get(from) ?? "");
       }
     },
+    // Fake consent seam: `overrides.confirm` may be a boolean (fixed answer) or a
+    // `(question) => boolean` predicate. Default declines (false), matching the safe
+    // non-interactive default so no test ever "installs" without opting in.
+    confirm: (question) => {
+      confirmCalls.push(question);
+      if (typeof overrides.confirm === "function") {
+        return overrides.confirm(question);
+      }
+      return overrides.confirm === true;
+    },
     log: (message) => logs.push(message)
   };
-  return { ctx, logs, execCalls, copies, files };
+  return { ctx, logs, execCalls, copies, files, confirmCalls };
 }
 
 /**

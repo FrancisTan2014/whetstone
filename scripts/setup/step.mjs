@@ -34,6 +34,8 @@
  * @property {Record<string, string | undefined>} env  Environment variables.
  * @property {(command: string, args: string[]) => ExecResult} exec  Run an external command synchronously.
  * @property {SetupFs} fs         Minimal file-system surface.
+ * @property {(question: string) => boolean} confirm  Consent seam: ask a Y/N before any heavy or
+ *                                system install (yes/pre-consent ⇒ true, non-interactive ⇒ false).
  * @property {(message: string) => void} log  Progress logger.
  */
 

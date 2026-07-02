@@ -4,15 +4,38 @@
 // from coverage for the same reason as `src/**/index.ts`: it is a boundary of un-fakeable Node I/O.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readSync, writeFileSync } from "node:fs";
 
+import { makeConfirm } from "./confirm.mjs";
 import { resolveCommand } from "./platform.mjs";
 
 /**
+ * Read a single line from stdin synchronously (setup is spawnSync-synchronous throughout, so there
+ * is no event loop to await). Prints the question, then blocks on one `readSync` from fd 0. Returns
+ * `null` on EOF (zero bytes — closed/redirected stdin) or a read error, so `makeConfirm` DECLINES
+ * rather than treating an unavailable stdin as the `[Y/n]` empty-line default. Lives only in this
+ * excluded boundary — never in tested decision logic.
+ *
+ * @param {string} question
+ * @returns {string | null}
+ */
+function promptLine(question) {
+  process.stdout.write(`${question} `);
+  const buffer = Buffer.alloc(256);
+  try {
+    const bytes = readSync(0, buffer, 0, buffer.length, null);
+    return bytes === 0 ? null : buffer.toString("utf8", 0, bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {string} root  Absolute repository root.
+ * @param {{ yes?: boolean }} [options]  `yes` pre-consents every `ctx.confirm` (the `--yes` flag).
  * @returns {import("./step.mjs").SetupContext}
  */
-export function createContext(root) {
+export function createContext(root, options = {}) {
   const platform = process.platform;
   return {
     root,
@@ -41,6 +64,14 @@ export function createContext(root) {
       writeText: (path, content) => writeFileSync(path, content),
       copyFile: (from, to) => copyFileSync(from, to)
     },
+    confirm: makeConfirm({
+      yes: options.yes === true,
+      // Interactivity is gated on stdin (the line we read), not stdout: a redirected/closed stdin
+      // (e.g. `pnpm setup --voice < NUL`) must decline even when stdout is still a terminal, so a
+      // non-interactive run can never auto-consent to a system install. Require both to be safe.
+      isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
+      prompt: promptLine
+    }),
     log: (message) => console.log(message)
   };
 }
