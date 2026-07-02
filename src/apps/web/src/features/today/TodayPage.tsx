@@ -5,6 +5,7 @@ import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetsto
 
 import { buttonVariants } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
+import { fetchWorks } from "../library/libraryApi.js";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
 import { fetchLatestReadingPosition } from "./todayApi.js";
@@ -14,6 +15,12 @@ import { fetchLatestReadingPosition } from "./todayApi.js";
 // voice diary (#246), recall (#318), a Continue-reading seam over the latest reading position, and
 // the reading→practice nudge (#245). Each async arm loads independently so one failing never blanks
 // the page, and the reader stays calm (none of this lives in it).
+//
+// On a true cold start — no works, no reading position, no recall due, no nudge — Today would
+// otherwise say "done for today", which is untruthful when there is simply nothing to start from. So
+// it also reads whether the library holds any work: when every arm is loaded and empty it shows a
+// first-run on-ramp ("Start with one source" → Library) and hides the done-for-today line, until the
+// learner has at least one work or any trace (#391).
 
 type RecallState =
   | Readonly<{ status: "error" }>
@@ -32,10 +39,19 @@ type NudgeState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ nudge: NudgeDto | undefined; status: "ready" }>;
 
+// Whether the library holds any work yet. Only its "ready + empty" arm feeds the first-run decision;
+// a still-loading or failed load simply means "not known to be a cold start", so Today never claims
+// the first-run state on incomplete information.
+type LibraryState =
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ hasWorks: boolean; status: "ready" }>;
+
 export function TodayPage(): React.JSX.Element {
   const [recall, setRecall] = useState<RecallState>({ status: "loading" });
   const [reading, setReading] = useState<ContinueState>({ status: "loading" });
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
+  const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
   useEffect(() => {
     fetchDueRecall().then(
@@ -50,6 +66,10 @@ export function TodayPage(): React.JSX.Element {
       (value) => setNudge({ nudge: value, status: "ready" }),
       () => setNudge({ status: "error" })
     );
+    fetchWorks().then(
+      (list) => setLibrary({ hasWorks: list.works.length > 0, status: "ready" }),
+      () => setLibrary({ status: "error" })
+    );
   }, []);
 
   // Dismiss = cooldown: remove the card at once (a "not now" is honoured immediately) and tell the
@@ -58,6 +78,8 @@ export function TodayPage(): React.JSX.Element {
     setNudge({ nudge: undefined, status: "ready" });
     void dismissNudge(chunkId).catch(() => undefined);
   }
+
+  const firstRun = isFirstRun({ library, nudge, reading, recall });
 
   return (
     <section aria-labelledby="today-heading" className="mx-auto max-w-2xl p-6">
@@ -71,12 +93,55 @@ export function TodayPage(): React.JSX.Element {
       </header>
 
       <div className="mt-6 flex flex-col gap-4">
+        {firstRun ? <FirstRunCard /> : null}
         <DiaryCaptureCard />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
-        <ClearedState recall={recall} nudge={nudge} />
+        <ClearedState firstRun={firstRun} recall={recall} nudge={nudge} />
       </div>
+    </section>
+  );
+}
+
+// A truthful cold start: every actionable arm is loaded AND empty and the library holds no work.
+// Any arm still loading or failed makes this false, so Today shows the normal board rather than
+// claiming a first-run state it cannot confirm (#391).
+function isFirstRun({
+  library,
+  nudge,
+  reading,
+  recall
+}: Readonly<{
+  library: LibraryState;
+  nudge: NudgeState;
+  reading: ContinueState;
+  recall: RecallState;
+}>): boolean {
+  return (
+    library.status === "ready" &&
+    !library.hasWorks &&
+    reading.status === "ready" &&
+    reading.position === undefined &&
+    recall.status === "ready" &&
+    recall.items.length === 0 &&
+    activeNudge(nudge) === undefined
+  );
+}
+
+// The first-run on-ramp: shown only on a confirmed cold start. It points at the single next step —
+// add or import one work — and routes to Library (never duplicating Library's add/upload forms).
+function FirstRunCard(): React.JSX.Element {
+  return (
+    <section
+      aria-label="Start with one source"
+      className="rounded border border-border bg-surface p-4"
+    >
+      <h2 className="text-lg font-medium text-text">Start with one source</h2>
+      <p className="mt-1 text-text-muted">Add or import a reading — one work is enough to begin.</p>
+      <Link className={`${buttonVariants({ variant: "primary" })} mt-3`} to="/library">
+        Open Library
+      </Link>
     </section>
   );
 }
@@ -247,11 +312,16 @@ function NudgeCard({
 // user — NO streak, NO guilt, NO back-judge, NO penalty. A low or empty day is fine. Diary capture and
 // Continue reading may still show — they are invitations.
 function ClearedState({
+  firstRun,
   nudge,
   recall
-}: Readonly<{ nudge: NudgeState; recall: RecallState }>): React.JSX.Element | null {
+}: Readonly<{
+  firstRun: boolean;
+  nudge: NudgeState;
+  recall: RecallState;
+}>): React.JSX.Element | null {
   const recallCleared = recall.status === "ready" && recall.items.length === 0;
-  if (!recallCleared || activeNudge(nudge) !== undefined) {
+  if (firstRun || !recallCleared || activeNudge(nudge) !== undefined) {
     return null;
   }
 
