@@ -50,6 +50,11 @@ export const readingUnits = pgTable(
       .primaryKey()
       .references(() => entries.id),
     orderIndex: integer("order_index").notNull(),
+    // The unit's source-file identity: the EPUB spine item href this unit was ingested from (null for
+    // Markdown/PDF, which have no per-unit source file). Scopes an anchor to (source_file, anchor_id)
+    // so a reused anchor id in different chapters resolves per-file, and lets the reader's work-scoped
+    // reference resolver jump cross-unit (#366).
+    sourceFile: text("source_file"),
     title: text("title"),
     workEntryId: text("work_entry_id")
       .notNull()
@@ -69,6 +74,11 @@ export const readingUnits = pgTable(
 export const docBlocks = pgTable(
   "doc_blocks",
   {
+    // The block's source-HTML id at ingest (a figure/heading/paragraph id, an in-work cross-reference
+    // target), lifted off the PM node so the node JSON stays pure content (#366). Keyed with the unit's
+    // `source_file` it forms the work anchor index a cross-reference resolves through. Null when the
+    // source element had no id; mirrors the legacy `blocks.anchor_id` column.
+    anchorId: text("anchor_id"),
     id: text("id").primaryKey(),
     nodeJson: jsonb("node_json").notNull(),
     orderIndex: integer("order_index").notNull(),
