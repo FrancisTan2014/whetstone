@@ -247,6 +247,55 @@ function readFootnoteTargetAttrs(element: HTMLElement): { refId: string | null }
   return { refId: element.getAttribute("id") };
 }
 
+// Whether an href points OUTSIDE the work, so the link stays inert (no navigation): a URL scheme
+// (`http:`, `https:`, `mailto:`, `tel:`, …) or a protocol-relative `//host` reference. A relative
+// path and/or a bare `#fragment` is a same-work reference and is preserved as a live jump instead.
+function isExternalHref(href: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
+}
+
+// Split a same-work href into its file part (`refFile`, null for a same-file `#id`) and anchor (the
+// `#fragment` id, null when the href carries no fragment). Mirrors the footnote split so a link and a
+// noteref reach the reader's work-scoped resolver keyed the same way (#366): `ch01.html#intro` ->
+// (`ch01.html`, `intro`), `#intro` -> (null, `intro`), `ch02.html` -> (`ch02.html`, null).
+function splitHref(href: string): { anchor: string | null; refFile: string | null } {
+  const hashIndex = href.indexOf("#");
+
+  if (hashIndex === -1) {
+    return { anchor: null, refFile: href };
+  }
+
+  const path = href.slice(0, hashIndex);
+  const id = href.slice(hashIndex + 1);
+
+  return { anchor: id === "" ? null : id, refFile: path === "" ? null : path };
+}
+
+// The `link` mark's attributes for an `<a>`, or `false` to skip the rule (leaving the anchor's text
+// in flow) when it carries no usable href — a bare `<a name=…>`/`<a>` is not a reference. `kind`
+// records an explicit cross-reference (`data-type=xref`) versus a generic same-work link. An external
+// or cross-work href (a URL scheme / protocol-relative) is preserved as INERT with no target, so it
+// renders as styled-but-dead text; a same-work href keeps its `anchor` + `refFile` for the ingest
+// `targetSourceFile` stamp (#366). `a[data-type=noteref]` never reaches this rule — the footnoteMarker
+// node rule precedes it and wins.
+function readLinkAttrs(element: HTMLElement): false | Record<string, unknown> {
+  const href = element.getAttribute("href");
+
+  if (href === null || href === "") {
+    return false;
+  }
+
+  const kind = element.getAttribute("data-type") === "xref" ? "xref" : "href";
+
+  if (isExternalHref(href)) {
+    return { anchor: null, inert: true, kind, refFile: null, targetSourceFile: null };
+  }
+
+  const { anchor, refFile } = splitHref(href);
+
+  return { anchor, inert: false, kind, refFile, targetSourceFile: null };
+}
+
 // The unknown fallback reads back the raw HTML and original tag the pre-walk stamped onto the
 // sentinel, so the publisher construct is preserved verbatim in the model.
 function readUnknownAttrs(element: HTMLElement): { html: string | null; tag: string | null } {
@@ -306,6 +355,11 @@ const RULES: ParseRule[] = [
   { node: "definitionDescription", tag: "dd" },
   ...calloutRules,
   { getAttrs: readFootnoteMarkerAttrs, node: "footnoteMarker", tag: "a[data-type=noteref]" },
+  // The same-work reference link mark (#368). Placed AFTER the noteref node rule so a footnote marker
+  // still parses to the `footnoteMarker` atom (rule order decides when selectors overlap); every other
+  // `<a>` becomes an inline `link` mark on its text (a bare hrefless anchor skips the rule and stays
+  // plain text). `codeBlock` allows no marks, so an `<a>` inside `<pre>` keeps its text without a mark.
+  { getAttrs: readLinkAttrs, mark: "link", tag: "a" },
   {
     getAttrs: withAnchorId(readFootnoteTargetAttrs),
     node: "footnoteTarget",
