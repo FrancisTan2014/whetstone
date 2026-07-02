@@ -480,10 +480,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the receding reading
   chrome — a minimal title + a thin top progress line plus the one home for every reading tool
   (text-size, Day/Night `ThemeToggle`, the 目录 toggle as a contents icon, and the notes toggle),
-  laid out as a **right-edge vertical icon rail on desktop** (framing the reading column; returns on
-  hover / scroll-up via `useReaderScroll.ts`) and a **top bar hidden by default on mobile** (a center
-  tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). The whole
-  chrome recedes as one through the `data-hidden` flag. `readingSize.ts` holds the
+  laid out as a **persistent vertical icon rail docked at the bottom-right on desktop** (beside the
+  reading column, always one click away — it stays put while scrolling, never receding) and a **top bar
+  hidden by default on mobile** (a center
+  tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). On mobile the
+  whole chrome recedes as one through the `data-hidden` flag; on desktop only the title recedes on
+  scroll-up (via `useReaderScroll.ts`) while the tool rail persists. `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its hue key
   for the highlight (`noteMark--<hue>`, applied by `applyNoteHighlights.ts`) and whole-block gutter
   (`readerBlock--<hue>`) classes.

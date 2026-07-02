@@ -758,7 +758,8 @@
 
 /* Reading chrome (WeRead-style): a fixed overlay whose children position independently so the
    reading column underneath is never pushed or split. Pointer events are off on the overlay and
-   back on for each control. The whole chrome recedes while reading via `data-hidden`. */
+   back on for each control. The title (and, on mobile, the top bar) recedes while reading via
+   `data-hidden`; the desktop tool rail is persistent and stays put. */
 .readingHeader {
   position: fixed;
   inset: 0;
@@ -809,8 +810,8 @@
   opacity: 0.75;
 }
 
-/* The reading tools. Desktop: a right-edge vertical icon rail, vertically centered. Narrow: a
-   horizontal cluster at the top-end forming a top bar with the title. */
+/* The reading tools. Desktop: a persistent vertical icon rail docked at the bottom-right, beside the
+   reading column. Narrow: a horizontal cluster at the top-end forming a top bar with the title. */
 .readingTools {
   position: fixed;
   display: flex;
@@ -855,7 +856,8 @@
   font-weight: 600;
 }
 
-/* The desktop hover zone is off by default; the narrow layout never uses it. */
+/* The rail-edge hover zone is unused (display: none) at every width: the desktop rail is persistent,
+   so there is no receded rail to summon on hover, and the narrow layout never used it. */
 .readingRailEdge {
   display: none;
 }

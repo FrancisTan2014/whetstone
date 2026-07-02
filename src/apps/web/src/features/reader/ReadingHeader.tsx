@@ -51,13 +51,14 @@ function NotesIcon(): React.JSX.Element {
   );
 }
 
-// The immersive reading chrome: every reading tool in one receding surface — text size (A−/A+),
+// The immersive reading chrome: every reading tool in one surface — text size (A−/A+),
 // the Day/Night theme toggle, the 目录 (when the work has units, shown as a contents icon), a notes
-// toggle, and a progress indicator. On desktop the tools sit in a right-edge vertical icon rail and
-// the title is a minimal top affordance; on narrow screens they form a top bar. The whole chrome
-// recedes while reading (`hidden` → `data-hidden`) and returns on hover / scroll-up (desktop) or a
-// center tap (mobile); the single `data-hidden` flag drives the CSS transition so every tool recedes
-// together. Tool labels stay on `aria-label`, so the controls are screen-reader clear even as icons.
+// toggle, and a progress indicator. On desktop the tools sit in a persistent vertical icon rail
+// docked at the bottom-right beside the reading column (always one click away — it never recedes),
+// and the title is a minimal top affordance that recedes on scroll. On narrow screens the tools form
+// a top bar and the whole chrome recedes while reading (`hidden` → `data-hidden`), returning on a
+// center tap; the single `data-hidden` flag drives the CSS transition. Tool labels stay on
+// `aria-label`, so the controls are screen-reader clear even as icons.
 export function ReadingHeader({
   hasToc,
   hidden,
@@ -87,7 +88,8 @@ export function ReadingHeader({
       >
         <span className="readingProgressBar" style={{ transform: `scaleX(${progress})` }} />
       </div>
-      {/* A thin right-edge hover zone so the receded desktop rail returns on hover (CSS only). */}
+      {/* A thin right-edge zone kept inert (`.readingRailEdge` is display:none): the desktop rail is
+          now persistent, so there is no receded rail to summon on hover. */}
       <span aria-hidden className="readingRailEdge" />
       <div aria-label="Reading tools" className="readingTools" role="group">
         <div aria-label="Reading text size" className="readingSizeControl" role="group">
