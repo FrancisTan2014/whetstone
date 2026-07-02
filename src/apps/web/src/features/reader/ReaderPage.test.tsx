@@ -2267,7 +2267,12 @@ describe("ReaderPage note management", () => {
     const target = await screen.findByText("Heading text");
     expect(blockElement(container, "b-2")).not.toBeNull();
     expect(screen.queryByText("Intro paragraph.")).toBeNull();
-    expect(target.closest("[data-block-id]")?.scrollIntoView).toHaveBeenCalled();
+    // The scroll runs in a post-load effect after the holding unit's blocks render, so poll for it
+    // rather than asserting synchronously — a bare assert races the effect and flakes under parallel
+    // CI load (the block is present via findByText before the scroll effect has fired).
+    await waitFor(() =>
+      expect(target.closest("[data-block-id]")?.scrollIntoView).toHaveBeenCalled()
+    );
   });
 });
 
