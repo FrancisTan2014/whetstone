@@ -37,19 +37,25 @@ type PmJsonNode = Readonly<{
   type: string;
 }>;
 
-// A loaded reading unit: its ordered blocks plus the title used for the eyebrow.
+// A loaded reading unit: its ordered blocks plus the title used for the eyebrow. `sourceFile` is the
+// unit's source-document identity (EPUB spine href), carried so the reader can resolve a
+// cross-reference relative to the unit the reader is currently in (#366); absent for the Markdown/PDF
+// path, which has no per-unit source file.
 export type ReaderUnit = Readonly<{
   blocks: ReadonlyArray<ReaderBlock>;
   entryId: string;
+  sourceFile?: string;
   title?: string;
 }>;
 
 // One reading unit in the lightweight structure: ordering metadata and how many blocks it
-// holds, but no content — enough to render the 目录 and decide which unit to open.
+// holds, but no content — enough to render the 目录 and decide which unit to open. Carries the unit's
+// `sourceFile` (#366) so the reader knows the active unit's source identity without a content fetch.
 export type ReaderUnitMeta = Readonly<{
   blockCount: number;
   entryId: string;
   orderIndex: number;
+  sourceFile?: string;
   title?: string;
 }>;
 
@@ -163,8 +169,9 @@ function toReaderBlock(block: BlockDto): ReaderBlock {
 
 function toReaderUnitMeta(unit: ReadingUnitStructureDto): ReaderUnitMeta {
   const base = { blockCount: unit.blockCount, entryId: unit.entryId, orderIndex: unit.orderIndex };
+  const withTitle = unit.title === undefined ? base : { ...base, title: unit.title };
 
-  return unit.title === undefined ? base : { ...base, title: unit.title };
+  return unit.sourceFile === undefined ? withTitle : { ...withTitle, sourceFile: unit.sourceFile };
 }
 
 // The reader structure built from a work's structure DTO: units sorted into reading order so

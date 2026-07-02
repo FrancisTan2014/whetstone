@@ -485,7 +485,36 @@ describe("PmDocument footnote markers (#335)", () => {
     expect(button?.getAttribute("data-anchor-id")).toBe("fn2-ref");
 
     fireEvent.click(button as HTMLElement);
-    expect(onActivateAnchor).toHaveBeenCalledWith("fn2");
+    // A marker with no cross-file target passes `undefined` for the target source file, so the reader
+    // resolves it against the current unit (#366).
+    expect(onActivateAnchor).toHaveBeenCalledWith("fn2", undefined);
+  });
+
+  it("passes a cross-file marker's targetSourceFile to the jump so an endnote resolves per-file (#366)", () => {
+    const crossFileDoc = {
+      content: [
+        {
+          content: [
+            { text: "See ", type: "text" },
+            {
+              attrs: { label: "3", refId: "fn3", targetSourceFile: "text/notes.xhtml" },
+              type: "footnoteMarker"
+            }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    } as unknown as DocumentNodeJSON;
+    const onActivateAnchor = vi.fn();
+    const { container } = render(
+      <PmDocument document={crossFileDoc} onActivateAnchor={onActivateAnchor} />
+    );
+
+    fireEvent.click(container.querySelector("button.readerXref") as HTMLElement);
+    // The marker's resolved target file is threaded through so the endnote lands in the file that owns
+    // it, not the unit the reader is currently in.
+    expect(onActivateAnchor).toHaveBeenCalledWith("fn3", "text/notes.xhtml");
   });
 
   it("strips only the `[`/`]` pair directly flanking the marker, leaving `[sic]` intact", () => {

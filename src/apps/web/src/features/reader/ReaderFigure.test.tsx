@@ -31,6 +31,7 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 
 vi.mock("./readerApi", () => ({
   fetchUnitContent: vi.fn(),
+  fetchWorkAnchorIndex: vi.fn(),
   fetchWorkStructure: vi.fn(),
   fetchWorks: vi.fn(),
   locateBlockUnit: vi.fn()
@@ -50,7 +51,13 @@ vi.mock("./readingPositionApi", () => ({
 
 import { fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
-import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
+import {
+  fetchUnitContent,
+  fetchWorks,
+  fetchWorkAnchorIndex,
+  fetchWorkStructure,
+  locateBlockUnit
+} from "./readerApi";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { ReaderPage } from "./ReaderPage";
 import type { BlockDto, WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
@@ -58,6 +65,7 @@ import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
+const mockedFetchWorkAnchorIndex = vi.mocked(fetchWorkAnchorIndex);
 const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
 const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
@@ -105,6 +113,10 @@ function renderReader(content: WorkContentDto): ReturnType<typeof rtlRender> {
       entryId: unit.entryId,
       orderIndex: unit.orderIndex
     })),
+    workEntryId: content.workEntryId
+  });
+  mockedFetchWorkAnchorIndex.mockResolvedValue({
+    anchors: [],
     workEntryId: content.workEntryId
   });
   mockedFetchUnitContent.mockImplementation(async (_workEntryId, unitEntryId) => {

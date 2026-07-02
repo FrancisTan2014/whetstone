@@ -31,6 +31,7 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 
 vi.mock("./readerApi", () => ({
   fetchUnitContent: vi.fn(),
+  fetchWorkAnchorIndex: vi.fn(),
   fetchWorkStructure: vi.fn(),
   fetchWorks: vi.fn(),
   locateBlockUnit: vi.fn()
@@ -63,7 +64,13 @@ import {
   updateNote
 } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
-import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
+import {
+  fetchUnitContent,
+  fetchWorks,
+  fetchWorkAnchorIndex,
+  fetchWorkStructure,
+  locateBlockUnit
+} from "./readerApi";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import {
   applyUnitError,
@@ -74,6 +81,7 @@ import {
   retryActiveUnit,
   viewingPosition
 } from "./ReaderPage";
+import { buildAnchorIndex } from "./referenceResolver";
 import type { ReaderBlock, ReaderStructure } from "./readerModel";
 import type {
   NoteDto,
@@ -87,6 +95,7 @@ import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
+const mockedFetchWorkAnchorIndex = vi.mocked(fetchWorkAnchorIndex);
 const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
 const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
 const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
@@ -179,6 +188,7 @@ function structureOf(content: WorkContentDto): WorkStructureDto {
       blockCount: (unit.docBlocks ?? []).length + unit.blocks.length,
       entryId: unit.entryId,
       orderIndex: unit.orderIndex,
+      ...(unit.sourceFile === undefined ? {} : { sourceFile: unit.sourceFile }),
       ...(unit.title === undefined ? {} : { title: unit.title })
     })),
     workEntryId: content.workEntryId
@@ -497,6 +507,117 @@ const pmFootnoteContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A CROSS-UNIT endnote (#366): the marker paragraph (pm-x1) lives in the first reading unit and carries
+// a `targetSourceFile` pointing at a SEPARATE notes file; the `footnoteTarget` (pm-x2) lives in a
+// different reading unit (that notes file). The marker's target is not in the rendered unit, so the
+// same-unit DOM path misses and the reader must fall back to the work-scoped anchor-index resolver.
+const pmCrossUnitFootnoteContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-x1"),
+          node: {
+            attrs: { id: "pm-x1" },
+            content: [
+              { text: "Body text ", type: "text" },
+              {
+                attrs: { label: "5", refId: "note5", targetSourceFile: "text/notes.xhtml" },
+                type: "footnoteMarker"
+              },
+              { text: ".", type: "text" }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          type: "paragraph"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0,
+      sourceFile: "text/ch01.xhtml"
+    },
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-x2"),
+          node: {
+            attrs: { id: "pm-x2", label: "5", refId: "note5" },
+            content: [
+              {
+                content: [{ text: "The endnote in the notes file.", type: "text" }],
+                type: "paragraph"
+              }
+            ],
+            type: "footnoteTarget"
+          },
+          orderIndex: 0,
+          type: "footnoteTarget"
+        }
+      ],
+      entryId: toEntryId("u-2"),
+      orderIndex: 1,
+      sourceFile: "text/notes.xhtml",
+      title: "Notes"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
+// A same-file cross-reference (#366) reached through the index fallback: the marker carries NO
+// `targetSourceFile`, so the resolver must scope it by the ACTIVE unit's source file. The target lives
+// in another unit (same source file), so the same-unit DOM lookup misses and the index takes over.
+const pmSameFileFallbackContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-s1"),
+          node: {
+            attrs: { id: "pm-s1" },
+            content: [
+              { text: "Prose ", type: "text" },
+              { attrs: { label: "7", refId: "t7" }, type: "footnoteMarker" },
+              { text: ".", type: "text" }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          type: "paragraph"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0,
+      sourceFile: "text/ch01.xhtml"
+    },
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-s2"),
+          node: {
+            attrs: { id: "pm-s2", label: "7", refId: "t7" },
+            content: [
+              { content: [{ text: "The same-file endnote.", type: "text" }], type: "paragraph" }
+            ],
+            type: "footnoteTarget"
+          },
+          orderIndex: 0,
+          type: "footnoteTarget"
+        }
+      ],
+      entryId: toEntryId("u-2"),
+      orderIndex: 1,
+      sourceFile: "text/ch01.xhtml",
+      title: "More"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 const xrefCaptionContent: WorkContentDto = {
   readingUnits: [
     {
@@ -605,6 +726,10 @@ beforeEach(() => {
   seededContent = emptyContent("work-1");
   mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => ({
     readingUnits: structureOf(seededContent).readingUnits,
+    workEntryId: toEntryId(workEntryId)
+  }));
+  mockedFetchWorkAnchorIndex.mockImplementation(async (workEntryId: string) => ({
+    anchors: [],
     workEntryId: toEntryId(workEntryId)
   }));
   mockedFetchUnitContent.mockImplementation(async (_workEntryId: string, unitEntryId: string) => {
@@ -1097,6 +1222,97 @@ describe("ReaderPage", () => {
     await waitFor(() =>
       expect(blockElement(container, "pm-b1").getAttribute("data-born")).toBe("true")
     );
+  });
+
+  it("resolves a cross-unit endnote through the work anchor index and jumps to its unit (#366)", async () => {
+    seedWorkContent(pmCrossUnitFootnoteContent);
+    // The endnote target lives in the notes unit/file; the work anchor index maps (notes file, refId)
+    // to that block, so the reader can jump across units when the same-unit DOM lookup misses.
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [
+        {
+          anchor: "note5",
+          blockEntryId: toEntryId("pm-x2"),
+          sourceFile: "text/notes.xhtml",
+          unitEntryId: toEntryId("u-2")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    const marker = await screen.findByRole("button", { name: "5" });
+
+    // The target is in another unit, so it is not in the DOM: the same-unit fast path finds nothing.
+    expect(container.querySelector('[data-anchor-id="note5"]')).toBeNull();
+
+    await user.click(marker);
+
+    // The resolver loads the owning unit and the endnote block lands highlighted (the cross-unit jump).
+    await screen.findByText("The endnote in the notes file.");
+    await waitFor(() =>
+      expect(blockElement(container, "pm-x2").getAttribute("data-born")).toBe("true")
+    );
+  });
+
+  it("no-ops when a cross-unit endnote has no matching anchor in the index (#366)", async () => {
+    seedWorkContent(pmCrossUnitFootnoteContent);
+    // The anchor index is empty, so the target file+id resolves to nothing: the jump must not fire.
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [],
+      workEntryId: toEntryId("work-1")
+    });
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    const marker = await screen.findByRole("button", { name: "5" });
+
+    await user.click(marker);
+
+    // An unresolvable reference leaves the reader in place: no locator lookup, no unit switch.
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
+    expect(screen.queryByText("The endnote in the notes file.")).toBeNull();
+  });
+
+  it("scopes a marker with no target file by the active unit's source file, jumping cross-unit (#366)", async () => {
+    seedWorkContent(pmSameFileFallbackContent);
+    // The marker carries no target file, so the resolver must key on the active unit's source file;
+    // the index maps (that file, refId) to a block in a later unit.
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [
+        {
+          anchor: "t7",
+          blockEntryId: toEntryId("pm-s2"),
+          sourceFile: "text/ch01.xhtml",
+          unitEntryId: toEntryId("u-2")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    const marker = await screen.findByRole("button", { name: "7" });
+
+    await user.click(marker);
+
+    await screen.findByText("The same-file endnote.");
+    await waitFor(() =>
+      expect(blockElement(container, "pm-s2").getAttribute("data-born")).toBe("true")
+    );
+  });
+
+  it("still opens the work when the anchor index fails to load, degrading cross-unit resolution (#366)", async () => {
+    seedWorkContent(pmCrossUnitFootnoteContent);
+    // A failed anchor-index load must not fail the open: it degrades to an empty index, so the work
+    // still renders and cross-unit references simply resolve to nothing.
+    mockedFetchWorkAnchorIndex.mockRejectedValue(new Error("index unavailable"));
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    const marker = await screen.findByRole("button", { name: "5" });
+
+    await user.click(marker);
+
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
+    expect(screen.queryByText("The endnote in the notes file.")).toBeNull();
   });
 
   it("opens the selection toolbar then the editor when text is selected in a block", async () => {
@@ -2342,6 +2558,7 @@ describe("ReaderPage unit reducers (viewing)", () => {
       reading: {
         activeUnit: { status: "loading" },
         activeUnitIndex: 0,
+        anchorIndex: buildAnchorIndex({ anchors: [], workEntryId: "work-1" }),
         loadNonce: 0,
         status: "viewing",
         structure: reducerStructure,

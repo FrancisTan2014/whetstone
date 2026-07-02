@@ -38,7 +38,12 @@ function numberAttr(node: PmNode, key: string): number | undefined {
 // The reader's block-jump, threaded to the module-level node mapping through context because
 // `@tiptap/static-renderer` builds its mapping once at module scope (#335). A footnote marker consumes
 // it to become a live internal jump; absent (a raw render with no reader wiring), markers stay inert.
-const ActivateAnchorContext = createContext<((anchorId: string) => void) | undefined>(undefined);
+// The optional second argument is the reference's target source file (#366): a footnote marker passes
+// its `targetSourceFile` so an endnote in a separate file resolves against that file, not the unit the
+// reader is in. Callers that omit it (an in-file marker, the mdast/#252 path) resolve same-file.
+const ActivateAnchorContext = createContext<
+  ((anchor: string, targetSourceFile?: string) => void) | undefined
+>(undefined);
 
 // A footnote/endnote reference marker. With a `refId` and the reader's jump wired, it renders an
 // accent-styled, keyboard-focusable superscript control that scrolls+highlights its footnote target
@@ -48,6 +53,10 @@ const ActivateAnchorContext = createContext<((anchorId: string) => void) | undef
 function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
   const label = stringAttr(node, "label");
   const refId = stringAttr(node, "refId");
+  // The file the marker points into (#366), computed at ingest by resolving the marker's href against
+  // its chapter. Passed to the resolver so a cross-file endnote lands in the right unit; absent for an
+  // in-file reference, which resolves against the current unit.
+  const targetSourceFile = stringAttr(node, "targetSourceFile");
   const onActivateAnchor = useContext(ActivateAnchorContext);
   const text = label ?? refId ?? "";
 
@@ -67,7 +76,7 @@ function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
       <button
         className="readerXref"
         data-anchor-id={`${refId}-ref`}
-        onClick={() => onActivateAnchor(refId)}
+        onClick={() => onActivateAnchor(refId, targetSourceFile)}
         type="button"
       >
         {text}
@@ -233,8 +242,9 @@ const renderDocument = renderJSONContentToReactElement({ markMapping: {}, nodeMa
 export interface PmDocumentProps {
   readonly document: DocumentNodeJSON;
   // The reader's block-jump. When provided, footnote markers become live internal jumps; absent, a raw
-  // render leaves them inert. Absent by default so a bare `<PmDocument>` stays presentation-only.
-  readonly onActivateAnchor?: (anchorId: string) => void;
+  // render leaves them inert. Absent by default so a bare `<PmDocument>` stays presentation-only. The
+  // optional second argument carries a reference's target source file for cross-file resolution (#366).
+  readonly onActivateAnchor?: (anchor: string, targetSourceFile?: string) => void;
 }
 
 // Render a stored PM document to React. The doc root carries the `.reader` class so the existing
@@ -253,7 +263,7 @@ export function PmDocument({ document, onActivateAnchor }: PmDocumentProps): Rea
 
 export interface PmBlockProps {
   readonly node: DocumentNodeJSON;
-  readonly onActivateAnchor?: (anchorId: string) => void;
+  readonly onActivateAnchor?: (anchor: string, targetSourceFile?: string) => void;
 }
 
 // Render a single stored PM block node (not the whole doc) to React, reusing the same per-node

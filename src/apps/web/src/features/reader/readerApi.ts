@@ -1,6 +1,7 @@
 import type {
   BlockUnitLocatorDto,
   ReadingUnitContentDto,
+  WorkAnchorIndexDto,
   WorkListDto,
   WorkStructureDto
 } from "@whetstone/contracts";
@@ -26,6 +27,13 @@ export async function fetchWorks(): Promise<WorkListDto> {
 // The lightweight outline fetched first: reading units + block counts, no content.
 export async function fetchWorkStructure(workEntryId: string): Promise<WorkStructureDto> {
   return requestJson<WorkStructureDto>(`/api/works/${encodeURIComponent(workEntryId)}/structure`);
+}
+
+// The work's anchor index: every addressable block reachable by a source-HTML id, keyed at the
+// consumer by (sourceFile, anchor), so the reader resolves a cross-reference to another unit and
+// jumps there via `jumpToBlock` (#366). Fetched once alongside the structure when a work opens.
+export async function fetchWorkAnchorIndex(workEntryId: string): Promise<WorkAnchorIndexDto> {
+  return requestJson<WorkAnchorIndexDto>(`/api/works/${encodeURIComponent(workEntryId)}/anchors`);
 }
 
 // One reading unit's blocks, fetched on demand when that unit becomes active.

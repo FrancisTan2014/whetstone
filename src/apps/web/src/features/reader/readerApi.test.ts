@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
+import {
+  fetchUnitContent,
+  fetchWorks,
+  fetchWorkAnchorIndex,
+  fetchWorkStructure,
+  locateBlockUnit
+} from "./readerApi";
 
 function stubFetch(response: {
   ok: boolean;
@@ -35,6 +41,19 @@ describe("readerApi", () => {
 
     await expect(fetchWorkStructure("work 1")).resolves.toEqual(structure);
     expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/structure", undefined);
+  });
+
+  it("fetches a work's anchor index from its anchors endpoint", async () => {
+    const anchorIndex = {
+      anchors: [
+        { anchor: "fn1", blockEntryId: "b-1", sourceFile: "text/ch01.xhtml", unitEntryId: "u-1" }
+      ],
+      workEntryId: "work 1"
+    };
+    const fetchMock = stubFetch({ body: anchorIndex, ok: true });
+
+    await expect(fetchWorkAnchorIndex("work 1")).resolves.toEqual(anchorIndex);
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/anchors", undefined);
   });
 
   it("fetches a reading unit's content from its unit-content endpoint", async () => {
