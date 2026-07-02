@@ -339,8 +339,9 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
   preferences record, so new settings join without a new surface.
 - **Immersive, single-column layout (微信读书-style).** Reading is full-bleed and calm: one reading column
   on the paper surface, **comfortably sized and framed by the edge chrome** (not a narrow column lost in
-  whitespace). On **desktop** the reading **tools are a persistent right-edge vertical rail of icons** that
-  stays put while scrolling (always one click away) and the **目录 a left drawer**; on **mobile** the chrome
+  whitespace). On **desktop** the reading **tools are a persistent vertical rail of icons docked at the
+  bottom-right** (beside the reading column) that stays put while scrolling (always one click away) and
+  the **目录 a left drawer**; on **mobile** the chrome
   **recedes while reading** and is **toggled by tapping the center**. Tools are **icon-based** (the table
   of contents is a labelled **icon**, not the literal "目录" text). There is **no in-reader work-picker and no
   page heading**; a work is opened from the Library (or "Continue reading"). A subtle **progress indicator**
