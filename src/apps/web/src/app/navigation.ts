@@ -5,16 +5,15 @@ export type NavDestination = Readonly<{
   to: string;
 }>;
 
-// The primary navigation modes. Today is the proactive landing (index route); Library and Reader
-// mount existing screens; Notes and Search are placeholder regions until their feature slices land.
+// The primary navigation destinations (#390): exactly five calm, product-facing modes. Today is the
+// proactive landing (index route); Progress keeps its route but its user-facing label is "Map"
+// (the fog-of-war mastery view). Reader, Recall, Notes, and Diary are NOT primary — Reader is an
+// immersive destination opened from context, and the others are secondary surfaces reached from the
+// places that need them (Today links to Recall/Diary; Library links to the all-notes surface).
 export const navDestinations: ReadonlyArray<NavDestination> = [
   { end: true, label: "Today", to: "/" },
   { label: "Library", to: "/library" },
-  { label: "Reader", to: "/reader" },
   { label: "Practice", to: "/practice" },
-  { label: "Progress", to: "/progress" },
-  { label: "Recall", to: "/recall" },
-  { label: "Notes", to: "/notes" },
-  { label: "Diary", to: "/diary" },
+  { label: "Map", to: "/progress" },
   { label: "Search", to: "/search" }
 ];

@@ -19,13 +19,14 @@ exists not to log what you did but to **change you** — to move what you encoun
 to **owned, automatic, and used in real life**. Success is judged by **internalization and growth** (transfer,
 retention, real-world use), never by streaks or volume. Language is v0's **first proving ground**; the
 architecture — capture → model → push → internalize → grow — is domain-general. The name says it: you sharpen
-*yourself* against the text.
+_yourself_ against the text.
 
-**因材施教 — for everyone.** Confucius taught *to the student*; but a tutor who reads one learner and adapts to
+**因材施教 — for everyone.** Confucius taught _to the student_; but a tutor who reads one learner and adapts to
 them was, for most of history, a privilege of the rich. The LLM makes **因材施教 universal** — a patient tutor
-that knows *your* gaps, *your* materials, *your* energy. That democratization is whetstone's reason to exist.
+that knows _your_ gaps, _your_ materials, _your_ energy. That democratization is whetstone's reason to exist.
 
 **The scope test (so the app cannot sprawl into a mix):** every feature is either
+
 - **(a) capture** — it records your activity/knowledge into the structured learner model, or
 - **(b) coach** — it is the LLM reading that model to give feedback, suggestions, or connections.
 
@@ -36,30 +37,30 @@ source library** (what you read — ingested works/blocks, no owner) and your **
 done — notes, diary, speech-practice deposits, recall — all `user_id`-owned, all feeding the model). Capture
 types differ only by **anchoring**: a note → a source block, a speech deposit → a case, a diary entry →
 un-anchored. Every personal surface is a **view of the one model** — **Today** (what's next), the fog-of-war
-**Map** (mastery), **Recall** (what's due), a **Timeline** (history, newest-first) — so "history" is a *view of
-your trace*, never a per-feature page (the diary's history is the Timeline's first facet). **Reading is the
+**Map** (mastery), **Recall** (what's due), a **Timeline** (history, newest-first) — so "history" is a _view of
+your trace_, never a per-feature page (the diary's history is the Timeline's first facet). **Reading is the
 on-ramp; the model is the destination.** The model compounds only as fast as it is fed, and the **feed
 (capture) side is deliberately thin in v0** — it is the growth frontier (see "Future direction → more feeders").
 
 ## Internalization & growth (the back half of the loop)
 
 The loop is **capture → model → push → internalize → grow** — the first three are machinery, the last two are
-the point. v0's back half is **thin**: the app measures and schedules *in-app performance* (intervals, case
+the point. v0's back half is **thin**: the app measures and schedules _in-app performance_ (intervals, case
 scores, mastery) but under-verifies **internalization** and barely reflects **growth**. The strict test it
 mostly skips is **transfer**: you have internalized something when you deploy it **spontaneously in a situation
-you were never drilled on** — ultimately, in real life. Four principles correct this — each a *sharpening of an
-existing surface*, not a new app:
+you were never drilled on** — ultimately, in real life. Four principles correct this — each a _sharpening of an
+existing surface_, not a new app:
 
 - **Ownership = transfer, not interval.** A chunk counts as owned (lit on the Map) only when produced
   **unprompted in a context it was not taught in**; the coach deliberately probes transfer. Mastery is
-  *demonstrated*, not *scheduled*.
+  _demonstrated_, not _scheduled_.
 - **Close the loop to life.** Pair the "I couldn't say X" feeder with its mirror, **"I used X for real"** — the
   truest internalization signal and the truest growth metric.
 - **Reflect becoming, not doing.** The Timeline matures from a log into a **growth arc** (was-weak → now-owned,
   latency down, range up); seeing growth reinforces it (metacognition) and is the "better person" made visible.
-- **Push by internalization value** — due × real-life value × *not-yet-transferred*, not mere due-ness.
+- **Push by internalization value** — due × real-life value × _not-yet-transferred_, not mere due-ness.
 
-These are **principles, not v0 scope**: v0 stays the small assistant; they fix what every surface is *for* and
+These are **principles, not v0 scope**: v0 stays the small assistant; they fix what every surface is _for_ and
 how to judge it — by internalization and growth, not activity.
 
 ## The arranger — guidance as the product
@@ -67,7 +68,7 @@ how to judge it — by internalization and growth, not activity.
 The hardest part of self-learning is often not capability or even discipline; a committed learner can still get
 only **single-dimensional, generic guidance** from stateless chat, which re-meets them every prompt. whetstone's
 moat — your learner model + history + **persona** — exists to give what chat structurally cannot:
-**multi-dimensional, persona-grounded guidance.** This is 因材施教 applied to your *life path*, not just your
+**multi-dimensional, persona-grounded guidance.** This is 因材施教 applied to your _life path_, not just your
 vocabulary, and it is the arranger's real job: turn big, long-horizon goals into a **disciplined daily routine**.
 
 **The model is of you and your goals — as tracks.** Parallel tracks (a language, a craft, a domain to master, an
@@ -77,26 +78,26 @@ arranger projects each track's daily slice onto the Today board.
 
 **Planning is hybrid — never autonomous, never absent.** The arranger **proposes a persona-grounded path draft**;
 you **approve or edit** it; then it **owns the daily cadence and progress** against that path. Keeping you in the
-loop is what stops it drifting into the generic advice stateless chat gives — the plan is *grounded in your model
-and ratified by you*, not generated blind.
+loop is what stops it drifting into the generic advice stateless chat gives — the plan is _grounded in your model
+and ratified by you_, not generated blind.
 
-**It defends against discouragement by design — not by mood.** Discouragement attaches to an *uncertain outcome*;
+**It defends against discouragement by design — not by mood.** Discouragement attaches to an _uncertain outcome_;
 the routine converts it into **controllable daily action** and resets the scoreboard: the 上 may be a goal you can
 be denied, but the **guaranteed 中 is who you become** — disciplined, capable, confident. This is the telos in
-operation (*growth, not activity*): aim high, and let the daily practice guarantee the growth regardless of the
+operation (_growth, not activity_): aim high, and let the daily practice guarantee the growth regardless of the
 verdict.
 
 The arranger then reframes the **Today home**: not a feed of proposals but a **finite, clearable daily board** —
-clear it, then rest freely, *no back-judge*. Supporting constraints keep it humane, never a new boss:
+clear it, then rest freely, _no back-judge_. Supporting constraints keep it humane, never a new boss:
 
 - **Compassion, never punishment.** No shame, no punishing streaks; a missed day or a low-energy week is
-  *recovered from*, treated as **energy data, not a moral failure** (this is *why* v0 rejects streaks and
+  _recovered from_, treated as **energy data, not a moral failure** (this is _why_ v0 rejects streaks and
   gamification).
-- **Small & compounding over intensity.** Size the day to be clearable *even on a low day* — `(1.01)^365`, not
+- **Small & compounding over intensity.** Size the day to be clearable _even on a low day_ — `(1.01)^365`, not
   heroic bursts that collapse.
-- **Energy-aware & relapse-tolerant.** Low energy *shrinks* the board, offers lighter work, or blesses rest; it
+- **Energy-aware & relapse-tolerant.** Low energy _shrinks_ the board, offers lighter work, or blesses rest; it
   bends, it does not break.
-- **Scaffolding that fades.** It externalizes discipline *until the habit is internalized*, then steps back —
+- **Scaffolding that fades.** It externalizes discipline _until the habit is internalized_, then steps back —
   growing your capacity to self-direct is itself part of growing into a better person.
 
 **Breadth = the whole 六艺, language first.** The arranger is meant to span the whole curriculum and is
@@ -104,10 +105,10 @@ clear it, then rest freely, *no back-judge*. Supporting constraints keep it huma
 tracks slot in cleanly. The multi-track life arranger is the vision; one disciplined track, end to end, is v0.
 
 **v0 is a usable personal learning assistant — not only the on-ramp.** The reading + annotation loop is the
-*on-ramp* that begins the learner model (read source materials, break them into addressable blocks, attach
+_on-ramp_ that begins the learner model (read source materials, break them into addressable blocks, attach
 notes, connect ideas across works). v0 now also delivers the **assistant loop the North Star promises**: a
 proactive **Today home** that **captures** (a tap-and-talk voice diary), **proposes recall** (due items from
-the built SM-2 scheduler), and **surfaces practice** (the reading→practice nudge). The coach/recall *engine*
+the built SM-2 scheduler), and **surfaces practice** (the reading→practice nudge). The coach/recall _engine_
 (SM-2, recall store, the live coach, the learner model, the fog-of-war map) is **already built** — v0 adds the
 **proactive surfaces** that make it usable. The reading surface itself stays calm; the assistant lives in its
 own home (see "v0 assistant home (Today)"). The detailed scope and content model below remain the source of
@@ -218,15 +219,19 @@ tokens live in code (the Tailwind theme) once built; this section records the du
   accent for all interactive elements; **three muted annotation hues** mapped to the note templates —
   Vocabulary (amber), Expression/phrase (teal-green), Thought/question (violet).
 - **Typography:** **serif** reading body (Latin: Source Serif 4; CJK: a Song/Serif stack for
-  classical texts) with **sans (Inter)** for UI; language-aware font stacks;   a ~66ch reading measure
-    (Latin; narrower, looser-leading for CJK) held at a **stable column width**, so adjusting the text
-    size reflows the text rather than widening or narrowing the column.
+  classical texts) with **sans (Inter)** for UI; language-aware font stacks; a ~66ch reading measure
+  (Latin; narrower, looser-leading for CJK) held at a **stable column width**, so adjusting the text
+  size reflows the text rather than widening or narrowing the column.
 - **Themes:** ship **Day (light)** and **Night (dark)**; Day is the default with a Night toggle. Dark
   mode is a token override, never a second set of components.
-- **Information architecture:** one unified single-user app with four modes — **Library, Reader,
-  Notes, Search**. Ingest is contextual (add or upload from a Work), not a separate "admin" site;
-  "admin" and "reader" remain one person in different modes.
-- **Navigation:** a left sidebar on desktop/tablet and a bottom tab bar on mobile; the reader is
+- **Information architecture:** one unified single-user app whose **primary navigation is five calm,
+  product-facing destinations — Today, Library, Practice, Map, Search**. The Reader is an immersive
+  destination opened from context; Recall, Diary, and Notes are secondary surfaces reached from the
+  places that need them (Today links to Recall/Diary; Library links to the all-notes review). Ingest is
+  contextual (add or upload from a Work), not a separate "admin" site; "admin" and "reader" remain one
+  person in different modes.
+- **Navigation:** a left sidebar on desktop/tablet and a single-row bottom tab bar on mobile (five
+  ≥44px targets, never wrapping; the theme toggle is shell chrome, not a tab); the reader is
   immersive (chrome recedes while reading).
 - **Motion (first-class):** the app should feel **lively** — purposeful, spring-based motion in the
   chrome, transitions, and the moment of annotation (a note's highlight is "born" on save) — while the
@@ -253,8 +258,8 @@ tokens live in code (the Tailwind theme) once built; this section records the du
     and English (`en`). EPUB metadata languages are normalized into this set on ingestion.
   - `ReadingUnit` is an ordered unit within a work (chapter/section/essay). It is a container/ordering
     entry, linked from the Work via `contains`.
-  - **`Block` is the atomic, addressable unit** —   one content block (paragraph, heading, list item,
-      blockquote, code block, **table**, or **figure** — an extracted EPUB image with its caption). Each block is an `Entry`, linked from its ReadingUnit via `contains`,
+  - **`Block` is the atomic, addressable unit** — one content block (paragraph, heading, list item,
+    blockquote, code block, **table**, or **figure** — an extracted EPUB image with its caption). Each block is an `Entry`, linked from its ReadingUnit via `contains`,
     with a **stable id** that survives edits and re-imports. Blocks are what notes anchor to and what
     search returns.
 - A short work (essay, blog post) has one ReadingUnit; a book/classic has many ordered units.
@@ -455,7 +460,7 @@ Storing blocks as rows makes search easier and richer than files would (granular
 
 While reading, the user can select a single word (or short phrase) and look it up in place — a fast,
 **view-only, monolingual** glance that never auto-creates or edits a note. Note-taking stays a deliberate,
-manual act (the effortful encoding is the point), and the *meaning-mapping stays the reader's own work*:
+manual act (the effortful encoding is the point), and the _meaning-mapping stays the reader's own work_:
 lookup shows real dictionary content, not a pre-digested analysis.
 
 - **Boundary first.** Every source implements a `DictionaryProvider` interface that hides its format,
@@ -486,7 +491,7 @@ lookup shows real dictionary content, not a pre-digested analysis.
   links only — never scraped or embedded.
 
 **Interpret the selection before looking it up (CJK segmentation).** A raw CJK selection is ambiguous —
-there are no word spaces — so a tap/selection is first *interpreted* into word spans: the reader snaps to
+there are no word spaces — so a tap/selection is first _interpreted_ into word spans: the reader snaps to
 the segmented word under the tap (六艺, not 六) and can grow/shrink to the neighbouring token
 (微信读书/Pleco-style), and lookup runs on that span. Driven by **native word segmentation**
 (`Intl.Segmenter`, zero-dependency) — **not** an LLM sub-word (BPE) tokenizer, whose statistical pieces do
@@ -495,7 +500,7 @@ not respect word meaning; a classical-tuned segmenter (e.g. jiayan) is a later r
 **LLM explanation — narrow, labeled, context-grounded (never a dictionary).** The default lookup stays real
 dictionary content the reader maps for themselves; an LLM pre-digest of ordinary vocabulary is shallow
 ("fake") learning and stays deferred (the "No LLM note drafting" non-goal holds). But where dictionaries
-*structurally* miss — classical Chinese (文言文), 成語, allusions, proper nouns — the reader hits a dead end,
+_structurally_ miss — classical Chinese (文言文), 成語, allusions, proper nouns — the reader hits a dead end,
 so lookup offers an **optional** "explain in context" tab: a **local LLM** (Qwen/DeepSeek, via the existing
 coach model seam) glosses the selected span **using its surrounding sentence** — context a dictionary cannot
 use. It is a **reference of last resort** — clearly marked AI-generated and attributed, never dressed as an
@@ -506,19 +511,19 @@ Classical Chinese first.
 
 - Content document model: **ProseMirror via Tiptap** (MIT) — see "Architecture: the document-model
   bedrock". Source HTML → document via `parseDOM`; `@tiptap/static-renderer` renders it; `prosemirror-
-  model` runs in Node (per-block `data-block-id` from the stable node id).
+model` runs in Node (per-block `data-block-id` from the stable node id).
 - EPUB parsing: `@lingo-reader/epub-parser` provides chapter XHTML; Markdown import via `remark-parse`
-  + `remark-gfm`. Both feed the document model (no longer a stored mdast intermediate).
+  - `remark-gfm`. Both feed the document model (no longer a stored mdast intermediate).
 - Search: PostgreSQL FTS + `pg_trgm` now; `pgvector` later (Drizzle has native `vector()` support;
   `tsvector` is set via raw SQL).
 - All chosen libraries are permissively licensed (MIT/Apache/BSD); no GPL/AGPL, no paid lock-in.
-- *Superseded* (mdast storage, `rehype-remark`→mdast, `react-markdown` rendering): see
+- _Superseded_ (mdast storage, `rehype-remark`→mdast, `react-markdown` rendering): see
   `docs/DECISIONS.md` D1.
 
 ## Language practice & recall (the learning loop)
 
 The first capability built **on** the reading/annotation on-ramp: a coach that grows the learner's
-*productive, everyday* English — the spoken vocabulary and ready-made phrasings a technical reader
+_productive, everyday_ English — the spoken vocabulary and ready-made phrasings a technical reader
 rarely picks up.
 
 **The gap it targets.** Outside a technical domain the learner thinks in their first language and
@@ -527,11 +532,11 @@ anchored to translation. Fluency is owning enough **chunks** (collocations, idio
 retrieve, not build. So the module trains **production under mild time pressure** (a situation → say it
 before you can translate), not recognition.
 
-**The compounding principle (the invariant).** *Every practice leaves a durable trace* — mistakes,
+**The compounding principle (the invariant).** _Every practice leaves a durable trace_ — mistakes,
 patterns kept, progress, corrections — deposited into the learner model; nothing is ephemeral. The
 longer whetstone is used, the more deeply it knows the learner and the smarter its proposals get. This
-is the moat (learner model + retrieval) made concrete, and the test for any practice feature: *does
-this interaction make the next proposal smarter? If not, it leaks value.*
+is the moat (learner model + retrieval) made concrete, and the test for any practice feature: _does
+this interaction make the next proposal smarter? If not, it leaks value._
 
 **The loop — a real-time spoken conversation.** A session (~15 min) is a **call with the coach**, not a
 form. You tap once and **talk**; the coach listens continuously, detects when you've finished
@@ -545,12 +550,12 @@ time-box near). Then **one analysis pass** over the whole round (transcript + ST
 case's target chunks + compiled context) returns a **structured debrief** — per-chunk grades, the 2–3
 highest-value **pattern-tagged** mistakes, wins, one native upgrade — and that deposits
 **deterministically** into SM-2 recall, error-pattern counts, the rolling profile, and case mastery (the
-map). A compact **debrief screen** shows the few moments that matter and what is now due to recall. *Flow
-during, learning after:* the conversation stays natural while every round still compounds.
+map). A compact **debrief screen** shows the few moments that matter and what is now due to recall. _Flow
+during, learning after:_ the conversation stays natural while every round still compounds.
 
 **Voice plumbing (decided).** Voice-**in** = browser mic + lightweight client VAD → **server-side local
 Whisper** (transcript + word-timings; private, swappable, cost-routed). Voice-**out** = the **browser's
-built-in TTS** (free, on-device) for v0, a neural-voice seam later. The browser's own speech *recognizer*
+built-in TTS** (free, on-device) for v0, a neural-voice seam later. The browser's own speech _recognizer_
 is rejected (cloud-routed, unreliable on Safari/iOS, no timings). **The coach is a fixed skill that
 evolves by briefing, not by rewriting itself:** each round `compileContext` feeds it your profile + due
 chunks + top error patterns + recent outcomes, and the learner model sets **knobs** (target band,
@@ -574,12 +579,12 @@ self-tuning, eval-driven coach is deferred; the knobs are its seam.
 
 **Why production, and why spoken (the basis).** Input (reading) is necessary but not sufficient —
 producing forces retrieval and reveals gaps (Swain's output hypothesis); automaticity is **skill- and
-modality-specific**, so you automate speaking only by *speaking*, not typing (DeKeyser); and real-time
+modality-specific**, so you automate speaking only by _speaking_, not typing (DeKeyser); and real-time
 pressure builds the automatic access fluency needs (Segalowitz). Hence spoken, production-first, under
 mild time pressure.
 
 **Content navigation — a coach-navigated fog-of-war.** Everyday English is an **authored map** of
-domains/cases (kitchen, chores, childcare, small talk, errands…) — the curation of *what matters*, with
+domains/cases (kitchen, chores, childcare, small talk, errands…) — the curation of _what matters_, with
 no fixed linear path. The **coach lights the next region by `gap × frequency`** (high-value in real
 life **and** still weak for you), **seeded by your real failures** (jots, reading captures, "I couldn't
 say X"), and it **probes adjacent dark areas** to surface blind spots you couldn't nominate. Your
@@ -589,7 +594,7 @@ learner model drives the route; the map guarantees coverage.
 progress, dark = unknown — the honest progress signal (not XP). The system knows improvement by
 **measuring every turn** (produced the target? naturally? how fast — STT latency/pauses? which error
 category?) and reading the **trend in those deposits** (mastery intervals lengthening, error frequency
-falling, latency dropping, dark→lit). Improvement is the model's *slope*, not a one-off test. This
+falling, latency dropping, dark→lit). Improvement is the model's _slope_, not a one-off test. This
 closes a two-level loop — **micro** (speak → judge → next cue adapts) and **macro** (deposits →
 model/map update → tomorrow's navigation + recall schedule) — at once how the system measures progress
 and how it gets smarter.
@@ -606,20 +611,20 @@ upgrade, a self-tuning (eval-driven) coach, and the reverse practice→reading "
 
 ## v0 assistant home (Today)
 
-The North Star is *proactive*, so v0 gives the assistant a **front door**: a **Today** home that is the app's
-landing. It surfaces *what to do today* by reading the already-built learner model, and the **reading surface
+The North Star is _proactive_, so v0 gives the assistant a **front door**: a **Today** home that is the app's
+landing. It surfaces _what to do today_ by reading the already-built learner model, and the **reading surface
 stays calm** (no capture/recall/practice inside the reader; standing non-goal).
 
 **Today is a finite, clearable daily board** (see "The arranger"), not an endless feed: a small, energy-aware
 set you can actually finish. When it is cleared, a calm **"done for today"** invites you to rest and play
-**freely — no streak, no guilt, no back-judge** (*rest is earned, not stolen*). On a low day the board
+**freely — no streak, no guilt, no back-judge** (_rest is earned, not stolen_). On a low day the board
 **shrinks**; a missed day is recovered from, never punished. Three arms, one restrained surface:
 
 - **Capture — voice diary.** Tap and talk; each voice note → STT → an LLM **tidy pass (never a polish or
   rewrite)** → one **block under today's date**. Un-anchored, any language, edit/delete. Every entry
   **deposits into the learner history the coach reads**, so capture compounds — it is not a write-only journal.
 - **Coach — recall proposals.** Today's **due** items (the built **SM-2** scheduler + recall store) surfaced as
-  a **gentle, capped, snoozeable proposal** — *proposals, not an obligation*; a backlog never piles into a
+  a **gentle, capped, snoozeable proposal** — _proposals, not an obligation_; a backlog never piles into a
   wall. Completing an item feeds its grade back to SM-2. **FSRS is a future swap behind the same grade-driven
   scheduler seam** — SM-2 is what ships.
 - **Practice — the reading nudge.** The reading→practice nudge (a recent capture → "practise it") renders as a
@@ -640,24 +645,24 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
   reading-notes, the reading→chunk harvest, speech-practice deposits, the voice diary. Future **capture
   sources** thicken the model behind the same scope test: e.g. a fast **"I couldn't say X" real-life jot** (the
   strongest next feeder — already a fog-of-war seed) and its mirror **"I used X for real"** (an internalization / growth signal), a **web/article clipper** for reading done outside the
-  app, and **importing prior highlights/notes** to bootstrap. Each must *feed the model* (capture), never
+  app, and **importing prior highlights/notes** to bootstrap. Each must _feed the model_ (capture), never
   merely store content.
 - The Entry/link + Block model supports future rich connections between materials, notes, concepts,
   and review items (block references, backlinks, transclusion) — none built in v0.
 - **Internal references — one work-level link graph (settled; the v0 build hardens it).**
   Footnote/endnote markers, "see Figure 5-2", and chapter cross-refs are the **same primitive**: an
-  inline **reference** to another point in the *same work*, carrying a **target** (the source
+  inline **reference** to another point in the _same work_, carrying a **target** (the source
   `id`/href) and a **role** (note → superscript + back-link; cross-ref → inline link). They are **not**
-  per-kind nodes re-implemented per renderer. **Representation:** a reference *marker* (footnote/endnote
-  /callout superscript) is an inline **atom**; a reference *over existing prose text* (xref, figure
+  per-kind nodes re-implemented per renderer. **Representation:** a reference _marker_ (footnote/endnote
+  /callout superscript) is an inline **atom**; a reference _over existing prose text_ (xref, figure
   /section, chapter cross-ref, generic same-work `<a>`) is an inline **`link` mark** — the text stays in
   the paragraph's inline run, so CJK microtypography (inter-CJK-space normalization) is never broken by
   pulling link text out of flow. This is the content model's **first inline mark**, a deliberate
-  extension of the node-only schema; it does **not** contradict *annotations render as Decorations,
-  never marks* — that rule governs **personal overlay** (notes/comments, `user_id`), whereas a link is
+  extension of the node-only schema; it does **not** contradict _annotations render as Decorations,
+  never marks_ — that rule governs **personal overlay** (notes/comments, `user_id`), whereas a link is
   **intrinsic content**. The **keystone — historically missing, and the cause of the repeated
   regressions — is a work anchor index** built at ingest: `(source file, anchor) → (reading unit,
-  block)` for the *whole* work, keyed by **real per-unit source file** (not an anchor-only shortcut —
+block)` for the _whole_ work, keyed by **real per-unit source file** (not an anchor-only shortcut —
   per-chapter ids like `#fn1` collide across files). Resolution must be **work-scoped, not current-unit
   DOM-scoped**: a reference resolves **across chapters**, so endnotes-at-the-end and chapter cross-refs
   work, not only same-chapter anchors. A **single resolver** turns any target into a cross-unit
@@ -672,7 +677,7 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
 - A block-based editor (future) and LLM-assisted note drafting remain future, not v0. Language
   practice & recall is **now an active module** — see "Language practice & recall" above.
 - **Editing & the document model — committed** (see "Architecture: the document-model bedrock"
-  above). whetstone is a personal learning environment where the same person reads *and writes*, so a
+  above). whetstone is a personal learning environment where the same person reads _and writes_, so a
   Notion-like block editor is a near-term direction. The content bedrock is the **Tiptap/ProseMirror
   document model** (mdast retired to import/export); the editor is the same model made editable. Build
   in slices: schema/node-specs → fidelity ingestion (fail-loud + log) → static-renderer reader →
@@ -680,10 +685,10 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
   - The editor's **first payoff is writing**: authoring an **owned Work** — the same block/document model as
     an ingested one, but **authored** (canonical, not regenerated) and **owned** (a Work gains an `author`) —
     composed in the Tiptap editor, read back in the same reader, and **feeding the learner model** (production
-    is capture). This adds a **third content category** beside *ingested* (shared, no owner) and *personal*
+    is capture). This adds a **third content category** beside _ingested_ (shared, no owner) and _personal_
     (notes, owned/private): **owned content that can later be shared**; and the **rich editor becomes a shared
     capability** across writing, note bodies, and comments. **Sharing + comments are a later, separate social
-    layer** — comments are already modeled (decorations + `user_id`), but *shared* reading/commenting needs the
+    layer** — comments are already modeled (decorations + `user_id`), but _shared_ reading/commenting needs the
     deferred **multi-user** step, so **authoring lands single-user first** (it crosses no new non-goal). All of
     this sits **after the bedrock pivot** (the editor is its final slice).
 

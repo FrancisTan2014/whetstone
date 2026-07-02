@@ -118,6 +118,13 @@ describe("AdminLibraryPage", () => {
     ).toBeDefined();
   });
 
+  it("links to the all-notes review surface from the header (#390)", async () => {
+    await renderReady();
+
+    const notesLink = screen.getByRole("link", { name: "Review all notes" });
+    expect(notesLink.getAttribute("href")).toBe("#/notes");
+  });
+
   it("shows a loading state before the initial load resolves", async () => {
     render(<AdminLibraryPage />);
 
