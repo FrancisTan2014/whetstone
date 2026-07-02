@@ -344,7 +344,6 @@ function seedNavWork(): void {
   }));
 }
 
-
 const crossBlockContent: WorkContentDto = {
   readingUnits: [
     {
@@ -1178,9 +1177,36 @@ describe("ReaderPage", () => {
     expect(within(toc).queryByRole("button", { name: "Section 1" })).toBeNull();
     expect(within(toc).queryByRole("button", { name: "Section 2" })).toBeNull();
     // The entry that opens the active (first) unit is marked current.
-    expect(within(toc).getByRole("button", { name: "Chapter One" }).getAttribute("aria-current")).toBe(
-      "true"
-    );
+    expect(
+      within(toc).getByRole("button", { name: "Chapter One" }).getAttribute("aria-current")
+    ).toBe("true");
+  });
+
+  it("marks no nav entry current when the open unit is not an authored target", async () => {
+    // A nav tree whose only entry targets the second unit, while the reader opens the first — so no
+    // entry is active and none is marked current.
+    seedWorkContent(navContent);
+    mockedFetchWorkStructure.mockImplementation(async (workEntryId: string) => ({
+      readingUnits: structureOf(navContent).readingUnits,
+      tableOfContents: [
+        {
+          depth: 0,
+          entryId: "t-only",
+          label: "Only Chapter Two",
+          orderIndex: 0,
+          targetUnitEntryId: toEntryId("u-2")
+        }
+      ],
+      workEntryId: toEntryId(workEntryId)
+    }));
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    expect(
+      within(toc).getByRole("button", { name: "Only Chapter Two" }).getAttribute("aria-current")
+    ).toBeNull();
   });
 
   it("opens a whole-file nav entry's unit at its top", async () => {

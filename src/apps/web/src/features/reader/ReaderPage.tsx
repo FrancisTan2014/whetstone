@@ -1002,24 +1002,32 @@ export function ReaderPage({
       {state.status === "worksError" ? <p role="alert">Could not load works.</p> : null}
 
       {state.status === "ready"
-        ? renderReady(state.works, state.reading, handlers, selectUnit, onSelectTocEntry, retryUnit, {
-            chromeHidden,
-            isNarrow,
-            onSizeChange,
-            onToggleChrome,
-            prefersReducedMotion,
-            scroll,
-            size,
-            tools: {
-              notesCount: notes.length,
-              notesOpen,
-              onCloseToc: () => setTocOpen(false),
-              onSetNotesOpen: setNotesOpen,
-              onToggleNotes: () => setNotesOpen((value) => !value),
-              onToggleToc: () => setTocOpen((value) => !value),
-              tocOpen
+        ? renderReady(
+            state.works,
+            state.reading,
+            handlers,
+            selectUnit,
+            onSelectTocEntry,
+            retryUnit,
+            {
+              chromeHidden,
+              isNarrow,
+              onSizeChange,
+              onToggleChrome,
+              prefersReducedMotion,
+              scroll,
+              size,
+              tools: {
+                notesCount: notes.length,
+                notesOpen,
+                onCloseToc: () => setTocOpen(false),
+                onSetNotesOpen: setNotesOpen,
+                onToggleNotes: () => setNotesOpen((value) => !value),
+                onToggleToc: () => setTocOpen((value) => !value),
+                tocOpen
+              }
             }
-          })
+          )
         : null}
 
       {capture === undefined ? null : (
@@ -1154,9 +1162,7 @@ function renderViewing(
   // navigates by its reading-unit list, and a single-unit work (an essay) reads without a 目录.
   const tree = structure.tableOfContents;
   const activeEntryId =
-    tree === undefined
-      ? undefined
-      : activeTocEntryId(tree, units[activeUnitIndex]?.entryId);
+    tree === undefined ? undefined : activeTocEntryId(tree, units[activeUnitIndex]?.entryId);
   const hasToc = tree !== undefined || units.length > 1;
   const toc =
     tree !== undefined ? (

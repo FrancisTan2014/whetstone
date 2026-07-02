@@ -88,7 +88,12 @@ const tocStructure: ReaderStructure = {
 
 const anchorIndex: AnchorIndex = buildAnchorIndex({
   anchors: [
-    { anchor: "sec-2", blockEntryId: "block-sec-2", sourceFile: "OEBPS/chap1.xhtml", unitEntryId: "u-1" },
+    {
+      anchor: "sec-2",
+      blockEntryId: "block-sec-2",
+      sourceFile: "OEBPS/chap1.xhtml",
+      unitEntryId: "u-1"
+    },
     { anchor: "note-a", blockEntryId: "block-note-a", sourceFile: null, unitEntryId: "u-3" }
   ],
   workEntryId: "work-1"
@@ -107,7 +112,11 @@ describe("resolveTocEntryNavigation", () => {
 
   it("no-ops an entry whose target unit is not in the structure", () => {
     expect(
-      resolveTocEntryNavigation(tocStructure, anchorIndex, tocEntry({ targetUnitEntryId: "u-gone" }))
+      resolveTocEntryNavigation(
+        tocStructure,
+        anchorIndex,
+        tocEntry({ targetUnitEntryId: "u-gone" })
+      )
     ).toEqual({ kind: "none" });
   });
 

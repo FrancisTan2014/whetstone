@@ -131,7 +131,9 @@ describe("ReaderToc tree mode", () => {
     expect(screen.getByRole("button", { name: "Chapter Two" }).getAttribute("aria-current")).toBe(
       "true"
     );
-    expect(screen.getByRole("button", { name: "Part One" }).getAttribute("aria-current")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Part One" }).getAttribute("aria-current")
+    ).toBeNull();
   });
 
   it("does not mark any entry current when no active entry is given", () => {

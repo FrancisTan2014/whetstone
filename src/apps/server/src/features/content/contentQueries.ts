@@ -15,7 +15,14 @@ import { and, asc, count, eq, isNotNull, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
-import { blocks, docBlocks, readingUnits, tocEntries, workMeta, workSources } from "../../db/schema.js";
+import {
+  blocks,
+  docBlocks,
+  readingUnits,
+  tocEntries,
+  workMeta,
+  workSources
+} from "../../db/schema.js";
 
 type ReadingUnitRow = Readonly<{
   entryId: string;
