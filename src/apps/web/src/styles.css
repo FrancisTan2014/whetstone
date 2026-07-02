@@ -733,6 +733,30 @@ code {
   cursor: pointer;
 }
 
+/* A same-work reference link (#368): the inline `link` mark rendered in flow. The active control
+   reuses the accent-underline affordance of `.readerXref` so an inline cross-reference reads as a
+   tappable reference within the prose line; the inert variant (an external/cross-work link) keeps a
+   quiet dotted underline to show it was a link in the source without inviting a tap. Both stay inline
+   so CJK inter-character spacing is preserved (`见周髀之术`). */
+.readerLink {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.readerLink--inert {
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: default;
+}
+
 /* A footnote marker (#250): the live cross-reference rendered as a quiet raised superscript, like a
    printed footnote number, so it reads as a reference without breaking the line. The inner control keeps
    the underlined-accent affordance; on coarse pointers it grows to a ≥44px touch target. */
