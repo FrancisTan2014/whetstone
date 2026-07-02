@@ -174,7 +174,10 @@ const server = createServer({
       }
     },
     pdfToMarkdown: composePdfToMarkdown(
-      createOcrmypdfPreprocess({ ocrmypdfBinary: config.pdfOcrBinary }),
+      createOcrmypdfPreprocess({
+        ocrmypdfBinary: config.pdfOcrBinary,
+        timeoutMs: config.pdfTimeoutMs
+      }),
       createDoclingPdfToMarkdown({
         pythonBinary: config.pdfPythonBinary,
         scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url)),

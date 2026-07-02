@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { PdfOcr } from "./pdfOcr.js";
+import { withTimeout } from "./withTimeout.js";
 
 // The PDF-to-Markdown seam (#15): PDF ingestion converges on the existing Markdown -> mdast ->
 // decompose -> blocks pipeline. Conversion is one-shot — a born-digital PDF is rendered to clean
@@ -35,20 +36,6 @@ export type DoclingDependencies = Readonly<{
 
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
-// Reject if `work` does not settle within `timeoutMs`, so the seam bounds any converter — the real
-// spawn (killed via execFile's own timeout) and an injected run alike. The timer is always cleared,
-// so a resolved conversion leaves no dangling handle.
-function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`PDF conversion timed out after ${timeoutMs}ms.`)),
-      timeoutMs
-    );
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
-
 // The real worker: write the bytes to a temp file, spawn the one-shot Docling script, return its
 // Markdown. The PDF lives only for the conversion and is removed after. Permissive deps only.
 export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): PdfToMarkdown {
@@ -73,7 +60,7 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
       const pdfPath = join(dir, "source.pdf");
       try {
         await writeFile(pdfPath, bytes);
-        return await withTimeout(run(pdfPath), dependencies.timeoutMs);
+        return await withTimeout(run(pdfPath), dependencies.timeoutMs, "PDF conversion");
       } finally {
         await rm(dir, { force: true, recursive: true });
       }
