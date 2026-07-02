@@ -809,8 +809,8 @@
   opacity: 0.75;
 }
 
-/* The reading tools. Desktop: a bottom-centre horizontal icon pill. Narrow: a horizontal cluster
-   docked as a bottom bar within the safe area. */
+/* The reading tools. Desktop: a right-edge vertical icon rail, vertically centered. Narrow: a
+   horizontal cluster at the top-end forming a top bar with the title. */
 .readingTools {
   position: fixed;
   display: flex;
@@ -898,56 +898,27 @@
 }
 
 @media (min-width: 56rem) {
-  /* Desktop: a horizontal icon pill floating at the bottom-centre of the viewport, bringing the
-     desktop layout in line with the mobile bottom bar (#364) while keeping the floating-pill
-     aesthetic. Centred under the reading column (which has wide side margins) it reads as part of the
-     centred frame; a full-width bar would feel heavy. It floats over the column's bottom (translucent
-     + blurred) and recedes downward while reading, so the last line is never permanently obscured;
-     `env(safe-area-inset-bottom)` is respected. */
+  /* Desktop: a vertical icon rail docked just outside the centered reading column's right edge, so
+     the column + rail read as one centered frame (#180). The rail is fixed and positioned from the
+     viewport centre by half the column measure plus a small gap, so it tracks the column's edge as
+     the window widens instead of pinning to the window edge. The 56rem breakpoint is the smallest
+     width at which `column + gap + rail` fits beside the text without overlap (widest column is the
+     46rem CJK measure); below it the top-bar layout above takes over. */
   .readingTools {
-    inset-inline-start: 50%;
-    inset-block-end: max(1rem, env(safe-area-inset-bottom));
-    flex-direction: row;
-    transform: translateX(-50%);
+    inset-inline-start: calc(50% + var(--reading-measure) / 2 + 1rem);
+    inset-block-start: 50%;
+    flex-direction: column;
+    transform: translateY(-50%);
     padding: 0.25rem;
     border-radius: 999px;
     background-color: color-mix(in oklch, var(--color-surface) 80%, transparent);
     backdrop-filter: blur(8px);
   }
 
-  /* A-/A+ sit side by side again on desktop (the narrow rail had stacked them into one icon column). */
+  /* Stack A-/A+ in the same vertical column as the other tools so the rail is one narrow icon
+     column (#298), instead of the size pill sitting two icons wide. Mobile keeps the row. */
   .readingSizeControl {
-    flex-direction: row;
-  }
-
-  /* Recede downward off the bottom edge with the shared chrome transition, keeping the horizontal
-     centring while it slides away (a different translateY from the mobile rule, which uses 130%). */
-  .readingHeader[data-hidden="true"] .readingTools {
-    transform: translateX(-50%) translateY(160%);
-    opacity: 0;
-  }
-
-  /* A thin bottom-edge hover zone brings the receded pill back on desktop (its mobile sibling returns
-     on a centre tap / scroll-up instead). It is inert until the chrome hides, so it never blocks
-     selecting the last line; once the pill has receded it catches the pointer, and hovering the pill
-     itself keeps it in place. */
-  .readingRailEdge {
-    display: block;
-    position: fixed;
-    inset-inline: 0;
-    inset-block-end: 0;
-    block-size: 1.5rem;
-    pointer-events: none;
-  }
-
-  .readingHeader[data-hidden="true"] .readingRailEdge {
-    pointer-events: auto;
-  }
-
-  .readingHeader[data-hidden="true"] .readingRailEdge:hover ~ .readingTools,
-  .readingHeader[data-hidden="true"] .readingTools:hover {
-    transform: translateX(-50%);
-    opacity: 1;
+    flex-direction: column;
   }
 }
 

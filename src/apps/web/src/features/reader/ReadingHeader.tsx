@@ -87,7 +87,7 @@ export function ReadingHeader({
       >
         <span className="readingProgressBar" style={{ transform: `scaleX(${progress})` }} />
       </div>
-      {/* A thin bottom-edge hover zone so the receded desktop tool pill returns on hover (CSS only). */}
+      {/* A thin right-edge hover zone so the receded desktop rail returns on hover (CSS only). */}
       <span aria-hidden className="readingRailEdge" />
       <div aria-label="Reading tools" className="readingTools" role="group">
         <div aria-label="Reading text size" className="readingSizeControl" role="group">
