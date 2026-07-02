@@ -34,13 +34,55 @@ function resolveConverseModel(ctx) {
 }
 
 /**
- * The local "AI 解释" model to provision — `EXPLAIN_MODEL` override or the default.
+ * The runtime-effective local "AI 解释" model. Precedence mirrors what the server actually serves at
+ * boot: a process-env `EXPLAIN_MODEL` override wins (dotenv does not overwrite an already-set var),
+ * then the value persisted in `.env`, then the default. check/verify pull and probe THIS exact model,
+ * so setup never reports ready for a model the server would not use (e.g. `.env` names `qwen3` while
+ * only the default `qwen2.5` is pulled).
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {string}
  */
 function resolveExplainModel(ctx) {
-  return ctx.env.EXPLAIN_MODEL ?? DEFAULT_EXPLAIN_MODEL;
+  return ctx.env.EXPLAIN_MODEL ?? readEnv(ctx).EXPLAIN_MODEL ?? DEFAULT_EXPLAIN_MODEL;
+}
+
+// The exact non-secret `.env` values `provision` writes to make the coach fully local. Both tiers must
+// read `cheap` so the runtime routes coach calls to the local Ollama adapter instead of the default
+// `analyze: "strong"` (which, with no cloud key, degrades to the deterministic fake). check/verify
+// require these exact values — a stale `.env` that lacks them, or pins one to `strong`, is reported
+// not-ready so `provision` upserts them.
+const REQUIRED_COACH_ENV = Object.freeze({
+  COACH_CONVERSE_TIER: "cheap",
+  COACH_ANALYZE_TIER: "cheap"
+});
+
+/**
+ * Validate that `.env` wires the exact non-secret values the runtime consumes for a fully-local coach:
+ * `EXPLAIN_MODEL` naming the local model that was pulled/verified, and both `COACH_*_TIER=cheap` pins
+ * that route every coach call to the local tier. Returns the first gap via `fail`, or null when fully
+ * wired.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} explainModel  The runtime-effective explain model (see resolveExplainModel).
+ * @param {(what: string) => import("../step.mjs").StepResult} fail
+ * @returns {import("../step.mjs").StepResult | null}
+ */
+function checkEnvWiring(ctx, explainModel, fail) {
+  const env = readEnv(ctx);
+  if (env.EXPLAIN_MODEL !== explainModel) {
+    return fail(
+      `.env does not wire EXPLAIN_MODEL=${explainModel} — the local "AI 解释" model the coach will use.`
+    );
+  }
+  for (const [key, value] of Object.entries(REQUIRED_COACH_ENV)) {
+    if (env[key] !== value) {
+      return fail(
+        `.env does not pin ${key}=${value}, so a coach call would route to the cloud/fake tier, not the local model.`
+      );
+    }
+  }
+  return null;
 }
 
 /**
@@ -126,13 +168,9 @@ export const coachStep = {
         `Run \`ollama pull ${explainModel}\` (or \`pnpm setup --coach\`).`
       );
     }
-    if (readEnv(ctx).EXPLAIN_MODEL === undefined) {
-      return missing(
-        "The local coach is not wired into .env (EXPLAIN_MODEL).",
-        "Run `pnpm setup --coach`."
-      );
-    }
-    return ok();
+    return (
+      checkEnvWiring(ctx, explainModel, (what) => missing(what, "Run `pnpm setup --coach`.")) ?? ok()
+    );
   },
   provision(ctx) {
     // Consent-gated: offer to install Ollama after an explicit Y (or `--yes`); on decline, no package
@@ -172,16 +210,16 @@ export const coachStep = {
     return ok();
   },
   verify(ctx) {
-    if (readEnv(ctx).EXPLAIN_MODEL === undefined) {
-      return error(
-        "The local coach is not wired into .env after provisioning.",
-        "Re-run `pnpm setup --coach`."
-      );
+    const converseModel = resolveConverseModel(ctx);
+    const explainModel = resolveExplainModel(ctx);
+    const wiringGap = checkEnvWiring(ctx, explainModel, (what) =>
+      error(what, "Re-run `pnpm setup --coach`.")
+    );
+    if (wiringGap) {
+      return wiringGap;
     }
     // A minimal generate call per model confirms the daemon actually answers — setup must not report
     // ok for a model the server would fail on (daemon down, model unpulled, or an empty response).
-    const converseModel = resolveConverseModel(ctx);
-    const explainModel = resolveExplainModel(ctx);
     for (const model of [converseModel, explainModel]) {
       const result = ctx.exec("ollama", ["run", model, "Reply with the single word: ok"]);
       if (result.code !== 0) {

@@ -6,6 +6,8 @@ import { coachStep, validateOllamaAnswer } from "./coach.mjs";
 const ENV_PATH = "/repo/.env";
 const CONVERSE_MODEL = "llama3.1:8b";
 const EXPLAIN_MODEL = "qwen2.5";
+// The exact non-secret wiring `provision` writes: the local explain model + both tiers pinned local.
+const WIRED_ENV = `EXPLAIN_MODEL=${EXPLAIN_MODEL}\nCOACH_CONVERSE_TIER=cheap\nCOACH_ANALYZE_TIER=cheap\n`;
 
 // A default handler where Ollama is present, both models are listed, and every model answers; each
 // test overrides only the branch it exercises.
@@ -78,10 +80,44 @@ describe("coachStep.check", () => {
     expect(coachStep.check(ctx).what).toContain(".env");
   });
 
-  it("is ok when Ollama, both models, and .env are all present", () => {
+  it("verifies the model .env actually wires, not the default: a mismatched EXPLAIN_MODEL is caught", () => {
+    // .env names qwen3, but only the default llama3.1:8b + qwen2.5 are pulled (happyExec). check must
+    // derive the model from the runtime-effective .env value and flag qwen3 as not pulled.
+    const { ctx } = createFakeContext({
+      execHandler: happyExec,
+      fileContents: { [ENV_PATH]: "EXPLAIN_MODEL=qwen3\nCOACH_CONVERSE_TIER=cheap\nCOACH_ANALYZE_TIER=cheap\n" }
+    });
+    const result = coachStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.remedy).toContain("ollama pull qwen3");
+  });
+
+  it("reports missing when the coach tier pins are absent (analyze would route to strong/fake)", () => {
     const { ctx } = createFakeContext({
       execHandler: happyExec,
       fileContents: { [ENV_PATH]: `EXPLAIN_MODEL=${EXPLAIN_MODEL}\n` }
+    });
+    const result = coachStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("COACH_CONVERSE_TIER");
+  });
+
+  it("reports missing when a coach tier is pinned to strong instead of cheap", () => {
+    const { ctx } = createFakeContext({
+      execHandler: happyExec,
+      fileContents: {
+        [ENV_PATH]: `EXPLAIN_MODEL=${EXPLAIN_MODEL}\nCOACH_CONVERSE_TIER=cheap\nCOACH_ANALYZE_TIER=strong\n`
+      }
+    });
+    const result = coachStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("COACH_ANALYZE_TIER");
+  });
+
+  it("is ok when Ollama, both models, and .env are all present", () => {
+    const { ctx } = createFakeContext({
+      execHandler: happyExec,
+      fileContents: { [ENV_PATH]: WIRED_ENV }
     });
     expect(coachStep.check(ctx)).toEqual({ status: "ok" });
   });
@@ -176,11 +212,21 @@ describe("coachStep.provision", () => {
 });
 
 describe("coachStep.verify", () => {
-  const wired = { [ENV_PATH]: `EXPLAIN_MODEL=${EXPLAIN_MODEL}\n` };
+  const wired = { [ENV_PATH]: WIRED_ENV };
 
   it("errors when .env is not wired after provisioning", () => {
     const { ctx } = createFakeContext();
-    expect(coachStep.verify(ctx).what).toContain("not wired");
+    expect(coachStep.verify(ctx).what).toContain("EXPLAIN_MODEL");
+  });
+
+  it("errors when the coach tiers are not wired after provisioning", () => {
+    const { ctx } = createFakeContext({
+      fileContents: { [ENV_PATH]: `EXPLAIN_MODEL=${EXPLAIN_MODEL}\n` },
+      execHandler: happyExec
+    });
+    const result = coachStep.verify(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("COACH_CONVERSE_TIER");
   });
 
   it("errors when a model does not answer (non-zero)", () => {
