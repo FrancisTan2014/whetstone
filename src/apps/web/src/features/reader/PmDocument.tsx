@@ -118,7 +118,7 @@ function LinkMark({
 
   return (
     <button
-      className="readerLink"
+      className="readerLink readerXref"
       onClick={() => onActivateAnchor(anchor, targetSourceFile)}
       type="button"
     >
