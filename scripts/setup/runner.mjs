@@ -26,6 +26,8 @@ import { error, isOk } from "./step.mjs";
  * @property {boolean} doctor            `--check` / `--doctor`: probe only, never mutate.
  * @property {boolean} voice             `--voice`: include optional voice-capability steps.
  * @property {boolean} coach             `--coach`: include optional coach-capability steps.
+ * @property {boolean} all               `--all`: enable every optional capability (voice + coach).
+ * @property {boolean} yes               `--yes`: pre-consent every `ctx.confirm` (unattended installs).
  * @property {string[]} unknown          Unrecognized flags (reported, non-fatal).
  */
 
@@ -33,7 +35,9 @@ const RECOGNIZED = new Map([
   ["--check", "doctor"],
   ["--doctor", "doctor"],
   ["--voice", "voice"],
-  ["--coach", "coach"]
+  ["--coach", "coach"],
+  ["--all", "all"],
+  ["--yes", "yes"]
 ]);
 
 /**
@@ -43,7 +47,14 @@ const RECOGNIZED = new Map([
  * @returns {SetupArgs}
  */
 export function parseArgs(argv) {
-  const args = { doctor: false, voice: false, coach: false, unknown: /** @type {string[]} */ ([]) };
+  const args = {
+    doctor: false,
+    voice: false,
+    coach: false,
+    all: false,
+    yes: false,
+    unknown: /** @type {string[]} */ ([])
+  };
   for (const raw of argv) {
     const key = RECOGNIZED.get(raw);
     if (key) {
@@ -57,16 +68,17 @@ export function parseArgs(argv) {
 
 /**
  * Select the steps to run: every base (non-optional) step, plus optional steps whose `capability`
- * was opted in via a flag. The base `pnpm setup` therefore excludes all heavy/optional capabilities.
+ * was opted in via a flag. `--all` enables every optional capability at once; otherwise each
+ * `--<capability>` selects only its own. The base `pnpm setup` excludes all heavy/optional steps.
  *
  * @param {Step[]} steps
- * @param {{ voice: boolean, coach: boolean }} flags
+ * @param {{ voice: boolean, coach: boolean, all?: boolean }} flags
  * @returns {Step[]}
  */
 export function selectSteps(steps, flags) {
   const enabled = new Set();
-  if (flags.voice) enabled.add("voice");
-  if (flags.coach) enabled.add("coach");
+  if (flags.all || flags.voice) enabled.add("voice");
+  if (flags.all || flags.coach) enabled.add("coach");
   return steps.filter(
     (step) => !step.optional || (step.capability !== undefined && enabled.has(step.capability))
   );

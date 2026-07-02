@@ -16,12 +16,12 @@ const args = parseArgs(process.argv.slice(2));
 if (args.unknown.length > 0) {
   console.log(
     `[setup] ignoring unrecognized flag(s): ${args.unknown.join(", ")}. ` +
-      "Known flags: --check (doctor), --voice, --coach."
+      "Known flags: --check (doctor), --voice, --coach, --all, --yes."
   );
 }
 
-const ctx = createContext(repoRoot);
-const selected = selectSteps(steps, { voice: args.voice, coach: args.coach });
+const ctx = createContext(repoRoot, { yes: args.yes });
+const selected = selectSteps(steps, { voice: args.voice, coach: args.coach, all: args.all });
 const { exitCode, outcomes } = runSetup(selected, ctx, { doctor: args.doctor });
 
 console.log(`\n${formatSummary(outcomes, { doctor: args.doctor, exitCode })}`);
