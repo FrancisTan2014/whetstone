@@ -326,16 +326,19 @@ export {
   parseLatestReadingPositionResponse,
   parseReadingPositionResponse,
   parseUpsertReadingPositionRequest,
+  parseWorksWithReadingPositionResponse,
   readingPositionDtoSchema,
   readingPositionResponseSchema,
-  upsertReadingPositionRequestSchema
+  upsertReadingPositionRequestSchema,
+  worksWithReadingPositionResponseSchema
 } from "./readingPositionContracts.js";
 export type {
   LatestReadingPositionDto,
   LatestReadingPositionResponse,
   ReadingPositionDto,
   ReadingPositionResponse,
-  UpsertReadingPositionRequest
+  UpsertReadingPositionRequest,
+  WorksWithReadingPositionResponse
 } from "./readingPositionContracts.js";
 export {
   defaultPreferences,

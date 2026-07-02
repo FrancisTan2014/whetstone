@@ -21,8 +21,12 @@ type NotesState =
 
 // Cross-work Notes mode (PRODUCT.md "Notes" mode): lists every saved note grouped by work, each
 // linking back to its anchored block in the Reader (`#/reader?work=&block=`). Read-only here;
-// editing/deleting still happens inside the Reader's note panel.
-export function NotesPage(): React.JSX.Element {
+// editing/deleting still happens inside the Reader's note panel. When `focusWorkEntryId` is set
+// (the Library's contextual "Notes" action passes `#/notes?work=<id>`), the list narrows to that
+// one work.
+type NotesPageProps = Readonly<{ focusWorkEntryId?: string | undefined }>;
+
+export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Element {
   const [state, setState] = useState<NotesState>({ status: "loading" });
 
   useEffect(() => {
@@ -36,14 +40,18 @@ export function NotesPage(): React.JSX.Element {
       <h1 className="text-2xl font-semibold text-text" id="notes-heading">
         Notes
       </h1>
-      <p className="mt-2 text-text-muted">Every note you have saved, across all works.</p>
+      <p className="mt-2 text-text-muted">
+        {focusWorkEntryId === undefined
+          ? "Every note you have saved, across all works."
+          : "Every note you have saved in this work."}
+      </p>
 
-      <div className="mt-6">{renderState(state)}</div>
+      <div className="mt-6">{renderState(state, focusWorkEntryId)}</div>
     </section>
   );
 }
 
-function renderState(state: NotesState): React.JSX.Element {
+function renderState(state: NotesState, focusWorkEntryId: string | undefined): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading your notes…" />;
   }
@@ -56,17 +64,24 @@ function renderState(state: NotesState): React.JSX.Element {
     );
   }
 
-  if (state.groups.length === 0) {
+  const groups =
+    focusWorkEntryId === undefined
+      ? state.groups
+      : state.groups.filter((group) => group.workEntryId === focusWorkEntryId);
+
+  if (groups.length === 0) {
     return (
       <p className="text-text-muted">
-        No notes yet. Open a work in the Reader and select text to create one.
+        {focusWorkEntryId === undefined
+          ? "No notes yet. Open a work in the Reader and select text to create one."
+          : "No notes yet for this work. Open it in the Reader and select text to create one."}
       </p>
     );
   }
 
   return (
     <div className="flex flex-col gap-8">
-      {state.groups.map((group) => (
+      {groups.map((group) => (
         <section aria-labelledby={`notes-work-${group.workEntryId}`} key={group.workEntryId}>
           <h2
             className="mb-3 text-xl font-semibold text-text"

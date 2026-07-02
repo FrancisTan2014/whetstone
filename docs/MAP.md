@@ -312,7 +312,9 @@ can navigate them from another package.
   `getLatestReadingPosition` adds the cross-work seam the Today home composes — the user's single
   most-recently-`updated_at` position joined to `work_meta` for the title — served user-scoped via
   `GET /api/reading-position/latest` (`{ position }` or an explicit null when none); the upsert bumps
-  `updated_at` so "most recent" tracks the last save.
+  `updated_at` so "most recent" tracks the last save. `getWorksWithReadingPosition` serves the shelf's
+  Read-vs-Continue distinction — the user-scoped set of work ids that have any saved position — via
+  `GET /api/reading-position/works` (`{ workEntryIds }`).
   `search/` is read-only block-level library search: `GET /api/search?q=` validates the query, then
   `searchQueries.searchBlocks` runs a case-insensitive `ILIKE` substring scan over each unit's
   rendered substrate — the PM `doc_blocks` for a unit that has any (EPUB), else the legacy mdast
@@ -397,9 +399,10 @@ can navigate them from another package.
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
-  `AdminLibraryPage` + `WorkContentPanel` at `/library`, Reader = `ReaderPage`, Practice =
+  `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"
+  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Practice =
   `SessionPage`, Progress = `ProgressMapPage`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
-  `NotesPage`, Diary = `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
+  `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
   `ToastViewport` live region). `navigation.ts` holds the **five** primary destinations — Today,
   Library, Practice, **Map** (the user-facing label for the `/progress` route), Search — rendered as a
@@ -435,11 +438,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
   field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each
   deep-link the reader to the work/block (`#/reader?work=&block=`), with explicit empty/error states.
-  `library/` is the admin home: `AdminLibraryPage.tsx` shows works as cards
+  `library/` is the shelf-first admin home: `AdminLibraryPage.tsx` shows works as cards
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
-  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes); each card's "Continue
-  reading" deep-links to `#/reader?work=<entryId>` (with an optional `&block=<entryId>` to open a
-  specific block). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
+  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). Each card carries four
+  actions — a reader link (`#/reader?work=<entryId>`, labelled **Continue** when the work has a saved
+  reading position, else **Read** — armed by `libraryApi.fetchWorksWithReadingPosition` →
+  `GET /api/reading-position/works` → the set of work ids with a position), a **Manage content**
+  button (emits `onManageContent` up to `LibraryMode`, which opens the content sheet), a contextual
+  **Notes** link (`#/notes?work=<entryId>`), and **Export Markdown**. Creating a work auto-opens its
+  Manage-content sheet (add content right after create); an EPUB import does not. `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
   transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
   each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
   `fetchUnitContent` / `locateBlockUnit` / `fetchWorkAnchorIndex`), with an explicit per-unit loading
@@ -575,10 +582,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   learner dictionaries (Longman/Merriam-Webster/Oxford, #254/#303), a Chinese (CJK) headword gets the
   Chinese ones (汉典/萌典/ctext/国学大师) — `isEnglishHeadword` is the discriminator. Lookup never
   creates, pre-fills, or edits a note.
-  `content/` is the Work detail surface (`WorkContentPanel.tsx`): a work switcher, a header
-  (title/author/type/language + unit/block counts via `workContentSummary.ts`), an "Open in Reader"
-  deep-link, a calm add-content area (manual Markdown + `.md` upload) reporting the ingestion result,
-  and a units/blocks overview; `contentApi.ts` calls the content/ingest endpoints.
+  `content/` is the focused Manage-content surface (`WorkContentPanel.tsx`), opened on demand inside
+  the Library's "Manage content" `Sheet`: a work switcher, a header (title/author/type/language +
+  unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, a calm add-content
+  area (manual Markdown + `.md` upload) reporting the ingestion result, and a units/blocks overview
+  that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
+  behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
   `diary/` is the Diary mode (#246): `DiaryPage.tsx` is the tap-and-talk surface — a record button
   (reusing the session capture seam, injected via `createDiaryCapture` in the coverage-excluded
   `diaryCapture.ts`; falls back to an always-present typed box when capture is unsupported) that records →

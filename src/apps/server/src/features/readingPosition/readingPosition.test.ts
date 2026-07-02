@@ -9,6 +9,7 @@ import type {
   LatestReadingPositionResponse,
   ReadingPositionResponse,
   ReadingUnitContentDto,
+  WorksWithReadingPositionResponse,
   WorkStructureDto
 } from "@whetstone/contracts";
 
@@ -20,7 +21,11 @@ import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
-import { getLatestReadingPosition, getReadingPosition } from "./readingPositionQueries.js";
+import {
+  getLatestReadingPosition,
+  getReadingPosition,
+  getWorksWithReadingPosition
+} from "./readingPositionQueries.js";
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -304,5 +309,69 @@ describe("latest reading position", () => {
     expect((await getLatestReadingPosition(context.db, DEFAULT_USER_ID))?.workEntryId).toBe(
       first.workEntryId
     );
+  });
+});
+
+describe("works with a saved reading position", () => {
+  it("lists exactly the works the user has a position for (query)", async () => {
+    const started = await createWorkWithUnitAndBlock();
+    const untouched = await createWorkWithUnitAndBlock();
+    await putPosition(started.workEntryId, { unitEntryId: started.unitEntryId });
+
+    const ids = await getWorksWithReadingPosition(context.db, DEFAULT_USER_ID);
+
+    expect(ids).toEqual([started.workEntryId]);
+    expect(ids).not.toContain(untouched.workEntryId);
+  });
+
+  it("returns an empty list when the user has no saved positions (query)", async () => {
+    await createWorkWithUnitAndBlock();
+
+    expect(await getWorksWithReadingPosition(context.db, DEFAULT_USER_ID)).toEqual([]);
+  });
+
+  it("scopes the works to the user — another user sees none (query)", async () => {
+    const { unitEntryId, workEntryId } = await createWorkWithUnitAndBlock();
+    await putPosition(workEntryId, { unitEntryId });
+
+    expect(await getWorksWithReadingPosition(context.db, "another-user")).toEqual([]);
+  });
+
+  it("serves the works with a saved position over the route", async () => {
+    const started = await createWorkWithUnitAndBlock();
+    await createWorkWithUnitAndBlock();
+    await putPosition(started.workEntryId, { unitEntryId: started.unitEntryId });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/reading-position/works"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as WorksWithReadingPositionResponse).workEntryIds).toEqual([
+      started.workEntryId
+    ]);
+  });
+
+  it("does not leak one user's works to another over the route", async () => {
+    const { unitEntryId, workEntryId } = await createWorkWithUnitAndBlock();
+    await putPosition(workEntryId, { unitEntryId });
+
+    const otherUserServer = createServer({
+      currentUser: { getCurrentUserId: () => "other" },
+      logger: false,
+      readingPosition: { db: context.db }
+    });
+
+    try {
+      const response = await otherUserServer.inject({
+        method: "GET",
+        url: "/api/reading-position/works"
+      });
+
+      expect((response.json() as WorksWithReadingPositionResponse).workEntryIds).toEqual([]);
+    } finally {
+      await otherUserServer.close();
+    }
   });
 });

@@ -83,11 +83,13 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain("Work detail");
   });
 
-  it("mounts the existing Library screens at the /library route", () => {
+  it("mounts the shelf-first Library at the /library route", () => {
     const markup = renderAt("/library");
 
     expect(markup).toContain(">Library<");
-    expect(markup).toContain("Work detail");
+    // Raw content management now lives behind an on-demand "Manage content" sheet, so the shelf
+    // route no longer renders the old always-visible "Work detail" panel (#392).
+    expect(markup).not.toContain("Work detail");
   });
 
   it("links Library to the all-notes review surface (#390)", () => {

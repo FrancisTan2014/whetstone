@@ -10,7 +10,11 @@ import {
   upsertReadingPosition,
   type ReadingPositionDependencies
 } from "./readingPositionCommands.js";
-import { getLatestReadingPosition, getReadingPosition } from "./readingPositionQueries.js";
+import {
+  getLatestReadingPosition,
+  getReadingPosition,
+  getWorksWithReadingPosition
+} from "./readingPositionQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 
@@ -37,6 +41,15 @@ export function registerReadingPositionRoutes(
           };
 
     return { position };
+  });
+
+  server.get("/api/reading-position/works", async (request) => {
+    const workEntryIds = await getWorksWithReadingPosition(
+      dependencies.db,
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    return { workEntryIds };
   });
 
   server.get<{ Params: WorkParams }>(

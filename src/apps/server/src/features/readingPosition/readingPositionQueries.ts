@@ -58,3 +58,15 @@ export async function getLatestReadingPosition(
 
   return rows[0];
 }
+
+// The entry ids of every work the user has a saved reading position for — the Library shelf's
+// "Read vs Continue" seam. One scoped read answers the whole shelf, so cards never need a per-work
+// round-trip. A user has at most one position row per work, so the ids are already distinct.
+export async function getWorksWithReadingPosition(db: DbClient, userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ workEntryId: readingPositions.workEntryId })
+    .from(readingPositions)
+    .where(eq(readingPositions.userId, userId));
+
+  return rows.map((row) => row.workEntryId);
+}

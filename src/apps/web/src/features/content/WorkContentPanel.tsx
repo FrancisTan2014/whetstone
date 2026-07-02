@@ -66,6 +66,9 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
   const [file, setFile] = useState<File | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [result, setResult] = useState<string | undefined>(undefined);
+  // The units/blocks overview summarizes by default (reading units + block counts); the per-block
+  // plaintext/type rows stay collapsed behind an explicit "View blocks" affordance (#392).
+  const [showBlocks, setShowBlocks] = useState(false);
 
   useEffect(() => {
     loadInitialState(focusWorkEntryId)
@@ -154,14 +157,7 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
   }
 
   return (
-    <section
-      aria-labelledby="content-heading"
-      className="mx-auto mt-8 flex max-w-5xl flex-col gap-6 rounded border border-border bg-surface p-6"
-    >
-      <h2 className="text-2xl font-semibold text-text" id="content-heading">
-        Work detail
-      </h2>
-
+    <section aria-label="Work detail" className="flex flex-col gap-6">
       {state.status === "loading" ? <LoadingIndicator label="Loading works…" /> : null}
       {state.status === "error" ? <p role="alert">Could not load works.</p> : null}
       {state.status === "empty" ? (
@@ -175,9 +171,11 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
             onAddMarkdown,
             onChooseFile,
             onSelectWork,
+            onToggleBlocks: () => setShowBlocks((previous) => !previous),
             onUploadFile,
             result,
-            setMarkdown
+            setMarkdown,
+            showBlocks
           })
         : null}
     </section>
@@ -190,9 +188,11 @@ type ReadyHandlers = Readonly<{
   onAddMarkdown: (event: FormEvent, data: ReadyData) => void;
   onChooseFile: (event: ChangeEvent<HTMLInputElement>) => void;
   onSelectWork: (work: WorkListItemDto, data: ReadyData) => void;
+  onToggleBlocks: () => void;
   onUploadFile: (event: FormEvent, data: ReadyData) => void;
   result: string | undefined;
   setMarkdown: (value: string) => void;
+  showBlocks: boolean;
 }>;
 
 function renderReady(data: ReadyData, handlers: ReadyHandlers): React.JSX.Element {
@@ -201,7 +201,7 @@ function renderReady(data: ReadyData, handlers: ReadyHandlers): React.JSX.Elemen
       {data.works.length > 1 ? renderWorkSwitcher(data, handlers) : null}
       {renderHeader(data)}
       {renderAddContent(data, handlers)}
-      {renderOverview(data.content)}
+      {renderOverview(data.content, handlers.showBlocks, handlers.onToggleBlocks)}
     </div>
   );
 }
@@ -300,37 +300,57 @@ function renderAddContent(data: ReadyData, handlers: ReadyHandlers): React.JSX.E
   );
 }
 
-function renderOverview(content: WorkContentDto): React.JSX.Element {
+function renderOverview(
+  content: WorkContentDto,
+  showBlocks: boolean,
+  onToggleBlocks: () => void
+): React.JSX.Element {
   if (content.readingUnits.length === 0) {
     return <p className="text-text-muted">No content yet.</p>;
   }
 
   return (
-    <ol aria-label="Reading units" className="flex flex-col gap-4">
-      {content.readingUnits.map((unit) => renderReadingUnit(unit))}
-    </ol>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-lg font-medium text-text">Content overview</h3>
+        <Button
+          aria-expanded={showBlocks}
+          onClick={onToggleBlocks}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          {showBlocks ? "Hide blocks" : "View blocks"}
+        </Button>
+      </div>
+      <ol aria-label="Reading units" className="flex flex-col gap-4">
+        {content.readingUnits.map((unit) => renderReadingUnit(unit, showBlocks))}
+      </ol>
+    </div>
   );
 }
 
-function renderReadingUnit(unit: ReadingUnitDto): React.JSX.Element {
+function renderReadingUnit(unit: ReadingUnitDto, showBlocks: boolean): React.JSX.Element {
   return (
     <li className="rounded border border-border bg-bg p-4" key={unit.entryId}>
-      <h5 className="mb-2 flex items-baseline gap-2 font-medium text-text">
+      <h4 className="flex items-baseline gap-2 font-medium text-text">
         <span>{unit.title ?? "Untitled section"}</span>
         <span className="text-xs font-normal text-text-muted">
           {unit.blocks.length === 1 ? "1 block" : `${unit.blocks.length} blocks`}
         </span>
-      </h5>
-      <ol aria-label="Blocks" className="flex flex-col gap-1">
-        {unit.blocks.map((block) => (
-          <li className="flex gap-2 text-sm" key={block.entryId}>
-            <span className="rounded bg-surface px-2 text-xs text-text-muted">
-              {block.blockType}
-            </span>
-            <span className="text-text">{block.plaintext}</span>
-          </li>
-        ))}
-      </ol>
+      </h4>
+      {showBlocks ? (
+        <ol aria-label="Blocks" className="mt-2 flex flex-col gap-1">
+          {unit.blocks.map((block) => (
+            <li className="flex gap-2 text-sm" key={block.entryId}>
+              <span className="rounded bg-surface px-2 text-xs text-text-muted">
+                {block.blockType}
+              </span>
+              <span className="text-text">{block.plaintext}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </li>
   );
 }
