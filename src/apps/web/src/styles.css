@@ -190,6 +190,12 @@ code {
   font-weight: 600;
 }
 
+/* An authored nav entry (#379) is indented by its depth in the authored tree so the hierarchy of
+   parts, chapters, and sections reads at a glance; depth 0 sits flush with the drawer edge. */
+.readerTocEntry {
+  padding-left: calc(0.5rem + var(--toc-depth, 0) * 1rem);
+}
+
 .readerNotice {
   color: var(--color-success);
   font-weight: 600;

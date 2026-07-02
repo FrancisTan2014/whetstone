@@ -41,12 +41,15 @@ import {
   toReaderBlocks,
   type ReaderBlock,
   type ReaderStructure,
+  type ReaderTocEntry,
   type ReaderUnit
 } from "./readerModel";
 import { isUnitTitleRedundant } from "./readerHeadings";
 import { buildAnchorIndex, type AnchorIndex } from "./referenceResolver";
 import {
+  activeTocEntryId,
   clampUnitIndex,
+  resolveTocEntryNavigation,
   unitIndexForEntryId,
   unitTocLabel,
   workProgress
@@ -681,6 +684,26 @@ export function ReaderPage({
     [activeUnitSourceFile, jumpToBlock, viewingAnchorIndex]
   );
 
+  // Navigate the nav-derived TOC (#379): resolve the selected entry to its intent through the same
+  // work-scoped resolver the reader uses for cross-references (#366), then reuse the existing reader
+  // moves — open a unit's top, jump-and-highlight a specific block (cross-unit load handled by
+  // `jumpToBlock`), or no-op an unresolvable target. The structure is passed in from the viewing
+  // render, so this never re-reads component state to decide where an entry goes.
+  function onSelectTocEntry(structure: ReaderStructure, entry: ReaderTocEntry): void {
+    const navigation = resolveTocEntryNavigation(structure, viewingAnchorIndex, entry);
+
+    switch (navigation.kind) {
+      case "unit":
+        selectUnit(navigation.unitIndex);
+        break;
+      case "block":
+        jumpToBlock(navigation.blockEntryId);
+        break;
+      case "none":
+        break;
+    }
+  }
+
   // The open work's language (for routing a lookup), derived for every ready state so an idle
   // reader resolves it the same way — no open work falls back to English.
   const readerLanguage = useMemo((): string => {
@@ -979,7 +1002,7 @@ export function ReaderPage({
       {state.status === "worksError" ? <p role="alert">Could not load works.</p> : null}
 
       {state.status === "ready"
-        ? renderReady(state.works, state.reading, handlers, selectUnit, retryUnit, {
+        ? renderReady(state.works, state.reading, handlers, selectUnit, onSelectTocEntry, retryUnit, {
             chromeHidden,
             isNarrow,
             onSizeChange,
@@ -1043,6 +1066,7 @@ function renderReady(
   reading: ReadingState,
   handlers: ReaderHandlers,
   onSelectUnit: (index: number) => void,
+  onSelectTocEntry: (structure: ReaderStructure, entry: ReaderTocEntry) => void,
   onRetryUnit: () => void,
   chromeBase: ReaderChromeBase
 ): React.JSX.Element {
@@ -1054,7 +1078,7 @@ function renderReady(
     title: openWork?.work.title ?? ""
   };
 
-  return renderReading(reading, handlers, onSelectUnit, onRetryUnit, chrome);
+  return renderReading(reading, handlers, onSelectUnit, onSelectTocEntry, onRetryUnit, chrome);
 }
 
 // A center tap on the reading area toggles the chrome on narrow screens (where it is hidden by
@@ -1082,6 +1106,7 @@ function renderReading(
   reading: ReadingState,
   handlers: ReaderHandlers,
   onSelectUnit: (index: number) => void,
+  onSelectTocEntry: (structure: ReaderStructure, entry: ReaderTocEntry) => void,
   onRetryUnit: () => void,
   chrome: ReaderChrome
 ): React.JSX.Element {
@@ -1103,6 +1128,7 @@ function renderReading(
         reading.workEntryId,
         reading.activeUnitIndex,
         onSelectUnit,
+        onSelectTocEntry,
         onRetryUnit,
         handlers,
         chrome
@@ -1116,6 +1142,7 @@ function renderViewing(
   workEntryId: string,
   activeUnitIndex: number,
   onSelectUnit: (index: number) => void,
+  onSelectTocEntry: (structure: ReaderStructure, entry: ReaderTocEntry) => void,
   onRetryUnit: () => void,
   handlers: ReaderHandlers,
   chrome: ReaderChrome
@@ -1123,20 +1150,41 @@ function renderViewing(
   const entrance = readingEntranceMotion(chrome.prefersReducedMotion);
   const units = structure.units;
   const tools = chrome.tools;
-  // A multi-unit work navigates by its 目录; a single-unit work (an essay) reads without it.
-  const hasToc = units.length > 1;
-  const toc = hasToc ? (
-    <ReaderToc
-      activeIndex={activeUnitIndex}
-      items={units.map((unit, index) => ({
-        entryId: unit.entryId,
-        label: unitTocLabel(unit, index)
-      }))}
-      onClose={tools.onCloseToc}
-      onSelect={onSelectUnit}
-      open={tools.tocOpen}
-    />
-  ) : null;
+  // A nav-bearing work (#379) navigates by its authored TOC tree; otherwise a multi-unit work
+  // navigates by its reading-unit list, and a single-unit work (an essay) reads without a 目录.
+  const tree = structure.tableOfContents;
+  const activeEntryId =
+    tree === undefined
+      ? undefined
+      : activeTocEntryId(tree, units[activeUnitIndex]?.entryId);
+  const hasToc = tree !== undefined || units.length > 1;
+  const toc =
+    tree !== undefined ? (
+      <ReaderToc
+        entries={tree.map((entry) => ({
+          depth: entry.depth,
+          entryId: entry.entryId,
+          label: entry.label,
+          onSelect: () => onSelectTocEntry(structure, entry)
+        }))}
+        mode="tree"
+        onClose={tools.onCloseToc}
+        open={tools.tocOpen}
+        {...(activeEntryId === undefined ? {} : { activeEntryId })}
+      />
+    ) : units.length > 1 ? (
+      <ReaderToc
+        activeIndex={activeUnitIndex}
+        items={units.map((unit, index) => ({
+          entryId: unit.entryId,
+          label: unitTocLabel(unit, index)
+        }))}
+        mode="list"
+        onClose={tools.onCloseToc}
+        onSelect={onSelectUnit}
+        open={tools.tocOpen}
+      />
+    ) : null;
 
   return (
     <div className="readerReading">

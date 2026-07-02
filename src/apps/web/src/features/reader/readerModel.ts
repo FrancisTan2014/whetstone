@@ -3,6 +3,7 @@ import type {
   DocBlockDto,
   ReadingUnitContentDto,
   ReadingUnitStructureDto,
+  TocEntryDto,
   WorkStructureDto
 } from "@whetstone/contracts";
 
@@ -59,8 +60,27 @@ export type ReaderUnitMeta = Readonly<{
   title?: string;
 }>;
 
-// The work's structure: ordered unit metadata, fetched before any unit's blocks.
+// One entry in the reader's nav-derived table of contents (#379): an authored label, its authored
+// nesting `depth` (used to indent it in the drawer), and where selecting it navigates. `targetUnitEntryId`
+// is the reading unit it opens (absent for a label-only entry whose selection no-ops); `targetAnchor`
+// is the block to scroll to within that unit (absent for a whole-file entry that opens the unit top).
+// `orderIndex` is the work-global pre-order rank, so the flat array renders fully expanded and correctly
+// indented. `parentEntryId` carries the authored hierarchy for a later collapse/expand slice.
+export type ReaderTocEntry = Readonly<{
+  depth: number;
+  entryId: string;
+  label: string;
+  orderIndex: number;
+  parentEntryId?: string;
+  targetAnchor?: string;
+  targetUnitEntryId?: string;
+}>;
+
+// The work's structure: ordered unit metadata, fetched before any unit's blocks. `tableOfContents`
+// carries the authored nav tree (#379) when the work has one; absent for Markdown or a nav-less EPUB,
+// where the reader falls back to the flat reading-unit list.
 export type ReaderStructure = Readonly<{
+  tableOfContents?: ReadonlyArray<ReaderTocEntry>;
   units: ReadonlyArray<ReaderUnitMeta>;
   workEntryId: string;
 }>;
@@ -174,12 +194,43 @@ function toReaderUnitMeta(unit: ReadingUnitStructureDto): ReaderUnitMeta {
   return unit.sourceFile === undefined ? withTitle : { ...withTitle, sourceFile: unit.sourceFile };
 }
 
+function toReaderTocEntry(entry: TocEntryDto): ReaderTocEntry {
+  const base = {
+    depth: entry.depth,
+    entryId: entry.entryId,
+    label: entry.label,
+    orderIndex: entry.orderIndex
+  };
+  const withParent =
+    entry.parentEntryId === undefined ? base : { ...base, parentEntryId: entry.parentEntryId };
+  const withTarget =
+    entry.targetUnitEntryId === undefined
+      ? withParent
+      : { ...withParent, targetUnitEntryId: entry.targetUnitEntryId };
+
+  return entry.targetAnchor === undefined
+    ? withTarget
+    : { ...withTarget, targetAnchor: entry.targetAnchor };
+}
+
 // The reader structure built from a work's structure DTO: units sorted into reading order so
-// the 目录 and navigation read positionally without trusting the array order.
+// the 目录 and navigation read positionally without trusting the array order. When the work has an
+// authored table of contents (#379), it is carried through in pre-order (sorted by `orderIndex`) so
+// the drawer renders the authored nav tree; otherwise `tableOfContents` stays absent and the reader
+// falls back to the flat reading-unit list.
 export function buildReaderStructure(structure: WorkStructureDto): ReaderStructure {
-  return {
+  const base = {
     units: [...structure.readingUnits].sort(byOrderIndex).map(toReaderUnitMeta),
     workEntryId: structure.workEntryId
+  };
+
+  if (structure.tableOfContents === undefined) {
+    return base;
+  }
+
+  return {
+    ...base,
+    tableOfContents: [...structure.tableOfContents].sort(byOrderIndex).map(toReaderTocEntry)
   };
 }
 

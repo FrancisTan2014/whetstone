@@ -317,10 +317,14 @@ blocks via the stable-id diff above, inside a transaction.
 The reader is **目录-driven and reading-unit-scoped**, mirroring how mature readers (EPUB spine readers,
 微信读书) work and avoiding the freeze of rendering a whole book at once.
 
-- **Navigation by table of contents (目录).** A TOC lists the work's reading units in order (current one
-  highlighted); selecting one opens it. The 目录 is a **toggle/drawer on all widths** (it slides over/in and
-  dismisses) — **not** a persistent column that competes with the text. A single-unit work (a short essay)
-  needs no TOC.
+- **Navigation by table of contents (目录).** The TOC reflects the **EPUB's authored navigation**
+  (`nav.xhtml` / `toc.ncx`) as a **hierarchical, collapsible tree** (Part › Chapter › Section) with the
+  **authored labels** — not an outline guessed from spine order and first headings. The current entry is
+  highlighted and its ancestors auto-expanded; selecting an entry opens its reading unit and resolves the
+  entry's target through the **work link graph** (scroll + brief highlight). The 目录 is a
+  **toggle/drawer on all widths** (it slides over/in and dismisses) — **not** a persistent column that
+  competes with the text. A work with no authored nav (a short essay, or Markdown) falls back to a flat
+  list of its reading units; a single-unit work needs no TOC.
 - **One reading unit at a time.** The reader renders only the **current reading unit's** blocks, as a
   continuous vertical scroll within that unit — not the whole work concatenated. Rendering stays bounded
   regardless of book size (a whole book is thousands of blocks; one chapter is hundreds); this is what
