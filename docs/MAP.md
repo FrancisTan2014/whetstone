@@ -305,7 +305,12 @@ can navigate them from another package.
   so commands test against a fake parser). It guards the upload with `src/files/zipArchive.ts`
   (`isZipArchive`, a dependency-free ZIP signature/EOCD check) and rejects non-ZIP bytes before the
   library runs — the library otherwise hangs and emits a process-crashing unhandled rejection on
-  non-EPUB input. `src/files/imageResourceStore.ts` — content-addressed image
+  non-EPUB input. `src/files/epubNav.ts` — a pure, no-I/O parser for an EPUB's authored navigation:
+  `parseNavDocument` reads an EPUB3 `nav.xhtml` toc or an EPUB2 `toc.ncx` navMap into a normalized
+  nested nav tree (`NavEntry{ label, href, children }`; fail-soft, never throws), and `selectNavResource`
+  picks the nav resource from the OPF manifest (EPUB3 `properties~="nav"`, else the ncx media type).
+  Parsing only — no persistence/reader/href resolution (foundation for the nested nav-tree 目录, #379).
+  `src/files/imageResourceStore.ts` — content-addressed image
   store (sha256-keyed, so identical bytes dedupe to one resource) under `imageResourcesDir`, with a
   write-time content-type allowlist (PNG/JPEG/GIF/WebP; SVG and others rejected); served read-only by
   `src/features/images/imageRoutes.ts` (`GET /api/images/:id`, id is the content hash, allowlist
