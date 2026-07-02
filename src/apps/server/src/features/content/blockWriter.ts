@@ -32,6 +32,10 @@ export type PersistableReadingUnit = Readonly<{
   // rides along so surviving units' evidence reaches the ingestion logger after filtering, and is
   // never written to a column. Defaults to an empty array so callers can flat-map without a guard.
   evidence: ReadonlyArray<IngestionEvidence>;
+  // The unit's source-file identity (the EPUB spine item href), or null for a format with no per-unit
+  // source file (Markdown/PDF). Persisted to `reading_units.source_file` so an anchor is scoped by
+  // (source_file, anchor) for cross-unit reference resolution (#366).
+  sourceFile: string | null;
   title: string | undefined;
 }>;
 
@@ -65,6 +69,7 @@ export async function writeReadingUnits(
   const readingUnitRows: {
     entryId: string;
     orderIndex: number;
+    sourceFile: string | null;
     title: string | null;
     workEntryId: EntryId;
   }[] = [];
@@ -83,6 +88,7 @@ export async function writeReadingUnits(
   }[] = [];
   // Transitional PM block rows (#311): one row per top-level PM node, keyed by its stable id.
   const docBlockRows: {
+    anchorId: string | null;
     id: string;
     nodeJson: unknown;
     orderIndex: number;
@@ -99,6 +105,7 @@ export async function writeReadingUnits(
     readingUnitRows.push({
       entryId: unitEntryId,
       orderIndex: input.startOrder + unitIndex,
+      sourceFile: unit.sourceFile,
       title: unit.title ?? null,
       workEntryId: input.workEntryId
     });
@@ -113,6 +120,7 @@ export async function writeReadingUnits(
       entryRows.push({ id: docBlock.id, type: "block" });
       linkRows.push({ fromEntryId: unitEntryId, toEntryId: docBlock.id, type: "contains" });
       docBlockRows.push({
+        anchorId: docBlock.anchorId,
         id: docBlock.id,
         nodeJson: docBlock.node,
         orderIndex: docBlockIndex,

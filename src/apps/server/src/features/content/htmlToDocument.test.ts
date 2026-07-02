@@ -184,17 +184,75 @@ describe("htmlToDocument", () => {
     const paragraphs = blocksOfType(blocks, "paragraph");
 
     const marker0 = findDescendant(paragraphs[0]!.node, "footnoteMarker")!;
-    expect(marker0.attrs).toMatchObject({ label: "9", noteKind: "footnote", refId: "fn9" });
+    expect(marker0.attrs).toMatchObject({
+      label: "9",
+      noteKind: "footnote",
+      refFile: null,
+      refId: "fn9"
+    });
 
     const marker1 = findDescendant(paragraphs[1]!.node, "footnoteMarker")!;
-    expect(marker1.attrs).toMatchObject({ label: "12", refId: "fn12" });
+    expect(marker1.attrs).toMatchObject({ label: "12", refFile: null, refId: "fn12" });
 
     const marker2 = findDescendant(paragraphs[2]!.node, "footnoteMarker")!;
-    expect(marker2.attrs).toMatchObject({ label: "x", refId: null });
+    expect(marker2.attrs).toMatchObject({ label: "x", refFile: null, refId: null });
 
     const target = blocksOfType(blocks, "footnoteTarget")[0]!;
     expect(target.node.attrs).toMatchObject({ refId: "fn9" });
     expect(textOf(target.node)).toBe("The ninth note.");
+  });
+
+  it("captures the file part of a cross-file endnote marker and normalizes an empty id to null", () => {
+    const html =
+      '<p>Cross reference<a data-type="noteref" href="../notes.xhtml#fn12">12</a>.</p>' +
+      '<p>Empty target<a data-type="noteref" href="notes.xhtml#">y</a>.</p>';
+
+    const { blocks } = htmlToDocument(html);
+    const paragraphs = blocksOfType(blocks, "paragraph");
+
+    const crossFile = findDescendant(paragraphs[0]!.node, "footnoteMarker")!;
+    expect(crossFile.attrs).toMatchObject({ refFile: "../notes.xhtml", refId: "fn12" });
+
+    const emptyId = findDescendant(paragraphs[1]!.node, "footnoteMarker")!;
+    expect(emptyId.attrs).toMatchObject({ refFile: "notes.xhtml", refId: null });
+  });
+
+  it("lifts a block's source-HTML id into IngestedBlock.anchorId without leaking it into node JSON", () => {
+    const html =
+      '<h2 id="sec-intro">Introduction</h2>' +
+      '<p id="para-1">A paragraph with an id.</p>' +
+      "<p>A paragraph without an id.</p>";
+
+    const { blocks } = htmlToDocument(html);
+    const [heading, withId, withoutId] = blocks as ReadonlyArray<{
+      anchorId: string | null;
+      node: DocumentNodeJSON;
+    }>;
+
+    expect(heading!.anchorId).toBe("sec-intro");
+    expect(withId!.anchorId).toBe("para-1");
+    expect(withoutId!.anchorId).toBeNull();
+
+    // The addressing id is metadata, not render content: it must not survive into the stored node JSON.
+    for (const block of blocks) {
+      expect(JSON.stringify(block.node)).not.toContain("anchorId");
+    }
+  });
+
+  it("strips the anchorId attribute recursively from nested block content", () => {
+    const html = '<ul id="list-1"><li><p id="item-para">Nested paragraph.</p></li></ul>';
+
+    const { blocks } = htmlToDocument(html);
+    const list = blocksOfType(blocks, "bulletList")[0] as {
+      anchorId: string | null;
+      node: DocumentNodeJSON;
+    };
+
+    expect(list.anchorId).toBe("list-1");
+
+    const nestedParagraph = findDescendant(list.node, "paragraph")!;
+    expect(nestedParagraph.attrs ?? {}).not.toHaveProperty("anchorId");
+    expect(JSON.stringify(list.node)).not.toContain("anchorId");
   });
 
   it("flags an unknown block element with evidence and preserves its neighbors", () => {

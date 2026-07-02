@@ -25,11 +25,14 @@ export type ParsedEpubImage = Readonly<{
   src: string;
 }>;
 
-// One spine chapter's processed body HTML plus the images it references. CSS is ignored
-// in v0; images are surfaced (not yet stored) so a later slice can persist figures.
+// One spine chapter's processed body HTML plus the images it references. `sourceFile` is the spine
+// item's manifest href (its source-file identity), so a unit's anchors can be scoped by source file
+// and a cross-file reference resolved to the owning chapter (#366). CSS is ignored in v0; images are
+// surfaced (not yet stored) so a later slice can persist figures.
 export type ParsedEpubChapter = Readonly<{
   html: string;
   images: ReadonlyArray<ParsedEpubImage>;
+  sourceFile: string;
 }>;
 
 export type ParsedEpub = Readonly<{
@@ -265,7 +268,8 @@ export function createEpubParser(
           html: chapter.html,
           images: await extractChapterImages(chapter.html, mediaTypes, (src) =>
             logDebug("epub_resource_skipped", { src })
-          )
+          ),
+          sourceFile: item.href
         });
       }
 

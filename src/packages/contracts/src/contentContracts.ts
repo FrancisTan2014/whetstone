@@ -78,6 +78,9 @@ export type ReadingUnitDto = Readonly<{
   docBlocks?: ReadonlyArray<DocBlockDto>;
   entryId: EntryId;
   orderIndex: number;
+  // The unit's source-file identity (EPUB spine href), so the reader can scope a cross-reference by
+  // (sourceFile, anchor); absent for a format with no per-unit source file (#366).
+  sourceFile?: string;
   title?: string;
 }>;
 
@@ -88,11 +91,14 @@ export type WorkContentDto = Readonly<{
 
 // One reading unit in a work's lightweight structure: ordering metadata and the number of
 // non-deleted blocks it holds, but no block content. Keeps the structure payload O(units) so a
-// lazy-loading reader can render the outline and fetch each unit's blocks on demand.
+// lazy-loading reader can render the outline and fetch each unit's blocks on demand. `sourceFile` is
+// the unit's source-file identity (EPUB spine href), so the reader can scope a cross-reference from
+// the current unit by (sourceFile, anchor); absent for a format with no per-unit source file (#366).
 export type ReadingUnitStructureDto = Readonly<{
   blockCount: number;
   entryId: EntryId;
   orderIndex: number;
+  sourceFile?: string;
   title?: string;
 }>;
 
@@ -110,6 +116,9 @@ export type ReadingUnitContentDto = Readonly<{
   docBlocks?: ReadonlyArray<DocBlockDto>;
   entryId: EntryId;
   orderIndex: number;
+  // The unit's source-file identity (EPUB spine href), so the reader resolves a same-unit marker's
+  // cross-reference by (sourceFile, anchor); absent for a format with no per-unit source file (#366).
+  sourceFile?: string;
   title?: string;
 }>;
 
@@ -118,6 +127,37 @@ export type ReadingUnitContentDto = Readonly<{
 export type BlockUnitLocatorDto = Readonly<{
   unitEntryId: EntryId;
 }>;
+
+// One entry in a work's anchor index: an addressable block reachable by its source-HTML `anchor`,
+// scoped by the owning unit's `sourceFile` (null for a format with no per-unit source file). The
+// (sourceFile, anchor) pair is the key a cross-reference resolves through; `blockEntryId` is the
+// target `doc_blocks` id (fed to the reader's block-jump) and `unitEntryId` its owning unit (#366).
+export const workAnchorEntryDtoSchema = z
+  .object({
+    anchor: z.string(),
+    blockEntryId: z.string(),
+    sourceFile: z.string().nullable(),
+    unitEntryId: z.string()
+  })
+  .strict();
+
+export type WorkAnchorEntryDto = z.infer<typeof workAnchorEntryDtoSchema>;
+
+// A work's anchor index: every addressable block that carries a source-HTML id, so the reader can
+// build a work-scoped resolver that jumps cross-unit. The same anchor id reused in two source files
+// yields two distinct entries (no collision), because the key is (sourceFile, anchor) (#366).
+export const workAnchorIndexDtoSchema = z
+  .object({
+    anchors: z.array(workAnchorEntryDtoSchema),
+    workEntryId: z.string()
+  })
+  .strict();
+
+export type WorkAnchorIndexDto = z.infer<typeof workAnchorIndexDtoSchema>;
+
+export function parseWorkAnchorIndex(value: unknown): WorkAnchorIndexDto {
+  return workAnchorIndexDtoSchema.parse(value);
+}
 
 // EPUB uploads are sent as the raw file bytes under this media type; the owning work
 // is created from the EPUB's own OPF metadata, so there is no JSON request body.

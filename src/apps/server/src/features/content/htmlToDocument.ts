@@ -30,12 +30,16 @@ export interface IngestionEvidence {
   adjacentText: string;
 }
 
-// One top-level block of the ingested document: its stable id, node type, and the ProseMirror node
-// JSON to persist as a Block row.
+// One top-level block of the ingested document: its stable id, node type, the ProseMirror node
+// JSON to persist as a Block row, and the source-HTML `anchorId` lifted off the node (a cross-reference
+// target such as a figure/heading id; null when the source element had no id). `anchorId` rides
+// alongside the node — not inside its JSON — because it is addressing metadata, not render content
+// (#366), mirroring the legacy `blocks.anchor_id` column.
 export interface IngestedBlock {
   id: string;
   type: string;
   node: DocumentNodeJSON;
+  anchorId: string | null;
 }
 
 // The full result of ingesting one HTML fragment: the whole document, its decomposition into block
@@ -206,24 +210,37 @@ function elementText(element: HTMLElement): string {
   return String(element.textContent).trim();
 }
 
-// A footnote marker references its target by `refId`: a same-document `href="#id"`, else an explicit
-// `data-target`, else null (an out-of-document endnote the reader slice resolves separately).
-function readRefId(element: HTMLElement): string | null {
+// A footnote marker references its target by `refId` and, for a cross-file endnote, the file part
+// `refFile`: a `href="path#id"` splits into (`path` -> refFile, `id` -> refId), a same-document
+// `href="#id"` yields (null, id), and an explicit `data-target` yields (null, target). An empty path
+// or id normalizes to null. Capturing the path (which `readRefId` used to drop) lets the reader's
+// work-scoped resolver reach an endnote living in a separate source file (#366).
+function readFootnoteRef(element: HTMLElement): {
+  refFile: string | null;
+  refId: string | null;
+} {
   const href = element.getAttribute("href");
 
-  if (href !== null && href.startsWith("#")) {
-    return href.slice(1);
+  if (href !== null && href.includes("#")) {
+    const hashIndex = href.indexOf("#");
+    const path = href.slice(0, hashIndex);
+    const id = href.slice(hashIndex + 1);
+
+    return { refFile: path === "" ? null : path, refId: id === "" ? null : id };
   }
 
-  return element.getAttribute("data-target");
+  return { refFile: null, refId: element.getAttribute("data-target") };
 }
 
 function readFootnoteMarkerAttrs(element: HTMLElement): {
   label: string;
   noteKind: string;
+  refFile: string | null;
   refId: string | null;
 } {
-  return { label: elementText(element), noteKind: "footnote", refId: readRefId(element) };
+  const { refFile, refId } = readFootnoteRef(element);
+
+  return { label: elementText(element), noteKind: "footnote", refFile, refId };
 }
 
 function readFootnoteTargetAttrs(element: HTMLElement): { refId: string | null } {
@@ -236,49 +253,65 @@ function readUnknownAttrs(element: HTMLElement): { html: string | null; tag: str
   return { html: element.getAttribute("data-raw"), tag: element.getAttribute("data-tag") };
 }
 
+// Compose an existing block-rule `getAttrs` (if any) with the source element's `id`, captured as the
+// block-group `anchorId` attribute so a block's in-work cross-reference target survives ingestion
+// robustly through wrapper unwrapping (#366). Ingestion lifts it off the top-level node and strips it
+// from the stored JSON, so this only rides the parse; non-block rules (list items, cells, images,
+// markers) deliberately omit it — their owning top-level block holds the address.
+function withAnchorId(
+  getAttrs?: (element: HTMLElement) => Record<string, unknown>
+): (element: HTMLElement) => Record<string, unknown> {
+  return (element) => ({ ...(getAttrs?.(element) ?? {}), anchorId: element.getAttribute("id") });
+}
+
 // One parse rule per heading level so the level is a static attr rather than a parsed one.
 const headingRules: ParseRule[] = [1, 2, 3, 4, 5, 6].map((level) => ({
-  attrs: { level },
+  getAttrs: withAnchorId(() => ({ level })),
   node: "heading",
   tag: `h${level}`
 }));
 
 // One parse rule per callout kind, each stamping the kind from its `data-type`.
 const calloutRules: ParseRule[] = CALLOUT_KINDS.map((kind) => ({
-  getAttrs: readCalloutAttrs,
+  getAttrs: withAnchorId(readCalloutAttrs),
   node: "callout",
   tag: `div[data-type=${kind}]`
 }));
 
 // The explicit rules array bound to `documentSchema`'s node types (see file header for why this is
 // not `DOMParser.fromSchema`). Order matters only where selectors overlap; here they are disjoint.
+// Every block-group rule captures the element `id` via `withAnchorId` (#366); non-block rules do not.
 const RULES: ParseRule[] = [
   ...headingRules,
-  { node: "paragraph", tag: "p" },
-  { node: "blockquote", tag: "blockquote" },
+  { getAttrs: withAnchorId(), node: "paragraph", tag: "p" },
+  { getAttrs: withAnchorId(), node: "blockquote", tag: "blockquote" },
   {
-    getAttrs: (element) => ({ language: readCodeLanguage(element) }),
+    getAttrs: withAnchorId((element) => ({ language: readCodeLanguage(element) })),
     node: "codeBlock",
     preserveWhitespace: "full",
     tag: "pre"
   },
-  { node: "bulletList", tag: "ul" },
-  { getAttrs: readOrderedListAttrs, node: "orderedList", tag: "ol" },
+  { getAttrs: withAnchorId(), node: "bulletList", tag: "ul" },
+  { getAttrs: withAnchorId(readOrderedListAttrs), node: "orderedList", tag: "ol" },
   { node: "listItem", tag: "li" },
-  { node: "table", tag: "table" },
+  { getAttrs: withAnchorId(), node: "table", tag: "table" },
   { node: "tableRow", tag: "tr" },
   { getAttrs: readCellAttrs, node: "tableCell", tag: "td" },
   { getAttrs: readCellAttrs, node: "tableHeader", tag: "th" },
-  { node: "figure", tag: "figure" },
+  { getAttrs: withAnchorId(), node: "figure", tag: "figure" },
   { getAttrs: readImageAttrs, node: "image", tag: "img" },
   { node: "figureCaption", tag: "figcaption" },
-  { node: "definitionList", tag: "dl" },
+  { getAttrs: withAnchorId(), node: "definitionList", tag: "dl" },
   { node: "definitionTerm", tag: "dt" },
   { node: "definitionDescription", tag: "dd" },
   ...calloutRules,
   { getAttrs: readFootnoteMarkerAttrs, node: "footnoteMarker", tag: "a[data-type=noteref]" },
-  { getAttrs: readFootnoteTargetAttrs, node: "footnoteTarget", tag: "[data-type=footnote]" },
-  { getAttrs: readUnknownAttrs, node: "unknown", tag: "div[data-whetstone-unknown]" }
+  {
+    getAttrs: withAnchorId(readFootnoteTargetAttrs),
+    node: "footnoteTarget",
+    tag: "[data-type=footnote]"
+  },
+  { getAttrs: withAnchorId(readUnknownAttrs), node: "unknown", tag: "div[data-whetstone-unknown]" }
 ];
 
 // Classify an element for the fail-loud pre-walk: recognized (has a parse rule), tolerated (descend
@@ -598,12 +631,35 @@ function collectUnknowns(body: HTMLElement, ownerDocument: Document): IngestionE
   return evidence;
 }
 
+// Recursively remove the `anchorId` block-group attribute from a node's JSON (and its descendants),
+// returning a copy. `anchorId` rides the parse only as a lift carrier: it is addressing metadata, not
+// render content, so the stored `doc_blocks.node_json` must not carry it — keeping the node JSON
+// byte-identical to before this attribute existed (#366).
+function stripAnchorId(node: DocumentNodeJSON): DocumentNodeJSON {
+  const next: DocumentNodeJSON = { ...node };
+
+  if (next.attrs !== undefined && "anchorId" in next.attrs) {
+    const { anchorId: _anchorId, ...rest } = next.attrs;
+    next.attrs = rest;
+  }
+
+  if (next.content !== undefined) {
+    next.content = next.content.map(stripAnchorId);
+  }
+
+  return next;
+}
+
 // Top-level blocks always carry an id after `assignNodeIds`, so read it through a typed view rather
-// than an optional chain whose null branch could never be taken (keeps branch coverage exact).
+// than an optional chain whose null branch could never be taken (keeps branch coverage exact). The
+// block's source-HTML `anchorId` is lifted off the top-level node and the attribute stripped from the
+// stored JSON, so the id becomes the `doc_blocks.anchor_id` addressing column (#366).
 function toBlock(node: DocumentNodeJSON): IngestedBlock {
   const attrs = node.attrs as Record<string, unknown>;
+  const anchorIdValue = attrs["anchorId"];
+  const anchorId = typeof anchorIdValue === "string" ? anchorIdValue : null;
 
-  return { id: String(attrs["id"]), node, type: node.type };
+  return { anchorId, id: String(attrs["id"]), node: stripAnchorId(node), type: node.type };
 }
 
 // --- CJK inter-character spacing (#340) -------------------------------------------------------

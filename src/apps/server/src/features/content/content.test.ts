@@ -11,6 +11,7 @@ import {
   type BlockUnitLocatorDto,
   type IngestEpubResultDto,
   type ReadingUnitContentDto,
+  type WorkAnchorIndexDto,
   type WorkContentDto,
   type WorkStructureDto
 } from "@whetstone/contracts";
@@ -1335,7 +1336,7 @@ describe("EPUB ingestion routes", () => {
       await writeReadingUnits(tx, {
         createEntryId: () => "should-not-be-used",
         startOrder: 0,
-        units: [{ blocks: [], docBlocks: [], evidence: [], title: "Empty" }],
+        units: [{ blocks: [], docBlocks: [], evidence: [], sourceFile: null, title: "Empty" }],
         workEntryId: toEntryId(workEntryId)
       });
     });
@@ -1469,5 +1470,171 @@ describe("EPUB ingestion routes", () => {
     expect(removed.statusCode).toBe(404);
     expect(removed.json()).toEqual({ error: "block_not_found" });
     expect(unknown.statusCode).toBe(404);
+  });
+});
+
+describe("work-scoped reference foundation (#366)", () => {
+  // A two-chapter EPUB whose chapters live in different source files, reuse the SAME anchor id
+  // ("shared") in each file, and carry a cross-file endnote marker pointing from ch01 into the notes
+  // file — the fixture that exercises per-file identity, addressable anchors, and endnote targeting.
+  function refsEpub(): ParsedEpub {
+    return {
+      chapters: [
+        {
+          html:
+            "<h1>Chapter One</h1>" +
+            '<p id="shared">Chapter one anchor.</p>' +
+            '<p>See the note<a data-type="noteref" href="notes.xhtml#note1">1</a>.</p>' +
+            // An inert marker with no resolvable target (no `#`, no `data-target`): it stays unstamped.
+            '<p>No target<a data-type="noteref" href="endnotes.html">x</a>.</p>',
+          images: [],
+          sourceFile: "text/ch01.xhtml"
+        },
+        {
+          html:
+            "<h1>Notes</h1>" +
+            '<p id="shared">Notes anchor.</p>' +
+            '<aside data-type="footnote" id="note1"><p>The endnote body.</p></aside>',
+          images: [],
+          sourceFile: "text/notes.xhtml"
+        }
+      ],
+      metadata: { author: "Anon", language: "en", title: "Refs" }
+    };
+  }
+
+  function findNode(node: PmNode, type: string): PmNode | undefined {
+    if (node.type === type) {
+      return node;
+    }
+    for (const child of node.content ?? []) {
+      const found = findNode(child, type);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  async function ingestRefs(): Promise<string> {
+    epubResponder = async () => refsEpub();
+    const response = await ingestEpub(Buffer.from("epub-refs"));
+    expect(response.statusCode).toBe(201);
+
+    return (response.json() as IngestEpubResultDto).work.entryId;
+  }
+
+  it("persists each reading unit's source file from the EPUB spine", async () => {
+    const workEntryId = await ingestRefs();
+
+    const units = await context.db
+      .select()
+      .from(readingUnits)
+      .where(eq(readingUnits.workEntryId, workEntryId))
+      .orderBy(readingUnits.orderIndex);
+
+    expect(units.map((unit) => unit.sourceFile)).toEqual(["text/ch01.xhtml", "text/notes.xhtml"]);
+  });
+
+  it("surfaces each unit's source file through the work structure and unit content", async () => {
+    const workEntryId = await ingestRefs();
+
+    const structureResponse = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/structure`
+    });
+    const structure = structureResponse.json() as WorkStructureDto;
+    expect(structure.readingUnits.map((unit) => unit.sourceFile)).toEqual([
+      "text/ch01.xhtml",
+      "text/notes.xhtml"
+    ]);
+
+    const firstUnit = structure.readingUnits[0]!;
+    const contentResponse = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/units/${firstUnit.entryId}/content`
+    });
+    expect((contentResponse.json() as ReadingUnitContentDto).sourceFile).toBe("text/ch01.xhtml");
+  });
+
+  it("captures a block's source-HTML id as doc_blocks.anchor_id without leaking it into node JSON", async () => {
+    const workEntryId = await ingestRefs();
+
+    const rows = await context.db
+      .select()
+      .from(docBlocks)
+      .where(eq(docBlocks.workEntryId, workEntryId));
+
+    const shared = rows.filter((row) => row.anchorId === "shared");
+    expect(shared).toHaveLength(2);
+    // A heading without an id yields no anchor id, so it is not addressable.
+    expect(rows.some((row) => row.type === "heading" && row.anchorId !== null)).toBe(false);
+    // The addressing id lives in the column only — never in the stored render content.
+    for (const row of rows) {
+      expect(JSON.stringify(row.nodeJson)).not.toContain("anchorId");
+    }
+  });
+
+  it("indexes work anchors per source file so a reused anchor id does not collide across chapters", async () => {
+    const workEntryId = await ingestRefs();
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/anchors`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const index = response.json() as WorkAnchorIndexDto;
+    expect(index.workEntryId).toBe(workEntryId);
+
+    const shared = index.anchors.filter((entry) => entry.anchor === "shared");
+    expect(shared.map((entry) => entry.sourceFile).sort()).toEqual([
+      "text/ch01.xhtml",
+      "text/notes.xhtml"
+    ]);
+    // The two same-id anchors resolve to distinct blocks in distinct reading units — no collision.
+    expect(new Set(shared.map((entry) => entry.blockEntryId)).size).toBe(2);
+    expect(new Set(shared.map((entry) => entry.unitEntryId)).size).toBe(2);
+
+    // The endnote target in the notes file is addressable by its own id.
+    expect(
+      index.anchors.some(
+        (entry) => entry.anchor === "note1" && entry.sourceFile === "text/notes.xhtml"
+      )
+    ).toBe(true);
+  });
+
+  it("stamps a cross-file endnote marker with the resolved target source file", async () => {
+    const workEntryId = await ingestRefs();
+
+    const rows = await context.db
+      .select()
+      .from(docBlocks)
+      .where(eq(docBlocks.workEntryId, workEntryId));
+
+    const markers = rows
+      .map((row) => findNode(row.nodeJson as PmNode, "footnoteMarker"))
+      .filter((node): node is PmNode => node !== undefined);
+
+    const resolved = markers.find((marker) => marker.attrs?.["refId"] === "note1");
+    expect(resolved?.attrs).toMatchObject({
+      refFile: "notes.xhtml",
+      refId: "note1",
+      targetSourceFile: "text/notes.xhtml"
+    });
+
+    // The inert marker (no resolvable target) is left unstamped: its `targetSourceFile` stays null.
+    const inert = markers.find((marker) => marker.attrs?.["refId"] === null);
+    expect(inert?.attrs?.["targetSourceFile"] ?? null).toBeNull();
+  });
+
+  it("returns 404 for the anchors of an unknown work", async () => {
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/works/missing-work/anchors"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "work_not_found" });
   });
 });

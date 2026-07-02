@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   epubContentType,
   ingestMarkdownRequestSchema,
-  parseIngestMarkdownRequest
+  parseIngestMarkdownRequest,
+  parseWorkAnchorIndex
 } from "./contentContracts.js";
 
 describe("parseIngestMarkdownRequest", () => {
@@ -59,5 +60,39 @@ describe("parseIngestMarkdownRequest", () => {
 describe("epubContentType", () => {
   it("is the standard EPUB media type", () => {
     expect(epubContentType).toBe("application/epub+zip");
+  });
+});
+
+describe("parseWorkAnchorIndex", () => {
+  it("accepts a work anchor index with a null and a non-null source file", () => {
+    const index = {
+      anchors: [
+        { anchor: "fn1", blockEntryId: "b-1", sourceFile: "text/ch01.xhtml", unitEntryId: "u-1" },
+        { anchor: "fn2", blockEntryId: "b-2", sourceFile: null, unitEntryId: "u-2" }
+      ],
+      workEntryId: "work-1"
+    };
+
+    expect(parseWorkAnchorIndex(index)).toEqual(index);
+  });
+
+  it("rejects an anchor entry missing its block id", () => {
+    expect(() =>
+      parseWorkAnchorIndex({
+        anchors: [{ anchor: "fn1", sourceFile: null, unitEntryId: "u-1" }],
+        workEntryId: "work-1"
+      })
+    ).toThrow();
+  });
+
+  it("rejects unexpected keys on an entry", () => {
+    expect(() =>
+      parseWorkAnchorIndex({
+        anchors: [
+          { anchor: "fn1", blockEntryId: "b-1", extra: true, sourceFile: null, unitEntryId: "u-1" }
+        ],
+        workEntryId: "work-1"
+      })
+    ).toThrow();
   });
 });

@@ -23,7 +23,13 @@ import { ImageLightbox } from "./ImageLightbox";
 import { BlockContent } from "./mdastBlock";
 import { PmBlock } from "./PmDocument";
 import { draftOverlapsNotes, indexBlocks } from "./readerMarks";
-import { fetchUnitContent, fetchWorks, fetchWorkStructure, locateBlockUnit } from "./readerApi";
+import {
+  fetchUnitContent,
+  fetchWorks,
+  fetchWorkAnchorIndex,
+  fetchWorkStructure,
+  locateBlockUnit
+} from "./readerApi";
 import {
   captureSelectionAnchor,
   eventTargetClosest,
@@ -38,6 +44,7 @@ import {
   type ReaderUnit
 } from "./readerModel";
 import { isUnitTitleRedundant } from "./readerHeadings";
+import { buildAnchorIndex, type AnchorIndex } from "./referenceResolver";
 import {
   clampUnitIndex,
   unitIndexForEntryId,
@@ -55,6 +62,10 @@ import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readin
 import { scrollToBlock } from "./scrollToBlock";
 import { selectionRect } from "./selectionRect";
 import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
+
+// A stable empty resolver used before a work is open (no viewing state): keeping `viewingAnchorIndex`
+// always defined lets `onActivateAnchor` resolve unconditionally — an empty index simply misses (#366).
+const emptyAnchorIndex: AnchorIndex = buildAnchorIndex({ anchors: [], workEntryId: "" });
 
 // Immersive-reader chrome state shared with the reading view: the language-aware paper
 // surface, the text-size control, the auto-hiding header, the receding reading tools, and the
@@ -102,6 +113,10 @@ type ReadingState =
       // Retry re-fetches the same unit; `activeUnitIndex` points into `structure.units`.
       activeUnit: ActiveUnit;
       activeUnitIndex: number;
+      // The work-scoped reference resolver (#366), built once from the work's anchor index when the
+      // work opens. A cross-reference the same-unit DOM path can't resolve (an endnote in another
+      // unit/file) falls back to this to find its block and jump cross-unit.
+      anchorIndex: AnchorIndex;
       loadNonce: number;
       // One-shot scroll target carried in state (not refs): the consuming effect reads it after
       // the unit's blocks render and scrolls there. Cleared by the next unit-reducer transition so
@@ -202,6 +217,7 @@ export function applyUnitLoaded(
   const unit: ReaderUnit = {
     blocks,
     entryId: meta.entryId,
+    ...(meta.sourceFile === undefined ? {} : { sourceFile: meta.sourceFile }),
     ...(meta.title === undefined ? {} : { title: meta.title })
   };
 
@@ -291,7 +307,9 @@ type ReaderHandlers = Readonly<{
   onEditNote: (workEntryId: string, note: NoteDto) => void;
   onJumpToBlock: (note: NoteDto) => void;
   // Activate a same-work internal cross-reference: jump to the block whose anchor id matches (#252).
-  onActivateAnchor: (anchorId: string) => void;
+  // The optional second argument is the reference's target source file, so a cross-file endnote
+  // resolves against that file, not the current unit (#366).
+  onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
@@ -447,6 +465,16 @@ export function ReaderPage({
     };
   }, [activeUnitEntryId, activeUnitLoadNonce, viewingWorkEntryId]);
 
+  // The current work's reference resolver and the active unit's source file, read directly by
+  // `onActivateAnchor` below. Both are stable across unrelated re-renders (opening the toolbar or a
+  // lookup) and only change on a work open or unit switch — which re-render the block list anyway — so
+  // taking them as callback dependencies keeps the memoized blocks flat during interactions (#366).
+  const viewingAnchorIndex = viewing?.anchorIndex ?? emptyAnchorIndex;
+  const activeUnitSourceFile =
+    viewing === undefined
+      ? undefined
+      : viewing.structure.units[viewing.activeUnitIndex]?.sourceFile;
+
   useEffect(() => {
     // The initial open is inlined here (rather than calling a component-scoped openWork) so the
     // effect has no forward reference and no external function dependency: on mount it fetches
@@ -477,6 +505,14 @@ export function ReaderPage({
       try {
         const structureDto = await fetchWorkStructure(workEntryId);
         const noteList = await fetchNotes(workEntryId);
+        // The work's anchor index powers the cross-unit reference resolver (#366). A failure to load
+        // it degrades to no cross-unit resolution (an empty index resolves nothing) rather than
+        // failing the whole open — same-unit references still work via the DOM path.
+        const anchorIndexDto = await fetchWorkAnchorIndex(workEntryId).catch(() => ({
+          anchors: [],
+          workEntryId
+        }));
+        const anchorIndex = buildAnchorIndex(anchorIndexDto);
         const structure = buildReaderStructure(structureDto);
         const savedPosition = await fetchReadingPosition(workEntryId).catch(() => undefined);
         const plan = await resolveOpening(structure, {
@@ -498,6 +534,7 @@ export function ReaderPage({
           reading: {
             activeUnit: { status: "loading" },
             activeUnitIndex: plan.unitIndex,
+            anchorIndex,
             loadNonce: 0,
             status: "viewing",
             structure,
@@ -606,22 +643,42 @@ export function ReaderPage({
     [viewingWorkEntryId]
   );
 
-  // Activate a same-work internal cross-reference (#252): resolve the target block from the rendered
-  // DOM (no ref read in render) by its anchor id, then jump there. Stable so memoized blocks stay flat.
+  // Activate an internal cross-reference (#252, #366): first try the same-unit fast path — resolve the
+  // target block from the rendered DOM by its anchor id (no ref read in render) and jump there, which
+  // preserves the in-file footnote behavior (#335). When the DOM has no such anchor (an endnote whose
+  // target lives in another reading unit/file), fall back to the work-scoped resolver: resolve the
+  // reference against its target source file (a marker passes its `targetSourceFile`) or, absent one,
+  // the current unit's source file, and jump to the resolved block. An unresolvable reference no-ops.
+  // The resolver and active source file only change on a work open / unit switch, so memoized blocks
+  // stay flat during unrelated interactions (opening the toolbar or a lookup).
   const onActivateAnchor = useCallback(
-    (anchorId: string): void => {
+    (anchorId: string, targetSourceFile?: string): void => {
       // Escape quotes/backslashes for the attribute selector; ingest ids are plain html ids.
       const escaped = anchorId.replace(/["\\]/g, "\\$&");
-      const target =
+      const domTarget =
         document
           .querySelector(`.reader [data-anchor-id="${escaped}"]`)
           ?.closest("[data-block-id]")
           ?.getAttribute("data-block-id") ?? undefined;
-      if (target !== undefined) {
-        jumpToBlock(target);
+
+      if (domTarget !== undefined) {
+        jumpToBlock(domTarget);
+        return;
+      }
+
+      // A marker's target file wins (a cross-file endnote); otherwise the reference is same-file, so it
+      // resolves against the unit the reader is currently in. An empty index or a miss simply no-ops.
+      const sourceFile = targetSourceFile ?? activeUnitSourceFile;
+      const resolved = viewingAnchorIndex.resolve({
+        anchor: anchorId,
+        ...(sourceFile === undefined ? {} : { sourceFile })
+      });
+
+      if (resolved !== undefined) {
+        jumpToBlock(resolved);
       }
     },
-    [jumpToBlock]
+    [activeUnitSourceFile, jumpToBlock, viewingAnchorIndex]
   );
 
   // The open work's language (for routing a lookup), derived for every ready state so an idle
@@ -1229,7 +1286,7 @@ type ReaderBlockViewProps = Readonly<{
   block: ReaderBlock;
   born: boolean;
   notes: ReadonlyArray<NoteDto>;
-  onActivateAnchor: (anchorId: string) => void;
+  onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
   workEntryId: string;
@@ -1245,7 +1302,7 @@ function ReaderFigure({
   onActivateAnchor
 }: {
   block: ReaderBlock;
-  onActivateAnchor: (anchorId: string) => void;
+  onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
 }): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
   const imageSrc =
@@ -1283,7 +1340,7 @@ function FigureCaption({
   onActivateAnchor
 }: {
   block: ReaderBlock;
-  onActivateAnchor: (anchorId: string) => void;
+  onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
 }): React.ReactNode {
   if (block.node !== undefined) {
     const caption = figureCaptionNode(block.node);

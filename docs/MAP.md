@@ -262,11 +262,15 @@ can navigate them from another package.
   soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
   (`GET /api/works/:id/content/markdown`, which keeps `loadWorkContent` server-side). The reader no
   longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
-  (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit`): `GET …/structure` (units +
-  block counts, no content), `GET …/units/:unitId/content` (one unit's ordered blocks — both the mdast
-  `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`, the reader's render source),
-  and `GET …/blocks/:blockId/unit` (block → owning unit for deep-links / jump-to-note, via
-  `locateBlockUnit`), each 404ing an unknown/out-of-work target. A block id is resolved over **both**
+  (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit` / `loadWorkAnchorIndex`):
+  `GET …/structure` (units + block counts, no content), `GET …/units/:unitId/content` (one unit's
+  ordered blocks — both the mdast `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`,
+  the reader's render source), `GET …/blocks/:blockId/unit` (block → owning unit for deep-links /
+  jump-to-note, via `locateBlockUnit`), and `GET …/anchors` (the **work anchor index** — every
+  addressable block keyed by `(reading_units.source_file, doc_blocks.anchor_id)` →
+  `{ blockEntryId, unitEntryId }`, so an id reused across chapters resolves per source file, not by
+  collision; backs work-scoped internal-reference resolution, #366), each 404ing an unknown/out-of-work
+  target. A block id is resolved over **both**
   substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
   union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
   resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
@@ -397,7 +401,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   specific block). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
   transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
   each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
-  `fetchUnitContent` / `locateBlockUnit`), with an explicit per-unit loading state and an error+Retry;
+  `fetchUnitContent` / `locateBlockUnit` / `fetchWorkAnchorIndex`), with an explicit per-unit loading
+  state and an error+Retry;
   `readerModel.ts` carries each block's stored mdast for direct, re-parse-free rendering (no Markdown
   round-trip; `blockToMarkdown` stays for the export path only);
   `readerNavigation.ts` holds the pure unit helpers (TOC labels, clamp, unit-by-entry-id, work-level
@@ -415,8 +420,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   per-block `PmBlock` export (so `ReaderBlockView` stays memoized per block, perf #72, rather than
   re-rendering the whole unit). `PmDocument` supplies an explicit per-node React mapping covering every
   #310 node type (the specs carry no `renderHTML`), stamps `data-block-id` = the PM node's stable
-  UniqueID on each top-level block (so notes/position/search/selection anchor by block + offset), keeps
-  links inert (no in-content navigation; v0 has no cross-document in-book link resolution), and prints
+  UniqueID on each top-level block (so notes/position/search/selection anchor by block + offset),
+  resolves internal references **work-scoped** through the work anchor index (`referenceResolver.ts`
+  builds `resolve(target)` from `fetchWorkAnchorIndex`; `onActivateAnchor` first tries a same-unit DOM
+  anchor, then resolves `(sourceFile, anchor)` → block → the existing cross-unit `jumpToBlock`, so
+  footnote/endnote markers and other in-book references now navigate **across chapters/files**, #366 —
+  visible inline `<a>` link rendering is deferred to #368), and prints
   the `unknown` fallback as inert escaped text (never `dangerouslySetInnerHTML`, no fetch). It reuses the
   `.reader` typography/theme classes; `PmDocument.tokens.ts` holds its presentational
   heading-tag/callout-kind class maps. A Markdown work with no PM blocks falls back to the legacy mdast

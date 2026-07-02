@@ -1,4 +1,4 @@
-import { Node } from "@tiptap/core";
+import { Extension, Node } from "@tiptap/core";
 import { UniqueID } from "@tiptap/extension-unique-id";
 
 // The whetstone content bedrock: ProseMirror node specs, declared through Tiptap (MIT) so the same
@@ -126,13 +126,20 @@ const callout = Node.create({
 // --- Footnotes / endnotes ---------------------------------------------------------------------
 
 // An inline marker that references a target by its `refId`; the back-link and jump are wired by the
-// reader slice from these stable ids (PRODUCT "internal cross-reference links").
+// reader slice from these stable ids (PRODUCT "internal cross-reference links"). `refFile` is the
+// source-file path part of a cross-file reference (e.g. `../notes.xhtml#fn12` -> `../notes.xhtml`),
+// null for a same-file marker; `targetSourceFile` is that path resolved against the marker's own
+// source file at ingest, so the reader's work-scoped resolver can jump to an endnote in another unit
+// keyed by (sourceFile, anchor) (#366). Both are addressing metadata intrinsic to the marker, kept in
+// the node so the resolver has the full target without re-deriving it.
 const footnoteMarker = Node.create({
   addAttributes() {
     return {
       label: { default: null },
       noteKind: { default: "footnote" },
-      refId: { default: null }
+      refFile: { default: null },
+      refId: { default: null },
+      targetSourceFile: { default: null }
     };
   },
   atom: true,
@@ -200,11 +207,44 @@ export const documentNodes = [
 // the schema object.
 export const documentNodeNames = documentNodes.map((node) => node.name) as ReadonlyArray<string>;
 
+// The block-group node types every top-level block can be. Each carries the addressing-only
+// `anchorId` global attribute below, so a block's source-HTML id is captured at ingest without
+// polluting non-block nodes (list items, cells, inline runs).
+const BLOCK_GROUP_NODE_NAMES = [
+  "paragraph",
+  "heading",
+  "blockquote",
+  "codeBlock",
+  "bulletList",
+  "orderedList",
+  "table",
+  "figure",
+  "definitionList",
+  "callout",
+  "footnoteTarget",
+  "unknown"
+] as const;
+
+// `anchorId` is the host element's id at ingest (a figure/heading/paragraph id, a cross-reference
+// target), declared on every block-group node so the ingestion parse can carry it robustly through
+// wrapper unwrapping — positional correlation is unsafe because publishers wrap chapters (e.g.
+// O'Reilly's `<section>`). It is addressing metadata, not render content (exactly like the legacy
+// `blocks.anchor_id` column), so ingestion LIFTS it off the top-level node into the `doc_blocks`
+// `anchor_id` column and STRIPS it from the stored node JSON — the PM document stays a pure content
+// model and the node JSON is byte-identical to before this attribute existed (#366).
+const anchorIdAttribute = Extension.create({
+  addGlobalAttributes() {
+    return [{ attributes: { anchorId: { default: null } }, types: [...BLOCK_GROUP_NODE_NAMES] }];
+  },
+  name: "anchorIdAttribute"
+});
+
 // Stable ids on every addressable node. `types: "all"` covers all node types except `doc` and `text`
 // (UniqueID's own exclusion), and the default generator/attribute name (`id`, a UUID) is used — this
 // is Tiptap's server-side id generator, run with no editor in the document module below.
 export const uniqueIdExtension = UniqueID.configure({ types: "all" });
 
-// The full extension set (nodes + the id attribute) passed to `getSchema` and to the server-side id
-// generator. Kept as one boundary so the schema and id assignment can never drift apart.
-export const documentExtensions = [...documentNodes, uniqueIdExtension];
+// The full extension set (nodes + the id attribute + the anchor-id addressing attribute) passed to
+// `getSchema` and to the server-side id generator. Kept as one boundary so the schema and id
+// assignment can never drift apart.
+export const documentExtensions = [...documentNodes, uniqueIdExtension, anchorIdAttribute];

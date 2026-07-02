@@ -206,7 +206,10 @@ export {
   epubContentType,
   ingestMarkdownRequestSchema,
   parseIngestMarkdownRequest,
-  pdfContentType
+  parseWorkAnchorIndex,
+  pdfContentType,
+  workAnchorEntryDtoSchema,
+  workAnchorIndexDtoSchema
 } from "./contentContracts.js";
 export type {
   BlockDto,
@@ -217,6 +220,8 @@ export type {
   ReadingUnitContentDto,
   ReadingUnitDto,
   ReadingUnitStructureDto,
+  WorkAnchorEntryDto,
+  WorkAnchorIndexDto,
   WorkContentDto,
   WorkStructureDto
 } from "./contentContracts.js";
