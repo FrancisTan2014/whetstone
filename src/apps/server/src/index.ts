@@ -177,7 +177,8 @@ const server = createServer({
       createOcrmypdfPreprocess({ ocrmypdfBinary: config.pdfOcrBinary }),
       createDoclingPdfToMarkdown({
         pythonBinary: config.pdfPythonBinary,
-        scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url))
+        scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url)),
+        timeoutMs: config.pdfTimeoutMs
       })
     ),
     sourceFileStore

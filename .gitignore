@@ -54,6 +54,10 @@ test-results/
 reports/mutation/
 .stryker-tmp/
 
+# Python bytecode (ingestion worker + its tests)
+__pycache__/
+*.pyc
+
 # Environment files
 .env
 .env.*

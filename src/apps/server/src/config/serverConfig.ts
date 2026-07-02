@@ -10,6 +10,7 @@ export type ServerConfig = Readonly<{
   logLevel: ServerLogLevel;
   pdfOcrBinary: string;
   pdfPythonBinary: string;
+  pdfTimeoutMs: number;
   port: number;
   sourceFilesDir: string;
   webDir: string | undefined;
@@ -23,6 +24,10 @@ const defaultServerConfig: ServerConfig = {
   logLevel: "info",
   pdfOcrBinary: "ocrmypdf",
   pdfPythonBinary: "python",
+  // Docling's per-page layout + table analysis is slow; oversized/scanned books can run for many
+  // minutes. Bound the spawn so a slow PDF is killed and rejected (422) instead of hanging the
+  // ingest request. v0 targets born-digital, reasonably-sized PDFs (#403). Env-overridable.
+  pdfTimeoutMs: 180_000,
   port: 3000,
   sourceFilesDir: "./.data/sources",
   webDir: undefined
@@ -42,6 +47,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   const port = parsePort(env.PORT);
   const logLevel = parseLogLevel(env.LOG_LEVEL);
   const epubUploadLimitBytes = parseEpubUploadLimit(env.EPUB_UPLOAD_LIMIT_BYTES);
+  const pdfTimeoutMs = parsePdfTimeout(env.PDF_TIMEOUT_MS);
 
   return {
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
@@ -51,6 +57,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     logLevel,
     pdfOcrBinary: env.PDF_OCR_BINARY ?? defaultServerConfig.pdfOcrBinary,
     pdfPythonBinary: env.PDF_PYTHON_BINARY ?? defaultServerConfig.pdfPythonBinary,
+    pdfTimeoutMs,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
     webDir: env.WEB_DIR ?? defaultServerConfig.webDir
@@ -104,4 +111,18 @@ function parseEpubUploadLimit(rawLimit: string | undefined): number {
   }
 
   return limit;
+}
+
+function parsePdfTimeout(rawTimeout: string | undefined): number {
+  if (rawTimeout === undefined) {
+    return defaultServerConfig.pdfTimeoutMs;
+  }
+
+  const timeout = Number.parseInt(rawTimeout, 10);
+
+  if (!Number.isInteger(timeout) || timeout < 1) {
+    throw new Error("PDF_TIMEOUT_MS must be a positive integer number of milliseconds.");
+  }
+
+  return timeout;
 }

@@ -28,9 +28,26 @@ export type DoclingDependencies = Readonly<{
   run?: (pdfPath: string) => Promise<string>;
   pythonBinary: string;
   scriptPath: string;
+  // Wall-clock bound for the conversion. Docling is slow on large/scanned PDFs; without this an
+  // oversized book runs unbounded and hangs the ingest request (#403). Sourced from config.
+  timeoutMs: number;
 }>;
 
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+
+// Reject if `work` does not settle within `timeoutMs`, so the seam bounds any converter — the real
+// spawn (killed via execFile's own timeout) and an injected run alike. The timer is always cleared,
+// so a resolved conversion leaves no dangling handle.
+function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`PDF conversion timed out after ${timeoutMs}ms.`)),
+      timeoutMs
+    );
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
 
 // The real worker: write the bytes to a temp file, spawn the one-shot Docling script, return its
 // Markdown. The PDF lives only for the conversion and is removed after. Permissive deps only.
@@ -42,7 +59,9 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
         execFile(
           dependencies.pythonBinary,
           [dependencies.scriptPath, pdfPath],
-          { maxBuffer: MAX_OUTPUT_BYTES },
+          // Bound the subprocess itself: on timeout execFile sends killSignal, so a slow/oversized
+          // PDF is killed (not abandoned) and the callback rejects → route maps it to 422 (#403).
+          { killSignal: "SIGKILL", maxBuffer: MAX_OUTPUT_BYTES, timeout: dependencies.timeoutMs },
           /* v8 ignore next -- success path needs a real subprocess; failure path is covered */
           (error, stdout) => (error === null ? resolve(stdout) : reject(error))
         );
@@ -54,7 +73,7 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
       const pdfPath = join(dir, "source.pdf");
       try {
         await writeFile(pdfPath, bytes);
-        return await run(pdfPath);
+        return await withTimeout(run(pdfPath), dependencies.timeoutMs);
       } finally {
         await rm(dir, { force: true, recursive: true });
       }
