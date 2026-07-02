@@ -554,7 +554,11 @@ self-tuning, eval-driven coach is deferred; the knobs are its seam.
   free-generates live.
 - **The app is a thin orchestrator** over a rich **learner-context store** + a **model-agnostic LLM
   seam**: cheap/local model for the bulk, a stronger model only for the few coaching calls; **voice
-  decoded locally with OSS** (transcript + prosody features → the LLM), never raw audio.
+  decoded locally with OSS** (transcript + prosody features → the LLM), never raw audio. **v0 is
+  local-first — the seam is implemented with a TS-native, in-process LLM SDK (the Vercel AI SDK)
+  pointed at a local Ollama model, serving the coach, the diary tidy pass, and the 解释 aid; cloud
+  providers are deferred behind the same SDK/seam until whetstone is stable (a config drop-in, not a
+  rewrite). A separate-runtime gateway (e.g. a LiteLLM proxy) is rejected for v0.**
 
 **Why production, and why spoken (the basis).** Input (reading) is necessary but not sufficient —
 producing forces retrieval and reveals gaps (Swain's output hypothesis); automaticity is **skill- and
