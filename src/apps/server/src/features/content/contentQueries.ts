@@ -5,10 +5,12 @@ import type {
   ReadingUnitContentDto,
   ReadingUnitDto,
   ReadingUnitStructureDto,
+  WorkAnchorEntryDto,
+  WorkAnchorIndexDto,
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { and, asc, count, eq, isNull } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -181,6 +183,7 @@ export async function loadWorkStructure(
       blockCount: count(blocks.entryId),
       entryId: readingUnits.entryId,
       orderIndex: readingUnits.orderIndex,
+      sourceFile: readingUnits.sourceFile,
       title: readingUnits.title
     })
     .from(readingUnits)
@@ -189,24 +192,34 @@ export async function loadWorkStructure(
       and(eq(blocks.readingUnitEntryId, readingUnits.entryId), isNull(blocks.deletedAt))
     )
     .where(eq(readingUnits.workEntryId, workEntryId))
-    .groupBy(readingUnits.entryId, readingUnits.orderIndex, readingUnits.title)
+    .groupBy(
+      readingUnits.entryId,
+      readingUnits.orderIndex,
+      readingUnits.sourceFile,
+      readingUnits.title
+    )
     .orderBy(asc(readingUnits.orderIndex));
 
   return {
     // Exclude units with no renderable mdast blocks (an unknown-only / PM-only chapter persisted for
     // its `doc_blocks`, or a unit whose blocks were all soft-deleted); the mdast reader shows only
     // units with content until #312 swaps it to the PM block rows (mirrors loadWorkContent).
-    readingUnits: rows
-      .filter((row) => row.blockCount > 0)
-      .map((row) => toStructureDto(row, row.blockCount)),
+    readingUnits: rows.filter((row) => row.blockCount > 0).map(toStructureDto),
     workEntryId
   };
 }
 
-function toStructureDto(unit: ReadingUnitRow, blockCount: number): ReadingUnitStructureDto {
-  const base = { blockCount, entryId: toEntryId(unit.entryId), orderIndex: unit.orderIndex };
+function toStructureDto(
+  unit: ReadingUnitRow & { blockCount: number; sourceFile: string | null }
+): ReadingUnitStructureDto {
+  const base = {
+    blockCount: unit.blockCount,
+    entryId: toEntryId(unit.entryId),
+    orderIndex: unit.orderIndex
+  };
+  const withTitle = unit.title === null ? base : { ...base, title: unit.title };
 
-  return unit.title === null ? base : { ...base, title: unit.title };
+  return unit.sourceFile === null ? withTitle : { ...withTitle, sourceFile: unit.sourceFile };
 }
 
 // One reading unit's content on demand, or `undefined` when the unit does not exist or is not part
@@ -220,6 +233,7 @@ export async function loadReadingUnitContent(
     .select({
       entryId: readingUnits.entryId,
       orderIndex: readingUnits.orderIndex,
+      sourceFile: readingUnits.sourceFile,
       title: readingUnits.title
     })
     .from(readingUnits)
@@ -249,8 +263,9 @@ export async function loadReadingUnitContent(
     entryId: toEntryId(unit.entryId),
     orderIndex: unit.orderIndex
   };
+  const withTitle = unit.title === null ? base : { ...base, title: unit.title };
 
-  return unit.title === null ? base : { ...base, title: unit.title };
+  return unit.sourceFile === null ? withTitle : { ...withTitle, sourceFile: unit.sourceFile };
 }
 
 // The reading unit owning an addressable block within the work, or `undefined` when the block does
@@ -280,4 +295,45 @@ export async function locateBlockUnit(
   // The inner join drops soft-deleted/detached blocks (null reading-unit id), so a row here always
   // carries a real owning unit.
   return row === undefined ? undefined : toEntryId(row.unitEntryId);
+}
+
+// The work's anchor index: every PM `doc_blocks` block that carries a source-HTML id (`anchor_id`),
+// paired with its owning unit's `source_file`, so the reader can build a work-scoped resolver that
+// jumps a cross-reference to another unit (#366). Keyed by (source_file, anchor) at the consumer, so
+// the same anchor id reused in two source files yields two distinct, non-colliding entries. Only PM
+// `doc_blocks` carry an ingest-captured `anchor_id`, so the legacy mdast `blocks` are not unioned in
+// here (their `blocks.anchor_id` served the #252 same-unit path over the DOM, not this index).
+export async function loadWorkAnchorIndex(
+  db: DbClient,
+  workEntryId: EntryId
+): Promise<WorkAnchorIndexDto> {
+  const rows = await db
+    .select({
+      anchor: docBlocks.anchorId,
+      blockEntryId: docBlocks.id,
+      sourceFile: readingUnits.sourceFile,
+      unitEntryId: docBlocks.readingUnitEntryId
+    })
+    .from(docBlocks)
+    .innerJoin(readingUnits, eq(docBlocks.readingUnitEntryId, readingUnits.entryId))
+    .where(and(eq(docBlocks.workEntryId, workEntryId), isNotNull(docBlocks.anchorId)))
+    .orderBy(asc(docBlocks.orderIndex));
+
+  return { anchors: rows.map(toAnchorEntryDto), workEntryId };
+}
+
+function toAnchorEntryDto(row: {
+  anchor: string | null;
+  blockEntryId: string;
+  sourceFile: string | null;
+  unitEntryId: string;
+}): WorkAnchorEntryDto {
+  return {
+    // The `IS NOT NULL` filter guarantees a string `anchor`; read it through a cast rather than a
+    // null-coalesce whose fallback branch could never run (keeps branch coverage exact).
+    anchor: row.anchor as string,
+    blockEntryId: row.blockEntryId,
+    sourceFile: row.sourceFile,
+    unitEntryId: row.unitEntryId
+  };
 }

@@ -6,6 +6,7 @@ import { ingestMarkdown, ingestPdf, type ContentDependencies } from "./contentCo
 import { ingestEpub } from "./epubCommands.js";
 import {
   loadReadingUnitContent,
+  loadWorkAnchorIndex,
   loadWorkContent,
   loadWorkStructure,
   locateBlockUnit,
@@ -149,6 +150,19 @@ export function registerContentRoutes(
       return loadWorkStructure(dependencies.db, workEntryId);
     }
   );
+
+  // The work's anchor index: every addressable block reachable by a source-HTML id, keyed by
+  // (sourceFile, anchor), so the reader builds a work-scoped resolver that jumps a cross-reference
+  // cross-unit (#366). 404 for an unknown work.
+  server.get<{ Params: WorkParams }>("/api/works/:workEntryId/anchors", async (request, reply) => {
+    const workEntryId = toEntryId(request.params.workEntryId);
+
+    if (!(await workExists(dependencies.db, workEntryId))) {
+      return reply.code(404).send(workNotFoundBody);
+    }
+
+    return loadWorkAnchorIndex(dependencies.db, workEntryId);
+  });
 
   // One unit's blocks on demand. 404 covers both an unknown unit and one in another work.
   server.get<{ Params: UnitParams }>(
