@@ -428,7 +428,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
   (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion
   vars. `src/shared/theme/` is the theme controller (`theme.ts` pure rules, `useTheme.ts` applies the
-  `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button mounted in the shell footer); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
+  `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button placed as app-shell chrome in a
+  slim top bar — not a nav tab (#390)); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
   the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
