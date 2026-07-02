@@ -6,8 +6,13 @@
 
 import { fileURLToPath } from "node:url";
 
+import { envPath, parseEnvVars, readEnv, upsertEnvVars } from "../env-file.mjs";
 import { installSystemTool } from "../installSystemTool.mjs";
 import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
+
+// Re-exported so this file stays the voice step's public surface; the `.env` line helpers now live in
+// the shared env-file owner (#382) but voice's tests and any voice consumer import them from here.
+export { parseEnvVars, upsertEnvVars };
 
 const DEFAULT_MODEL = "small";
 const WRAPPER_DIR = fileURLToPath(new URL("../whisper-wrapper", import.meta.url));
@@ -17,55 +22,6 @@ const PYTHON_DOCS = "https://www.python.org/downloads";
 const PYTHON_REMEDY =
   "Install Python 3 (https://www.python.org/downloads, or `winget install Python.Python.3` / " +
   "`brew install python`), then re-run `pnpm setup --voice`.";
-
-/**
- * Parse simple `KEY=value` lines from a `.env` file's contents (commented lines ignored).
- *
- * @param {string} content
- * @returns {Record<string, string>}
- */
-export function parseEnvVars(content) {
-  /** @type {Record<string, string>} */
-  const vars = {};
-  for (const line of content.split("\n")) {
-    const match = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (match) {
-      vars[match[1]] = match[2].trim();
-    }
-  }
-  return vars;
-}
-
-/**
- * Upsert `KEY=value` entries into `.env` contents: an existing active *or commented* `KEY=` line is
- * rewritten in place (uncommenting the `.env.example` template line), otherwise the entry is
- * appended. Entries with an `undefined` value are skipped. Always returns newline-terminated content.
- *
- * @param {string} content
- * @param {Record<string, string | undefined>} vars
- * @returns {string}
- */
-export function upsertEnvVars(content, vars) {
-  const handled = new Set();
-  const lines = (content.length === 0 ? [] : content.split("\n")).map((line) => {
-    const match = /^\s*#?\s*([A-Z_][A-Z0-9_]*)\s*=/.exec(line);
-    if (match && vars[match[1]] !== undefined) {
-      handled.add(match[1]);
-      return `${match[1]}=${vars[match[1]]}`;
-    }
-    return line;
-  });
-  for (const [key, value] of Object.entries(vars)) {
-    if (value !== undefined && !handled.has(key)) {
-      lines.push(`${key}=${value}`);
-    }
-  }
-  let out = lines.join("\n");
-  if (!out.endsWith("\n")) {
-    out += "\n";
-  }
-  return out;
-}
 
 /**
  * Validate wrapper stdout against the **same strict contract the runtime adapter enforces** —
@@ -172,23 +128,6 @@ const PYTHON_SPEC = {
     darwin: { manager: "brew", args: ["install", "python"] }
   }
 };
-
-/**
- * @param {import("../step.mjs").SetupContext} ctx
- * @returns {Record<string, string>}
- */
-function readEnv(ctx) {
-  const path = envPath(ctx);
-  return ctx.fs.exists(path) ? parseEnvVars(ctx.fs.readText(path)) : {};
-}
-
-/**
- * @param {import("../step.mjs").SetupContext} ctx
- * @returns {string}
- */
-function envPath(ctx) {
-  return `${ctx.root}/.env`;
-}
 
 /** @type {import("../step.mjs").Step} */
 export const voiceStep = {
