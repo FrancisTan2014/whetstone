@@ -82,7 +82,11 @@ code {
    empty state. A plain hash anchor so it needs no router context. */
 .readerExit {
   color: var(--color-text-muted);
-  display: inline-block;
+  /* A primary reader navigation control: expand the quiet text link to a ≥44px hit target
+     (WCAG 2.5.5 / #401) at every pointer type without moving the label from the top-left. */
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 44px;
   font-weight: 600;
   margin-bottom: 1.5rem;
   text-decoration: none;
