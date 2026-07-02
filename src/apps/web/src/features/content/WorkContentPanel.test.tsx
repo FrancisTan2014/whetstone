@@ -6,10 +6,12 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 vi.mock("./contentApi", () => ({
   fetchWorkContent: vi.fn(),
   fetchWorks: vi.fn(),
-  ingestMarkdown: vi.fn()
+  ingestMarkdown: vi.fn(),
+  ingestPdf: vi.fn()
 }));
 
-import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
+import type { IngestPdfOutcome } from "./contentApi";
+import { fetchWorkContent, fetchWorks, ingestMarkdown, ingestPdf } from "./contentApi";
 import { WorkContentPanel } from "./WorkContentPanel";
 import type { WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
@@ -17,6 +19,7 @@ import { toAuthorId, toEntryId } from "@whetstone/domain";
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
 const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
+const mockedIngestPdf = vi.mocked(ingestPdf);
 
 const author = { id: toAuthorId("author-1"), name: "George Orwell" };
 
@@ -275,7 +278,7 @@ describe("WorkContentPanel", () => {
     mockedIngestMarkdown.mockResolvedValue({ content: contentA, status: "ingested" });
     const file = new File(["# Hi from file"], "notes.md", { type: "text/markdown" });
 
-    await user.upload(screen.getByLabelText("Upload a .md file"), file);
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
     expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
@@ -285,6 +288,7 @@ describe("WorkContentPanel", () => {
       kind: "upload",
       markdown: "# Hi from file"
     });
+    expect(mockedIngestPdf).not.toHaveBeenCalled();
   });
 
   it("validates that a file is chosen before upload", async () => {
@@ -292,8 +296,9 @@ describe("WorkContentPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
-    expect(screen.getByText("Choose a .md file to upload.")).toBeDefined();
+    expect(screen.getByText("Choose a .md or PDF file to upload.")).toBeDefined();
     expect(mockedIngestMarkdown).not.toHaveBeenCalled();
+    expect(mockedIngestPdf).not.toHaveBeenCalled();
   });
 
   it("shows an error when uploading fails", async () => {
@@ -301,7 +306,7 @@ describe("WorkContentPanel", () => {
     mockedIngestMarkdown.mockRejectedValue(new Error("boom"));
     const file = new File(["# Hi"], "notes.md", { type: "text/markdown" });
 
-    await user.upload(screen.getByLabelText("Upload a .md file"), file);
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
     expect(await screen.findByText("Could not upload the file. Please try again.")).toBeDefined();
@@ -312,7 +317,7 @@ describe("WorkContentPanel", () => {
     mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
     const file = new File(["![only](x.png)"], "image.md", { type: "text/markdown" });
 
-    await user.upload(screen.getByLabelText("Upload a .md file"), file);
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
     expect(
@@ -321,6 +326,99 @@ describe("WorkContentPanel", () => {
       )
     ).toBeDefined();
     expect(screen.queryByText(/^Ingested —/)).toBeNull();
+  });
+
+  it("routes a PDF upload to the PDF worker and reports the ingestion result", async () => {
+    const user = await renderReady();
+    mockedIngestPdf.mockResolvedValue({ content: contentA, status: "ingested" });
+    const file = new File(["%PDF-1.4 body"], "paper.pdf", { type: "application/pdf" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(screen.getByText("2 reading units · 3 blocks")).toBeDefined();
+    expect(mockedIngestPdf).toHaveBeenCalledWith("work-1", file);
+    expect(mockedIngestMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("routes a PDF by extension when the browser omits the MIME type", async () => {
+    const user = await renderReady();
+    mockedIngestPdf.mockResolvedValue({ content: contentA, status: "ingested" });
+    const file = new File(["%PDF-1.4 body"], "paper.PDF", { type: "" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(mockedIngestPdf).toHaveBeenCalledWith("work-1", file);
+  });
+
+  it("shows a couldn't-read message when the PDF is invalid", async () => {
+    const user = await renderReady();
+    mockedIngestPdf.mockResolvedValue({ status: "invalid_pdf" });
+    const file = new File(["scanned"], "scan.pdf", { type: "application/pdf" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(
+      await screen.findByText("We couldn’t read this PDF. Please try a different file.")
+    ).toBeDefined();
+    expect(screen.queryByText(/^Ingested —/)).toBeNull();
+  });
+
+  it("shows the unsupported-content message when a PDF yields no readable blocks", async () => {
+    const user = await renderReady();
+    mockedIngestPdf.mockResolvedValue({ status: "empty_content" });
+    const file = new File(["blank"], "blank.pdf", { type: "application/pdf" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(
+      await screen.findByText(
+        "This Markdown has no readable text to add. Images on their own aren’t supported yet."
+      )
+    ).toBeDefined();
+  });
+
+  it("shows an error when uploading a PDF fails", async () => {
+    const user = await renderReady();
+    mockedIngestPdf.mockRejectedValue(new Error("boom"));
+    const file = new File(["broken"], "broken.pdf", { type: "application/pdf" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(await screen.findByText("Could not upload the PDF. Please try again.")).toBeDefined();
+  });
+
+  it("disables the upload control and shows a busy state while a PDF converts", async () => {
+    const user = await renderReady();
+    let resolveIngest: (outcome: IngestPdfOutcome) => void = () => undefined;
+    mockedIngestPdf.mockReturnValue(
+      new Promise<IngestPdfOutcome>((resolve) => {
+        resolveIngest = resolve;
+      })
+    );
+    const file = new File(["%PDF-1.4 body"], "paper.pdf", { type: "application/pdf" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(await screen.findByText("Converting the PDF…")).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: "Upload file" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+
+    resolveIngest({ content: contentA, status: "ingested" });
+
+    expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
+    expect(screen.queryByText("Converting the PDF…")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Upload file" }) as HTMLButtonElement).disabled
+    ).toBe(false);
   });
 
   it("switches the selected work and loads its content", async () => {

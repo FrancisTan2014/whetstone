@@ -5,6 +5,7 @@ import type {
   WorkListDto,
   WorkStructureDto
 } from "@whetstone/contracts";
+import { pdfContentType } from "@whetstone/contracts";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
@@ -65,6 +66,36 @@ export async function ingestMarkdown(
 
   if (response.status === 422) {
     return { status: "empty_content" };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Request to ${path} failed with status ${response.status}.`);
+  }
+
+  return { content: (await response.json()) as WorkContentDto, status: "ingested" };
+}
+
+// Ingesting a PDF hands its raw bytes to the server's doc-AI worker, which converts it into the same
+// block pipeline as a .md upload. It can fail two distinct ways the panel messages differently: the
+// worker could not read the PDF (422 `invalid_pdf`), or it produced no readable blocks (422
+// `empty_content`). Both arrive as 422, distinguished by the response body's `error`.
+export type IngestPdfOutcome =
+  | Readonly<{ content: WorkContentDto; status: "ingested" }>
+  | Readonly<{ status: "invalid_pdf" }>
+  | Readonly<{ status: "empty_content" }>;
+
+export async function ingestPdf(workEntryId: string, file: File): Promise<IngestPdfOutcome> {
+  const path = `/api/works/${encodeURIComponent(workEntryId)}/content/pdf`;
+  const response = await fetch(path, {
+    body: await file.arrayBuffer(),
+    headers: { "content-type": pdfContentType },
+    method: "POST"
+  });
+
+  if (response.status === 422) {
+    const body = (await response.json()) as { error?: string };
+
+    return body.error === "invalid_pdf" ? { status: "invalid_pdf" } : { status: "empty_content" };
   }
 
   if (!response.ok) {
