@@ -21,6 +21,24 @@ function mockMatchMedia(matchers: Record<string, boolean> = {}): void {
   })) as unknown as typeof window.matchMedia;
 }
 
+// jsdom lacks PointerEvent, and its fallback event carries neither clientX/clientY nor pointerId. A
+// MouseEvent supplies the coordinates and we stamp the pointerId, so React's synthetic pointer handlers
+// receive real values (the viewer's pinch/pan math is what we assert, not jsdom's absent layout).
+function firePointer(
+  node: HTMLElement,
+  type: "pointercancel" | "pointerdown" | "pointermove" | "pointerup",
+  init: { clientX: number; clientY: number; pointerId: number }
+): void {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: init.clientX,
+    clientY: init.clientY
+  });
+  Object.defineProperty(event, "pointerId", { value: init.pointerId });
+  fireEvent(node, event);
+}
+
 function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
   return rtlRender(ui, {
     wrapper: ({ children }: { children: React.ReactNode }) => (
@@ -408,6 +426,213 @@ describe("ReaderPage figure image lightbox (#334)", () => {
     expect(await screen.findByRole("dialog", { name: "A dot" })).toBeDefined();
 
     await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("ReaderFigure image lightbox zoom + pan (#381)", () => {
+  const captionedFigure = () =>
+    figureContent({ alt: "A dot", imageResourceId: "abc123", plaintext: "The caption." });
+
+  async function openViewer(): Promise<{
+    dialog: HTMLElement;
+    image: HTMLImageElement;
+    user: ReturnType<typeof userEvent.setup>;
+    viewport: HTMLElement;
+  }> {
+    const user = userEvent.setup();
+    renderReader(captionedFigure());
+    await user.click(await screen.findByRole("button", { name: "View larger: A dot" }));
+    const dialog = await screen.findByRole("dialog", { name: "A dot" });
+    const viewport = dialog.querySelector(".lightbox-viewport") as HTMLElement;
+    const image = dialog.querySelector("img.lightbox-image") as HTMLImageElement;
+    // jsdom has no layout; give the fit box a size so pan bounds are exercisable.
+    Object.defineProperty(viewport, "offsetWidth", { configurable: true, value: 800 });
+    Object.defineProperty(viewport, "offsetHeight", { configurable: true, value: 600 });
+    return { dialog, image, user, viewport };
+  }
+
+  it("opens fit-to-viewport: the image sits in a fit box at scale 1, un-panned", async () => {
+    const { image, viewport } = await openViewer();
+
+    // The enlarged image is inside the pannable fit box (the CSS scales it up to fill 96vw x 92vh).
+    expect(viewport.contains(image)).toBe(true);
+    expect(image.getAttribute("data-zoom")).toBe("1");
+    expect(image.style.transform).toBe("translate(0px, 0px) scale(1)");
+    expect(viewport.getAttribute("data-zoomed")).toBe("false");
+  });
+
+  it("disables zoom-out and reset at fit, and enables zoom-in", async () => {
+    const { dialog } = await openViewer();
+
+    expect(
+      (within(dialog).getByRole("button", { name: "Zoom out" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(
+      (within(dialog).getByRole("button", { name: "Reset zoom to fit" }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+    expect(
+      (within(dialog).getByRole("button", { name: "Zoom in" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
+  it("zooms in via the + control and marks the viewport zoomed", async () => {
+    const { dialog, image, user, viewport } = await openViewer();
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+
+    expect(image.getAttribute("data-zoom")).toBe("1.6");
+    expect(image.style.transform).toBe("translate(0px, 0px) scale(1.6)");
+    expect(viewport.getAttribute("data-zoomed")).toBe("true");
+    expect(
+      (within(dialog).getByRole("button", { name: "Zoom out" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
+  it("zooms back out a step via the − control", async () => {
+    const { dialog, image, user } = await openViewer();
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+    const zoomedIn = Number(image.getAttribute("data-zoom"));
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom out" }));
+
+    expect(Number(image.getAttribute("data-zoom"))).toBeLessThan(zoomedIn);
+    expect(Number(image.getAttribute("data-zoom"))).toBeGreaterThan(1);
+  });
+
+  it("bounds zoom-in at the maximum and disables the + control there", async () => {
+    const { dialog, image, user } = await openViewer();
+    const zoomIn = within(dialog).getByRole("button", { name: "Zoom in" });
+
+    for (let i = 0; i < 6; i += 1) {
+      await user.click(zoomIn);
+    }
+
+    expect(image.getAttribute("data-zoom")).toBe("5");
+    expect((zoomIn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("resets back to fit (scale 1, no pan) via the reset control", async () => {
+    const { dialog, image, user } = await openViewer();
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+    expect(image.getAttribute("data-zoom")).not.toBe("1");
+
+    await user.click(within(dialog).getByRole("button", { name: "Reset zoom to fit" }));
+
+    expect(image.getAttribute("data-zoom")).toBe("1");
+    expect(image.style.transform).toBe("translate(0px, 0px) scale(1)");
+    expect(
+      (within(dialog).getByRole("button", { name: "Reset zoom to fit" }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+  });
+
+  it("zooms in on a wheel scroll up and back out on a wheel scroll down", async () => {
+    const { image, viewport } = await openViewer();
+
+    fireEvent.wheel(viewport, { deltaY: -100 });
+    const zoomedIn = Number(image.getAttribute("data-zoom"));
+    expect(zoomedIn).toBeGreaterThan(1);
+
+    fireEvent.wheel(viewport, { deltaY: 100 });
+    expect(Number(image.getAttribute("data-zoom"))).toBeLessThan(zoomedIn);
+  });
+
+  it("pinches to zoom with two pointers", async () => {
+    const { image, viewport } = await openViewer();
+
+    firePointer(viewport, "pointerdown", { clientX: 100, clientY: 100, pointerId: 1 });
+    firePointer(viewport, "pointerdown", { clientX: 200, clientY: 100, pointerId: 2 });
+    firePointer(viewport, "pointermove", { clientX: 300, clientY: 100, pointerId: 2 });
+
+    // Span grew from 100 to 200 -> ratio 2 -> scale 2.
+    expect(image.getAttribute("data-zoom")).toBe("2");
+  });
+
+  it("keeps scale steady when the two pinch pointers start coincident (zero span)", async () => {
+    const { image, viewport } = await openViewer();
+
+    firePointer(viewport, "pointerdown", { clientX: 100, clientY: 100, pointerId: 1 });
+    firePointer(viewport, "pointerdown", { clientX: 100, clientY: 100, pointerId: 2 });
+    firePointer(viewport, "pointermove", { clientX: 100, clientY: 100, pointerId: 2 });
+
+    expect(image.getAttribute("data-zoom")).toBe("1");
+  });
+
+  it("pans by dragging while zoomed, and the drag does not dismiss the viewer", async () => {
+    const { dialog, image, user, viewport } = await openViewer();
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+
+    firePointer(viewport, "pointerdown", { clientX: 100, clientY: 100, pointerId: 1 });
+    firePointer(viewport, "pointermove", { clientX: 150, clientY: 130, pointerId: 1 });
+
+    // Delta (50, 30) is within the 1.6x pan bounds (extent x=240, y=180).
+    expect(image.style.transform).toBe("translate(50px, 30px) scale(1.6)");
+    // A pan-drag on the image must not dismiss the dialog.
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+
+    // Releasing the last pointer ends the gesture without dismissing.
+    firePointer(viewport, "pointerup", { clientX: 150, clientY: 130, pointerId: 1 });
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    expect(viewport.getAttribute("data-interacting")).toBe("false");
+  });
+
+  it("clamps the pan so the image can't be dragged fully off-screen", async () => {
+    const { dialog, image, user, viewport } = await openViewer();
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+
+    firePointer(viewport, "pointerdown", { clientX: 0, clientY: 0, pointerId: 1 });
+    firePointer(viewport, "pointermove", { clientX: 9999, clientY: 9999, pointerId: 1 });
+
+    // Clamped to the extents at 1.6x: x = 800*0.6/2 = 240, y = 600*0.6/2 = 180 (float-tolerant).
+    const [x, y, scale] = image.style.transform.match(/-?\d+(?:\.\d+)?/gu) ?? [];
+    expect(Number(x)).toBeCloseTo(240);
+    expect(Number(y)).toBeCloseTo(180);
+    expect(Number(scale)).toBeCloseTo(1.6);
+  });
+
+  it("does not pan for a pointer move that never went through pointer-down", async () => {
+    const { image, viewport } = await openViewer();
+
+    firePointer(viewport, "pointermove", { clientX: 200, clientY: 200, pointerId: 42 });
+
+    expect(image.style.transform).toBe("translate(0px, 0px) scale(1)");
+  });
+
+  it("does not resume panning with a leftover finger after one of two lifts", async () => {
+    const { image, viewport } = await openViewer();
+
+    firePointer(viewport, "pointerdown", { clientX: 100, clientY: 100, pointerId: 1 });
+    firePointer(viewport, "pointerdown", { clientX: 200, clientY: 100, pointerId: 2 });
+    // Lift the second finger; the pan start was cleared when the pinch began.
+    firePointer(viewport, "pointerup", { clientX: 200, clientY: 100, pointerId: 2 });
+    firePointer(viewport, "pointermove", { clientX: 260, clientY: 140, pointerId: 1 });
+
+    expect(image.style.transform).toBe("translate(0px, 0px) scale(1)");
+  });
+
+  it("still dismisses on Escape and the close button after zooming", async () => {
+    const { dialog, user } = await openViewer();
+
+    await user.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Re-open and confirm it reset to fit (#381 regression: zoom/pan must not persist across reopen),
+    // then dismiss via the close button.
+    await user.click(await screen.findByRole("button", { name: "View larger: A dot" }));
+    const reopened = await screen.findByRole("dialog", { name: "A dot" });
+    const reopenedImage = within(reopened).getByAltText("A dot");
+    expect(reopenedImage.getAttribute("data-zoom")).toBe("1");
+    expect(reopenedImage.style.transform).toBe("translate(0px, 0px) scale(1)");
+    await user.click(within(reopened).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

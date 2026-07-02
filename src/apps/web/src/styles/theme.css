@@ -340,10 +340,71 @@
   pointer-events: auto;
 }
 
+/* The pannable zoom viewport (#381): a fit-to-viewport box the enlarged image fills. Sizing the box to
+   the available area (not the image's intrinsic pixels) is what lets a small source scale UP to fit,
+   fixing the old `max-*`-only rule that never enlarged. `overflow: hidden` clips the zoomed image to the
+   box; `touch-action: none` hands pinch/drag gestures to the viewer instead of the browser. */
+.lightbox-viewport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 96vw;
+  block-size: 92vh;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.lightbox-viewport[data-zoomed="true"] {
+  cursor: grab;
+}
+
 .lightbox-image {
-  max-inline-size: 96vw;
-  max-block-size: 92vh;
+  inline-size: 100%;
+  block-size: 100%;
   object-fit: contain;
+  transform-origin: center center;
+  /* Smooth the discrete button/wheel zoom; the global reduced-motion rule zeroes this transition, and a
+     live pan/pinch drops it (below) so the image tracks the pointer with no lag. */
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.lightbox-viewport[data-interacting="true"] .lightbox-image {
+  transition: none;
+}
+
+/* The zoom controls: a centered cluster of >=44px, keyboard-operable, aria-labelled targets on their own
+   scrim so they read over a light or dark image in both Day and Night. */
+.lightbox-controls {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background-color: rgb(0 0 0 / 0.55);
+}
+
+.lightbox-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  border: none;
+  border-radius: 999px;
+  background-color: transparent;
+  color: #fff;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lightbox-control:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lightbox-control:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .lightbox-caption {
