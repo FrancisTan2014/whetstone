@@ -36,11 +36,13 @@ to the deterministic fake. With no Ollama daemon the local tier itself degrades 
 The local cheap tier serves from Ollama on its fixed default port (`http://127.0.0.1:11434`).
 
 **Local dev (one command):** `pnpm setup --coach` installs Ollama itself (consent-gated via a Y/N
-prompt, or `--yes` for unattended), pulls the converse model (`llama3.1:8b`) and the "AI 解释" model
-(`EXPLAIN_MODEL`, default `qwen2.5`), verifies each answers through the daemon, and writes
-`EXPLAIN_MODEL` + `COACH_CONVERSE_TIER=cheap` + `COACH_ANALYZE_TIER=cheap` to `.env` for a fully-local
-coach (see `scripts/setup/steps/coach.mjs`). Add `COACH_API_KEY` + `COACH_ANALYZE_TIER=strong`
-manually for the optional cloud judge. To provision a host by hand instead:
+prompt, or `--yes` for unattended), pulls the converse model (`COACH_MODEL`, default `llama3.1:8b`)
+and the "AI 解释" model (`EXPLAIN_MODEL`, default `qwen2.5`), verifies each answers through the daemon,
+and writes `COACH_MODEL` + `EXPLAIN_MODEL` + `COACH_CONVERSE_TIER=cheap` + `COACH_ANALYZE_TIER=cheap`
+to `.env` for a fully-local coach (see `scripts/setup/steps/coach.mjs`). Persisting the model names
+means the server serves the exact models setup pulled/verified — a `COACH_MODEL=<x>` override survives
+into `pnpm dev` rather than the server silently falling back to the default. Add `COACH_API_KEY` +
+`COACH_ANALYZE_TIER=strong` manually for the optional cloud judge. To provision a host by hand instead:
 
 1. **Install Ollama** — <https://ollama.com/download> (macOS: download the app, or `brew install
 ollama`). Start the daemon (`ollama serve`, or just launch the app).

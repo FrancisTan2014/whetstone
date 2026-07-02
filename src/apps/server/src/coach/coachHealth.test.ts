@@ -7,7 +7,7 @@ import { defaultCostRouting } from "./coachRouter.js";
 const model = "llama3.1:8b";
 
 function configWith(overrides: Partial<CoachConfig>): CoachConfig {
-  return { apiKey: "sk-test", routing: defaultCostRouting, ...overrides };
+  return { apiKey: "sk-test", converseModel: model, routing: defaultCostRouting, ...overrides };
 }
 
 describe("checkCoachHealth", () => {

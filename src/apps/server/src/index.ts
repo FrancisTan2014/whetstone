@@ -147,7 +147,7 @@ const lookupService = createLookupService({
 const coachConfig = readCoachConfig();
 const coach = resolveCoach({
   config: coachConfig,
-  createAdapters: (apiKey) => createCoachAdapters(apiKey),
+  createAdapters: (apiKey) => createCoachAdapters(apiKey, coachConfig.converseModel),
   fake: createFakeCoach()
 });
 const speechConfig = readSpeechConfig();
@@ -241,7 +241,7 @@ try {
   // configured but its Ollama model is not serving, instead of a silent fallback to the fake.
   const coachHealth = await checkCoachHealth({
     config: coachConfig,
-    localModel: defaultCheapModel,
+    localModel: coachConfig.converseModel,
     probeLocalModel: probeOllamaModel
   });
   if (coachHealth.status === "local_unavailable") {

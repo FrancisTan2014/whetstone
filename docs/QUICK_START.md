@@ -135,10 +135,11 @@ pnpm setup --coach   # installs Ollama (with a Y/N prompt), pulls the converse +
 ```
 
 It installs Ollama itself (consent-gated — an explicit `Y`, or `--yes` for unattended), pulls the
-converse model (`llama3.1:8b`) and the 文言 explain model (`qwen2.5`), and writes `EXPLAIN_MODEL`,
-`COACH_CONVERSE_TIER=cheap`, and `COACH_ANALYZE_TIER=cheap` to `.env` — a **fully-local coach** (no
-cloud key, no data leaving the machine). Pick a different converse model with `COACH_MODEL`, or a
-different explain model with `EXPLAIN_MODEL`. After it finishes, restart the server.
+converse model (`llama3.1:8b`) and the 文言 explain model (`qwen2.5`), and writes `COACH_MODEL`,
+`EXPLAIN_MODEL`, `COACH_CONVERSE_TIER=cheap`, and `COACH_ANALYZE_TIER=cheap` to `.env` — a
+**fully-local coach** (no cloud key, no data leaving the machine). Pick a different converse model with
+`COACH_MODEL`, or a different explain model with `EXPLAIN_MODEL`; setup pulls, verifies, and persists
+the exact model you choose, so the server serves it too. After it finishes, restart the server.
 
 With no `COACH_API_KEY`, the coach still runs its cheap/local tier for real; because `pnpm setup
 --coach` writes `COACH_ANALYZE_TIER=cheap`, every call is local (no cloud call). Any call still routed

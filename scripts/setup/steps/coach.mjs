@@ -24,13 +24,17 @@ const OLLAMA_REMEDY =
   "`pnpm setup --coach`.";
 
 /**
- * The local converse model to provision — `COACH_MODEL` override or the default.
+ * The runtime-effective local converse model. Precedence mirrors what the server serves at boot (see
+ * readCoachConfig / COACH_MODEL): a process-env `COACH_MODEL` override wins (dotenv does not overwrite
+ * an already-set var), then the value persisted in `.env`, then the default. check/verify pull and
+ * probe THIS exact model, and `provision` persists it to `.env`, so a `COACH_MODEL=<x> pnpm setup
+ * --coach` override survives into `pnpm dev` instead of the server silently serving the default.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {string}
  */
 function resolveConverseModel(ctx) {
-  return ctx.env.COACH_MODEL ?? DEFAULT_CONVERSE_MODEL;
+  return ctx.env.COACH_MODEL ?? readEnv(ctx).COACH_MODEL ?? DEFAULT_CONVERSE_MODEL;
 }
 
 /**
@@ -59,17 +63,23 @@ const REQUIRED_COACH_ENV = Object.freeze({
 
 /**
  * Validate that `.env` wires the exact non-secret values the runtime consumes for a fully-local coach:
- * `EXPLAIN_MODEL` naming the local model that was pulled/verified, and both `COACH_*_TIER=cheap` pins
- * that route every coach call to the local tier. Returns the first gap via `fail`, or null when fully
- * wired.
+ * `COACH_MODEL` naming the local converse model and `EXPLAIN_MODEL` naming the local "AI 解释" model
+ * (both pulled/verified), plus both `COACH_*_TIER=cheap` pins that route every coach call to the local
+ * tier. Returns the first gap via `fail`, or null when fully wired.
  *
  * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} converseModel  The runtime-effective converse model (see resolveConverseModel).
  * @param {string} explainModel  The runtime-effective explain model (see resolveExplainModel).
  * @param {(what: string) => import("../step.mjs").StepResult} fail
  * @returns {import("../step.mjs").StepResult | null}
  */
-function checkEnvWiring(ctx, explainModel, fail) {
+function checkEnvWiring(ctx, converseModel, explainModel, fail) {
   const env = readEnv(ctx);
+  if (env.COACH_MODEL !== converseModel) {
+    return fail(
+      `.env does not wire COACH_MODEL=${converseModel} — the local converse model the coach will use.`
+    );
+  }
   if (env.EXPLAIN_MODEL !== explainModel) {
     return fail(
       `.env does not wire EXPLAIN_MODEL=${explainModel} — the local "AI 解释" model the coach will use.`
@@ -83,6 +93,35 @@ function checkEnvWiring(ctx, explainModel, fail) {
     }
   }
   return null;
+}
+
+/**
+ * The model NAMEs from `ollama list` output — the first column of each row, header row skipped.
+ *
+ * @param {string} stdout
+ * @returns {string[]}
+ */
+export function parseOllamaModelNames(stdout) {
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split(/\s+/)[0])
+    .filter((name) => name.toLowerCase() !== "name");
+}
+
+/**
+ * Is `model` among the pulled models in `ollama list` output? Matches a full NAME exactly; a request
+ * without an explicit `:tag` also matches the `:latest` tag Ollama assigns — so `qwen2.5` matches a
+ * listed `qwen2.5:latest` but NOT `qwen2.5-coder:latest` (the loose `stdout.includes(model)` bug).
+ *
+ * @param {string} stdout  `ollama list` output.
+ * @param {string} model
+ * @returns {boolean}
+ */
+export function isModelPulled(stdout, model) {
+  const withLatest = model.includes(":") ? model : `${model}:latest`;
+  return parseOllamaModelNames(stdout).some((name) => name === model || name === withLatest);
 }
 
 /**
@@ -153,7 +192,7 @@ export const coachStep = {
       );
     }
     const listed = ctx.exec("ollama", ["list"]);
-    const pulled = (model) => listed.code === 0 && listed.stdout.includes(model);
+    const pulled = (model) => listed.code === 0 && isModelPulled(listed.stdout, model);
     const converseModel = resolveConverseModel(ctx);
     if (!pulled(converseModel)) {
       return missing(
@@ -169,7 +208,9 @@ export const coachStep = {
       );
     }
     return (
-      checkEnvWiring(ctx, explainModel, (what) => missing(what, "Run `pnpm setup --coach`.")) ?? ok()
+      checkEnvWiring(ctx, converseModel, explainModel, (what) =>
+        missing(what, "Run `pnpm setup --coach`.")
+      ) ?? ok()
     );
   },
   provision(ctx) {
@@ -197,11 +238,13 @@ export const coachStep = {
 
     const path = envPath(ctx);
     const content = ctx.fs.exists(path) ? ctx.fs.readText(path) : "";
-    // Non-secret env only: name the local explain model and pin both coach tiers to `cheap` so the
-    // coach runs fully local. NEVER write COACH_API_KEY — the cloud judge stays a manual opt-in.
+    // Non-secret env only: name the local converse + explain models the runtime reads (so a
+    // `COACH_MODEL` / `EXPLAIN_MODEL` override survives into `pnpm dev`) and pin both coach tiers to
+    // `cheap` so the coach runs fully local. NEVER write COACH_API_KEY — the cloud judge is manual.
     ctx.fs.writeText(
       path,
       upsertEnvVars(content, {
+        COACH_MODEL: converseModel,
         EXPLAIN_MODEL: explainModel,
         COACH_CONVERSE_TIER: "cheap",
         COACH_ANALYZE_TIER: "cheap"
@@ -212,7 +255,7 @@ export const coachStep = {
   verify(ctx) {
     const converseModel = resolveConverseModel(ctx);
     const explainModel = resolveExplainModel(ctx);
-    const wiringGap = checkEnvWiring(ctx, explainModel, (what) =>
+    const wiringGap = checkEnvWiring(ctx, converseModel, explainModel, (what) =>
       error(what, "Re-run `pnpm setup --coach`.")
     );
     if (wiringGap) {

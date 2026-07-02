@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CoachProvider } from "./coachProvider.js";
 import { readCoachConfig, resolveCoach } from "./coachConfig.js";
+import { defaultCheapModel } from "./coachAdapters.js";
 import { defaultCostRouting } from "./coachRouter.js";
 
 function stub(tag: string): CoachProvider {
@@ -28,13 +29,23 @@ function stub(tag: string): CoachProvider {
 }
 
 describe("readCoachConfig", () => {
-  it("is absent-config-safe: no env yields the default routing and no key", () => {
-    expect(readCoachConfig({})).toEqual({ apiKey: undefined, routing: defaultCostRouting });
+  it("is absent-config-safe: no env yields the default routing, model, and no key", () => {
+    expect(readCoachConfig({})).toEqual({
+      apiKey: undefined,
+      converseModel: defaultCheapModel,
+      routing: defaultCostRouting
+    });
   });
 
   it("reads an API key, treating a blank one as absent", () => {
     expect(readCoachConfig({ COACH_API_KEY: "sk-123" }).apiKey).toBe("sk-123");
     expect(readCoachConfig({ COACH_API_KEY: "   " }).apiKey).toBeUndefined();
+  });
+
+  it("reads COACH_MODEL as the local converse model, trimming it and defaulting a blank one", () => {
+    expect(readCoachConfig({ COACH_MODEL: "  mistral  " }).converseModel).toBe("mistral");
+    expect(readCoachConfig({}).converseModel).toBe(defaultCheapModel);
+    expect(readCoachConfig({ COACH_MODEL: "   " }).converseModel).toBe(defaultCheapModel);
   });
 
   it("applies per-call-type tier overrides", () => {
@@ -83,7 +94,11 @@ describe("resolveCoach", () => {
   const judgeRequest = { context: { focus: "", recentTargets: [] }, target: "x", transcript: "x" };
 
   it("falls back to the fake only when no adapter factory is wired", () => {
-    const config = { apiKey: undefined, routing: defaultCostRouting };
+    const config = {
+      apiKey: undefined,
+      converseModel: defaultCheapModel,
+      routing: defaultCostRouting
+    };
     expect(resolveCoach({ config, fake })).toBe(fake);
   });
 
@@ -93,7 +108,11 @@ describe("resolveCoach", () => {
       // With no key the strong tier is the fake; the cheap tier is the real local adapter.
       return { cheap: stub("local-cheap"), strong: stub("keyless-strong-fake") };
     });
-    const config = { apiKey: undefined, routing: defaultCostRouting };
+    const config = {
+      apiKey: undefined,
+      converseModel: defaultCheapModel,
+      routing: defaultCostRouting
+    };
 
     const coach = resolveCoach({ config, createAdapters, fake });
 
@@ -109,7 +128,11 @@ describe("resolveCoach", () => {
       expect(apiKey).toBe("sk-123");
       return { cheap: stub("cheap"), strong: stub("strong") };
     });
-    const config = { apiKey: "sk-123", routing: defaultCostRouting };
+    const config = {
+      apiKey: "sk-123",
+      converseModel: defaultCheapModel,
+      routing: defaultCostRouting
+    };
 
     const coach = resolveCoach({ config, createAdapters, fake });
 
