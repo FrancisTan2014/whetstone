@@ -157,6 +157,9 @@ export function AdminLibraryPage({ onWorkCreated }: AdminLibraryPageProps): Reac
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold text-text">Library</h1>
         <div className="flex flex-wrap items-center gap-3">
+          <a className={buttonVariants({ variant: "secondary" })} href="#/notes">
+            Review all notes
+          </a>
           <label
             aria-busy={epubBusy}
             className={`${buttonVariants({ variant: "secondary" })} cursor-pointer focus-within:ring-2 focus-within:ring-ring focus-within:outline-none ${

@@ -400,9 +400,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `AdminLibraryPage` + `WorkContentPanel` at `/library`, Reader = `ReaderPage`, Practice =
   `SessionPage`, Progress = `ProgressMapPage`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
   `NotesPage`, Diary = `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
-  `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, hosting the
-  `ThemeToggle` in its footer and the single `ToastViewport` live region) with `navigation.ts`
-  destinations. On the `/reader` route the nav (and its `ThemeToggle`) recedes so the reading column
+  `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
+  `ToastViewport` live region). `navigation.ts` holds the **five** primary destinations — Today,
+  Library, Practice, **Map** (the user-facing label for the `/progress` route), Search — rendered as a
+  **single non-wrapping row of ≥44px targets** on mobile (#390). Reader, Recall, Notes, and Diary keep
+  their routes but are NOT primary: Reader is an immersive destination opened from context, and the
+  others are reached from where they belong (Today links to Recall/Diary; Library links to the
+  all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
+  wrap the mobile row). On the `/reader` route the nav (and the toggle bar) recedes so the reading column
   owns the viewport (immersive reading room); the reader provides its own back-to-Library control.
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
