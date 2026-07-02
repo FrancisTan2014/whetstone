@@ -65,7 +65,11 @@ export function flattenNavTree(
   const rows: TocEntryRow[] = [];
   let orderIndex = 0;
 
-  const walk = (nodes: ReadonlyArray<NavEntry>, depth: number, parentEntryId: string | null): void => {
+  const walk = (
+    nodes: ReadonlyArray<NavEntry>,
+    depth: number,
+    parentEntryId: string | null
+  ): void => {
     for (const node of nodes) {
       const entryId = createEntryId();
       const { targetAnchor, targetSourceFile } = resolveTarget(navPath, node.href);
