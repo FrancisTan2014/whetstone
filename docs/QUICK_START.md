@@ -140,6 +140,10 @@ converse model (`llama3.1:8b`) and the 文言 explain model (`qwen2.5`), and wri
 cloud key, no data leaving the machine). Pick a different converse model with `COACH_MODEL`, or a
 different explain model with `EXPLAIN_MODEL`. After it finishes, restart the server.
 
+With no `COACH_API_KEY`, the coach still runs its cheap/local tier for real; because `pnpm setup
+--coach` writes `COACH_ANALYZE_TIER=cheap`, every call is local (no cloud call). Any call still routed
+to `strong` without a key falls back to the deterministic fake.
+
 | Variable        | Default   | Purpose                                                             |
 | --------------- | --------- | ------------------------------------------------------------------- |
 | `COACH_*_TIER`  | see docs  | Per-call tier override (`cheap` = local Ollama / `strong` = cloud). |

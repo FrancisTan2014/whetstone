@@ -129,7 +129,9 @@ can navigate them from another package.
   propose / author / converse / analyze), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds
   and runs with no API key), `coachRouter.ts` (cost-routing — judge/converse/analyze=strong,
   propose/author=cheap, configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe
-  `resolveCoach` that stays on the fake until real adapters + a key are wired). `converse` (#220) is the
+  `resolveCoach` that builds the cost-routed adapters whenever the adapter factory is wired — even with
+  no key: the cheap/local tier runs, while `strong`-routed calls with no key resolve to the fake; it
+  falls back to the plain fake only when no factory is wired). `converse` (#220) is the
   conversational next-turn call the live loop makes per user turn (no per-turn grading); `analyze` (#222)
   is the end-of-round one-pass call: the whole round (transcript + word-timings + the case's target chunks
   - compiled context) -> a grade per chunk, the top tagged mistakes, wins, and one native upgrade (the

@@ -62,20 +62,50 @@ describe("readCoachConfig", () => {
 describe("resolveCoach", () => {
   const fake = stub("fake");
 
-  it("uses the fake when no key is configured", () => {
-    const config = { apiKey: undefined, routing: defaultCostRouting };
-    expect(
-      resolveCoach({ config, createAdapters: () => ({ cheap: fake, strong: fake }), fake })
-    ).toBe(fake);
-  });
+  const knobs = {
+    challenge: "medium" as const,
+    focus: "f",
+    pace: "steady" as const,
+    probeErrorPatterns: [],
+    register: "neutral" as const,
+    support: "medium" as const,
+    targetBand: "intermediate" as const
+  };
+  const analyzeRequest = {
+    communicativeFunction: "f",
+    context: { profile: null, rankedChunks: [], recentOutcomes: [], relevantErrors: [] },
+    history: [],
+    knobs,
+    situation: "s",
+    targetChunks: [],
+    words: []
+  };
+  const judgeRequest = { context: { focus: "", recentTargets: [] }, target: "x", transcript: "x" };
 
-  it("uses the fake when a key is present but no adapter is wired", () => {
-    const config = { apiKey: "sk-123", routing: defaultCostRouting };
+  it("falls back to the fake only when no adapter factory is wired", () => {
+    const config = { apiKey: undefined, routing: defaultCostRouting };
     expect(resolveCoach({ config, fake })).toBe(fake);
   });
 
+  it("builds the cost-routed adapters even with no key: cheap runs local, strong runs the fake", async () => {
+    const createAdapters = vi.fn((apiKey: string | undefined) => {
+      expect(apiKey).toBeUndefined();
+      // With no key the strong tier is the fake; the cheap tier is the real local adapter.
+      return { cheap: stub("local-cheap"), strong: stub("keyless-strong-fake") };
+    });
+    const config = { apiKey: undefined, routing: defaultCostRouting };
+
+    const coach = resolveCoach({ config, createAdapters, fake });
+
+    expect(coach).not.toBe(fake);
+    expect(createAdapters).toHaveBeenCalledOnce();
+    // Default routing sends converse/judge/propose/author to cheap (local) and analyze to strong.
+    expect((await coach.judgeProduction(judgeRequest)).issues[0]?.note).toBe("local-cheap");
+    expect((await coach.analyze(analyzeRequest)).encouragement).toBe("keyless-strong-fake");
+  });
+
   it("builds the cost-routed real adapters from the key when both are present", async () => {
-    const createAdapters = vi.fn((apiKey: string) => {
+    const createAdapters = vi.fn((apiKey: string | undefined) => {
       expect(apiKey).toBe("sk-123");
       return { cheap: stub("cheap"), strong: stub("strong") };
     });
@@ -85,12 +115,8 @@ describe("resolveCoach", () => {
 
     expect(coach).not.toBe(fake);
     expect(createAdapters).toHaveBeenCalledOnce();
-    // Default routing sends only analyze to the strong tier.
-    const judgement = await coach.judgeProduction({
-      context: { focus: "", recentTargets: [] },
-      target: "x",
-      transcript: "x"
-    });
-    expect(judgement.issues[0]?.note).toBe("cheap");
+    // Default routing sends only analyze to the strong (cloud) tier.
+    expect((await coach.judgeProduction(judgeRequest)).issues[0]?.note).toBe("cheap");
+    expect((await coach.analyze(analyzeRequest)).encouragement).toBe("strong");
   });
 });

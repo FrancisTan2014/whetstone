@@ -2,10 +2,10 @@ import { coachTiers, createRoutedCoach, defaultCostRouting } from "./coachRouter
 import type { CoachCallType, CoachTier, CostRouting } from "./coachRouter.js";
 import type { CoachProvider } from "./coachProvider.js";
 
-// The coach config seam: which model tier each call type uses, and whether real-model credentials are
-// present. Reading is absent-config-safe — with no env it yields the default routing and no key, so
-// the server stays on the deterministic fake (the keyless dev mode), exactly like the deploy/web-dir
-// guard skips cleanly when unconfigured.
+// The coach config seam: which model tier each call type uses, and whether a cloud key is present.
+// Reading is absent-config-safe — with no env it yields the default routing and no key. With no key
+// the coach still runs its LOCAL cheap tier (falling back to the deterministic fake per call if no
+// Ollama daemon is up); only strong-routed calls need a key, and without one they use the fake.
 export type CoachConfig = Readonly<{
   apiKey: string | undefined;
   routing: CostRouting;
@@ -49,21 +49,24 @@ export function readCoachConfig(env: NodeJS.ProcessEnv = process.env): CoachConf
   return { apiKey: parseApiKey(env.COACH_API_KEY), routing };
 }
 
-// The real, cost-routed tiers, built only when credentials are present.
+// The real, cost-routed tiers. `cheap` is always the local Ollama adapter (needs no key); `strong` is
+// the cloud adapter when a key is present, otherwise the deterministic fake.
 export type CoachAdapters = Readonly<{ cheap: CoachProvider; strong: CoachProvider }>;
 
 export type ResolveCoachDependencies = Readonly<{
   config: CoachConfig;
-  // Builds the real tiered adapters from a key. Absent = no real adapter wired yet.
-  createAdapters?: (apiKey: string) => CoachAdapters;
+  // Builds the tiered adapters. Key-optional: with no key the cheap tier is still the real local
+  // adapter and the strong tier is the fake. Absent factory = no real adapter wired yet.
+  createAdapters?: (apiKey: string | undefined) => CoachAdapters;
   fake: CoachProvider;
 }>;
 
-// Resolve the coach to use: the cost-routed real adapters when both a key and an adapter factory are
-// present, otherwise the deterministic fake. No key, or no wired adapter, both fall back to the fake —
-// the loop never depends on a real model being configured.
+// Resolve the coach to use. With an adapter factory wired we ALWAYS build the cost-routed adapters —
+// even with no key — so cheap-routed calls run on the LOCAL adapter while strong-routed calls with no
+// key resolve to the fake (via `createAdapters`). With no factory wired we fall back to the fake. The
+// loop never depends on a real model: the local cheap adapter itself degrades to the fake per call.
 export function resolveCoach(dependencies: ResolveCoachDependencies): CoachProvider {
-  if (dependencies.config.apiKey === undefined || dependencies.createAdapters === undefined) {
+  if (dependencies.createAdapters === undefined) {
     return dependencies.fake;
   }
 

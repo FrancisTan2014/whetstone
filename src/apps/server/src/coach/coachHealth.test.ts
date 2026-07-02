@@ -11,11 +11,19 @@ function configWith(overrides: Partial<CoachConfig>): CoachConfig {
 }
 
 describe("checkCoachHealth", () => {
-  it("reports the fake when no API key is set, without probing the local model", async () => {
+  const allStrong = {
+    analyze: "strong" as const,
+    author: "strong" as const,
+    converse: "strong" as const,
+    judge: "strong" as const,
+    propose: "strong" as const
+  };
+
+  it("reports the fake when no key is set and nothing is routed to the local tier", async () => {
     const probeLocalModel = vi.fn(() => Promise.resolve(true));
 
     const report = await checkCoachHealth({
-      config: configWith({ apiKey: undefined }),
+      config: configWith({ apiKey: undefined, routing: allStrong }),
       localModel: model,
       probeLocalModel
     });
@@ -24,19 +32,11 @@ describe("checkCoachHealth", () => {
     expect(probeLocalModel).not.toHaveBeenCalled();
   });
 
-  it("reports cloud-only when no call is routed to the local tier", async () => {
+  it("reports cloud-only when a key is set but no call is routed to the local tier", async () => {
     const probeLocalModel = vi.fn(() => Promise.resolve(true));
 
     const report = await checkCoachHealth({
-      config: configWith({
-        routing: {
-          analyze: "strong",
-          author: "strong",
-          converse: "strong",
-          judge: "strong",
-          propose: "strong"
-        }
-      }),
+      config: configWith({ routing: allStrong }),
       localModel: model,
       probeLocalModel
     });
@@ -45,7 +45,7 @@ describe("checkCoachHealth", () => {
     expect(probeLocalModel).not.toHaveBeenCalled();
   });
 
-  it("reports local_ready when the cheap tier's model is serving", async () => {
+  it("reports local_ready when the cheap tier's model is serving (with a key)", async () => {
     const report = await checkCoachHealth({
       config: configWith({}),
       localModel: model,
@@ -56,9 +56,19 @@ describe("checkCoachHealth", () => {
     expect(report.message).toContain(model);
   });
 
+  it("reports local_ready for a keyless coach whose cheap tier is serving", async () => {
+    const report = await checkCoachHealth({
+      config: configWith({ apiKey: undefined }),
+      localModel: model,
+      probeLocalModel: (requested) => Promise.resolve(requested === model)
+    });
+
+    expect(report.status).toBe("local_ready");
+  });
+
   it("reports local_unavailable with a pull hint when the model is not serving", async () => {
     const report = await checkCoachHealth({
-      config: configWith({}),
+      config: configWith({ apiKey: undefined }),
       localModel: model,
       probeLocalModel: () => Promise.resolve(false)
     });
