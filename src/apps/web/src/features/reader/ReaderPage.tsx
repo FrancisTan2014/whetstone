@@ -1526,7 +1526,7 @@ function renderPanel(
           onJump={(note) => handlers.onJumpToBlock(note)}
           templates={templates}
         />
-        <button onClick={handlers.onClose} type="button">
+        <button className="readerBlockNotesClose" onClick={handlers.onClose} type="button">
           Close
         </button>
       </aside>

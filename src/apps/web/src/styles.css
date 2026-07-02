@@ -937,6 +937,29 @@ code {
   z-index: 10;
 }
 
+/* The panel's Close control is a primary dismiss action, so give the quiet text button a >=44px hit
+   target (WCAG 2.5.5 / #413) in BOTH dimensions — "Close" is narrow enough that its width, not only its
+   height, fell under the minimum touch size. */
+.readerBlockNotesClose {
+  align-items: center;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  color: var(--color-text);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 600;
+  justify-content: center;
+  margin-top: 1rem;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding-inline: 0.75rem;
+}
+
+.readerBlockNotesClose:hover {
+  color: var(--color-accent);
+}
+
 .noteList {
   display: flex;
   flex-direction: column;
