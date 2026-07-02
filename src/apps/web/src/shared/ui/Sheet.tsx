@@ -47,7 +47,7 @@ export function Sheet({
             initial={isRight ? { x: "100%" } : { y: "100%" }}
             transition={transition}
           >
-            <header className="flex items-center justify-between gap-4">
+            <header className="sheet-header flex items-center justify-between gap-4">
               <Dialog.Title className="text-lg font-semibold text-text">{title}</Dialog.Title>
               <Dialog.Close
                 aria-label="Close"
@@ -56,7 +56,7 @@ export function Sheet({
                 ✕
               </Dialog.Close>
             </header>
-            {children}
+            <div className="sheet-body">{children}</div>
           </motion.div>
         </Dialog.Content>
       </Dialog.Portal>
