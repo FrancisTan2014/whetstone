@@ -435,8 +435,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   else saved position, else first); `ReaderToc.tsx` is the 目录 — a controlled,
   dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
   sidebar). When the structure carries a nav-derived `tableOfContents` (#379) it renders the **authored
-  nav tree** fully expanded — indented by `depth` (as `data-depth`), authored labels, current entry
-  `aria-current` — and selecting an entry navigates via the #366 resolver (`resolveTocEntryNavigation` in
+  nav tree** as a **collapsible hierarchy** (#380) — indented by `depth` (as `data-depth`/`--toc-depth`),
+  a per-parent disclosure control (`aria-expanded`, ≥44px, Enter/Space) that hides descendants when
+  collapsed, with the active entry's ancestors auto-expanded (local UI state, not persisted) and the
+  current entry `aria-current` — and selecting an entry navigates via the #366 resolver (`resolveTocEntryNavigation` in
   `readerNavigation.ts` → open the target unit, and when the entry has a `targetAnchor` scroll+highlight
   it, reusing `ReaderPage`'s `onActivateAnchor`/`jumpToBlock`; unresolvable entries no-op); a nav-less
   work falls back to the flat unit list with the current one marked (the `Section N` label fallback stays
