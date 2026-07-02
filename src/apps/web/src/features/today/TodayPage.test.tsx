@@ -346,4 +346,30 @@ describe("TodayPage", () => {
     await screen.findByText(/You’re done for today/);
     expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
   });
+
+  it("does not claim a first-run state while the practice nudge is still loading", async () => {
+    // Nudge left pending (loading): the cold start is not confirmed, so no on-ramp card appears.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
+    renderToday();
+
+    await screen.findByText(/Nothing to continue yet/);
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+  });
+
+  it("does not claim a first-run state when the practice nudge fails to load", async () => {
+    // A failed nudge arm is not "empty": the cold start is unconfirmed, so no on-ramp card, and the
+    // page still does not blank.
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    await screen.findByText(/Nothing to continue yet/);
+    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+    expect(screen.getByText("Capture a thought")).toBeDefined();
+  });
 });

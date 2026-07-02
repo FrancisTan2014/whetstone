@@ -125,7 +125,8 @@ function isFirstRun({
     reading.position === undefined &&
     recall.status === "ready" &&
     recall.items.length === 0 &&
-    activeNudge(nudge) === undefined
+    nudge.status === "ready" &&
+    nudge.nudge === undefined
   );
 }
 
