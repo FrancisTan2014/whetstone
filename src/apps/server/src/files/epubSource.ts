@@ -101,20 +101,21 @@ function mediaTypeBySavedPath(
 // caught by the caller.
 const navTextDecoder = new TextDecoder("utf-8", { fatal: true });
 
-// Surface the EPUB's authored navigation document (#379) while the archive's resources are on disk.
-// Identify the nav resource from the manifest (`selectNavResource`: EPUB3 `nav` property wins over a
-// legacy NCX media type), read its saved bytes with the same path scheme as every other resource, and
-// decode to UTF-8. Fail-soft at every step — no nav resource, missing/empty bytes, or an undecodable
-// stream all yield `undefined` so ingestion simply persists no TOC, never a throw. `path` is the nav
-// resource's own manifest href, the base a nav entry's relative href resolves against.
-async function readNavDocument(
-  manifest: Record<string, ManifestItem>,
-  resourceSaveDir: string
-): Promise<ParsedEpubNav | undefined> {
+// Surface the EPUB's authored navigation document (#379) from the archive. Identify the nav resource
+// from the manifest (`selectNavResource`: EPUB3 `nav` property wins over a legacy NCX media type), read
+// its bytes straight from the archive (the parser only writes a resource to disk when a spine chapter
+// referencing it is loaded, and the nav document is not a spine item), and decode to UTF-8. Fail-soft at
+// every step — no nav resource, an undecodable archive, missing/empty bytes, or an undecodable stream
+// all yield `undefined` so ingestion simply persists no TOC, never a throw. `path` is the nav resource's
+// own manifest href, the base a nav entry's relative href resolves against.
+export function readNavDocument(
+  archiveBytes: Uint8Array,
+  manifest: Record<string, ManifestItem>
+): ParsedEpubNav | undefined {
   const selected = selectNavResource(
     Object.values(manifest).map((item) => ({
       href: item.href,
-      ...(item.mediaType === undefined ? {} : { mediaType: item.mediaType }),
+      mediaType: item.mediaType,
       ...(item.properties === undefined ? {} : { properties: item.properties })
     }))
   );
@@ -123,9 +124,17 @@ async function readNavDocument(
     return undefined;
   }
 
-  const bytes = await readResourceBytes(savedResourcePath(selected.href, resourceSaveDir));
+  let files: Unzipped;
+  try {
+    files = unzipSync(archiveBytes);
+  } catch {
+    return undefined;
+  }
 
-  if (bytes === null) {
+  // Manifest hrefs are resolved against the OPF directory (e.g. "OEBPS/nav.xhtml"), which is exactly the
+  // archive entry name, so the nav bytes are looked up by the selected href directly.
+  const bytes = files[selected.href];
+  if (bytes === undefined || bytes.length === 0) {
     return undefined;
   }
 
@@ -307,8 +316,9 @@ export function createEpubParser(
     // single, clear rejection the ingest command maps to "invalid EPUB" — mirroring the non-ZIP
     // guard's intent — instead of leaking the library's internals.
     let epub: Awaited<ReturnType<typeof initEpubFile>>;
+    const sanitized = sanitizeEpubBytes(bytes);
     try {
-      epub = await initEpubFile(sanitizeEpubBytes(bytes), resourceSaveDir);
+      epub = await initEpubFile(sanitized, resourceSaveDir);
     } catch (cause) {
       throw new Error("The upload could not be parsed as a valid EPUB.", { cause });
     }
@@ -334,10 +344,10 @@ export function createEpubParser(
         });
       }
 
-      // The authored nav is read while the parser's saved resources are still on disk (they persist
-      // past `destroy()`, but reading here keeps the on-disk contract local). Fail-soft: `undefined`
-      // when the EPUB has no nav resource or it could not be read/decoded (#379).
-      const nav = await readNavDocument(manifest, resourceSaveDir);
+      // The authored nav is read from the archive (the parser writes a resource to disk only when a
+      // spine chapter referencing it is loaded, and the nav document is not a spine item). Fail-soft:
+      // `undefined` when the EPUB has no nav resource or it could not be read/decoded (#379).
+      const nav = readNavDocument(sanitized, manifest);
 
       return Object.freeze({ chapters, metadata, ...(nav === undefined ? {} : { nav }) });
     } finally {
