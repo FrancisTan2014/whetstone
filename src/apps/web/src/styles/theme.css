@@ -266,9 +266,27 @@
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
+  /* Contain overflow to the scrollable body below so a long list never spills past the panel and
+     leaves its actions unreachable (#402); the header stays pinned. */
+  overflow: hidden;
   background-color: var(--color-surface);
   color: var(--color-text);
   box-shadow: 0 10px 40px rgb(0 0 0 / 0.2);
+}
+
+/* The title/close row is fixed; only the body scrolls. */
+.sheet-header {
+  flex: 0 0 auto;
+}
+
+/* The Sheet owns its scroll: the content region takes the remaining height and scrolls within the
+   panel, so every card and its actions stay reachable at any list length or viewport (#402). The
+   `min-block-size: 0` is required for a flex child to shrink below its content and actually scroll. */
+.sheet-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sheet-panel-right {
