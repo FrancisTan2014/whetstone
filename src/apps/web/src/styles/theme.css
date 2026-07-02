@@ -898,17 +898,18 @@
 }
 
 @media (min-width: 56rem) {
-  /* Desktop: a vertical icon rail docked just outside the centered reading column's right edge, so
-     the column + rail read as one centered frame (#180). The rail is fixed and positioned from the
-     viewport centre by half the column measure plus a small gap, so it tracks the column's edge as
-     the window widens instead of pinning to the window edge. The 56rem breakpoint is the smallest
-     width at which `column + gap + rail` fits beside the text without overlap (widest column is the
-     46rem CJK measure); below it the top-bar layout above takes over. */
+  /* Desktop: a persistent vertical icon rail docked at the bottom-right, just outside the centered
+     reading column's right edge, so the column + rail read as one centered frame (#180). The rail is
+     fixed and positioned from the viewport centre by half the column measure plus a small gap, so it
+     tracks the column's edge as the window widens instead of pinning to the window edge, and anchored
+     to the viewport bottom (a bottom-right pill) rather than vertically centered. It stays put while
+     scrolling (no recede, #231) in the empty right margin, so it never overlaps the text. The 56rem
+     breakpoint is the smallest width at which `column + gap + rail` fits beside the text without
+     overlap (widest column is the 46rem CJK measure); below it the top-bar layout above takes over. */
   .readingTools {
     inset-inline-start: calc(50% + var(--reading-measure) / 2 + 1rem);
-    inset-block-start: 50%;
+    inset-block-end: max(1rem, env(safe-area-inset-bottom));
     flex-direction: column;
-    transform: translateY(-50%);
     padding: 0.25rem;
     border-radius: 999px;
     background-color: color-mix(in oklch, var(--color-surface) 80%, transparent);
