@@ -4,15 +4,37 @@
 // from coverage for the same reason as `src/**/index.ts`: it is a boundary of un-fakeable Node I/O.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readSync, writeFileSync } from "node:fs";
 
+import { makeConfirm } from "./confirm.mjs";
 import { resolveCommand } from "./platform.mjs";
 
 /**
+ * Read a single line from stdin synchronously (setup is spawnSync-synchronous throughout, so there
+ * is no event loop to await). Prints the question, then blocks on one `readSync` from fd 0. Any read
+ * error (closed/interrupted stdin) degrades to an empty line, which `makeConfirm` treats as the
+ * `[Y/n]` default. Lives only in this excluded boundary — never in tested decision logic.
+ *
+ * @param {string} question
+ * @returns {string}
+ */
+function promptLine(question) {
+  process.stdout.write(`${question} `);
+  const buffer = Buffer.alloc(256);
+  try {
+    const bytes = readSync(0, buffer, 0, buffer.length, null);
+    return buffer.toString("utf8", 0, bytes);
+  } catch {
+    return "";
+  }
+}
+
+/**
  * @param {string} root  Absolute repository root.
+ * @param {{ yes?: boolean }} [options]  `yes` pre-consents every `ctx.confirm` (the `--yes` flag).
  * @returns {import("./step.mjs").SetupContext}
  */
-export function createContext(root) {
+export function createContext(root, options = {}) {
   const platform = process.platform;
   return {
     root,
@@ -41,6 +63,11 @@ export function createContext(root) {
       writeText: (path, content) => writeFileSync(path, content),
       copyFile: (from, to) => copyFileSync(from, to)
     },
+    confirm: makeConfirm({
+      yes: options.yes === true,
+      isTTY: process.stdout.isTTY === true,
+      prompt: promptLine
+    }),
     log: (message) => console.log(message)
   };
 }
