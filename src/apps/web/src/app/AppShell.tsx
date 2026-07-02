@@ -21,6 +21,10 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
 // repositioned with utilities), plus the routed content region. Wrapped in SafeArea so it respects
 // dynamic viewport height and device safe-area insets.
 //
+// SafeArea bounds the shell to exactly one viewport, so the routed <main> scrolls internally
+// (min-h-0 lets the flex children shrink) and the mobile bottom nav stays pinned to the viewport edge
+// as a stable single row — content growth never reflows or pushes it off-screen (#390).
+//
 // The theme toggle is shell chrome in a slim top bar — never a primary tab — so it can never push the
 // mobile bottom nav into a second row (#390). On the reader route the app navigation and the toggle
 // bar recede so the reading column owns the full viewport (an immersive reading room): nothing but the
@@ -31,7 +35,7 @@ export function AppShell(): React.JSX.Element {
   if (location.pathname === "/reader") {
     return (
       <SafeArea>
-        <main className="flex-1 overflow-y-auto bg-bg text-text">
+        <main className="min-h-0 flex-1 overflow-y-auto bg-bg text-text">
           <Outlet />
         </main>
         <ToastViewport />
@@ -41,7 +45,7 @@ export function AppShell(): React.JSX.Element {
 
   return (
     <SafeArea>
-      <div className="flex flex-1 flex-col bg-bg text-text md:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col bg-bg text-text md:flex-row">
         <nav
           aria-label="Primary"
           className="order-last flex shrink-0 gap-1 border-t border-border bg-surface p-2 md:order-first md:w-56 md:flex-col md:border-t-0 md:border-r"
@@ -57,11 +61,11 @@ export function AppShell(): React.JSX.Element {
             </NavLink>
           ))}
         </nav>
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex justify-end border-b border-border bg-surface p-2">
             <ThemeToggle />
           </div>
-          <main className="flex-1 overflow-y-auto">
+          <main className="min-h-0 flex-1 overflow-y-auto">
             <Outlet />
           </main>
         </div>
