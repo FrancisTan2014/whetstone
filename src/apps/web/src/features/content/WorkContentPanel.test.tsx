@@ -139,8 +139,10 @@ afterEach(() => {
   cleanup();
 });
 
-async function renderReady(): Promise<ReturnType<typeof userEvent.setup>> {
-  const user = userEvent.setup();
+async function renderReady(
+  options?: Parameters<typeof userEvent.setup>[0]
+): Promise<ReturnType<typeof userEvent.setup>> {
+  const user = userEvent.setup(options);
   render(<WorkContentPanel />);
   await screen.findByRole("heading", { level: 3, name: "Work A" });
 
@@ -296,8 +298,36 @@ describe("WorkContentPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Upload file" }));
 
-    expect(screen.getByText("Choose a .md or PDF file to upload.")).toBeDefined();
+    expect(screen.getByText("Choose a .md or .pdf file to upload.")).toBeDefined();
     expect(mockedIngestMarkdown).not.toHaveBeenCalled();
+    expect(mockedIngestPdf).not.toHaveBeenCalled();
+  });
+
+  it("rejects a file that is neither Markdown nor PDF without calling any ingest path", async () => {
+    // applyAccept: false lets the file reach the component guard despite the input's accept filter
+    // (the browser accept attribute is a hint, not a guarantee — drag-drop or older browsers can
+    // still deliver an unsupported file).
+    const user = await renderReady({ applyAccept: false });
+    const file = new File(["plain text"], "notes.txt", { type: "text/plain" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(screen.getByText("Choose a .md or .pdf file to upload.")).toBeDefined();
+    expect(mockedIngestMarkdown).not.toHaveBeenCalled();
+    expect(mockedIngestPdf).not.toHaveBeenCalled();
+  });
+
+  it("accepts a .md file by extension when the browser omits the MIME type", async () => {
+    const user = await renderReady();
+    mockedIngestMarkdown.mockResolvedValue({ content: contentA, status: "ingested" });
+    const file = new File(["# Hi"], "notes.md", { type: "" });
+
+    await user.upload(screen.getByLabelText("Upload a .md or PDF file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload file" }));
+
+    expect(await screen.findByText(/^Ingested —/)).toBeDefined();
+    expect(mockedIngestMarkdown).toHaveBeenCalled();
     expect(mockedIngestPdf).not.toHaveBeenCalled();
   });
 
