@@ -376,9 +376,11 @@ be clean and consistent:
 - **Figures** (EPUB images) render as a real figure — the image sized to the reading measure with its
   caption beneath (never a stray heading); a missing or unsupported image degrades to its caption alone.
   The image is display-only (not annotatable); its caption is selectable text you can take notes on.
-  **Tapping or clicking the image opens it larger in a lightbox** — a centered overlay that fits the image
-  to the viewport over a dimmed backdrop, dismissed by Escape, the backdrop, or a close button (it never
-  navigates away) — so diagrams and dense figures stay legible beyond the reading column.
+  **Tapping or clicking the image opens it in a figure viewer** — a centered overlay over a dimmed backdrop
+  that **enlarges the image to fit the viewport (scaling small sources up, not only down)** and lets the
+  reader **zoom in and pan** to inspect dense diagrams; dismissed by Escape, the backdrop, or a close button
+  (it never navigates away) — so diagrams and dense figures stay legible beyond the reading column,
+  especially on large screens.
 - Front matter (title/copyright/dedication units) is de-emphasized, not rendered as giant repeated
   headings.
 - Typography targets: reading measure ~66ch (Latin), line-height >= 1.5, comfortable body size (~18px),
