@@ -5,7 +5,7 @@ import { workLanguageLabels, type WorkType } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
+import { fetchWorkContent, fetchWorks, ingestMarkdown, ingestPdf } from "./contentApi";
 import { summarizeWorkContent, workContentSummaryLabel } from "./workContentSummary";
 
 type ReadyData = Readonly<{
@@ -49,6 +49,26 @@ function formatWorkType(workType: WorkType): string {
 const emptyContentMessage =
   "This Markdown has no readable text to add. Images on their own aren’t supported yet.";
 
+// Shown when the doc-AI worker could not read an uploaded PDF (the server's 422 `invalid_pdf`), e.g. a
+// scanned or corrupt file.
+const invalidPdfMessage = "We couldn’t read this PDF. Please try a different file.";
+
+// Shown when the chosen file is neither a Markdown nor a PDF file, so nothing is uploaded. Also used
+// for the no-file case, since both mean "pick a supported file first".
+const unsupportedFileMessage = "Choose a .md or .pdf file to upload.";
+
+// Detect a PDF selection so the single upload control can route it to the PDF worker instead of the
+// Markdown path — by MIME type, falling back to the extension when the browser omits the type.
+function isPdfFile(file: File): boolean {
+  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+}
+
+// Detect a Markdown selection — the other supported type. Same MIME-first, extension-fallback shape as
+// isPdfFile, so a file that is neither PDF nor Markdown can be rejected before any ingest call.
+function isMarkdownFile(file: File): boolean {
+  return file.type === "text/markdown" || file.name.toLowerCase().endsWith(".md");
+}
+
 function ingestedLabel(content: WorkContentDto): string {
   return `Ingested — ${workContentSummaryLabel(summarizeWorkContent(content))}.`;
 }
@@ -64,6 +84,10 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
   const [state, setState] = useState<PanelState>({ status: "loading" });
   const [markdown, setMarkdown] = useState("");
   const [file, setFile] = useState<File | undefined>(undefined);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  // Remount key for the uncontrolled file input: bumping it after each upload clears the picked
+  // filename (a file input's value cannot be set programmatically).
+  const [uploadNonce, setUploadNonce] = useState(0);
   const [error, setError] = useState<string | undefined>(undefined);
   const [result, setResult] = useState<string | undefined>(undefined);
   // The units/blocks overview summarizes by default (reading units + block counts); the per-block
@@ -124,29 +148,53 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
     event.preventDefault();
 
     if (file === undefined) {
-      setError("Choose a .md file to upload.");
+      setError(unsupportedFileMessage);
       return;
     }
 
+    const pdf = isPdfFile(file);
+    if (!pdf && !isMarkdownFile(file)) {
+      setError(unsupportedFileMessage);
+      return;
+    }
+
+    setUploadBusy(true);
+    setError(undefined);
+    setResult(undefined);
+
     try {
-      const outcome = await ingestMarkdown(data.selectedWork.work.entryId, {
-        fileName: file.name,
-        kind: "upload",
-        markdown: await file.text()
-      });
+      const outcome = pdf
+        ? await ingestPdf(data.selectedWork.work.entryId, file)
+        : await ingestMarkdown(data.selectedWork.work.entryId, {
+            fileName: file.name,
+            kind: "upload",
+            markdown: await file.text()
+          });
+
+      if (outcome.status === "invalid_pdf") {
+        setError(invalidPdfMessage);
+        return;
+      }
 
       if (outcome.status === "empty_content") {
-        setResult(undefined);
         setError(emptyContentMessage);
         return;
       }
 
       applyContent(data, outcome.content, data.selectedWork);
-      setFile(undefined);
-      setError(undefined);
       setResult(ingestedLabel(outcome.content));
     } catch {
-      setError("Could not upload the file. Please try again.");
+      setError(
+        pdf
+          ? "Could not upload the PDF. Please try again."
+          : "Could not upload the file. Please try again."
+      );
+    } finally {
+      // Clear the busy state and the chosen file after every attempt; a file input is uncontrolled,
+      // so bump its remount key to fully clear the picked filename.
+      setUploadBusy(false);
+      setFile(undefined);
+      setUploadNonce((nonce) => nonce + 1);
     }
   }
 
@@ -175,7 +223,9 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
             onUploadFile,
             result,
             setMarkdown,
-            showBlocks
+            showBlocks,
+            uploadBusy,
+            uploadNonce
           })
         : null}
     </section>
@@ -193,6 +243,8 @@ type ReadyHandlers = Readonly<{
   result: string | undefined;
   setMarkdown: (value: string) => void;
   showBlocks: boolean;
+  uploadBusy: boolean;
+  uploadNonce: number;
 }>;
 
 function renderReady(data: ReadyData, handlers: ReadyHandlers): React.JSX.Element {
@@ -278,12 +330,27 @@ function renderAddContent(data: ReadyData, handlers: ReadyHandlers): React.JSX.E
         onSubmit={(event) => handlers.onUploadFile(event, data)}
       >
         <label className="flex flex-col gap-1 text-sm text-text-muted" htmlFor="content-file">
-          Upload a .md file
-          <input accept=".md" id="content-file" onChange={handlers.onChooseFile} type="file" />
+          Upload a .md or PDF file
+          <input
+            accept=".md,.pdf,application/pdf"
+            disabled={handlers.uploadBusy}
+            id="content-file"
+            key={handlers.uploadNonce}
+            onChange={handlers.onChooseFile}
+            type="file"
+          />
         </label>
-        <Button className="self-start" size="sm" type="submit" variant="secondary">
+        <Button
+          className="self-start"
+          disabled={handlers.uploadBusy}
+          pending={handlers.uploadBusy}
+          size="sm"
+          type="submit"
+          variant="secondary"
+        >
           Upload file
         </Button>
+        {handlers.uploadBusy ? <LoadingIndicator label="Converting the PDF…" /> : null}
       </form>
 
       {handlers.result !== undefined ? (
