@@ -1,4 +1,4 @@
-import { Extension, Node } from "@tiptap/core";
+import { Extension, Mark, Node } from "@tiptap/core";
 import { UniqueID } from "@tiptap/extension-unique-id";
 
 // The whetstone content bedrock: ProseMirror node specs, declared through Tiptap (MIT) so the same
@@ -161,6 +161,32 @@ const footnoteTarget = Node.create({
   name: "footnoteTarget"
 });
 
+// --- Inline marks -----------------------------------------------------------------------------
+
+// The document model's first content MARK: a same-work reference link kept inline on the text run
+// (PRODUCT "internal cross-reference links", #368). A mark — not an inline atom — because an atom
+// would pull the link text out of the paragraph's inline run and reopen the #340/#358 CJK
+// inter-character spacing gaps (`见周髀之术` shattering into `见之术`); a mark keeps the linked text in
+// flow while carrying the addressing metadata. `kind` distinguishes an explicit cross-reference
+// (`a[data-type=xref]`) from a generic same-work `<a>`; `anchor` is the target's source-HTML id (the
+// href `#fragment`); `refFile` is the file part of a cross-file href (`ch01.html#id` -> `ch01.html`,
+// null for a same-file `#id`); `targetSourceFile` is that path resolved against the mark's own source
+// file at ingest (#366), so the reader's work-scoped resolver can jump keyed by (sourceFile, anchor).
+// `inert` marks an external/cross-work link (`http(s):`, `mailto:`, protocol-relative `//`) that
+// renders as styled but non-navigating text, never a live `<a href>` that could hijack the SPA route.
+const link = Mark.create({
+  addAttributes() {
+    return {
+      anchor: { default: null },
+      inert: { default: false },
+      kind: { default: "href" },
+      refFile: { default: null },
+      targetSourceFile: { default: null }
+    };
+  },
+  name: "link"
+});
+
 // --- Unknown fallback -------------------------------------------------------------------------
 
 // The conservative fallback for an element the schema does not recognize: its raw HTML is preserved
@@ -207,6 +233,13 @@ export const documentNodes = [
 // the schema object.
 export const documentNodeNames = documentNodes.map((node) => node.name) as ReadonlyArray<string>;
 
+// The mark-spec extensions that define the document schema's content marks. The `link` mark is the
+// only one (#368); em/strong/other inline formatting stay descended-to-plain-text for now.
+export const documentMarks = [link] as const;
+
+// Every mark name in the schema, mirroring `documentNodeNames` for consumers that branch on mark type.
+export const documentMarkNames = documentMarks.map((mark) => mark.name) as ReadonlyArray<string>;
+
 // The block-group node types every top-level block can be. Each carries the addressing-only
 // `anchorId` global attribute below, so a block's source-HTML id is captured at ingest without
 // polluting non-block nodes (list items, cells, inline runs).
@@ -244,7 +277,12 @@ const anchorIdAttribute = Extension.create({
 // is Tiptap's server-side id generator, run with no editor in the document module below.
 export const uniqueIdExtension = UniqueID.configure({ types: "all" });
 
-// The full extension set (nodes + the id attribute + the anchor-id addressing attribute) passed to
-// `getSchema` and to the server-side id generator. Kept as one boundary so the schema and id
-// assignment can never drift apart.
-export const documentExtensions = [...documentNodes, uniqueIdExtension, anchorIdAttribute];
+// The full extension set (nodes + marks + the id attribute + the anchor-id addressing attribute)
+// passed to `getSchema` and to the server-side id generator. Kept as one boundary so the schema and
+// id assignment can never drift apart.
+export const documentExtensions = [
+  ...documentNodes,
+  ...documentMarks,
+  uniqueIdExtension,
+  anchorIdAttribute
+];

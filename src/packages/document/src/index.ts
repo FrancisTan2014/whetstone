@@ -1,5 +1,7 @@
 export {
   documentExtensions,
+  documentMarkNames,
+  documentMarks,
   documentNodeNames,
   documentNodes,
   uniqueIdExtension
