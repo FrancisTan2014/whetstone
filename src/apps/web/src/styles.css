@@ -708,9 +708,11 @@ code {
 }
 
 /*
- * In-content links from the source render as non-navigating text (#74): keep the original
- * styling of the surrounding prose so a click selects text for lookup/annotation instead of
- * leaving the page. The book's own cross-document links are not resolvable in v0.
+ * The inert base for an in-content link: a non-navigating source link — a Markdown/mdast fallback
+ * link (#74), or an external/cross-work target — keeps the surrounding prose styling so a click
+ * selects text for lookup/annotation instead of leaving the page. A LIVE same-work cross-reference
+ * is a real control that layers the `.readerXref` accent affordance on top of this base (#252, #368);
+ * same-work book cross-references now resolve through the work anchor index (#366).
  */
 .readerLink {
   color: inherit;
@@ -731,6 +733,16 @@ code {
   text-decoration: underline;
   text-underline-offset: 0.15em;
   cursor: pointer;
+}
+
+/* An inert `link` mark (#368): an external/cross-work target, or a link with no resolvable anchor. It
+   keeps a quiet dotted underline to show it was a link in the source without inviting a tap, and stays
+   inline so CJK inter-character spacing is preserved (`见周髀之术`). A live same-work link layers
+   `.readerXref` on the inert base instead, so this treatment is reserved for inert links only. */
+.readerLink--inert {
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: default;
 }
 
 /* A footnote marker (#250): the live cross-reference rendered as a quiet raised superscript, like a

@@ -1,5 +1,7 @@
 import {
+  type JSONMarkType,
   type JSONNodeType,
+  type MarkProps,
   type NodeProps,
   renderJSONContentToReactElement
 } from "@tiptap/static-renderer/json/react";
@@ -22,11 +24,17 @@ import { stripFlankingFootnoteBrackets } from "./pmFootnotes";
 // to a React text child would double-escape it.
 
 type PmNode = JSONNodeType;
+type PmMark = JSONMarkType;
 type PmNodeProps = NodeProps<PmNode, React.ReactNode | React.ReactNode[]>;
 type PmNodeRenderer = (props: PmNodeProps) => React.ReactNode;
 
 function stringAttr(node: PmNode, key: string): string | undefined {
   const value = node.attrs?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function markStringAttr(mark: PmMark, key: string): string | undefined {
+  const value = mark.attrs?.[key];
   return typeof value === "string" ? value : undefined;
 }
 
@@ -82,6 +90,40 @@ function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
         {text}
       </button>
     </sup>
+  );
+}
+
+// A same-work reference link mark (#368). It keeps its text IN the paragraph's inline run (a mark, not
+// an atom) so CJK inter-character spacing is preserved (`见周髀之术`, #340/#358). With a resolvable
+// `anchor` and the reader's jump wired, it renders a focusable inline control that scrolls+highlights
+// its target via `onActivateAnchor` — the SAME work-scoped resolution the footnote/endnote markers use
+// (#366), threading the mark's `targetSourceFile` so a cross-chapter reference lands in the right unit.
+// An INERT link (external/cross-work), a link with no anchor, or a raw render with no jump wired stays
+// styled but non-navigating text: a `<span>`, never a live `<a href>` that could hijack the SPA route.
+function LinkMark({
+  children,
+  mark
+}: {
+  children?: React.ReactNode;
+  mark: PmMark;
+}): React.ReactElement {
+  const anchor = markStringAttr(mark, "anchor");
+  const targetSourceFile = markStringAttr(mark, "targetSourceFile");
+  const inert = mark.attrs?.["inert"] === true;
+  const onActivateAnchor = useContext(ActivateAnchorContext);
+
+  if (inert || anchor === undefined || onActivateAnchor === undefined) {
+    return <span className="readerLink readerLink--inert">{children}</span>;
+  }
+
+  return (
+    <button
+      className="readerLink readerXref"
+      onClick={() => onActivateAnchor(anchor, targetSourceFile)}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -237,7 +279,13 @@ const nodeMapping: Record<string, PmNodeRenderer> = {
   )
 };
 
-const renderDocument = renderJSONContentToReactElement({ markMapping: {}, nodeMapping });
+const markMapping = {
+  link: ({ children, mark }: MarkProps<PmMark, React.ReactNode, PmNode>) => (
+    <LinkMark mark={mark}>{children}</LinkMark>
+  )
+};
+
+const renderDocument = renderJSONContentToReactElement({ markMapping, nodeMapping });
 
 export interface PmDocumentProps {
   readonly document: DocumentNodeJSON;

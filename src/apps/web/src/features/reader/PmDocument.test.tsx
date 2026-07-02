@@ -559,3 +559,146 @@ describe("PmDocument footnote markers (#335)", () => {
     expect(container.querySelector("p")?.textContent).toBe("Data Guard 2, noted [sic] again.");
   });
 });
+
+describe("PmDocument reference links (#368)", () => {
+  // A paragraph whose linked text carries a `link` mark. `attrs` builds a single link-marked text run
+  // in flow (a mark, not an atom) so the surrounding prose is never shattered.
+  function linkedParagraph(attrs: Record<string, unknown>, text = "Chapter 1"): DocumentNodeJSON {
+    return {
+      content: [
+        {
+          content: [
+            { text: "See ", type: "text" },
+            { marks: [{ attrs, type: "link" }], text, type: "text" },
+            { text: " now.", type: "text" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    } as unknown as DocumentNodeJSON;
+  }
+
+  it("renders a cross-chapter xref as an inline control and fires the jump with its target file", () => {
+    const doc = linkedParagraph({
+      anchor: "ch_introduction",
+      inert: false,
+      kind: "xref",
+      refFile: "ch01.html",
+      targetSourceFile: "text/ch01.html"
+    });
+    const onActivateAnchor = vi.fn();
+    const { container } = render(<PmDocument document={doc} onActivateAnchor={onActivateAnchor} />);
+
+    const button = container.querySelector("button.readerLink");
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toBe("Chapter 1");
+    // The link text stays in the paragraph's flow — no shatter.
+    expect(container.querySelector("p")?.textContent).toBe("See Chapter 1 now.");
+    // Never a live <a href> that could hijack the SPA route.
+    expect(container.querySelector("a")).toBeNull();
+
+    fireEvent.click(button as HTMLElement);
+    // The mark's resolved target file is threaded so a cross-chapter reference lands in the right unit.
+    expect(onActivateAnchor).toHaveBeenCalledWith("ch_introduction", "text/ch01.html");
+  });
+
+  it("fires a same-unit `#id` link with no target file so it resolves against the current unit", () => {
+    const doc = linkedParagraph(
+      { anchor: "sec_two", inert: false, kind: "href", refFile: null, targetSourceFile: null },
+      "this section"
+    );
+    const onActivateAnchor = vi.fn();
+    const { container } = render(<PmDocument document={doc} onActivateAnchor={onActivateAnchor} />);
+
+    fireEvent.click(container.querySelector("button.readerLink") as HTMLElement);
+    // A null targetSourceFile reads back as undefined, so the reader resolves same-unit (#366).
+    expect(onActivateAnchor).toHaveBeenCalledWith("sec_two", undefined);
+  });
+
+  it("renders an external inert link as non-navigating styled text, never a control", () => {
+    const doc = linkedParagraph(
+      { anchor: null, inert: true, kind: "href", refFile: null, targetSourceFile: null },
+      "the site"
+    );
+    const onActivateAnchor = vi.fn();
+    const { container } = render(<PmDocument document={doc} onActivateAnchor={onActivateAnchor} />);
+
+    const span = container.querySelector("span.readerLink");
+    expect(span).not.toBeNull();
+    expect(span?.textContent).toBe("the site");
+    // No button, no anchor: nothing navigates and no SPA route change is possible.
+    expect(container.querySelector("button.readerLink")).toBeNull();
+    expect(container.querySelector("a")).toBeNull();
+
+    fireEvent.click(span as HTMLElement);
+    expect(onActivateAnchor).not.toHaveBeenCalled();
+  });
+
+  it("renders a link with no anchor as inert text (an unresolvable target no-ops)", () => {
+    const doc = linkedParagraph(
+      {
+        anchor: null,
+        inert: false,
+        kind: "href",
+        refFile: "ch02.html",
+        targetSourceFile: "ch02.html"
+      },
+      "chapter two"
+    );
+    const { container } = render(<PmDocument document={doc} onActivateAnchor={vi.fn()} />);
+
+    expect(container.querySelector("span.readerLink")).not.toBeNull();
+    expect(container.querySelector("button.readerLink")).toBeNull();
+  });
+
+  it("renders a link as inert text on a raw render with no jump wired", () => {
+    const doc = linkedParagraph({
+      anchor: "sec_two",
+      inert: false,
+      kind: "href",
+      refFile: null,
+      targetSourceFile: null
+    });
+    const { container } = render(<PmDocument document={doc} />);
+
+    expect(container.querySelector("span.readerLink")).not.toBeNull();
+    expect(container.querySelector("button.readerLink")).toBeNull();
+  });
+
+  it("keeps a CJK inline link's text in flow so no gap opens (mark, not atom — #340 guard)", () => {
+    const cjkDoc = {
+      content: [
+        {
+          content: [
+            { text: "见", type: "text" },
+            {
+              marks: [
+                {
+                  attrs: {
+                    anchor: "zhoubi",
+                    inert: false,
+                    kind: "href",
+                    refFile: null,
+                    targetSourceFile: null
+                  },
+                  type: "link"
+                }
+              ],
+              text: "周髀",
+              type: "text"
+            },
+            { text: "之术", type: "text" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    } as unknown as DocumentNodeJSON;
+    const { container } = render(<PmDocument document={cjkDoc} onActivateAnchor={vi.fn()} />);
+
+    // The paragraph text is contiguous — the linked run sits between 见 and 之术 with no stray gap.
+    expect(container.querySelector("p")?.textContent).toBe("见周髀之术");
+    expect(container.querySelector("button.readerLink")?.textContent).toBe("周髀");
+  });
+});

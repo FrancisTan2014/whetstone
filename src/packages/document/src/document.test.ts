@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assignNodeIds,
   type DocumentNodeJSON,
+  documentMarkNames,
   documentNodeNames,
   documentSchema,
   documentText,
@@ -171,6 +172,109 @@ describe("document schema", () => {
     for (const name of expected) {
       expect(documentSchema.nodes[name]).toBeDefined();
     }
+  });
+
+  it("registers the `link` content mark (the only inline mark, #368)", () => {
+    expect([...documentMarkNames]).toEqual(["link"]);
+    expect(documentSchema.marks["link"]).toBeDefined();
+  });
+});
+
+describe("link mark round-trip (#368)", () => {
+  // A paragraph whose inline run carries the `link` mark on the linked text only: a cross-chapter
+  // xref, a same-file `#id` link, and an external inert link, each keeping its text in the run.
+  const linkedDoc: DocumentNodeJSON = {
+    content: [
+      {
+        content: [
+          { text: "See ", type: "text" },
+          {
+            marks: [
+              {
+                attrs: {
+                  anchor: "ch_introduction",
+                  inert: false,
+                  kind: "xref",
+                  refFile: "ch01.html",
+                  targetSourceFile: "text/ch01.html"
+                },
+                type: "link"
+              }
+            ],
+            text: "Chapter 1",
+            type: "text"
+          },
+          { text: " and ", type: "text" },
+          {
+            marks: [
+              {
+                attrs: {
+                  anchor: "sec",
+                  inert: false,
+                  kind: "href",
+                  refFile: null,
+                  targetSourceFile: null
+                },
+                type: "link"
+              }
+            ],
+            text: "this section",
+            type: "text"
+          },
+          { text: " or ", type: "text" },
+          {
+            marks: [
+              {
+                attrs: {
+                  anchor: null,
+                  inert: true,
+                  kind: "href",
+                  refFile: null,
+                  targetSourceFile: null
+                },
+                type: "link"
+              }
+            ],
+            text: "the site",
+            type: "text"
+          }
+        ],
+        type: "paragraph"
+      }
+    ],
+    type: "doc"
+  };
+
+  it("round-trips the link mark through fromJSON/toJSON unchanged", () => {
+    const withIds = assignNodeIds(linkedDoc);
+    const node = parseDocument(withIds);
+
+    expect(node.type.name).toBe("doc");
+    expect(serializeDocument(node)).toEqual(withIds);
+  });
+
+  it("keeps the linked text in the inline run so documentText stays gap-free (CJK safe, #340)", () => {
+    // `见` + linked `周髀` + `之术` -> `见周髀之术`: a mark keeps the text in flow (an atom would not).
+    const cjk: DocumentNodeJSON = {
+      content: [
+        {
+          content: [
+            { text: "见", type: "text" },
+            {
+              marks: [{ attrs: { anchor: "zhoubi", kind: "href" }, type: "link" }],
+              text: "周髀",
+              type: "text"
+            },
+            { text: "之术", type: "text" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+
+    expect(documentText(cjk)).toBe("见周髀之术");
+    expect(isValidDocument(cjk)).toBe(true);
   });
 });
 

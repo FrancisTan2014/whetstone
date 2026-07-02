@@ -684,3 +684,160 @@ describe("htmlToDocument MathML tolerance (#361)", () => {
     expect(evidence[0]!.tag).toBe("video");
   });
 });
+
+describe("htmlToDocument reference links (#368)", () => {
+  // The `link` mark on a text node, if any: the marks array lives on the text node, not as a child
+  // node, so the footnote-style `findDescendant` walk cannot reach it.
+  function findLinkMark(node: DocumentNodeJSON): Record<string, unknown> | undefined {
+    for (const mark of node.marks ?? []) {
+      if (mark["type"] === "link") {
+        return mark["attrs"] as Record<string, unknown>;
+      }
+    }
+
+    for (const child of childrenOf(node)) {
+      const found = findLinkMark(child);
+
+      if (found !== undefined) {
+        return found;
+      }
+    }
+
+    return undefined;
+  }
+
+  // The text node that carries the `link` mark, so its text (the anchor's linked run) can be asserted.
+  function findLinkedText(node: DocumentNodeJSON): string | undefined {
+    if ((node.marks ?? []).some((mark) => mark["type"] === "link")) {
+      return node.text;
+    }
+
+    for (const child of childrenOf(node)) {
+      const found = findLinkedText(child);
+
+      if (found !== undefined) {
+        return found;
+      }
+    }
+
+    return undefined;
+  }
+
+  it("preserves a cross-chapter xref as a link mark carrying its href parts", () => {
+    const { blocks } = htmlToDocument(
+      '<p>Go to <a data-type="xref" href="ch01.html#ch_introduction">Chapter 1</a>.</p>'
+    );
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(findLinkMark(paragraph.node)).toEqual({
+      anchor: "ch_introduction",
+      inert: false,
+      kind: "xref",
+      refFile: "ch01.html",
+      targetSourceFile: null
+    });
+    // The linked text stays in the inline run — no descended-text-with-lost-href, no paragraph shatter.
+    expect(findLinkedText(paragraph.node)).toBe("Chapter 1");
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+  });
+
+  it("preserves a same-chapter `#id` link with a null file part and the generic `href` kind", () => {
+    const { blocks } = htmlToDocument('<p>See <a href="#sec_two">this section</a>.</p>');
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(findLinkMark(paragraph.node)).toEqual({
+      anchor: "sec_two",
+      inert: false,
+      kind: "href",
+      refFile: null,
+      targetSourceFile: null
+    });
+  });
+
+  it("preserves a same-work link with an empty fragment (`path#`) as an anchorless link", () => {
+    const { blocks } = htmlToDocument('<p>Open <a href="ch02.html#">chapter two</a>.</p>');
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(findLinkMark(paragraph.node)).toEqual({
+      anchor: null,
+      inert: false,
+      kind: "href",
+      refFile: "ch02.html",
+      targetSourceFile: null
+    });
+  });
+
+  it("preserves a same-work link with a bare path (no fragment) as an anchorless link", () => {
+    const { blocks } = htmlToDocument('<p>Open <a href="ch02.html">chapter two</a>.</p>');
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(findLinkMark(paragraph.node)).toEqual({
+      anchor: null,
+      inert: false,
+      kind: "href",
+      refFile: "ch02.html",
+      targetSourceFile: null
+    });
+  });
+
+  it.each([
+    ["https scheme", '<a href="https://example.com/x">the site</a>', "the site"],
+    ["mailto scheme", '<a href="mailto:a@example.com">email us</a>', "email us"],
+    ["protocol-relative", '<a href="//cdn.example.com/x">a mirror</a>', "a mirror"]
+  ])("flags an external %s link as inert with no target", (_name, anchorHtml, linkedText) => {
+    const { blocks } = htmlToDocument(`<p>Visit ${anchorHtml}.</p>`);
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(findLinkMark(paragraph.node)).toEqual({
+      anchor: null,
+      inert: true,
+      kind: "href",
+      refFile: null,
+      targetSourceFile: null
+    });
+    // Even an inert link keeps its text in flow, never dropped or shattered.
+    expect(findLinkedText(paragraph.node)).toBe(linkedText);
+  });
+
+  it("skips a bare hrefless anchor, leaving its text in flow with no link mark", () => {
+    const { blocks } = htmlToDocument(
+      '<p>An <a name="top">anchor</a> and <a href="">empty</a>.</p>'
+    );
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    expect(findLinkMark(paragraph.node)).toBeUndefined();
+    expect(textOf(paragraph.node)).toBe("An anchor and empty.");
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+  });
+
+  it("keeps a[data-type=noteref] as the footnoteMarker atom, not a link mark", () => {
+    const { blocks } = htmlToDocument(
+      '<p>Note<a data-type="noteref" href="notes.xhtml#fn1">1</a>.</p>'
+    );
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    // The noteref rule wins over the generic link rule: a footnoteMarker node, and no link mark.
+    expect(findDescendant(paragraph.node, "footnoteMarker")).toBeDefined();
+    expect(findLinkMark(paragraph.node)).toBeUndefined();
+  });
+
+  it("renders a CJK inline link text IN FLOW so no gap opens (mark, not atom — #340 guard)", () => {
+    const { blocks } = htmlToDocument('<p>见<a href="#zhoubi">周髀</a>之术</p>');
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+
+    // A mark keeps `周髀` inside the paragraph's inline run, so the text is contiguous: `见周髀之术`.
+    // An inline atom would pull it out and reopen the inter-character gap (`见之术`).
+    expect(textOf(paragraph.node)).toBe("见周髀之术");
+    expect(findLinkedText(paragraph.node)).toBe("周髀");
+    expect(findLinkMark(paragraph.node)?.["anchor"]).toBe("zhoubi");
+  });
+
+  it("keeps a link inside a code block as plain text (codeBlock allows no marks)", () => {
+    const { blocks } = htmlToDocument('<pre><code>see <a href="#x">ref</a> here</code></pre>');
+    const code = blocksOfType(blocks, "codeBlock")[0]!;
+
+    // The `<a>` text survives verbatim, but no mark is applied inside the mark-free code block.
+    expect(textOf(code.node)).toBe("see ref here");
+    expect(findLinkMark(code.node)).toBeUndefined();
+  });
+});
