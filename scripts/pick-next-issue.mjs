@@ -39,11 +39,15 @@ export function ghJson(args) {
 }
 
 // Every #N in a `Depends on:` clause, handling "Depends on: #3, #4" and "Depends on #3 and #5". The
-// match stops at the first sentence end, so a trailing sentence on the same line (e.g.
+// clause may lead with Markdown decoration -- bold/italic (`**Depends on:**`), a list marker
+// (`- Depends on:`), or a blockquote (`> Depends on:`) -- because the design agent writes issue
+// bodies in Markdown; those leading tokens are skipped so a bolded line is NOT silently read as "no
+// dependency" (which would wrongly unblock, or let the picker grab, a still-gated issue). The match
+// stops at the first sentence end, so a trailing sentence on the same line (e.g.
 // "Depends on: #3, #4. Split from #9.") never misreads #9 as a dependency.
 export function dependsOn(body) {
   const deps = new Set();
-  const clauseRe = /^[ \t]*depends on\b[^.\n]*/gim;
+  const clauseRe = /^[ \t>*_+-]*depends on\b[^.\n]*/gim;
   let clause;
   while ((clause = clauseRe.exec(body ?? '')) !== null) {
     for (const m of clause[0].matchAll(/#(\d+)/g)) deps.add(Number(m[1]));
