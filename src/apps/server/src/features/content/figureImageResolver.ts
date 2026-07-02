@@ -13,6 +13,7 @@ import {
 } from "../../files/imageResourceStore.js";
 import type { PersistableBlock, PersistableReadingUnit } from "./blockWriter.js";
 import { htmlToDocument, type IngestedBlock } from "./htmlToDocument.js";
+import { resolveRelativeHref } from "./resolveRelativeHref.js";
 
 type ImageStore = Pick<ImageResourceStore, "store">;
 
@@ -84,6 +85,45 @@ async function stampDocBlockImages(
   }
 }
 
+// Stamp every PM `footnoteMarker` node in a chapter's blocks with `targetSourceFile`: the marker's
+// `refFile` (the file part of a cross-file endnote href, null for a same-file note) resolved against
+// THIS chapter's source file (#366). Only markers that actually reference a target (`refId` present)
+// are stamped, so an inert marker keeps its null. This is what lets the reader's work-scoped resolver
+// jump to an endnote living in a separate reading unit, keyed by (targetSourceFile, refId).
+function stampFootnoteTargets(
+  blocks: ReadonlyArray<IngestedBlock>,
+  chapterSourceFile: string
+): void {
+  const markers: DocumentNodeJSON[] = [];
+  const collect = (node: DocumentNodeJSON): void => {
+    if (node.type === "footnoteMarker") {
+      markers.push(node);
+    }
+    for (const child of node.content ?? []) {
+      collect(child);
+    }
+  };
+  for (const block of blocks) {
+    collect(block.node);
+  }
+
+  for (const marker of markers) {
+    // Markers always carry attrs (the parse-rule label/refId/refFile), so reading them is unconditional.
+    const attrs = marker.attrs!;
+    const refId = attrs["refId"];
+
+    if (typeof refId !== "string") {
+      continue;
+    }
+
+    const refFile = typeof attrs["refFile"] === "string" ? attrs["refFile"] : null;
+    marker.attrs = { ...attrs, targetSourceFile: resolveRelativeHref(chapterSourceFile, refFile) };
+  }
+}
+
+// Resolve one decomposed block's figure image (mdast path). Text blocks pass through with null figure
+// columns; a figure stores its image (content-addressed) and carries the id + alt, or degrades to
+// caption-only / drops when it has neither a storable image nor a caption.
 async function resolveBlock(
   block: DecomposedBlock,
   imageBySrc: ReadonlyMap<string, ParsedEpubImage>,
@@ -142,6 +182,9 @@ export async function resolveChapters(
     // Stamp the PM figure/image nodes with their stored-image ids before they become doc_blocks (#312),
     // reusing this chapter's image map and store — the same resolution the mdast figure blocks get.
     await stampDocBlockImages(ingested.blocks, imageBySrc, store);
+    // Stamp each footnote/endnote marker's resolved target source file (#366), so a cross-file endnote
+    // resolves to the chapter that owns it.
+    stampFootnoteTargets(ingested.blocks, chapter.sourceFile);
 
     for (const block of decomposed.blocks) {
       const resolved = await resolveBlock(block, imageBySrc, store);
@@ -155,6 +198,7 @@ export async function resolveChapters(
       blocks,
       docBlocks: ingested.blocks,
       evidence: ingested.evidence,
+      sourceFile: chapter.sourceFile,
       title: decomposed.title
     });
   }
