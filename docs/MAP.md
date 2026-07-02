@@ -203,9 +203,13 @@ can navigate them from another package.
   is the fallback. `sessionRoutes.ts`: `POST /api/session/` `start|transcribe|turn|say|end`. The
   coach/speech seams are resolved (fakes when unconfigured) in `index.ts`. Mistake-category map is pure in
   `@whetstone/domain` (`mistakeCategory.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
-  Web: the live **call surface** `SessionPage` (#221) — tap **Start call**, talk continuously, the coach
-  replies in voice, with **barge-in** and scrolling **live captions**, until **End**; a typed box is the
-  secondary no-mic fallback. It wires the foundations end to end: continuous capture + endpointing
+  Web: the live **call surface** `SessionPage` (#221, #393) — before the call the page is a calm hero:
+  the situation plus one primary **Start call** (End is not a peer yet). Tap it to talk continuously; the
+  coach replies in voice, with **barge-in** and scrolling **live captions**, the call state
+  (Ready/listening/thinking/speaking) leading and one **End & review** action. The typed box is the
+  fallback, not a competing field: hidden behind a secondary **Type instead** when voice is supported,
+  and shown automatically with a calm explanation only when voice is unsupported or the mic fails (the
+  session stays usable). It wires the foundations end to end: continuous capture + endpointing
   (`liveCapture.ts`, #219) → STT (`transcribe`, #207) → coach (`say` → `/api/session/say`, #220) →
   browser TTS out (`voiceOut.ts`'s `createVoiceOut`, wired to `window.speechSynthesis` in the
   coverage-excluded `browserVoiceOut.ts`). The browser audio/speech boundaries (`liveCapture.ts`,

@@ -313,10 +313,43 @@ describe("SessionPage", () => {
     await screen.findByText("Welcoming a guest to the table");
     expect(screen.queryByRole("button", { name: "Start call" })).toBeNull();
     expect(capture.start).not.toHaveBeenCalled();
+    expect(screen.getByText(/Voice isn't available on this device/)).toBeDefined();
 
     await user.type(screen.getByLabelText("Or type what you'd say"), "hi");
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("Go on.")).toBeDefined();
+  });
+
+  it("leads with one Start call and hides the typed box and End before a supported call begins", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    const { live } = fakeLive();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    // Voice-first: the one primary action is Start call — no competing typed box, no End peer.
+    expect(screen.getByRole("button", { name: "Start call" })).toBeDefined();
+    expect(screen.queryByLabelText("Or type what you'd say")).toBeNull();
+    expect(screen.queryByRole("button", { name: "End & review" })).toBeNull();
+  });
+
+  it("reveals the typed fallback behind a secondary 'Type instead' without losing the call", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedSay.mockResolvedValue({ say: "Sounds good." });
+    const { capture, live } = fakeLive();
+    const user = userEvent.setup();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    expect(screen.queryByLabelText("Or type what you'd say")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Type instead" }));
+    // Typing is now available; the voice call was never started (no mic capture opened).
+    expect(screen.getByLabelText("Or type what you'd say")).toBeDefined();
+    expect(capture.start).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Or type what you'd say"), "help yourself");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Sounds good.")).toBeDefined();
   });
 
   it("offers a calm land-the-plane nudge after the time-box, without cutting off the call", async () => {
