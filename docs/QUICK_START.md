@@ -126,20 +126,32 @@ ignores `.env`/`.env.*` and allows only `.env.example`.
 
 ### Coaching model (optional)
 
-The speaking coach runs **local converse + cloud judge** when configured, and falls back to a
-deterministic fake when it isn't — so no model is required for the loop or the `pnpm validate` gate.
+The speaking coach runs on a **local Ollama LLM** when configured, and falls back to a deterministic
+fake when it isn't — so no model is required for the loop or the `pnpm validate` gate. The one command
+that makes the local coach work end to end is:
 
-| Variable        | Default   | Purpose                                                                                |
-| --------------- | --------- | -------------------------------------------------------------------------------------- |
-| `COACH_API_KEY` | _(unset)_ | Cloud key for the strong tier (the judge). **Unset ⇒ coach on the fake.**              |
-| `COACH_*_TIER`  | see docs  | Per-call tier override (`cheap`/`strong`); defaults give local converse + cloud judge. |
+```powershell
+pnpm setup --coach   # installs Ollama (with a Y/N prompt), pulls the converse + 解释 models, writes the coach env to .env
+```
 
-To run the real coach, install [Ollama](https://ollama.com/download), pull the local model, set the
-key, and start the server:
+It installs Ollama itself (consent-gated — an explicit `Y`, or `--yes` for unattended), pulls the
+converse model (`llama3.1:8b`) and the 文言 explain model (`qwen2.5`), and writes `EXPLAIN_MODEL`,
+`COACH_CONVERSE_TIER=cheap`, and `COACH_ANALYZE_TIER=cheap` to `.env` — a **fully-local coach** (no
+cloud key, no data leaving the machine). Pick a different converse model with `COACH_MODEL`, or a
+different explain model with `EXPLAIN_MODEL`. After it finishes, restart the server.
+
+| Variable        | Default   | Purpose                                                             |
+| --------------- | --------- | ------------------------------------------------------------------- |
+| `COACH_*_TIER`  | see docs  | Per-call tier override (`cheap` = local Ollama / `strong` = cloud). |
+| `COACH_API_KEY` | _(unset)_ | Cloud key — only for the optional cloud judge (see below).          |
+
+**Optional cloud judge (manual):** to route the end-of-round _analyze_ (judge) call to a stronger
+cloud model instead of local, set `COACH_API_KEY` (never commit it) and `COACH_ANALYZE_TIER=strong`,
+then start the server:
 
 ```bash
-ollama pull llama3.1:8b
 export COACH_API_KEY=sk-...
+export COACH_ANALYZE_TIER=strong
 pnpm --filter @whetstone/server start
 ```
 
@@ -153,7 +165,8 @@ For a Chinese selection, the reader's lookup popover offers an optional **"AI �
 tab that sends the selected span plus its surrounding block to a **local** model and shows a short,
 clearly **AI-generated** contextual gloss — useful for classical-Chinese terms, 成語, allusions, and
 proper nouns the bundled dictionaries structurally miss. It reuses the same local Ollama daemon as the
-coach; point it at a 文言-strong model with `EXPLAIN_MODEL` (e.g. `qwen2.5`):
+coach and is wired by the same `pnpm setup --coach` (which pulls `EXPLAIN_MODEL`, default `qwen2.5`,
+and writes it to `.env`). To point it at a different 文言-strong model, pull it and set `EXPLAIN_MODEL`:
 
 ```bash
 ollama pull qwen2.5
