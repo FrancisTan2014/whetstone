@@ -458,8 +458,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `readerModel.ts` carries each block's stored mdast for direct, re-parse-free rendering (no Markdown
   round-trip; `blockToMarkdown` stays for the export path only);
   `readerNavigation.ts` holds the pure unit helpers (TOC labels, clamp, unit-by-entry-id, work-level
-  progress) and `readingPosition.ts` resolves the opening unit (deep-link `?block=` via the locator,
-  else saved position, else first); `ReaderToc.tsx` is the 目录 — a controlled,
+  progress, `firstSubstantiveUnitIndex`) and `readingPosition.ts` resolves the opening unit (deep-link
+  `?block=` via the locator, else saved position, else the **first substantive unit**, skipping
+  front-matter-like units that carry no substantive text — `hasSubstantiveText` on the structure DTO,
+  computed server-side; #394); a de-emphasized `FrontMatterNotice.tsx` renders a "Start reading"
+  affordance when the reader is intentionally on front matter; `ReaderToc.tsx` is the 目录 — a controlled,
   dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
   sidebar). When the structure carries a nav-derived `tableOfContents` (#379) it renders the **authored
   nav tree** as a **collapsible hierarchy** (#380) — indented by `depth` (as `data-depth`/`--toc-depth`),

@@ -2738,8 +2738,8 @@ describe("ReaderPage unit reducers", () => {
 describe("ReaderPage unit reducers (viewing)", () => {
   const reducerStructure: ReaderStructure = {
     units: [
-      { blockCount: 1, entryId: "u-1", orderIndex: 0 },
-      { blockCount: 2, entryId: "u-2", orderIndex: 1, title: "Two" }
+      { blockCount: 1, entryId: "u-1", hasSubstantiveText: true, orderIndex: 0 },
+      { blockCount: 2, entryId: "u-2", hasSubstantiveText: true, orderIndex: 1, title: "Two" }
     ],
     workEntryId: "work-1"
   };

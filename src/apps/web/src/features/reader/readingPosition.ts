@@ -1,4 +1,4 @@
-import { unitIndexForEntryId } from "./readerNavigation";
+import { firstSubstantiveUnitIndex, unitIndexForEntryId } from "./readerNavigation";
 import type { ReaderStructure } from "./readerModel";
 
 // Reading position is now durable server state (persisted per user + work — see
@@ -26,8 +26,10 @@ export type LocateBlockUnit = (blockEntryId: string) => Promise<string | undefin
 // resolved through the locator endpoint and the reader scrolls to the block; a locator miss (or a
 // unit no longer in the structure) falls through. Otherwise a saved position restores its unit and
 // scrolls to its block anchor when that unit still exists (no anchor = top of the unit); otherwise
-// the first unit opens. A saved unit that no longer exists (the work changed) falls back to the
-// first unit; a missing anchor block simply no-ops at scroll time, so a stale anchor never throws.
+// the reader opens the first substantive unit (#394), skipping leading cover/front-matter units so
+// they do not dominate the first impression, and falling back to the first unit when every unit is
+// front matter. A saved unit that no longer exists (the work changed) falls back the same way; a
+// missing anchor block simply no-ops at scroll time, so a stale anchor never throws.
 export async function resolveOpening(
   structure: ReaderStructure,
   options: {
@@ -60,5 +62,5 @@ export async function resolveOpening(
     }
   }
 
-  return { unitIndex: 0 };
+  return { unitIndex: firstSubstantiveUnitIndex(structure) ?? 0 };
 }

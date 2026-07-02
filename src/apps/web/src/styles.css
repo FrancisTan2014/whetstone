@@ -888,6 +888,42 @@ code {
   padding-block-start: 1.5rem;
 }
 
+/* Front-matter notice (#394): de-emphasized banner shown when the reader sits on a cover/front-matter
+   unit, offering a jump to the first substantive unit so front matter never traps the reader. */
+.readerFrontMatterNotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-block-end: 2rem;
+  padding: 0.75rem 1rem;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: 0.5rem;
+}
+
+.readerFrontMatterNoticeLabel {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.readerFrontMatterNoticeStart {
+  min-height: 44px;
+  padding: 0.5rem 0.9rem;
+  background: transparent;
+  border: 1px solid var(--color-accent);
+  border-radius: 0.5rem;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
 .readerPagerSpacer {
   flex: 0 0 auto;
 }

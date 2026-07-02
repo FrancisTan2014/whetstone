@@ -72,6 +72,21 @@ describe("buildReaderStructure", () => {
     expect(structure.units.map((unit) => unit.blockCount)).toEqual([1, 2]);
   });
 
+  it("maps hasSubstantiveText, defaulting an absent flag to substantive (#394)", () => {
+    const mixed: WorkStructureDto = {
+      readingUnits: [
+        { blockCount: 1, entryId: toEntryId("u-cover"), hasSubstantiveText: false, orderIndex: 0 },
+        { blockCount: 2, entryId: toEntryId("u-body"), hasSubstantiveText: true, orderIndex: 1 },
+        { blockCount: 1, entryId: toEntryId("u-legacy"), orderIndex: 2 }
+      ],
+      workEntryId: toEntryId("work-1")
+    };
+
+    const structure = buildReaderStructure(mixed);
+
+    expect(structure.units.map((unit) => unit.hasSubstantiveText)).toEqual([false, true, true]);
+  });
+
   it("includes a unit title when present and omits it otherwise", () => {
     const structure = buildReaderStructure(unorderedStructure);
 
