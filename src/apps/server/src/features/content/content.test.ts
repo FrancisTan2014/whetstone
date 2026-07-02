@@ -51,6 +51,7 @@ type TestContext = Readonly<{
 type PmNode = Readonly<{
   attrs?: Record<string, unknown>;
   content?: ReadonlyArray<PmNode>;
+  marks?: ReadonlyArray<Record<string, unknown>>;
   type: string;
 }>;
 
@@ -1486,7 +1487,11 @@ describe("work-scoped reference foundation (#366)", () => {
             '<p id="shared">Chapter one anchor.</p>' +
             '<p>See the note<a data-type="noteref" href="notes.xhtml#note1">1</a>.</p>' +
             // An inert marker with no resolvable target (no `#`, no `data-target`): it stays unstamped.
-            '<p>No target<a data-type="noteref" href="endnotes.html">x</a>.</p>',
+            '<p>No target<a data-type="noteref" href="endnotes.html">x</a>.</p>' +
+            // Reference links (#368): a cross-file xref, a same-file `#id` link, and an external link.
+            '<p>Read <a data-type="xref" href="notes.xhtml#note1">the notes</a>, ' +
+            '<a href="#shared">this anchor</a>, or ' +
+            '<a href="https://example.com">the web</a>.</p>',
           images: [],
           sourceFile: "text/ch01.xhtml"
         },
@@ -1626,6 +1631,52 @@ describe("work-scoped reference foundation (#366)", () => {
     // The inert marker (no resolvable target) is left unstamped: its `targetSourceFile` stays null.
     const inert = markers.find((marker) => marker.attrs?.["refId"] === null);
     expect(inert?.attrs?.["targetSourceFile"] ?? null).toBeNull();
+  });
+
+  it("stamps same-work link marks with the resolved target source file, leaving external links inert (#368)", async () => {
+    const workEntryId = await ingestRefs();
+
+    const rows = await context.db
+      .select()
+      .from(docBlocks)
+      .where(eq(docBlocks.workEntryId, workEntryId));
+
+    // Link marks live in a text node's `marks` array, so gather them by walking marks (not node attrs).
+    const linkAttrs: Array<Record<string, unknown>> = [];
+    const collect = (node: PmNode): void => {
+      for (const mark of (node.marks as Array<Record<string, unknown>> | undefined) ?? []) {
+        if (mark["type"] === "link") {
+          linkAttrs.push(mark["attrs"] as Record<string, unknown>);
+        }
+      }
+      for (const child of node.content ?? []) {
+        collect(child);
+      }
+    };
+    for (const row of rows) {
+      collect(row.nodeJson as PmNode);
+    }
+
+    // The cross-file xref resolves its file part against ch01 -> the notes unit's source file.
+    const xref = linkAttrs.find((attrs) => attrs["kind"] === "xref");
+    expect(xref).toMatchObject({
+      anchor: "note1",
+      inert: false,
+      refFile: "notes.xhtml",
+      targetSourceFile: "text/notes.xhtml"
+    });
+
+    // The same-file `#shared` link has no file part, so it resolves to ch01's own source file.
+    const sameFile = linkAttrs.find((attrs) => attrs["anchor"] === "shared");
+    expect(sameFile).toMatchObject({
+      inert: false,
+      refFile: null,
+      targetSourceFile: "text/ch01.xhtml"
+    });
+
+    // The external link stays inert with no resolved target — it never navigates within the work.
+    const external = linkAttrs.find((attrs) => attrs["inert"] === true);
+    expect(external?.["targetSourceFile"] ?? null).toBeNull();
   });
 
   it("returns 404 for the anchors of an unknown work", async () => {

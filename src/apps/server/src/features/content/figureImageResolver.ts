@@ -121,6 +121,40 @@ function stampFootnoteTargets(
   }
 }
 
+// Stamp every same-work `link` mark in a chapter's blocks with `targetSourceFile`: the mark's
+// `refFile` (the file part of a cross-file href, null for a same-file `#id`) resolved against THIS
+// chapter's source file (#366), reusing the footnote marker's resolution — one path, no second
+// resolver. Marks live in a text node's `marks` array, so this walks inline marks (not node attrs).
+// An external/inert link is skipped, keeping its null target so it never navigates.
+function stampLinkTargets(blocks: ReadonlyArray<IngestedBlock>, chapterSourceFile: string): void {
+  const links: Array<Record<string, unknown>> = [];
+  const collect = (node: DocumentNodeJSON): void => {
+    // `link` is the document schema's only mark (#368), so every mark on a text node is a link — no
+    // per-mark type guard is needed (and an unreachable one would break exact branch coverage).
+    for (const mark of node.marks ?? []) {
+      links.push(mark);
+    }
+    for (const child of node.content ?? []) {
+      collect(child);
+    }
+  };
+  for (const block of blocks) {
+    collect(block.node);
+  }
+
+  for (const link of links) {
+    // Link marks always carry attrs (the parse-rule kind/anchor/refFile/inert), so reading is unconditional.
+    const attrs = link["attrs"] as Record<string, unknown>;
+
+    if (attrs["inert"] === true) {
+      continue;
+    }
+
+    const refFile = typeof attrs["refFile"] === "string" ? attrs["refFile"] : null;
+    link["attrs"] = { ...attrs, targetSourceFile: resolveRelativeHref(chapterSourceFile, refFile) };
+  }
+}
+
 // Resolve one decomposed block's figure image (mdast path). Text blocks pass through with null figure
 // columns; a figure stores its image (content-addressed) and carries the id + alt, or degrades to
 // caption-only / drops when it has neither a storable image nor a caption.
@@ -185,6 +219,9 @@ export async function resolveChapters(
     // Stamp each footnote/endnote marker's resolved target source file (#366), so a cross-file endnote
     // resolves to the chapter that owns it.
     stampFootnoteTargets(ingested.blocks, chapter.sourceFile);
+    // Stamp each same-work link mark's resolved target source file (#368), reusing the same resolution
+    // so an inline cross-reference jumps across chapters/files; external/inert links are left untouched.
+    stampLinkTargets(ingested.blocks, chapter.sourceFile);
 
     for (const block of decomposed.blocks) {
       const resolved = await resolveBlock(block, imageBySrc, store);
