@@ -97,6 +97,12 @@ export type WorkContentDto = Readonly<{
 export type ReadingUnitStructureDto = Readonly<{
   blockCount: number;
   entryId: EntryId;
+  // Whether the unit carries substantive selectable text — at least one non-figure block with
+  // non-whitespace text. Conservatively false for a front-matter-like unit (a cover/plate with only
+  // figure/image blocks and no body text), so the reader can open a new work at the first substantive
+  // unit rather than its cover (#394). Absent on a legacy payload; the reader then treats the unit as
+  // substantive (fail safe — never hide real content).
+  hasSubstantiveText?: boolean;
   orderIndex: number;
   sourceFile?: string;
   title?: string;

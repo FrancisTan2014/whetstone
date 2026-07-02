@@ -18,6 +18,16 @@ export function unitIndexForEntryId(
   return index === -1 ? undefined : index;
 }
 
+// The index of the first reading unit that carries substantive selectable text (#394), or undefined
+// when every unit is front-matter-like (a cover/plate with no body text). A newly opened work with no
+// saved position starts here so its cover does not dominate the first impression; the undefined case
+// lets the caller fall back to the first unit, so the reader always opens something.
+export function firstSubstantiveUnitIndex(structure: ReaderStructure): number | undefined {
+  const index = structure.units.findIndex((unit) => unit.hasSubstantiveText);
+
+  return index === -1 ? undefined : index;
+}
+
 // Clamp an externally supplied unit index (a TOC selection) into the valid range; an empty
 // work clamps to 0.
 export function clampUnitIndex(structure: ReaderStructure, index: number): number {

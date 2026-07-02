@@ -1372,6 +1372,34 @@ describe("EPUB ingestion routes", () => {
     expect(body.readingUnits.every((unit) => !("blocks" in unit))).toBe(true);
   });
 
+  it("flags a figure-only front-matter unit as lacking substantive text (#394)", async () => {
+    // Chapter 1 is a bare cover image (a figure block, no selectable text) -> front matter;
+    // chapter 2 has a heading and a paragraph -> substantive. The per-unit hasSubstantiveText
+    // signal lets the reader open the work at the first substantive unit.
+    const png = pngBytes();
+    epubResponder = async () => ({
+      chapters: [
+        {
+          html: '<img src="img/cover.png" alt=""/>',
+          images: [{ bytes: png, contentType: "image/png", src: "img/cover.png" }]
+        },
+        { html: "<h1>Chapter One</h1><p>The body begins here.</p>", images: [] }
+      ],
+      metadata: { author: "Anon", language: "en", title: "Cover Then Body" }
+    });
+
+    const ingestResponse = await ingestEpub(Buffer.from("epub-front-matter"));
+    expect(ingestResponse.statusCode).toBe(201);
+    const workEntryId = (ingestResponse.json() as IngestEpubResultDto).content.workEntryId;
+
+    const response = await getStructure(workEntryId);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as WorkStructureDto;
+    expect(body.readingUnits.map((unit) => unit.blockCount)).toEqual([1, 2]);
+    expect(body.readingUnits.map((unit) => unit.hasSubstantiveText)).toEqual([false, true]);
+  });
+
   it("returns 404 for the structure of an unknown work", async () => {
     const response = await getStructure("missing-work");
 

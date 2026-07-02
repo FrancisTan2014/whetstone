@@ -11,7 +11,7 @@ import type {
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { and, asc, count, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -190,6 +190,11 @@ export async function loadWorkStructure(
     .select({
       blockCount: count(blocks.entryId),
       entryId: readingUnits.entryId,
+      // A unit carries substantive text when any non-figure block has non-whitespace plaintext; a
+      // cover/plate unit of only figure blocks (or empty text) is false. `bool_or` over the unit's
+      // blocks is non-null here because only units with at least one block survive the blockCount
+      // filter below (#394).
+      hasSubstantiveText: sql<boolean>`bool_or(${blocks.blockType} <> 'figure' and btrim(${blocks.plaintext}) <> '')`,
       orderIndex: readingUnits.orderIndex,
       sourceFile: readingUnits.sourceFile,
       title: readingUnits.title
@@ -285,11 +290,16 @@ function toTocEntryDto(
 }
 
 function toStructureDto(
-  unit: ReadingUnitRow & { blockCount: number; sourceFile: string | null }
+  unit: ReadingUnitRow & {
+    blockCount: number;
+    hasSubstantiveText: boolean;
+    sourceFile: string | null;
+  }
 ): ReadingUnitStructureDto {
   const base = {
     blockCount: unit.blockCount,
     entryId: toEntryId(unit.entryId),
+    hasSubstantiveText: unit.hasSubstantiveText,
     orderIndex: unit.orderIndex
   };
   const withTitle = unit.title === null ? base : { ...base, title: unit.title };

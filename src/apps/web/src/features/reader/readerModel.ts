@@ -55,6 +55,10 @@ export type ReaderUnit = Readonly<{
 export type ReaderUnitMeta = Readonly<{
   blockCount: number;
   entryId: string;
+  // Whether the unit carries substantive selectable text (#394). False for a front-matter-like unit
+  // (a cover/plate of only figure blocks), so the reader opens a new work at the first substantive
+  // unit and de-emphasizes front matter. Defaults to true when the structure DTO omits it (fail safe).
+  hasSubstantiveText: boolean;
   orderIndex: number;
   sourceFile?: string;
   title?: string;
@@ -188,7 +192,13 @@ function toReaderBlock(block: BlockDto): ReaderBlock {
 }
 
 function toReaderUnitMeta(unit: ReadingUnitStructureDto): ReaderUnitMeta {
-  const base = { blockCount: unit.blockCount, entryId: unit.entryId, orderIndex: unit.orderIndex };
+  const base = {
+    blockCount: unit.blockCount,
+    entryId: unit.entryId,
+    // A legacy payload without the flag is treated as substantive so real content is never skipped.
+    hasSubstantiveText: unit.hasSubstantiveText !== false,
+    orderIndex: unit.orderIndex
+  };
   const withTitle = unit.title === undefined ? base : { ...base, title: unit.title };
 
   return unit.sourceFile === undefined ? withTitle : { ...withTitle, sourceFile: unit.sourceFile };

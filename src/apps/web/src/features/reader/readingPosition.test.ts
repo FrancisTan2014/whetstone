@@ -5,10 +5,19 @@ import { resolveOpening, type LocateBlockUnit } from "./readingPosition";
 
 const structure: ReaderStructure = {
   units: [
-    { blockCount: 0, entryId: "u-1", orderIndex: 0, title: "One" },
-    { blockCount: 0, entryId: "u-2", orderIndex: 1, title: "Two" }
+    { blockCount: 1, entryId: "u-1", hasSubstantiveText: true, orderIndex: 0, title: "One" },
+    { blockCount: 1, entryId: "u-2", hasSubstantiveText: true, orderIndex: 1, title: "Two" }
   ],
   workEntryId: "work-1"
+};
+
+// A work whose first unit is front matter (a cover/plate with no substantive text) followed by body.
+const withFrontMatter: ReaderStructure = {
+  units: [
+    { blockCount: 1, entryId: "cover", hasSubstantiveText: false, orderIndex: 0, title: "Cover" },
+    { blockCount: 3, entryId: "body", hasSubstantiveText: true, orderIndex: 1, title: "One" }
+  ],
+  workEntryId: "work-fm"
 };
 
 // A locator stub resolving the listed blocks to their owning unit; any other block is unknown.
@@ -75,6 +84,35 @@ describe("resolveOpening", () => {
 
   it("opens the first unit when there is no deep link or saved position", async () => {
     const plan = await resolveOpening(structure, { locateBlockUnit: locator({}) });
+
+    expect(plan).toEqual({ unitIndex: 0 });
+  });
+
+  it("skips leading front matter and opens the first substantive unit (#394)", async () => {
+    const plan = await resolveOpening(withFrontMatter, { locateBlockUnit: locator({}) });
+
+    expect(plan).toEqual({ unitIndex: 1 });
+  });
+
+  it("falls back to the first unit when every unit is front matter (#394)", async () => {
+    const allFrontMatter: ReaderStructure = {
+      units: [
+        { blockCount: 1, entryId: "cover", hasSubstantiveText: false, orderIndex: 0 },
+        { blockCount: 1, entryId: "plate", hasSubstantiveText: false, orderIndex: 1 }
+      ],
+      workEntryId: "work-fm-only"
+    };
+
+    const plan = await resolveOpening(allFrontMatter, { locateBlockUnit: locator({}) });
+
+    expect(plan).toEqual({ unitIndex: 0 });
+  });
+
+  it("still honours a saved front-matter position over the first substantive unit (#394)", async () => {
+    const plan = await resolveOpening(withFrontMatter, {
+      locateBlockUnit: locator({}),
+      savedPosition: { unitEntryId: "cover" }
+    });
 
     expect(plan).toEqual({ unitIndex: 0 });
   });

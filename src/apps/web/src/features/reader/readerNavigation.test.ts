@@ -4,6 +4,7 @@ import type { ReaderStructure, ReaderTocEntry, ReaderUnitMeta } from "./readerMo
 import {
   activeTocEntryId,
   clampUnitIndex,
+  firstSubstantiveUnitIndex,
   resolveTocEntryNavigation,
   unitIndexForEntryId,
   unitTocLabel,
@@ -13,8 +14,14 @@ import { buildAnchorIndex, type AnchorIndex } from "./referenceResolver";
 
 const structure: ReaderStructure = {
   units: [
-    { blockCount: 2, entryId: "u-1", orderIndex: 0, title: "Chapter One" },
-    { blockCount: 1, entryId: "u-2", orderIndex: 1 }
+    {
+      blockCount: 2,
+      entryId: "u-1",
+      hasSubstantiveText: true,
+      orderIndex: 0,
+      title: "Chapter One"
+    },
+    { blockCount: 1, entryId: "u-2", hasSubstantiveText: true, orderIndex: 1 }
   ],
   workEntryId: "work-1"
 };
@@ -41,6 +48,38 @@ describe("clampUnitIndex", () => {
 
   it("clamps to 0 for an empty work", () => {
     expect(clampUnitIndex(emptyStructure, 4)).toBe(0);
+  });
+});
+
+describe("firstSubstantiveUnitIndex", () => {
+  it("returns the first unit index when the first unit has substantive text", () => {
+    expect(firstSubstantiveUnitIndex(structure)).toBe(0);
+  });
+
+  it("skips leading front matter to the first substantive unit (#394)", () => {
+    const withFrontMatter: ReaderStructure = {
+      units: [
+        { blockCount: 1, entryId: "cover", hasSubstantiveText: false, orderIndex: 0 },
+        { blockCount: 1, entryId: "plate", hasSubstantiveText: false, orderIndex: 1 },
+        { blockCount: 4, entryId: "body", hasSubstantiveText: true, orderIndex: 2 }
+      ],
+      workEntryId: "work-fm"
+    };
+
+    expect(firstSubstantiveUnitIndex(withFrontMatter)).toBe(2);
+  });
+
+  it("returns undefined when every unit is front matter (#394)", () => {
+    const allFrontMatter: ReaderStructure = {
+      units: [{ blockCount: 1, entryId: "cover", hasSubstantiveText: false, orderIndex: 0 }],
+      workEntryId: "work-fm-only"
+    };
+
+    expect(firstSubstantiveUnitIndex(allFrontMatter)).toBeUndefined();
+  });
+
+  it("returns undefined for an empty work", () => {
+    expect(firstSubstantiveUnitIndex(emptyStructure)).toBeUndefined();
   });
 });
 
@@ -76,12 +115,19 @@ const tocStructure: ReaderStructure = {
     {
       blockCount: 3,
       entryId: "u-1",
+      hasSubstantiveText: true,
       orderIndex: 0,
       sourceFile: "OEBPS/chap1.xhtml",
       title: "Chapter One"
     },
-    { blockCount: 2, entryId: "u-2", orderIndex: 1, sourceFile: "OEBPS/chap2.xhtml" },
-    { blockCount: 1, entryId: "u-3", orderIndex: 2 }
+    {
+      blockCount: 2,
+      entryId: "u-2",
+      hasSubstantiveText: true,
+      orderIndex: 1,
+      sourceFile: "OEBPS/chap2.xhtml"
+    },
+    { blockCount: 1, entryId: "u-3", hasSubstantiveText: true, orderIndex: 2 }
   ],
   workEntryId: "work-1"
 };

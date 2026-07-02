@@ -11,6 +11,7 @@ function structure(count: number): ReaderStructure {
     units: Array.from({ length: count }, (_, index) => ({
       blockCount: 1,
       entryId: `u-${index}`,
+      hasSubstantiveText: true,
       orderIndex: index,
       title: `Chapter ${index + 1}`
     })),

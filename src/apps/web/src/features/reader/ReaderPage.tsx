@@ -58,6 +58,7 @@ import { resolveOpening } from "./readingPosition";
 import { readingEntranceMotion } from "./readingEntrance";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { useReadingPositionWriter, type SaveReadingPosition } from "./useReadingPositionWriter";
+import { FrontMatterNotice } from "./FrontMatterNotice";
 import { ReaderToc } from "./ReaderToc";
 import { ReadingHeader } from "./ReadingHeader";
 import { readingMeasureRem } from "./readingMeasure";
@@ -1227,6 +1228,11 @@ function renderViewing(
           transition={entrance.transition}
         >
           <div className="reading-surface readerPaper" lang={chrome.language}>
+            <FrontMatterNotice
+              activeUnitIndex={activeUnitIndex}
+              onSelectUnit={onSelectUnit}
+              structure={structure}
+            />
             {renderActiveUnit(structure, activeUnit, workEntryId, onRetryUnit, handlers)}
             <ChapterPager
               activeUnitIndex={activeUnitIndex}
