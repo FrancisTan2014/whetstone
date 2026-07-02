@@ -305,9 +305,14 @@ Staged by difficulty and value:
   whole-book case (史记) without manual typing.** Images are extracted into **figure blocks** from EPUB
   `<figure>` structure (image + `<figcaption>`): the caption becomes the figure's caption, never a stray
   heading. A bare `<img>` becomes an image-only figure; v0 does not guess captions from neighboring text.
-- **Next stage — PDF / scanned**: deferred. Handled by an **isolated Python ingestion worker**
-  (document-AI + CJK OCR) behind the same normalized contract, opened only when its fidelity gain is
-  worth the added runtime. Not part of v0. (See future direction.)
+- **v0 — PDF**: `.pdf` upload, **contextual to a Work** (a PDF has no reliable title/author, so it fills
+  a Work you create/select — unlike EPUB, which self-creates from OPF metadata). An **isolated Python
+  doc-AI worker** (Docling, MIT — permissive only) converts a **born-digital** PDF to Markdown one-shot,
+  ingested through the same Markdown → blocks pipeline (a PDF ≡ the equivalent `.md`); **scanned** PDFs
+  get an **OCR pre-pass** (OCRmyPDF/Tesseract) first, with Docling's own OCR off so the fragile
+  OCR-engine dependency never sits on the born-digital path. The lane is optional — a deterministic fake
+  keeps the build gate green with no Python — and a PDF that yields no text is reported as unsupported
+  content, never a crash.
 
 Re-ingestion is idempotent: the original file's sha256 is recorded; re-upload replaces the work's
 blocks via the stable-id diff above, inside a transaction.
@@ -691,7 +696,6 @@ calm: one restrained front door, never a metrics dashboard, streaks, or gamifica
 - No voice or audio features **in the reader**; spoken practice (Whisper STT in / browser TTS out) lives
   in the active language module, while the reader itself stays text-only.
 - No daily routine; no complicated settings.
-- No PDF/scanned ingestion in v0 (it is the next stage, not a permanent exclusion).
 - No remote (`http`) images, SVG, or manual/Markdown image upload in v0: figure support is **EPUB-only**,
   served from bytes extracted at ingestion. The figure **image** is display-only and not annotatable (you can
   enlarge it in a lightbox to view, but not pan, pinch-zoom, or step through a gallery — those are deferred);
