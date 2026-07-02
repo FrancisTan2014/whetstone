@@ -16,9 +16,11 @@ The Tiptap/ProseMirror schema for whetstone content (PRODUCT "Architecture: the 
 bedrock"). Pure and Node-runnable (no DOM; HTML parsing/rendering belong to the ingestion/reader
 slices). Public surface is `src/index.ts`. Units: `nodes.ts` (Tiptap `Node.create` specs for doc,
 text, prose blocks, nesting lists, tables, figures, definition lists, callout, footnote marker/target,
-and a raw-HTML `unknown` fallback — the `image` node carries an `imageResourceId` attr (default null)
-so a resolved EPUB image can be referenced by the reader; `documentExtensions` couples the specs with
-the UniqueID id attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
+and a raw-HTML `unknown` fallback, plus the `link` **mark** — the schema's only content mark (#368),
+carrying a same-work cross-reference's `kind`/`anchor`/`refFile`/`targetSourceFile`/`inert` inline on
+the text run; the `image` node carries an `imageResourceId` attr (default null)
+so a resolved EPUB image can be referenced by the reader; `documentExtensions` couples the node + mark
+specs with the UniqueID id attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
 (`parseDocument`/`serializeDocument`/`isValidDocument`/`assignNodeIds` JSON round-trip + validation,
 `DocumentValidationError`). Stable node ids use Tiptap UniqueID's server-side generator. Tests
 colocated. Invariant: depends on nothing outward; no UI, ingestion, or editing here.
@@ -424,8 +426,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   resolves internal references **work-scoped** through the work anchor index (`referenceResolver.ts`
   builds `resolve(target)` from `fetchWorkAnchorIndex`; `onActivateAnchor` first tries a same-unit DOM
   anchor, then resolves `(sourceFile, anchor)` → block → the existing cross-unit `jumpToBlock`, so
-  footnote/endnote markers and other in-book references now navigate **across chapters/files**, #366 —
-  visible inline `<a>` link rendering is deferred to #368), and prints
+  footnote/endnote markers **and same-work `<a>` cross-references** now navigate **across
+  chapters/files**, #366/#368 — a same-work `<a>` parses to the document schema's `link` **mark**
+  (`nodes.ts`; kept inline so #340 CJK spacing survives, `见周髀之术`), stamped with a resolved
+  `targetSourceFile` at ingest like a footnote (`figureImageResolver.ts`), and rendered by
+  `PmDocument.tsx`'s `link` mark mapping as an inline jump control; an external/cross-work link is
+  ingested `inert` and rendered as styled non-navigating text, never a live `<a href>`), and prints
   the `unknown` fallback as inert escaped text (never `dangerouslySetInnerHTML`, no fetch). It reuses the
   `.reader` typography/theme classes; `PmDocument.tokens.ts` holds its presentational
   heading-tag/callout-kind class maps. A Markdown work with no PM blocks falls back to the legacy mdast
