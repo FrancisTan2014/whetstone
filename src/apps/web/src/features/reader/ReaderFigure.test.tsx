@@ -625,9 +625,13 @@ describe("ReaderFigure image lightbox zoom + pan (#381)", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    // Re-open and dismiss via the close button.
+    // Re-open and confirm it reset to fit (#381 regression: zoom/pan must not persist across reopen),
+    // then dismiss via the close button.
     await user.click(await screen.findByRole("button", { name: "View larger: A dot" }));
     const reopened = await screen.findByRole("dialog", { name: "A dot" });
+    const reopenedImage = within(reopened).getByAltText("A dot");
+    expect(reopenedImage.getAttribute("data-zoom")).toBe("1");
+    expect(reopenedImage.style.transform).toBe("translate(0px, 0px) scale(1)");
     await user.click(within(reopened).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });

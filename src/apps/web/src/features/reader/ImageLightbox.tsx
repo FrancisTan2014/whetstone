@@ -130,8 +130,20 @@ export function ImageLightbox({
 
   const zoomedIn = zoomState.scale > FIT_SCALE;
 
+  // The viewer always (re)opens at fit. `zoomState` and the gesture refs live on this always-mounted
+  // component (the trigger stays rendered), so without this Radix leaves them intact across a close —
+  // reopening the same figure would show the previous zoom/pan. Reset them whenever the dialog opens or
+  // closes so every open starts at the fit-to-viewport baseline (#381).
+  const handleOpenChange = (): void => {
+    setZoomState(initialZoomState);
+    setInteracting(false);
+    pointersRef.current.clear();
+    pinchRef.current = 0;
+    panStartRef.current = null;
+  };
+
   return (
-    <Dialog.Root>
+    <Dialog.Root onOpenChange={handleOpenChange}>
       <Dialog.Trigger asChild>
         <button aria-label={triggerLabel} className="readerFigureTrigger" type="button">
           <img
