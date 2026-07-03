@@ -5,7 +5,7 @@ import { workLanguageLabels, type WorkType } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { isMarkdownFile, isPdfFile } from "../../shared/files/fileType";
+import { detectUploadKind } from "../../shared/files/fileType";
 import { fetchWorkContent, fetchWorks, ingestMarkdown, ingestPdf } from "./contentApi";
 import { summarizeWorkContent, workContentSummaryLabel } from "./workContentSummary";
 
@@ -141,11 +141,12 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
       return;
     }
 
-    const pdf = isPdfFile(file);
-    if (!pdf && !isMarkdownFile(file)) {
+    const kind = detectUploadKind(file);
+    if (kind !== "pdf" && kind !== "markdown") {
       setError(unsupportedFileMessage);
       return;
     }
+    const pdf = kind === "pdf";
 
     setUploadBusy(true);
     setError(undefined);

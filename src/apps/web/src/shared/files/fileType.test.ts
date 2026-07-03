@@ -1,50 +1,38 @@
 import { describe, expect, it } from "vitest";
 
-import { isEpubFile, isMarkdownFile, isPdfFile, stripFileExtension } from "./fileType";
+import { detectUploadKind, stripFileExtension } from "./fileType";
 
 function fileNamed(name: string, type = ""): File {
   return new File([new Uint8Array([1])], name, { type });
 }
 
-describe("isEpubFile", () => {
-  it("matches on the EPUB MIME type regardless of extension", () => {
-    expect(isEpubFile(fileNamed("book", "application/epub+zip"))).toBe(true);
+describe("detectUploadKind", () => {
+  it("classifies each recognized MIME type regardless of extension", () => {
+    expect(detectUploadKind(fileNamed("book", "application/epub+zip"))).toBe("epub");
+    expect(detectUploadKind(fileNamed("scan", "application/pdf"))).toBe("pdf");
+    expect(detectUploadKind(fileNamed("notes", "text/markdown"))).toBe("markdown");
   });
 
-  it("matches on a .epub extension when the browser omits the type", () => {
-    expect(isEpubFile(fileNamed("BOOK.EPUB"))).toBe(true);
+  it("falls back to the extension when the browser omits the type", () => {
+    expect(detectUploadKind(fileNamed("BOOK.EPUB"))).toBe("epub");
+    expect(detectUploadKind(fileNamed("Report.PDF"))).toBe("pdf");
+    expect(detectUploadKind(fileNamed("README.MD"))).toBe("markdown");
   });
 
-  it("rejects a non-EPUB file", () => {
-    expect(isEpubFile(fileNamed("notes.md", "text/markdown"))).toBe(false);
-  });
-});
-
-describe("isPdfFile", () => {
-  it("matches on the PDF MIME type regardless of extension", () => {
-    expect(isPdfFile(fileNamed("scan", "application/pdf"))).toBe(true);
+  it("prefers the MIME type over a conflicting extension", () => {
+    // A real PDF mislabelled with a .epub name must route by its content type, not the extension.
+    expect(detectUploadKind(fileNamed("book.epub", "application/pdf"))).toBe("pdf");
+    // ...and an actual EPUB named .pdf routes as EPUB.
+    expect(detectUploadKind(fileNamed("report.pdf", "application/epub+zip"))).toBe("epub");
   });
 
-  it("matches on a .pdf extension when the browser omits the type", () => {
-    expect(isPdfFile(fileNamed("Report.PDF"))).toBe(true);
+  it("falls back to the extension when the reported MIME type is unrecognized", () => {
+    expect(detectUploadKind(fileNamed("Report.pdf", "application/octet-stream"))).toBe("pdf");
   });
 
-  it("rejects a non-PDF file", () => {
-    expect(isPdfFile(fileNamed("book.epub", "application/epub+zip"))).toBe(false);
-  });
-});
-
-describe("isMarkdownFile", () => {
-  it("matches on the Markdown MIME type regardless of extension", () => {
-    expect(isMarkdownFile(fileNamed("notes", "text/markdown"))).toBe(true);
-  });
-
-  it("matches on a .md extension when the browser omits the type", () => {
-    expect(isMarkdownFile(fileNamed("README.MD"))).toBe(true);
-  });
-
-  it("rejects a non-Markdown file", () => {
-    expect(isMarkdownFile(fileNamed("scan.pdf", "application/pdf"))).toBe(false);
+  it("returns undefined for an unsupported file", () => {
+    expect(detectUploadKind(fileNamed("photo.png", "image/png"))).toBeUndefined();
+    expect(detectUploadKind(fileNamed("notes.txt"))).toBeUndefined();
   });
 });
 

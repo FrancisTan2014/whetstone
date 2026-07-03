@@ -505,6 +505,19 @@ describe("AdminLibraryPage", () => {
     expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
+  it("routes by MIME type first: a PDF mislabelled .epub takes the PDF confirm path", async () => {
+    const user = await renderReady();
+
+    // Real content type is PDF even though the filename ends in .epub — MIME must win, so this opens
+    // the PDF/Markdown confirm sheet rather than ingesting directly as an EPUB.
+    const file = new File([new Uint8Array([1])], "mislabelled.epub", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("mislabelled");
+    expect(mockedIngestEpub).not.toHaveBeenCalled();
+  });
+
   it("prefills the Add-work sheet from a Markdown filename, then creates and ingests it", async () => {
     const onManageContent = vi.fn();
     mockedCreateWork.mockResolvedValue(essayWorkItem);
@@ -584,7 +597,7 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Imported “Report”.")).toBeDefined();
   });
 
-  it("surfaces the invalid-PDF message when the worker cannot read the PDF", async () => {
+  it("surfaces the invalid-PDF message but still opens the new Work for retry", async () => {
     const onManageContent = vi.fn();
     mockedCreateWork.mockResolvedValue(essayWorkItem);
     mockedIngestPdf.mockResolvedValue({ status: "invalid_pdf" });
@@ -598,7 +611,10 @@ describe("AdminLibraryPage", () => {
     expect(
       await screen.findByText("We couldn’t read this PDF. Please try a different file.")
     ).toBeDefined();
-    expect(onManageContent).not.toHaveBeenCalled();
+    // The Work was created, so it must remain visible and retryable from Manage content.
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
   });
 
   it("surfaces the empty-content message when a PDF has no readable text", async () => {
@@ -635,10 +651,11 @@ describe("AdminLibraryPage", () => {
     ).toBeDefined();
   });
 
-  it("shows a generic error toast when the upload ingest throws", async () => {
+  it("shows a generic error toast but still opens the new Work when the ingest throws", async () => {
+    const onManageContent = vi.fn();
     mockedCreateWork.mockResolvedValue(essayWorkItem);
     mockedIngestPdf.mockRejectedValue(new Error("boom"));
-    const user = await renderReady();
+    const user = await renderReady(onManageContent);
 
     const file = new File([new Uint8Array([1])], "doc.pdf", { type: "application/pdf" });
     await user.upload(screen.getByLabelText("Upload"), file);
@@ -646,6 +663,10 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     expect(await screen.findByText("Could not ingest the file. Please try again.")).toBeDefined();
+    // Even on an unexpected failure the created Work is surfaced for retry.
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
   });
 
   it("rejects an unsupported file type with an error and ingests nothing", async () => {

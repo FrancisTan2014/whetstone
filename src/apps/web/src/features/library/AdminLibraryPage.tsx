@@ -17,12 +17,7 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { Spinner } from "../../shared/ui/Spinner";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
-import {
-  isEpubFile,
-  isMarkdownFile,
-  isPdfFile,
-  stripFileExtension
-} from "../../shared/files/fileType";
+import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import {
   createWork,
@@ -199,45 +194,63 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     workEntryId: string,
     workTitle: string
   ): Promise<void> {
-    const pdf = isPdfFile(file);
+    const pdf = detectUploadKind(file) === "pdf";
     setUploadBusy(true);
     setUploadKind(pdf ? "pdf" : "markdown");
 
     try {
-      if (pdf) {
-        const outcome = await ingestPdf(workEntryId, file);
+      const failureMessage = await ingestHeldFile(pdf, file, workEntryId);
 
-        if (outcome.status === "invalid_pdf") {
-          toast.error(invalidPdfMessage);
-          return;
-        }
-
-        if (outcome.status === "empty_content") {
-          toast.error(emptyContentMessage);
-          return;
-        }
+      if (failureMessage === undefined) {
+        toast.success(`Imported “${workTitle}”.`);
       } else {
-        const outcome = await ingestMarkdown(workEntryId, {
-          fileName: file.name,
-          kind: "upload",
-          markdown: await file.text()
-        });
-
-        if (outcome.status === "empty_content") {
-          toast.error(emptyContentMessage);
-          return;
-        }
+        toast.error(failureMessage);
       }
-
-      await reload();
-      toast.success(`Imported “${workTitle}”.`);
-      onManageContent(workEntryId);
     } catch {
       toast.error("Could not ingest the file. Please try again.");
     } finally {
+      // The Work was created regardless of the ingest outcome. Refresh the shelf and hand the user to
+      // Manage content either way, so a failed ingest leaves the new (empty) Work visible and
+      // immediately retryable from that surface.
+      await reload();
+      onManageContent(workEntryId);
       setUploadBusy(false);
       setUploadKind(undefined);
     }
+  }
+
+  // Ingest the held PDF/Markdown into the just-created Work, returning a user-facing message when the
+  // server reports a handled failure (unreadable PDF, no readable text) or `undefined` on success.
+  async function ingestHeldFile(
+    pdf: boolean,
+    file: File,
+    workEntryId: string
+  ): Promise<string | undefined> {
+    if (pdf) {
+      const outcome = await ingestPdf(workEntryId, file);
+
+      if (outcome.status === "invalid_pdf") {
+        return invalidPdfMessage;
+      }
+
+      if (outcome.status === "empty_content") {
+        return emptyContentMessage;
+      }
+
+      return undefined;
+    }
+
+    const outcome = await ingestMarkdown(workEntryId, {
+      fileName: file.name,
+      kind: "upload",
+      markdown: await file.text()
+    });
+
+    if (outcome.status === "empty_content") {
+      return emptyContentMessage;
+    }
+
+    return undefined;
   }
 
   async function onSelectUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -249,7 +262,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
 
     // EPUB metadata (OPF) is authoritative, so ingest straight to a new Work with no confirm form.
-    if (isEpubFile(file)) {
+    const kind = detectUploadKind(file);
+
+    if (kind === "epub") {
       setUploadBusy(true);
       setUploadKind("epub");
 
@@ -269,7 +284,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
     // PDF/Markdown carry no reliable metadata: hold the file and confirm the Work first, pre-filling
     // the title from the filename.
-    if (isPdfFile(file) || isMarkdownFile(file)) {
+    if (kind === "pdf" || kind === "markdown") {
       resetWorkForm();
       setPendingUpload(file);
       setTitle(stripFileExtension(file.name));
