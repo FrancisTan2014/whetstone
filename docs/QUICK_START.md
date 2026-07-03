@@ -289,10 +289,9 @@ the **Work content** panel, and the **Reader**.
    and choose **Add author or source**.
 2. **Create a work.** In _Works_, enter a title, pick a type and language, then either select your
    author/source or choose **New author or source…** and name one inline. Choose **Create work**.
-3. **Add reading content.** In the _Work content_ panel, select your work, then add Markdown content
-   in one of two ways:
-   - paste Markdown into the **Markdown** box and choose **Add Markdown content**, or
-   - choose a `.md` file and choose **Upload file**.
+3. **Add reading content.** In the _Work content_ panel, select your work, then paste Markdown into
+   the **Markdown** box and choose **Add Markdown content**. (To bring in a whole file — `.epub`,
+   `.pdf`, or `.md` — use the shelf's **Upload** control instead; it creates a new Work.)
 
    The Markdown is split into ordered **reading units** (one per heading section) and **blocks**
    (paragraphs, list items, and so on). They appear in the panel as you add them.
