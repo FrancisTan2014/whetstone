@@ -75,7 +75,8 @@ silently does nothing is a defect:
   confirm it ingests straight to a new work with **no** metadata form, and upload a `.pdf`/`.md` and
   confirm it opens the **Add work** sheet pre-filled with the filename title, then creates and ingests
   on submit. Also create a work by hand (*Add work*, including the new-author path) and add content via
-  the Manage-content panel (paste Markdown, upload a `.md` file). Then confirm the work opens in the
+  the Manage-content panel (paste Markdown — the panel has no file upload; files come in through the
+  shelf **Upload**). Then confirm the work opens in the
   reader with its blocks. Watch for the classic ingestion failures: a work created but **empty / no
   readable content with no error**, an oversized book that fails silently, or a missing/incorrect
   error on bad input. Do **not** API-seed to skip this — testing the upload path is the point.
