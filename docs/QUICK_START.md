@@ -279,6 +279,12 @@ printed URL (by default `http://127.0.0.1:5173`) and keep the server running.
 With both the server and web client running, open the web app. The page shows the **Library admin**,
 the **Work content** panel, and the **Reader**.
 
+> **Fastest path — the shelf's one Upload front door.** On the Library shelf, the single **Upload**
+> control accepts `.epub`, `.pdf`, and `.md` and creates a **new Work** from the file. An EPUB ingests
+> straight away (its embedded metadata is authoritative); a PDF or Markdown file first opens the
+> **Add work** sheet, pre-filled with the title from the filename, so you can confirm the metadata
+> before it ingests. The manual steps below remain available for building a work by hand.
+
 1. **Create or select an author/source.** In _Library admin → Authors and sources_, enter a name
    and choose **Add author or source**.
 2. **Create a work.** In _Works_, enter a title, pick a type and language, then either select your

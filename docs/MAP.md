@@ -443,8 +443,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each
   deep-link the reader to the work/block (`#/reader?work=&block=`), with explicit empty/error states.
   `library/` is the shelf-first admin home: `AdminLibraryPage.tsx` shows works as cards
-  grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and uploads
-  an `.epub` to create a Work (`libraryApi.ingestEpub` posts the raw bytes). Each card carries four
+  grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and a single
+  **Upload** control — the one file front door — that accepts `.epub`/`.pdf`/`.md` and creates a new
+  Work (#417). It routes by type via the shared `shared/files/fileType.ts` `detectUploadKind`
+  (MIME type first, extension fallback): an EPUB ingests
+  straight to a Work (`libraryApi.ingestEpub` posts the raw bytes, OPF metadata authoritative), while a
+  PDF/Markdown (no reliable metadata) opens the same **Add work** sheet pre-filled with the filename's
+  title, then on submit creates the Work and ingests the held file into it via the content feature's
+  `contentApi.ingestPdf`/`ingestMarkdown`. Each card carries four
   actions — a reader link (`#/reader?work=<entryId>`, labelled **Continue** when the work has a saved
   reading position, else **Read** — armed by `libraryApi.fetchWorksWithReadingPosition` →
   `GET /api/reading-position/works` → the set of work ids with a position), a **Manage content**
@@ -593,7 +599,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   the Library's "Manage content" `Sheet`: a work switcher, a header (title/author/type/language +
   unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, a calm add-content
   area (manual Markdown + a single file-upload control that accepts both `.md` and `.pdf`, routing by
-  file type to `ingestMarkdown`/`ingestPdf` — #404) reporting the ingestion result, and a units/blocks overview
+  file type via the shared `shared/files/fileType.ts` `detectUploadKind` (MIME type first, extension
+  fallback), also
+  used by the shelf Upload control #417 — to `ingestMarkdown`/`ingestPdf` — #404) reporting the ingestion result, and a units/blocks overview
   that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
   behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
   `diary/` is the Diary mode (#246): `DiaryPage.tsx` is the tap-and-talk surface — a record button

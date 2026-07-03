@@ -5,6 +5,7 @@ import { workLanguageLabels, type WorkType } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { detectUploadKind } from "../../shared/files/fileType";
 import { fetchWorkContent, fetchWorks, ingestMarkdown, ingestPdf } from "./contentApi";
 import { summarizeWorkContent, workContentSummaryLabel } from "./workContentSummary";
 
@@ -56,18 +57,6 @@ const invalidPdfMessage = "We couldn’t read this PDF. Please try a different f
 // Shown when the chosen file is neither a Markdown nor a PDF file, so nothing is uploaded. Also used
 // for the no-file case, since both mean "pick a supported file first".
 const unsupportedFileMessage = "Choose a .md or .pdf file to upload.";
-
-// Detect a PDF selection so the single upload control can route it to the PDF worker instead of the
-// Markdown path — by MIME type, falling back to the extension when the browser omits the type.
-function isPdfFile(file: File): boolean {
-  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-}
-
-// Detect a Markdown selection — the other supported type. Same MIME-first, extension-fallback shape as
-// isPdfFile, so a file that is neither PDF nor Markdown can be rejected before any ingest call.
-function isMarkdownFile(file: File): boolean {
-  return file.type === "text/markdown" || file.name.toLowerCase().endsWith(".md");
-}
 
 function ingestedLabel(content: WorkContentDto): string {
   return `Ingested — ${workContentSummaryLabel(summarizeWorkContent(content))}.`;
@@ -152,11 +141,12 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
       return;
     }
 
-    const pdf = isPdfFile(file);
-    if (!pdf && !isMarkdownFile(file)) {
+    const kind = detectUploadKind(file);
+    if (kind !== "pdf" && kind !== "markdown") {
       setError(unsupportedFileMessage);
       return;
     }
+    const pdf = kind === "pdf";
 
     setUploadBusy(true);
     setError(undefined);

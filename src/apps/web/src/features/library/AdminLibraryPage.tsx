@@ -17,6 +17,8 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { Spinner } from "../../shared/ui/Spinner";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
+import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
+import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import {
   createWork,
   fetchAuthors,
@@ -28,7 +30,23 @@ import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 
 const newAuthorOption = "new-author-or-source";
 
+// Shown when the doc-AI worker could not read an uploaded PDF (the server's 422 `invalid_pdf`), e.g. a
+// scanned or corrupt file — mirrors the Manage-content panel's copy so the one front door reads the same.
+const invalidPdfMessage = "We couldn’t read this PDF. Please try a different file.";
+
+// Shown when a PDF/Markdown produced no readable blocks (the server's 422 `empty_content`), e.g. an
+// image-only document — v0 has no image block, so there is nothing to add.
+const emptyContentMessage =
+  "This document has no readable text to add. Images on their own aren’t supported yet.";
+
+// Rejects a picked file that is none of the three supported document types before any ingest call.
+const unsupportedUploadMessage = "Choose an .epub, .pdf, or .md file.";
+
 type LoadState = "loading" | "ready" | "error";
+
+// Which document is ingesting, so the header can show the right progress copy: EPUB ingests on
+// selection; PDF/Markdown ingest after the confirm sheet is submitted.
+type UploadKind = "epub" | "pdf" | "markdown";
 
 function formatWorkType(workType: WorkType): string {
   return workType.replace("_", " ");
@@ -59,7 +77,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [workError, setWorkError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
 
-  const [epubBusy, setEpubBusy] = useState(false);
+  // A held PDF/Markdown file waiting for the confirm sheet: unlike an EPUB (OPF metadata is
+  // authoritative), these carry no reliable metadata, so we create the Work from the confirmed form
+  // first, then ingest this file into it.
+  const [pendingUpload, setPendingUpload] = useState<File | undefined>(undefined);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadKind, setUploadKind] = useState<UploadKind | undefined>(undefined);
 
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const toast = useToast();
@@ -98,6 +121,31 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     return { authorId: toAuthorId(authorChoice), mode: "existing" };
   }
 
+  function resetWorkForm(): void {
+    setTitle("");
+    setLanguage("en");
+    setWorkType("book");
+    setAuthorChoice(newAuthorOption);
+    setInlineAuthorName("");
+    setWorkError(undefined);
+  }
+
+  // The "Add work" button opens a clean, purely-manual sheet: clearing any held upload guarantees a
+  // stray earlier file selection can never be ingested into a manually created work.
+  function openManualAddWork(): void {
+    setPendingUpload(undefined);
+    resetWorkForm();
+    setAddOpen(true);
+  }
+
+  // The sheet is only rendered while open, and Radix only calls onOpenChange to request dismissal
+  // (Esc / overlay / close button), so any change closes it and drops any held upload — mirroring the
+  // Library composition's own sheet-dismissal pattern.
+  function onSheetDismiss(): void {
+    setPendingUpload(undefined);
+    setAddOpen(false);
+  }
+
   async function onSubmitWork(event: FormEvent): Promise<void> {
     event.preventDefault();
     const trimmedTitle = title.trim();
@@ -114,17 +162,26 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
+    const heldUpload = pendingUpload;
     setSubmitting(true);
 
     try {
       const created = await createWork({ author, language, title: trimmedTitle, workType });
-      setTitle("");
-      setInlineAuthorName("");
-      setWorkError(undefined);
+      resetWorkForm();
+      setPendingUpload(undefined);
       setAddOpen(false);
-      await reload();
-      toast.success(`Added “${trimmedTitle}”.`);
-      onManageContent(created.work.entryId);
+
+      if (heldUpload === undefined) {
+        await reload();
+        toast.success(`Added “${trimmedTitle}”.`);
+        onManageContent(created.work.entryId);
+        return;
+      }
+
+      // The Work now exists; ingest the held file into it. `ingestUploadIntoWork` owns its own
+      // failure handling (a failed ingest leaves the empty Work in place, retryable from Manage
+      // content), so it never throws back into this create-scoped catch.
+      await ingestUploadIntoWork(heldUpload, created.work.entryId, trimmedTitle);
     } catch {
       toast.error("Could not save the work. Please try again.");
     } finally {
@@ -132,7 +189,71 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
   }
 
-  async function onUploadEpub(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+  async function ingestUploadIntoWork(
+    file: File,
+    workEntryId: string,
+    workTitle: string
+  ): Promise<void> {
+    const pdf = detectUploadKind(file) === "pdf";
+    setUploadBusy(true);
+    setUploadKind(pdf ? "pdf" : "markdown");
+
+    try {
+      const failureMessage = await ingestHeldFile(pdf, file, workEntryId);
+
+      if (failureMessage === undefined) {
+        toast.success(`Imported “${workTitle}”.`);
+      } else {
+        toast.error(failureMessage);
+      }
+    } catch {
+      toast.error("Could not ingest the file. Please try again.");
+    } finally {
+      // The Work was created regardless of the ingest outcome. Refresh the shelf and hand the user to
+      // Manage content either way, so a failed ingest leaves the new (empty) Work visible and
+      // immediately retryable from that surface.
+      await reload();
+      onManageContent(workEntryId);
+      setUploadBusy(false);
+      setUploadKind(undefined);
+    }
+  }
+
+  // Ingest the held PDF/Markdown into the just-created Work, returning a user-facing message when the
+  // server reports a handled failure (unreadable PDF, no readable text) or `undefined` on success.
+  async function ingestHeldFile(
+    pdf: boolean,
+    file: File,
+    workEntryId: string
+  ): Promise<string | undefined> {
+    if (pdf) {
+      const outcome = await ingestPdf(workEntryId, file);
+
+      if (outcome.status === "invalid_pdf") {
+        return invalidPdfMessage;
+      }
+
+      if (outcome.status === "empty_content") {
+        return emptyContentMessage;
+      }
+
+      return undefined;
+    }
+
+    const outcome = await ingestMarkdown(workEntryId, {
+      fileName: file.name,
+      kind: "upload",
+      markdown: await file.text()
+    });
+
+    if (outcome.status === "empty_content") {
+      return emptyContentMessage;
+    }
+
+    return undefined;
+  }
+
+  async function onSelectUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
 
@@ -140,17 +261,38 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    setEpubBusy(true);
+    // EPUB metadata (OPF) is authoritative, so ingest straight to a new Work with no confirm form.
+    const kind = detectUploadKind(file);
 
-    try {
-      const result = await ingestEpub(file);
-      await reload();
-      toast.success(`Imported “${result.work.title}”.`);
-    } catch {
-      toast.error("Could not ingest the EPUB. Please try again.");
-    } finally {
-      setEpubBusy(false);
+    if (kind === "epub") {
+      setUploadBusy(true);
+      setUploadKind("epub");
+
+      try {
+        const result = await ingestEpub(file);
+        await reload();
+        toast.success(`Imported “${result.work.title}”.`);
+      } catch {
+        toast.error("Could not ingest the EPUB. Please try again.");
+      } finally {
+        setUploadBusy(false);
+        setUploadKind(undefined);
+      }
+
+      return;
     }
+
+    // PDF/Markdown carry no reliable metadata: hold the file and confirm the Work first, pre-filling
+    // the title from the filename.
+    if (kind === "pdf" || kind === "markdown") {
+      resetWorkForm();
+      setPendingUpload(file);
+      setTitle(stripFileExtension(file.name));
+      setAddOpen(true);
+      return;
+    }
+
+    toast.error(unsupportedUploadMessage);
   }
 
   const listVariants: Variants = {
@@ -172,28 +314,29 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             Review all notes
           </a>
           <label
-            aria-busy={epubBusy}
+            aria-busy={uploadBusy}
             className={`${buttonVariants({ variant: "secondary" })} cursor-pointer focus-within:ring-2 focus-within:ring-ring focus-within:outline-none ${
-              epubBusy ? "pointer-events-none opacity-50" : ""
+              uploadBusy ? "pointer-events-none opacity-50" : ""
             }`}
           >
-            {epubBusy ? <Spinner /> : null}
-            Upload EPUB
+            {uploadBusy ? <Spinner /> : null}
+            Upload
             <input
-              accept=".epub,application/epub+zip"
+              accept=".epub,application/epub+zip,.pdf,application/pdf,.md,text/markdown"
               className="sr-only"
-              disabled={epubBusy}
-              onChange={(event) => void onUploadEpub(event)}
+              disabled={uploadBusy}
+              onChange={(event) => void onSelectUpload(event)}
               type="file"
             />
           </label>
-          <Button onClick={() => setAddOpen(true)} type="button">
+          <Button onClick={openManualAddWork} type="button">
             Add work
           </Button>
         </div>
       </header>
 
-      {epubBusy ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
+      {uploadKind === "epub" ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
+      {uploadKind === "pdf" ? <LoadingIndicator label="Converting the PDF…" /> : null}
 
       {loadState === "loading" ? <LoadingIndicator label="Loading the library…" /> : null}
       {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
@@ -208,7 +351,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         : null}
 
       {addOpen ? (
-        <Sheet onOpenChange={setAddOpen} open title="Add work">
+        <Sheet onOpenChange={onSheetDismiss} open title="Add work">
           <form className="flex flex-col gap-3" onSubmit={(event) => void onSubmitWork(event)}>
             <label className="flex flex-col gap-1" htmlFor="work-title">
               Title
@@ -310,7 +453,7 @@ function renderLibrary(
   if (groups.length === 0) {
     return (
       <p className="rounded border border-border bg-surface p-6 text-text-muted">
-        No works yet. Add a work or upload an EPUB to start your library.
+        No works yet. Add a work or upload a document to start your library.
       </p>
     );
   }

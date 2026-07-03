@@ -8,7 +8,7 @@ import {
   within
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./libraryApi", () => ({
   createWork: vi.fn(),
@@ -18,6 +18,11 @@ vi.mock("./libraryApi", () => ({
   ingestEpub: vi.fn()
 }));
 
+vi.mock("../content/contentApi", () => ({
+  ingestMarkdown: vi.fn(),
+  ingestPdf: vi.fn()
+}));
+
 import {
   createWork,
   fetchAuthors,
@@ -25,6 +30,7 @@ import {
   fetchWorksWithReadingPosition,
   ingestEpub
 } from "./libraryApi";
+import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
@@ -52,6 +58,8 @@ const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
 const mockedCreateWork = vi.mocked(createWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
+const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
+const mockedIngestPdf = vi.mocked(ingestPdf);
 
 const orwell: AuthorDto = { id: toAuthorId("author-1"), name: "George Orwell" };
 const dickens: AuthorDto = { id: toAuthorId("author-2"), name: "Charles Dickens" };
@@ -91,6 +99,25 @@ function mockMatchMedia(reduce = false): void {
   }));
 }
 
+beforeAll(() => {
+  // jsdom does not implement Blob.text(); the page uses the standard File.text() web API (native in
+  // browsers) to read a held Markdown upload, so provide it here via FileReader.
+  if (typeof Blob.prototype.text !== "function") {
+    Blob.prototype.text = function blobText(this: Blob): Promise<string> {
+      return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.addEventListener("load", () => {
+          resolve(String(reader.result));
+        });
+        reader.addEventListener("error", () => {
+          reject(reader.error ?? new Error("Could not read blob."));
+        });
+        reader.readAsText(this);
+      });
+    };
+  }
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockMatchMedia(false);
@@ -127,7 +154,7 @@ describe("AdminLibraryPage", () => {
     await renderReady();
 
     expect(
-      screen.getByText("No works yet. Add a work or upload an EPUB to start your library.")
+      screen.getByText("No works yet. Add a work or upload a document to start your library.")
     ).toBeDefined();
   });
 
@@ -388,7 +415,7 @@ describe("AdminLibraryPage", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
       type: "application/epub+zip"
     });
-    await user.upload(screen.getByLabelText("Upload EPUB"), file);
+    await user.upload(screen.getByLabelText("Upload"), file);
 
     expect(await screen.findByRole("heading", { name: "史记选读" })).toBeDefined();
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
@@ -418,7 +445,7 @@ describe("AdminLibraryPage", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
       type: "application/epub+zip"
     });
-    await user.upload(screen.getByLabelText("Upload EPUB"), file);
+    await user.upload(screen.getByLabelText("Upload"), file);
 
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
     expect(onManageContent).not.toHaveBeenCalled();
@@ -429,7 +456,7 @@ describe("AdminLibraryPage", () => {
     mockedIngestEpub.mockRejectedValue(new Error("boom"));
 
     const file = new File([new Uint8Array([1])], "bad.epub", { type: "application/epub+zip" });
-    await user.upload(screen.getByLabelText("Upload EPUB"), file);
+    await user.upload(screen.getByLabelText("Upload"), file);
 
     expect(await screen.findByText("Could not ingest the EPUB. Please try again.")).toBeDefined();
   });
@@ -437,9 +464,307 @@ describe("AdminLibraryPage", () => {
   it("ignores an upload with no file selected", async () => {
     await renderReady();
 
-    fireEvent.change(screen.getByLabelText("Upload EPUB"), { target: { files: [] } });
+    fireEvent.change(screen.getByLabelText("Upload"), { target: { files: [] } });
 
     expect(mockedIngestEpub).not.toHaveBeenCalled();
+  });
+
+  it("labels the shelf control 'Upload' and accepts epub, pdf, and md", async () => {
+    await renderReady();
+
+    const input = screen.getByLabelText("Upload") as HTMLInputElement;
+    expect(input.accept).toBe(".epub,application/epub+zip,.pdf,application/pdf,.md,text/markdown");
+  });
+
+  it("ingests a selected EPUB directly without showing the Add-work form", async () => {
+    const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
+    const epubWork: WorkListItemDto = {
+      author: epubAuthor,
+      work: {
+        authorId: epubAuthor.id,
+        entryId: toEntryId("work-epub"),
+        language: "zh-CN",
+        title: "史记选读",
+        workType: "book"
+      }
+    };
+    mockedIngestEpub.mockResolvedValue({
+      content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+      work: epubWork.work
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
+    expect(screen.queryByLabelText("Title")).toBeNull();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+  });
+
+  it("routes by MIME type first: a PDF mislabelled .epub takes the PDF confirm path", async () => {
+    const user = await renderReady();
+
+    // Real content type is PDF even though the filename ends in .epub — MIME must win, so this opens
+    // the PDF/Markdown confirm sheet rather than ingesting directly as an EPUB.
+    const file = new File([new Uint8Array([1])], "mislabelled.epub", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("mislabelled");
+    expect(mockedIngestEpub).not.toHaveBeenCalled();
+  });
+
+  it("prefills the Add-work sheet from a Markdown filename, then creates and ingests it", async () => {
+    const onManageContent = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestMarkdown.mockResolvedValue({
+      content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
+      status: "ingested"
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    const file = new File(["# Politics"], "Politics and the English Language.md", {
+      type: "text/markdown"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("Politics and the English Language");
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(mockedCreateWork).toHaveBeenCalledWith({
+        author: { mode: "new", name: "George Orwell" },
+        language: "en",
+        title: "Politics and the English Language",
+        workType: "book"
+      });
+    });
+    await waitFor(() => {
+      expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
+        fileName: "Politics and the English Language.md",
+        kind: "upload",
+        markdown: "# Politics"
+      });
+    });
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+    expect(await screen.findByText("Imported “Politics and the English Language”.")).toBeDefined();
+  });
+
+  it("prefills from a PDF filename, then creates, ingests, and opens Manage content", async () => {
+    const onManageContent = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestPdf.mockResolvedValue({
+      content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
+      status: "ingested"
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    const file = new File([new Uint8Array([1, 2, 3])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("Report");
+
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(mockedCreateWork).toHaveBeenCalledWith({
+        author: { mode: "new", name: "Nobody" },
+        language: "en",
+        title: "Report",
+        workType: "book"
+      });
+    });
+    await waitFor(() => {
+      expect(mockedIngestPdf).toHaveBeenCalledWith("work-1", file);
+    });
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+    expect(await screen.findByText("Imported “Report”.")).toBeDefined();
+  });
+
+  it("surfaces the invalid-PDF message but still opens the new Work for retry", async () => {
+    const onManageContent = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestPdf.mockResolvedValue({ status: "invalid_pdf" });
+    const user = await renderReady(onManageContent);
+
+    const file = new File([new Uint8Array([1])], "scan.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(
+      await screen.findByText("We couldn’t read this PDF. Please try a different file.")
+    ).toBeDefined();
+    // The Work was created, so it must remain visible and retryable from Manage content.
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+  });
+
+  it("surfaces the empty-content message when a PDF has no readable text", async () => {
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestPdf.mockResolvedValue({ status: "empty_content" });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "blank.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(
+      await screen.findByText(
+        "This document has no readable text to add. Images on their own aren’t supported yet."
+      )
+    ).toBeDefined();
+  });
+
+  it("surfaces the empty-content message when a Markdown upload has no readable text", async () => {
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
+    const user = await renderReady();
+
+    const file = new File(["![only image](x.png)"], "images.md", { type: "text/markdown" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(
+      await screen.findByText(
+        "This document has no readable text to add. Images on their own aren’t supported yet."
+      )
+    ).toBeDefined();
+  });
+
+  it("shows a generic error toast but still opens the new Work when the ingest throws", async () => {
+    const onManageContent = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestPdf.mockRejectedValue(new Error("boom"));
+    const user = await renderReady(onManageContent);
+
+    const file = new File([new Uint8Array([1])], "doc.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("Could not ingest the file. Please try again.")).toBeDefined();
+    // Even on an unexpected failure the created Work is surfaced for retry.
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+  });
+
+  it("rejects an unsupported file type with an error and ingests nothing", async () => {
+    await renderReady();
+
+    const file = new File(["plain"], "notes.txt", { type: "text/plain" });
+    // Bypass the input's accept filter to exercise the client-side type guard.
+    fireEvent.change(screen.getByLabelText("Upload"), { target: { files: [file] } });
+
+    expect(await screen.findByText("Choose an .epub, .pdf, or .md file.")).toBeDefined();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+    expect(mockedIngestEpub).not.toHaveBeenCalled();
+  });
+
+  it("drops a held upload when the Add-work sheet is dismissed", async () => {
+    const onManageContent = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    const held = new File(["# X"], "held.md", { type: "text/markdown" });
+    await user.upload(screen.getByLabelText("Upload"), held);
+    await screen.findByLabelText("Title");
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Title")).toBeNull();
+    });
+
+    // A fresh, purely-manual Add work must not ingest the previously held file.
+    await user.click(screen.getByRole("button", { name: "Add work" }));
+    await screen.findByLabelText("Title");
+    await user.type(screen.getByLabelText("Title"), "Manual Work");
+    await user.type(screen.getByLabelText("New author or source name"), "Someone");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+    expect(mockedIngestMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("shows the EPUB progress indicator while an EPUB ingests", async () => {
+    let resolveIngest: (value: Awaited<ReturnType<typeof ingestEpub>>) => void = () => {};
+    mockedIngestEpub.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveIngest = resolve;
+        })
+    );
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "book.epub", { type: "application/epub+zip" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    expect(await screen.findByText("Ingesting the EPUB…")).toBeDefined();
+
+    resolveIngest({
+      content: { readingUnits: [], workEntryId: toEntryId("work-epub") },
+      work: {
+        authorId: toAuthorId("author-9"),
+        entryId: toEntryId("work-epub"),
+        language: "en",
+        title: "Book",
+        workType: "book"
+      }
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Ingesting the EPUB…")).toBeNull();
+    });
+  });
+
+  it("shows the PDF progress indicator while a held PDF ingests", async () => {
+    let resolveIngest: (value: Awaited<ReturnType<typeof ingestPdf>>) => void = () => {};
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestPdf.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveIngest = resolve;
+        })
+    );
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("Converting the PDF…")).toBeDefined();
+
+    resolveIngest({
+      content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
+      status: "ingested"
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Converting the PDF…")).toBeNull();
+    });
   });
 
   it("renders cards without entrance offset when reduced motion is preferred", async () => {

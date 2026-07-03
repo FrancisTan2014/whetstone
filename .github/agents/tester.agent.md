@@ -70,9 +70,12 @@ something (text resized, theme changed, results appeared, content persisted), be
 silently does nothing is a defect:
 
 - **Admin / content ingestion (drive the real upload UI — the riskiest, least-covered area).** From
-  the Library/admin surface, create a work (*Add work*, including the new-author path) and add its
-  content **through the browser**: paste Markdown (*Add Markdown content*), upload a `.md` file, and
-  **upload a real EPUB** (use a fixture from `fixtures/epub/`). Then confirm the work opens in the
+  the Library/admin surface, exercise the single shelf **Upload** control (the one file front door,
+  accepting `.epub`/`.pdf`/`.md`): **upload a real EPUB** (use a fixture from `fixtures/epub/`) and
+  confirm it ingests straight to a new work with **no** metadata form, and upload a `.pdf`/`.md` and
+  confirm it opens the **Add work** sheet pre-filled with the filename title, then creates and ingests
+  on submit. Also create a work by hand (*Add work*, including the new-author path) and add content via
+  the Manage-content panel (paste Markdown, upload a `.md` file). Then confirm the work opens in the
   reader with its blocks. Watch for the classic ingestion failures: a work created but **empty / no
   readable content with no error**, an oversized book that fails silently, or a missing/incorrect
   error on bad input. Do **not** API-seed to skip this — testing the upload path is the point.
