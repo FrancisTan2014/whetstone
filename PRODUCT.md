@@ -116,8 +116,8 @@ truth for what to build now.
 
 ## v0 scope
 
-1. **Ingest** source materials — by manual input and by file upload (`.md`, `.epub`) — and have the
-   backend automatically decompose them into the content model below.
+1. **Ingest** source materials — by manual input and by a single **Upload** control (`.epub`, `.pdf`,
+   `.md`) — and have the backend automatically decompose them into the content model below.
 2. **Read** materials in a clean continuous reader.
 3. **Annotate** — select any text (a word, phrase, or longer passage) to create a note anchored to
    the exact source block.
@@ -310,8 +310,9 @@ Staged by difficulty and value:
   whole-book case (史记) without manual typing.** Images are extracted into **figure blocks** from EPUB
   `<figure>` structure (image + `<figcaption>`): the caption becomes the figure's caption, never a stray
   heading. A bare `<img>` becomes an image-only figure; v0 does not guess captions from neighboring text.
-- **v0 — PDF**: `.pdf` upload, **contextual to a Work** (a PDF has no reliable title/author, so it fills
-  a Work you create/select — unlike EPUB, which self-creates from OPF metadata). An **isolated Python
+- **v0 — PDF**: `.pdf` upload **creates a new Work** through the shared **Upload** control. A PDF has no
+  reliable title/author, so — unlike EPUB, which self-creates from OPF metadata — Upload first confirms
+  the Work's title (defaulted from the filename), author, and language, then ingests into it. An **isolated Python
   doc-AI worker** (Docling, MIT — permissive only) converts a **born-digital** PDF to Markdown one-shot,
   ingested through the same Markdown → blocks pipeline (a PDF ≡ the equivalent `.md`); **scanned** PDFs
   get an **OCR pre-pass** (OCRmyPDF/Tesseract) first, with Docling's own OCR off so the fragile
@@ -321,6 +322,15 @@ Staged by difficulty and value:
 
 Re-ingestion is idempotent: the original file's sha256 is recorded; re-upload replaces the work's
 blocks via the stable-id diff above, inside a transaction.
+
+**Ingestion entry points (one front door).** The Library exposes exactly **one file-upload control,
+labeled "Upload"**, on the shelf toolbar: it accepts `.epub`, `.pdf`, and `.md` and always produces a
+**new Work**. EPUB self-creates from OPF metadata with no prompt; PDF/`.md` (which carry no reliable
+metadata) route through the **Add work** metadata step — title defaulted from the filename, author and
+language confirmed — before ingest. Alongside it, **Add work** creates an empty Work from manual
+metadata, and the per-Work **Manage content** sheet keeps a **paste-Markdown** editor for typing/editing
+an existing Work's content. There is no second "upload a file" control inside Manage content — bringing a
+file in is always "Upload → new Work".
 
 ## v0 reader
 
