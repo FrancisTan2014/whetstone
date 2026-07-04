@@ -11,6 +11,7 @@
     "dev": "node scripts/dev.mjs",
     "setup": "node scripts/setup.mjs",
     "setup:doctor": "node scripts/setup.mjs --check",
+    "setup:minimal": "node scripts/setup.mjs --minimal",
     "setup:voice": "node scripts/setup.mjs --voice",
     "setup:coach": "node scripts/setup.mjs --coach",
     "setup:all": "node scripts/setup.mjs --all",

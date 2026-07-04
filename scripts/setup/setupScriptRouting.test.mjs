@@ -36,7 +36,7 @@ function runShorthand(script) {
 }
 
 describe("pnpm setup:<capability> scripts do not collide with pnpm's built-in `setup` (#421)", () => {
-  for (const script of ["setup:voice", "setup:coach", "setup:all"]) {
+  for (const script of ["setup:minimal", "setup:voice", "setup:coach", "setup:all"]) {
     it(`\`pnpm ${script}\` reaches our doctor run, not pnpm's built-in setup`, () => {
       const { output } = runShorthand(script);
       // The reported failure: routing to the built-in rejects the baked-in flag as unknown.

@@ -24,9 +24,10 @@ import { error, isOk } from "./step.mjs";
 /**
  * @typedef {object} SetupArgs
  * @property {boolean} doctor            `--check` / `--doctor`: probe only, never mutate.
- * @property {boolean} voice             `--voice`: include optional voice-capability steps.
- * @property {boolean} coach             `--coach`: include optional coach-capability steps.
- * @property {boolean} all               `--all`: enable every optional capability (voice + coach).
+ * @property {boolean} voice             `--voice`: (re)run only the optional voice-capability steps.
+ * @property {boolean} coach             `--coach`: (re)run only the optional coach-capability steps.
+ * @property {boolean} all               `--all`: every optional capability (voice + coach) — the default.
+ * @property {boolean} minimal           `--minimal`: base steps only (no voice/coach), for lean/CI runs.
  * @property {boolean} yes               `--yes`: pre-consent every `ctx.confirm` (unattended installs).
  * @property {string[]} unknown          Unrecognized flags (reported, non-fatal).
  */
@@ -37,6 +38,7 @@ const RECOGNIZED = new Map([
   ["--voice", "voice"],
   ["--coach", "coach"],
   ["--all", "all"],
+  ["--minimal", "minimal"],
   ["--yes", "yes"]
 ]);
 
@@ -52,6 +54,7 @@ export function parseArgs(argv) {
     voice: false,
     coach: false,
     all: false,
+    minimal: false,
     yes: false,
     unknown: /** @type {string[]} */ ([])
   };
@@ -67,18 +70,33 @@ export function parseArgs(argv) {
 }
 
 /**
- * Select the steps to run: every base (non-optional) step, plus optional steps whose `capability`
- * was opted in via a flag. `--all` enables every optional capability at once; otherwise each
- * `--<capability>` selects only its own. The base `pnpm setup` excludes all heavy/optional steps.
+ * Select the steps to run. The base (non-optional) steps always run. For the optional capabilities:
+ * - `--minimal` → base only (no optional capabilities): the lean / CI / reader-only path.
+ * - an explicit `--voice` and/or `--coach` → base plus exactly those capabilities: the single
+ *   -capability conveniences (`pnpm setup:voice` / `pnpm setup:coach`) to (re)run one feature.
+ * - otherwise (the default, and the `--all` alias) → base plus **every** optional capability, so a
+ *   bare `pnpm setup` reaches a fully-capable app (reader + voice + coach) in one command.
+ *
+ * Heavy installs stay consent-gated inside each optional step, so "selected" never means "installed
+ * silently": a declined prompt (or a non-interactive run) falls back to instruct-only and stays green.
  *
  * @param {Step[]} steps
- * @param {{ voice: boolean, coach: boolean, all?: boolean }} flags
+ * @param {{ voice: boolean, coach: boolean, all?: boolean, minimal?: boolean }} flags
  * @returns {Step[]}
  */
 export function selectSteps(steps, flags) {
   const enabled = new Set();
-  if (flags.all || flags.voice) enabled.add("voice");
-  if (flags.all || flags.coach) enabled.add("coach");
+  if (flags.minimal) {
+    // base only — enable no optional capability.
+  } else if (flags.voice || flags.coach) {
+    // Explicit single-capability selection (setup:voice / setup:coach).
+    if (flags.voice) enabled.add("voice");
+    if (flags.coach) enabled.add("coach");
+  } else {
+    // Default (and --all): every optional capability.
+    enabled.add("voice");
+    enabled.add("coach");
+  }
   return steps.filter(
     (step) => !step.optional || (step.capability !== undefined && enabled.has(step.capability))
   );

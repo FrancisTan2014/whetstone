@@ -16,15 +16,21 @@ const args = parseArgs(process.argv.slice(2));
 if (args.unknown.length > 0) {
   console.log(
     `[setup] ignoring unrecognized flag(s): ${args.unknown.join(", ")}. ` +
-      "Enable a capability with its own script — `pnpm setup:doctor` (--check), " +
-      "`pnpm setup:voice`, `pnpm setup:coach`, `pnpm setup:all` — or forward a raw " +
-      "flag/env combo with `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --all --yes`). " +
+      "`pnpm setup` already installs every capability (reader + voice + coach), consent-gated. " +
+      "Use a baked-in script instead of a flag — `pnpm setup:minimal` (base only, no voice/coach), " +
+      "`pnpm setup:doctor` (--check), `pnpm setup:voice`, `pnpm setup:coach`, `pnpm setup:all` — " +
+      "or forward a raw flag/env combo with `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes`). " +
       "Passing a flag to `pnpm setup` directly collides with pnpm's built-in `setup` command and fails."
   );
 }
 
 const ctx = createContext(repoRoot, { yes: args.yes });
-const selected = selectSteps(steps, { voice: args.voice, coach: args.coach, all: args.all });
+const selected = selectSteps(steps, {
+  voice: args.voice,
+  coach: args.coach,
+  all: args.all,
+  minimal: args.minimal
+});
 const { exitCode, outcomes } = runSetup(selected, ctx, { doctor: args.doctor });
 
 console.log(`\n${formatSummary(outcomes, { doctor: args.doctor, exitCode })}`);

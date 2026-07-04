@@ -12,7 +12,7 @@ note capture. It does not describe features that are not implemented yet.
 A fresh clone reaches a working app with **one command**, then one to run it:
 
 ```powershell
-pnpm setup   # bootstrap: checks your toolchain, installs, builds, gets the E2E browser, scaffolds .env
+pnpm setup   # bootstrap: toolchain, install, build, E2E browser, .env — plus voice + local coach (consent-gated)
 pnpm dev     # run the whole stack
 ```
 
@@ -25,20 +25,32 @@ are skipped). To just check readiness without changing anything:
 pnpm setup:doctor   # report each capability as ready / optional-missing / failed; never mutates
 ```
 
-Opt-in heavy capabilities are excluded from the base run; enable each with its own script (their own
-steps land with those features): `pnpm setup:voice`, `pnpm setup:coach`, or `pnpm setup:all` for both.
+Heavy/system capabilities (voice, local coach) are **included in the base `pnpm setup`**, but each
+system install stays **consent-gated**: on a terminal you press **Y** before Ollama/Python is
+installed; decline (or run non-interactively, e.g. CI) and that step falls back to instruct-only and
+the run still exits 0 — nothing installs silently. For a lean run that skips voice/coach entirely
+(fast iteration, reader-only, CI), use the opt-out:
 
-> **Why `pnpm setup:voice` and not a flag on `pnpm setup`?** `setup` is a **built-in pnpm command**, so
+```powershell
+pnpm setup:minimal   # base only: toolchain, install, build, E2E browser, .env — no voice/coach, no prompts
+```
+
+You can also (re)run a single capability on its own with `pnpm setup:voice`, `pnpm setup:coach`, or
+`pnpm setup:all` (both). The canonical set: `pnpm setup` (full, consent-gated) / `pnpm setup:minimal`
+(lean) / `pnpm setup:doctor` (probe only).
+
+> **Why baked-in scripts and not a flag on `pnpm setup`?** `setup` is a **built-in pnpm command**, so
 > `pnpm setup` with any flag is routed to pnpm's built-in and fails with `Unknown option`. The
-> capability scripts (`setup:voice`, `setup:coach`, `setup:all`, `setup:doctor`) bake the flag in and
-> don't collide. For a raw flag/env combo, use the explicit run form: `pnpm run setup -- --<flag>`
-> (e.g. `pnpm run setup -- --all --yes`).
+> capability scripts (`setup:minimal`, `setup:voice`, `setup:coach`, `setup:all`, `setup:doctor`) bake
+> the flag in and don't collide. For a raw flag/env combo, use the explicit run form:
+> `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes` for unattended consent).
 
 ### Voice input (optional)
 
-Spoken practice transcribes locally with Whisper. It is **off by default** (the base run stays fast
-and offline), so with nothing configured a spoken turn transcribes to empty and the server logs a
-one-line boot warning telling you how to enable it. To turn it on:
+Spoken practice transcribes locally with Whisper. The base `pnpm setup` already installs it
+(consent-gated); if you ran `pnpm setup:minimal`, or declined the prompt, voice stays off — a spoken
+turn transcribes to empty and the server logs a one-line boot warning telling you how to enable it.
+To (re)run just this capability:
 
 ```powershell
 pnpm setup:voice   # installs faster-whisper + the whetstone-whisper wrapper, fetches the model, writes WHISPER_* to .env
@@ -133,8 +145,8 @@ ignores `.env`/`.env.*` and allows only `.env.example`.
 ### Coaching model (optional)
 
 The speaking coach runs on a **local Ollama LLM** when configured, and falls back to a deterministic
-fake when it isn't — so no model is required for the loop or the `pnpm validate` gate. The one command
-that makes the local coach work end to end is:
+fake when it isn't — so no model is required for the loop or the `pnpm validate` gate. The base
+`pnpm setup` already provisions it (consent-gated); to (re)run just this capability end to end:
 
 ```powershell
 pnpm setup:coach   # installs Ollama (with a Y/N prompt), pulls the converse + 解释 models, writes the coach env to .env
