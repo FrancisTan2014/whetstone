@@ -444,9 +444,9 @@ webview.
 
 > **Windows note.** The native iOS project is generated and built with Apple tooling, so **§ 8 requires
 > macOS** (Xcode + CocoaPods + an Apple Developer account). The cross-platform pieces — the Capacitor
-> config, the host-config injection logic, and its unit tests — live in this repo and run anywhere;
-> the `ios/` Xcode project, the `Info.plist` permission, and the simulator/TestFlight steps below can
-> only be executed on a Mac. The steps that are macOS-only are marked **(macOS)**.
+> config, the host-config injection logic, the `Info.plist` permission patch, and their unit tests —
+> live in this repo and run anywhere; generating the `ios/` Xcode project and the simulator/TestFlight
+> steps below can only be executed on a Mac. The steps that are macOS-only are marked **(macOS)**.
 
 **Prerequisites (macOS, once):** Xcode (with the iOS SDK and command-line tools), CocoaPods
 (`sudo gem install cocoapods`), and an Apple Developer account for device/TestFlight builds. Then
@@ -463,28 +463,31 @@ export WHETSTONE_API_BASE_URL="https://whetstone.example.ts.net/api"   # your re
 **First-time platform generation (macOS):**
 
 ```bash
-pnpm --filter @whetstone/mobile add:ios   # generates src/apps/mobile/ios (the Xcode project)
+pnpm --filter @whetstone/mobile add:ios   # generates src/apps/mobile/ios and applies the mic permission
 ```
 
-**Add the microphone permission (macOS, once — AC #4).** Practice records voice, so iOS requires a
-usage description. After `add:ios`, add this key to `src/apps/mobile/ios/App/App/Info.plist`:
+**Microphone permission is applied automatically (AC #4).** Practice records voice, so iOS requires an
+`NSMicrophoneUsageDescription`. Rather than a manual edit, `add:ios` and `sync` run a checked-in patch
+(`scripts/applyIosPermissions.ts`, unit-tested) that ensures this key is present in
+`src/apps/mobile/ios/App/App/Info.plist` (idempotent). The committed iOS project keeps the permission,
+so a clean checkout following these scripts is TestFlight-ready. To (re)apply it on its own:
 
-```xml
-<key>NSMicrophoneUsageDescription</key>
-<string>Whetstone uses the microphone for spoken Practice sessions.</string>
+```bash
+pnpm --filter @whetstone/mobile apply:permissions
 ```
 
 **Build, sync, and open (macOS):**
 
 ```bash
-pnpm --filter @whetstone/mobile sync      # builds the web app, runs `cap sync ios`, injects host config
+pnpm --filter @whetstone/mobile sync      # build web, `cap sync ios`, inject host config, apply mic permission
 pnpm --filter @whetstone/mobile open:ios  # opens the project in Xcode
 ```
 
 In Xcode, select a simulator or a connected device and press **Run**. `sync` embeds the current web
 `dist` and bakes in `WHETSTONE_API_BASE_URL`; re-run it after any web change.
 
-**Host-config glue tests** (pure, run anywhere including Windows/CI, part of `pnpm test`):
+**Mobile shell tests** (pure host-config + permission glue; run anywhere including Windows/CI, part of
+`pnpm test`):
 
 ```bash
 pnpm exec vitest run src/apps/mobile
@@ -496,7 +499,7 @@ pnpm exec vitest run src/apps/mobile
    `pnpm --filter @whetstone/mobile sync`.
 2. In Xcode → **Signing & Capabilities**, select your Apple Developer team and set a unique bundle
    identifier (defaults to `com.whetstone.app`).
-3. Confirm `NSMicrophoneUsageDescription` is present in `Info.plist` (above).
+3. `NSMicrophoneUsageDescription` is applied automatically by `add:ios`/`sync` (above) — no manual edit.
 4. Set the version/build number, choose **Any iOS Device (arm64)**, then **Product → Archive**.
 5. In the Organizer, **Distribute App → App Store Connect → Upload**.
 6. In App Store Connect, add the build to **TestFlight**, complete export-compliance answers, and

@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "build:web": "pnpm --filter @whetstone/web build",
-    "add:ios": "cap add ios",
+    "add:ios": "cap add ios && pnpm apply:permissions",
     "inject:config": "tsx scripts/injectHostConfig.ts",
-    "sync": "pnpm build:web && cap sync ios && pnpm inject:config",
+    "apply:permissions": "tsx scripts/applyIosPermissions.ts",
+    "sync": "pnpm build:web && cap sync ios && pnpm inject:config && pnpm apply:permissions",
     "open:ios": "cap open ios"
   },
   "dependencies": {

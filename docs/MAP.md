@@ -678,9 +678,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - The only measured/typed source is `src/hostConfig.ts` (pure, 100%-covered): `iosHostConfig` builds
   the `platform="ios"` + `apiBaseUrl` host runtime config (the #445 `@whetstone/contracts` contract),
   `hostConfigInjectionScript` emits the `window.__WHETSTONE_HOST_CONFIG__ = {…}` JS, and
-  `injectHostConfigScript` inserts it before `</head>` (fail-loud if absent). `scripts/injectHostConfig.ts`
-  is the sync-time I/O glue: reads `WHETSTONE_API_BASE_URL` (fail-loud with a remedy on missing/invalid),
-  and injects the script into the synced `ios/App/App/public/index.html` after `cap sync`.
+  `injectHostConfigScript` inserts it before `</head>` (fail-loud if absent). `src/iosPermissions.ts`
+  (pure, 100%-covered) holds `ensureInfoPlistPermissions`, which idempotently adds the required
+  `NSMicrophoneUsageDescription` (Practice voice, AC #4) to the generated Info.plist. `scripts/` hold
+  the sync-time I/O glue: `injectHostConfig.ts` (reads `WHETSTONE_API_BASE_URL`, fail-loud on
+  missing/invalid, injects into the synced `ios/App/App/public/index.html`) and `applyIosPermissions.ts`
+  (patches `ios/App/App/Info.plist`); both are wired into `add:ios`/`sync` so a clean checkout is
+  TestFlight-ready with no manual edit.
 - `capacitor.config.ts` and `scripts/` live outside `src/`, so they are not coverage-measured or in the
   TS gate; the generated native `ios/` project (created on macOS by `cap add ios`) is git-/prettier-/
   eslint-ignored. Build/run/TestFlight flow (macOS-only steps marked): `docs/QUICK_START.md § 8`. iOS
