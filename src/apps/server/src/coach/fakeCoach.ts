@@ -149,8 +149,11 @@ function signalsConfusion(text: string | undefined): boolean {
 // to say, then hand the turn back. Deliberately DISTINCT from language `repair` (which recasts an
 // English phrase): this explains the activity itself. The literal "this is a role-play" also lets the
 // coach detect its own prior reorientation, so a repeated confusion turn doesn't loop the explanation.
+// The example is a real usable target phrase for this case when one is available; otherwise a safe,
+// generic natural line — never a malformed transform of the communicative-function label (#437 review).
 function reorientationSay(request: CoachConverseRequest): string {
-  const example = `I'd like to ${request.communicativeFunction.toLowerCase()}.`;
+  const usableTarget = request.context.recentTargets.find((phrase) => phrase.trim().length > 0);
+  const example = usableTarget ?? "I'm not sure how to start, but here goes.";
   return (
     `Quick note - this is a role-play: ${request.situation}. There's no script; just reply in English ` +
     `as if you were really there, for example "${example}" Go ahead whenever you're ready.`

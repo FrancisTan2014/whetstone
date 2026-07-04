@@ -180,11 +180,25 @@ describe("FakeCoach converse", () => {
       ]
     });
 
-    // Reorientation names the role-play + a concrete example, and is NOT a language repair.
+    // Reorientation names the role-play, and is NOT a language repair.
     expect(result.repair).toBeUndefined();
-    expect(result.say).toContain("role-play");
+    expect(result.say).toContain("this is a role-play");
     expect(result.say).toContain("At the table");
-    expect(result.say).toContain("I'd like to offering food.");
+    // With no usable target phrase, the example is a safe generic natural line - never a malformed
+    // transform of the communicative-function label.
+    expect(result.say).toContain("I'm not sure how to start, but here goes.");
+    expect(result.say).not.toContain("offering food");
+  });
+
+  it("uses a real usable target phrase as the reorientation example when one is available (#437)", async () => {
+    const result = await coach.converse({
+      ...base,
+      context: { focus: "At the table", recentTargets: ["", "Help yourself."] },
+      history: [{ role: "user", text: "what are you talking about?" }]
+    });
+
+    expect(result.repair).toBeUndefined();
+    expect(result.say).toContain('for example "Help yourself."');
   });
 
   it("reorients on a clear confusion/meta turn, and only once per stuck stretch (#437)", async () => {
