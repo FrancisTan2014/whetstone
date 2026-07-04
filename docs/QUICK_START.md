@@ -357,3 +357,53 @@ the alternative if you own a Cloudflare domain, and **Tailscale Funnel** is the 
 publicly — never a random `trycloudflare.com` quick tunnel. Any tokens/keys stay in the host's
 environment; nothing secret is committed. See
 [DEPLOY.md § 5 — A stable, fast URL (Tailscale `serve`)](./DEPLOY.md#5-a-stable-fast-url-tailscale-serve--recommended).
+
+## 7. Desktop app (Tauri, Windows/macOS)
+
+whetstone ships as a **native desktop app** (`src/apps/desktop/`) using a Tauri v2 shell around the
+same web core — no Electron. The window loads the **bundled** web build (not a remote URL) and injects
+the host runtime config (`platform="desktop"` + your `apiBaseUrl`) before the web app boots.
+
+**Prerequisites (once):** the Rust toolchain (`rustup`, `cargo`) and the Tauri platform prerequisites
+for your OS — on Windows the **WebView2 runtime** (preinstalled on Windows 10/11) and the MSVC build
+tools; on macOS the Xcode command-line tools. See
+[tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/). Then `pnpm install` at the
+repo root pulls the `@tauri-apps/cli`.
+
+**Configure the API base URL.** Native builds require an explicit, absolute `apiBaseUrl` (an empty or
+relative value triggers the fail-loud startup screen from #445). Set it via the
+`WHETSTONE_API_BASE_URL` environment variable:
+
+```powershell
+# Point the desktop shell at a reachable API server (dev: the local server via the Vite proxy)
+$env:WHETSTONE_API_BASE_URL = "http://localhost:5173/api"   # dev
+# $env:WHETSTONE_API_BASE_URL = "https://whetstone.example.ts.net/api"  # packaged, your server
+```
+
+**Dev run** (against a local server — start the API server first, e.g. `pnpm dev` in another
+terminal):
+
+```powershell
+pnpm --filter @whetstone/desktop dev
+```
+
+This launches the Vite web dev server (`beforeDevCommand`) and opens the desktop window pointing at it.
+
+**Production package build** (produces installers under `src/apps/desktop/src-tauri/target/release/bundle/`):
+
+```powershell
+pnpm --filter @whetstone/web build      # ensure the web dist exists (also run by beforeBuildCommand)
+pnpm --filter @whetstone/desktop build
+```
+
+The build embeds the current web `dist`. Bake a default API base into a packaged build by setting
+`WHETSTONE_API_BASE_URL` in the environment before `build`.
+
+**Desktop shell tests** (pure Rust config/navigation helpers):
+
+```powershell
+pnpm --filter @whetstone/desktop test   # cargo test --lib
+```
+
+**macOS packaging** uses the same commands (`pnpm --filter @whetstone/desktop build`) and is CI-ready;
+code-signing and store distribution are out of scope here.

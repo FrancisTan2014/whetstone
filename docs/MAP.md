@@ -640,6 +640,23 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 
+### `src/apps/desktop/` — Tauri desktop shell (Windows/macOS)
+
+- Native desktop packaging (#446) around the shared web core — **Tauri v2, no Electron**. All shell
+  logic is **Rust** under `src-tauri/src/` (kept out of the TS typecheck/lint/coverage gates); the
+  window loads the **bundled** web `dist` (not a remote URL) via `frontendDist: "../../web/dist"`.
+- `src-tauri/src/host_config.rs` builds the `platform="desktop"` + `apiBaseUrl` host runtime config
+  (the #445 `@whetstone/contracts` contract) and the `initialization_script` string that sets
+  `window.__WHETSTONE_HOST_CONFIG__` **before** the web app boots; a missing/empty base is injected
+  verbatim so the web resolver shows its fail-loud startup screen. Base URL comes from
+  `WHETSTONE_API_BASE_URL` (runtime env, then compile-time). `src-tauri/src/navigation.rs` decides
+  which top-level navigations are external (http(s) to a non-app host) so `main.rs` opens them in the
+  system browser via `tauri-plugin-opener` (called from Rust; no webview permission granted). Pure
+  helpers are unit-tested with `cargo test --lib`.
+- `src-tauri/capabilities/default.json` grants only `core:default` (no fs/shell/opener grants to the
+  webview). Dev/package commands: `docs/QUICK_START.md § 7`. Rust build artifacts
+  (`src-tauri/target/`, `src-tauri/gen/`) are git- and prettier-ignored.
+
 ## Build, validate, run
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.

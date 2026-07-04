@@ -1,0 +1,15 @@
+{
+  "name": "@whetstone/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Whetstone desktop shell (Tauri) around the shared web core",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml --lib"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  }
+}
