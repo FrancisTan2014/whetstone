@@ -15,6 +15,7 @@ describe("parseArgs", () => {
       voice: false,
       coach: false,
       all: false,
+      minimal: false,
       yes: false,
       unknown: []
     });
@@ -31,6 +32,7 @@ describe("parseArgs", () => {
       voice: true,
       coach: true,
       all: false,
+      minimal: false,
       yes: false,
       unknown: []
     });
@@ -40,6 +42,10 @@ describe("parseArgs", () => {
     expect(parseArgs(["--all"]).all).toBe(true);
     expect(parseArgs(["--yes"]).yes).toBe(true);
     expect(parseArgs(["--all", "--yes"])).toMatchObject({ all: true, yes: true, unknown: [] });
+  });
+
+  it("recognizes --minimal for a base-only run", () => {
+    expect(parseArgs(["--minimal"]).minimal).toBe(true);
   });
 
   it("collects unrecognized flags", () => {
@@ -54,11 +60,15 @@ describe("selectSteps", () => {
   const optionalNoCapability = createFakeStep({ id: "loose", optional: true }).step;
   const steps = [base, voice, coach, optionalNoCapability];
 
-  it("includes only base steps with no flags", () => {
-    expect(selectSteps(steps, { voice: false, coach: false })).toEqual([base]);
+  it("includes every optional capability by default (bare `pnpm setup` = full install)", () => {
+    expect(selectSteps(steps, { voice: false, coach: false })).toEqual([base, voice, coach]);
   });
 
-  it("adds the matching optional capability when its flag is set", () => {
+  it("narrows to base-only under --minimal", () => {
+    expect(selectSteps(steps, { voice: false, coach: false, minimal: true })).toEqual([base]);
+  });
+
+  it("adds only the matching optional capability when its flag is set (setup:voice / setup:coach)", () => {
     expect(selectSteps(steps, { voice: true, coach: false })).toEqual([base, voice]);
     expect(selectSteps(steps, { voice: false, coach: true })).toEqual([base, coach]);
   });
@@ -67,7 +77,7 @@ describe("selectSteps", () => {
     expect(selectSteps(steps, { voice: true, coach: true })).toEqual([base, voice, coach]);
   });
 
-  it("enables every optional capability under --all", () => {
+  it("treats --all as an alias of the default (every optional capability)", () => {
     expect(selectSteps(steps, { voice: false, coach: false, all: true })).toEqual([
       base,
       voice,
