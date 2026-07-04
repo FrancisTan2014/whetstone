@@ -1,0 +1,24 @@
+{
+  "name": "@whetstone/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capacitor iOS shell that packages the whetstone web app as a TestFlight-ready native app.",
+  "type": "module",
+  "scripts": {
+    "build:web": "pnpm --filter @whetstone/web build",
+    "add:ios": "cap add ios && pnpm apply:permissions",
+    "inject:config": "tsx scripts/injectHostConfig.ts",
+    "apply:permissions": "tsx scripts/applyIosPermissions.ts",
+    "sync": "pnpm build:web && cap sync ios && pnpm inject:config && pnpm apply:permissions",
+    "open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
+    "@whetstone/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
+    "tsx": "^4.22.4"
+  }
+}

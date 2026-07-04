@@ -314,7 +314,7 @@ same-origin `/api`, so the same bundle runs as browser web, a desktop shell, or 
   `src/main.tsx` validates this once at startup (`bootstrapApiRuntime`). Valid config is trusted
   inward and every `apiUrl(...)` call targets it; invalid config fails loud with a blocking startup
   screen that states what is wrong and how to fix it — it never silently falls back to a fake default.
-  (No Tauri/Capacitor scaffolding ships yet — this is only the runtime contract the shells will use.)
+  Both shells ship: the desktop shell (Tauri) in § 7 and the iOS shell (Capacitor) in § 8.
 
 ## 4. First user flow
 
@@ -431,3 +431,78 @@ pnpm --filter @whetstone/desktop test   # cargo test --lib
 
 **macOS packaging** uses the same commands (`pnpm --filter @whetstone/desktop build`) and is CI-ready;
 code-signing and store distribution are out of scope here.
+
+## 8. iOS app (Capacitor, macOS only)
+
+whetstone also ships as a **native iOS app** (`src/apps/mobile/`) using a
+[Capacitor](https://capacitorjs.com/) shell around the same web core. The app embeds the **bundled**
+web build (it does not load a remote URL) and injects the host runtime config (`platform="ios"` + your
+absolute `apiBaseUrl`) into the packaged `index.html` before the web app boots, so every API call
+targets your server (the on-device app has no local Ollama/Whisper — Practice and lookup call the
+server APIs). External links (e.g. the reader's dictionary lookups) open in **Safari**, not the app
+webview.
+
+> **Windows note.** The native iOS project is generated and built with Apple tooling, so **§ 8 requires
+> macOS** (Xcode + CocoaPods + an Apple Developer account). The cross-platform pieces — the Capacitor
+> config, the host-config injection logic, the `Info.plist` permission patch, and their unit tests —
+> live in this repo and run anywhere; generating the `ios/` Xcode project and the simulator/TestFlight
+> steps below can only be executed on a Mac. The steps that are macOS-only are marked **(macOS)**.
+
+**Prerequisites (macOS, once):** Xcode (with the iOS SDK and command-line tools), CocoaPods
+(`sudo gem install cocoapods`), and an Apple Developer account for device/TestFlight builds. Then
+`pnpm install` at the repo root pulls the Capacitor CLI and libraries.
+
+**Configure the API base URL.** iOS builds require an explicit, absolute `apiBaseUrl` (an empty or
+relative value fails loud — the sync step aborts with the fix, and the runtime shows the #445 startup
+screen). Set it via `WHETSTONE_API_BASE_URL`:
+
+```bash
+export WHETSTONE_API_BASE_URL="https://whetstone.example.ts.net/api"   # your reachable server
+```
+
+**First-time platform generation (macOS):**
+
+```bash
+pnpm --filter @whetstone/mobile add:ios   # generates src/apps/mobile/ios and applies the mic permission
+```
+
+**Microphone permission is applied automatically (AC #4).** Practice records voice, so iOS requires an
+`NSMicrophoneUsageDescription`. Rather than a manual edit, `add:ios` and `sync` run a checked-in patch
+(`scripts/applyIosPermissions.ts`, unit-tested) that ensures this key is present in
+`src/apps/mobile/ios/App/App/Info.plist` (idempotent). The committed iOS project keeps the permission,
+so a clean checkout following these scripts is TestFlight-ready. To (re)apply it on its own:
+
+```bash
+pnpm --filter @whetstone/mobile apply:permissions
+```
+
+**Build, sync, and open (macOS):**
+
+```bash
+pnpm --filter @whetstone/mobile sync      # build web, `cap sync ios`, inject host config, apply mic permission
+pnpm --filter @whetstone/mobile open:ios  # opens the project in Xcode
+```
+
+In Xcode, select a simulator or a connected device and press **Run**. `sync` embeds the current web
+`dist` and bakes in `WHETSTONE_API_BASE_URL`; re-run it after any web change.
+
+**Mobile shell tests** (pure host-config + permission glue; run anywhere including Windows/CI, part of
+`pnpm test`):
+
+```bash
+pnpm exec vitest run src/apps/mobile
+```
+
+### TestFlight handoff checklist (macOS)
+
+1. Set a distributable `WHETSTONE_API_BASE_URL` (a public/tailnet server the phone can reach), then
+   `pnpm --filter @whetstone/mobile sync`.
+2. In Xcode → **Signing & Capabilities**, select your Apple Developer team and set a unique bundle
+   identifier (defaults to `com.whetstone.app`).
+3. `NSMicrophoneUsageDescription` is applied automatically by `add:ios`/`sync` (above) — no manual edit.
+4. Set the version/build number, choose **Any iOS Device (arm64)**, then **Product → Archive**.
+5. In the Organizer, **Distribute App → App Store Connect → Upload**.
+6. In App Store Connect, add the build to **TestFlight**, complete export-compliance answers, and
+   invite testers.
+
+App Store submission assets, review, and legal are out of scope here. Android is a non-goal.

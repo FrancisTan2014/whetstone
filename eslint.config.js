@@ -16,7 +16,10 @@ export default tseslint.config(
       // Tauri desktop Rust build artifacts (generated JS in the codegen output
       // and bundler dirs); never source we lint.
       "src/apps/desktop/src-tauri/target/**",
-      "src/apps/desktop/src-tauri/gen/**"
+      "src/apps/desktop/src-tauri/gen/**",
+      // Capacitor-generated native iOS project (Xcode/Swift/plist/Pods, created on macOS by
+      // `cap add ios`); generated output, never source we lint.
+      "src/apps/mobile/ios/**"
     ]
   },
   js.configs.recommended,
