@@ -196,9 +196,20 @@ export const voiceStep = {
     const located = ctx.exec(python, ["-m", "whetstone_whisper.locate"]);
     const launcher = located.stdout.trim();
     if (located.code !== 0 || launcher.length === 0) {
+      // locate.py reports the interpreter's per-user Scripts dir on stderr when it cannot resolve
+      // the launcher. Microsoft Store Python installs the console script there but never adds it to
+      // PATH (#424), so name that exact directory instead of a generic "put it on PATH".
+      const userScriptsDir = located.stderr.trim();
+      const remedy =
+        userScriptsDir.length > 0
+          ? `Microsoft Store Python installed it into "${userScriptsDir}" but does not add that to PATH — ` +
+            `add that directory to PATH, or install Python 3 from ${PYTHON_DOCS} with "Add to PATH", ` +
+            "then re-run `pnpm setup:voice`."
+          : `Install Python 3 from ${PYTHON_DOCS} with "Add to PATH" (so pip's console scripts are ` +
+            "resolvable), then re-run `pnpm setup:voice`.";
       return error(
         "The whetstone-whisper launcher could not be located after installation.",
-        "Ensure your Python scripts directory is on PATH, then re-run `pnpm setup:voice`."
+        remedy
       );
     }
 
