@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="whetstone">
+  <!--
+    whetstone app icon (#438): a wordless, bold lowercase "w" monogram in the brand accent on the
+    app background. Day tokens: background #f5f4ef, accent #4f46e5 (src/apps/web/src/styles/theme.css).
+    The glyph sits inside x[96..416] y[150..362], within the maskable central-80% safe zone
+    (51.2..460.8), so this single source rasterizes for both the "any" and "maskable" purposes.
+  -->
+  <rect width="512" height="512" fill="#f5f4ef"/>
+  <path d="M96 150 L176 362 L256 232 L336 362 L416 150"
+        fill="none" stroke="#4f46e5" stroke-width="60"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

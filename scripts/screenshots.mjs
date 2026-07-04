@@ -107,7 +107,13 @@ async function buildWorkspace() {
     return;
   }
   console.log("Building workspace (pnpm build)…");
-  await run("pnpm", ["build"], { cwd: root, shell: process.platform === "win32" });
+  // Build with the PWA/service worker disabled (#438): the screenshot harness serves the built dist,
+  // and an active SW would precache and later serve stale assets across runs.
+  await run("pnpm", ["build"], {
+    cwd: root,
+    env: { ...process.env, WHETSTONE_DISABLE_PWA: "true" },
+    shell: process.platform === "win32"
+  });
 }
 
 async function startServer(port, sourceFilesDir) {
