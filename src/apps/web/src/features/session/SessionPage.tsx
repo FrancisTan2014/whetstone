@@ -75,6 +75,10 @@ export function SessionPage({
   const [captions, setCaptions] = useState<ReadonlyArray<Caption>>([]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [started, setStarted] = useState(false);
+  // The learner has an utterance in progress (they started speaking this turn). Gates the "Done"
+  // control so it only enables once there is something to finish (#436); tapping before speech is a
+  // safe no-op regardless.
+  const [speaking, setSpeaking] = useState(false);
   const [micUnavailable, setMicUnavailable] = useState(false);
   const [wrapUp, setWrapUp] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -135,10 +139,17 @@ export function SessionPage({
   }
 
   async function onUtterance(call: CallContext, audio: Blob): Promise<void> {
+    setSpeaking(false);
     setPhase("thinking");
     const { transcript, words } = await transcribe(audio);
     wordsRef.current = [...wordsRef.current, ...words];
     await runTurn(call, transcript);
+  }
+
+  // "Done speaking": the learner explicitly finalises their current utterance and submits it, instead of
+  // waiting for the generous silence backstop (#436). A no-op when nothing is capturing.
+  function finishUtterance(): void {
+    liveRef.current?.capture.finishUtterance();
   }
 
   // Open the live call. A mic-start failure (denied/absent device, or a non-secure context where
@@ -150,9 +161,12 @@ export function SessionPage({
       onBargeIn: () => {
         voice.cancel();
         capture.setCoachPlaying(false);
+        // A barge-in is the learner speaking, so "Done" becomes available for this new utterance.
+        setSpeaking(true);
         setPhase("listening");
       },
-      onUtterance: (audio) => void guarded(() => onUtterance(call, audio))
+      onUtterance: (audio) => void guarded(() => onUtterance(call, audio)),
+      onUtteranceStart: () => setSpeaking(true)
     });
     liveRef.current = { capture, voice };
     return capture.start().then(
@@ -267,10 +281,12 @@ export function SessionPage({
   return (
     <CallView
       call={status.call}
+      canFinish={speaking}
       captions={captions}
       endCall={() => void endCall(status.call)}
       liveDeps={live}
       micUnavailable={micUnavailable}
+      onDone={finishUtterance}
       onSend={(transcript) => void guarded(() => runTurn(status.call, transcript))}
       onStart={(deps) => void startCall(status.call, deps)}
       phase={phase}
@@ -293,10 +309,12 @@ function Shell({ children }: Readonly<{ children: React.ReactNode }>): React.JSX
 
 function CallView({
   call,
+  canFinish,
   captions,
   endCall,
   liveDeps,
   micUnavailable,
+  onDone,
   onSend,
   onStart,
   phase,
@@ -304,10 +322,12 @@ function CallView({
   wrapUp
 }: Readonly<{
   call: CallContext;
+  canFinish: boolean;
   captions: ReadonlyArray<Caption>;
   endCall: () => void;
   liveDeps: LiveDependencies | undefined;
   micUnavailable: boolean;
+  onDone: () => void;
   onSend: (transcript: string) => void;
   onStart: (deps: LiveDependencies) => void;
   phase: Phase;
@@ -413,8 +433,13 @@ function CallView({
               Start call
             </Button>
           ) : null}
+          {started && phase === "listening" ? (
+            <Button disabled={!canFinish} onClick={onDone} type="button">
+              Done speaking
+            </Button>
+          ) : null}
           {underway ? (
-            <Button onClick={endCall} type="button">
+            <Button onClick={endCall} type="button" variant="secondary">
               End &amp; review
             </Button>
           ) : null}

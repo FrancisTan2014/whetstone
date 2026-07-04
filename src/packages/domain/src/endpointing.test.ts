@@ -74,6 +74,32 @@ describe("endpointing — utterance start/end with onset candidate", () => {
     ]);
   });
 
+  // The learner now owns the turn boundary via "Done" (#436); VAD is only a generous backstop. At the
+  // production default (30ms frames, 3000ms end-silence) a natural mid-sentence pause must not submit a
+  // half-finished turn: a silence gap up to 2500ms while speaking must NOT end it; >= 3000ms does.
+  const backstopConfig: EndpointConfig = {
+    endSilenceMs: 3000,
+    frameMs: 30,
+    minSpeechMs: 150,
+    noiseFloor: 0.02
+  };
+
+  it("does not end the turn on a silence gap up to 2500ms while speaking (backstop only)", () => {
+    // 5 voiced frames (150ms) confirm the start, then 83 silent frames = 2490ms (<= 2500ms).
+    const { events, state } = run(backstopConfig, [...frames(5, VOICED), ...frames(83, SILENT)]);
+
+    expect(events.some((event) => event.type === "utterance-start")).toBe(true);
+    expect(events.some((event) => event.type === "utterance-end")).toBe(false);
+    expect(isCapturingUtterance(state)).toBe(true);
+  });
+
+  it("ends the turn once trailing silence reaches the 3000ms backstop", () => {
+    // 5 voiced frames confirm the start, then 100 silent frames = 3000ms reaches the backstop.
+    const { events } = run(backstopConfig, [...frames(5, VOICED), ...frames(100, SILENT)]);
+
+    expect(events.filter((event) => event.type === "utterance-end")).toHaveLength(1);
+  });
+
   it("aborts a candidate that goes silent before the speech window completes", () => {
     // 3 voiced frames (candidate at 0) then silence — never reaches the 5-frame window.
     const { events, state } = run(config, [...frames(3, VOICED), SILENT]);
