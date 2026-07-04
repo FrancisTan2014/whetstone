@@ -108,20 +108,29 @@ describe("installSystemTool", () => {
     expect(result.docs).toBe(DOCS);
   });
 
-  it("5. installs and returns ok when consent is granted and the install succeeds", () => {
-    const { ctx, confirmCalls, execCalls, logs } = createFakeContext({
+  it("5. installs and returns ok when consent is granted and the install makes check resolve", () => {
+    // check is authoritative on every platform: the probe fails until the install runs, and the
+    // post-install re-probe (no PATH refresh off win32) proves the tool now resolves.
+    let installed = false;
+    const { ctx, confirmCalls, execCalls, logs, refreshPathCalls } = createFakeContext({
       platform: "darwin",
       confirm: true,
       execHandler: (command, args) => {
-        if (command === "widget") return { code: 1, stdout: "", stderr: "" };
+        if (command === "widget") return { code: installed ? 0 : 1, stdout: "", stderr: "" };
         if (command === "brew" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
-        if (command === "brew" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
+        if (command === "brew" && args[0] === "install") {
+          installed = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
         return { code: 0, stdout: "", stderr: "" };
       }
     });
     expect(installSystemTool(ctx, makeSpec())).toEqual({ status: "ok" });
     expect(confirmCalls).toEqual(["Install Widget now? [Y/n]"]);
     expect(execCalls).toContainEqual(["brew", "install", "widget"]);
+    // The post-install re-probe ran (twice total: initial check + post-install check), no PATH refresh.
+    expect(execCalls.filter((call) => call[0] === "widget").length).toBe(2);
+    expect(refreshPathCalls()).toBe(0);
     expect(logs.join("\n")).toContain("installing Widget via brew");
   });
 
@@ -263,17 +272,44 @@ describe("installSystemTool", () => {
   });
 
   it("does not refresh PATH on non-win32 platforms after a successful install", () => {
+    let installed = false;
     const { ctx, refreshPathCalls } = createFakeContext({
       platform: "darwin",
       confirm: true,
       execHandler: (command, args) => {
-        if (command === "widget") return { code: 1, stdout: "", stderr: "" };
+        if (command === "widget") return { code: installed ? 0 : 1, stdout: "", stderr: "" };
+        if (command === "brew" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
+        if (command === "brew" && args[0] === "install") {
+          installed = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      }
+    });
+    expect(installSystemTool(ctx, makeSpec())).toEqual({ status: "ok" });
+    expect(refreshPathCalls()).toBe(0);
+  });
+
+  it("non-win32: an exit-zero install whose tool still does not resolve is the stale-PATH missing, not ok (#429 review — check is authoritative on every platform)", () => {
+    // check re-runs on every platform: a brew install that exits 0 but leaves the tool unresolved
+    // must NOT be reported ok. An exit-zero-still-missing is a stale-shell situation → `missing`
+    // (open a new terminal), the same contract as win32, and with no PATH refresh off win32.
+    const { ctx, execCalls, refreshPathCalls } = createFakeContext({
+      platform: "darwin",
+      confirm: true,
+      execHandler: (command, args) => {
+        if (command === "widget") return { code: 1, stdout: "", stderr: "" }; // never resolves
         if (command === "brew" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
         if (command === "brew" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
         return { code: 0, stdout: "", stderr: "" };
       }
     });
-    expect(installSystemTool(ctx, makeSpec())).toEqual({ status: "ok" });
+    const result = installSystemTool(ctx, makeSpec());
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("was installed but is not on this terminal's PATH");
+    expect(result.remedy).toContain("Open a new terminal");
+    // The post-install re-probe ran (initial check + post-install check), no PATH refresh off win32.
+    expect(execCalls.filter((call) => call[0] === "widget").length).toBe(2);
     expect(refreshPathCalls()).toBe(0);
   });
 });

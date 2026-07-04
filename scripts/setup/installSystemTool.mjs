@@ -42,9 +42,10 @@ import { error, isOk, missing, ok, withOutputTail } from "./step.mjs";
  *   1. `check` is ok (after a win32 PATH refresh) ⇒ `ok()` (already present, nothing to do).
  *   2. no plan for this platform, or its package manager is absent ⇒ `missing` + docs (instruct-only).
  *   3. `ctx.confirm(question)` is false          ⇒ `missing` (instruct-only; user declined).
- *   4. install runs, then `check` still fails: a non-zero install exit ⇒ `error` with the output tail;
- *      a zero exit whose tool is merely off this win32 process's PATH ⇒ `missing` (open a new terminal).
- *   5. after install, `check` is ok (PATH refreshed on win32) ⇒ `ok()`, regardless of the exit code.
+ *   4. install runs, then `check` still fails: a zero exit (installed but not yet on PATH) ⇒
+ *      `missing` (open a new terminal); a non-zero exit (the install failed) ⇒ `error` + output tail.
+ *   5. after install, `check` is ok (PATH refreshed on win32) ⇒ `ok()`, regardless of the exit code
+ *      and on every platform — the install's exit code is never trusted over `check`.
  *
  * @param {import("./step.mjs").SetupContext} ctx
  * @param {InstallSpec} spec
@@ -82,31 +83,29 @@ export function installSystemTool(ctx, spec) {
   ctx.log(`[setup] installing ${spec.name} via ${plan.manager}...`);
   const result = ctx.exec(plan.manager, plan.args);
 
-  // Decide readiness by re-probing `check` (the source of truth), NOT by the install exit code —
-  // winget exits non-zero for the benign "already installed, no upgrade applicable" case
-  // (APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, 0x8A15002B), which is not a real failure. On win32
-  // the freshly-installed binary is also invisible to THIS process until PATH is refreshed from the
-  // registry (the `spawnSync <tool> ENOENT` of #423, where the next step tries to *use* the tool);
-  // refresh, then re-probe so install->use completes in one run.
+  // Decide readiness by re-probing `check` (the source of truth) on EVERY platform, NOT by the
+  // install exit code — winget exits non-zero for the benign "already installed, no upgrade
+  // applicable" case (APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, 0x8A15002B), and an exit-zero
+  // install has not actually proven the tool resolves. On win32 the freshly-installed binary is also
+  // invisible to THIS process until PATH is refreshed from the registry (the `spawnSync <tool>
+  // ENOENT` of #423, where the next step tries to *use* the tool); refresh first, then re-probe.
   if (ctx.platform === "win32") {
     ctx.refreshPath();
-    if (isOk(spec.check(ctx))) {
-      return ok();
-    }
-    // Installed per the command, but still unresolved. If the install itself succeeded, the only
-    // cause left is a stale shell PATH — name it rather than letting a downstream step blame
-    // something else. A non-zero exit falls through to the shared error path below (with its tail).
-    if (result.code === 0) {
-      return missing(
-        `${spec.name} was installed but is not on this terminal's PATH yet.`,
-        `Open a new terminal (so it picks up the updated PATH) and re-run the same command, ` +
-          `or add ${spec.name} to your PATH manually.`
-      );
-    }
+  }
+  if (isOk(spec.check(ctx))) {
+    return ok();
   }
 
-  if (result.code !== 0) {
-    return error(what, withOutputTail(spec.remedy, result), spec.docs);
+  // Installed per the command, but the tool still doesn't resolve. An exit-zero install that hasn't
+  // surfaced on PATH is a stale-shell situation (the win32 in-process PATH, or a manager like brew
+  // whose bin dir isn't on PATH yet) — name it and point at a fresh terminal, not a hard failure. A
+  // non-zero exit means the install itself failed: surface it as an error with its output tail.
+  if (result.code === 0) {
+    return missing(
+      `${spec.name} was installed but is not on this terminal's PATH yet.`,
+      `Open a new terminal (so it picks up the updated PATH) and re-run the same command, ` +
+        `or add ${spec.name} to your PATH manually.`
+    );
   }
-  return ok();
+  return error(what, withOutputTail(spec.remedy, result), spec.docs);
 }
