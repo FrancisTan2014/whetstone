@@ -235,14 +235,33 @@ describe("voiceStep.provision", () => {
     expect(voiceStep.provision(ctx).what).toContain("whetstone-whisper wrapper");
   });
 
-  it("errors when the launcher cannot be located after install", () => {
+  it("errors with a python.org remedy when the launcher is nowhere and no user-site dir is reported", () => {
     const { ctx } = createFakeContext({
       execHandler: (command, args) =>
         args.join(" ").includes("whetstone_whisper.locate")
           ? { code: 0, stdout: "\n", stderr: "" }
           : happyExec(command, args)
     });
-    expect(voiceStep.provision(ctx).what).toContain("could not be located");
+    const result = voiceStep.provision(ctx);
+    expect(result.what).toContain("could not be located");
+    expect(result.remedy).toContain("https://www.python.org/downloads");
+    expect(result.remedy).toContain("Add to PATH");
+  });
+
+  it("names the Microsoft Store Python user-site Scripts dir in the remedy when locate reports one", () => {
+    const userScriptsDir =
+      "C:\\Users\\me\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts";
+    const { ctx } = createFakeContext({
+      execHandler: (command, args) =>
+        args.join(" ").includes("whetstone_whisper.locate")
+          ? { code: 0, stdout: "", stderr: `${userScriptsDir}\n` }
+          : happyExec(command, args)
+    });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("could not be located");
+    expect(result.remedy).toContain(userScriptsDir);
+    expect(result.remedy).toContain("Microsoft Store Python");
   });
 
   it("maps a model-download failure to an actionable error", () => {
