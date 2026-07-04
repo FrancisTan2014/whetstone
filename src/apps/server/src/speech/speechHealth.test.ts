@@ -7,7 +7,7 @@ describe("checkSpeechHealth", () => {
     const report = checkSpeechHealth({ config: { whisper: undefined } });
 
     expect(report.status).toBe("fake");
-    expect(report.message).toContain("pnpm setup --voice");
+    expect(report.message).toContain("pnpm setup:voice");
     expect(report.message).toContain("WHISPER_BINARY");
   });
 

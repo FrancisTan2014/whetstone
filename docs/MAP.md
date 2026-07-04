@@ -164,7 +164,7 @@ can navigate them from another package.
   `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
   safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured).
   `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`, mirrors `checkCoachHealth`) logs a
-  boot warning when STT is on the fake, pointing at `pnpm setup --voice`. The
+  boot warning when STT is on the fake, pointing at `pnpm setup:voice`. The
   latency/inter-word-pause derivation is pure in `@whetstone/domain` (`speechTiming.ts`); shapes in
   `@whetstone/contracts` (`speechContracts.ts`). Audio never leaves the machine; setup in
   `docs/SPEECH.md`.

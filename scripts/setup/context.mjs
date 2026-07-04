@@ -67,7 +67,7 @@ export function createContext(root, options = {}) {
     confirm: makeConfirm({
       yes: options.yes === true,
       // Interactivity is gated on stdin (the line we read), not stdout: a redirected/closed stdin
-      // (e.g. `pnpm setup --voice < NUL`) must decline even when stdout is still a terminal, so a
+      // (e.g. `pnpm setup:voice < NUL`) must decline even when stdout is still a terminal, so a
       // non-interactive run can never auto-consent to a system install. Require both to be safe.
       isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
       prompt: promptLine

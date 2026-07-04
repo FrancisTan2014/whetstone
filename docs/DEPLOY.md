@@ -103,7 +103,7 @@ at the web build inside the runner workspace; `ProgramArguments` runs the freshl
     <key>IMAGE_RESOURCES_DIR</key><string>/Users/<YOU>/whetstone/data/images</string>
     <key>LOG_LEVEL</key><string>info</string>
     <!-- Optional: local Whisper STT for spoken practice (docs/SPEECH.md). Leave out to run without
-         voice (spoken turns transcribe to empty). On the deploy host run `pnpm setup --voice` once,
+         voice (spoken turns transcribe to empty). On the deploy host run `pnpm setup:voice` once,
          then copy the WHISPER_BINARY / WHISPER_MODEL_PATH / WHISPER_LANGUAGE it wrote into .env here. -->
     <!-- <key>WHISPER_BINARY</key><string>/Users/<YOU>/Library/Python/3.x/bin/whetstone-whisper</string> -->
     <!-- <key>WHISPER_MODEL_PATH</key><string>small</string> -->

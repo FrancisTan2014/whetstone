@@ -31,12 +31,12 @@ crashes for a missing model.
 A local Whisper is configured only when **both** `WHISPER_BINARY` and `WHISPER_MODEL_PATH` are
 present; otherwise resolution falls back to the fake.
 
-## One-command setup (`pnpm setup --voice`)
+## One-command setup (`pnpm setup:voice`)
 
 The fastest way to enable voice is the setup framework's voice step:
 
 ```
-pnpm setup --voice
+pnpm setup:voice
 ```
 
 It installs `faster-whisper`, installs the bundled **`whetstone-whisper`** console-script wrapper
