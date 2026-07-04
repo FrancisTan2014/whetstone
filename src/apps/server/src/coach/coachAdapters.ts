@@ -13,9 +13,15 @@ export const defaultStrongModel = "gpt-5-mini";
 
 /* v8 ignore start -- cloud network boundary, exercised via an injected LlmModel in tests */
 function createCloudChat(apiKey: string): LlmModel {
-  return async (prompt) => {
+  return async (prompt, options) => {
     const response = await fetch("https://api.openai.com/v1/responses", {
-      body: JSON.stringify({ input: prompt, model: defaultStrongModel }),
+      body: JSON.stringify({
+        input: prompt,
+        model: defaultStrongModel,
+        // Equivalent of the local adapter's JSON mode (#433): ask the Responses API for a JSON object
+        // when the caller wants structured output, so the strong tier is just as parse-reliable.
+        ...(options?.json === true ? { text: { format: { type: "json_object" } } } : {})
+      }),
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
       method: "POST"
     });

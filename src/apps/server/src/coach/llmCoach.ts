@@ -60,9 +60,12 @@ function analyzePrompt(request: AnalyzeRoundRequest): string {
 
   return [
     "You are an English speaking coach. Judge one round, intelligibility first (was it understood?),",
-    "then chunk use; never penalize accent or non-nativeness. Reply with ONLY JSON matching:",
-    '{"chunkGrades":[{"chunkId","grade":0-5}],"mistakes":[{"category","said","native","why"}],',
-    '"wins":[],"upgrade":{"said","native"},"encouragement"}.',
+    "then chunk use; never penalize accent or non-nativeness. Reply with ONLY a JSON object with:",
+    '"chunkGrades" (array of {"chunkId": string, "grade": integer 0-5}), "mistakes" (array of',
+    '{"category","said","native","why"} strings), "wins" (array of strings), "upgrade"',
+    '({"said","native"} strings), and "encouragement" (string). Example:',
+    '{"chunkGrades":[{"chunkId":"c1","grade":4}],"mistakes":[],"wins":["Clear"],' +
+      '"upgrade":{"said":"","native":""},"encouragement":"Well understood."}',
     `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`,
     `Target chunks:\n${chunks}`,
     `Transcript: ${transcript}`
@@ -101,10 +104,16 @@ function conversePrompt(request: CoachConverseRequest): string {
         knobs.targetL1Share * 100
       )}% L1 in "say" to stay understood, but ALWAYS keep some English and pull toward it. Each turn,`,
       'recast ONE short English target for them to retry (pushed output) in "englishTarget".',
-      'Reply with ONLY JSON: {"say","englishTarget", optional "repair":{"reason","recast"}}.'
+      'Reply with ONLY a JSON object with a string "say" and a string "englishTarget". Optionally',
+      'include a "repair" object with string "reason" and "recast" on a real breakdown. Example:',
+      '{"say":"...","englishTarget":"...","repair":{"reason":"...","recast":"..."}}.'
     );
   } else {
-    lines.push('Reply with ONLY JSON: {"say", optional "repair":{"reason","recast"}}.');
+    lines.push(
+      'Reply with ONLY a JSON object with a string "say". Optionally include a "repair" object with',
+      'string "reason" and "recast" on a real breakdown. Example:',
+      '{"say":"...","repair":{"reason":"...","recast":"..."}}.'
+    );
   }
 
   lines.push(`Conversation:\n${transcript}`);
@@ -119,7 +128,7 @@ export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvide
     async analyze(request: AnalyzeRoundRequest): Promise<AnalyzeRoundResult> {
       try {
         return parseAnalyzeRoundResult(
-          extractJson(await dependencies.chat(analyzePrompt(request)))
+          extractJson(await dependencies.chat(analyzePrompt(request), { json: true }))
         );
       } catch (error) {
         // Degrade to the fake — but make it visible first, so `local_ready` boot health can't mask a
@@ -137,7 +146,7 @@ export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvide
     async converse(request: CoachConverseRequest): Promise<CoachConverseResult> {
       try {
         return parseCoachConverseResult(
-          extractJson(await dependencies.chat(conversePrompt(request)))
+          extractJson(await dependencies.chat(conversePrompt(request), { json: true }))
         );
       } catch (error) {
         dependencies.onFallback({

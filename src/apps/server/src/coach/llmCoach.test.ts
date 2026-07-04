@@ -58,6 +58,8 @@ describe("createLlmCoach analyze", () => {
     expect(result.encouragement).toBe("Understood you.");
     // The prompt is intelligibility-first and never penalizes accent.
     expect((chat.mock.calls[0]?.[0] as string).toLowerCase()).toContain("intelligibility");
+    // analyze asks the model for JSON mode so the strict parse gets valid JSON (#433).
+    expect(chat).toHaveBeenCalledWith(expect.any(String), { json: true });
     // A successful call must not log a fallback.
     expect(onFallback).not.toHaveBeenCalled();
   });
@@ -110,6 +112,8 @@ describe("createLlmCoach converse", () => {
     expect(result.say).toContain("offer");
     expect(result.repair?.recast).toContain("help yourself");
     expect((chat.mock.calls[0]?.[0] as string).toLowerCase()).toContain("register");
+    // converse asks the model for JSON mode (#433).
+    expect(chat).toHaveBeenCalledWith(expect.any(String), { json: true });
     expect(onFallback).not.toHaveBeenCalled();
   });
 
