@@ -10,6 +10,65 @@ import { makeConfirm } from "./confirm.mjs";
 import { resolveCommand } from "./platform.mjs";
 
 /**
+ * Read a persisted PATH value from the Windows registry (`reg query <key> /v Path`). Returns the raw
+ * value string (possibly containing unexpanded `%VAR%` references), or "" when the key/value is
+ * absent or the query fails. Boundary-only helper (never in tested decision logic).
+ *
+ * @param {string} key  Registry key, e.g. `HKCU\\Environment`.
+ * @returns {string}
+ */
+function queryRegistryPath(key) {
+  const result = spawnSync("reg", ["query", key, "/v", "Path"], { encoding: "utf8" });
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    return "";
+  }
+  // A `Path` row looks like: `    Path    REG_EXPAND_SZ    C:\\a;C:\\b`. Split on the type token and
+  // take the remainder as the value (it may itself contain spaces).
+  const match = result.stdout.match(/\bPath\s+REG(?:_EXPAND)?_SZ\s+(.*)/i);
+  return match ? match[1].trim() : "";
+}
+
+/**
+ * Expand `%VAR%` references (REG_EXPAND_SZ values store them unexpanded) against the current process
+ * environment, so a refreshed PATH holds concrete directories a child spawn can resolve.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function expandEnvRefs(value) {
+  return value.replace(/%([^%]+)%/g, (whole, name) => process.env[name] ?? whole);
+}
+
+/**
+ * Re-read the persisted Machine + User `Path` from the registry and apply it to this process, so a
+ * tool installed mid-run (whose installer only updated the persisted PATH) resolves for subsequent
+ * child spawns. Win32-only; a no-op elsewhere (brew/apt/script installs land on an already-active
+ * PATH). Lives in this excluded boundary — never in tested decision logic.
+ *
+ * @param {NodeJS.Platform} platform
+ * @returns {void}
+ */
+function refreshProcessPath(platform) {
+  if (platform !== "win32") {
+    return;
+  }
+  const machine = queryRegistryPath(
+    "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"
+  );
+  const user = queryRegistryPath("HKCU\\Environment");
+  const combined = [machine, user]
+    .map((value) => expandEnvRefs(value))
+    .filter((value) => value.length > 0)
+    .join(";");
+  if (combined.length > 0) {
+    // Windows treats PATH case-insensitively but Node exposes whichever casing the parent set; keep
+    // both in sync so `process.env.PATH` reads and child spawns agree.
+    process.env.Path = combined;
+    process.env.PATH = combined;
+  }
+}
+
+/**
  * Read a single line from stdin synchronously (setup is spawnSync-synchronous throughout, so there
  * is no event loop to await). Prints the question, then blocks on one `readSync` from fd 0. Returns
  * `null` on EOF (zero bytes — closed/redirected stdin) or a read error, so `makeConfirm` DECLINES
@@ -72,6 +131,7 @@ export function createContext(root, options = {}) {
       isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
       prompt: promptLine
     }),
+    refreshPath: () => refreshProcessPath(platform),
     log: (message) => console.log(message)
   };
 }

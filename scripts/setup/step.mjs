@@ -36,6 +36,9 @@
  * @property {SetupFs} fs         Minimal file-system surface.
  * @property {(question: string) => boolean} confirm  Consent seam: ask a Y/N before any heavy or
  *                                system install (yes/pre-consent ⇒ true, non-interactive ⇒ false).
+ * @property {() => void} refreshPath  Re-read the persisted (registry) PATH into this process so a
+ *                                just-installed tool resolves for subsequent child spawns. Win32-only
+ *                                effect (a no-op elsewhere, where installers update new shells' PATH).
  * @property {(message: string) => void} log  Progress logger.
  */
 
