@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="whetstone">
+  <!-- Browser favicon: the same "w" monogram as icon.svg (whetstone brand accent on the app background). -->
+  <rect width="512" height="512" fill="#f5f4ef"/>
+  <path d="M96 150 L176 362 L256 232 L336 362 L416 150"
+        fill="none" stroke="#4f46e5" stroke-width="60"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -399,6 +399,13 @@ can navigate them from another package.
 
 ### `src/apps/web/` — React + Vite PWA
 
+- Installable PWA (#438): `vite.config.ts` runs `vite-plugin-pwa` (generateSW, `registerType:
+  "autoUpdate"`) — the manifest (`display: standalone`, Day-token `theme_color`/`background_color`) +
+  a Workbox service worker precaching the built shell; icons live in `public/` (committed `icon.svg`
+  source + generated PNGs incl. a 512 maskable + 180 apple-touch), iOS/desktop meta in `index.html`.
+  The SW is off in dev and the E2E/screenshot harnesses (`devOptions.enabled=false` +
+  `WHETSTONE_DISABLE_PWA=true`); `assert-pwa-build.mjs` fails the build if `dist` lacks the
+  manifest/SW/icons. The server serves `manifest.webmanifest` + `sw.js` at root via `staticWeb.ts`.
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout

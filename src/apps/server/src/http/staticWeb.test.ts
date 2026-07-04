@@ -19,6 +19,13 @@ describe("web static serving (single origin)", () => {
     await writeFile(join(webDir, "index.html"), "<!doctype html><title>whetstone</title>root-ok");
     await mkdir(join(webDir, "assets"), { recursive: true });
     await writeFile(join(webDir, "assets", "app.js"), "export const marker = 'asset-ok';");
+    // The installable PWA (#438) is served from the same origin: the generated manifest and the
+    // service worker sit at the site root so the SW controls the whole app.
+    await writeFile(
+      join(webDir, "manifest.webmanifest"),
+      JSON.stringify({ name: "whetstone", display: "standalone" })
+    );
+    await writeFile(join(webDir, "sw.js"), "self.addEventListener('install', () => {});");
   });
 
   afterEach(async () => {
@@ -47,6 +54,32 @@ describe("web static serving (single origin)", () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.body).toContain("asset-ok");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("serves the PWA manifest with the manifest content-type so the app is installable (#438)", async () => {
+    const server = createServer({ logger: false, web: { dir: webDir } });
+
+    try {
+      const response = await server.inject({ method: "GET", url: "/manifest.webmanifest" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toContain("application/manifest+json");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("serves the service worker from the site root so it controls the whole app scope (#438)", async () => {
+    const server = createServer({ logger: false, web: { dir: webDir } });
+
+    try {
+      const response = await server.inject({ method: "GET", url: "/sw.js" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toContain("javascript");
     } finally {
       await server.close();
     }
