@@ -20,4 +20,19 @@ describe("checkSpeechHealth", () => {
 
     expect(report.status).toBe("configured");
   });
+
+  it("emits pure-ASCII log messages so the Windows console renders them cleanly (#439)", () => {
+    const messages = [
+      checkSpeechHealth({ config: { whisper: undefined } }).message,
+      checkSpeechHealth({
+        config: {
+          whisper: { binaryPath: "/bin/whetstone-whisper", language: "en", modelPath: "small" }
+        }
+      }).message
+    ];
+
+    for (const message of messages) {
+      expect([...message].every((ch) => (ch.codePointAt(0) ?? 0) <= 127)).toBe(true);
+    }
+  });
 });

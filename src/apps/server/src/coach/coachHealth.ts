@@ -32,11 +32,11 @@ export async function checkCoachHealth(
     return config.apiKey === undefined
       ? {
           message:
-            "No call routed to the local tier and no COACH_API_KEY — coach runs on the fake.",
+            "No call routed to the local tier and no COACH_API_KEY - coach runs on the fake.",
           status: "fake"
         }
       : {
-          message: "No call routed to the local tier — coach uses the cloud model only.",
+          message: "No call routed to the local tier - coach uses the cloud model only.",
           status: "cloud_only"
         };
   }
@@ -51,7 +51,7 @@ export async function checkCoachHealth(
   }
 
   return {
-    message: `Local coach model ${localModel} is unavailable — local-tier calls fall back to the fake. Run: ollama pull ${localModel}`,
+    message: `Local coach model ${localModel} is unavailable - local-tier calls fall back to the fake. Run: ollama pull ${localModel}`,
     status: "local_unavailable"
   };
 }

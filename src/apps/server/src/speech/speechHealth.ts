@@ -20,13 +20,13 @@ export function checkSpeechHealth(dependencies: SpeechHealthDependencies): Speec
   if (dependencies.config.whisper === undefined) {
     return {
       message:
-        "Local Whisper STT is not configured — spoken practice transcribes to empty. Set WHISPER_BINARY + WHISPER_MODEL_PATH, or run: pnpm setup:voice",
+        "Local Whisper STT is not configured - spoken practice transcribes to empty. Set WHISPER_BINARY + WHISPER_MODEL_PATH, or run: pnpm setup:voice",
       status: "fake"
     };
   }
 
   return {
-    message: "Local Whisper STT is configured — spoken practice transcribes locally.",
+    message: "Local Whisper STT is configured - spoken practice transcribes locally.",
     status: "configured"
   };
 }
