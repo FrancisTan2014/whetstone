@@ -650,9 +650,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `window.__WHETSTONE_HOST_CONFIG__` **before** the web app boots; a missing/empty base is injected
   verbatim so the web resolver shows its fail-loud startup screen. Base URL comes from
   `WHETSTONE_API_BASE_URL` (runtime env, then compile-time). `src-tauri/src/navigation.rs` decides
-  which top-level navigations are external (http(s) to a non-app host) so `main.rs` opens them in the
-  system browser via `tauri-plugin-opener` (called from Rust; no webview permission granted). Pure
-  helpers are unit-tested with `cargo test --lib`.
+  which requests are external (http(s) to a non-app host) so `main.rs` opens them in the system
+  browser via `tauri-plugin-opener` (called from Rust; no webview permission granted) — for both
+  top-level `on_navigation` and `on_new_window` (`target="_blank"` / `window.open`, which Tauri routes
+  separately; external → open + deny in-app window, internal → allow). Pure helpers
+  (`is_external_navigation`, `classify_new_window`) are unit-tested with `cargo test --lib`.
 - `src-tauri/capabilities/default.json` grants only `core:default` (no fs/shell/opener grants to the
   webview). Dev/package commands: `docs/QUICK_START.md § 7`. Rust build artifacts
   (`src-tauri/target/`, `src-tauri/gen/`) are git- and prettier-ignored.
