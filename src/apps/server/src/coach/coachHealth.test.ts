@@ -86,4 +86,35 @@ describe("checkCoachHealth", () => {
 
     expect(report.status).toBe("local_unavailable");
   });
+
+  it("emits pure-ASCII log messages so the Windows console renders them cleanly (#439)", async () => {
+    // Cover every status branch — the Windows OEM console mangles any non-ASCII (e.g. an em dash) to
+    // mojibake, so each boot/health message that reaches stdout must stay ASCII-only.
+    const reports = await Promise.all([
+      checkCoachHealth({
+        config: configWith({ apiKey: undefined, routing: allStrong }),
+        localModel: model,
+        probeLocalModel: () => Promise.resolve(true)
+      }),
+      checkCoachHealth({
+        config: configWith({ routing: allStrong }),
+        localModel: model,
+        probeLocalModel: () => Promise.resolve(true)
+      }),
+      checkCoachHealth({
+        config: configWith({}),
+        localModel: model,
+        probeLocalModel: () => Promise.resolve(true)
+      }),
+      checkCoachHealth({
+        config: configWith({}),
+        localModel: model,
+        probeLocalModel: () => Promise.resolve(false)
+      })
+    ]);
+
+    for (const report of reports) {
+      expect([...report.message].every((ch) => (ch.codePointAt(0) ?? 0) <= 127)).toBe(true);
+    }
+  });
 });
