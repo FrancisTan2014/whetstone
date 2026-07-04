@@ -28,7 +28,7 @@ pnpm setup:doctor   # report each capability as ready / optional-missing / faile
 Opt-in heavy capabilities are excluded from the base run; enable each with its own script (their own
 steps land with those features): `pnpm setup:voice`, `pnpm setup:coach`, or `pnpm setup:all` for both.
 
-> **Why a `setup:*` script, not `pnpm setup --voice`?** `setup` is a **built-in pnpm command**, so
+> **Why `pnpm setup:voice` and not a flag on `pnpm setup`?** `setup` is a **built-in pnpm command**, so
 > `pnpm setup` with any flag is routed to pnpm's built-in and fails with `Unknown option`. The
 > capability scripts (`setup:voice`, `setup:coach`, `setup:all`, `setup:doctor`) bake the flag in and
 > don't collide. For a raw flag/env combo, use the explicit run form: `pnpm run setup -- --<flag>`
