@@ -15,10 +15,27 @@
 // Ctrl-C (or either dev server exiting) tears the whole group down so no orphan stays behind.
 import { spawn } from "node:child_process";
 
+import { cmdShimSpawnOptions } from "./setup/platform.mjs";
+
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 function run(args) {
-  return spawn(pnpm, args, { stdio: "inherit" });
+  // On Windows the `pnpm.cmd` shim must be spawned through a shell (Node forbids launching a
+  // `.cmd`/`.bat` directly since CVE-2024-27980 — `spawn EINVAL` on Node 24); on posix it spawns
+  // directly. See `cmdShimSpawnOptions`.
+  return spawn(pnpm, args, cmdShimSpawnOptions(process.platform));
+}
+
+// Tear a tracked dev server down completely. On Windows the shell-wrapped `pnpm.cmd` child IS
+// `cmd.exe`; killing it does NOT stop the `pnpm` -> `node`/`tsx`/Vite descendants (Windows does not
+// signal a process's children), which would orphan the servers on ports 3000 / 5173. Kill the whole
+// tree by PID instead. On posix `child.kill()` is unchanged.
+function killTree(child) {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+    return;
+  }
+  child.kill();
 }
 
 const children = new Set();
@@ -28,7 +45,7 @@ function shutdown(code) {
   if (shuttingDown) return;
   shuttingDown = true;
   for (const child of children) {
-    child.kill();
+    killTree(child);
   }
   process.exitCode = code;
 }
