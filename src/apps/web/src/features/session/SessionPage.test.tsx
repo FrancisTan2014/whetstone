@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -58,7 +58,8 @@ function fakeLive(overrides?: { supported?: boolean; startRejects?: boolean }) {
   const callbacks: {
     onUtterance: ((audio: Blob) => void) | undefined;
     onBargeIn: (() => void) | undefined;
-  } = { onBargeIn: undefined, onUtterance: undefined };
+    onUtteranceStart: (() => void) | undefined;
+  } = { onBargeIn: undefined, onUtterance: undefined, onUtteranceStart: undefined };
   const capture = {
     finishUtterance: vi.fn(),
     setCoachPlaying: vi.fn(),
@@ -74,6 +75,7 @@ function fakeLive(overrides?: { supported?: boolean; startRejects?: boolean }) {
     createCapture: (cb) => {
       callbacks.onUtterance = cb.onUtterance;
       callbacks.onBargeIn = cb.onBargeIn;
+      callbacks.onUtteranceStart = cb.onUtteranceStart;
       return capture;
     },
     createVoiceOut: () => voice,
@@ -239,6 +241,54 @@ describe("SessionPage", () => {
 
     callbacks.onBargeIn?.();
     expect(voice.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("offers a Done control during the learner's turn that finalises the utterance (#436)", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedTranscribe.mockResolvedValue({ transcript: "help yourself", words: [] });
+    mockedSay.mockResolvedValue({ say: "And then?" });
+    const { callbacks, capture, live } = fakeLive();
+    const user = userEvent.setup();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Start call" }));
+    await screen.findByText("Listening…");
+
+    // Visible during the learner's turn, but disabled until they have started speaking (a safe no-op).
+    const done = screen.getByRole("button", { name: "Done speaking" });
+    expect((done as HTMLButtonElement).disabled).toBe(true);
+
+    act(() => {
+      callbacks.onUtteranceStart?.();
+    });
+    expect(
+      (screen.getByRole("button", { name: "Done speaking" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "Done speaking" }));
+    expect(capture.finishUtterance).toHaveBeenCalledOnce();
+  });
+
+  it("hides the Done control while the coach is thinking/speaking, not the learner's turn (#436)", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    // Hold the coach reply pending so the phase stays "thinking" after the utterance is submitted.
+    mockedTranscribe.mockResolvedValue({ transcript: "help yourself", words: [] });
+    mockedSay.mockReturnValue(new Promise(() => {}));
+    const { callbacks, live } = fakeLive();
+    const user = userEvent.setup();
+    render(<SessionPage live={live} />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    await user.click(screen.getByRole("button", { name: "Start call" }));
+    await screen.findByText("Listening…");
+
+    callbacks.onUtteranceStart?.();
+    callbacks.onUtterance?.(new Blob(["x"]));
+
+    // Coach is now thinking — Done must not be offered (no confusing no-op mid-coach-turn).
+    expect(await screen.findByText("Coach is thinking…")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Done speaking" })).toBeNull();
   });
 
   it("ends a typed round to a calm debrief and can practise again", async () => {
