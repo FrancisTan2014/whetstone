@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@capacitor/core": "^8.4.1",
-    "@capacitor/ios": "^8.4.1"
+    "@capacitor/ios": "^8.4.1",
+    "@whetstone/contracts": "workspace:*"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",

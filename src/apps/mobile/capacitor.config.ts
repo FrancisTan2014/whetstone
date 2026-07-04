@@ -1,4 +1,3 @@
-/// <reference types="node" />
 import type { CapacitorConfig } from "@capacitor/cli";
 
 // The iOS shell runs the same web bundle from the local Capacitor origin, so it embeds the built web

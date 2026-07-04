@@ -95,6 +95,9 @@ importers:
       '@capacitor/ios':
         specifier: ^8.4.1
         version: 8.4.1(@capacitor/core@8.4.1)
+      '@whetstone/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
     devDependencies:
       '@capacitor/cli':
         specifier: ^8.4.1
