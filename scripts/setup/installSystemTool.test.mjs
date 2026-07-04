@@ -126,17 +126,17 @@ describe("installSystemTool", () => {
   });
 
   it("honors a custom consent question, what text, and detect args", () => {
-    let onPath = false;
+    let installed = false;
     const { ctx, confirmCalls, execCalls } = createFakeContext({
       platform: "win32",
       confirm: true,
-      onRefreshPath: () => {
-        onPath = true;
-      },
       execHandler: (command, args) => {
-        if (command === "widget") return { code: onPath ? 0 : 1, stdout: "", stderr: "" };
+        if (command === "widget") return { code: installed ? 0 : 1, stdout: "", stderr: "" };
         if (command === "winget" && args.join(" ") === "-v") return { code: 0, stdout: "", stderr: "" };
-        if (command === "winget" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "install") {
+          installed = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
         return { code: 1, stdout: "", stderr: "" };
       }
     });
@@ -150,25 +150,92 @@ describe("installSystemTool", () => {
     expect(execCalls).toContainEqual(["winget", "-v"]);
   });
 
-  it("win32: refreshes PATH after a successful install so the tool re-resolves in the same run (#423)", () => {
-    // Model the #423 scenario: winget installs the tool, but it is invisible to the running process
-    // until PATH is refreshed. The probe returns ENOENT until `refreshPath` runs, then resolves.
+  it("win32: refreshes PATH before the initial check so an already-installed tool off the stale process PATH is detected — no prompt, no install (#429)", () => {
+    // The tool is on the persisted (registry) PATH but not this stale shell's process PATH: the probe
+    // fails until refreshPath re-reads PATH, after which it resolves. It must be detected up front,
+    // with no consent prompt and no winget invocation.
     let onPath = false;
-    const { ctx, refreshPathCalls, execCalls } = createFakeContext({
+    const { ctx, confirmCalls, execCalls, refreshPathCalls } = createFakeContext({
       platform: "win32",
-      confirm: true,
       onRefreshPath: () => {
         onPath = true;
       },
+      execHandler: (command, args) =>
+        command === "widget" && args[0] === "--probe"
+          ? { code: onPath ? 0 : 1, stdout: "", stderr: "" }
+          : undefined
+    });
+    expect(installSystemTool(ctx, makeSpec())).toEqual({ status: "ok" });
+    expect(refreshPathCalls()).toBe(1);
+    expect(confirmCalls).toEqual([]);
+    // Only the check probe ran — no `winget --version` detect, no `winget install`.
+    expect(execCalls).toEqual([["widget", "--probe"]]);
+  });
+
+  it("win32: a benign non-zero winget exit whose tool nonetheless resolves is ok (#429 — exit code is only a hint)", () => {
+    // winget "already installed, no upgrade applicable" exits NON-ZERO (0x8A15002B), but the tool is
+    // actually present. Readiness is decided by `check` after a PATH refresh, not by the exit code.
+    let installed = false;
+    const { ctx, refreshPathCalls, execCalls } = createFakeContext({
+      platform: "win32",
+      confirm: true,
       execHandler: (command, args) => {
-        if (command === "widget") return { code: onPath ? 0 : 1, stdout: "", stderr: "" };
+        if (command === "widget") return { code: installed ? 0 : 1, stdout: "", stderr: "" };
         if (command === "winget" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
-        if (command === "winget" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "install") {
+          installed = true;
+          return { code: 1, stdout: "already installed", stderr: "no upgrade applicable" };
+        }
         return { code: 1, stdout: "", stderr: "" };
       }
     });
     expect(installSystemTool(ctx, makeSpec())).toEqual({ status: "ok" });
-    expect(refreshPathCalls()).toBe(1);
+    // Two refreshes: before the initial check (still missing), and after install (now resolves).
+    expect(refreshPathCalls()).toBe(2);
+    expect(execCalls).toContainEqual(["winget", "install", "Widget.Widget"]);
+  });
+
+  it("non-win32: returns error with the output tail when the install command exits non-zero", () => {
+    const { ctx, refreshPathCalls } = createFakeContext({
+      platform: "darwin",
+      confirm: true,
+      execHandler: (command, args) => {
+        if (command === "widget") return { code: 1, stdout: "", stderr: "" };
+        if (command === "brew" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
+        if (command === "brew" && args[0] === "install") {
+          return { code: 1, stdout: "", stderr: "brew: download failed" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      }
+    });
+    const result = installSystemTool(ctx, makeSpec());
+    expect(result.status).toBe("error");
+    expect(result.remedy).toContain("Install Widget manually.");
+    expect(result.remedy).toContain("brew: download failed");
+    expect(result.docs).toBe(DOCS);
+    expect(refreshPathCalls()).toBe(0);
+  });
+
+  it("win32: refreshes PATH after a successful install so the tool re-resolves in the same run (#423)", () => {
+    // Model the #423 scenario: winget installs the tool, but it is invisible to the running process
+    // until PATH is refreshed. The probe fails until the install runs; the post-install refresh +
+    // re-probe resolves it in the same run (no new terminal needed).
+    let installed = false;
+    const { ctx, refreshPathCalls, execCalls } = createFakeContext({
+      platform: "win32",
+      confirm: true,
+      execHandler: (command, args) => {
+        if (command === "widget") return { code: installed ? 0 : 1, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "install") {
+          installed = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      }
+    });
+    expect(installSystemTool(ctx, makeSpec())).toEqual({ status: "ok" });
+    expect(refreshPathCalls()).toBe(2); // initial (still missing) + post-install (resolves)
     // The re-probe (post-refresh) proves install->use completed without opening a new terminal.
     expect(execCalls).toContainEqual(["widget", "--probe"]);
   });
@@ -192,7 +259,7 @@ describe("installSystemTool", () => {
     expect(result.what).toContain("was installed but is not on this terminal's PATH");
     expect(result.remedy).toContain("Open a new terminal");
     expect(result.remedy).toContain("Widget");
-    expect(refreshPathCalls()).toBe(1);
+    expect(refreshPathCalls()).toBe(2); // initial (still missing) + post-install (still unresolved)
   });
 
   it("does not refresh PATH on non-win32 platforms after a successful install", () => {
