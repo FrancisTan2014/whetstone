@@ -93,7 +93,12 @@ function conversePrompt(request: CoachConverseRequest): string {
     "You are an English speaking coach in a live call. Stay in flow: reply with the next natural line",
     "for the situation, never a score. Add a gentle recast ONLY on a real breakdown (stuck/unintelligible).",
     `Register: ${knobs.register}. Pace: ${knobs.pace}. Band: ${knobs.targetBand}. Length tracks the band.`,
-    `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`
+    `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`,
+    // Reorientation (#437): a confused learner needs the FORMAT explained, not a language recast.
+    "If the learner clearly signals confusion about the format itself (not just a language slip) - e.g.",
+    '"what are you talking about", "I don\'t understand", "you\'re just talking to yourself", or an empty',
+    "turn - step out of character for ONE short line to reorient them: name the role-play and give a",
+    "concrete example of what to say, then return to the scene. Do this at most once; never grade."
   ];
 
   if (bilingual) {

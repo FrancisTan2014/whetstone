@@ -93,6 +93,26 @@ afterEach(() => {
 });
 
 describe("SessionPage", () => {
+  it("shows the role-play framing before the first turn and dismisses it after (#437)", async () => {
+    mockedStart.mockResolvedValue(oneCue);
+    mockedSay.mockResolvedValue({ say: "Tell me more." });
+    const user = userEvent.setup();
+    // No live deps -> typed-only, so the call is underway immediately and the framing is visible.
+    render(<SessionPage />);
+
+    await screen.findByText("Welcoming a guest to the table");
+    const framing = screen.getByRole("note");
+    expect(framing.textContent).toContain("role-play");
+    expect(framing.textContent).toContain("Welcoming a guest to the table");
+
+    await user.type(screen.getByLabelText("Or type what you'd say"), "help yourself");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // Dismissed on the first learner turn.
+    expect(await screen.findByText("help yourself")).toBeDefined();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
   it("shows a loading state while the call starts", () => {
     mockedStart.mockReturnValue(new Promise<SessionPlanDto>(() => {}));
     render(<SessionPage />);
