@@ -670,6 +670,22 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   webview). Dev/package commands: `docs/QUICK_START.md § 7`. Rust build artifacts
   (`src-tauri/target/`, `src-tauri/gen/`) are git- and prettier-ignored.
 
+### `src/apps/mobile/` — Capacitor iOS shell (macOS to build)
+
+- Native iOS packaging (#447) around the shared web core — **Capacitor 8**. The app embeds the
+  **bundled** web `dist` (`webDir: "../web/dist"` in `capacitor.config.ts`, not a remote URL) and keeps
+  external links in Safari via `server.allowNavigation: []`.
+- The only measured/typed source is `src/hostConfig.ts` (pure, 100%-covered): `iosHostConfig` builds
+  the `platform="ios"` + `apiBaseUrl` host runtime config (the #445 `@whetstone/contracts` contract),
+  `hostConfigInjectionScript` emits the `window.__WHETSTONE_HOST_CONFIG__ = {…}` JS, and
+  `injectHostConfigScript` inserts it before `</head>` (fail-loud if absent). `scripts/injectHostConfig.ts`
+  is the sync-time I/O glue: reads `WHETSTONE_API_BASE_URL` (fail-loud with a remedy on missing/invalid),
+  and injects the script into the synced `ios/App/App/public/index.html` after `cap sync`.
+- `capacitor.config.ts` and `scripts/` live outside `src/`, so they are not coverage-measured or in the
+  TS gate; the generated native `ios/` project (created on macOS by `cap add ios`) is git-/prettier-/
+  eslint-ignored. Build/run/TestFlight flow (macOS-only steps marked): `docs/QUICK_START.md § 8`. iOS
+  native project generation, the `Info.plist` microphone permission, and TestFlight require macOS.
+
 ## Build, validate, run
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.

@@ -1,0 +1,11 @@
+# Capacitor native iOS project build artifacts (generated on macOS by `cap add ios` / `cap sync ios`).
+# The web assets under ios/App/App/public are copied from the web build on every sync, so they are
+# generated output, not source.
+ios/App/App/public/
+ios/App/Pods/
+ios/App/output/
+ios/App/build/
+ios/DerivedData/
+ios/capacitor-cordova-ios-plugins/
+*.xcuserstate
+xcuserdata/

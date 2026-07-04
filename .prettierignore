@@ -6,3 +6,4 @@ pnpm-lock.yaml
 **/src/db/migrations
 src/apps/desktop/src-tauri/target
 src/apps/desktop/src-tauri/gen
+src/apps/mobile/ios
