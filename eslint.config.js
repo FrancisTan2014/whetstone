@@ -12,7 +12,11 @@ export default tseslint.config(
       "**/.stryker-tmp/**",
       "**/reports/**",
       "**/*.d.ts",
-      "**/*.tsbuildinfo"
+      "**/*.tsbuildinfo",
+      // Tauri desktop Rust build artifacts (generated JS in the codegen output
+      // and bundler dirs); never source we lint.
+      "src/apps/desktop/src-tauri/target/**",
+      "src/apps/desktop/src-tauri/gen/**"
     ]
   },
   js.configs.recommended,

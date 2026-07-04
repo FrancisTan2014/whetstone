@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capability set for the Whetstone desktop shell: core defaults only. External links are opened from the Rust side, so no opener, shell, or filesystem permissions are granted to the webview.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
