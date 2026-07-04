@@ -218,6 +218,29 @@ describe("coachStep.provision", () => {
     expect(env).not.toContain("COACH_API_KEY");
   });
 
+  it("win32: surfaces the accurate stale-PATH remedy (not `ollama serve`) when a fresh install is unresolved (#423)", () => {
+    // #423: winget installs Ollama, but the running process's PATH is stale, so `ollama` stays
+    // unresolved even after the refresh. provision must surface installSystemTool's accurate
+    // "open a new terminal" remedy and NEVER reach the misleading `ollama serve` pull-failure hint.
+    const { ctx, execCalls } = createFakeContext({
+      platform: "win32",
+      confirm: true,
+      execHandler: (command, args) => {
+        if (command === "ollama" && args[0] === "--version") return { code: 1, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
+        if (command === "winget" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
+        return { code: 1, stdout: "", stderr: "" };
+      }
+    });
+    const result = coachStep.provision(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("was installed but is not on this terminal's PATH");
+    expect(result.remedy).toContain("Open a new terminal");
+    expect(result.remedy).not.toContain("ollama serve");
+    // It must not blindly proceed to pull a tool it cannot resolve.
+    expect(execCalls).not.toContainEqual(["ollama", "pull", CONVERSE_MODEL]);
+  });
+
   it("falls back to the instruct-only remedy when consent is declined (no install/pull)", () => {
     const { ctx, confirmCalls, execCalls } = createFakeContext({
       platform: "win32",

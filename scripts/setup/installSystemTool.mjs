@@ -73,5 +73,22 @@ export function installSystemTool(ctx, spec) {
   if (result.code !== 0) {
     return error(what, withOutputTail(spec.remedy, result), spec.docs);
   }
+
+  // The install succeeded — but on Windows the freshly-installed binary is invisible to THIS process:
+  // the installer only updates the persisted (registry) PATH, while our already-running process and
+  // every child `spawnSync` keep the PATH captured at launch. That is the `spawnSync <tool> ENOENT`
+  // in #423, where the very next step tries to *use* the tool we just installed. Refresh PATH from
+  // the registry and re-probe so install->use completes in one run; if it still doesn't resolve, name
+  // the real cause — a stale shell PATH — rather than letting a downstream step blame something else.
+  if (ctx.platform === "win32") {
+    ctx.refreshPath();
+    if (!isOk(spec.check(ctx))) {
+      return missing(
+        `${spec.name} was installed but is not on this terminal's PATH yet.`,
+        `Open a new terminal (so it picks up the updated PATH) and re-run the same command, ` +
+          `or add ${spec.name} to your PATH manually.`
+      );
+    }
+  }
   return ok();
 }
