@@ -1,5 +1,7 @@
 import { defaultPreferences, preferencesSchema, type PreferencesDto } from "@whetstone/contracts";
 
+import { apiUrl } from "../runtime";
+
 // A best-effort cache of the last-known preferences so each control (text size in the reader, theme in
 // the toggle) can PUT the whole record without re-fetching the other field. Server is the source of
 // truth; this only bridges the two controls between a load and the next save.
@@ -13,7 +15,7 @@ let saveChain: Promise<void> = Promise.resolve();
 export async function fetchPreferences(): Promise<PreferencesDto> {
   const load = (async () => {
     try {
-      const response = await fetch("/api/preferences");
+      const response = await fetch(apiUrl("/preferences"));
 
       if (!response.ok) {
         return current;
@@ -44,7 +46,7 @@ export async function savePreferences(partial: Partial<PreferencesDto>): Promise
 
     current = { ...current, ...partial };
     try {
-      await fetch("/api/preferences", {
+      await fetch(apiUrl("/preferences"), {
         body: JSON.stringify(current),
         headers: { "content-type": "application/json" },
         method: "PUT"

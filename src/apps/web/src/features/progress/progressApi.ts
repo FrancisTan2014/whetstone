@@ -1,5 +1,7 @@
 import type { ProgressMapDto } from "@whetstone/contracts";
 
+import { apiUrl } from "../../shared/runtime";
+
 async function requestJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
 
@@ -11,5 +13,5 @@ async function requestJson<T>(path: string): Promise<T> {
 }
 
 export async function fetchProgressMap(): Promise<ProgressMapDto> {
-  return requestJson<ProgressMapDto>("/api/progress-map");
+  return requestJson<ProgressMapDto>(apiUrl("/progress-map"));
 }

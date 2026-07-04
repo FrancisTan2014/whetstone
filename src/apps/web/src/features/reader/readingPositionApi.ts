@@ -3,12 +3,14 @@ import {
   type UpsertReadingPositionRequest
 } from "@whetstone/contracts";
 
+import { apiUrl } from "../../shared/runtime";
+
 import type { ReadingPosition } from "./readingPosition";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
 function positionPath(workEntryId: string): string {
-  return `/api/works/${encodeURIComponent(workEntryId)}/reading-position`;
+  return apiUrl(`/works/${encodeURIComponent(workEntryId)}/reading-position`);
 }
 
 // The server is the source of truth for reading position, so the reader keeps its own fetch helper

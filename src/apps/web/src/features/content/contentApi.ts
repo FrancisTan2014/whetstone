@@ -7,6 +7,8 @@ import type {
 } from "@whetstone/contracts";
 import { pdfContentType } from "@whetstone/contracts";
 
+import { apiUrl } from "../../shared/runtime";
+
 const jsonHeaders = { "content-type": "application/json" } as const;
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -22,7 +24,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 // The content feature keeps its own works fetch so it stays decoupled from the
 // library admin feature.
 export async function fetchWorks(): Promise<WorkListDto> {
-  return requestJson<WorkListDto>("/api/works");
+  return requestJson<WorkListDto>(apiUrl("/works"));
 }
 
 // The authoring panel needs a work's whole content. It is now assembled from the lightweight
@@ -31,14 +33,16 @@ export async function fetchWorks(): Promise<WorkListDto> {
 // unit, so the composed result is a `WorkContentDto`.
 export async function fetchWorkContent(workEntryId: string): Promise<WorkContentDto> {
   const structure = await requestJson<WorkStructureDto>(
-    `/api/works/${encodeURIComponent(workEntryId)}/structure`
+    apiUrl(`/works/${encodeURIComponent(workEntryId)}/structure`)
   );
   const readingUnits = await Promise.all(
     structure.readingUnits.map((unit) =>
       requestJson<ReadingUnitContentDto>(
-        `/api/works/${encodeURIComponent(workEntryId)}/units/${encodeURIComponent(
-          unit.entryId
-        )}/content`
+        apiUrl(
+          `/works/${encodeURIComponent(workEntryId)}/units/${encodeURIComponent(
+            unit.entryId
+          )}/content`
+        )
       )
     )
   );
@@ -57,7 +61,7 @@ export async function ingestMarkdown(
   workEntryId: string,
   source: IngestMarkdownRequest
 ): Promise<IngestMarkdownOutcome> {
-  const path = `/api/works/${encodeURIComponent(workEntryId)}/content`;
+  const path = apiUrl(`/works/${encodeURIComponent(workEntryId)}/content`);
   const response = await fetch(path, {
     body: JSON.stringify(source),
     headers: jsonHeaders,
@@ -85,7 +89,7 @@ export type IngestPdfOutcome =
   | Readonly<{ status: "empty_content" }>;
 
 export async function ingestPdf(workEntryId: string, file: File): Promise<IngestPdfOutcome> {
-  const path = `/api/works/${encodeURIComponent(workEntryId)}/content/pdf`;
+  const path = apiUrl(`/works/${encodeURIComponent(workEntryId)}/content/pdf`);
   const response = await fetch(path, {
     body: await file.arrayBuffer(),
     headers: { "content-type": pdfContentType },

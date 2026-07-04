@@ -4,6 +4,8 @@ import {
   type LookupSourceId
 } from "@whetstone/contracts";
 
+import { apiUrl } from "../../shared/runtime";
+
 // The lookup feature keeps its own fetch helper so it stays decoupled from the reader and notes
 // features. One source is fetched per call so each tab loads independently; the response is
 // validated at the boundary before the UI renders it. `context` (the selection's containing block
@@ -22,7 +24,7 @@ export async function lookupTerm(
     context === undefined
       ? base
       : `${base}&context=${encodeURIComponent(context.slice(0, maxContextLength))}`;
-  const response = await fetch(`/api/lookup?${query}`);
+  const response = await fetch(apiUrl(`/lookup?${query}`));
 
   if (!response.ok) {
     throw new Error(`Lookup request failed with status ${response.status}.`);
