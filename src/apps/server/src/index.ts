@@ -229,7 +229,7 @@ try {
     server.log.info({ coach: coachHealth.status }, coachHealth.message);
   }
 
-  // Report the Whisper STT wiring (#347): a clear "run pnpm setup --voice" hint when spoken practice
+  // Report the Whisper STT wiring (#347): a clear "run pnpm setup:voice" hint when spoken practice
   // would otherwise silently transcribe to empty, instead of an unexplained empty transcript.
   const speechHealth = checkSpeechHealth({ config: speechConfig });
   if (speechHealth.status === "fake") {

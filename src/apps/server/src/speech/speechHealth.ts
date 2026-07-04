@@ -4,7 +4,7 @@ import type { SpeechConfig } from "./speechConfig.js";
 // this only *reports*: `resolveSpeechInput` already falls back to the deterministic fake when no
 // Whisper is configured, so a missing model never crashes the loop. Without this, spoken practice
 // silently returns an empty transcript with no signal; the warning turns that silent degrade into a
-// clear "run `pnpm setup --voice`" hint.
+// clear "run `pnpm setup:voice`" hint.
 export type SpeechHealthStatus = "fake" | "configured";
 
 export type SpeechHealthReport = Readonly<{
@@ -20,7 +20,7 @@ export function checkSpeechHealth(dependencies: SpeechHealthDependencies): Speec
   if (dependencies.config.whisper === undefined) {
     return {
       message:
-        "Local Whisper STT is not configured — spoken practice transcribes to empty. Set WHISPER_BINARY + WHISPER_MODEL_PATH, or run: pnpm setup --voice",
+        "Local Whisper STT is not configured — spoken practice transcribes to empty. Set WHISPER_BINARY + WHISPER_MODEL_PATH, or run: pnpm setup:voice",
       status: "fake"
     };
   }

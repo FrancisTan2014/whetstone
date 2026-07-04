@@ -16,7 +16,10 @@ const args = parseArgs(process.argv.slice(2));
 if (args.unknown.length > 0) {
   console.log(
     `[setup] ignoring unrecognized flag(s): ${args.unknown.join(", ")}. ` +
-      "Known flags: --check (doctor), --voice, --coach, --all, --yes."
+      "Enable a capability with its own script — `pnpm setup:doctor` (--check), " +
+      "`pnpm setup:voice`, `pnpm setup:coach`, `pnpm setup:all` — or forward a raw " +
+      "flag/env combo with `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --all --yes`). " +
+      "Passing a flag to `pnpm setup` directly collides with pnpm's built-in `setup` command and fails."
   );
 }
 

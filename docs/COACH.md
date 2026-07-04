@@ -27,7 +27,7 @@ Override any call's tier with its env var (`COACH_CONVERSE_TIER`, `COACH_ANALYZE
 
 With a key set, the defaults already give you **local converse + cloud judge**. Keyless still runs a
 **fully-local coach**: the cheap/local tier serves converse (and, with `COACH_ANALYZE_TIER=cheap` —
-which `pnpm setup --coach` writes — analyze too), while any remaining `strong`-routed call falls back
+which `pnpm setup:coach` writes — analyze too), while any remaining `strong`-routed call falls back
 to the deterministic fake. With no Ollama daemon the local tier itself degrades to the fake per call
 (the `pnpm validate` path: no network, no model).
 
@@ -35,7 +35,7 @@ to the deterministic fake. With no Ollama daemon the local tier itself degrades 
 
 The local cheap tier serves from Ollama on its fixed default port (`http://127.0.0.1:11434`).
 
-**Local dev (one command):** `pnpm setup --coach` installs Ollama itself (consent-gated via a Y/N
+**Local dev (one command):** `pnpm setup:coach` installs Ollama itself (consent-gated via a Y/N
 prompt, or `--yes` for unattended), pulls the converse model (`COACH_MODEL`, default `llama3.1:8b`)
 and the "AI 解释" model (`EXPLAIN_MODEL`, default `qwen2.5`), verifies each answers through the daemon,
 and writes `COACH_MODEL` + `EXPLAIN_MODEL` + `COACH_CONVERSE_TIER=cheap` + `COACH_ANALYZE_TIER=cheap`

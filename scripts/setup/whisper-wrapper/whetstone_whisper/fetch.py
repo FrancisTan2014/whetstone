@@ -1,4 +1,4 @@
-"""Pre-fetch a faster-whisper model so `pnpm setup --voice` fails loud on a download problem.
+"""Pre-fetch a faster-whisper model so `pnpm setup:voice` fails loud on a download problem.
 
 `WhisperModel(model)` downloads the model to the local cache on construction (a size name like
 `small` auto-downloads; a path is used as-is). Running this as a distinct step lets the setup runner

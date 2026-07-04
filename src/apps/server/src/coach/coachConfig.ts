@@ -8,7 +8,7 @@ import type { CoachProvider } from "./coachProvider.js";
 // yields the default routing, the default local model, and no key. With no key the coach still runs
 // its LOCAL cheap tier (falling back to the deterministic fake per call if no Ollama daemon is up);
 // only strong-routed calls need a key, and without one they use the fake. `COACH_MODEL` overrides the
-// local converse model, so the server serves the exact model `pnpm setup --coach` pulled/verified.
+// local converse model, so the server serves the exact model `pnpm setup:coach` pulled/verified.
 export type CoachConfig = Readonly<{
   apiKey: string | undefined;
   converseModel: string;

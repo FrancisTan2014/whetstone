@@ -1,5 +1,5 @@
 // Optional setup step (#382): make the LOCAL LLM coach work end to end with one command —
-// `pnpm setup --coach`. It installs Ollama itself (consent-gated via #383's `installSystemTool`,
+// `pnpm setup:coach`. It installs Ollama itself (consent-gated via #383's `installSystemTool`,
 // never silently), pulls the local converse + "AI 解释" models, wires the non-secret coach env into
 // the root `.env` (EXPLAIN_MODEL + COACH_*_TIER=cheap for a fully-local coach), and verifies each
 // model actually answers through the daemon. Excluded from the base `pnpm setup` (heavy/network);
@@ -21,7 +21,7 @@ const OLLAMA_DOCS = "https://ollama.com/download";
 const OLLAMA_REMEDY =
   "Install Ollama (https://ollama.com/download, or `winget install Ollama.Ollama` / " +
   "`brew install ollama` / `curl -fsSL https://ollama.com/install.sh | sh`), then re-run " +
-  "`pnpm setup --coach`.";
+  "`pnpm setup:coach`.";
 
 /**
  * The runtime-effective local converse model. Precedence mirrors what the server serves at boot (see
@@ -197,19 +197,19 @@ export const coachStep = {
     if (!pulled(converseModel)) {
       return missing(
         `The local coach model "${converseModel}" is not pulled.`,
-        `Run \`ollama pull ${converseModel}\` (or \`pnpm setup --coach\`).`
+        `Run \`ollama pull ${converseModel}\` (or \`pnpm setup:coach\`).`
       );
     }
     const explainModel = resolveExplainModel(ctx);
     if (!pulled(explainModel)) {
       return missing(
         `The "AI 解释" model "${explainModel}" is not pulled.`,
-        `Run \`ollama pull ${explainModel}\` (or \`pnpm setup --coach\`).`
+        `Run \`ollama pull ${explainModel}\` (or \`pnpm setup:coach\`).`
       );
     }
     return (
       checkEnvWiring(ctx, converseModel, explainModel, (what) =>
-        missing(what, "Run `pnpm setup --coach`.")
+        missing(what, "Run `pnpm setup:coach`.")
       ) ?? ok()
     );
   },
@@ -229,7 +229,7 @@ export const coachStep = {
         return error(
           `Pulling the Ollama model "${model}" failed.`,
           withOutputTail(
-            "Ensure the Ollama daemon is running (`ollama serve`) and check your network, then re-run `pnpm setup --coach`.",
+            "Ensure the Ollama daemon is running (`ollama serve`) and check your network, then re-run `pnpm setup:coach`.",
             fetched
           )
         );
@@ -256,7 +256,7 @@ export const coachStep = {
     const converseModel = resolveConverseModel(ctx);
     const explainModel = resolveExplainModel(ctx);
     const wiringGap = checkEnvWiring(ctx, converseModel, explainModel, (what) =>
-      error(what, "Re-run `pnpm setup --coach`.")
+      error(what, "Re-run `pnpm setup:coach`.")
     );
     if (wiringGap) {
       return wiringGap;
@@ -269,7 +269,7 @@ export const coachStep = {
         return error(
           `The Ollama model "${model}" did not answer.`,
           withOutputTail(
-            "Ensure the Ollama daemon is running (`ollama serve`) and the model is pulled, then re-run `pnpm setup --coach`.",
+            "Ensure the Ollama daemon is running (`ollama serve`) and the model is pulled, then re-run `pnpm setup:coach`.",
             result
           )
         );
@@ -278,7 +278,7 @@ export const coachStep = {
       if (!shape.ok) {
         return error(
           `The Ollama model "${model}" answered off-contract: ${shape.reason}.`,
-          withOutputTail(`Re-pull it (\`ollama pull ${model}\`), then re-run \`pnpm setup --coach\`.`, result)
+          withOutputTail(`Re-pull it (\`ollama pull ${model}\`), then re-run \`pnpm setup:coach\`.`, result)
         );
       }
     }

@@ -1,6 +1,6 @@
 """Locate the pip-generated `whetstone-whisper` console-script launcher.
 
-`pnpm setup --voice` runs `python -m whetstone_whisper.locate` and writes the printed path to
+`pnpm setup:voice` runs `python -m whetstone_whisper.locate` and writes the printed path to
 WHISPER_BINARY (the server's execFile runs it directly). Resolution is injectable so it is unit
 -tested without depending on the host's PATH or Python layout.
 """

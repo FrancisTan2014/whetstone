@@ -1,5 +1,5 @@
 // Optional setup step (first consumer of the #346 framework): enable local Whisper STT with one
-// command — `pnpm setup --voice`. It installs faster-whisper + the `whetstone-whisper` console-script
+// command — `pnpm setup:voice`. It installs faster-whisper + the `whetstone-whisper` console-script
 // wrapper, pre-fetches the model, and writes WHISPER_BINARY / WHISPER_MODEL_PATH / WHISPER_LANGUAGE to
 // the root `.env` (which the server dev/start already load). Excluded from the base `pnpm setup`
 // (heavy/network); every failure mode returns an actionable { what, remedy }, never a raw crash.
@@ -21,7 +21,7 @@ const SAMPLE_AUDIO = fileURLToPath(new URL("./voice-sample.wav", import.meta.url
 const PYTHON_DOCS = "https://www.python.org/downloads";
 const PYTHON_REMEDY =
   "Install Python 3 (https://www.python.org/downloads, or `winget install Python.Python.3` / " +
-  "`brew install python`), then re-run `pnpm setup --voice`.";
+  "`brew install python`), then re-run `pnpm setup:voice`.";
 
 /**
  * Validate wrapper stdout against the **same strict contract the runtime adapter enforces** —
@@ -143,20 +143,20 @@ export const voiceStep = {
     if (ctx.exec(python, ["-c", "import faster_whisper"]).code !== 0) {
       return missing(
         "faster-whisper is not installed.",
-        "Run `pnpm setup --voice` to install it and wire up Whisper."
+        "Run `pnpm setup:voice` to install it and wire up Whisper."
       );
     }
     const env = readEnv(ctx);
     if (env.WHISPER_BINARY === undefined || env.WHISPER_MODEL_PATH === undefined) {
       return missing(
         "Whisper is not wired into .env (WHISPER_BINARY / WHISPER_MODEL_PATH).",
-        "Run `pnpm setup --voice`."
+        "Run `pnpm setup:voice`."
       );
     }
     if (!ctx.fs.exists(env.WHISPER_BINARY)) {
       return missing(
         `The whetstone-whisper launcher is missing (${env.WHISPER_BINARY}).`,
-        "Run `pnpm setup --voice` to reinstall it."
+        "Run `pnpm setup:voice` to reinstall it."
       );
     }
     return ok();
@@ -179,7 +179,7 @@ export const voiceStep = {
       return error(
         "`pip install faster-whisper` failed.",
         withOutputTail(
-          "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup --voice`.",
+          "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup:voice`.",
           pip
         )
       );
@@ -189,7 +189,7 @@ export const voiceStep = {
     if (wrapper.code !== 0) {
       return error(
         "Installing the whetstone-whisper wrapper failed.",
-        withOutputTail("Re-run `pnpm setup --voice` and inspect the pip error above.", wrapper)
+        withOutputTail("Re-run `pnpm setup:voice` and inspect the pip error above.", wrapper)
       );
     }
 
@@ -198,7 +198,7 @@ export const voiceStep = {
     if (located.code !== 0 || launcher.length === 0) {
       return error(
         "The whetstone-whisper launcher could not be located after installation.",
-        "Ensure your Python scripts directory is on PATH, then re-run `pnpm setup --voice`."
+        "Ensure your Python scripts directory is on PATH, then re-run `pnpm setup:voice`."
       );
     }
 
@@ -208,7 +208,7 @@ export const voiceStep = {
       return error(
         `Downloading the Whisper model "${model}" failed.`,
         withOutputTail(
-          "Retry, pick a smaller model (`WHISPER_MODEL=base.en pnpm setup --voice`), or check connectivity.",
+          "Retry, pick a smaller model (`WHISPER_MODEL=base.en pnpm run setup -- --voice`), or check connectivity.",
           fetched
         )
       );
@@ -231,7 +231,7 @@ export const voiceStep = {
     if (env.WHISPER_BINARY === undefined || env.WHISPER_MODEL_PATH === undefined) {
       return error(
         "Whisper is not wired into .env after provisioning.",
-        "Re-run `pnpm setup --voice`."
+        "Re-run `pnpm setup:voice`."
       );
     }
     const result = ctx.exec(env.WHISPER_BINARY, [
@@ -248,7 +248,7 @@ export const voiceStep = {
       return error(
         "The whetstone-whisper wrapper failed on the sample audio.",
         withOutputTail(
-          "See docs/SPEECH.md and check the model; then re-run `pnpm setup --voice`.",
+          "See docs/SPEECH.md and check the model; then re-run `pnpm setup:voice`.",
           result
         )
       );

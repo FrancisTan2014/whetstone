@@ -25,8 +25,14 @@ are skipped). To just check readiness without changing anything:
 pnpm setup:doctor   # report each capability as ready / optional-missing / failed; never mutates
 ```
 
-Opt-in heavy capabilities are excluded from the base run; enable them with a flag (their own steps
-land with those features): `pnpm setup --voice`, `pnpm setup --coach`.
+Opt-in heavy capabilities are excluded from the base run; enable each with its own script (their own
+steps land with those features): `pnpm setup:voice`, `pnpm setup:coach`, or `pnpm setup:all` for both.
+
+> **Why `pnpm setup:voice` and not a flag on `pnpm setup`?** `setup` is a **built-in pnpm command**, so
+> `pnpm setup` with any flag is routed to pnpm's built-in and fails with `Unknown option`. The
+> capability scripts (`setup:voice`, `setup:coach`, `setup:all`, `setup:doctor`) bake the flag in and
+> don't collide. For a raw flag/env combo, use the explicit run form: `pnpm run setup -- --<flag>`
+> (e.g. `pnpm run setup -- --all --yes`).
 
 ### Voice input (optional)
 
@@ -35,11 +41,11 @@ and offline), so with nothing configured a spoken turn transcribes to empty and 
 one-line boot warning telling you how to enable it. To turn it on:
 
 ```powershell
-pnpm setup --voice   # installs faster-whisper + the whetstone-whisper wrapper, fetches the model, writes WHISPER_* to .env
+pnpm setup:voice   # installs faster-whisper + the whetstone-whisper wrapper, fetches the model, writes WHISPER_* to .env
 ```
 
 Pick a different model with `WHISPER_MODEL` (default `small`, multilingual): e.g.
-`WHISPER_MODEL=base.en pnpm setup --voice` for English-only. After it finishes, restart `pnpm dev`
+`WHISPER_MODEL=base.en pnpm run setup -- --voice` for English-only. After it finishes, restart `pnpm dev`
 and speaking yields a real transcript. Details and the STT contract: [docs/SPEECH.md](./SPEECH.md).
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine
@@ -131,7 +137,7 @@ fake when it isn't — so no model is required for the loop or the `pnpm validat
 that makes the local coach work end to end is:
 
 ```powershell
-pnpm setup --coach   # installs Ollama (with a Y/N prompt), pulls the converse + 解释 models, writes the coach env to .env
+pnpm setup:coach   # installs Ollama (with a Y/N prompt), pulls the converse + 解释 models, writes the coach env to .env
 ```
 
 It installs Ollama itself (consent-gated — an explicit `Y`, or `--yes` for unattended), pulls the
@@ -170,7 +176,7 @@ For a Chinese selection, the reader's lookup popover offers an optional **"AI �
 tab that sends the selected span plus its surrounding block to a **local** model and shows a short,
 clearly **AI-generated** contextual gloss — useful for classical-Chinese terms, 成語, allusions, and
 proper nouns the bundled dictionaries structurally miss. It reuses the same local Ollama daemon as the
-coach and is wired by the same `pnpm setup --coach` (which pulls `EXPLAIN_MODEL`, default `qwen2.5`,
+coach and is wired by the same `pnpm setup:coach` (which pulls `EXPLAIN_MODEL`, default `qwen2.5`,
 and writes it to `.env`). To point it at a different 文言-strong model, pull it and set `EXPLAIN_MODEL`:
 
 ```bash
