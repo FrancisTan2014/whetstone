@@ -171,7 +171,7 @@ describe("FakeCoach converse", () => {
     expect(result.repair).toBeUndefined();
   });
 
-  it("offers light repair when the latest user turn is a breakdown (no usable words)", async () => {
+  it("steps out of character to reorient (not a language repair) on an empty/near-empty turn (#437)", async () => {
     const result = await coach.converse({
       ...base,
       history: [
@@ -180,10 +180,34 @@ describe("FakeCoach converse", () => {
       ]
     });
 
-    expect(result.repair).toBeDefined();
-    expect(result.repair?.reason.length).toBeGreaterThan(0);
-    expect(result.repair?.recast).toContain("At the table");
-    expect(result.say.length).toBeGreaterThan(0);
+    // Reorientation names the role-play + a concrete example, and is NOT a language repair.
+    expect(result.repair).toBeUndefined();
+    expect(result.say).toContain("role-play");
+    expect(result.say).toContain("At the table");
+    expect(result.say).toContain("I'd like to offering food.");
+  });
+
+  it("reorients on a clear confusion/meta turn, and only once per stuck stretch (#437)", async () => {
+    const confused = await coach.converse({
+      ...base,
+      history: [
+        { role: "coach", text: "Let's get into it: At the table. How would you start?" },
+        { role: "user", text: "What are you talking about? You're just talking to yourself." }
+      ]
+    });
+    expect(confused.repair).toBeUndefined();
+    expect(confused.say).toContain("this is a role-play");
+
+    // A repeated confusion turn right after a reorientation does NOT reorient again (no loop).
+    const again = await coach.converse({
+      ...base,
+      history: [
+        { role: "user", text: "What are you talking about?" },
+        { role: "coach", text: confused.say },
+        { role: "user", text: "I still don't understand." }
+      ]
+    });
+    expect(again.say).not.toContain("this is a role-play");
   });
 
   it("is deterministic — the same conversation converses identically", async () => {
@@ -201,12 +225,13 @@ describe("FakeCoach converse", () => {
     });
     expect(flow.englishTarget?.length).toBeGreaterThan(0);
 
-    // A breakdown turn (no usable words) in bilingual mode still pushes an English target.
+    // A confusion turn (no usable words) in bilingual mode reorients and still pushes an English target.
     const breakdown = await coach.converse({
       ...bilingual,
       history: [{ role: "user" as const, text: "  ...  " }]
     });
-    expect(breakdown.repair).toBeDefined();
+    expect(breakdown.repair).toBeUndefined();
+    expect(breakdown.say).toContain("role-play");
     expect(breakdown.englishTarget?.length).toBeGreaterThan(0);
 
     // The English-only path carries no target.

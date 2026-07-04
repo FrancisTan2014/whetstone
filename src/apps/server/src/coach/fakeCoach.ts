@@ -113,24 +113,67 @@ function lastUserText(history: ReadonlyArray<ConversationTurn>): string | undefi
   return [...history].reverse().find((turn) => turn.role === "user")?.text;
 }
 
+function lastCoachText(history: ReadonlyArray<ConversationTurn>): string | undefined {
+  return [...history].reverse().find((turn) => turn.role === "coach")?.text;
+}
+
+// A learner turn signals confusion about the FORMAT (not a language slip) when it is empty/
+// unintelligible, or matches a meta/disengagement phrase ("what are you talking about", "you're just
+// talking to yourself"). These are the cues to step out of character and reorient (#437).
+const CONFUSION_SIGNALS: ReadonlyArray<string> = [
+  "what are you talking about",
+  "what do you mean",
+  "don't understand",
+  "do not understand",
+  "talking to yourself",
+  "don't know what to say",
+  "do not know what to say",
+  "don't get it",
+  "makes no sense",
+  "confused",
+  "don't see"
+];
+
+function signalsConfusion(text: string | undefined): boolean {
+  if (text === undefined) {
+    return false;
+  }
+  if (tokenize(text).length === 0) {
+    return true;
+  }
+  const lower = text.toLowerCase();
+  return CONFUSION_SIGNALS.some((signal) => lower.includes(signal));
+}
+
+// The one-line reorientation: step out of character to name the role-play + a concrete example of what
+// to say, then hand the turn back. Deliberately DISTINCT from language `repair` (which recasts an
+// English phrase): this explains the activity itself. The literal "this is a role-play" also lets the
+// coach detect its own prior reorientation, so a repeated confusion turn doesn't loop the explanation.
+function reorientationSay(request: CoachConverseRequest): string {
+  const example = `I'd like to ${request.communicativeFunction.toLowerCase()}.`;
+  return (
+    `Quick note - this is a role-play: ${request.situation}. There's no script; just reply in English ` +
+    `as if you were really there, for example "${example}" Go ahead whenever you're ready.`
+  );
+}
+
 // A deterministic conversational turn (#220): the coach stays in flow, asking a scripted follow-up that
-// keeps the learner producing, and offers light repair ONLY on a real breakdown — when the latest user
-// turn carried no usable words (stuck / unintelligible). No grading here; that is the end-of-round job.
+// keeps the learner producing. On a clear confusion signal it steps out of character ONCE to reorient
+// (#437) instead of dragging back into the scene. No grading here; that is the end-of-round job.
 function converse(request: CoachConverseRequest): CoachConverseResult {
   // The bilingual mix (#270): when any L1 is allowed, push one short English target each turn so L1
   // is a bridge, not a comfort trap. English-only learners (share 0) get the prior English reply.
   const bilingual = request.knobs.targetL1Share > 0;
   const englishTarget = "Let's try that in English.";
   const latest = lastUserText(request.history);
-  if (latest !== undefined && tokenize(latest).length === 0) {
-    const stuck: CoachConverseResult = {
-      repair: {
-        reason: "That one didn't quite come through — looks like a tricky spot.",
-        recast: `Let's take it slowly. Try one short sentence about: ${request.situation}`
-      },
-      say: "No rush — let's try a simpler version. Just give me a few words."
-    };
-    return bilingual ? { ...stuck, englishTarget } : stuck;
+
+  // Reorient at most ONCE per stuck stretch: skip if the immediately preceding coach line already
+  // reoriented, so a repeated confusion turn doesn't loop the same explanation.
+  const alreadyReoriented =
+    lastCoachText(request.history)?.includes("this is a role-play") === true;
+  if (signalsConfusion(latest) && !alreadyReoriented) {
+    const reorient: CoachConverseResult = { say: reorientationSay(request) };
+    return bilingual ? { ...reorient, englishTarget } : reorient;
   }
 
   const coachTurns = request.history.filter((turn) => turn.role === "coach").length;

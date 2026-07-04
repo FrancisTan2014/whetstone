@@ -337,6 +337,9 @@ function CallView({
   const [typed, setTyped] = useState("");
   const [showTyped, setShowTyped] = useState(false);
   const busy = phase === "thinking" || phase === "speaking";
+  // The upfront role-play framing shows until the learner's first turn, so a first-timer knows this is
+  // a role-play they take part in before they speak (#437).
+  const hasUserTurn = captions.some((caption) => caption.role === "user");
   // Voice is the primary path when the browser supports capture and a start hasn't degraded to
   // typed-only. When voice isn't an option (unsupported or a failed mic) the call runs typed-only, so
   // the typed box is shown with a calm explanation; otherwise it stays hidden behind "Type instead".
@@ -380,6 +383,16 @@ function CallView({
         {!underway ? (
           <p className="text-text">
             When you&apos;re ready, start the call and just talk with your coach — no script.
+          </p>
+        ) : null}
+
+        {underway && !hasUserTurn ? (
+          <p
+            className="rounded border border-border bg-surface px-3 py-2 text-sm text-text-muted"
+            role="note"
+          >
+            You&apos;re in a role-play: {call.situation}. Respond naturally in English, as if you
+            were really there.
           </p>
         ) : null}
 

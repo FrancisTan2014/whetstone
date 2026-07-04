@@ -353,19 +353,28 @@ describe("converseTurn", () => {
     expect(second.reply.englishTarget?.length).toBeGreaterThan(0);
   });
 
-  it("offers light repair and persists it when the learner breaks down (empty transcript)", async () => {
+  it("persists a coach reply's repair to the coach exchange (repairJson round-trip)", async () => {
     const caseId = await firstCaseId();
+    const fake = createFakeCoach();
+    const repair = { reason: "That one didn't land.", recast: "Try: help yourself." };
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      coach: {
+        ...fake,
+        converse: () => Promise.resolve({ repair, say: "No rush — a simpler version." })
+      }
+    };
 
-    const outcome = await converseTurn(makeDeps(), { caseId, transcript: "" }, userA, t0);
+    const outcome = await converseTurn(deps, { caseId, transcript: "hello" }, userA, t0);
     if (outcome.status !== "ok") {
       throw new Error("expected ok");
     }
-    expect(outcome.reply.repair).toBeDefined();
+    expect(outcome.reply.repair).toEqual(repair);
 
     const coachRow = (
       await db.select().from(sessionExchanges).where(eq(sessionExchanges.role, "coach"))
     )[0];
-    expect(coachRow?.repairJson).toEqual(outcome.reply.repair);
+    expect(coachRow?.repairJson).toEqual(repair);
   });
 
   it("rebuilds the conversation across turns, advancing the coach reply", async () => {
