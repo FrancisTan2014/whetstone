@@ -44,7 +44,7 @@ function fakeFactories(): {
 describe("createCoachAdapters", () => {
   it("keyless: cheap is the local seam adapter; strong is the deterministic fake (no cloud model built)", async () => {
     const { cloudModel, factories, localModel } = fakeFactories();
-    const adapters = createCoachAdapters(undefined, "llama3.1:8b", factories);
+    const adapters = createCoachAdapters(undefined, () => {}, "llama3.1:8b", factories);
 
     // The cheap tier is built from the local factory for the configured model.
     expect(factories.createLocal).toHaveBeenCalledWith("llama3.1:8b");
@@ -62,7 +62,7 @@ describe("createCoachAdapters", () => {
 
   it("treats a blank key like no key: strong stays the fake, no cloud model built", async () => {
     const { factories } = fakeFactories();
-    const adapters = createCoachAdapters("", "llama3.1:8b", factories);
+    const adapters = createCoachAdapters("", () => {}, "llama3.1:8b", factories);
 
     await adapters.strong.analyze(analyzeRequest);
     expect(factories.createCloud).not.toHaveBeenCalled();
@@ -70,16 +70,28 @@ describe("createCoachAdapters", () => {
 
   it("with a key: strong is built from the cloud factory and routes analyze through it", async () => {
     const { cloudModel, factories } = fakeFactories();
-    const adapters = createCoachAdapters("sk-test", "llama3.1:8b", factories);
+    const adapters = createCoachAdapters("sk-test", () => {}, "llama3.1:8b", factories);
 
     expect(factories.createCloud).toHaveBeenCalledWith("sk-test");
     await adapters.strong.analyze(analyzeRequest);
     expect(cloudModel).toHaveBeenCalledOnce();
   });
 
+  it("threads onFallback into the cheap tier so a degraded local call is reported with its model (#432)", async () => {
+    const { factories } = fakeFactories(); // local model returns "" -> analyze parse fails -> fallback
+    const onFallback = vi.fn();
+    const adapters = createCoachAdapters(undefined, onFallback, "llama3.1:8b", factories);
+
+    await adapters.cheap.analyze(analyzeRequest);
+    expect(onFallback).toHaveBeenCalledTimes(1);
+    expect(onFallback).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "analyze", model: "llama3.1:8b" })
+    );
+  });
+
   it("defaults to the real model factories when none are injected (production wiring)", () => {
     // Building the adapters with the production defaults must not touch the network — the model is only
     // called on analyze — so constructing them exercises the default wiring without any I/O.
-    expect(() => createCoachAdapters(undefined)).not.toThrow();
+    expect(() => createCoachAdapters(undefined, () => {})).not.toThrow();
   });
 });

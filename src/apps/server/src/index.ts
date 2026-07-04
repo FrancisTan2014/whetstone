@@ -121,7 +121,15 @@ const lookupService = createLookupService({
 const coachConfig = readCoachConfig();
 const coach = resolveCoach({
   config: coachConfig,
-  createAdapters: (apiKey) => createCoachAdapters(apiKey, coachConfig.converseModel),
+  createAdapters: (apiKey) =>
+    createCoachAdapters(
+      apiKey,
+      // Observability (#432): a coach call that fails and degrades to the fake emits one structured
+      // warn (method/model/reason only — no prompt, transcript, or key), matching the ingestionLogger
+      // convention above, so a degraded coach is diagnosable instead of silently masquerading.
+      (info) => console.warn("[coach] local model call failed; using fake", JSON.stringify(info)),
+      coachConfig.converseModel
+    ),
   fake: createFakeCoach()
 });
 const speechConfig = readSpeechConfig();

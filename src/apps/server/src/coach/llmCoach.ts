@@ -25,7 +25,28 @@ export type LlmCoachDependencies = Readonly<{
   // Everything except analyze (and gradeForScheduler) delegates here: in v0 only the end-of-round
   // judge is real; converse/judge/propose/author stay on the deterministic fallback (#241).
   fallback: CoachProvider;
+  // The model name this tier calls (e.g. "llama3.1:8b"), named in the fallback log — never a secret.
+  model: string;
+  // Observability seam (#432): invoked exactly once, before returning the fake, whenever a real
+  // converse/analyze call fails — so a degraded coach is diagnosable at runtime instead of silently
+  // masquerading as healthy. A dependency-injected logger like `ingestionLogger`: a fake in tests,
+  // a structured `console.warn` in `index.ts`. It only ever receives method/model/reason — never a
+  // prompt, transcript, or key.
+  onFallback: (info: CoachFallbackInfo) => void;
 }>;
+
+// What the fallback log carries: which method degraded, which model it called, and why. No secrets or
+// user content by construction — never the prompt, transcript, or an API key.
+export type CoachFallbackInfo = Readonly<{
+  method: "converse" | "analyze";
+  model: string;
+  err: string;
+}>;
+
+// Normalize an unknown thrown value to a log-safe reason string (an Error's message, else its String).
+function errorReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 // The rubric (#241): score INTELLIGIBILITY first — was it understood? — then chunk use, NEVER
 // nativeness; an intelligible-but-accented attempt grades high. Output is strict JSON the contract
@@ -100,7 +121,14 @@ export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvide
         return parseAnalyzeRoundResult(
           extractJson(await dependencies.chat(analyzePrompt(request)))
         );
-      } catch {
+      } catch (error) {
+        // Degrade to the fake — but make it visible first, so `local_ready` boot health can't mask a
+        // coach that isn't actually answering (#432). One warn per fallback; behavior is unchanged.
+        dependencies.onFallback({
+          method: "analyze",
+          model: dependencies.model,
+          err: errorReason(error)
+        });
         return dependencies.fallback.analyze(request);
       }
     },
@@ -111,7 +139,12 @@ export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvide
         return parseCoachConverseResult(
           extractJson(await dependencies.chat(conversePrompt(request)))
         );
-      } catch {
+      } catch (error) {
+        dependencies.onFallback({
+          method: "converse",
+          model: dependencies.model,
+          err: errorReason(error)
+        });
         return dependencies.fallback.converse(request);
       }
     },
