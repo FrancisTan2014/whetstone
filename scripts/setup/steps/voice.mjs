@@ -168,12 +168,10 @@ export const voiceStep = {
     if (!isOk(pythonReady)) {
       return pythonReady;
     }
+    // installSystemTool's authoritative `check` (pythonCheck) just passed, so a Python interpreter is
+    // guaranteed to resolve here (its "installed but still off PATH" case already returns `missing`).
+    // Capture which command — `python` vs `python3` — for the pip invocations below.
     const python = resolvePython(ctx);
-    if (python === null) {
-      // The package manager reported success but Python is still not on this shell's PATH (common on
-      // Windows until a new terminal is opened): instruct the user to re-run in a fresh shell.
-      return missing("Python 3 was not found (required for local Whisper STT).", PYTHON_REMEDY);
-    }
     const pip = ctx.exec(python, ["-m", "pip", "install", "faster-whisper"]);
     if (pip.code !== 0) {
       return error(

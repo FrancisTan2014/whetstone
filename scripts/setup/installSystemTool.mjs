@@ -35,19 +35,31 @@ import { error, isOk, missing, ok, withOutputTail } from "./step.mjs";
  */
 
 /**
- * Ensure a system tool is present, asking consent before installing. Five outcomes, none of which
- * throw:
- *   1. `check` is ok                         ⇒ `ok()` (already present, nothing to do).
+ * Ensure a system tool is present, asking consent before installing. `spec.check` — "does the tool
+ * actually work?" — is the single source of truth for readiness; an install command's exit code is
+ * only a hint (winget in particular exits non-zero for the benign "already installed, no upgrade
+ * applicable" case, so it must never be trusted over `check`). Outcomes, none of which throw:
+ *   1. `check` is ok (after a win32 PATH refresh) ⇒ `ok()` (already present, nothing to do).
  *   2. no plan for this platform, or its package manager is absent ⇒ `missing` + docs (instruct-only).
- *   3. `ctx.confirm(question)` is false      ⇒ `missing` (instruct-only; user declined).
- *   4. install runs but exits non-zero       ⇒ `error` with the output tail (instruct-only fallback).
- *   5. install exits zero                    ⇒ `ok()`.
+ *   3. `ctx.confirm(question)` is false          ⇒ `missing` (instruct-only; user declined).
+ *   4. install runs, then `check` still fails: a zero exit (installed but not yet on PATH) ⇒
+ *      `missing` (open a new terminal); a non-zero exit (the install failed) ⇒ `error` + output tail.
+ *   5. after install, `check` is ok (PATH refreshed on win32) ⇒ `ok()`, regardless of the exit code
+ *      and on every platform — the install's exit code is never trusted over `check`.
  *
  * @param {import("./step.mjs").SetupContext} ctx
  * @param {InstallSpec} spec
  * @returns {import("./step.mjs").StepResult}
  */
 export function installSystemTool(ctx, spec) {
+  // On win32 a tool installed in a prior session updates only the persisted (registry) PATH; a
+  // long-lived shell (e.g. git-bash/MINGW64) started before that install keeps its stale process
+  // PATH, so `check` would wrongly report the tool missing and we would needlessly prompt + invoke
+  // winget (which then reports "no upgrade applicable"). Refresh PATH from the registry before the
+  // initial probe so an already-installed tool is detected up front. (#429; no-op off win32.)
+  if (ctx.platform === "win32") {
+    ctx.refreshPath();
+  }
   const ready = spec.check(ctx);
   if (isOk(ready)) {
     return ready;
@@ -70,25 +82,30 @@ export function installSystemTool(ctx, spec) {
 
   ctx.log(`[setup] installing ${spec.name} via ${plan.manager}...`);
   const result = ctx.exec(plan.manager, plan.args);
-  if (result.code !== 0) {
-    return error(what, withOutputTail(spec.remedy, result), spec.docs);
-  }
 
-  // The install succeeded — but on Windows the freshly-installed binary is invisible to THIS process:
-  // the installer only updates the persisted (registry) PATH, while our already-running process and
-  // every child `spawnSync` keep the PATH captured at launch. That is the `spawnSync <tool> ENOENT`
-  // in #423, where the very next step tries to *use* the tool we just installed. Refresh PATH from
-  // the registry and re-probe so install->use completes in one run; if it still doesn't resolve, name
-  // the real cause — a stale shell PATH — rather than letting a downstream step blame something else.
+  // Decide readiness by re-probing `check` (the source of truth) on EVERY platform, NOT by the
+  // install exit code — winget exits non-zero for the benign "already installed, no upgrade
+  // applicable" case (APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, 0x8A15002B), and an exit-zero
+  // install has not actually proven the tool resolves. On win32 the freshly-installed binary is also
+  // invisible to THIS process until PATH is refreshed from the registry (the `spawnSync <tool>
+  // ENOENT` of #423, where the next step tries to *use* the tool); refresh first, then re-probe.
   if (ctx.platform === "win32") {
     ctx.refreshPath();
-    if (!isOk(spec.check(ctx))) {
-      return missing(
-        `${spec.name} was installed but is not on this terminal's PATH yet.`,
-        `Open a new terminal (so it picks up the updated PATH) and re-run the same command, ` +
-          `or add ${spec.name} to your PATH manually.`
-      );
-    }
   }
-  return ok();
+  if (isOk(spec.check(ctx))) {
+    return ok();
+  }
+
+  // Installed per the command, but the tool still doesn't resolve. An exit-zero install that hasn't
+  // surfaced on PATH is a stale-shell situation (the win32 in-process PATH, or a manager like brew
+  // whose bin dir isn't on PATH yet) — name it and point at a fresh terminal, not a hard failure. A
+  // non-zero exit means the install itself failed: surface it as an error with its output tail.
+  if (result.code === 0) {
+    return missing(
+      `${spec.name} was installed but is not on this terminal's PATH yet.`,
+      `Open a new terminal (so it picks up the updated PATH) and re-run the same command, ` +
+        `or add ${spec.name} to your PATH manually.`
+    );
+  }
+  return error(what, withOutputTail(spec.remedy, result), spec.docs);
 }
