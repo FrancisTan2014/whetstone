@@ -258,6 +258,20 @@ export type {
 export { createHealthResponse, healthEndpointPath, healthResponseJsonSchema } from "./health.js";
 export type { HealthResponse } from "./health.js";
 export {
+  defaultWebHostRuntimeConfig,
+  hostPlatforms,
+  hostPlatformSchema,
+  hostRuntimeConfigGlobalKey,
+  hostRuntimeConfigSchema,
+  resolveApiUrl,
+  resolveHostRuntimeConfig
+} from "./hostRuntimeContracts.js";
+export type {
+  HostPlatform,
+  HostRuntimeConfig,
+  HostRuntimeConfigResolution
+} from "./hostRuntimeContracts.js";
+export {
   dictionaryEntrySchema,
   dictionaryPartOfSpeechSchema,
   dictionaryPronunciationSchema,

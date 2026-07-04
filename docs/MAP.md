@@ -54,7 +54,10 @@ Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts
 `NormalizedEntry` shape and `LookupResponse` DTO rendered by the reader), `searchContracts.ts`
 (the `/api/search` query validator + the block-level `SearchResultsDto`), `diaryContracts.ts` (#246
 voice-diary create/edit/timeline-page/calendar DTOs + query validators; the timeline is a generic
-dated-trace shape with a `kind` discriminator so other deposits can join later), `health.ts`. Tests colocated.
+dated-trace shape with a `kind` discriminator so other deposits can join later),
+`hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
+(`platform` + `apiBaseUrl`) schema, `resolveHostRuntimeConfig` (validates the injected config, fails
+loud, defaults browser web to `/api`), and the pure `resolveApiUrl` base+path joiner), `health.ts`. Tests colocated.
 Invariant: types resolve through built `dist` — run `pnpm build` (or `tsc -b`) before VS Code/tsc
 can navigate them from another package.
 
@@ -408,6 +411,14 @@ can navigate them from another package.
   manifest/SW/icons. The server serves `manifest.webmanifest` + `sw.js` at root via `staticWeb.ts`.
 - Entry: `src/main.tsx` (imports the self-hosted fonts + `styles/theme.css`, mounts `<MotionConfig
 reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed shell.
+- Host runtime config (#445): `src/shared/runtime/` is the host↔web-core seam so the one bundle runs
+  as browser web, desktop, or iOS. `apiRuntime.ts` holds the canonical `apiUrl(path)` resolver every
+  feature API call goes through (never a hardcoded `/api`), plus `bootstrapApiRuntime(window)` which
+  the `main.tsx` boundary calls once before render. A native shell injects
+  `window.__WHETSTONE_HOST_CONFIG__ = { platform, apiBaseUrl }` (validated by
+  `resolveHostRuntimeConfig` in `@whetstone/contracts`); browser web injects nothing and defaults to
+  same-origin `/api`. An invalid injection makes `main.tsx` render a blocking startup error (fail
+  loud) instead of starting with a wrong base.
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
   `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"

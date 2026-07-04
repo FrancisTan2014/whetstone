@@ -8,6 +8,7 @@ import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
+import { apiUrl } from "../../shared/runtime";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
 import { draftToAnchor, type NoteDraft } from "../notes/noteCapture";
@@ -1367,7 +1368,7 @@ function ReaderFigure({
 }): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
   const imageSrc =
-    block.imageResourceId === undefined ? undefined : `/api/images/${block.imageResourceId}`;
+    block.imageResourceId === undefined ? undefined : apiUrl(`/images/${block.imageResourceId}`);
   const showImage = imageSrc !== undefined && !imageFailed;
 
   return (

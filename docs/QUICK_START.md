@@ -292,6 +292,30 @@ pnpm --filter @whetstone/server start
 The server applies migrations and seeds the v0 note templates on boot. Open the web app's
 printed URL (by default `http://127.0.0.1:5173`) and keep the server running.
 
+### Host runtime config (native shells)
+
+The web app resolves every API call through one host-runtime contract instead of assuming
+same-origin `/api`, so the same bundle runs as browser web, a desktop shell, or an iOS shell (#445).
+
+- **Browser web (default):** nothing is injected, so the app uses `platform="web"` and
+  `apiBaseUrl="/api"` — the Vite dev proxy (above) forwards `/api` to the server, unchanged.
+- **Native shell (desktop/iOS):** the shell runs from a local app origin where same-origin `/api` is
+  wrong, so it injects the config on `window` **before** the web bundle boots:
+
+  ```html
+  <script>
+    window.__WHETSTONE_HOST_CONFIG__ = {
+      platform: "ios", // or "desktop"
+      apiBaseUrl: "https://your-api-host.example/api" // absolute for native
+    };
+  </script>
+  ```
+
+  `src/main.tsx` validates this once at startup (`bootstrapApiRuntime`). Valid config is trusted
+  inward and every `apiUrl(...)` call targets it; invalid config fails loud with a blocking startup
+  screen that states what is wrong and how to fix it — it never silently falls back to a fake default.
+  (No Tauri/Capacitor scaffolding ships yet — this is only the runtime contract the shells will use.)
+
 ## 4. First user flow
 
 With both the server and web client running, open the web app. The page shows the **Library admin**,

@@ -8,6 +8,8 @@ import type {
   UpdateNoteRequest
 } from "@whetstone/contracts";
 
+import { apiUrl } from "../../shared/runtime";
+
 const jsonHeaders = { "content-type": "application/json" } as const;
 
 // The notes feature keeps its own fetch helper so it stays decoupled from the reader,
@@ -23,23 +25,23 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function fetchNoteTemplates(): Promise<NoteTemplateListDto> {
-  return requestJson<NoteTemplateListDto>("/api/note-templates");
+  return requestJson<NoteTemplateListDto>(apiUrl("/note-templates"));
 }
 
 export async function fetchNotes(workEntryId: string): Promise<NoteListDto> {
-  return requestJson<NoteListDto>(`/api/works/${encodeURIComponent(workEntryId)}/notes`);
+  return requestJson<NoteListDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/notes`));
 }
 
 // Every note the current user owns across all works, for the cross-work Notes mode.
 export async function fetchAllNotes(): Promise<NotesOverviewListDto> {
-  return requestJson<NotesOverviewListDto>("/api/notes");
+  return requestJson<NotesOverviewListDto>(apiUrl("/notes"));
 }
 
 export async function createNote(
   workEntryId: string,
   request: CreateNoteRequest
 ): Promise<NoteDto> {
-  return requestJson<NoteDto>(`/api/works/${encodeURIComponent(workEntryId)}/notes`, {
+  return requestJson<NoteDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/notes`), {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "POST"
@@ -51,7 +53,7 @@ export async function createMark(
   workEntryId: string,
   request: CreateMarkRequest
 ): Promise<NoteDto> {
-  return requestJson<NoteDto>(`/api/works/${encodeURIComponent(workEntryId)}/marks`, {
+  return requestJson<NoteDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/marks`), {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "POST"
@@ -63,9 +65,9 @@ export async function updateNote(
   noteEntryId: string,
   request: UpdateNoteRequest
 ): Promise<NoteDto> {
-  const path = `/api/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(
-    noteEntryId
-  )}`;
+  const path = apiUrl(
+    `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}`
+  );
 
   return requestJson<NoteDto>(path, {
     body: JSON.stringify(request),
@@ -75,9 +77,9 @@ export async function updateNote(
 }
 
 export async function deleteNote(workEntryId: string, noteEntryId: string): Promise<void> {
-  const path = `/api/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(
-    noteEntryId
-  )}`;
+  const path = apiUrl(
+    `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}`
+  );
   const response = await fetch(path, { method: "DELETE" });
 
   if (!response.ok) {

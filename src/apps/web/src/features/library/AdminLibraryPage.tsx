@@ -17,6 +17,7 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { Spinner } from "../../shared/ui/Spinner";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
+import { apiUrl } from "../../shared/runtime";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import {
@@ -520,7 +521,7 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
         <a
           className="text-accent hover:text-accent-hover"
           download={`${item.work.title}.md`}
-          href={`/api/works/${workEntryId}/content/markdown`}
+          href={apiUrl(`/works/${workEntryId}/content/markdown`)}
         >
           Export Markdown
         </a>

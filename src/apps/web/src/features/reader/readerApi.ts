@@ -6,6 +6,8 @@ import type {
   WorkStructureDto
 } from "@whetstone/contracts";
 
+import { apiUrl } from "../../shared/runtime";
+
 // The reader keeps its own works/structure/unit fetch so it stays decoupled from the
 // library admin and content authoring features. It loads a work's lightweight structure
 // first and fetches each reading unit's blocks on demand, rather than transferring the
@@ -21,19 +23,23 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function fetchWorks(): Promise<WorkListDto> {
-  return requestJson<WorkListDto>("/api/works");
+  return requestJson<WorkListDto>(apiUrl("/works"));
 }
 
 // The lightweight outline fetched first: reading units + block counts, no content.
 export async function fetchWorkStructure(workEntryId: string): Promise<WorkStructureDto> {
-  return requestJson<WorkStructureDto>(`/api/works/${encodeURIComponent(workEntryId)}/structure`);
+  return requestJson<WorkStructureDto>(
+    apiUrl(`/works/${encodeURIComponent(workEntryId)}/structure`)
+  );
 }
 
 // The work's anchor index: every addressable block reachable by a source-HTML id, keyed at the
 // consumer by (sourceFile, anchor), so the reader resolves a cross-reference to another unit and
 // jumps there via `jumpToBlock` (#366). Fetched once alongside the structure when a work opens.
 export async function fetchWorkAnchorIndex(workEntryId: string): Promise<WorkAnchorIndexDto> {
-  return requestJson<WorkAnchorIndexDto>(`/api/works/${encodeURIComponent(workEntryId)}/anchors`);
+  return requestJson<WorkAnchorIndexDto>(
+    apiUrl(`/works/${encodeURIComponent(workEntryId)}/anchors`)
+  );
 }
 
 // One reading unit's blocks, fetched on demand when that unit becomes active.
@@ -42,7 +48,9 @@ export async function fetchUnitContent(
   unitEntryId: string
 ): Promise<ReadingUnitContentDto> {
   return requestJson<ReadingUnitContentDto>(
-    `/api/works/${encodeURIComponent(workEntryId)}/units/${encodeURIComponent(unitEntryId)}/content`
+    apiUrl(
+      `/works/${encodeURIComponent(workEntryId)}/units/${encodeURIComponent(unitEntryId)}/content`
+    )
   );
 }
 
@@ -54,9 +62,9 @@ export async function locateBlockUnit(
   workEntryId: string,
   blockEntryId: string
 ): Promise<string | undefined> {
-  const path = `/api/works/${encodeURIComponent(workEntryId)}/blocks/${encodeURIComponent(
-    blockEntryId
-  )}/unit`;
+  const path = apiUrl(
+    `/works/${encodeURIComponent(workEntryId)}/blocks/${encodeURIComponent(blockEntryId)}/unit`
+  );
   const response = await fetch(path);
 
   if (response.status === 404) {
