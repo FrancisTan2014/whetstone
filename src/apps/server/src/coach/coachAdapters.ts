@@ -1,5 +1,5 @@
 import { createFakeCoach } from "./fakeCoach.js";
-import { createLlmCoach } from "./llmCoach.js";
+import { createLlmCoach, type CoachFallbackInfo } from "./llmCoach.js";
 import type { CoachAdapters } from "./coachConfig.js";
 import { createOllamaModel, type LlmModel } from "../llm/llmModel.js";
 
@@ -7,11 +7,15 @@ import { createOllamaModel, type LlmModel } from "../llm/llmModel.js";
 // English-only coach. Swap to qwen3 only when the coach broadens to bilingual coaching (#241).
 export const defaultCheapModel = "llama3.1:8b";
 
+// The cloud model behind the strong tier — named here so the fallback log (#432) can report it and the
+// cloud call below uses the same identifier (one source of truth).
+export const defaultStrongModel = "gpt-5-mini";
+
 /* v8 ignore start -- cloud network boundary, exercised via an injected LlmModel in tests */
 function createCloudChat(apiKey: string): LlmModel {
   return async (prompt) => {
     const response = await fetch("https://api.openai.com/v1/responses", {
-      body: JSON.stringify({ input: prompt, model: "gpt-5-mini" }),
+      body: JSON.stringify({ input: prompt, model: defaultStrongModel }),
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
       method: "POST"
     });
@@ -38,17 +42,29 @@ const defaultModelFactories: CoachModelFactories = {
 // round) only when a key is present, otherwise the deterministic fake. So a keyless dev still gets a
 // real LOCAL cheap tier, while any strong-routed call safely resolves to the fake — no key required.
 // The cheap tier composes the LLM judge over the fake, so any model/parse failure still grades the round.
+// `onFallback` (#432) is threaded into each real tier so a silent degrade becomes a visible warn.
 export function createCoachAdapters(
   apiKey: string | undefined,
+  onFallback: (info: CoachFallbackInfo) => void,
   cheapModel = defaultCheapModel,
   factories: CoachModelFactories = defaultModelFactories
 ): CoachAdapters {
   const fallback = createFakeCoach();
   return {
-    cheap: createLlmCoach({ chat: factories.createLocal(cheapModel), fallback }),
+    cheap: createLlmCoach({
+      chat: factories.createLocal(cheapModel),
+      fallback,
+      model: cheapModel,
+      onFallback
+    }),
     strong:
       apiKey === undefined || apiKey.length === 0
         ? createFakeCoach()
-        : createLlmCoach({ chat: factories.createCloud(apiKey), fallback })
+        : createLlmCoach({
+            chat: factories.createCloud(apiKey),
+            fallback,
+            model: defaultStrongModel,
+            onFallback
+          })
   };
 }
