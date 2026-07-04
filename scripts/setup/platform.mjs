@@ -18,3 +18,18 @@ export function resolveCommand(command, platform) {
   }
   return command;
 }
+
+/**
+ * Spawn options for launching a Node-ecosystem `.cmd` shim (e.g. `pnpm.cmd`) by name with its output
+ * streamed to this terminal. On Windows the shim must go through a shell — since the fix for
+ * CVE-2024-27980 ("BatBadBut"), Node refuses to spawn a `.cmd`/`.bat` directly and throws
+ * `spawn EINVAL` (strict on Node 24) — so `shell: true`; on posix the real binary spawns directly
+ * with no shell. Keeping this win32/posix branch here (beside `resolveCommand`) is why
+ * `scripts/dev.mjs` no longer re-derives it inline.
+ *
+ * @param {NodeJS.Platform} platform
+ * @returns {{ stdio: "inherit", shell: boolean }}
+ */
+export function cmdShimSpawnOptions(platform) {
+  return { stdio: "inherit", shell: platform === "win32" };
+}

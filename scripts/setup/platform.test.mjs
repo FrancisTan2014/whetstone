@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveCommand } from "./platform.mjs";
+import { cmdShimSpawnOptions, resolveCommand } from "./platform.mjs";
 
 describe("resolveCommand", () => {
   it("appends .cmd to node-bin shims on win32", () => {
@@ -18,5 +18,16 @@ describe("resolveCommand", () => {
     expect(resolveCommand("pnpm", "linux")).toBe("pnpm");
     expect(resolveCommand("pnpm", "darwin")).toBe("pnpm");
     expect(resolveCommand("node", "linux")).toBe("node");
+  });
+});
+
+describe("cmdShimSpawnOptions", () => {
+  it("passes a shell on win32 so Node can spawn the `.cmd` shim (no spawn EINVAL)", () => {
+    expect(cmdShimSpawnOptions("win32")).toEqual({ stdio: "inherit", shell: true });
+  });
+
+  it("uses no shell on posix platforms", () => {
+    expect(cmdShimSpawnOptions("linux")).toEqual({ stdio: "inherit", shell: false });
+    expect(cmdShimSpawnOptions("darwin")).toEqual({ stdio: "inherit", shell: false });
   });
 });
