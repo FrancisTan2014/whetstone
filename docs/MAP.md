@@ -102,7 +102,10 @@ can navigate them from another package.
   status/model+prompt) and `proposal_reviews`. **Quick Capture endpoint** (`makeDurableRoutes.ts`, wired in
   `createServer.ts`/`index.ts`): `POST /api/makedurable/capture` runs `quickCapture` — the Timeline entry
   is saved FIRST, then the `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
-  attempts one proposal; any failure/timeout/invalid output yields no card. A generated candidate is gated
+  attempts one proposal — retrieve-before-generate: a small slice of the user's existing recall is loaded
+  first and passed into the prompt's "Already remembered" block (domain `buildProposalPrompt`) so the model
+  can prefer no candidate when already covered; any failure/timeout/invalid output yields no card. A
+  generated candidate is gated
   by the pure `@whetstone/domain` `makeDurable.ts` (`evaluateProposalGate` = confidence floor + faithful
   evidence quote; `classifyProposalDuplicate` suppresses same-target+same-context) and stored `visible`
   (a `MakeDurableCardDto` is returned) or `dismissed` — or held `pending` when a card is already up, so the
