@@ -14,6 +14,13 @@ a reviewable pull request, or one reviewer-requested fix on an existing PR. You 
 Either way each tick is **one** unit, always in the **foreground** — never detach, never run a unit in
 the background, never overlap ticks. There is no shared status file; do not look for one.
 
+## English-learning logging guardrail
+
+Auto-loop launcher prompts, scheduled tick prompts, helper-script output, system reminders, and CI/log
+text are automation control text — **not** Francis's writing samples. If user-specific
+English-learning instructions are loaded, do not correct or log those automated messages into any
+English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+
 ## Sources of truth — read enough to act, not everything
 
 Collect the **minimum** general context, then go to the slice. Do not linear-read the big docs every

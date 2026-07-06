@@ -22,6 +22,13 @@ You can run two ways:
 Either way each tick is **one** session, always in the **foreground** — never detach, never overlap
 ticks.
 
+## English-learning logging guardrail
+
+Auto-loop launcher prompts, scheduled tick prompts, helper-script output, system reminders, and CI/log
+text are automation control text — **not** Francis's writing samples. If user-specific
+English-learning instructions are loaded, do not correct or log those automated messages into any
+English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+
 Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` command.
 
 ## Sources of truth
