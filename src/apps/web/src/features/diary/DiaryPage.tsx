@@ -176,6 +176,20 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     setNotice(message);
   }
 
+  // Mark the day of a just-saved entry immediately, so the date-jump calendar reflects it without waiting
+  // for a month change/reload to re-fetch marks (#471). The month effect still refreshes marks whenever the
+  // visible month changes, so this only needs to add the new day to the current set.
+  function markEntryDay(entryDate: string): void {
+    setMarkedDays((previous) => {
+      if (previous.has(entryDate)) {
+        return previous;
+      }
+      const next = new Set(previous);
+      next.add(entryDate);
+      return next;
+    });
+  }
+
   async function loadMore(): Promise<void> {
     if (busyRef.current || !hasMoreRef.current) {
       return;
@@ -248,6 +262,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       setPhase("saving");
       const entry = await createDiaryEntry(trimmed);
       setEntries((previous) => [...previous, toFlat(entry)]);
+      markEntryDay(entry.entryDate);
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -266,6 +281,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     try {
       const entry = await createDiaryEntry(text);
       setEntries((previous) => [...previous, toFlat(entry)]);
+      markEntryDay(entry.entryDate);
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
