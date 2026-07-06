@@ -206,6 +206,25 @@ describe("DiaryPage capture", () => {
     expect(mockedCreate).not.toHaveBeenCalled();
   });
 
+  it("takes the no-speech retry and keeps typing usable when the capture is empty audio (#467)", async () => {
+    // A no-utterance stop settles empty audio; DiaryPage must not post it to /transcribe (which 400s) or
+    // hang in "transcribing" — it shows the calm retry, returns to idle, and leaves the typed box usable.
+    const { capture, stop } = makeCapture({ stop: async () => new Blob() });
+
+    await renderReady(capture);
+    await userEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await userEvent.click(screen.getByRole("button", { name: "Stop & save" }));
+
+    await screen.findByText(/Didn't catch any speech/);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(mockedTranscribe).not.toHaveBeenCalled();
+    expect(mockedCreate).not.toHaveBeenCalled();
+    // The typed fallback stays usable (not stuck disabled/busy).
+    expect((screen.getByRole("button", { name: "Add entry" }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
+  });
+
   it("warns when the microphone cannot be opened", async () => {
     const { capture } = makeCapture({ startRejects: true });
 
