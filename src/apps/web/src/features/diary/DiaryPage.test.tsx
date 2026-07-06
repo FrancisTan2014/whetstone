@@ -486,6 +486,36 @@ describe("DiaryPage date-jump calendar", () => {
     }
   });
 
+  it("marks the new entry's day on the calendar immediately after saving (#471)", async () => {
+    mockedCreate.mockResolvedValue(entryDto("typed-1", d(6), "a fresh thought"));
+    await renderReady(makeCapture().capture);
+
+    // No marks yet (the calendar fetch returns none).
+    expect(screen.queryByRole("button", { name: `Go to ${d(6)}` })).toBeNull();
+
+    await userEvent.type(screen.getByLabelText("Or write it down"), "a fresh thought");
+    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+
+    await screen.findByText("a fresh thought");
+    // The day is marked immediately, without a month toggle or reload.
+    expect(screen.getByRole("button", { name: `Go to ${d(6)}` })).toBeTruthy();
+  });
+
+  it("leaves an already-marked day marked when another entry is added the same day (#471)", async () => {
+    // The day is already marked from the calendar fetch; saving another entry that day keeps the mark
+    // (the marked-day set is left unchanged rather than needlessly rebuilt).
+    mockedCalendar.mockResolvedValue({ dates: [d(6)] });
+    mockedCreate.mockResolvedValue(entryDto("typed-2", d(6), "another thought"));
+    await renderReady(makeCapture().capture);
+    await screen.findByRole("button", { name: `Go to ${d(6)}` });
+
+    await userEvent.type(screen.getByLabelText("Or write it down"), "another thought");
+    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+
+    await screen.findByText("another thought");
+    expect(screen.getByRole("button", { name: `Go to ${d(6)}` })).toBeTruthy();
+  });
+
   it("clears marks when the calendar lookup fails", async () => {
     mockedCalendar.mockReset();
     mockedCalendar.mockRejectedValue(new Error("calendar down"));
