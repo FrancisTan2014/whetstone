@@ -11,7 +11,7 @@ import type {
   RecordProposalReviewRequest
 } from "@whetstone/contracts";
 import { parseProposalPayload } from "@whetstone/contracts";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { proposalCandidates, proposalReviews } from "../../db/schema.js";
@@ -182,4 +182,23 @@ export async function setProposalCandidateStatus(
     .update(proposalCandidates)
     .set({ status })
     .where(and(eq(proposalCandidates.id, id), eq(proposalCandidates.userId, userId)));
+}
+
+// Promote the user's oldest held (`pending`) candidate to `visible`, if any. Called after a review
+// clears the current Today card so a proposal that was held back by the one-card cap surfaces next —
+// keeping Today at "at most one card" without silently dropping the extras. A no-op when nothing is held.
+export async function promoteOldestPendingCandidate(db: DbClient, userId: string): Promise<void> {
+  const rows = await db
+    .select({ id: proposalCandidates.id })
+    .from(proposalCandidates)
+    .where(and(eq(proposalCandidates.userId, userId), eq(proposalCandidates.status, "pending")))
+    .orderBy(asc(proposalCandidates.createdAt), asc(proposalCandidates.id))
+    .limit(1);
+
+  const oldest = rows[0];
+  if (oldest === undefined) {
+    return;
+  }
+
+  await setProposalCandidateStatus(db, oldest.id, userId, "visible");
 }

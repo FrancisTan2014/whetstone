@@ -4,6 +4,7 @@ import type {
   JsonObject,
   MakeDurableCardDto,
   ProposalCandidateDto,
+  ProposalCandidateStatus,
   ProposalPayload,
   QuickCaptureRequest,
   QuickCaptureResultDto
@@ -17,6 +18,7 @@ import {
 
 import type { DbClient } from "../../db/dbClient.js";
 import { listRecallItems } from "../recall/recallQueries.js";
+import { countVisibleCandidates, MAKE_DURABLE_TODAY_CARD_CAP } from "./cardQueries.js";
 import { insertProposalCandidate } from "./proposalCommands.js";
 import type { ProposalProvider } from "./proposalProvider.js";
 import { createTimelineCapture } from "./timelineCommands.js";
@@ -91,7 +93,13 @@ export async function quickCapture(
     existing
   );
 
-  const visible = gate.visible && duplicateStatus !== "same_target_same_context";
+  // Three outcomes: a candidate that fails the gate or duplicates an existing item is `dismissed`; one
+  // that qualifies but would be the SECOND card on Today (the one-card cap is already reached) is held
+  // `pending` (surfaced later when the current card is reviewed); otherwise it is `visible` with a card.
+  const gatedIn = gate.visible && duplicateStatus !== "same_target_same_context";
+  const atCap =
+    (await countVisibleCandidates(dependencies.db, userId)) >= MAKE_DURABLE_TODAY_CARD_CAP;
+  const status: ProposalCandidateStatus = !gatedIn ? "dismissed" : atCap ? "pending" : "visible";
 
   const candidateRequest: CreateProposalCandidateRequest = {
     confidence: generated.confidence,
@@ -103,13 +111,13 @@ export async function quickCapture(
     reason: generated.reason,
     relatedRecallItemId: null,
     noveltyReason: null,
-    status: visible ? "visible" : "dismissed",
+    status,
     timelineEntryId: timelineEntry.entryId,
     type: generated.type
   };
   const candidate = await insertProposalCandidate(md, candidateRequest, userId, now);
 
-  if (!visible) {
+  if (status !== "visible") {
     return { card: null, timelineEntry };
   }
 

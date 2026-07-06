@@ -106,7 +106,10 @@ export function MakeDurableSection(): React.JSX.Element {
 
       {cards.length === 0 ? null : (
         <div className="mt-4 flex flex-col gap-3">
-          {cards.map((card) => (
+          {/* Today shows at most one Make Durable card (never an inbox). The server enforces this
+              (a second gated proposal is held, not surfaced); rendering only the first card is a
+              defensive client-side guarantee of the same rule. */}
+          {cards.slice(0, 1).map((card) => (
             <MakeDurableReviewCard card={card} key={card.proposalCandidateId} onAct={act} />
           ))}
         </div>

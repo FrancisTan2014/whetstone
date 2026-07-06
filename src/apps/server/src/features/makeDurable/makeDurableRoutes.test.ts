@@ -168,6 +168,14 @@ describe("POST /api/makedurable/proposals/:id/review", () => {
     expect(response.json()).toEqual({ error: "not_found" });
   });
 
+  it("returns 404 on a repeated review of an already-saved card (idempotent)", async () => {
+    const created = await capture();
+    const id = created.card?.proposalCandidateId ?? "";
+
+    expect((await reviewOf(id, { outcome: "saved" })).statusCode).toBe(200);
+    expect((await reviewOf(id, { outcome: "saved" })).statusCode).toBe(404);
+  });
+
   it("rejects Edit + Save without an edited payload", async () => {
     const created = await capture();
     const id = created.card?.proposalCandidateId ?? "";

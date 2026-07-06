@@ -42,3 +42,15 @@ export async function listPendingCards(
 
   return rows.map(toMakeDurableCard);
 }
+
+// How many of the user's candidates are currently surfaced on Today (`visible`). Used to enforce the
+// one-card cap on the capture path, so a fresh gated proposal is held (`pending`) rather than shown when
+// a card is already up.
+export async function countVisibleCandidates(db: DbClient, userId: string): Promise<number> {
+  const rows = await db
+    .select({ id: proposalCandidates.id })
+    .from(proposalCandidates)
+    .where(and(eq(proposalCandidates.userId, userId), eq(proposalCandidates.status, "visible")));
+
+  return rows.length;
+}

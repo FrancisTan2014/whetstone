@@ -9,7 +9,10 @@ import { enrollRecallItem } from "../recall/recallCommands.js";
 import { getRecallItemForUser, listRecallItems } from "../recall/recallQueries.js";
 import { listPendingCards } from "./cardQueries.js";
 import { quickCapture, type QuickCaptureDependencies } from "./captureCommands.js";
-import { listProposalCandidatesForUser } from "./proposalQueries.js";
+import {
+  listProposalCandidatesForUser,
+  listProposalReviewsForCandidate
+} from "./proposalQueries.js";
 import type { ProposalAttempt, ProposalProvider } from "./proposalProvider.js";
 import { reviewProposalCard } from "./reviewCommands.js";
 
@@ -17,6 +20,7 @@ const userA = "user-a";
 const userB = "user-b";
 const t0 = new Date("2026-07-06T09:30:00.000Z");
 const t1 = new Date("2026-07-06T10:00:00.000Z");
+const t2 = new Date("2026-07-07T08:00:00.000Z");
 
 const basePayload: ProposalPayload = {
   target: "WorkInsight is back up now",
@@ -317,6 +321,77 @@ describe("reviewProposalCard", () => {
       )
     ).toEqual({ status: "not_found" });
 
+    expect(await listRecallItems(context.db, userA)).toEqual([]);
+  });
+});
+
+describe("one-card cap and review idempotency", () => {
+  function reviewDeps(): { createId: () => string; db: DbClient } {
+    return { createId: () => "recall-1", db: context.db };
+  }
+
+  async function captureCardId(propose: ProposalProvider, now: Date): Promise<string> {
+    const result = await quickCapture(deps(propose), { text: captureText }, userA, now);
+    if (result.card === null) {
+      throw new Error("expected a visible card");
+    }
+    return result.card.proposalCandidateId;
+  }
+
+  const secondAttempt = proposeWith(
+    attempt({ payload: { ...basePayload, target: "It rolled back cleanly" } })
+  );
+
+  it("holds a second successful capture so Today shows at most one card", async () => {
+    const firstId = await captureCardId(proposeWith(attempt()), t0);
+
+    const second = await quickCapture(deps(secondAttempt), { text: captureText }, userA, t1);
+    expect(second.card).toBeNull();
+
+    const cards = await listPendingCards(context.db, userA);
+    expect(cards.map((card) => card.proposalCandidateId)).toEqual([firstId]);
+    // The second candidate is HELD (pending), not dismissed — it is not lost.
+    const statuses = (await listProposalCandidatesForUser(context.db, userA))
+      .map((candidate) => candidate.status)
+      .sort();
+    expect(statuses).toEqual(["pending", "visible"]);
+  });
+
+  it("promotes the held candidate once the visible card is reviewed", async () => {
+    const firstId = await captureCardId(proposeWith(attempt()), t0);
+    await quickCapture(deps(secondAttempt), { text: captureText }, userA, t1);
+    const held = (await listProposalCandidatesForUser(context.db, userA)).find(
+      (candidate) => candidate.status === "pending"
+    );
+
+    await reviewProposalCard(reviewDeps(), firstId, { outcome: "not_useful_now" }, userA, t2);
+
+    expect(
+      (await listPendingCards(context.db, userA)).map((card) => card.proposalCandidateId)
+    ).toEqual([held?.id]);
+  });
+
+  it("rejects a repeat Save and creates no duplicate recall item or review", async () => {
+    const id = await captureCardId(proposeWith(attempt()), t0);
+
+    const saved = await reviewProposalCard(reviewDeps(), id, { outcome: "saved" }, userA, t1);
+    expect(saved.status).toBe("saved");
+
+    expect(await reviewProposalCard(reviewDeps(), id, { outcome: "saved" }, userA, t2)).toEqual({
+      status: "not_found"
+    });
+
+    expect(await listRecallItems(context.db, userA)).toHaveLength(1);
+    expect(await listProposalReviewsForCandidate(context.db, id, userA)).toHaveLength(1);
+  });
+
+  it("rejects a stale review on an already-dismissed card", async () => {
+    const id = await captureCardId(proposeWith(attempt()), t0);
+    await reviewProposalCard(reviewDeps(), id, { outcome: "wrong_hallucinated" }, userA, t1);
+
+    expect(await reviewProposalCard(reviewDeps(), id, { outcome: "saved" }, userA, t2)).toEqual({
+      status: "not_found"
+    });
     expect(await listRecallItems(context.db, userA)).toEqual([]);
   });
 });
