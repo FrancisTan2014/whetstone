@@ -94,6 +94,87 @@ describe("ReaderToc list mode", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("closes the drawer on Escape (#459)", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ReaderToc
+        activeIndex={0}
+        items={items}
+        mode="list"
+        onClose={onClose}
+        onSelect={vi.fn()}
+        open={true}
+      />
+    );
+
+    await user.keyboard("{Escape}");
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores non-Escape keys", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ReaderToc
+        activeIndex={0}
+        items={items}
+        mode="list"
+        onClose={onClose}
+        onSelect={vi.fn()}
+        open={true}
+      />
+    );
+
+    await user.keyboard("a");
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not listen for Escape while closed, or after it closes", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ReaderToc
+        activeIndex={0}
+        items={items}
+        mode="list"
+        onClose={onClose}
+        onSelect={vi.fn()}
+        open={false}
+      />
+    );
+
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Open, then close: the keydown listener must be torn down so a later Escape does nothing.
+    rerender(
+      <ReaderToc
+        activeIndex={0}
+        items={items}
+        mode="list"
+        onClose={onClose}
+        onSelect={vi.fn()}
+        open={true}
+      />
+    );
+    rerender(
+      <ReaderToc
+        activeIndex={0}
+        items={items}
+        mode="list"
+        onClose={onClose}
+        onSelect={vi.fn()}
+        open={false}
+      />
+    );
+
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 type TreeSelectKey = "c1" | "c2" | "c3" | "part" | "part2" | "sec";
