@@ -61,7 +61,7 @@ export type {
 } from "./learnerModel.js";
 export { rankReadingNudges, recencyBoost, topReadingNudge } from "./readingNudge.js";
 export type { ReadingNudgeCandidate, RankedReadingNudge } from "./readingNudge.js";
-export { buildDiaryTidyPrompt, diaryTidyInstructions } from "./diaryTidy.js";
+export { buildDiaryTidyPrompt, diaryTidyInstructions, isFaithfulTidy } from "./diaryTidy.js";
 export {
   buildProposalPrompt,
   classifyProposalDuplicate,
