@@ -155,6 +155,9 @@ describe("WorkContentPanel", () => {
 
     const readerLink = screen.getByRole("link", { name: "Open in Reader" });
     expect(readerLink.getAttribute("href")).toBe("#/reader?work=work-1");
+    // A >=44px hit target (#491); it was a 20px-tall text link before. jsdom has no layout, so assert
+    // the sizing utility (min-h-11 = 44px); self-start keeps it from stretching to the panel width.
+    expect(readerLink.className).toContain("min-h-11");
   });
 
   it("summarizes reading units and block counts by default and reveals blocks on demand", async () => {

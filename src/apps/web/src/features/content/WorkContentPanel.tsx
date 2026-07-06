@@ -200,7 +200,7 @@ function renderHeader(data: ReadyData): React.JSX.Element {
       </p>
       <p className="text-sm text-text-muted">{summaryLabel}</p>
       <a
-        className="text-sm text-accent hover:text-accent-hover"
+        className="inline-flex min-h-11 items-center self-start text-sm text-accent hover:text-accent-hover"
         href={`#/reader?work=${encodeURIComponent(item.work.entryId)}`}
       >
         Open in Reader
