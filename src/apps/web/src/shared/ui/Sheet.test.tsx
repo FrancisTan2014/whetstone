@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Sheet } from "./Sheet";
@@ -89,5 +90,40 @@ describe("Sheet", () => {
     );
 
     expect(screen.getByText("panel body")).toBeDefined();
+  });
+
+  it("restores focus to the opener when it closes, even when unmounted while open (#469)", async () => {
+    mockMatchMedia({});
+    const user = userEvent.setup();
+
+    // Mirrors the Library pattern: the sheet is rendered only while open, so closing UNMOUNTS it while
+    // still open. Focus must return to the opener, not fall to <body>.
+    function Harness(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Open
+          </button>
+          {open ? (
+            <Sheet onOpenChange={() => setOpen(false)} open title="Note">
+              <p>panel body</p>
+            </Sheet>
+          ) : null}
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    await user.click(opener);
+    await screen.findByRole("dialog", { name: "Note" });
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(opener);
+    });
   });
 });
