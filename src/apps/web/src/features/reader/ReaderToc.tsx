@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export type ReaderTocItem = Readonly<{ entryId: string; label: string }>;
 
@@ -189,11 +189,28 @@ function ReaderTocTree({
 // (#380); otherwise it lists the reading units (`mode: "list"`) so a nav-less work still navigates
 // chapter by chapter.
 export function ReaderToc(props: ReaderTocProps): React.JSX.Element | null {
-  if (!props.open) {
+  const { onClose, open } = props;
+
+  // Escape dismisses the drawer, matching its backdrop/close-control dismissal and the other reader
+  // overlays (#459). Without this the drawer stayed open on Escape and its backdrop kept intercepting
+  // pointer input over the reader tools. The listener is only attached while open, so it never competes
+  // with the reader's own key handling when the 目录 is closed.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) {
     return null;
   }
-
-  const { onClose } = props;
 
   return (
     <div className="readerToc readerToc--open">
