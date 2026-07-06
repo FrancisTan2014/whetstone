@@ -105,13 +105,17 @@ can navigate them from another package.
   attempts one proposal; any failure/timeout/invalid output yields no card. A generated candidate is gated
   by the pure `@whetstone/domain` `makeDurable.ts` (`evaluateProposalGate` = confidence floor + faithful
   evidence quote; `classifyProposalDuplicate` suppresses same-target+same-context) and stored `visible`
-  (a `MakeDurableCardDto` is returned) or `dismissed`. `GET /api/makedurable/cards` (`cardQueries.ts`,
-  capped, calm — not an inbox) feeds Today; `POST /api/makedurable/proposals/:id/review`
-  (`reviewCommands.ts` `reviewProposalCard`) records the review and, on Save / Edit + Save, makes it durable
+  (a `MakeDurableCardDto` is returned) or `dismissed` — or held `pending` when a card is already up, so the
+  one-card Today cap is enforced on the capture path (not just the read). `GET /api/makedurable/cards`
+  (`cardQueries.ts`, capped = 1, calm — not an inbox) feeds Today; `POST /api/makedurable/proposals/:id/review`
+  (`reviewCommands.ts` `reviewProposalCard`) acts ONLY on a still-`visible` candidate (a forged/foreign id
+  or any repeat/stale POST on an already saved/dismissed candidate → `not_found`, so no duplicate reviews or
+  recall items), records the review and, on Save / Edit + Save, makes it durable
   via `saveProposalRecallItem` — the single path that stamps `recall_items.source_proposal_candidate_id`:
   it takes the owner-validated candidate (from `recordProposalReview`), derives every recall field + sets
   `provenance_entry_id` from the candidate's own `timeline_entry_id`, and calls `enrollRecallItem` (source id
-  passed inward, never from a client request). Ownership is enforced at the command boundary
+  passed inward, never from a client request); after a review the oldest held `pending` candidate is
+  promoted to `visible` (`promoteOldestPendingCandidate`) so held proposals surface without an inbox. Ownership is enforced at the command boundary
   (`createProposalCandidate`/`insertProposalCandidate` scope `timeline_entry_id` to the user;
   `recordProposalReview` → `not_found` for a forged/foreign candidate). **Web:**
   `src/apps/web/src/features/makeDurable/` — `MakeDurableSection` (a capture box + at most one review card
