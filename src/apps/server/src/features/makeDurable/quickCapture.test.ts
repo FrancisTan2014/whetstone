@@ -83,7 +83,12 @@ afterEach(async () => {
 
 describe("quickCapture", () => {
   it("saves the Timeline entry even when the model proposes nothing", async () => {
-    const result = await quickCapture(deps(proposeNothing), { text: captureText, inputMode: "typed" }, userA, t0);
+    const result = await quickCapture(
+      deps(proposeNothing),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
 
     expect(result.card).toBeNull();
     expect(result.timelineEntry.rawInputText).toBe(captureText);
@@ -93,7 +98,12 @@ describe("quickCapture", () => {
   });
 
   it("saves the entry and shows no card when the model returns an empty proposal", async () => {
-    const result = await quickCapture(deps(proposeEmpty), { text: captureText, inputMode: "typed" }, userA, t0);
+    const result = await quickCapture(
+      deps(proposeEmpty),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
 
     expect(result.card).toBeNull();
     expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
@@ -199,7 +209,12 @@ describe("quickCapture", () => {
   });
 
   it("keeps each user's captures and cards isolated", async () => {
-    await quickCapture(deps(proposeWith(attempt())), { text: captureText, inputMode: "typed" }, userA, t0);
+    await quickCapture(
+      deps(proposeWith(attempt())),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
 
     expect(await listPendingCards(context.db, userB)).toEqual([]);
     expect(await listProposalCandidatesForUser(context.db, userB)).toEqual([]);
@@ -258,7 +273,12 @@ describe("quickCapture", () => {
 
 describe("reviewProposalCard", () => {
   async function seedCard(propose: ProposalProvider = proposeWith(attempt())): Promise<string> {
-    const result = await quickCapture(deps(propose), { text: captureText, inputMode: "typed" }, userA, t0);
+    const result = await quickCapture(
+      deps(propose),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
     if (result.card === null) {
       throw new Error("expected a visible card");
     }
@@ -370,7 +390,12 @@ describe("one-card cap and review idempotency", () => {
   }
 
   async function captureCardId(propose: ProposalProvider, now: Date): Promise<string> {
-    const result = await quickCapture(deps(propose), { text: captureText, inputMode: "typed" }, userA, now);
+    const result = await quickCapture(
+      deps(propose),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      now
+    );
     if (result.card === null) {
       throw new Error("expected a visible card");
     }
@@ -384,7 +409,12 @@ describe("one-card cap and review idempotency", () => {
   it("holds a second successful capture so Today shows at most one card", async () => {
     const firstId = await captureCardId(proposeWith(attempt()), t0);
 
-    const second = await quickCapture(deps(secondAttempt), { text: captureText, inputMode: "typed" }, userA, t1);
+    const second = await quickCapture(
+      deps(secondAttempt),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t1
+    );
     expect(second.card).toBeNull();
 
     const cards = await listPendingCards(context.db, userA);

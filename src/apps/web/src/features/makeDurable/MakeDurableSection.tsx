@@ -165,11 +165,7 @@ export function MakeDurableSection({
               Tap to talk
             </Button>
           ) : (
-            <Button
-              onClick={() => void stopRecording(recording)}
-              type="button"
-              variant="secondary"
-            >
+            <Button onClick={() => void stopRecording(recording)} type="button" variant="secondary">
               Stop &amp; save
             </Button>
           )}
