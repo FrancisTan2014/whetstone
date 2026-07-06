@@ -1,4 +1,4 @@
-import { buildDiaryTidyPrompt } from "@whetstone/domain";
+import { buildDiaryTidyPrompt, isFaithfulTidy } from "@whetstone/domain";
 
 import type { LlmModel } from "../../llm/llmModel.js";
 
@@ -8,9 +8,12 @@ import type { LlmModel } from "../../llm/llmModel.js";
 export type DiaryTidy = (transcript: string) => Promise<string>;
 
 // Wrap a chat model as a diary tidier: build the tidy prompt, call the model, and trim the reply. Tidy
-// must NEVER make capture fail: if the model is unavailable (Ollama down / not pulled), the request
-// errors, or the reply is blank, fall back to the raw transcript. The worst case is an un-tidied but
-// faithful entry — which still honors "preserve the wording" — never a lost entry (#246).
+// must NEVER make capture fail and must NEVER rewrite the learner's wording. So fall back to the raw
+// transcript when the model is unavailable (Ollama down / not pulled), the request errors, the reply is
+// blank, OR the reply is not a faithful tidy — one that only drops/reorders the learner's own words
+// (`isFaithfulTidy`). A local model can ignore the prompt and upgrade vocabulary / rephrase (#462); the
+// deterministic guard catches that. The worst case is an un-tidied but faithful entry — which still
+// honors "preserve the wording" — never a lost or silently rewritten entry (#246).
 export function createDiaryTidy(chat: LlmModel): DiaryTidy {
   return async (transcript) => {
     let tidied: string;
@@ -21,6 +24,10 @@ export function createDiaryTidy(chat: LlmModel): DiaryTidy {
       return transcript;
     }
 
-    return tidied.length > 0 ? tidied : transcript;
+    if (tidied.length === 0 || !isFaithfulTidy(transcript, tidied)) {
+      return transcript;
+    }
+
+    return tidied;
   };
 }

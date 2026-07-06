@@ -30,4 +30,22 @@ describe("createDiaryTidy", () => {
 
     await expect(tidy("the original words")).resolves.toBe("the original words");
   });
+
+  it("falls back to the raw transcript when the model rewrites the wording (#462)", async () => {
+    const raw =
+      "I felt calm after reading one page today. I want to keep the habit small and sustainable.";
+    // The model ignores the prompt and upgrades/substitutes words ("this", "be", "manageable"). The
+    // deterministic faithfulness guard rejects it, keeping the diary a trustworthy learner-history signal.
+    const tidy = createDiaryTidy(
+      async () => "I felt calm after one page today. I want this habit to be small and manageable."
+    );
+
+    await expect(tidy(raw)).resolves.toBe(raw);
+  });
+
+  it("keeps a faithful tidy that only drops fillers and reorders", async () => {
+    const tidy = createDiaryTidy(async () => "Today I read a book");
+
+    await expect(tidy("um today I, I read a book")).resolves.toBe("Today I read a book");
+  });
 });
