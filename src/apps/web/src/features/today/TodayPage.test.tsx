@@ -235,7 +235,12 @@ describe("TodayPage", () => {
     renderToday();
 
     await screen.findByText("thrive under pressure");
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss this practice nudge" }));
+    const dismiss = screen.getByRole("button", { name: "Dismiss this practice nudge" });
+    // The dismiss control is a >=44px hit target (#489); it was just the ✕ glyph (~13x24) before.
+    // jsdom has no layout, so assert the sizing utilities (min-h-11 = min-w-11 = 44px).
+    expect(dismiss.className).toContain("min-h-11");
+    expect(dismiss.className).toContain("min-w-11");
+    fireEvent.click(dismiss);
 
     expect(mockedDismiss).toHaveBeenCalledWith("harvest-chunk-note-1");
     await waitFor(() => {

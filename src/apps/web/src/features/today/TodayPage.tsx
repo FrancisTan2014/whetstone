@@ -293,7 +293,7 @@ function NudgeCard({
         <h2 className="text-lg font-medium text-text">Practice</h2>
         <button
           aria-label="Dismiss this practice nudge"
-          className="text-text-muted hover:text-text"
+          className="inline-flex min-h-11 min-w-11 items-center justify-center text-text-muted hover:text-text"
           onClick={() => onDismiss(nudge.chunkId)}
           type="button"
         >
