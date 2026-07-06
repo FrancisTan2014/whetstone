@@ -539,6 +539,17 @@ describe("DiaryPage date-jump calendar", () => {
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
   });
 
+  it("gives the marked-day button a >=44px hit target (#483)", async () => {
+    mockedCalendar.mockReset();
+    mockedCalendar.mockResolvedValue({ dates: [d(15)] });
+
+    await renderReady(makeCapture().capture);
+
+    // jsdom has no layout, so assert the sizing utility (size-11 = 44px square); it was size-7 (28px).
+    const marked = await screen.findByRole("button", { name: `Go to ${d(15)}` });
+    expect(marked.className).toContain("size-11");
+  });
+
   it("lazy-loads older pages until the chosen day is loaded, then scrolls", async () => {
     mockedTimeline.mockReset();
     mockedTimeline.mockResolvedValueOnce(sevenRecentDays());

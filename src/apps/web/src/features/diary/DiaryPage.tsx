@@ -603,7 +603,7 @@ function DiaryCalendar({
                     {markedDays.has(cell) ? (
                       <button
                         aria-label={`Go to ${cell}`}
-                        className="mx-auto flex size-7 items-center justify-center rounded-full bg-accent text-accent-fg"
+                        className="mx-auto flex size-11 items-center justify-center rounded-full bg-accent text-accent-fg"
                         onClick={() => onJump(cell)}
                         type="button"
                       >
