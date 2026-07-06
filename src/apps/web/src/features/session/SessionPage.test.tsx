@@ -417,7 +417,12 @@ describe("SessionPage", () => {
     await screen.findByText("Welcoming a guest to the table");
     expect(screen.queryByLabelText("Or type what you'd say")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Type instead" }));
+    // The 'Type instead' control is a >=44px hit target (#482). jsdom has no layout, so assert the
+    // sizing utility that drives the height (min-h-11 = 44px); it rendered only ~20px tall before.
+    const typeInstead = screen.getByRole("button", { name: "Type instead" });
+    expect(typeInstead.className).toContain("min-h-11");
+
+    await user.click(typeInstead);
     // Typing is now available; the voice call was never started (no mic capture opened).
     expect(screen.getByLabelText("Or type what you'd say")).toBeDefined();
     expect(capture.start).not.toHaveBeenCalled();

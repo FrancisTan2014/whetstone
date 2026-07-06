@@ -458,7 +458,7 @@ function CallView({
           ) : null}
           {voiceSupported && !typedVisible ? (
             <button
-              className="text-sm text-text-muted underline underline-offset-2 hover:text-text"
+              className="inline-flex min-h-11 items-center text-sm text-text-muted underline underline-offset-2 hover:text-text"
               onClick={() => setShowTyped(true)}
               type="button"
             >
