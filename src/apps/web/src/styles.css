@@ -177,12 +177,14 @@ code {
 }
 
 .readerTocItem {
+  align-items: center;
   background: transparent;
   border: none;
   border-radius: 0.375rem;
   color: inherit;
   cursor: pointer;
-  display: block;
+  display: flex;
+  min-block-size: 44px;
   padding: 0.375rem 0.5rem;
   text-align: left;
   width: 100%;
