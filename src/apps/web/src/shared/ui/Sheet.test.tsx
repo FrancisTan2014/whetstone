@@ -140,4 +140,70 @@ describe("Sheet", () => {
       expect(document.activeElement).toBe(opener);
     });
   });
+
+  it("restores focus to the opener when dismissed with Escape (#480)", async () => {
+    mockMatchMedia({});
+    const user = userEvent.setup();
+
+    function Harness(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Open
+          </button>
+          {open ? (
+            <Sheet onOpenChange={() => setOpen(false)} open title="Note">
+              <p>panel body</p>
+            </Sheet>
+          ) : null}
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    await user.click(opener);
+    await screen.findByRole("dialog", { name: "Note" });
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(opener);
+    });
+  });
+
+  it("restores focus to the opener on Escape for a persistently-mounted sheet (#480)", async () => {
+    mockMatchMedia({});
+    const user = userEvent.setup();
+
+    // Mirrors the Reader "Your notes" pattern: the sheet stays mounted and its `open` prop toggles, so
+    // dismissal is a Radix close transition (not an unmount). Focus must still return to the opener.
+    function Harness(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">
+            Open
+          </button>
+          <Sheet onOpenChange={setOpen} open={open} title="Note">
+            <p>panel body</p>
+          </Sheet>
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    await user.click(opener);
+    await screen.findByRole("dialog", { name: "Note" });
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(opener);
+    });
+  });
 });
