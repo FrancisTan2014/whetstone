@@ -483,6 +483,12 @@ function renderLibrary(
   );
 }
 
+// Per-work card actions (#463): quiet accent text links/buttons, but each expanded to a >=44px hit
+// target in BOTH dimensions (WCAG 2.5.5 / the app's target-size rule) — the labels alone rendered only
+// ~20px tall. inline-flex centers the label in the padded, min-sized box; the accent styling is unchanged.
+const cardActionClass =
+  "inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-accent hover:text-accent-hover";
+
 function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): React.JSX.Element {
   const workEntryId = item.work.entryId;
   // "Continue" only when the reader has a saved position for this work; otherwise a truthful "Read".
@@ -498,28 +504,25 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
       <p className="text-sm text-text-muted">
         {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
       </p>
-      <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+      <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <a
-          className="font-medium text-accent hover:text-accent-hover"
+          className={`${cardActionClass} font-medium`}
           href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
         >
           {resumes ? "Continue" : "Read"}
         </a>
         <button
-          className="text-accent hover:text-accent-hover"
+          className={cardActionClass}
           onClick={() => options.onManageContent(workEntryId)}
           type="button"
         >
           Manage content
         </button>
-        <a
-          className="text-accent hover:text-accent-hover"
-          href={`#/notes?work=${encodeURIComponent(workEntryId)}`}
-        >
+        <a className={cardActionClass} href={`#/notes?work=${encodeURIComponent(workEntryId)}`}>
           Notes
         </a>
         <a
-          className="text-accent hover:text-accent-hover"
+          className={cardActionClass}
           download={`${item.work.title}.md`}
           href={apiUrl(`/works/${workEntryId}/content/markdown`)}
         >

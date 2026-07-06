@@ -207,6 +207,26 @@ describe("AdminLibraryPage", () => {
     expect(within(group).getAllByRole("button", { name: "Manage content" })).toHaveLength(2);
   });
 
+  it("gives every per-work card action a >=44px hit target (#463)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    await renderReady();
+
+    const group = await screen.findByRole("region", { name: "George Orwell" });
+    const actions = [
+      within(group).getByRole("link", { name: "Read" }),
+      within(group).getByRole("button", { name: "Manage content" }),
+      within(group).getByRole("link", { name: "Notes" }),
+      within(group).getByRole("link", { name: "Export Markdown" })
+    ];
+
+    // jsdom has no layout, so assert the sizing utilities that drive the >=44px target in both
+    // dimensions (min-h-11 = min-w-11 = 44px), like Button's target-size test. Dropping either fails.
+    for (const action of actions) {
+      expect(action.className).toContain("min-h-11");
+      expect(action.className).toContain("min-w-11");
+    }
+  });
+
   it("labels the reader link 'Continue' only for works with a saved reading position", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
     mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set(["work-2"]));
