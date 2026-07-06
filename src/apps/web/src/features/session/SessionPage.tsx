@@ -494,8 +494,19 @@ function CallView({
   );
 }
 
+// The date an item is next due for recall, in the learner's locale (UTC so it is deterministic and
+// matches the day the recall schedule uses). Shown next to each debrief item to make clear it is
+// scheduled for a (usually future) day, not due right now.
+function formatRecallDueDate(dueAt: string): string {
+  return new Date(dueAt).toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC"
+  });
+}
+
 // The compact end-of-round debrief (#222): encouragement, the few moments that matter (said -> native +
-// why), the one upgrade to carry, wins, and what is now due to recall. Calm, not a wall of corrections.
+// why), the one upgrade to carry, wins, and what was scheduled for recall. Calm, not a wall of corrections.
 function DebriefView({
   debrief,
   onRestart
@@ -552,12 +563,16 @@ function DebriefView({
         {debrief.due.length > 0 ? (
           <section aria-labelledby="debrief-due-heading" className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold text-text" id="debrief-due-heading">
-              Now due to recall
+              Scheduled for recall
             </h2>
+            {/* These items were just added to the spaced-repetition schedule; each shows when it is next
+                due (usually a future day, not now). Recall resurfaces each item only when it is actually
+                due, so the debrief and the Recall page never contradict each other (#478). */}
             <ul className="flex flex-col gap-1">
               {debrief.due.map((item) => (
                 <li className="text-sm text-text" key={item.text}>
-                  {item.text}
+                  <span>{item.text}</span>
+                  <span className="text-text-muted"> · due {formatRecallDueDate(item.dueAt)}</span>
                 </li>
               ))}
             </ul>
