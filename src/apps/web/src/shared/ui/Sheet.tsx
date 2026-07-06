@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion, useReducedMotion } from "framer-motion";
+import { useEffect, useRef } from "react";
 
 import { motionSprings, withReducedMotion } from "../motion/motion.js";
 import { useMediaQuery } from "./useMediaQuery.js";
@@ -32,6 +33,20 @@ export function Sheet({
   const prefersReducedMotion = Boolean(useReducedMotion());
   const transition = withReducedMotion(motionSprings.gentle, prefersReducedMotion);
 
+  // Restore focus to the control that opened the sheet when it closes — so keyboard users land back on a
+  // usable control instead of <body> (#469). The opener is captured on open (before Radix moves focus into
+  // the panel), then refocused both on a Radix close transition AND on unmount. The unmount path is the
+  // load-bearing one: callers often render the sheet only while open (`{open ? <Sheet open/> : null}`), so
+  // it is UNMOUNTED while still open and Radix's own close-time restore never runs.
+  const openerRef = useRef<HTMLElement | null>(null);
+  const restoreFocus = (): void => {
+    const opener = openerRef.current;
+    if (opener !== null && opener.isConnected) {
+      opener.focus({ preventScroll: true });
+    }
+  };
+  useEffect(() => restoreFocus, []);
+
   return (
     <Dialog.Root onOpenChange={onOpenChange} open={open}>
       <Dialog.Portal>
@@ -40,6 +55,13 @@ export function Sheet({
           aria-describedby={undefined}
           asChild
           className={isRight ? "sheet-panel sheet-panel-right" : "sheet-panel sheet-panel-bottom"}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
+          onOpenAutoFocus={() => {
+            openerRef.current = document.activeElement as HTMLElement | null;
+          }}
         >
           <motion.div
             animate={isRight ? { x: 0 } : { y: 0 }}
