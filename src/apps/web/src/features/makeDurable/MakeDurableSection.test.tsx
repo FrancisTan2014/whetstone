@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -146,7 +146,7 @@ describe("MakeDurableSection", () => {
     expect(mockedReview).toHaveBeenCalledWith("cand-1", { outcome: "wrong_hallucinated" });
   });
 
-  it("edits the target and saves the edited payload", async () => {
+  it("edits every field and saves the edited payload", async () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(null);
     render(<MakeDurableSection />);
@@ -157,18 +157,48 @@ describe("MakeDurableSection", () => {
     const targetInput = screen.getByLabelText("Target");
     await user.clear(targetInput);
     await user.type(targetInput, "It's back up now");
+    const cueInput = screen.getByLabelText("Cue");
+    await user.clear(cueInput);
+    await user.type(cueInput, "the wifi is working again");
+    const contextInput = screen.getByLabelText("When to use it");
+    await user.clear(contextInput);
+    await user.type(contextInput, "telling a friend");
+    await user.selectOptions(screen.getByLabelText("Category"), "daily_life");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(mockedReview).toHaveBeenCalledWith("cand-1", {
       outcome: "edited_saved",
       editedPayload: {
         target: "It's back up now",
-        cue: "a service is back",
-        useContext: "reporting availability",
-        category: "work",
+        cue: "the wifi is working again",
+        useContext: "telling a friend",
+        category: "daily_life",
         tags: ["service-status"]
       }
     });
+  });
+
+  it("does not save an edit when a required field is blank", async () => {
+    mockedFetch.mockResolvedValue([card]);
+    render(<MakeDurableSection />);
+    await screen.findByText("WorkInsight is back up now");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.clear(screen.getByLabelText("Target"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(mockedReview).not.toHaveBeenCalled();
+  });
+
+  it("ignores a capture submit with no text", async () => {
+    render(<MakeDurableSection />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    const form = screen.getByLabelText("Quick capture text").closest("form");
+    fireEvent.submit(form as HTMLFormElement);
+
+    expect(mockedSubmit).not.toHaveBeenCalled();
   });
 
   it("cancels an edit without saving", async () => {

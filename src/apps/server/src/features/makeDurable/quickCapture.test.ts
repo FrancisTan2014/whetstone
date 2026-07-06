@@ -180,6 +180,37 @@ describe("quickCapture", () => {
     expect(await listPendingCards(context.db, userB)).toEqual([]);
     expect(await listProposalCandidatesForUser(context.db, userB)).toEqual([]);
   });
+
+  it("carries a tagless proposal through the card and the saved recall item as empty/null tags", async () => {
+    const tagless: ProposalPayload = {
+      target: "WorkInsight is back up now",
+      cue: "a service is back",
+      useContext: "reporting availability",
+      category: "work"
+    };
+
+    const result = await quickCapture(
+      deps(proposeWith(attempt({ payload: tagless }))),
+      { text: captureText },
+      userA,
+      t0
+    );
+
+    expect(result.card?.tags).toEqual([]);
+    expect((await listPendingCards(context.db, userA))[0]?.tags).toEqual([]);
+
+    const saved = await reviewProposalCard(
+      { createId: () => "recall-1", db: context.db },
+      result.card?.proposalCandidateId ?? "",
+      { outcome: "saved" },
+      userA,
+      t1
+    );
+    if (saved.status !== "saved") {
+      throw new Error("expected saved");
+    }
+    expect(saved.recallItem.tags).toBeNull();
+  });
 });
 
 describe("reviewProposalCard", () => {
