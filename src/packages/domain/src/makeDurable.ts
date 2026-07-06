@@ -19,14 +19,43 @@ export const proposalPromptInstructions: ReadonlyArray<string> = [
   'The candidate type must be exactly one of: "phrase_chunk" (a reusable phrase/chunk worth remembering), "couldnt_say_gap" (something the learner could not say in English), or "recurring_pattern" (a reusable fix for a repeated error such as a preposition, word choice, or verb complementation).',
   "Quote evidence verbatim from the capture in evidenceQuote — do NOT paraphrase or invent it.",
   "Use only the capture text; do not invent facts.",
+  "Compare the capture against the learner's 'Already remembered' items below; if it is already covered by one of them, prefer NO candidate rather than proposing a near-duplicate.",
   "confidence is 0..1; reason is one concrete sentence.",
   "payload carries: target (the phrase/pattern to remember), cue (a retrieval prompt), useContext (when/where to use it), an optional explanation, category (one of language, work, family, technical, reading, reflection, daily_life), and optional tags.",
   'Reply with ONLY strict JSON of the form {"candidates":[{"type":"...","confidence":0.0,"reason":"...","evidenceQuote":"...","payload":{"target":"...","cue":"...","useContext":"...","category":"...","tags":["..."]}}]} — an empty candidates array when nothing qualifies.'
 ];
 
-// Build the proposal prompt for a raw capture: the fixed invariant instructions, then the capture text.
-export function buildProposalPrompt(rawText: string): string {
-  return [...proposalPromptInstructions, "", `Capture:\n${rawText}`].join("\n");
+// A small slice of the learner's existing recall for retrieve-before-generate: the target they already
+// remember, plus when they use it. Passed into the proposal prompt so the model can avoid re-proposing
+// something already covered (the deterministic `classifyProposalDuplicate` remains the safety net).
+export type ExistingRecallItem = Readonly<{ target: string; useContext: string | null }>;
+
+// Render the "Already remembered" retrieval block for the prompt: one line per existing item (with its
+// use-context when known), or an explicit "(none yet)" so the section is always present and unambiguous.
+function renderRememberedItems(existing: ReadonlyArray<ExistingRecallItem>): string {
+  if (existing.length === 0) {
+    return "(none yet)";
+  }
+  return existing
+    .map((item) =>
+      item.useContext === null ? `- ${item.target}` : `- ${item.target} — ${item.useContext}`
+    )
+    .join("\n");
+}
+
+// Build the proposal prompt for a raw capture: the fixed invariant instructions, the retrieved
+// "Already remembered" context (so the model compares before proposing), then the capture text.
+export function buildProposalPrompt(
+  rawText: string,
+  existing: ReadonlyArray<ExistingRecallItem> = []
+): string {
+  return [
+    ...proposalPromptInstructions,
+    "",
+    `Already remembered:\n${renderRememberedItems(existing)}`,
+    "",
+    `Capture:\n${rawText}`
+  ].join("\n");
 }
 
 // Normalize free text for faithful-quote / duplicate comparison: trim, lowercase, and collapse internal
@@ -89,14 +118,14 @@ export type ProposalDuplicateVerdict =
 // context as an empty string.
 export function classifyProposalDuplicate(
   proposed: Readonly<{ target: string; useContext: string }>,
-  existing: ReadonlyArray<Readonly<{ text: string; useContext: string | null }>>
+  existing: ReadonlyArray<ExistingRecallItem>
 ): ProposalDuplicateVerdict {
   const target = normalizeForMatch(proposed.target);
   const useContext = normalizeForMatch(proposed.useContext);
 
   let sawSameTarget = false;
   for (const item of existing) {
-    if (normalizeForMatch(item.text) !== target) {
+    if (normalizeForMatch(item.target) !== target) {
       continue;
     }
     sawSameTarget = true;

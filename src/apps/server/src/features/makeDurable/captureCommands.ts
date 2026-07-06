@@ -13,7 +13,8 @@ import {
   classifyProposalDuplicate,
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
   evaluateProposalGate,
-  PROPOSAL_PROMPT_VERSION
+  PROPOSAL_PROMPT_VERSION,
+  type ExistingRecallItem
 } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -71,7 +72,14 @@ export async function quickCapture(
   };
   const timelineEntry = await createTimelineCapture(md, captureRequest, userId, now);
 
-  const attempt = await dependencies.propose(request.text);
+  // Retrieve-before-generate (#452): load a small slice of the learner's existing recall FIRST, so the
+  // proposal seam can compare against it in the prompt and prefer no candidate when already covered. The
+  // same retrieved set feeds the deterministic duplicate gate below as the safety net.
+  const existing: ReadonlyArray<ExistingRecallItem> = (
+    await listRecallItems(dependencies.db, userId)
+  ).map((item) => ({ target: item.text, useContext: item.useContext }));
+
+  const attempt = await dependencies.propose(request.text, existing);
   const generated = attempt?.generation.candidates[0];
   if (attempt === null || generated === undefined) {
     return { card: null, timelineEntry };
@@ -84,10 +92,6 @@ export async function quickCapture(
     threshold: dependencies.confidenceThreshold ?? DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD
   });
 
-  const existing = (await listRecallItems(dependencies.db, userId)).map((item) => ({
-    text: item.text,
-    useContext: item.useContext
-  }));
   const duplicateStatus = classifyProposalDuplicate(
     { target: generated.payload.target, useContext: generated.payload.useContext },
     existing

@@ -185,6 +185,25 @@ describe("quickCapture", () => {
     expect(await listProposalCandidatesForUser(context.db, userB)).toEqual([]);
   });
 
+  it("retrieves the user's existing recall and passes it into the proposal seam before generating", async () => {
+    await enrollRecallItem(
+      { createId: () => "existing-1", db: context.db },
+      { kind: "phrase", text: "by and large", useContext: "summarizing" },
+      userA,
+      t0
+    );
+
+    let seen: unknown;
+    const spy: ProposalProvider = (_rawText, existing) => {
+      seen = existing;
+      return Promise.resolve(null);
+    };
+
+    await quickCapture(deps(spy), { text: captureText }, userA, t0);
+
+    expect(seen).toEqual([{ target: "by and large", useContext: "summarizing" }]);
+  });
+
   it("carries a tagless proposal through the card and the saved recall item as empty/null tags", async () => {
     const tagless: ProposalPayload = {
       target: "WorkInsight is back up now",

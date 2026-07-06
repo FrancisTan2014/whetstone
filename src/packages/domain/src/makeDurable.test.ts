@@ -21,6 +21,22 @@ describe("buildProposalPrompt", () => {
     expect(prompt).toContain("Capture:\nI couldn't say 'the deploy is rolling back'");
   });
 
+  it("renders the retrieved 'Already remembered' items so the model compares before proposing", () => {
+    const prompt = buildProposalPrompt("the deploy rolled back", [
+      { target: "It's back up now", useContext: "reporting availability" },
+      { target: "by and large", useContext: null }
+    ]);
+
+    expect(prompt).toContain("Already remembered:");
+    expect(prompt).toContain("- It's back up now — reporting availability");
+    expect(prompt).toContain("- by and large");
+    expect(proposalPromptInstructions.join(" ").toLowerCase()).toContain("already remembered");
+  });
+
+  it("shows an explicit empty marker when nothing is remembered yet", () => {
+    expect(buildProposalPrompt("first capture")).toContain("Already remembered:\n(none yet)");
+  });
+
   it("constrains output to zero or one candidate of the allowed types", () => {
     const joined = proposalPromptInstructions.join(" ");
     expect(joined).toContain("ZERO or ONE");
@@ -101,14 +117,16 @@ describe("classifyProposalDuplicate", () => {
 
   it("is unique when no existing item shares the target", () => {
     expect(
-      classifyProposalDuplicate(proposed, [{ text: "spill the beans", useContext: "casual chat" }])
+      classifyProposalDuplicate(proposed, [
+        { target: "spill the beans", useContext: "casual chat" }
+      ])
     ).toBe("unique");
   });
 
   it("flags same target + same context as a duplicate (case/space-insensitive)", () => {
     expect(
       classifyProposalDuplicate(proposed, [
-        { text: "it's   BACK up now", useContext: "Reporting Service Availability" }
+        { target: "it's   BACK up now", useContext: "Reporting Service Availability" }
       ])
     ).toBe("same_target_same_context");
   });
@@ -116,7 +134,7 @@ describe("classifyProposalDuplicate", () => {
   it("flags same target in a new context", () => {
     expect(
       classifyProposalDuplicate(proposed, [
-        { text: "it's back up now", useContext: "telling a friend the wifi returned" }
+        { target: "it's back up now", useContext: "telling a friend the wifi returned" }
       ])
     ).toBe("same_target_new_context");
   });
@@ -124,7 +142,7 @@ describe("classifyProposalDuplicate", () => {
   it("treats a null existing context as empty", () => {
     expect(
       classifyProposalDuplicate({ target: "hi", useContext: "" }, [
-        { text: "hi", useContext: null }
+        { target: "hi", useContext: null }
       ])
     ).toBe("same_target_same_context");
   });

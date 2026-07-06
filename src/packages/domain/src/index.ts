@@ -72,7 +72,7 @@ export {
   PROPOSAL_PROMPT_VERSION,
   proposalPromptInstructions
 } from "./makeDurable.js";
-export type { ProposalDuplicateVerdict, ProposalGateVerdict } from "./makeDurable.js";
+export type { ExistingRecallItem, ProposalDuplicateVerdict, ProposalGateVerdict } from "./makeDurable.js";
 export {
   groupByDayDesc,
   isDayKey,
