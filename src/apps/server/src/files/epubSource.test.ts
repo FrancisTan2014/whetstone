@@ -9,7 +9,8 @@ import {
   createEpubParser,
   readNavDocument,
   readResourceBytes,
-  sanitizeEpubBytes
+  sanitizeEpubBytes,
+  spineSourceFile
 } from "./epubSource.js";
 
 let imagesDir: string;
@@ -436,6 +437,25 @@ function navArchive(navBytes: Uint8Array | null): Uint8Array {
 
   return zipSync(entries);
 }
+
+describe("spineSourceFile", () => {
+  it("records the scheme-less manifest href for a spine item found by id (#501)", () => {
+    // The real @lingo-reader spine tags hrefs with an `epub:` virtual scheme; the manifest href does
+    // not, and it is the identity the authored nav resolves its entry targets to. A reading unit must
+    // record the manifest href so a TOC entry can match it, or 目录 navigation silently no-ops.
+    const source = spineSourceFile(navManifest, { href: "epub:OEBPS/chap1.xhtml", id: "c1" });
+
+    expect(source).toBe("OEBPS/chap1.xhtml");
+  });
+
+  it("falls back to the spine href when the id is absent from the manifest (#501)", () => {
+    // Defensive: a well-formed EPUB always lists a spine idref in the manifest, but a malformed one
+    // should still yield some identity rather than an empty one.
+    const source = spineSourceFile(navManifest, { href: "epub:OEBPS/orphan.xhtml", id: "ghost" });
+
+    expect(source).toBe("epub:OEBPS/orphan.xhtml");
+  });
+});
 
 describe("readNavDocument", () => {
   it("decodes the nav resource named by the manifest to a nav document (#379)", () => {

@@ -96,6 +96,20 @@ function mediaTypeBySavedPath(
   return byPath;
 }
 
+// The source-file identity to record for a spine chapter (#501). @lingo-reader tags spine hrefs with an
+// `epub:` virtual scheme (`epub:OEBPS/chap1.xhtml`) while manifest hrefs — the base the authored nav
+// resolves its entry hrefs against (#366/#379) — carry none (`OEBPS/chap1.xhtml`). A reading unit must
+// record the manifest-relative identity (looked up by the spine item's manifest id) or its `source_file`
+// never matches a TOC entry's target and 目录 navigation silently no-ops. Falls back to the raw spine
+// href only when the id is absent from the manifest (never expected: a spine idref is by definition a
+// manifest id), so a malformed EPUB still yields some identity rather than an empty one.
+export function spineSourceFile(
+  manifest: Record<string, ManifestItem>,
+  item: Readonly<{ href: string; id: string }>
+): string {
+  return manifest[item.id]?.href ?? item.href;
+}
+
 // Fail-fast UTF-8 decoder for the nav document: an undecodable nav resource must be omitted (fail-soft),
 // not surfaced as replacement characters, so the byte stream is decoded with `fatal` and the throw is
 // caught by the caller.
@@ -340,14 +354,10 @@ export function createEpubParser(
           images: await extractChapterImages(chapter.html, mediaTypes, (src) =>
             logDebug("epub_resource_skipped", { src })
           ),
-          // @lingo-reader tags spine hrefs with an `epub:` virtual scheme (`epub:OEBPS/chap1.xhtml`)
-          // while manifest hrefs carry none (`OEBPS/chap1.xhtml`). The authored nav resolves its entry
-          // hrefs against the nav document's manifest href (#366/#379), yielding scheme-less paths, so a
-          // reading unit must record the same manifest-relative identity — looked up by the spine item's
-          // manifest id — or its `source_file` never matches a TOC entry's target and 目录 navigation
-          // silently no-ops (#501). Fall back to the raw spine href only if the id is absent from the
-          // manifest (never expected: a spine idref is by definition a manifest id).
-          sourceFile: manifest[item.id]?.href ?? item.href
+          // See `spineSourceFile`: record the manifest-relative identity, not the `epub:`-scheme spine
+          // href, so a reading unit's `source_file` matches a TOC entry's target and 目录 navigation
+          // resolves rather than silently no-op'ing (#501).
+          sourceFile: spineSourceFile(manifest, item)
         });
       }
 
