@@ -285,6 +285,25 @@ describe("MakeDurableSection voice capture", () => {
     expect(mockedSubmit).not.toHaveBeenCalled();
   });
 
+  it("shows the no-speech retry (not the save error) when the capture is empty audio (#465)", async () => {
+    // The adapter settles empty audio on a no-utterance stop; the section must NOT post it to
+    // /transcribe (which 400s) — it takes the calm retry path without ever calling transcribe.
+    const start = vi.fn(async () => ({ stop: async () => new Blob() }));
+    render(<MakeDurableSection capture={fakeVoice({ start })} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Didn't catch any speech");
+    expect(mockedTranscribe).not.toHaveBeenCalled();
+    expect(mockedSubmit).not.toHaveBeenCalled();
+    // The control returns to idle so the learner can retry or type.
+    expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+  });
+
   it("falls back to typing when the microphone can't be reached", async () => {
     const start = vi.fn().mockRejectedValue(new Error("denied"));
     render(<MakeDurableSection capture={fakeVoice({ start })} />);
