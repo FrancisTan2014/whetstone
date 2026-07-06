@@ -21,6 +21,11 @@ function makeItem(overrides: Partial<RecallItemDto> = {}): RecallItemDto {
       repetitions: 0
     },
     text: "quick",
+    cue: null,
+    useContext: null,
+    category: null,
+    tags: null,
+    sourceProposalCandidateId: null,
     ...overrides
   };
 }

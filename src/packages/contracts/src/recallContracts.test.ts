@@ -41,6 +41,35 @@ describe("enrollRecallItemRequest", () => {
     expect(parseEnrollRecallItemRequest({ kind, text: "x" }).kind).toBe(kind);
   });
 
+  it("accepts an item with production-style Make Durable metadata", () => {
+    const request = {
+      category: "work" as const,
+      cue: "a service is back after a restart",
+      kind: "phrase" as const,
+      provenanceEntryId: "timeline-1",
+      sourceProposalCandidateId: "cand-1",
+      tags: ["service-status"],
+      text: "WorkInsight is back up now",
+      useContext: "reporting service availability"
+    };
+    expect(parseEnrollRecallItemRequest(request)).toEqual(request);
+  });
+
+  it("rejects a blank cue and a blank tag", () => {
+    expect(() =>
+      parseEnrollRecallItemRequest({ cue: "  ", kind: "phrase", text: "x" })
+    ).toThrow();
+    expect(() =>
+      parseEnrollRecallItemRequest({ kind: "phrase", tags: [" "], text: "x" })
+    ).toThrow();
+  });
+
+  it("rejects an unknown category", () => {
+    expect(() =>
+      parseEnrollRecallItemRequest({ category: "sports", kind: "phrase", text: "x" })
+    ).toThrow();
+  });
+
   it("rejects a blank text", () => {
     expect(() => parseEnrollRecallItemRequest({ kind: "word", text: "   " })).toThrow();
   });
@@ -81,11 +110,28 @@ describe("recall DTOs", () => {
     kind: "phrase" as const,
     provenanceEntryId: null,
     review,
-    text: "by and large"
+    text: "by and large",
+    cue: null,
+    useContext: null,
+    category: null,
+    tags: null,
+    sourceProposalCandidateId: null
   };
 
   it("round-trips a recall item DTO", () => {
     expect(parseRecallItemDto(item)).toEqual(item);
+  });
+
+  it("round-trips a production recall item DTO carrying Make Durable metadata", () => {
+    const durable = {
+      ...item,
+      category: "work" as const,
+      cue: "a service is back",
+      sourceProposalCandidateId: "cand-1",
+      tags: ["service-status"],
+      useContext: "reporting availability"
+    };
+    expect(parseRecallItemDto(durable)).toEqual(durable);
   });
 
   it("round-trips a recall item list DTO", () => {

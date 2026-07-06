@@ -67,7 +67,12 @@ describe("enrollRecallItem", () => {
         lastReviewedAt: null,
         repetitions: 0
       },
-      text: "spill the beans"
+      text: "spill the beans",
+      cue: null,
+      useContext: null,
+      category: null,
+      tags: null,
+      sourceProposalCandidateId: null
     });
   });
 

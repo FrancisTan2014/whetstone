@@ -94,6 +94,19 @@ can navigate them from another package.
   never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
   row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
   `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
+- Make Durable foundation (#451): `src/features/makeDurable/` — the data boundary for turning Quick
+  Capture into gated recall (no HTTP endpoint yet). `timelineCommands.ts` `createTimelineCapture`
+  registers a `timeline_entry` Entry + a `timeline_entries` capture row in one transaction (server-owned
+  id/`created_at`/`entry_date`; `raw_input_text` verbatim, `tidied_text` null until async tidy);
+  `timelineQueries.ts` reads user-scoped captures. `proposalCommands.ts`/`proposalQueries.ts` own
+  `proposal_candidates` (gated suggestions: type/status/confidence/evidence/`payload_json`/duplicate
+  status/model+prompt) and `proposal_reviews` (Save/Edit/Not-useful/Wrong outcomes, user-scoped via the
+  parent candidate). A saved proposal becomes durable via the existing `enrollRecallItem`, using
+  `recall_items.provenance_entry_id` → the source `timeline_entries` Entry; `recall_items` also gains
+  nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
+  `source_proposal_candidate_id`) so reading/speech/jot feeders are untouched. The `timeline_entry` Entry
+  type lives in `@whetstone/domain` (`entry.ts`); DTOs/enums in `@whetstone/contracts`
+  (`makeDurableContracts.ts`, plus recall extensions in `recallContracts.ts`).
 - Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
   cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
   `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's

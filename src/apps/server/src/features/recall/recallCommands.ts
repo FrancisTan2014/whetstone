@@ -49,6 +49,11 @@ export async function enrollRecallItem(
     kind: request.kind,
     provenanceEntryId: request.provenanceEntryId ?? null,
     text: request.text,
+    cue: request.cue ?? null,
+    useContext: request.useContext ?? null,
+    category: request.category ?? null,
+    tagsJson: request.tags ?? null,
+    sourceProposalCandidateId: request.sourceProposalCandidateId ?? null,
     userId,
     ...reviewStateColumns(review)
   };

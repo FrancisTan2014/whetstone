@@ -47,7 +47,12 @@ export function toRecallItemDto(row: RecallItemRow): RecallItemDto {
     kind: row.kind,
     provenanceEntryId: row.provenanceEntryId,
     review: rowToReviewState(row),
-    text: row.text
+    text: row.text,
+    cue: row.cue,
+    useContext: row.useContext,
+    category: row.category,
+    tags: row.tagsJson ?? null,
+    sourceProposalCandidateId: row.sourceProposalCandidateId
   };
 }
 

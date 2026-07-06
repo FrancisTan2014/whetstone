@@ -12,6 +12,24 @@ export const recallKindSchema = z.enum(recallKinds);
 
 export type RecallKind = z.infer<typeof recallKindSchema>;
 
+// The fixed, broad category a production-style recall item is filed under (#451). One shallow enum —
+// deliberately not a tag taxonomy — so Make Durable can classify a saved item into a single broad
+// bucket. Narrow, editable tags (below) refine within a category. Null on legacy/reading/speech items
+// that predate Make Durable.
+export const recallCategories = [
+  "language",
+  "work",
+  "family",
+  "technical",
+  "reading",
+  "reflection",
+  "daily_life"
+] as const;
+
+export const recallCategorySchema = z.enum(recallCategories);
+
+export type RecallCategory = z.infer<typeof recallCategorySchema>;
+
 // Enroll request: what the learner (or an LLM) supplies to save an item. It NEVER supplies the
 // owning user (the server resolves the current user) nor the review state (the scheduler seeds it).
 // `provenanceEntryId` optionally links the item to the source note/block it came from; absent/null
@@ -25,7 +43,22 @@ export const enrollRecallItemRequestSchema = z
       .string()
       .refine(isNonBlank, { message: "provenanceEntryId must be non-empty." })
       .nullish(),
-    text: z.string().refine(isNonBlank, { message: "text must be non-empty." })
+    text: z.string().refine(isNonBlank, { message: "text must be non-empty." }),
+    // Optional production-style recall metadata (#451). Absent on reading/speech/jot deposits; set when
+    // an item is made durable from a Make Durable proposal. `sourceProposalCandidateId` links the item
+    // back to the candidate it was saved from (evidence/audit); it does NOT replace `provenanceEntryId`,
+    // which still points at the source timeline entry.
+    cue: z.string().refine(isNonBlank, { message: "cue must be non-empty." }).nullish(),
+    useContext: z
+      .string()
+      .refine(isNonBlank, { message: "useContext must be non-empty." })
+      .nullish(),
+    category: recallCategorySchema.nullish(),
+    tags: z.array(z.string().refine(isNonBlank, { message: "tag must be non-empty." })).nullish(),
+    sourceProposalCandidateId: z
+      .string()
+      .refine(isNonBlank, { message: "sourceProposalCandidateId must be non-empty." })
+      .nullish()
   })
   .strict();
 
@@ -55,7 +88,13 @@ export const recallItemDtoSchema = z
     kind: recallKindSchema,
     provenanceEntryId: z.string().nullable(),
     review: reviewStateDtoSchema,
-    text: z.string()
+    text: z.string(),
+    // Production-style recall metadata (#451); null on items not made durable from a proposal.
+    cue: z.string().nullable(),
+    useContext: z.string().nullable(),
+    category: recallCategorySchema.nullable(),
+    tags: z.array(z.string()).nullable(),
+    sourceProposalCandidateId: z.string().nullable()
   })
   .strict();
 
