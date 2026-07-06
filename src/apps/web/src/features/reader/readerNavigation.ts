@@ -75,9 +75,12 @@ export type TocEntryNavigation =
 // Resolve a TOC entry to its navigation intent. An entry with no target unit — or one naming a unit
 // the structure no longer lists — no-ops. A whole-file entry (no `targetAnchor`) opens its unit's top.
 // An entry with a `#fragment` resolves that anchor against its target unit's source file through the
-// work-scoped anchor index (#366): a hit jumps to the owning block, a miss no-ops (rather than
-// silently opening the wrong place). Iterating with the unit's index in hand keeps both the ordinal
-// (for opening) and the source file (for resolving) on one matched unit without a second lookup.
+// work-scoped anchor index (#366): a hit jumps to the owning block. A miss falls back to opening the
+// target unit's top rather than doing nothing (#495) — a fragment commonly fails to resolve because the
+// target unit's blocks are not loaded yet (a cross-chapter jump), and the entry still names a valid
+// unit, so opening that chapter is the right move (its heading is at/near the top anyway). Iterating
+// with the unit's index in hand keeps both the ordinal (for opening) and the source file (for resolving)
+// on one matched unit without a second lookup.
 export function resolveTocEntryNavigation(
   structure: ReaderStructure,
   anchorIndex: AnchorIndex,
@@ -101,7 +104,9 @@ export function resolveTocEntryNavigation(
       ...(unit.sourceFile === undefined ? {} : { sourceFile: unit.sourceFile })
     });
 
-    return blockEntryId === undefined ? { kind: "none" } : { blockEntryId, kind: "block" };
+    return blockEntryId === undefined
+      ? { kind: "unit", unitIndex }
+      : { blockEntryId, kind: "block" };
   }
 
   return { kind: "none" };
