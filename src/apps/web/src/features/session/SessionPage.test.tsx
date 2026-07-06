@@ -246,6 +246,11 @@ describe("SessionPage", () => {
     expect(screen.getByText("Make yourself at home.")).toBeDefined();
     expect(screen.getByText("—")).toBeDefined();
     expect(screen.getByText("Dig in.")).toBeDefined();
+    // The recall deposits are honestly labelled as SCHEDULED (with their next-due day), not "now due",
+    // so the debrief never contradicts the Recall page (#478). dueAt 2026-01-02 → "Jan 2".
+    expect(screen.getByText("Scheduled for recall")).toBeDefined();
+    expect(screen.queryByText("Now due to recall")).toBeNull();
+    expect(screen.getByText(/due Jan 2/)).toBeDefined();
     expect(screen.getByText('Nailed "Help yourself.".')).toBeDefined();
   });
 
@@ -323,7 +328,7 @@ describe("SessionPage", () => {
     expect(mockedEnd).toHaveBeenCalledWith({ caseId: "k.table", words: [] });
     expect(await screen.findByText("Smooth round — nothing needed correcting.")).toBeDefined();
     expect(screen.queryByRole("list", { name: "Wins" })).toBeNull();
-    expect(screen.queryByText("Now due to recall")).toBeNull();
+    expect(screen.queryByText("Scheduled for recall")).toBeNull();
     expect(screen.getByText("what you tried")).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "Practise again" }));

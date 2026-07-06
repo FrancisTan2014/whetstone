@@ -260,7 +260,8 @@ can navigate them from another package.
   `browserVoiceOut.ts`) are injected via the `live` prop and excluded from coverage; the loop
   orchestration, `pickEnglishVoice`/`createVoiceOut`, and `sessionApi` are covered. **End** runs the
   end-of-round analysis (`endSession`) and renders the compact **debrief** (`DebriefView`, #222):
-  encouragement, the few moments (said -> native + why), the one upgrade, and what is now due to recall.
+  encouragement, the few moments (said -> native + why), the one upgrade, and what was scheduled for
+  recall (each with its next-due date, so the debrief never contradicts the due-now Recall page — #478).
   After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
   nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
 - Voice diary: `src/features/diary/` (#246) — tap-and-talk capture that REUSES the session STT seam

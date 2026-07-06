@@ -118,7 +118,7 @@ export const debriefDueDtoSchema = z.object({ dueAt: z.string(), text: z.string(
 export type DebriefDueDto = z.infer<typeof debriefDueDtoSchema>;
 
 // The compact end-of-round debrief: a line of encouragement, the 2-3 moments that matter, the one
-// native upgrade to carry, the wins, and what is now due to recall. Calm, not a wall of corrections.
+// native upgrade to carry, the wins, and what was scheduled for recall. Calm, not a wall of corrections.
 export const debriefDtoSchema = z
   .object({
     due: z.array(debriefDueDtoSchema),
