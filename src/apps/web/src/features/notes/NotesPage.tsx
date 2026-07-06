@@ -109,7 +109,7 @@ function renderNote(note: NoteOverviewDto): React.JSX.Element {
         </Markdown>
       </div>
       <a
-        className="mt-3 inline-block text-sm text-accent hover:text-accent-hover"
+        className="mt-3 inline-flex min-h-11 min-w-11 items-center text-sm text-accent hover:text-accent-hover"
         href={`#/reader?work=${encodeURIComponent(note.workEntryId)}&block=${encodeURIComponent(
           note.blockEntryId
         )}`}

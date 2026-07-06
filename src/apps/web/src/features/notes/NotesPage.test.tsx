@@ -67,6 +67,12 @@ describe("NotesPage", () => {
     const links = screen.getAllByRole("link", { name: "Open in Reader" });
     expect(links[0]?.getAttribute("href")).toBe("#/reader?work=work-a&block=block-1");
     expect(links[1]?.getAttribute("href")).toBe("#/reader?work=work-b&block=block-2");
+    // Each action is a >=44px hit target in both dimensions (#475). jsdom has no layout, so assert the
+    // sizing utilities (min-h-11 = min-w-11 = 44px); dropping min-h-11 fails here.
+    for (const link of links) {
+      expect(link.className).toContain("min-h-11");
+      expect(link.className).toContain("min-w-11");
+    }
   });
 
   it("shows an explicit empty state when the user has no notes", async () => {
