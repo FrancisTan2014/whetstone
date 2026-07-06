@@ -37,6 +37,8 @@ import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
 import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
 import type { NudgeRouteDependencies } from "../features/nudge/nudgeRoutes.js";
+import { registerMakeDurableRoutes } from "../features/makeDurable/makeDurableRoutes.js";
+import type { MakeDurableRouteDependencies } from "../features/makeDurable/makeDurableRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
@@ -67,6 +69,7 @@ export type CreateServerOptions = Readonly<{
   readingPosition?: ReadingPositionDependencies;
   recall?: RecallRouteDependencies;
   nudge?: NudgeRouteDependencies;
+  makeDurable?: MakeDurableRouteDependencies;
   search?: SearchDependencies;
   session?: SessionDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
@@ -140,6 +143,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.nudge !== undefined) {
     registerNudgeRoutes(server, options.nudge);
+  }
+
+  if (options.makeDurable !== undefined) {
+    registerMakeDurableRoutes(server, options.makeDurable);
   }
 
   if (options.images !== undefined) {

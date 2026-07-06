@@ -1,8 +1,10 @@
 import { z } from "zod";
 
-// Shared contracts for the Make Durable foundation (#451): the Timeline capture, the gated proposal
-// candidate, and the user's review of a proposal. These are the data-boundary schemas the server
-// commands validate with and return; there is no HTTP endpoint in this slice.
+import { recallCategorySchema } from "./recallContracts.js";
+
+// Shared contracts for the Make Durable foundation (#451) and the Quick Capture review loop (#452):
+// the Timeline capture, the gated proposal candidate, the user's review, the local-model proposal
+// output, and the Today review card the web renders.
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
@@ -23,8 +25,14 @@ export const captureSourceSchema = z.enum(captureSources);
 
 export type CaptureSource = z.infer<typeof captureSourceSchema>;
 
-// The two v0 proposal kinds: a reusable phrase/chunk worth remembering, or a "couldn't say it" gap.
-export const proposalCandidateTypes = ["phrase_chunk", "couldnt_say_gap"] as const;
+// The v0 proposal kinds: a reusable phrase/chunk worth remembering, a "couldn't say it" gap, or a
+// recurring production pattern (a reusable fix for a repeated error — preposition, word choice, verb
+// complementation, etc.).
+export const proposalCandidateTypes = [
+  "phrase_chunk",
+  "couldnt_say_gap",
+  "recurring_pattern"
+] as const;
 
 export const proposalCandidateTypeSchema = z.enum(proposalCandidateTypes);
 
@@ -212,4 +220,148 @@ export function parseCreateProposalCandidateRequest(
 
 export function parseRecordProposalReviewRequest(value: unknown): RecordProposalReviewRequest {
   return recordProposalReviewRequestSchema.parse(value);
+}
+
+// ---------------------------------------------------------------------------
+// Quick Capture review loop (#452)
+// ---------------------------------------------------------------------------
+
+// A typed Quick Capture: the raw text the learner submits from the Today capture surface. The owning
+// user, ids, and timestamps are the server's to set.
+export const quickCaptureRequestSchema = z
+  .object({
+    text: z.string().refine(isNonBlank, { message: "text must be non-empty." })
+  })
+  .strict();
+
+export type QuickCaptureRequest = z.infer<typeof quickCaptureRequestSchema>;
+
+// The proposed recall payload a candidate carries: the durable item the learner would save. `target`
+// is the phrase/pattern to remember; `cue` is the retrieval prompt; `useContext` is when/where to use
+// it; `explanation` is an optional gloss; `category` is the one broad bucket; `tags` are optional narrow
+// tags. This is the shape of `proposal_candidates.payload_json` and the source of the review card.
+export const proposalPayloadSchema = z
+  .object({
+    target: z.string().refine(isNonBlank, { message: "target must be non-empty." }),
+    cue: z.string().refine(isNonBlank, { message: "cue must be non-empty." }),
+    useContext: z.string().refine(isNonBlank, { message: "useContext must be non-empty." }),
+    explanation: z
+      .string()
+      .refine(isNonBlank, { message: "explanation must be non-empty." })
+      .nullish(),
+    category: recallCategorySchema,
+    tags: z.array(z.string().refine(isNonBlank, { message: "tag must be non-empty." })).nullish()
+  })
+  .strict();
+
+export type ProposalPayload = z.infer<typeof proposalPayloadSchema>;
+
+// One candidate as emitted by the local proposal model. `evidenceQuote` must be a faithful quote from
+// the capture (enforced by the gate); `duplicateCheckQuery` is an optional retrieval hint. The gate and
+// dedup run over this before it is ever shown.
+export const proposalGenerationCandidateSchema = z
+  .object({
+    type: proposalCandidateTypeSchema,
+    confidence: z.number().min(0).max(1),
+    reason: z.string().refine(isNonBlank, { message: "reason must be non-empty." }),
+    evidenceQuote: z.string().refine(isNonBlank, { message: "evidenceQuote must be non-empty." }),
+    duplicateCheckQuery: z
+      .string()
+      .refine(isNonBlank, { message: "duplicateCheckQuery must be non-empty." })
+      .nullish(),
+    payload: proposalPayloadSchema
+  })
+  .strict();
+
+export type ProposalGenerationCandidate = z.infer<typeof proposalGenerationCandidateSchema>;
+
+// The whole proposal-model output: zero or one candidate. More than one is invalid output (the prompt
+// asks for at most one), so it is rejected and no card is shown.
+export const proposalGenerationSchema = z
+  .object({
+    candidates: z.array(proposalGenerationCandidateSchema).max(1)
+  })
+  .strict();
+
+export type ProposalGeneration = z.infer<typeof proposalGenerationSchema>;
+
+// The Today review card: everything the web needs to render one Make Durable proposal and act on it.
+// Derived from the visible candidate + its payload; `tags` is always an array (possibly empty).
+export const makeDurableCardDtoSchema = z
+  .object({
+    proposalCandidateId: z.string(),
+    timelineEntryId: z.string(),
+    type: proposalCandidateTypeSchema,
+    target: z.string(),
+    cue: z.string(),
+    useContext: z.string(),
+    reason: z.string(),
+    category: recallCategorySchema,
+    tags: z.array(z.string())
+  })
+  .strict();
+
+export type MakeDurableCardDto = z.infer<typeof makeDurableCardDtoSchema>;
+
+export const makeDurableCardListDtoSchema = z
+  .object({ cards: z.array(makeDurableCardDtoSchema) })
+  .strict();
+
+export type MakeDurableCardListDto = z.infer<typeof makeDurableCardListDtoSchema>;
+
+// The Quick Capture response: the Timeline entry (always saved) and the review card IF a proposal
+// passed the gate/dedup (null when the model was unavailable, slow, invalid, gated out, or a duplicate).
+export const quickCaptureResultDtoSchema = z
+  .object({
+    timelineEntry: timelineCaptureDtoSchema,
+    card: makeDurableCardDtoSchema.nullable()
+  })
+  .strict();
+
+export type QuickCaptureResultDto = z.infer<typeof quickCaptureResultDtoSchema>;
+
+// The review-card action body: the outcome, plus (for Edit + Save) the edited payload and optional
+// feedback tags. The candidate id comes from the route path.
+export const reviewProposalRequestSchema = z
+  .object({
+    outcome: proposalReviewOutcomeSchema,
+    editedPayload: proposalPayloadSchema.nullish(),
+    feedbackTags: z
+      .array(z.string().refine(isNonBlank, { message: "feedbackTag must be non-empty." }))
+      .nullish()
+  })
+  .strict()
+  .refine((data) => data.outcome !== "edited_saved" || (data.editedPayload ?? null) !== null, {
+    message: "editedPayload is required when outcome is edited_saved.",
+    path: ["editedPayload"]
+  });
+
+export type ReviewProposalRequest = z.infer<typeof reviewProposalRequestSchema>;
+
+export function parseQuickCaptureRequest(value: unknown): QuickCaptureRequest {
+  return quickCaptureRequestSchema.parse(value);
+}
+
+export function parseProposalGeneration(value: unknown): ProposalGeneration {
+  return proposalGenerationSchema.parse(value);
+}
+
+export function parseProposalPayload(value: unknown): ProposalPayload {
+  return proposalPayloadSchema.parse(value);
+}
+
+export function parseMakeDurableCardDto(value: unknown): MakeDurableCardDto {
+  return makeDurableCardDtoSchema.parse(value);
+}
+
+export function parseMakeDurableCardListDto(value: unknown): MakeDurableCardListDto {
+  return makeDurableCardListDtoSchema.parse(value);
+}
+
+export function parseQuickCaptureResultDto(value: unknown): QuickCaptureResultDto {
+  return quickCaptureResultDtoSchema.parse(value);
+}
+
+export function parseReviewProposalRequest(value: unknown): ReviewProposalRequest {
+  return reviewProposalRequestSchema.parse(value);
 }

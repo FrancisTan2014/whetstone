@@ -94,24 +94,31 @@ can navigate them from another package.
   never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
   row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
   `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
-- Make Durable foundation (#451): `src/features/makeDurable/` — the data boundary for turning Quick
-  Capture into gated recall (no HTTP endpoint yet). `timelineCommands.ts` `createTimelineCapture`
-  registers a `timeline_entry` Entry + a `timeline_entries` capture row in one transaction (server-owned
-  id/`created_at`/`entry_date`; `raw_input_text` verbatim, `tidied_text` null until async tidy);
-  `timelineQueries.ts` reads user-scoped captures. `proposalCommands.ts`/`proposalQueries.ts` own
-  `proposal_candidates` (gated suggestions: type/status/confidence/evidence/`payload_json`/duplicate
-  status/model+prompt) and `proposal_reviews` (Save/Edit/Not-useful/Wrong outcomes, user-scoped via the
-  parent candidate). Ownership is enforced at the command boundary, not just by DB FKs:
-  `createProposalCandidate` scopes `timeline_entry_id` through `getTimelineCaptureForUser`
-  (`timeline_not_found` for a forged/foreign capture), and `saveProposalRecallItem` is the ONLY path that
-  stamps `recall_items.source_proposal_candidate_id` — it verifies the candidate exists, is the user's,
-  and that `provenanceEntryId` matches the candidate's `timeline_entry_id` before calling the existing
-  `enrollRecallItem` (which takes the validated source id as an internal argument, never from the client
-  request). Provenance uses `recall_items.provenance_entry_id` → the source `timeline_entries` Entry;
-  `recall_items` also gains nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
-  `source_proposal_candidate_id`) so reading/speech/jot feeders are untouched. The `timeline_entry` Entry
-  type lives in `@whetstone/domain` (`entry.ts`); DTOs/enums in `@whetstone/contracts`
-  (`makeDurableContracts.ts`, plus recall extensions in `recallContracts.ts`).
+- Make Durable (#451 data foundation, #452 Quick Capture loop): `src/apps/server/src/features/makeDurable/`
+  turns a typed Quick Capture into gated recall. **Data model:** `timelineCommands.ts`
+  `createTimelineCapture` registers a `timeline_entry` Entry + a `timeline_entries` capture row in one
+  transaction (server-owned id/`created_at`/`entry_date`; `raw_input_text` verbatim); `proposalCommands.ts`/
+  `proposalQueries.ts` own `proposal_candidates` (type/status/confidence/evidence/`payload_json`/duplicate
+  status/model+prompt) and `proposal_reviews`. **Quick Capture endpoint** (`makeDurableRoutes.ts`, wired in
+  `createServer.ts`/`index.ts`): `POST /api/makedurable/capture` runs `quickCapture` — the Timeline entry
+  is saved FIRST, then the `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
+  attempts one proposal; any failure/timeout/invalid output yields no card. A generated candidate is gated
+  by the pure `@whetstone/domain` `makeDurable.ts` (`evaluateProposalGate` = confidence floor + faithful
+  evidence quote; `classifyProposalDuplicate` suppresses same-target+same-context) and stored `visible`
+  (a `MakeDurableCardDto` is returned) or `dismissed`. `GET /api/makedurable/cards` (`cardQueries.ts`,
+  capped, calm — not an inbox) feeds Today; `POST /api/makedurable/proposals/:id/review`
+  (`reviewCommands.ts` `reviewProposalCard`) records the review and, on Save / Edit + Save, makes it durable
+  via `saveProposalRecallItem` — the single path that stamps `recall_items.source_proposal_candidate_id`:
+  it takes the owner-validated candidate (from `recordProposalReview`), derives every recall field + sets
+  `provenance_entry_id` from the candidate's own `timeline_entry_id`, and calls `enrollRecallItem` (source id
+  passed inward, never from a client request). Ownership is enforced at the command boundary
+  (`createProposalCandidate`/`insertProposalCandidate` scope `timeline_entry_id` to the user;
+  `recordProposalReview` → `not_found` for a forged/foreign candidate). **Web:**
+  `src/apps/web/src/features/makeDurable/` — `MakeDurableSection` (a capture box + at most one review card
+  with Save/Edit/Not-useful/Wrong) on Today (`TodayPage.tsx`), over `makeDurableApi.ts`. `recall_items`
+  carries nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
+  `source_proposal_candidate_id`); the `timeline_entry` type is in `@whetstone/domain` (`entry.ts`),
+  DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`).
 - Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
   cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
   `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's

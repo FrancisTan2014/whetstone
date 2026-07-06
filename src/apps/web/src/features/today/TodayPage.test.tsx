@@ -7,6 +7,11 @@ vi.mock("../recall/recallApi", () => ({ fetchDueRecall: vi.fn() }));
 vi.mock("./todayApi", () => ({ fetchLatestReadingPosition: vi.fn() }));
 vi.mock("../nudge/nudgeApi", () => ({ dismissNudge: vi.fn(), fetchNudge: vi.fn() }));
 vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
+vi.mock("../makeDurable/makeDurableApi", () => ({
+  fetchMakeDurableCards: vi.fn(() => Promise.resolve([])),
+  reviewMakeDurableCard: vi.fn(),
+  submitQuickCapture: vi.fn()
+}));
 
 import type {
   AuthorDto,

@@ -618,7 +618,9 @@ export const proposalCandidates = pgTable(
       .notNull()
       .references(() => timelineEntries.entryId),
     userId: text("user_id").notNull(),
-    type: text("type", { enum: ["phrase_chunk", "couldnt_say_gap"] as const }).notNull(),
+    type: text("type", {
+      enum: ["phrase_chunk", "couldnt_say_gap", "recurring_pattern"] as const
+    }).notNull(),
     status: text("status", {
       enum: ["pending", "visible", "saved", "dismissed"] as const
     }).notNull(),
