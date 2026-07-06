@@ -521,8 +521,8 @@ code {
 }
 
 /* External dictionary deep-links (#254): a quiet inline row that wraps onto its own line UNDER the
-   headword/IPA row (flex-basis 100% in the wrapping header). Muted underlined links, scannable; on
-   touch each link gets a ≥44px target. Muted token meets AA contrast in Day and Night. */
+   headword/IPA row (flex-basis 100% in the wrapping header). Muted underlined links, scannable; each
+   link carries a >=44px hit target in both dimensions (#502). Muted token meets AA contrast in Day and Night. */
 .lookupExternalLinks {
   flex-basis: 100%;
   display: flex;
@@ -539,15 +539,15 @@ code {
 .lookupExternalLink {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  /* WCAG 2.5.5 / #502: a >=44px hit target in BOTH dimensions at every pointer type (a mouse read the
+     bare text link at only ~54x19px). Short CJK labels (汉典, 萌典) also need the inline minimum, so this
+     is unconditional, not gated on (pointer: coarse). */
+  min-block-size: 44px;
+  min-inline-size: 44px;
   color: var(--color-text-muted);
   text-decoration: underline;
   text-underline-offset: 0.15em;
-}
-
-@media (pointer: coarse) {
-  .lookupExternalLink {
-    min-height: 44px;
-  }
 }
 
 /* The no-definition launchpad (#339): the calm not-found line stacked over the same external-dictionary
