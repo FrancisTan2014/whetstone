@@ -56,6 +56,24 @@ describe("isFaithfulTidy", () => {
     expect(isFaithfulTidy("the deploy is happy", "the deploy is delighted")).toBe(false);
   });
 
+  it("rejects a meaning-reversing deletion of a protected negator", () => {
+    // Subset-only would accept these (every tidied token is in the raw), but dropping the negator flips
+    // the meaning — the guard must reject them.
+    expect(isFaithfulTidy("I did not finish the task", "I did finish the task")).toBe(false);
+    expect(isFaithfulTidy("I never skip a day", "I skip a day")).toBe(false);
+    expect(isFaithfulTidy("there is no time", "there is time")).toBe(false);
+  });
+
+  it("rejects dropping a contracted negation (n't)", () => {
+    expect(isFaithfulTidy("I don't like it", "I like it")).toBe(false);
+    expect(isFaithfulTidy("it wasn't hard", "it was hard")).toBe(false);
+  });
+
+  it("accepts a tidy that preserves the negation while dropping fillers", () => {
+    expect(isFaithfulTidy("um I did not finish", "I did not finish")).toBe(true);
+    expect(isFaithfulTidy("well I don't like it", "I don't like it")).toBe(true);
+  });
+
   it("rejects repeating a word more than the raw did (not a pure drop/reorder)", () => {
     expect(isFaithfulTidy("I read a book", "I read a a book")).toBe(false);
   });

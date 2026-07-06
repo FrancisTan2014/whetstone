@@ -48,4 +48,12 @@ describe("createDiaryTidy", () => {
 
     await expect(tidy("um today I, I read a book")).resolves.toBe("Today I read a book");
   });
+
+  it("falls back to the raw transcript when the model drops a negation (#462 review)", async () => {
+    // Deleting "not" reverses the meaning; the faithfulness guard rejects it even though every remaining
+    // word is present in the raw, so the learner's original words are saved.
+    const tidy = createDiaryTidy(async () => "I did finish the task");
+
+    await expect(tidy("I did not finish the task")).resolves.toBe("I did not finish the task");
+  });
 });
