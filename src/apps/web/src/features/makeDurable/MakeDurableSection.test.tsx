@@ -9,14 +9,34 @@ vi.mock("./makeDurableApi", () => ({
   submitQuickCapture: vi.fn()
 }));
 
+vi.mock("../session/sessionApi", () => ({
+  transcribe: vi.fn()
+}));
+
 import type { MakeDurableCardDto, QuickCaptureResultDto } from "@whetstone/contracts";
 
+import { transcribe } from "../session/sessionApi";
 import { fetchMakeDurableCards, reviewMakeDurableCard, submitQuickCapture } from "./makeDurableApi";
-import { MakeDurableSection } from "./MakeDurableSection";
+import { MakeDurableSection, type QuickCaptureVoiceDependencies } from "./MakeDurableSection";
 
 const mockedFetch = vi.mocked(fetchMakeDurableCards);
 const mockedSubmit = vi.mocked(submitQuickCapture);
 const mockedReview = vi.mocked(reviewMakeDurableCard);
+const mockedTranscribe = vi.mocked(transcribe);
+
+// A deterministic voice capture seam: `start()` opens a fake recording whose `stop()` resolves a stub
+// audio blob (the real MediaRecorder/Web Audio path is not exercisable in jsdom).
+function fakeVoice(
+  overrides: Partial<{
+    start: QuickCaptureVoiceDependencies["start"];
+    supported: boolean;
+  }> = {}
+): QuickCaptureVoiceDependencies {
+  return {
+    start: overrides.start ?? (async () => ({ stop: async () => new Blob(["audio"]) })),
+    supported: overrides.supported ?? true
+  };
+}
 
 const card: MakeDurableCardDto = {
   proposalCandidateId: "cand-1",
@@ -86,7 +106,7 @@ describe("MakeDurableSection", () => {
 
     await typeCapture("I couldn't say it");
 
-    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it");
+    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed");
     expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
   });
 
@@ -224,5 +244,70 @@ describe("MakeDurableSection", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn't record your choice");
+  });
+});
+
+describe("MakeDurableSection voice capture", () => {
+  it("hides the voice control when capture is unsupported (typed box remains)", async () => {
+    render(<MakeDurableSection capture={fakeVoice({ supported: false })} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    expect(screen.queryByRole("button", { name: "Tap to talk" })).toBeNull();
+    expect(screen.getByLabelText("Quick capture text")).toBeTruthy();
+  });
+
+  it("records, transcribes, and submits the transcript as a voice capture", async () => {
+    mockedTranscribe.mockResolvedValue({ transcript: "WorkInsight is back up now", words: [] });
+    mockedSubmit.mockResolvedValue(captureResult(card));
+    render(<MakeDurableSection capture={fakeVoice()} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    expect(mockedTranscribe).toHaveBeenCalled();
+    expect(mockedSubmit).toHaveBeenCalledWith("WorkInsight is back up now", "voice");
+    expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
+  });
+
+  it("shows a calm retry and submits nothing when no speech is caught", async () => {
+    mockedTranscribe.mockResolvedValue({ transcript: "   ", words: [] });
+    render(<MakeDurableSection capture={fakeVoice()} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Didn't catch any speech");
+    expect(mockedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("falls back to typing when the microphone can't be reached", async () => {
+    const start = vi.fn().mockRejectedValue(new Error("denied"));
+    render(<MakeDurableSection capture={fakeVoice({ start })} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Tap to talk" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Couldn't reach the microphone");
+    expect(screen.getByLabelText("Quick capture text")).toBeTruthy();
+  });
+
+  it("surfaces a quiet error when transcription or saving fails", async () => {
+    mockedTranscribe.mockRejectedValue(new Error("stt down"));
+    render(<MakeDurableSection capture={fakeVoice()} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Couldn't save your capture");
+    expect(mockedSubmit).not.toHaveBeenCalled();
   });
 });

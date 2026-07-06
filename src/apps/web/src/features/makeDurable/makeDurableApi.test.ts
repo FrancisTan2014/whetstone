@@ -62,14 +62,14 @@ afterEach(() => {
 });
 
 describe("submitQuickCapture", () => {
-  it("posts the text and parses the capture result", async () => {
+  it("posts the text with its input mode and parses the capture result", async () => {
     const result: QuickCaptureResultDto = {
       card,
       timelineEntry: {
         entryId: "entry-1",
         createdAt: "2026-07-06T09:30:00.000Z",
         entryDate: "2026-07-06",
-        inputMode: "typed",
+        inputMode: "voice",
         captureSource: "quick_capture",
         rawInputText: "the deploy failed",
         tidiedText: null,
@@ -79,16 +79,19 @@ describe("submitQuickCapture", () => {
     };
     const fetchMock = stubFetch({ body: result, ok: true });
 
-    expect(await submitQuickCapture("the deploy failed")).toEqual(result);
+    expect(await submitQuickCapture("the deploy failed", "voice")).toEqual(result);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/makedurable/capture"),
-      expect.objectContaining({ method: "POST" })
+      expect.objectContaining({
+        body: JSON.stringify({ text: "the deploy failed", inputMode: "voice" }),
+        method: "POST"
+      })
     );
   });
 
   it("throws on a non-ok response", async () => {
     stubFetch({ ok: false, status: 500 });
-    await expect(submitQuickCapture("x")).rejects.toThrow();
+    await expect(submitQuickCapture("x", "typed")).rejects.toThrow();
   });
 });
 

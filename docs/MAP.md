@@ -94,13 +94,17 @@ can navigate them from another package.
   never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
   row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
   `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
-- Make Durable (#451 data foundation, #452 Quick Capture loop): `src/apps/server/src/features/makeDurable/`
-  turns a typed Quick Capture into gated recall. **Data model:** `timelineCommands.ts`
+- Make Durable (#451 data foundation, #452 Quick Capture loop, #455 voice input):
+  `src/apps/server/src/features/makeDurable/`
+  turns a typed or voice Quick Capture into gated recall. **Data model:** `timelineCommands.ts`
   `createTimelineCapture` registers a `timeline_entry` Entry + a `timeline_entries` capture row in one
-  transaction (server-owned id/`created_at`/`entry_date`; `raw_input_text` verbatim); `proposalCommands.ts`/
+  transaction (server-owned id/`created_at`/`entry_date`; `raw_input_text` verbatim; `input_mode` typed|voice);
+  `proposalCommands.ts`/
   `proposalQueries.ts` own `proposal_candidates` (type/status/confidence/evidence/`payload_json`/duplicate
   status/model+prompt) and `proposal_reviews`. **Quick Capture endpoint** (`makeDurableRoutes.ts`, wired in
-  `createServer.ts`/`index.ts`): `POST /api/makedurable/capture` runs `quickCapture` — the Timeline entry
+  `createServer.ts`/`index.ts`): `POST /api/makedurable/capture` runs `quickCapture` — the `inputMode`
+  (`typed`, default, or `voice`) is recorded on the Timeline entry and a voice capture submits its transcript
+  as the text, so both follow the identical path from here. The Timeline entry
   is saved FIRST, then the `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
   attempts one proposal — retrieve-before-generate: a small slice of the user's existing recall is loaded
   first and passed into the prompt's "Already remembered" block (domain `buildProposalPrompt`) so the model
@@ -121,8 +125,13 @@ can navigate them from another package.
   promoted to `visible` (`promoteOldestPendingCandidate`) so held proposals surface without an inbox. Ownership is enforced at the command boundary
   (`createProposalCandidate`/`insertProposalCandidate` scope `timeline_entry_id` to the user;
   `recordProposalReview` → `not_found` for a forged/foreign candidate). **Web:**
-  `src/apps/web/src/features/makeDurable/` — `MakeDurableSection` (a capture box + at most one review card
-  with Save/Edit/Not-useful/Wrong) on Today (`TodayPage.tsx`), over `makeDurableApi.ts`. `recall_items`
+  `src/apps/web/src/features/makeDurable/` — `MakeDurableSection` (a typed capture box, an optional
+  tap-and-talk voice capture when `isVoiceCaptureSupported`, + at most one review card
+  with Save/Edit/Not-useful/Wrong) on Today (`TodayPage.tsx`), over `makeDurableApi.ts`
+  (`submitQuickCapture(text, inputMode)`). Voice records via the coverage-excluded browser boundary
+  `makeDurableCapture.ts` (wraps the shared `liveCapture` seam into one-shot record/stop), transcribes with
+  the session `transcribe` STT seam, then submits the transcript as a `voice` capture; a missing mic/STT
+  falls back to the always-present typed box. `recall_items`
   carries nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
   `source_proposal_candidate_id`); the `timeline_entry` type is in `@whetstone/domain` (`entry.ts`),
   DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`).

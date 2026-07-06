@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 
 import {
   recallCategories,
+  type CaptureInputMode,
   type MakeDurableCardDto,
   type ProposalPayload,
   type RecallCategory
 } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
+import { transcribe } from "../session/sessionApi";
+import { createQuickCaptureVoice } from "./makeDurableCapture";
 import {
   fetchMakeDurableCards,
   reviewMakeDurableCard,
@@ -15,15 +18,43 @@ import {
   type ReviewCardInput
 } from "./makeDurableApi";
 
-// The Make Durable Quick Capture surface on Today (#452): a typed capture box plus, when the local
-// model proposes something worth keeping, at most one calm review card. Capture is an invitation — the
-// entry is always saved server-side; the card only appears when a proposal passed the gate. Reviewing a
-// card (Save / Edit + Save / Not useful now / Wrong) removes it. Load/model failures degrade quietly so
-// this never blanks Today.
-export function MakeDurableSection(): React.JSX.Element {
+// One tap-and-talk recording: stop finalizes the audio and hands it back for STT. The browser audio
+// boundary (createQuickCaptureVoice in makeDurableCapture.ts) is injected so the section tests with a
+// deterministic fake, exactly as the diary page injects its live capture.
+export type VoiceRecording = Readonly<{ stop: () => Promise<Blob> }>;
+
+export type QuickCaptureVoiceDependencies = Readonly<{
+  start: () => Promise<VoiceRecording>;
+  // Feature-detected from `isVoiceCaptureSupported`: false on a non-secure context or no mic device, so
+  // the record button is hidden and capture falls back to the always-present typed box — never a dead end.
+  supported: boolean;
+}>;
+
+// Where the voice pipeline is: idle, recording (mic open), or transcribing (STT). Saving is shown on
+// the buttons via `busy`; a typed capture never leaves `idle`.
+type VoicePhase = "idle" | "recording" | "transcribing";
+
+const voicePhaseLabels: Readonly<Record<VoicePhase, string>> = {
+  idle: "",
+  recording: "Listening…",
+  transcribing: "Transcribing…"
+};
+
+// The Make Durable Quick Capture surface on Today (#452, #455): a typed capture box and — when the
+// browser supports it — a tap-and-talk voice capture, plus at most one calm review card when the local
+// model proposes something worth keeping. A voice capture records → transcribes with the shared STT seam
+// → submits the transcript exactly like a typed capture (`inputMode = "voice"`), so both follow the same
+// gate/dedup/Today-card path. Capture is an invitation — the entry is always saved server-side; the card
+// only appears when a proposal passed the gate. Load/model/mic failures degrade quietly so this never
+// blanks Today.
+export function MakeDurableSection({
+  capture = createQuickCaptureVoice()
+}: Readonly<{ capture?: QuickCaptureVoiceDependencies }>): React.JSX.Element {
   const [cards, setCards] = useState<ReadonlyArray<MakeDurableCardDto>>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<VoicePhase>("idle");
+  const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,26 +68,66 @@ export function MakeDurableSection(): React.JSX.Element {
     setCards((current) => current.filter((card) => card.proposalCandidateId !== id));
   }
 
-  async function capture(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
-    const trimmed = text.trim();
+  // The single path both typed and voice capture funnel through: the Timeline entry is always saved,
+  // and a returned review card (if any) is prepended. Returns whether the submit succeeded so the caller
+  // can clear its input only on success.
+  async function runCapture(rawText: string, inputMode: CaptureInputMode): Promise<boolean> {
+    const trimmed = rawText.trim();
     if (trimmed.length === 0) {
-      return;
+      return false;
     }
 
     setBusy(true);
     setError(null);
     try {
-      const result = await submitQuickCapture(trimmed);
-      setText("");
+      const result = await submitQuickCapture(trimmed, inputMode);
       const card = result.card;
       if (card !== null) {
         setCards((current) => [card, ...current]);
       }
+      return true;
     } catch {
       setError("Couldn't save your capture. Please try again.");
+      return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function captureTyped(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    if (await runCapture(text, "typed")) {
+      setText("");
+    }
+  }
+
+  async function startRecording(): Promise<void> {
+    setError(null);
+    try {
+      const handle = await capture.start();
+      setRecording(handle);
+      setPhase("recording");
+    } catch {
+      setError("Couldn't reach the microphone. You can type instead.");
+    }
+  }
+
+  async function stopRecording(handle: VoiceRecording): Promise<void> {
+    setError(null);
+    setRecording(null);
+    setPhase("transcribing");
+    try {
+      const audio = await handle.stop();
+      const { transcript } = await transcribe(audio);
+      setPhase("idle");
+      if (transcript.trim().length === 0) {
+        setError("Didn't catch any speech — try again.");
+        return;
+      }
+      await runCapture(transcript, "voice");
+    } catch {
+      setPhase("idle");
+      setError("Couldn't save your capture. Please try again.");
     }
   }
 
@@ -70,6 +141,8 @@ export function MakeDurableSection(): React.JSX.Element {
     }
   }
 
+  const transcribing = phase === "transcribing";
+
   return (
     <section
       aria-label="Make a note durable"
@@ -77,10 +150,34 @@ export function MakeDurableSection(): React.JSX.Element {
     >
       <h2 className="text-lg font-medium text-text">Make a note durable</h2>
       <p className="mt-1 text-text-muted">
-        Jot a phrase you reached for, or a moment you couldn&rsquo;t say in English.
+        Jot — or say — a phrase you reached for, or a moment you couldn&rsquo;t say in English.
       </p>
 
-      <form className="mt-3 flex flex-col gap-2" onSubmit={capture}>
+      {capture.supported ? (
+        <div className="mt-3 flex flex-col gap-2">
+          {recording === null ? (
+            <Button
+              disabled={busy || transcribing}
+              onClick={() => void startRecording()}
+              type="button"
+              variant="primary"
+            >
+              Tap to talk
+            </Button>
+          ) : (
+            <Button onClick={() => void stopRecording(recording)} type="button" variant="secondary">
+              Stop &amp; save
+            </Button>
+          )}
+          {phase === "idle" ? null : (
+            <p className="text-sm font-medium text-text" role="status">
+              {voicePhaseLabels[phase]}
+            </p>
+          )}
+        </div>
+      ) : null}
+
+      <form className="mt-3 flex flex-col gap-2" onSubmit={captureTyped}>
         <label className="sr-only" htmlFor="quick-capture">
           Quick capture text
         </label>
@@ -92,7 +189,11 @@ export function MakeDurableSection(): React.JSX.Element {
           value={text}
         />
         <div>
-          <Button disabled={busy || text.trim().length === 0} type="submit" variant="primary">
+          <Button
+            disabled={busy || transcribing || text.trim().length === 0}
+            type="submit"
+            variant="primary"
+          >
             {busy ? "Saving…" : "Capture"}
           </Button>
         </div>
