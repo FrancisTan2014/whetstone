@@ -225,6 +225,16 @@ describe("createEpubParser", () => {
     expect(parsed.chapters).toHaveLength(2);
     expect(parsed.chapters[0]?.html).toContain("Chapter One");
     expect(parsed.chapters[1]?.html).toContain("五帝本纪");
+    // Each chapter's `sourceFile` is the scheme-less manifest href (`OEBPS/chap1.xhtml`), the same
+    // identity the authored nav resolves its entry hrefs to (nav.path base `OEBPS/nav.xhtml`). The real
+    // @lingo-reader spine tags hrefs with an `epub:` virtual scheme; recording that raw prefixed href
+    // would leave a reading unit's `source_file` unmatchable by a TOC entry, so 目录 navigation would
+    // silently no-op (#501). Assert the scheme-less form so a regression to the spine href fails here.
+    expect(parsed.chapters.map((chapter) => chapter.sourceFile)).toEqual([
+      "OEBPS/chap1.xhtml",
+      "OEBPS/chap2.xhtml"
+    ]);
+    expect(parsed.chapters.every((chapter) => !chapter.sourceFile.startsWith("epub:"))).toBe(true);
   });
 
   it("surfaces no images for chapters that reference none", async () => {
