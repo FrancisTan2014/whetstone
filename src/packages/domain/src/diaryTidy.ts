@@ -29,8 +29,7 @@ export function buildDiaryTidyPrompt(transcript: string): string {
 // Language-agnostic tokenization: space-delimited scripts tokenize into letter/number runs; CJK and
 // Japanese/Korean characters (which carry no spaces) each count as one token, so a dropped filler still
 // reduces a count and a substituted character is still caught. Comparison is case-insensitive.
-const TIDY_WORD_PATTERN =
-  /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]|[\p{L}\p{N}]+/gu;
+const TIDY_WORD_PATTERN = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]|[\p{L}\p{N}]+/gu;
 
 function tidyWordCounts(text: string): Map<string, number> {
   const counts = new Map<string, number>();
