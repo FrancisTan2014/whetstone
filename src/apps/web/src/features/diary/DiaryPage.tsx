@@ -548,6 +548,7 @@ function DiaryCalendar({
       <div className="flex items-center justify-between">
         <Button
           aria-label="Previous month"
+          className="min-w-11"
           onClick={() => onShiftMonth(-1)}
           size="sm"
           variant="ghost"
@@ -555,7 +556,13 @@ function DiaryCalendar({
           ‹
         </Button>
         <span className="text-sm font-medium text-text">{monthLabel(monthKey)}</span>
-        <Button aria-label="Next month" onClick={() => onShiftMonth(1)} size="sm" variant="ghost">
+        <Button
+          aria-label="Next month"
+          className="min-w-11"
+          onClick={() => onShiftMonth(1)}
+          size="sm"
+          variant="ghost"
+        >
           ›
         </Button>
       </div>
