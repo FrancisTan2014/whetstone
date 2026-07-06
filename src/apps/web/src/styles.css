@@ -383,7 +383,9 @@ code {
   font-size: 0.875rem;
   font-weight: 600;
   justify-content: center;
-  min-height: 2.75rem;
+  /* 46px, not 44px: the toolbar springs in from scale 0.96, so a 44px control would dip under the 44px
+     target-size minimum mid-animation. Sizing to 46px keeps every control >=44px throughout (#487). */
+  min-height: 2.875rem;
   padding: 0.25rem 1rem;
 }
 
@@ -401,8 +403,9 @@ code {
   display: inline-flex;
   font-size: 0.875rem;
   justify-content: center;
-  min-height: 2.75rem;
-  min-width: 2.75rem;
+  /* 46px square for the same reason as .selectionToolbarAction (the entrance scale) — see above (#487). */
+  min-height: 2.875rem;
+  min-width: 2.875rem;
 }
 
 /*
