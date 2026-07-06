@@ -155,7 +155,8 @@ template breadth beyond the seeded set. A usable app beats a complete feature.
 
 - Web-core TypeScript stack, to maximize OSS leverage for parsing, rendering, selection, annotation,
   and future rich connections.
-- Browser target: PWA. Mobile (later): Capacitor wrapper. Desktop (later): Tauri wrapper.
+- Shipping targets: **real native shells** on desktop (Tauri) and iOS (Capacitor) over one web core.
+- PWA is optional convenience access, not the primary desktop/iOS delivery path.
 - v0 is server-centered: thin clients talk to one server. Client storage (IndexedDB) may be a later
   cache, never the v0 source of truth.
 - Backend: Node.js TypeScript + Fastify + PostgreSQL (via Drizzle). Validation with Zod. Tests with Vitest.
