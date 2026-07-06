@@ -474,6 +474,18 @@ describe("DiaryPage date-jump calendar", () => {
     await waitFor(() => expect(mockedCalendar).toHaveBeenCalledTimes(3));
   });
 
+  it("gives the month navigation controls a >=44px hit target in both dimensions (#470)", async () => {
+    await renderReady(makeCapture().capture);
+
+    // jsdom has no layout, so assert the sizing utilities: min-h-11 (from the button base) and the
+    // min-w-11 added for these icon-only arrows (‹ ›) — both = 44px. Dropping min-w-11 fails here.
+    for (const label of ["Previous month", "Next month"]) {
+      const button = screen.getByRole("button", { name: label });
+      expect(button.className).toContain("min-h-11");
+      expect(button.className).toContain("min-w-11");
+    }
+  });
+
   it("clears marks when the calendar lookup fails", async () => {
     mockedCalendar.mockReset();
     mockedCalendar.mockRejectedValue(new Error("calendar down"));
