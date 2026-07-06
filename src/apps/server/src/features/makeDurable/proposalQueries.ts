@@ -89,10 +89,7 @@ export async function listProposalReviewsForCandidate(
     .select()
     .from(proposalReviews)
     .where(
-      and(
-        eq(proposalReviews.proposalCandidateId, candidateId),
-        eq(proposalReviews.userId, userId)
-      )
+      and(eq(proposalReviews.proposalCandidateId, candidateId), eq(proposalReviews.userId, userId))
     )
     .orderBy(asc(proposalReviews.createdAt), asc(proposalReviews.id));
 

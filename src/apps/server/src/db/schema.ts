@@ -661,13 +661,7 @@ export const proposalReviews = pgTable(
       .references(() => proposalCandidates.id),
     userId: text("user_id").notNull(),
     outcome: text("outcome", {
-      enum: [
-        "saved",
-        "edited_saved",
-        "not_useful_now",
-        "wrong_hallucinated",
-        "ignored"
-      ] as const
+      enum: ["saved", "edited_saved", "not_useful_now", "wrong_hallucinated", "ignored"] as const
     }).notNull(),
     feedbackTagsJson: jsonb("feedback_tags_json").$type<string[]>(),
     editedPayloadJson: jsonb("edited_payload_json"),

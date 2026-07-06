@@ -24,10 +24,7 @@ import {
   listProposalReviewsForCandidate
 } from "./proposalQueries.js";
 import { createTimelineCapture, type MakeDurableDependencies } from "./timelineCommands.js";
-import {
-  getTimelineCaptureForUser,
-  listTimelineCapturesForUser
-} from "./timelineQueries.js";
+import { getTimelineCaptureForUser, listTimelineCapturesForUser } from "./timelineQueries.js";
 
 const userA = "user-a";
 const userB = "user-b";
@@ -46,9 +43,11 @@ async function buildContext(): Promise<TestContext> {
   return { db, deps: { createId: () => `id-${(sequence += 1)}`, db } };
 }
 
-async function capture(userId: string, now: Date, rawInputText = "I couldn't say it"): ReturnType<
-  typeof createTimelineCapture
-> {
+async function capture(
+  userId: string,
+  now: Date,
+  rawInputText = "I couldn't say it"
+): ReturnType<typeof createTimelineCapture> {
   const request = parseCreateTimelineCaptureRequest({ rawInputText });
   return createTimelineCapture(context.deps, request, userId, now);
 }

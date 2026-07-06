@@ -41,9 +41,7 @@ describe("createTimelineCaptureRequest", () => {
     expect(() =>
       parseCreateTimelineCaptureRequest({ captureSource: "sms", rawInputText: "x" })
     ).toThrow();
-    expect(() =>
-      parseCreateTimelineCaptureRequest({ rawInputText: "x", userId: "u" })
-    ).toThrow();
+    expect(() => parseCreateTimelineCaptureRequest({ rawInputText: "x", userId: "u" })).toThrow();
   });
 
   it.each(captureInputModes)("accepts input mode %s", (inputMode) => {
@@ -110,9 +108,9 @@ describe("createProposalCandidateRequest", () => {
   });
 
   it.each(proposalDuplicateStatuses)("accepts duplicate status %s", (duplicateStatus) => {
-    expect(
-      parseCreateProposalCandidateRequest({ ...base, duplicateStatus }).duplicateStatus
-    ).toBe(duplicateStatus);
+    expect(parseCreateProposalCandidateRequest({ ...base, duplicateStatus }).duplicateStatus).toBe(
+      duplicateStatus
+    );
   });
 });
 

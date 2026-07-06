@@ -56,9 +56,7 @@ describe("enrollRecallItemRequest", () => {
   });
 
   it("rejects a blank cue and a blank tag", () => {
-    expect(() =>
-      parseEnrollRecallItemRequest({ cue: "  ", kind: "phrase", text: "x" })
-    ).toThrow();
+    expect(() => parseEnrollRecallItemRequest({ cue: "  ", kind: "phrase", text: "x" })).toThrow();
     expect(() =>
       parseEnrollRecallItemRequest({ kind: "phrase", tags: [" "], text: "x" })
     ).toThrow();
