@@ -32,12 +32,16 @@ const SNOOZE_DEFER_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Enroll a recall item for a user, seeding its SM-2 review state (due immediately). Provenance and
-// gloss are optional; absent means jotted / LLM-supplied.
+// gloss are optional; absent means jotted / LLM-supplied. `sourceProposalCandidateId` is an INTERNAL
+// argument (never taken from the client request): it is set only by the Make Durable save boundary
+// (`saveProposalRecallItem`), which first validates the proposal's existence, ownership, and provenance
+// match. A raw enroll (jot / reading / speech) passes null.
 export async function enrollRecallItem(
   dependencies: RecallDependencies,
   request: EnrollRecallItemRequest,
   userId: string,
-  now: Date
+  now: Date,
+  sourceProposalCandidateId: string | null = null
 ): Promise<RecallItemDto> {
   const id = dependencies.createId();
   const review = newReviewState(now);
@@ -53,7 +57,7 @@ export async function enrollRecallItem(
     useContext: request.useContext ?? null,
     category: request.category ?? null,
     tagsJson: request.tags ?? null,
-    sourceProposalCandidateId: request.sourceProposalCandidateId ?? null,
+    sourceProposalCandidateId,
     userId,
     ...reviewStateColumns(review)
   };

@@ -47,12 +47,21 @@ describe("enrollRecallItemRequest", () => {
       cue: "a service is back after a restart",
       kind: "phrase" as const,
       provenanceEntryId: "timeline-1",
-      sourceProposalCandidateId: "cand-1",
       tags: ["service-status"],
       text: "WorkInsight is back up now",
       useContext: "reporting service availability"
     };
     expect(parseEnrollRecallItemRequest(request)).toEqual(request);
+  });
+
+  it("rejects a client-supplied sourceProposalCandidateId (set only by the save boundary)", () => {
+    expect(() =>
+      parseEnrollRecallItemRequest({
+        kind: "phrase",
+        sourceProposalCandidateId: "cand-1",
+        text: "x"
+      })
+    ).toThrow();
   });
 
   it("rejects a blank cue and a blank tag", () => {

@@ -45,20 +45,17 @@ export const enrollRecallItemRequestSchema = z
       .nullish(),
     text: z.string().refine(isNonBlank, { message: "text must be non-empty." }),
     // Optional production-style recall metadata (#451). Absent on reading/speech/jot deposits; set when
-    // an item is made durable from a Make Durable proposal. `sourceProposalCandidateId` links the item
-    // back to the candidate it was saved from (evidence/audit); it does NOT replace `provenanceEntryId`,
-    // which still points at the source timeline entry.
+    // an item is made durable from a Make Durable proposal. NOTE: `sourceProposalCandidateId` is
+    // deliberately NOT accepted here — it is an integrity-bearing link that must be validated (the
+    // proposal exists, is the user's, and matches the provenance timeline entry), so it is set only by
+    // the Make Durable save boundary (`saveProposalRecallItem`), never by a raw enroll client.
     cue: z.string().refine(isNonBlank, { message: "cue must be non-empty." }).nullish(),
     useContext: z
       .string()
       .refine(isNonBlank, { message: "useContext must be non-empty." })
       .nullish(),
     category: recallCategorySchema.nullish(),
-    tags: z.array(z.string().refine(isNonBlank, { message: "tag must be non-empty." })).nullish(),
-    sourceProposalCandidateId: z
-      .string()
-      .refine(isNonBlank, { message: "sourceProposalCandidateId must be non-empty." })
-      .nullish()
+    tags: z.array(z.string().refine(isNonBlank, { message: "tag must be non-empty." })).nullish()
   })
   .strict();
 

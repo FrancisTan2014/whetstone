@@ -9,15 +9,20 @@ import {
   parseProposalReviewDto,
   parseRecordProposalReviewRequest,
   parseTimelineCaptureDto,
-  type CreateProposalCandidateRequest
+  type CreateProposalCandidateRequest,
+  type ProposalCandidateDto
 } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, timelineEntries } from "../../db/schema.js";
+import { entries, proposalCandidates, timelineEntries } from "../../db/schema.js";
 import { enrollRecallItem, type RecallDependencies } from "../recall/recallCommands.js";
-import { getRecallItemForUser } from "../recall/recallQueries.js";
-import { createProposalCandidate, recordProposalReview } from "./proposalCommands.js";
+import { getRecallItemForUser, listRecallItems } from "../recall/recallQueries.js";
+import {
+  createProposalCandidate,
+  recordProposalReview,
+  saveProposalRecallItem
+} from "./proposalCommands.js";
 import {
   getProposalCandidateForUser,
   listProposalCandidatesForUser,
@@ -65,6 +70,25 @@ function candidateRequest(
     type: "phrase_chunk",
     ...overrides
   });
+}
+
+// Create a candidate for one of `userId`'s captures and unwrap the success result. Used where the
+// ownership gate is not the thing under test.
+async function createCandidate(
+  overrides: Partial<CreateProposalCandidateRequest> & { timelineEntryId: string },
+  userId = userA,
+  now = t1
+): Promise<ProposalCandidateDto> {
+  const result = await createProposalCandidate(
+    context.deps,
+    candidateRequest(overrides),
+    userId,
+    now
+  );
+  if (result.status !== "created") {
+    throw new Error(`expected created candidate, got ${result.status}`);
+  }
+  return result.candidate;
 }
 
 beforeEach(async () => {
@@ -144,12 +168,7 @@ describe("createProposalCandidate", () => {
   it("stores a gated candidate for a capture and round-trips its DTO", async () => {
     const cap = await capture(userA, t0);
 
-    const dto = await createProposalCandidate(
-      context.deps,
-      candidateRequest({ timelineEntryId: cap.entryId }),
-      userA,
-      t1
-    );
+    const dto = await createCandidate({ timelineEntryId: cap.entryId });
 
     expect(dto).toEqual({
       id: "id-2",
@@ -173,18 +192,13 @@ describe("createProposalCandidate", () => {
   it("keeps optional novelty and related-recall links when supplied", async () => {
     const cap = await capture(userA, t0);
 
-    const dto = await createProposalCandidate(
-      context.deps,
-      candidateRequest({
-        duplicateStatus: "related_but_distinct",
-        noveltyReason: "new context",
-        status: "visible",
-        timelineEntryId: cap.entryId,
-        type: "couldnt_say_gap"
-      }),
-      userA,
-      t1
-    );
+    const dto = await createCandidate({
+      duplicateStatus: "related_but_distinct",
+      noveltyReason: "new context",
+      status: "visible",
+      timelineEntryId: cap.entryId,
+      type: "couldnt_say_gap"
+    });
 
     expect(dto).toMatchObject({
       duplicateStatus: "related_but_distinct",
@@ -194,14 +208,35 @@ describe("createProposalCandidate", () => {
     });
   });
 
-  it("lists and gets candidates scoped to the owner", async () => {
-    const cap = await capture(userA, t0);
-    const created = await createProposalCandidate(
+  it("refuses to attach a candidate to another user's capture and stores nothing", async () => {
+    // userB owns the capture; userA must not be able to hang a candidate off it via its known entry id.
+    const foreignCapture = await capture(userB, t0, "not yours");
+
+    const result = await createProposalCandidate(
       context.deps,
-      candidateRequest({ timelineEntryId: cap.entryId }),
+      candidateRequest({ timelineEntryId: foreignCapture.entryId }),
       userA,
       t1
     );
+
+    expect(result).toEqual({ status: "timeline_not_found" });
+    expect(await context.db.select().from(proposalCandidates)).toEqual([]);
+  });
+
+  it("rejects a candidate for a non-existent capture", async () => {
+    const result = await createProposalCandidate(
+      context.deps,
+      candidateRequest({ timelineEntryId: "no-such-entry" }),
+      userA,
+      t1
+    );
+
+    expect(result).toEqual({ status: "timeline_not_found" });
+  });
+
+  it("lists and gets candidates scoped to the owner", async () => {
+    const cap = await capture(userA, t0);
+    const created = await createCandidate({ timelineEntryId: cap.entryId });
 
     expect((await listProposalCandidatesForUser(context.db, userA)).map((c) => c.id)).toEqual([
       created.id
@@ -215,12 +250,7 @@ describe("createProposalCandidate", () => {
 describe("recordProposalReview", () => {
   async function seedCandidate(): Promise<string> {
     const cap = await capture(userA, t0);
-    const created = await createProposalCandidate(
-      context.deps,
-      candidateRequest({ timelineEntryId: cap.entryId }),
-      userA,
-      t1
-    );
+    const created = await createCandidate({ timelineEntryId: cap.entryId });
     return created.id;
   }
 
@@ -291,31 +321,31 @@ describe("recordProposalReview", () => {
   });
 });
 
-describe("recall integration (Make Durable save)", () => {
+describe("saveProposalRecallItem (Make Durable save boundary)", () => {
   // The recall deps reuse the same db; a separate id sequence keeps recall ids independent of the
   // Make Durable ids so provenance/source links are unambiguous in the assertions.
-  function recallDeps(): RecallDependencies {
+  function recallDeps(): MakeDurableDependencies {
     let sequence = 0;
     return { createId: () => `recall-${(sequence += 1)}`, db: context.db };
   }
 
-  it("saves a production recall item whose provenance points at the timeline entry", async () => {
+  async function seed(): Promise<{ capture: string; candidateId: string }> {
     const cap = await capture(userA, t0);
-    const candidate = await createProposalCandidate(
-      context.deps,
-      candidateRequest({ timelineEntryId: cap.entryId }),
-      userA,
-      t1
-    );
+    const candidate = await createCandidate({ timelineEntryId: cap.entryId });
+    return { candidateId: candidate.id, capture: cap.entryId };
+  }
 
-    const item = await enrollRecallItem(
+  it("saves a production recall item whose provenance points at the timeline entry", async () => {
+    const { candidateId, capture: captureId } = await seed();
+
+    const result = await saveProposalRecallItem(
       recallDeps(),
+      candidateId,
       {
         category: "work",
         cue: "a local service is back after you restarted it",
         kind: "phrase",
-        provenanceEntryId: cap.entryId,
-        sourceProposalCandidateId: candidate.id,
+        provenanceEntryId: captureId,
         tags: ["service-status"],
         text: "WorkInsight is back up now",
         useContext: "reporting service availability at work"
@@ -324,25 +354,85 @@ describe("recall integration (Make Durable save)", () => {
       t2
     );
 
+    expect(result.status).toBe("saved");
+    if (result.status !== "saved") {
+      throw new Error("expected saved");
+    }
+    const { item } = result;
     // Existing recall invariants preserved: chunk_id null, provenance points at the timeline entry.
     expect(item.chunkId).toBeNull();
-    expect(item.provenanceEntryId).toBe(cap.entryId);
-    // New production metadata persisted.
+    expect(item.provenanceEntryId).toBe(captureId);
+    // The source link is stamped by the boundary (never taken from the caller), plus production metadata.
     expect(item).toMatchObject({
       category: "work",
       cue: "a local service is back after you restarted it",
-      sourceProposalCandidateId: candidate.id,
+      sourceProposalCandidateId: candidateId,
       tags: ["service-status"],
       useContext: "reporting service availability at work"
     });
 
-    const reloaded = await getRecallItemForUser(context.db, item.id, userA);
-    expect(reloaded).toEqual(item);
+    expect(await getRecallItemForUser(context.db, item.id, userA)).toEqual(item);
+  });
+
+  it("rejects a forged proposal id and creates no recall item", async () => {
+    const { capture: captureId } = await seed();
+
+    const result = await saveProposalRecallItem(
+      recallDeps(),
+      "no-such-candidate",
+      { kind: "phrase", provenanceEntryId: captureId, text: "x" },
+      userA,
+      t2
+    );
+
+    expect(result).toEqual({ status: "proposal_not_found" });
+    expect(await listRecallItems(context.db, userA)).toEqual([]);
+  });
+
+  it("rejects another user's proposal id (ownership) and creates no recall item", async () => {
+    const { candidateId, capture: captureId } = await seed();
+
+    const result = await saveProposalRecallItem(
+      recallDeps(),
+      candidateId,
+      { kind: "phrase", provenanceEntryId: captureId, text: "x" },
+      userB,
+      t2
+    );
+
+    expect(result).toEqual({ status: "proposal_not_found" });
+    expect(await listRecallItems(context.db, userB)).toEqual([]);
+  });
+
+  it("rejects a provenance that does not match the candidate's timeline entry", async () => {
+    const { candidateId } = await seed();
+    const otherCapture = await capture(userA, t1, "a different capture");
+
+    const mismatch = await saveProposalRecallItem(
+      recallDeps(),
+      candidateId,
+      { kind: "phrase", provenanceEntryId: otherCapture.entryId, text: "x" },
+      userA,
+      t2
+    );
+    expect(mismatch).toEqual({ status: "provenance_mismatch" });
+
+    // A missing provenance link is likewise rejected — a Make Durable save MUST be provenance-linked.
+    const missing = await saveProposalRecallItem(
+      recallDeps(),
+      candidateId,
+      { kind: "phrase", text: "x" },
+      userA,
+      t2
+    );
+    expect(missing).toEqual({ status: "provenance_mismatch" });
+
+    expect(await listRecallItems(context.db, userA)).toEqual([]);
   });
 
   it("leaves production metadata null for a plain (non-Make-Durable) recall item", async () => {
     const item = await enrollRecallItem(
-      recallDeps(),
+      recallDeps() as RecallDependencies,
       { kind: "idiom", text: "spill the beans" },
       userA,
       t0

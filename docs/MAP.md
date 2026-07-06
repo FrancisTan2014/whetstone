@@ -101,9 +101,14 @@ can navigate them from another package.
   `timelineQueries.ts` reads user-scoped captures. `proposalCommands.ts`/`proposalQueries.ts` own
   `proposal_candidates` (gated suggestions: type/status/confidence/evidence/`payload_json`/duplicate
   status/model+prompt) and `proposal_reviews` (Save/Edit/Not-useful/Wrong outcomes, user-scoped via the
-  parent candidate). A saved proposal becomes durable via the existing `enrollRecallItem`, using
-  `recall_items.provenance_entry_id` → the source `timeline_entries` Entry; `recall_items` also gains
-  nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
+  parent candidate). Ownership is enforced at the command boundary, not just by DB FKs:
+  `createProposalCandidate` scopes `timeline_entry_id` through `getTimelineCaptureForUser`
+  (`timeline_not_found` for a forged/foreign capture), and `saveProposalRecallItem` is the ONLY path that
+  stamps `recall_items.source_proposal_candidate_id` — it verifies the candidate exists, is the user's,
+  and that `provenanceEntryId` matches the candidate's `timeline_entry_id` before calling the existing
+  `enrollRecallItem` (which takes the validated source id as an internal argument, never from the client
+  request). Provenance uses `recall_items.provenance_entry_id` → the source `timeline_entries` Entry;
+  `recall_items` also gains nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
   `source_proposal_candidate_id`) so reading/speech/jot feeders are untouched. The `timeline_entry` Entry
   type lives in `@whetstone/domain` (`entry.ts`); DTOs/enums in `@whetstone/contracts`
   (`makeDurableContracts.ts`, plus recall extensions in `recallContracts.ts`).
@@ -416,7 +421,7 @@ can navigate them from another package.
 ### `src/apps/web/` — React + Vite PWA
 
 - Installable PWA (#438): `vite.config.ts` runs `vite-plugin-pwa` (generateSW, `registerType:
-  "autoUpdate"`) — the manifest (`display: standalone`, Day-token `theme_color`/`background_color`) +
+"autoUpdate"`) — the manifest (`display: standalone`, Day-token `theme_color`/`background_color`) +
   a Workbox service worker precaching the built shell; icons live in `public/` (committed `icon.svg`
   source + generated PNGs incl. a 512 maskable + 180 apple-touch), iOS/desktop meta in `index.html`.
   The SW is off in dev and the E2E/screenshot harnesses (`devOptions.enabled=false` +
