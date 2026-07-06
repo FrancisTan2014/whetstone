@@ -1247,6 +1247,27 @@ describe("ReaderPage", () => {
     expect(await screen.findByText("Section two body.")).toBeDefined();
   });
 
+  it("opens the target chapter when a #fragment nav entry's anchor cannot be resolved (#495)", async () => {
+    seedNavWork();
+    // A cross-chapter jump where the target unit isn't loaded: its anchor is not in the index, so the
+    // fragment does not resolve. The reader must still open the target chapter (not stay put / no-op).
+    mockedFetchWorkAnchorIndex.mockImplementation(async (workEntryId: string) => ({
+      anchors: [],
+      workEntryId: toEntryId(workEntryId)
+    }));
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Expand Chapter Two" }));
+    await user.click(within(toc).getByRole("button", { name: "Section 2.1" }));
+
+    // No block to jump to (the anchor missed), but the entry's target unit (Chapter Two) opens.
+    expect(await screen.findByText("Chapter two intro.")).toBeDefined();
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
+  });
+
   it("no-ops selecting a nav entry with no resolvable target", async () => {
     seedNavWork();
     const user = userEvent.setup();

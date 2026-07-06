@@ -192,14 +192,16 @@ describe("resolveTocEntryNavigation", () => {
     ).toEqual({ blockEntryId: "block-note-a", kind: "block" });
   });
 
-  it("no-ops a #fragment entry whose anchor does not resolve", () => {
+  it("falls back to opening the target unit's top when a #fragment does not resolve (#495)", () => {
+    // A cross-chapter TOC jump: the target unit's blocks are not loaded, so its anchor is not in the
+    // index. Rather than no-op (leaving the reader on the current chapter), open the target unit.
     expect(
       resolveTocEntryNavigation(
         tocStructure,
         anchorIndex,
         tocEntry({ targetAnchor: "missing", targetUnitEntryId: "u-1" })
       )
-    ).toEqual({ kind: "none" });
+    ).toEqual({ kind: "unit", unitIndex: 0 });
   });
 });
 
