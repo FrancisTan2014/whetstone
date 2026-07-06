@@ -36,6 +36,7 @@ import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { checkCoachHealth } from "./coach/coachHealth.js";
 import { createDiaryTidy } from "./features/diary/diaryTidy.js";
+import { createProposalProvider } from "./features/makeDurable/proposalProvider.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -201,6 +202,15 @@ const server = createServer({
   nudge: {
     db,
     now: () => new Date()
+  },
+  // The Make Durable Quick Capture loop (#452): the proposal seam reuses the cheap-tier local model
+  // behind the shared `LlmModel` seam (#385) in JSON mode — a proposal attempt that never blocks or
+  // fails capture (an unreachable/slow daemon simply yields no card).
+  makeDurable: {
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date(),
+    propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel)
   },
   search: { db },
   session: {

@@ -8,6 +8,7 @@ import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
 import { fetchWorks } from "../library/libraryApi.js";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
+import { MakeDurableSection } from "../makeDurable/MakeDurableSection.js";
 import { fetchLatestReadingPosition } from "./todayApi.js";
 
 // Today is a calm, finite, clearable daily board (PRODUCT.md "v0 assistant home (Today)" + "The
@@ -95,6 +96,7 @@ export function TodayPage(): React.JSX.Element {
       <div className="mt-6 flex flex-col gap-4">
         {firstRun ? <FirstRunCard /> : null}
         <DiaryCaptureCard />
+        <MakeDurableSection />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />

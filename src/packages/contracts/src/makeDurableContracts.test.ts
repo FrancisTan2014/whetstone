@@ -5,9 +5,16 @@ import {
   captureSources,
   parseCreateProposalCandidateRequest,
   parseCreateTimelineCaptureRequest,
+  parseMakeDurableCardDto,
+  parseMakeDurableCardListDto,
   parseProposalCandidateDto,
+  parseProposalGeneration,
+  parseProposalPayload,
   parseProposalReviewDto,
+  parseQuickCaptureRequest,
+  parseQuickCaptureResultDto,
   parseRecordProposalReviewRequest,
+  parseReviewProposalRequest,
   parseTimelineCaptureDto,
   proposalCandidateStatuses,
   proposalCandidateTypes,
@@ -184,5 +191,89 @@ describe("proposalReviewDto", () => {
       proposalCandidateId: "cand-1"
     };
     expect(parseProposalReviewDto(dto)).toEqual(dto);
+  });
+});
+
+describe("Quick Capture review loop contracts (#452)", () => {
+  const payload = {
+    target: "WorkInsight is back up now",
+    cue: "a service is back",
+    useContext: "reporting availability",
+    category: "work" as const,
+    tags: ["service-status"]
+  };
+
+  it("parses a typed quick capture and rejects blank text", () => {
+    expect(parseQuickCaptureRequest({ text: "the deploy failed" })).toEqual({
+      text: "the deploy failed"
+    });
+    expect(() => parseQuickCaptureRequest({ text: "   " })).toThrow();
+  });
+
+  it("round-trips a proposal payload and rejects a missing category or blank target", () => {
+    expect(parseProposalPayload(payload)).toEqual(payload);
+    const { category: _omitted, ...noCategory } = payload;
+    expect(() => parseProposalPayload(noCategory)).toThrow();
+    expect(() => parseProposalPayload({ ...payload, target: "  " })).toThrow();
+  });
+
+  it("accepts zero or one generated candidate but rejects more than one", () => {
+    expect(parseProposalGeneration({ candidates: [] })).toEqual({ candidates: [] });
+
+    const candidate = {
+      type: "recurring_pattern" as const,
+      confidence: 0.8,
+      reason: "a repeated preposition error",
+      evidenceQuote: "depends of",
+      payload
+    };
+    expect(parseProposalGeneration({ candidates: [candidate] }).candidates).toHaveLength(1);
+    expect(() => parseProposalGeneration({ candidates: [candidate, candidate] })).toThrow();
+    expect(() =>
+      parseProposalGeneration({ candidates: [{ ...candidate, confidence: 2 }] })
+    ).toThrow();
+  });
+
+  it("round-trips a review card and a card list", () => {
+    const card = {
+      proposalCandidateId: "cand-1",
+      timelineEntryId: "entry-1",
+      type: "phrase_chunk" as const,
+      target: "WorkInsight is back up now",
+      cue: "a service is back",
+      useContext: "reporting availability",
+      reason: "a reusable status phrase",
+      category: "work" as const,
+      tags: ["service-status"]
+    };
+    expect(parseMakeDurableCardDto(card)).toEqual(card);
+    expect(parseMakeDurableCardListDto({ cards: [card] })).toEqual({ cards: [card] });
+  });
+
+  it("round-trips a quick capture result with and without a card", () => {
+    const timelineEntry = {
+      entryId: "entry-1",
+      createdAt: "2026-07-06T09:30:00.000Z",
+      entryDate: "2026-07-06",
+      inputMode: "typed" as const,
+      captureSource: "quick_capture" as const,
+      rawInputText: "the deploy failed",
+      tidiedText: null,
+      language: null,
+      rawAudioPath: null
+    };
+    expect(parseQuickCaptureResultDto({ card: null, timelineEntry })).toEqual({
+      card: null,
+      timelineEntry
+    });
+  });
+
+  it("requires an edited payload only when the outcome is edited_saved", () => {
+    expect(parseReviewProposalRequest({ outcome: "saved" })).toEqual({ outcome: "saved" });
+    expect(
+      parseReviewProposalRequest({ outcome: "edited_saved", editedPayload: payload }).editedPayload
+    ).toEqual(payload);
+    expect(() => parseReviewProposalRequest({ outcome: "edited_saved" })).toThrow();
+    expect(() => parseReviewProposalRequest({ outcome: "nope" })).toThrow();
   });
 });

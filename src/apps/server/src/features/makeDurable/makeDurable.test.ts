@@ -17,7 +17,7 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { entries, proposalCandidates, timelineEntries } from "../../db/schema.js";
 import { enrollRecallItem, type RecallDependencies } from "../recall/recallCommands.js";
-import { getRecallItemForUser, listRecallItems } from "../recall/recallQueries.js";
+import { getRecallItemForUser } from "../recall/recallQueries.js";
 import {
   createProposalCandidate,
   recordProposalReview,
@@ -64,7 +64,13 @@ function candidateRequest(
     confidence: 0.9,
     evidenceQuote: "back up now",
     modelName: "llama3",
-    payload: { cue: "a service is back", target: "WorkInsight is back up now" },
+    payload: {
+      cue: "a local service is back",
+      target: "WorkInsight is back up now",
+      useContext: "reporting service availability",
+      category: "work",
+      tags: ["service-status"]
+    },
     promptVersion: "proposal-v1",
     reason: "reusable status phrase",
     type: "phrase_chunk",
@@ -178,7 +184,13 @@ describe("createProposalCandidate", () => {
       confidence: 0.9,
       reason: "reusable status phrase",
       evidenceQuote: "back up now",
-      payload: { cue: "a service is back", target: "WorkInsight is back up now" },
+      payload: {
+        cue: "a local service is back",
+        target: "WorkInsight is back up now",
+        useContext: "reporting service availability",
+        category: "work",
+        tags: ["service-status"]
+      },
       duplicateStatus: "unique",
       relatedRecallItemId: null,
       noveltyReason: null,
@@ -321,7 +333,7 @@ describe("recordProposalReview", () => {
   });
 });
 
-describe("saveProposalRecallItem (Make Durable save boundary)", () => {
+describe("saveProposalRecallItem (Make Durable save step)", () => {
   // The recall deps reuse the same db; a separate id sequence keeps recall ids independent of the
   // Make Durable ids so provenance/source links are unambiguous in the assertions.
   function recallDeps(): MakeDurableDependencies {
@@ -329,105 +341,69 @@ describe("saveProposalRecallItem (Make Durable save boundary)", () => {
     return { createId: () => `recall-${(sequence += 1)}`, db: context.db };
   }
 
-  async function seed(): Promise<{ capture: string; candidateId: string }> {
+  async function seed(): Promise<ProposalCandidateDto> {
     const cap = await capture(userA, t0);
-    const candidate = await createCandidate({ timelineEntryId: cap.entryId });
-    return { candidateId: candidate.id, capture: cap.entryId };
+    return createCandidate({ timelineEntryId: cap.entryId });
   }
 
-  it("saves a production recall item whose provenance points at the timeline entry", async () => {
-    const { candidateId, capture: captureId } = await seed();
+  it("derives a production recall item from the candidate, provenance-linked to the timeline entry", async () => {
+    const candidate = await seed();
 
-    const result = await saveProposalRecallItem(
-      recallDeps(),
-      candidateId,
-      {
-        category: "work",
-        cue: "a local service is back after you restarted it",
-        kind: "phrase",
-        provenanceEntryId: captureId,
-        tags: ["service-status"],
-        text: "WorkInsight is back up now",
-        useContext: "reporting service availability at work"
-      },
-      userA,
-      t2
-    );
+    const item = await saveProposalRecallItem(recallDeps(), candidate, null, userA, t2);
 
-    expect(result.status).toBe("saved");
-    if (result.status !== "saved") {
-      throw new Error("expected saved");
-    }
-    const { item } = result;
-    // Existing recall invariants preserved: chunk_id null, provenance points at the timeline entry.
+    // Recall invariants preserved: chunk_id null, provenance points at the candidate's timeline entry,
+    // and the item is derived from the stored payload (kind from the proposal type).
     expect(item.chunkId).toBeNull();
-    expect(item.provenanceEntryId).toBe(captureId);
-    // The source link is stamped by the boundary (never taken from the caller), plus production metadata.
+    expect(item.provenanceEntryId).toBe(candidate.timelineEntryId);
     expect(item).toMatchObject({
       category: "work",
-      cue: "a local service is back after you restarted it",
-      sourceProposalCandidateId: candidateId,
+      cue: "a local service is back",
+      kind: "phrase",
+      sourceProposalCandidateId: candidate.id,
       tags: ["service-status"],
-      useContext: "reporting service availability at work"
+      text: "WorkInsight is back up now",
+      useContext: "reporting service availability"
     });
 
     expect(await getRecallItemForUser(context.db, item.id, userA)).toEqual(item);
   });
 
-  it("rejects a forged proposal id and creates no recall item", async () => {
-    const { capture: captureId } = await seed();
+  it("uses the learner's edited payload on Edit + Save", async () => {
+    const candidate = await seed();
 
-    const result = await saveProposalRecallItem(
+    const item = await saveProposalRecallItem(
       recallDeps(),
-      "no-such-candidate",
-      { kind: "phrase", provenanceEntryId: captureId, text: "x" },
+      candidate,
+      {
+        cue: "the wifi is working again",
+        target: "It's back up now",
+        useContext: "telling a friend",
+        category: "daily_life",
+        tags: []
+      },
       userA,
       t2
     );
 
-    expect(result).toEqual({ status: "proposal_not_found" });
-    expect(await listRecallItems(context.db, userA)).toEqual([]);
+    expect(item).toMatchObject({
+      category: "daily_life",
+      sourceProposalCandidateId: candidate.id,
+      tags: [],
+      text: "It's back up now",
+      useContext: "telling a friend"
+    });
   });
 
-  it("rejects another user's proposal id (ownership) and creates no recall item", async () => {
-    const { candidateId, capture: captureId } = await seed();
+  it("maps a recurring_pattern proposal to a pattern recall item", async () => {
+    const cap = await capture(userA, t0);
+    const candidate = await createCandidate({
+      timelineEntryId: cap.entryId,
+      type: "recurring_pattern"
+    });
 
-    const result = await saveProposalRecallItem(
-      recallDeps(),
-      candidateId,
-      { kind: "phrase", provenanceEntryId: captureId, text: "x" },
-      userB,
-      t2
-    );
+    const item = await saveProposalRecallItem(recallDeps(), candidate, null, userA, t2);
 
-    expect(result).toEqual({ status: "proposal_not_found" });
-    expect(await listRecallItems(context.db, userB)).toEqual([]);
-  });
-
-  it("rejects a provenance that does not match the candidate's timeline entry", async () => {
-    const { candidateId } = await seed();
-    const otherCapture = await capture(userA, t1, "a different capture");
-
-    const mismatch = await saveProposalRecallItem(
-      recallDeps(),
-      candidateId,
-      { kind: "phrase", provenanceEntryId: otherCapture.entryId, text: "x" },
-      userA,
-      t2
-    );
-    expect(mismatch).toEqual({ status: "provenance_mismatch" });
-
-    // A missing provenance link is likewise rejected — a Make Durable save MUST be provenance-linked.
-    const missing = await saveProposalRecallItem(
-      recallDeps(),
-      candidateId,
-      { kind: "phrase", text: "x" },
-      userA,
-      t2
-    );
-    expect(missing).toEqual({ status: "provenance_mismatch" });
-
-    expect(await listRecallItems(context.db, userA)).toEqual([]);
+    expect(item.kind).toBe("pattern");
   });
 
   it("leaves production metadata null for a plain (non-Make-Durable) recall item", async () => {

@@ -63,6 +63,21 @@ export { rankReadingNudges, recencyBoost, topReadingNudge } from "./readingNudge
 export type { ReadingNudgeCandidate, RankedReadingNudge } from "./readingNudge.js";
 export { buildDiaryTidyPrompt, diaryTidyInstructions } from "./diaryTidy.js";
 export {
+  buildProposalPrompt,
+  classifyProposalDuplicate,
+  DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
+  evaluateProposalGate,
+  isFaithfulQuote,
+  normalizeForMatch,
+  PROPOSAL_PROMPT_VERSION,
+  proposalPromptInstructions
+} from "./makeDurable.js";
+export type {
+  ExistingRecallItem,
+  ProposalDuplicateVerdict,
+  ProposalGateVerdict
+} from "./makeDurable.js";
+export {
   groupByDayDesc,
   isDayKey,
   monthBounds,

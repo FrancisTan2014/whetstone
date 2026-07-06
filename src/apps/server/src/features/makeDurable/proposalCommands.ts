@@ -2,11 +2,18 @@ import type {
   CreateProposalCandidateRequest,
   EnrollRecallItemRequest,
   ProposalCandidateDto,
+  ProposalCandidateStatus,
+  ProposalCandidateType,
+  ProposalPayload,
   ProposalReviewDto,
   RecallItemDto,
+  RecallKind,
   RecordProposalReviewRequest
 } from "@whetstone/contracts";
+import { parseProposalPayload } from "@whetstone/contracts";
+import { and, asc, eq } from "drizzle-orm";
 
+import type { DbClient } from "../../db/dbClient.js";
 import { proposalCandidates, proposalReviews } from "../../db/schema.js";
 import { enrollRecallItem } from "../recall/recallCommands.js";
 import type { MakeDurableDependencies } from "./timelineCommands.js";
@@ -22,13 +29,16 @@ export type CreateProposalCandidateResult =
   | Readonly<{ status: "timeline_not_found" }>;
 
 export type RecordProposalReviewResult =
-  | Readonly<{ review: ProposalReviewDto; status: "recorded" }>
+  | Readonly<{ candidate: ProposalCandidateDto; review: ProposalReviewDto; status: "recorded" }>
   | Readonly<{ status: "not_found" }>;
 
-export type SaveProposalRecallResult =
-  | Readonly<{ item: RecallItemDto; status: "saved" }>
-  | Readonly<{ status: "proposal_not_found" }>
-  | Readonly<{ status: "provenance_mismatch" }>;
+// Map each proposal type to the recall kind a saved item takes: a phrase/gap becomes a `phrase`, a
+// recurring production fix becomes a `pattern`.
+const recallKindByProposalType: Record<ProposalCandidateType, RecallKind> = {
+  couldnt_say_gap: "phrase",
+  phrase_chunk: "phrase",
+  recurring_pattern: "pattern"
+};
 
 // Record a gated Make Durable suggestion for one of the user's captures. The candidate is workflow
 // state, not durable learning material — it becomes a recall item only when reviewed and saved. The
@@ -54,6 +64,22 @@ export async function createProposalCandidate(
     return { status: "timeline_not_found" };
   }
 
+  return {
+    candidate: await insertProposalCandidate(dependencies, request, userId, now),
+    status: "created"
+  };
+}
+
+// Persist a proposal candidate row and return its DTO. Assumes the caller has ALREADY established that
+// `timeline_entry_id` belongs to `userId` (either via `createProposalCandidate`'s check, or because the
+// caller just created that capture for the user, as Quick Capture does). Kept separate so the ownership
+// gate is not double-run; an external caller with an unvalidated id must use `createProposalCandidate`.
+export async function insertProposalCandidate(
+  dependencies: MakeDurableDependencies,
+  request: CreateProposalCandidateRequest,
+  userId: string,
+  now: Date
+): Promise<ProposalCandidateDto> {
   const row = {
     id: dependencies.createId(),
     timelineEntryId: request.timelineEntryId,
@@ -74,7 +100,7 @@ export async function createProposalCandidate(
 
   await dependencies.db.insert(proposalCandidates).values(row);
 
-  return { candidate: toProposalCandidateDto(row), status: "created" };
+  return toProposalCandidateDto(row);
 }
 
 // Record the user's decision on a proposal. Scoped to the current user so a forged or another user's
@@ -108,39 +134,71 @@ export async function recordProposalReview(
 
   await dependencies.db.insert(proposalReviews).values(row);
 
-  return { review: toProposalReviewDto(row), status: "recorded" };
+  return {
+    candidate: toProposalCandidateDto(candidate),
+    review: toProposalReviewDto(row),
+    status: "recorded"
+  };
 }
 
-// The Make Durable save boundary: the ONLY sanctioned path that stamps a recall item's
-// `source_proposal_candidate_id`. It enforces the integrity the raw `enrollRecallItem` cannot:
-//   1. the proposal candidate exists AND is owned by the current user (`proposal_not_found` otherwise —
-//      a forged or another user's candidate id is rejected), and
-//   2. the recall item's provenance points at the SAME timeline entry the proposal came from
-//      (`provenance_mismatch` when `request.provenanceEntryId` !== the candidate's `timeline_entry_id`),
-// so provenance can never cross-link to an unrelated (or another user's) capture. Only then does it
-// enroll the recall item, passing the validated candidate id inward.
+// The Make Durable save step: the ONLY path that stamps a recall item's `source_proposal_candidate_id`.
+// It takes an ALREADY-owner-validated candidate (the caller resolved it via the current user, e.g. from
+// `recordProposalReview`) and derives every recall field from it — kind from the proposal type, target/
+// cue/use-context/category/tags from the payload (or the learner's edited payload on Edit + Save), and
+// crucially `provenance_entry_id` from the candidate's own `timeline_entry_id`, so provenance can never
+// cross-link to an unrelated or another user's capture. The validated candidate id is stamped inward.
 export async function saveProposalRecallItem(
   dependencies: MakeDurableDependencies,
-  proposalCandidateId: string,
-  request: EnrollRecallItemRequest,
+  candidate: ProposalCandidateDto,
+  editedPayload: ProposalPayload | null,
   userId: string,
   now: Date
-): Promise<SaveProposalRecallResult> {
-  const candidate = await getProposalCandidateRowForUser(
-    dependencies.db,
-    proposalCandidateId,
-    userId
-  );
+): Promise<RecallItemDto> {
+  const payload = editedPayload ?? parseProposalPayload(candidate.payload);
+  const request: EnrollRecallItemRequest = {
+    kind: recallKindByProposalType[candidate.type],
+    text: payload.target,
+    gloss: payload.explanation ?? undefined,
+    cue: payload.cue,
+    useContext: payload.useContext,
+    category: payload.category,
+    tags: payload.tags ?? undefined,
+    provenanceEntryId: candidate.timelineEntryId
+  };
 
-  if (candidate === undefined) {
-    return { status: "proposal_not_found" };
+  return enrollRecallItem(dependencies, request, userId, now, candidate.id);
+}
+
+// Move one of the user's candidates to a new workflow status (e.g. `saved` after a save, `dismissed`
+// after a negative review or when gated out). Scoped to the owner so a forged/foreign id updates
+// nothing.
+export async function setProposalCandidateStatus(
+  db: DbClient,
+  id: string,
+  userId: string,
+  status: ProposalCandidateStatus
+): Promise<void> {
+  await db
+    .update(proposalCandidates)
+    .set({ status })
+    .where(and(eq(proposalCandidates.id, id), eq(proposalCandidates.userId, userId)));
+}
+
+// Promote the user's oldest held (`pending`) candidate to `visible`, if any. Called after a review
+// clears the current Today card so a proposal that was held back by the one-card cap surfaces next —
+// keeping Today at "at most one card" without silently dropping the extras. A no-op when nothing is held.
+export async function promoteOldestPendingCandidate(db: DbClient, userId: string): Promise<void> {
+  const rows = await db
+    .select({ id: proposalCandidates.id })
+    .from(proposalCandidates)
+    .where(and(eq(proposalCandidates.userId, userId), eq(proposalCandidates.status, "pending")))
+    .orderBy(asc(proposalCandidates.createdAt), asc(proposalCandidates.id))
+    .limit(1);
+
+  const oldest = rows[0];
+  if (oldest === undefined) {
+    return;
   }
 
-  if (request.provenanceEntryId !== candidate.timelineEntryId) {
-    return { status: "provenance_mismatch" };
-  }
-
-  const item = await enrollRecallItem(dependencies, request, userId, now, candidate.id);
-
-  return { item, status: "saved" };
+  await setProposalCandidateStatus(db, oldest.id, userId, "visible");
 }
