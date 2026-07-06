@@ -24,7 +24,13 @@ import {
   fetchTimeline,
   updateDiaryEntry
 } from "./diaryApi";
-import { DiaryPage, type DiaryCaptureDependencies, type DiaryRecording } from "./DiaryPage";
+import {
+  DiaryPage,
+  dayToUnmarkAfterDelete,
+  type DiaryCaptureDependencies,
+  type DiaryRecording,
+  type FlatEntry
+} from "./DiaryPage";
 
 const mockedTimeline = vi.mocked(fetchTimeline);
 const mockedCalendar = vi.mocked(fetchDiaryCalendar);
@@ -377,6 +383,71 @@ describe("DiaryPage edit and delete", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await screen.findByText(/Couldn't delete that entry/);
+  });
+
+  it("removes the calendar mark when the last entry for a day is deleted (#498)", async () => {
+    mockedDelete.mockResolvedValue();
+    mockedCalendar.mockReset();
+    mockedCalendar.mockResolvedValue({ dates: [d(30)] });
+
+    await renderReady(makeCapture().capture);
+    await screen.findByRole("button", { name: `Go to ${d(30)}` });
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByText("original text")).toBeNull());
+    // The day's only entry is gone, so its calendar mark is dropped immediately.
+    expect(screen.queryByRole("button", { name: `Go to ${d(30)}` })).toBeNull();
+  });
+
+  it("keeps the calendar mark when another entry remains on the day (#498)", async () => {
+    mockedDelete.mockResolvedValue();
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [
+        tDay(d(30), [
+          tEntry("e1", `${d(30)}T08:00:00.000Z`, "original text"),
+          tEntry("e2", `${d(30)}T09:00:00.000Z`, "sibling text")
+        ])
+      ]
+    });
+    mockedCalendar.mockReset();
+    mockedCalendar.mockResolvedValue({ dates: [d(30)] });
+
+    await renderReady(makeCapture().capture);
+    await screen.findByRole("button", { name: `Go to ${d(30)}` });
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
+
+    await waitFor(() => expect(screen.queryByText("original text")).toBeNull());
+    // A sibling entry still falls on the day, so it stays marked.
+    expect(screen.getByText("sibling text")).toBeDefined();
+    expect(screen.getByRole("button", { name: `Go to ${d(30)}` })).toBeTruthy();
+  });
+});
+
+describe("dayToUnmarkAfterDelete", () => {
+  const entry = (id: string, date: string): FlatEntry => ({
+    createdAt: `${date}T08:00:00.000Z`,
+    date,
+    id,
+    kind: "diary",
+    language: null,
+    text: id
+  });
+
+  it("returns undefined when the id is not among the loaded entries", () => {
+    expect(dayToUnmarkAfterDelete([entry("a", "2026-07-06")], "missing")).toBeUndefined();
+  });
+
+  it("returns undefined when another entry still falls on the deleted entry's day", () => {
+    const entries = [entry("a", "2026-07-06"), entry("b", "2026-07-06")];
+    expect(dayToUnmarkAfterDelete(entries, "a")).toBeUndefined();
+  });
+
+  it("returns the day when the deleted entry was the last one on it", () => {
+    const entries = [entry("a", "2026-07-06"), entry("b", "2026-07-05")];
+    expect(dayToUnmarkAfterDelete(entries, "a")).toBe("2026-07-06");
   });
 });
 
