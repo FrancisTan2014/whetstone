@@ -88,9 +88,7 @@ export function dayToUnmarkAfterDelete(
   if (removed === undefined) {
     return undefined;
   }
-  const dayStillHasEntry = entries.some(
-    (entry) => entry.id !== id && entry.date === removed.date
-  );
+  const dayStillHasEntry = entries.some((entry) => entry.id !== id && entry.date === removed.date);
   return dayStillHasEntry ? undefined : removed.date;
 }
 
