@@ -118,6 +118,14 @@ export function MakeDurableSection({
     setPhase("transcribing");
     try {
       const audio = await handle.stop();
+      // The voice adapter settles with empty audio when no utterance was confirmed (tap → silence →
+      // stop). Posting that to /transcribe would 400; instead take the calm no-speech retry directly
+      // (#465), never the generic save error.
+      if (audio.size === 0) {
+        setPhase("idle");
+        setError("Didn't catch any speech — try again.");
+        return;
+      }
       const { transcript } = await transcribe(audio);
       setPhase("idle");
       if (transcript.trim().length === 0) {
