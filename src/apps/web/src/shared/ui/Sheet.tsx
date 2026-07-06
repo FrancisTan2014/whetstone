@@ -73,7 +73,7 @@ export function Sheet({
               <Dialog.Title className="text-lg font-semibold text-text">{title}</Dialog.Title>
               <Dialog.Close
                 aria-label="Close"
-                className="rounded px-2 py-1 text-text-muted hover:text-text"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text"
               >
                 ✕
               </Dialog.Close>

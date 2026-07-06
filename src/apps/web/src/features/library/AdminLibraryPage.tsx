@@ -357,7 +357,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             <label className="flex flex-col gap-1" htmlFor="work-title">
               Title
               <input
-                className="rounded border border-border bg-surface px-3 py-2"
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
                 id="work-title"
                 onChange={(event) => setTitle(event.currentTarget.value)}
                 value={title}
@@ -367,7 +367,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             <label className="flex flex-col gap-1" htmlFor="work-type">
               Type
               <select
-                className="rounded border border-border bg-surface px-3 py-2"
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
                 id="work-type"
                 onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
                 value={workType}
@@ -383,7 +383,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             <label className="flex flex-col gap-1" htmlFor="work-language">
               Language
               <select
-                className="rounded border border-border bg-surface px-3 py-2"
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
                 id="work-language"
                 onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
                 value={language}
@@ -399,7 +399,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             <label className="flex flex-col gap-1" htmlFor="work-author">
               Author or source
               <select
-                className="rounded border border-border bg-surface px-3 py-2"
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
                 id="work-author"
                 onChange={(event) => setAuthorChoice(event.currentTarget.value)}
                 value={authorChoice}
@@ -417,7 +417,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
               <label className="flex flex-col gap-1" htmlFor="inline-author-name">
                 New author or source name
                 <input
-                  className="rounded border border-border bg-surface px-3 py-2"
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
                   id="inline-author-name"
                   onChange={(event) => setInlineAuthorName(event.currentTarget.value)}
                   value={inlineAuthorName}

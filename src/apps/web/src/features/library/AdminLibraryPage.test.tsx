@@ -384,6 +384,27 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Could not save the work. Please try again.")).toBeDefined();
   });
 
+  it("gives every Add work sheet control a >=44px hit target (#479)", async () => {
+    const user = await renderReady();
+    await openAddWork(user);
+
+    // jsdom has no layout, so assert the sizing utilities (min-h-11 = 44px) on each control. The
+    // fields were ~41-42px tall and the close control ~29x32 before this fix.
+    const fields = [
+      screen.getByLabelText("Title"),
+      screen.getByLabelText("Type"),
+      screen.getByLabelText("Language"),
+      screen.getByLabelText("Author or source"),
+      screen.getByLabelText("New author or source name")
+    ];
+    for (const field of fields) {
+      expect(field.className).toContain("min-h-11");
+    }
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close.className).toContain("min-h-11");
+    expect(close.className).toContain("min-w-11");
+  });
+
   it("disables the create button while the work is saving so it cannot double-submit", async () => {
     let resolveCreate: (value: WorkListItemDto) => void = () => {};
     mockedCreateWork.mockImplementation(
