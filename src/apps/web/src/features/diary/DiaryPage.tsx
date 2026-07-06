@@ -38,7 +38,7 @@ export type DiaryCaptureDependencies = Readonly<{
 
 // A timeline entry flattened with the day it falls under, so the pure `groupByDayDesc` can regroup the
 // loaded entries (capture prepends, lazy-load appends older) into day sections without another fetch.
-type FlatEntry = Readonly<{
+export type FlatEntry = Readonly<{
   createdAt: string;
   date: string;
   id: string;
@@ -74,6 +74,24 @@ function toFlat(entry: DiaryEntryDto): FlatEntry {
     language: entry.language,
     text: entry.text
   };
+}
+
+// The calendar day whose mark should be removed after deleting entry `id`, or undefined when nothing
+// should be unmarked (#498): undefined when the id isn't among the loaded entries, or when another
+// loaded entry still falls on that day. A loaded day holds all its entries, so "no other loaded entry
+// on that day" means the day is now empty.
+export function dayToUnmarkAfterDelete(
+  entries: ReadonlyArray<FlatEntry>,
+  id: string
+): string | undefined {
+  const removed = entries.find((entry) => entry.id === id);
+  if (removed === undefined) {
+    return undefined;
+  }
+  const dayStillHasEntry = entries.some(
+    (entry) => entry.id !== id && entry.date === removed.date
+  );
+  return dayStillHasEntry ? undefined : removed.date;
 }
 
 function dayLabel(dayKey: string): string {
@@ -186,6 +204,20 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       }
       const next = new Set(previous);
       next.add(entryDate);
+      return next;
+    });
+  }
+
+  // Remove a day's calendar mark when its last entry is deleted (#498). The timeline loads all of a
+  // day's entries together, so a loaded day's entry set is complete — the caller unmarks only after
+  // confirming no other loaded entry remains on that day.
+  function unmarkEntryDay(entryDate: string): void {
+    setMarkedDays((previous) => {
+      if (!previous.has(entryDate)) {
+        return previous;
+      }
+      const next = new Set(previous);
+      next.delete(entryDate);
       return next;
     });
   }
@@ -310,7 +342,12 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     setNotice(null);
     try {
       await deleteDiaryEntry(id);
+      const dayToUnmark = dayToUnmarkAfterDelete(entriesRef.current, id);
       setEntries((previous) => previous.filter((entry) => entry.id !== id));
+      // Drop the calendar mark when the deleted entry was the last one on its day (#498).
+      if (dayToUnmark !== undefined) {
+        unmarkEntryDay(dayToUnmark);
+      }
     } catch {
       fail("Couldn't delete that entry.");
     }
