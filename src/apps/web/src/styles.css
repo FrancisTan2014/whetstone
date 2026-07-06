@@ -433,13 +433,21 @@ code {
   justify-content: flex-end;
 }
 
+/* The popover's Close control is a primary dismiss action, so give the quiet "✕" button a >=44px hit
+   target (WCAG 2.5.5 / #460) in BOTH dimensions — the glyph alone measured only ~11x14px. Center the
+   glyph in the target with inline-flex; keep the transparent, tokenized quiet styling. */
 .lookupClose {
+  align-items: center;
   background: transparent;
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
+  display: inline-flex;
   font-size: 0.875rem;
+  justify-content: center;
   line-height: 1;
+  min-block-size: 44px;
+  min-inline-size: 44px;
 }
 
 /*
