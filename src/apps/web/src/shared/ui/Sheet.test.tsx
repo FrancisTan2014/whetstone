@@ -81,6 +81,20 @@ describe("Sheet", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("gives the close control a >=44px hit target in both dimensions (#479)", () => {
+    mockMatchMedia({});
+    render(
+      <Sheet onOpenChange={vi.fn()} open title="Note">
+        <p>panel body</p>
+      </Sheet>
+    );
+
+    // jsdom has no layout, so assert the sizing utilities (min-h-11 = min-w-11 = 44px).
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close.className).toContain("min-h-11");
+    expect(close.className).toContain("min-w-11");
+  });
+
   it("still renders its content under a reduced-motion preference", () => {
     mockMatchMedia({ "(prefers-reduced-motion: reduce)": true });
     render(
