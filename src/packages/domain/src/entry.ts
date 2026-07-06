@@ -4,7 +4,17 @@ declare const entryIdBrand: unique symbol;
 
 export type EntryId = string & { readonly [entryIdBrand]: "EntryId" };
 
-export const entryTypes = ["work", "reading_unit", "block", "note", "toc_entry"] as const;
+export const entryTypes = [
+  "work",
+  "reading_unit",
+  "block",
+  "note",
+  "toc_entry",
+  // `timeline_entry` (#451): a Make Durable / Quick Capture chronological capture is a first-class
+  // addressable Entry, so a Recall item created from a capture can point at it via
+  // `recall_items.provenance_entry_id` and captures can join the typed link graph via `entry_links`.
+  "timeline_entry"
+] as const;
 
 export type EntryType = (typeof entryTypes)[number];
 

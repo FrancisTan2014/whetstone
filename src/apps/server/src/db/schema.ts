@@ -19,7 +19,7 @@ export const entries = pgTable("entries", {
   // a work/reading unit/block, so the authored nav tree persists as its own `toc_entries` rows keyed
   // by an `entries` id (mirroring how reading units register entries).
   type: text("type", {
-    enum: ["work", "reading_unit", "block", "note", "toc_entry"] as const
+    enum: ["work", "reading_unit", "block", "note", "toc_entry", "timeline_entry"] as const
   }).notNull()
 });
 
@@ -369,6 +369,30 @@ export const recallItems = pgTable(
     // attach to a case. Null when the item is not tied to the authored corpus. Per-case mastery is
     // computed by joining a user's items to a case's chunks through this column.
     chunkId: text("chunk_id").references(() => chunks.id),
+    // Production-style recall metadata (#451) for items made durable from a Make Durable proposal.
+    // All nullable so existing reading/speech/jot feeders are unaffected (they leave these null).
+    // `cue` is the retrieval prompt; `use_context` is when/where to use the target; `category` is the
+    // one broad bucket; `tags_json` holds optional narrow tags; `source_proposal_candidate_id` links
+    // back to the candidate this item was saved from (audit/evidence) WITHOUT replacing
+    // `provenance_entry_id`, which still points at the source timeline entry.
+    cue: text("cue"),
+    useContext: text("use_context"),
+    category: text("category", {
+      enum: [
+        "language",
+        "work",
+        "family",
+        "technical",
+        "reading",
+        "reflection",
+        "daily_life"
+      ] as const
+    }),
+    tagsJson: jsonb("tags_json").$type<string[]>(),
+    // Not a Drizzle `.references()` FK: `proposal_candidates.related_recall_item_id` already points the
+    // other way, and a mutual inline FK is a type/definition cycle Drizzle cannot infer. The link is set
+    // only from a saved proposal, so it is enforced at the command boundary rather than by a DB constraint.
+    sourceProposalCandidateId: text("source_proposal_candidate_id"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     // Inlined SM-2 ReviewState (@whetstone/domain): ease, interval (days), streak, lapses, and the
     // last-reviewed (null until first review) / due timestamps. `due_at` is indexed with the user
@@ -551,4 +575,97 @@ export const nudgeState = pgTable(
     userId: text("user_id").notNull()
   },
   (table) => [primaryKey({ columns: [table.userId, table.chunkId] })]
+);
+
+// The Make Durable Timeline (#451): one user-owned chronological capture per row, keyed by its owning
+// Entry (`entries.type = "timeline_entry"`), so a Recall item made durable from a capture points at it
+// via `recall_items.provenance_entry_id -> entries.id` and captures can join the typed link graph via
+// `entry_links`. `entry_date` is the local `YYYY-MM-DD` day; `created_at` is the capture instant.
+// `raw_input_text` is preserved verbatim; `tidied_text` is the noise-removed form (null until/unless
+// tidy runs — tidy is async and may fail, and capture never blocks on it). `capture_source` spans quick
+// capture, diary, speech, reader, and writing so Diary can later be a filtered view over Timeline.
+export const timelineEntries = pgTable(
+  "timeline_entries",
+  {
+    entryId: text("entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    userId: text("user_id").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
+    entryDate: text("entry_date").notNull(),
+    inputMode: text("input_mode", { enum: ["typed", "voice"] as const }).notNull(),
+    captureSource: text("capture_source", {
+      enum: ["quick_capture", "diary", "speech", "reader", "writing"] as const
+    }).notNull(),
+    rawInputText: text("raw_input_text").notNull(),
+    tidiedText: text("tidied_text"),
+    language: text("language"),
+    rawAudioPath: text("raw_audio_path")
+  },
+  (table) => [index("timeline_entries_user_date_idx").on(table.userId, table.entryDate)]
+);
+
+// A gated Make Durable suggestion (#451): what Whetstone noticed about a capture, NOT durable learning
+// material until reviewed and saved. User-owned workflow state (not an Entry). `payload_json` holds the
+// opaque proposed recall payload (target/cue/use context/category/tags); `evidence_quote` is a faithful
+// quote from the capture; `confidence`/`reason` back the visibility gate; `duplicate_status` records the
+// dedupe verdict; `model_name`/`prompt_version` stamp the generating prompt for auditing/eval.
+export const proposalCandidates = pgTable(
+  "proposal_candidates",
+  {
+    id: text("id").primaryKey(),
+    timelineEntryId: text("timeline_entry_id")
+      .notNull()
+      .references(() => timelineEntries.entryId),
+    userId: text("user_id").notNull(),
+    type: text("type", { enum: ["phrase_chunk", "couldnt_say_gap"] as const }).notNull(),
+    status: text("status", {
+      enum: ["pending", "visible", "saved", "dismissed"] as const
+    }).notNull(),
+    confidence: doublePrecision("confidence").notNull(),
+    reason: text("reason").notNull(),
+    evidenceQuote: text("evidence_quote").notNull(),
+    payloadJson: jsonb("payload_json").notNull(),
+    duplicateStatus: text("duplicate_status", {
+      enum: [
+        "unique",
+        "exact_duplicate",
+        "same_target_same_context",
+        "same_target_new_context",
+        "same_gap_better_wording",
+        "related_but_distinct"
+      ] as const
+    }).notNull(),
+    relatedRecallItemId: text("related_recall_item_id").references(() => recallItems.id),
+    noveltyReason: text("novelty_reason"),
+    modelName: text("model_name").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [
+    index("proposal_candidates_user_idx").on(table.userId, table.createdAt),
+    index("proposal_candidates_timeline_entry_idx").on(table.timelineEntryId)
+  ]
+);
+
+// The user's decision on a proposal (#451): the tuning signal and the trigger for making an item
+// durable. Only `saved`/`edited_saved` create a recall item; the negatives record signal and create
+// nothing. `feedback_tags_json` holds optional reason tags; `edited_payload_json` holds the user's
+// edited payload on `edited_saved`. User-owned via the parent candidate.
+export const proposalReviews = pgTable(
+  "proposal_reviews",
+  {
+    id: text("id").primaryKey(),
+    proposalCandidateId: text("proposal_candidate_id")
+      .notNull()
+      .references(() => proposalCandidates.id),
+    userId: text("user_id").notNull(),
+    outcome: text("outcome", {
+      enum: ["saved", "edited_saved", "not_useful_now", "wrong_hallucinated", "ignored"] as const
+    }).notNull(),
+    feedbackTagsJson: jsonb("feedback_tags_json").$type<string[]>(),
+    editedPayloadJson: jsonb("edited_payload_json"),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [index("proposal_reviews_candidate_idx").on(table.proposalCandidateId)]
 );
