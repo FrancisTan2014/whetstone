@@ -83,7 +83,7 @@ afterEach(async () => {
 
 describe("quickCapture", () => {
   it("saves the Timeline entry even when the model proposes nothing", async () => {
-    const result = await quickCapture(deps(proposeNothing), { text: captureText }, userA, t0);
+    const result = await quickCapture(deps(proposeNothing), { text: captureText, inputMode: "typed" }, userA, t0);
 
     expect(result.card).toBeNull();
     expect(result.timelineEntry.rawInputText).toBe(captureText);
@@ -93,7 +93,7 @@ describe("quickCapture", () => {
   });
 
   it("saves the entry and shows no card when the model returns an empty proposal", async () => {
-    const result = await quickCapture(deps(proposeEmpty), { text: captureText }, userA, t0);
+    const result = await quickCapture(deps(proposeEmpty), { text: captureText, inputMode: "typed" }, userA, t0);
 
     expect(result.card).toBeNull();
     expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
@@ -102,7 +102,7 @@ describe("quickCapture", () => {
   it("returns a review card and stores a visible candidate for a gated, non-duplicate proposal", async () => {
     const result = await quickCapture(
       deps(proposeWith(attempt())),
-      { text: captureText },
+      { text: captureText, inputMode: "typed" },
       userA,
       t0
     );
@@ -126,10 +126,30 @@ describe("quickCapture", () => {
     expect(candidate?.status).toBe("visible");
   });
 
+  it("records a voice capture with input_mode = voice and runs the same proposal path", async () => {
+    const result = await quickCapture(
+      deps(proposeWith(attempt())),
+      { text: captureText, inputMode: "voice" },
+      userA,
+      t0
+    );
+
+    expect(result.timelineEntry.inputMode).toBe("voice");
+    expect(result.timelineEntry.captureSource).toBe("quick_capture");
+    expect(result.timelineEntry.rawInputText).toBe(captureText);
+    // The transcript flows through the identical gate/dedup path a typed capture uses.
+    expect(result.card).toMatchObject({
+      target: "WorkInsight is back up now",
+      timelineEntryId: result.timelineEntry.entryId
+    });
+    const [candidate] = await listProposalCandidatesForUser(context.db, userA);
+    expect(candidate?.status).toBe("visible");
+  });
+
   it("hides a low-confidence proposal (stored dismissed, no card, not on Today)", async () => {
     const result = await quickCapture(
       deps(proposeWith(attempt({ confidence: 0.2 }))),
-      { text: captureText },
+      { text: captureText, inputMode: "typed" },
       userA,
       t0
     );
@@ -143,7 +163,7 @@ describe("quickCapture", () => {
   it("hides a proposal whose evidence is not a faithful quote of the capture", async () => {
     const result = await quickCapture(
       deps(proposeWith(attempt({ evidenceQuote: "something never written" }))),
-      { text: captureText },
+      { text: captureText, inputMode: "typed" },
       userA,
       t0
     );
@@ -167,7 +187,7 @@ describe("quickCapture", () => {
 
     const result = await quickCapture(
       deps(proposeWith(attempt())),
-      { text: captureText },
+      { text: captureText, inputMode: "typed" },
       userA,
       t0
     );
@@ -179,7 +199,7 @@ describe("quickCapture", () => {
   });
 
   it("keeps each user's captures and cards isolated", async () => {
-    await quickCapture(deps(proposeWith(attempt())), { text: captureText }, userA, t0);
+    await quickCapture(deps(proposeWith(attempt())), { text: captureText, inputMode: "typed" }, userA, t0);
 
     expect(await listPendingCards(context.db, userB)).toEqual([]);
     expect(await listProposalCandidatesForUser(context.db, userB)).toEqual([]);
@@ -199,7 +219,7 @@ describe("quickCapture", () => {
       return Promise.resolve(null);
     };
 
-    await quickCapture(deps(spy), { text: captureText }, userA, t0);
+    await quickCapture(deps(spy), { text: captureText, inputMode: "typed" }, userA, t0);
 
     expect(seen).toEqual([{ target: "by and large", useContext: "summarizing" }]);
   });
@@ -214,7 +234,7 @@ describe("quickCapture", () => {
 
     const result = await quickCapture(
       deps(proposeWith(attempt({ payload: tagless }))),
-      { text: captureText },
+      { text: captureText, inputMode: "typed" },
       userA,
       t0
     );
@@ -238,7 +258,7 @@ describe("quickCapture", () => {
 
 describe("reviewProposalCard", () => {
   async function seedCard(propose: ProposalProvider = proposeWith(attempt())): Promise<string> {
-    const result = await quickCapture(deps(propose), { text: captureText }, userA, t0);
+    const result = await quickCapture(deps(propose), { text: captureText, inputMode: "typed" }, userA, t0);
     if (result.card === null) {
       throw new Error("expected a visible card");
     }
@@ -350,7 +370,7 @@ describe("one-card cap and review idempotency", () => {
   }
 
   async function captureCardId(propose: ProposalProvider, now: Date): Promise<string> {
-    const result = await quickCapture(deps(propose), { text: captureText }, userA, now);
+    const result = await quickCapture(deps(propose), { text: captureText, inputMode: "typed" }, userA, now);
     if (result.card === null) {
       throw new Error("expected a visible card");
     }
@@ -364,7 +384,7 @@ describe("one-card cap and review idempotency", () => {
   it("holds a second successful capture so Today shows at most one card", async () => {
     const firstId = await captureCardId(proposeWith(attempt()), t0);
 
-    const second = await quickCapture(deps(secondAttempt), { text: captureText }, userA, t1);
+    const second = await quickCapture(deps(secondAttempt), { text: captureText, inputMode: "typed" }, userA, t1);
     expect(second.card).toBeNull();
 
     const cards = await listPendingCards(context.db, userA);
@@ -378,7 +398,7 @@ describe("one-card cap and review idempotency", () => {
 
   it("promotes the held candidate once the visible card is reviewed", async () => {
     const firstId = await captureCardId(proposeWith(attempt()), t0);
-    await quickCapture(deps(secondAttempt), { text: captureText }, userA, t1);
+    await quickCapture(deps(secondAttempt), { text: captureText, inputMode: "typed" }, userA, t1);
     const held = (await listProposalCandidatesForUser(context.db, userA)).find(
       (candidate) => candidate.status === "pending"
     );

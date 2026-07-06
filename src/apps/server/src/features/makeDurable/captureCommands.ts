@@ -48,12 +48,13 @@ function toCard(candidate: ProposalCandidateDto, payload: ProposalPayload): Make
   };
 }
 
-// Typed Quick Capture (#452). The Timeline entry is saved FIRST and is never lost: only after it is
+// Quick Capture (#452, #455). The Timeline entry is saved FIRST and is never lost: only after it is
 // persisted does the proposal seam run, and any failure there (model down, timeout, invalid output)
-// simply yields no card. When a candidate is produced it is gated (confidence + faithful evidence quote)
-// and deduped against the user's recall items; it is stored either `visible` (a card is returned) or
-// `dismissed` (gated out / duplicate — no card). At most one candidate per capture, so the "one card per
-// capture" rule holds by construction.
+// simply yields no card. A capture may be typed or voice (`request.inputMode`); a voice capture submits
+// its transcript as the text and follows the exact same path from here on. When a candidate is produced
+// it is gated (confidence + faithful evidence quote) and deduped against the user's recall items; it is
+// stored either `visible` (a card is returned) or `dismissed` (gated out / duplicate — no card). At most
+// one candidate per capture, so the "one card per capture" rule holds by construction.
 export async function quickCapture(
   dependencies: QuickCaptureDependencies,
   request: QuickCaptureRequest,
@@ -64,7 +65,7 @@ export async function quickCapture(
 
   const captureRequest: CreateTimelineCaptureRequest = {
     captureSource: "quick_capture",
-    inputMode: "typed",
+    inputMode: request.inputMode,
     language: null,
     rawAudioPath: null,
     rawInputText: request.text,

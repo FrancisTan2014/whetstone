@@ -205,9 +205,17 @@ describe("Quick Capture review loop contracts (#452)", () => {
 
   it("parses a typed quick capture and rejects blank text", () => {
     expect(parseQuickCaptureRequest({ text: "the deploy failed" })).toEqual({
-      text: "the deploy failed"
+      text: "the deploy failed",
+      inputMode: "typed"
     });
     expect(() => parseQuickCaptureRequest({ text: "   " })).toThrow();
+  });
+
+  it("carries a voice quick capture's input mode", () => {
+    expect(parseQuickCaptureRequest({ text: "the deploy failed", inputMode: "voice" })).toEqual({
+      text: "the deploy failed",
+      inputMode: "voice"
+    });
   });
 
   it("round-trips a proposal payload and rejects a missing category or blank target", () => {

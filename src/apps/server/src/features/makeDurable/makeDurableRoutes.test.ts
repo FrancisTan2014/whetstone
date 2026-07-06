@@ -85,7 +85,32 @@ describe("POST /api/makedurable/capture", () => {
     const result = await capture();
 
     expect(result.timelineEntry.rawInputText).toBe(captureText);
+    expect(result.timelineEntry.inputMode).toBe("typed");
     expect(result.card?.target).toBe("WorkInsight is back up now");
+  });
+
+  it("records a voice capture with input_mode = voice through the same route", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { text: captureText, inputMode: "voice" },
+      url: "/api/makedurable/capture"
+    });
+
+    expect(response.statusCode).toBe(201);
+    const result = response.json() as QuickCaptureResultDto;
+    expect(result.timelineEntry.inputMode).toBe("voice");
+    expect(result.card?.target).toBe("WorkInsight is back up now");
+  });
+
+  it("rejects an unknown input mode", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { text: captureText, inputMode: "handwritten" },
+      url: "/api/makedurable/capture"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
   });
 
   it("rejects a blank capture", async () => {

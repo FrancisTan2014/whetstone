@@ -50,6 +50,10 @@ export default defineConfig({
         // Audio live-capture seam into a one-shot record/stop, not exercisable in jsdom; the diary's own
         // logic (DiaryPage, diaryApi) is covered.
         "**/features/diary/diaryCapture.ts",
+        // Browser audio boundary for voice Quick Capture (#455): wraps the same MediaRecorder/Web Audio
+        // live-capture seam into a one-shot record/stop, not exercisable in jsdom; the section's own logic
+        // (MakeDurableSection, makeDurableApi) is covered.
+        "**/features/makeDurable/makeDurableCapture.ts",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
         // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.

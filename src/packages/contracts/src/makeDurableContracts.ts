@@ -226,11 +226,14 @@ export function parseRecordProposalReviewRequest(value: unknown): RecordProposal
 // Quick Capture review loop (#452)
 // ---------------------------------------------------------------------------
 
-// A typed Quick Capture: the raw text the learner submits from the Today capture surface. The owning
-// user, ids, and timestamps are the server's to set.
+// A Quick Capture: the raw text the learner submits from the Today capture surface. `inputMode`
+// distinguishes a typed capture from a voice one (the transcript is submitted as `text`); it defaults
+// to `typed` so an omitting caller stays typed. The owning user, ids, and timestamps are the server's
+// to set.
 export const quickCaptureRequestSchema = z
   .object({
-    text: z.string().refine(isNonBlank, { message: "text must be non-empty." })
+    text: z.string().refine(isNonBlank, { message: "text must be non-empty." }),
+    inputMode: captureInputModeSchema.default("typed")
   })
   .strict();
 
