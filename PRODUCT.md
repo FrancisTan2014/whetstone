@@ -122,9 +122,10 @@ truth for what to build now.
 3. **Annotate** — select any text (a word, phrase, or longer passage) to create a note anchored to
    the exact source block.
 4. **Find** — search across the library at block granularity.
-5. **Capture by voice** — a tap-and-talk **voice diary**: each voice note is transcribed, lightly **tidied
-   (never polished)**, and saved as a **block under the current date**, deposited into the learner history
-   the coach reads.
+5. **Capture** — one entry point for lived learning friction. Typed **Quick Capture** and tap-and-talk
+   voice diary both save a chronological Timeline entry first (raw input preserved, then lightly
+   **tidied**, never polished). From Quick Capture, Whetstone may propose one evidence-backed learning
+   deposit for review on Today; approved proposals become production-style Recall items.
 6. **Recall** — surface **due** items (the built SM-2 scheduler) as **gentle, capped, snoozeable proposals**;
    completing one feeds its grade back to the scheduler.
 7. **A proactive Today home** — the assistant's front door, composing capture + recall + the
@@ -631,9 +632,12 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 **freely — no streak, no guilt, no back-judge** (_rest is earned, not stolen_). On a low day the board
 **shrinks**; a missed day is recovered from, never punished. Three arms, one restrained surface:
 
-- **Capture — voice diary.** Tap and talk; each voice note → STT → an LLM **tidy pass (never a polish or
-  rewrite)** → one **block under today's date**. Un-anchored, any language, edit/delete. Every entry
-  **deposits into the learner history the coach reads**, so capture compounds — it is not a write-only journal.
+- **Capture — Timeline + Make Durable.** One capture entry point feeds the learner trace. Typed **Quick
+  Capture** saves a Timeline entry immediately and may asynchronously produce one high-confidence,
+  evidence-backed proposal ("Make this durable?") as a capped Today card. Tap-and-talk voice diary uses
+  the same Timeline spine: STT → an LLM **tidy pass (never a polish or rewrite)** → one entry under
+  today's date. Every capture preserves the raw input and feeds the learner history; only reviewed,
+  approved Quick Capture proposals become Recall items.
 - **Coach — recall proposals.** Today's **due** items (the built **SM-2** scheduler + recall store) surfaced as
   a **gentle, capped, snoozeable proposal** — _proposals, not an obligation_; a backlog never piles into a
   wall. Completing an item feeds its grade back to SM-2. **FSRS is a future swap behind the same grade-driven
@@ -644,6 +648,19 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 **Tidy, not polish (the diary's invariant).** Tidy = drop fillers/false starts/repeats and lightly reorder for
 readability while **preserving the speaker's wording, meaning, and voice** — never upgrade vocabulary, "fix"
 phrasing to native, or translate. Polishing would erase the raw production signal the coach needs.
+
+**Make Durable (the Quick Capture invariant).** Capture never blocks on the local model: the Timeline entry is
+saved first; proposal generation is asynchronous, timeout-safe, and allowed to produce nothing. A proposal is
+visible only when it is schema-valid, evidence-backed, deduped against existing Recall items, and high-confidence.
+The first Make Durable slice is Recall-first: typed Quick Capture → Timeline entry → at most one Today review
+card → Save/Edit/Not useful/Wrong → production-style Recall item. Reader captures, voice Quick Capture, external
+share, Practice/Connection artifacts, tag taxonomies, and a review inbox are out of this first slice.
+
+**Recall deposits from Quick Capture.** Existing recall feeders remain intentional: reading harvest and
+speech end-of-round deposits may continue to write directly to Recall. Quick Capture is the gated path because
+its input is rough and user-directed. It extends `recall_items` rather than replacing it: `chunk_id` and
+`provenance_entry_id` stay load-bearing for the Map, case mastery, and source provenance; Make Durable adds
+production metadata such as cue, use context, broad category, optional narrow tag, and source Timeline entry.
 
 **Why a home, not scattered surfaces.** A proactive assistant needs one place that reaches you; without it the
 engine only speaks when you walk into Practice and recall has no surface at all. The Today home **supersedes**
