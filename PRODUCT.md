@@ -341,9 +341,16 @@ The reader is **目录-driven and reading-unit-scoped**, mirroring how mature re
 
 - **Navigation by table of contents (目录).** The TOC reflects the **EPUB's authored navigation**
   (`nav.xhtml` / `toc.ncx`) as a **hierarchical, collapsible tree** (Part › Chapter › Section) with the
-  **authored labels** — not an outline guessed from spine order and first headings. The current entry is
+  **authored labels** — not an outline guessed from spine order and first headings. When the authored nav
+  lists a **division (Part) as a flat sibling** of its chapters (a common O'Reilly / EPUB authoring
+  style), the tree **normalizes it into a real parent** — chapters nest under their Part — using each
+  entry's **structural role** (`epub:type` / `data-type`), so the 目录 always reads Part › Chapter ›
+  Section. Entry **depth drives a typographic tier** (top tier strongest, deeper tiers lighter and
+  smaller), so hierarchy reads without depending on indentation alone. The current entry is
   highlighted and its ancestors auto-expanded; selecting an entry opens its reading unit and resolves the
-  entry's target through the **work link graph** (scroll + brief highlight). The 目录 is a
+  entry's target through the **work link graph** (scroll + brief highlight) — a **section-level entry
+  resolves to that section's own position**, not the chapter top, so the section's anchor is captured even
+  when it is authored on a structural wrapper element. The 目录 is a
   **toggle/drawer on all widths** (it slides over/in and dismisses) — **not** a persistent column that
   competes with the text. A work with no authored nav (a short essay, or Markdown) falls back to a flat
   list of its reading units; a single-unit work needs no TOC.
