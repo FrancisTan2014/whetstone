@@ -108,7 +108,13 @@ can navigate them from another package.
   is saved FIRST, then the `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
   attempts one proposal — retrieve-before-generate: a small slice of the user's existing recall is loaded
   first and passed into the prompt's "Already remembered" block (domain `buildProposalPrompt`) so the model
-  can prefer no candidate when already covered; any failure/timeout/invalid output yields no card. A
+  can prefer no candidate when already covered; any failure/timeout/invalid output yields no card. The prompt
+  also carries a **reviewed-example policy** (#457): `proposalQueries.ts` `listReviewedProposalExamples`
+  distills the user's recent proposal reviews (the kept payload — edited on Edit + Save) into policy
+  examples, the pure domain `selectPolicyExamples` narrows them to a bounded, type-diverse few-shot set
+  (`MAX_POLICY_EXAMPLES`), and `buildProposalPrompt`/`buildBackfillProposalPrompt` render a "Policy from your
+  past reviews" block instructing the model to follow past accept/skip/type decisions (omitted, i.e. the
+  fallback path, when there is no review history). A
   generated candidate is gated
   by the pure `@whetstone/domain` `makeDurable.ts` (`evaluateProposalGate` = confidence floor + faithful
   evidence quote; `classifyProposalDuplicate` suppresses same-target+same-context) and stored `visible`

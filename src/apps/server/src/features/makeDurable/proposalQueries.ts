@@ -1,4 +1,9 @@
-import { parseProposalPayload, type JsonObject, type ProposalCandidateDto, type ProposalReviewDto } from "@whetstone/contracts";
+import {
+  parseProposalPayload,
+  type JsonObject,
+  type ProposalCandidateDto,
+  type ProposalReviewDto
+} from "@whetstone/contracts";
 import type { ReviewedProposalExample } from "@whetstone/domain";
 import { and, asc, desc, eq } from "drizzle-orm";
 

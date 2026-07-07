@@ -184,8 +184,12 @@ describe("reviewed-example policy in the proposal prompt (#457)", () => {
     expect(prompt).toContain("Policy from your past reviews");
     expect(prompt).toContain('[saved] phrase_chunk (work): "roll back the deploy"');
     expect(prompt).toContain("used when incident updates [tags: ops]");
-    expect(prompt).toContain('[wrong_hallucinated] recurring_pattern (language): "much informations"');
-    expect(prompt).toContain("do NOT propose items like those marked not_useful_now or wrong_hallucinated");
+    expect(prompt).toContain(
+      '[wrong_hallucinated] recurring_pattern (language): "much informations"'
+    );
+    expect(prompt).toContain(
+      "do NOT propose items like those marked not_useful_now or wrong_hallucinated"
+    );
     // The capture and retrieval framing are preserved around the policy block.
     expect(prompt).toContain("Already remembered:");
     expect(prompt).toContain("Capture:\ntoday's capture");

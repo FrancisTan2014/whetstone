@@ -364,7 +364,12 @@ describe("backfillMakeDurable", () => {
     );
     await recordProposalReview(
       { createId: () => "review-1", db: context.db },
-      { proposalCandidateId: reviewedCandidate.id, outcome: "saved", feedbackTags: null, editedPayload: null },
+      {
+        proposalCandidateId: reviewedCandidate.id,
+        outcome: "saved",
+        feedbackTags: null,
+        editedPayload: null
+      },
       userA,
       t0
     );
