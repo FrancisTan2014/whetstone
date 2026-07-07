@@ -227,3 +227,76 @@ export function contentPresent(selector: string): ContentPresence {
   const height = element.getBoundingClientRect().height;
   return { height, present: text.length > 0 || height > 0, text };
 }
+
+export interface HitTargetViolation {
+  descriptor: string;
+  height: number;
+  width: number;
+}
+
+// The systemic hit-target guard (#519): enumerate every VISIBLE, ENABLED interactive control on the
+// page and return those whose rendered rect is under 44x44 CSS px (WCAG 2.5.5) — using
+// `getBoundingClientRect`, i.e. the accessible target including padding, not just an icon glyph.
+// Controls matching `excludeSelector` (or nested inside such an element) are allowlisted. Self-contained
+// for `page.evaluate`: every helper is nested and it touches only DOM globals.
+export function smallHitTargets(excludeSelector: string): HitTargetViolation[] {
+  const interactive =
+    'button, a[href], input, select, textarea, summary, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="switch"]';
+
+  const excluded =
+    excludeSelector === "" ? [] : Array.from(document.querySelectorAll(excludeSelector));
+  const isExcluded = (element: Element): boolean =>
+    excluded.some((ancestor) => ancestor === element || ancestor.contains(element));
+
+  const isDisabled = (element: Element): boolean =>
+    (element as HTMLButtonElement).disabled === true ||
+    element.getAttribute("aria-disabled") === "true";
+
+  const isVisible = (element: Element, rect: DOMRect): boolean => {
+    if (rect.width === 0 && rect.height === 0) {
+      return false;
+    }
+    const style = getComputedStyle(element);
+    if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) {
+      return false;
+    }
+    // On-screen: any part inside the viewport (a control translated off-canvas is not "visible").
+    return (
+      rect.right > 0 &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.top < window.innerHeight
+    );
+  };
+
+  const describe = (element: Element): string => {
+    const tag = element.tagName.toLowerCase();
+    const id = element.id === "" ? "" : `#${element.id}`;
+    const classes =
+      typeof element.className === "string" && element.className.trim() !== ""
+        ? `.${element.className.trim().split(/\s+/).slice(0, 2).join(".")}`
+        : "";
+    const label =
+      element.getAttribute("aria-label") ??
+      element.getAttribute("title") ??
+      (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+    return `${tag}${id}${classes}${label === "" ? "" : ` "${label}"`}`;
+  };
+
+  const violations: HitTargetViolation[] = [];
+  document.querySelectorAll(interactive).forEach((element) => {
+    const rect = element.getBoundingClientRect();
+    if (isDisabled(element) || !isVisible(element, rect) || isExcluded(element)) {
+      return;
+    }
+    if (rect.width < 44 || rect.height < 44) {
+      violations.push({
+        descriptor: describe(element),
+        height: Math.round(rect.height * 10) / 10,
+        width: Math.round(rect.width * 10) / 10
+      });
+    }
+  });
+
+  return violations;
+}
