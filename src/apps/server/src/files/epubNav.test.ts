@@ -233,7 +233,11 @@ describe("parseNavDocument — division-as-sibling normalization (#515)", () => 
     expect(parseNavDocument(nav, "xhtml-nav")).toEqual([
       // A division immediately followed by another division absorbs nothing.
       { label: "Part One", href: "p1.html", children: [] },
-      { label: "Part Two", href: "p2.html", children: [{ label: "Chapter 1", href: "c1.html", children: [] }] },
+      {
+        label: "Part Two",
+        href: "p2.html",
+        children: [{ label: "Chapter 1", href: "c1.html", children: [] }]
+      },
       // A trailing division with no following chapters keeps empty children.
       { label: "Volume Three", href: "v3.html", children: [] }
     ]);
@@ -246,7 +250,11 @@ describe("parseNavDocument — division-as-sibling normalization (#515)", () => 
     </ol></nav></body></html>`;
 
     expect(parseNavDocument(nav, "xhtml-nav")).toEqual([
-      { label: "Part One", href: "p1.html", children: [{ label: "Chapter 1", href: "c1.html", children: [] }] }
+      {
+        label: "Part One",
+        href: "p1.html",
+        children: [{ label: "Chapter 1", href: "c1.html", children: [] }]
+      }
     ]);
   });
 
