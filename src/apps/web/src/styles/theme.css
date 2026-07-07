@@ -35,6 +35,14 @@
   --color-accent-hover: oklch(0.47 0.18 280);
   --color-accent-fg: #ffffff;
   --color-accent-fg: oklch(1 0 0);
+  /* In-content reference links (#517): a blue that reads as "reference", kept distinct from the indigo
+     accent (hue ~280) and all four annotation hues (amber 65 / teal 180 / violet 295 / rose 12) so a
+     link never looks like an annotated word — underline is reserved for .noteMark. AA >= 4.5:1 on
+     --color-surface (Day 5.7:1, hover 8.0:1). */
+  --color-link: #0b63ce;
+  --color-link: oklch(0.51 0.17 256);
+  --color-link-hover: #0a4ea3;
+  --color-link-hover: oklch(0.43 0.15 256);
   --color-ring: #6366f1;
   --color-ring: oklch(0.6 0.16 280);
   --color-success: #2f855a;
@@ -109,6 +117,12 @@
   --color-accent-hover: oklch(0.8 0.1 280);
   --color-accent-fg: #14130f;
   --color-accent-fg: oklch(0.18 0.006 90);
+  /* Night reference-link blue (#517): a lighter azure legible on the dark surface and clearly not the
+     accent/thought violets. AA >= 4.5:1 on --color-surface (Night 7.3:1, hover 9.5:1). */
+  --color-link: #7fb0ff;
+  --color-link: oklch(0.75 0.11 258);
+  --color-link-hover: #a6c8ff;
+  --color-link-hover: oklch(0.83 0.08 258);
   --color-ring: #818cf8;
   --color-ring: oklch(0.72 0.13 280);
   --color-success: #6ee7b7;
