@@ -309,11 +309,15 @@ describe("htmlToDocument", () => {
   });
 
   it("contributes no anchor for a wrapper enclosing no block-level descendant (no crash)", () => {
-    const { blocks } = htmlToDocument('<section id="empty"></section><p id="after">After.</p>');
+    const { blocks, evidence } = htmlToDocument(
+      '<section id="empty"></section><p id="after">After.</p>'
+    );
     const paragraph = blocksOfType(blocks, "paragraph")[0] as { anchorId: string | null };
 
-    // The empty wrapper drops silently; the real block keeps its own id, and nothing throws.
+    // The empty wrapper drops silently (it addresses nothing); the real block keeps its own id, and
+    // nothing throws. An EMPTY anchored wrapper is not a content loss, so it emits no evidence (#523).
     expect(paragraph.anchorId).toBe("after");
+    expect(evidence).toHaveLength(0);
   });
 
   it("does not hoist an id off an inline tolerated element onto its block", () => {
@@ -897,6 +901,37 @@ describe("htmlToDocument inline-image loss is loud (#523)", () => {
     // Images inside <pre>/<code> keep their existing handling; the inline-image pass skips them.
     expect(evidence).toHaveLength(0);
     expect(blocks.some((block) => findDescendant(block.node, "image") !== undefined)).toBe(true);
+  });
+});
+
+describe("htmlToDocument wrapper-metadata loss is loud (#523)", () => {
+  it("records evidence when an anchored wrapper has only inline content (no block to carry the id)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<div id="w"><span>inline only</span></div><p id="after">After.</p>'
+    );
+
+    // The div's id can never reach the anonymous paragraph its inline content collapses into, so the
+    // lost anchor is made loud rather than silently discarded.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("div");
+    expect(evidence[0]!.path).toBe("body>div");
+    expect(evidence[0]!.attributes["id"]).toBe("w");
+
+    // The following real block keeps its own id; the inline content still becomes a paragraph.
+    const paragraphs = blocks as ReadonlyArray<{ anchorId: string | null; node: DocumentNodeJSON }>;
+    expect(textOf(paragraphs[0]!.node)).toBe("inline only");
+    expect(paragraphs[0]!.anchorId).toBeNull();
+    expect(paragraphs[1]!.anchorId).toBe("after");
+  });
+
+  it("does not flag a nested wrapper whose block descendants already carry ids (resolved nesting)", () => {
+    // The inner wrapper hoists onto the heading; the outer wrapper still HAS a block descendant (that
+    // heading), so its id is a resolved nesting, not a loss — no evidence.
+    const { evidence } = htmlToDocument(
+      '<div id="outer"><div id="inner"><h1>Section</h1></div></div>'
+    );
+
+    expect(evidence).toHaveLength(0);
   });
 });
 

@@ -252,36 +252,54 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
 
   // #523 — the fail-loud invariant widens from "zero unknown blocks" to "zero un-evidenced loss": a
   // construct the schema cannot represent must surface an `IngestionEvidence` record, never vanish
-  // silently. This exercises the INLINE category (slice 1) end to end: an `<img>` in flowing prose has
-  // no schema home, so the full ingest path must surface its evidence through the ingestion logger.
-  it("makes inline-image loss loud through the full ingest path", async () => {
-    const lossyEpub: ParsedEpub = {
-      chapters: [
-        {
-          html: '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>See the diagram <img src="d.png" alt="D"/> here.</p></body></html>',
-          images: [image("d.png")],
-          sourceFile: "inline.xhtml"
-        }
-      ],
-      metadata: { author: "Synthetic Fixtures", language: "en", title: "Inline loss" }
+  // silently. These exercise the loss categories end to end through `ingestEpub -> ingestionLogger`:
+  // INLINE (an `<img>` in flowing prose) and WRAPPER-METADATA (an anchored wrapper whose inline-only
+  // content leaves its id nowhere to land). The INTRA-ELEMENT category's loud path (unreadable code
+  // callout markers) is asserted in htmlToDocument.test.ts.
+  async function evidenceForChapter(
+    html: string,
+    images: ReadonlyArray<ParsedEpubImage>
+  ): Promise<IngestionEvidence[]> {
+    const epub: ParsedEpub = {
+      chapters: [{ html, images, sourceFile: "loss.xhtml" }],
+      metadata: { author: "Synthetic Fixtures", language: "en", title: "Loss" }
     };
-    const lossy = await buildContext(() => lossyEpub);
+    const lossy = await buildContext(() => epub);
 
     try {
       const result = await ingestEpub(lossy.dependencies, new Uint8Array([1, 2, 3]));
       if (result.status !== "ingested") {
         throw new Error(`expected ingested, got ${result.status}`);
       }
-
-      // Loud, end to end: the dropped inline image surfaced an evidence record (tag/path/context)
-      // through the ingestion logger — not a silent drop.
-      const imgEvidence = lossy.evidence.filter((record) => record.tag === "img");
-      expect(imgEvidence).toHaveLength(1);
-      expect(imgEvidence[0]!.path).toBe("body>p>img");
-      expect(imgEvidence[0]!.attributes["src"]).toBe("d.png");
+      return lossy.evidence;
     } finally {
       await rm(lossy.sourcesDir, { force: true, recursive: true });
       await rm(lossy.imagesDir, { force: true, recursive: true });
     }
+  }
+
+  it("makes inline-image loss loud through the full ingest path", async () => {
+    const evidence = await evidenceForChapter(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>See the diagram <img src="d.png" alt="D"/> here.</p></body></html>',
+      [image("d.png")]
+    );
+
+    // Loud, end to end: the dropped inline image surfaced an evidence record (tag/path/context).
+    const imgEvidence = evidence.filter((record) => record.tag === "img");
+    expect(imgEvidence).toHaveLength(1);
+    expect(imgEvidence[0]!.path).toBe("body>p>img");
+    expect(imgEvidence[0]!.attributes["src"]).toBe("d.png");
+  });
+
+  it("makes wrapper-metadata loss loud through the full ingest path", async () => {
+    const evidence = await evidenceForChapter(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><div id="orphan"><span>inline only</span></div></body></html>',
+      []
+    );
+
+    // Loud, end to end: the anchored wrapper whose id could not be carried surfaced an evidence record.
+    const wrapperEvidence = evidence.filter((record) => record.attributes["id"] === "orphan");
+    expect(wrapperEvidence).toHaveLength(1);
+    expect(wrapperEvidence[0]!.tag).toBe("div");
   });
 });
