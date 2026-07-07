@@ -166,9 +166,10 @@ function ReaderTocTree({
               entry.onSelect();
               onClose();
             }}
+            title={entry.label}
             type="button"
           >
-            {entry.label}
+            <span className="readerTocLabel">{entry.label}</span>
           </button>
         </div>
         {hasChildren && isOpen ? (
@@ -235,9 +236,10 @@ export function ReaderToc(props: ReaderTocProps): React.JSX.Element | null {
                     props.onSelect(index);
                     onClose();
                   }}
+                  title={item.label}
                   type="button"
                 >
-                  {item.label}
+                  <span className="readerTocLabel">{item.label}</span>
                 </button>
               </li>
             ))}
