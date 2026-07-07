@@ -310,6 +310,10 @@ code {
 }
 
 .noteEditorTemplate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 44px;
   border: 1px solid var(--hue, var(--color-border));
   border-radius: 999px;
   color: var(--hue, var(--color-text-muted));
@@ -780,6 +784,10 @@ code {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.noteEditor input {
+  min-block-size: 44px;
 }
 
 .noteEditor textarea {
