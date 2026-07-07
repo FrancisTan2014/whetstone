@@ -631,6 +631,46 @@ function normalizeCodeCallouts(body: HTMLElement, ownerDocument: Document): Inge
   return evidence;
 }
 
+// The href an SVG `<image>` points at: EPUB diagrams commonly reference a raster through
+// `xlink:href` (the SVG 1.1 form) or a bare `href` (SVG 2). Returns the first non-empty one.
+function svgImageHref(image: Element): string | null {
+  const href = image.getAttribute("xlink:href") ?? image.getAttribute("href");
+
+  return href === null || href === "" ? null : href;
+}
+
+// EPUB publishers frequently wrap a raster diagram as `<svg><image xlink:href="…"/></svg>` (the DDIA
+// pattern) rather than a bare `<img>`. The #310 schema models a raster figure as `<img>`, and `<svg>`
+// is otherwise an unrecognized block the fail-loud walk would flag. So BEFORE the walk, unwrap every
+// SVG that carries an `<image>` into a plain `<img>` bearing that reference, so it parses as a figure
+// image like any other raster. A pure-vector `<svg>` (no `<image>`, or an `<image>` with no usable
+// href) is a different construct, out of scope here, and left for the fail-loud walk to record.
+function normalizeSvgImages(body: HTMLElement, ownerDocument: Document): void {
+  for (const svg of Array.from(body.querySelectorAll("svg"))) {
+    const image = svg.querySelector("image");
+
+    if (image === null) {
+      continue;
+    }
+
+    const href = svgImageHref(image);
+
+    if (href === null) {
+      continue;
+    }
+
+    const img = ownerDocument.createElement("img");
+    img.setAttribute("src", href);
+    const alt = image.getAttribute("alt") ?? svg.getAttribute("aria-label");
+
+    if (alt !== null) {
+      img.setAttribute("alt", alt);
+    }
+
+    svg.replaceWith(img);
+  }
+}
+
 // Replace an unrecognized element with a sentinel `<div>` that preserves its original tag and raw
 // HTML verbatim, so the explicit `unknown` parse rule turns it into an `unknown` node (and the
 // pre-walk does not descend into it).
@@ -1006,6 +1046,9 @@ export function htmlToDocument(html: string): HtmlIngestionResult {
   // fragment authored on a `<div class="sect1" id>` / `<section id>` becomes a block `anchorId` (#516)
   // instead of being dropped when the wrapper is unwrapped.
   hoistWrapperAnchorIds(body);
+  // Unwrap `<svg><image xlink:href>` raster wrappers (the DDIA diagram pattern) into plain `<img>`
+  // BEFORE the fail-loud walk, so they model as figure images instead of flagging `<svg>` as unknown.
+  normalizeSvgImages(body, window.document);
   // Normalize code-listing callout markers to inline text BEFORE the fail-loud walk and the parse, so
   // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
   const calloutEvidence = normalizeCodeCallouts(body, window.document);

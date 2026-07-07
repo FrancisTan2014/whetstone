@@ -46,6 +46,15 @@ function image(src: string): ParsedEpubImage {
   return { bytes: pngBytes, contentType: "image/png", src };
 }
 
+// A minimal valid SVG document for the <svg><image> figure construct.
+const svgBytes = Uint8Array.from(
+  Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>', "utf8")
+);
+
+function svgImage(src: string): ParsedEpubImage {
+  return { bytes: svgBytes, contentType: "image/svg+xml", src };
+}
+
 // A Part-as-sibling authored nav (#515 shape): Part I is a flat `<li>` sibling of its chapters, each
 // chapter targeting a chapter file plus its section anchor.
 const navSource = `<?xml version="1.0" encoding="utf-8"?>
@@ -62,7 +71,7 @@ function corpusEpub(): ParsedEpub {
     chapters: [
       {
         html: readCorpus("chapter1.xhtml"),
-        images: [image("fig-standalone.png"), image("fig-nested.png")],
+        images: [image("fig-standalone.png"), image("fig-nested.png"), svgImage("fig-svg.svg")],
         sourceFile: "chapter1.xhtml"
       },
       {
@@ -136,8 +145,9 @@ const CH2_PROSE: ReadonlyArray<string> = [
   "写入领导者之后，变更会流向每一个跟随者，保持数据一致。"
 ];
 
-// The number of figure images authored across the corpus (a standalone <img> and a <figure>).
-const EXPECTED_FIGURES = 2;
+// The number of figure images authored across the corpus: a standalone <img> and a <figure> nested in
+// <div>/<section> wrappers, plus an <svg><image>.
+const EXPECTED_FIGURES = 3;
 
 async function ingestCorpus(): Promise<WorkContentDto> {
   const result = await ingestEpub(context.dependencies, new Uint8Array([1, 2, 3]));

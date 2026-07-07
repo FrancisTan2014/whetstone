@@ -34,10 +34,49 @@ function childrenOf(node: HastNode): HastNode[] {
   return node.children ?? [];
 }
 
+// Structural container elements that only add nesting (a publisher's `<div class="sectN">` /
+// `<section>` chapter/section wrappers). They carry no block semantics of their own, so their
+// block-level children are hoisted to the top level for decomposition — otherwise a `<figure>`/`<img>`
+// nested inside one is lost when the whole wrapper is handed to the mdast pipeline, which has no
+// standalone-image/figure block (#520; the historically 4-round figure class, #249→#263→#278→#301).
+const STRUCTURAL_WRAPPER_TAGS: ReadonlySet<string> = new Set(["div", "section", "article"]);
+
 // A hast property is only usable when it is a non-empty string (an absent attribute is
 // `undefined`; `alt=""` is empty), so both src and alt collapse to `undefined` otherwise.
 function stringProperty(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+// Dissolve structural wrapper elements (`div`/`section`/`article`) into their children so each
+// block-level child is decomposed on its own — a figure/image inside a section wrapper becomes a figure
+// block instead of vanishing into the wrapper's mdast conversion (#520). Nesting is flattened
+// recursively; a wrapper's own `id` (a section cross-reference target) is transferred to the first
+// child element that lacks one, so the section anchor stays addressable after the wrapper is gone. A
+// wrapper whose sole content is an image is left intact for `figureFromHast` to model as one figure.
+function flattenStructuralWrappers(nodes: HastNode[]): HastNode[] {
+  const flattened: HastNode[] = [];
+
+  for (const node of nodes) {
+    const tagName = node.type === "element" ? node.tagName : undefined;
+    if (tagName === undefined || !STRUCTURAL_WRAPPER_TAGS.has(tagName)) {
+      flattened.push(node);
+      continue;
+    }
+
+    const children = flattenStructuralWrappers(childrenOf(node));
+    const wrapperId = stringProperty(node.properties.id);
+    if (wrapperId !== undefined) {
+      const firstElement = children.find(
+        (child) => child.type === "element" && stringProperty(child.properties.id) === undefined
+      );
+      if (firstElement !== undefined) {
+        firstElement.properties = { ...firstElement.properties, id: wrapperId };
+      }
+    }
+    flattened.push(...children);
+  }
+
+  return flattened;
 }
 
 function findDescendant(node: HastNode, tagName: string): HastNode | undefined {
@@ -262,7 +301,7 @@ export function decomposeHtmlChapter(html: string): DecomposedReadingUnit {
   // Convert one top-level node at a time so its element id (a cross-reference target like Figure 5-2)
   // is stamped onto the resulting block before rehype-remark flattens it away (#252): the first block
   // a node yields carries its anchor id, so a same-work `#id` link resolves to an addressable block.
-  for (const node of childrenOf(tree)) {
+  for (const node of flattenStructuralWrappers(childrenOf(tree))) {
     const nodeId = node.type === "element" ? stringProperty(node.properties.id) : undefined;
     const figure = figureFromHast(node);
 

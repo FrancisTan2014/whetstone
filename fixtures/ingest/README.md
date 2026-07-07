@@ -10,20 +10,23 @@ never a copyrighted book, and no machine-specific path is committed.
 
 ## Files
 
-- `chapter1.xhtml` — a `<div class="sect1" id="…">` section wrapper with prose paragraphs, plus a
-  standalone `<img>` and a `<figure>` (figure capture).
+- `chapter1.xhtml` — a `<div class="sect1" id="…">` section wrapper with prose paragraphs, a
+  standalone `<img>`, a `<figure>` nested inside inner `<div>`/`<section>` wrappers, and an
+  `<svg><image href>` raster wrapper (figure capture across all three shapes).
 - `chapter2.xhtml` — a code block with numbered callout markers, a `<dl><dt><dd>`, an inline `<tt>`,
-  CJK inter-element spacing, and a footnote (`data-type="noteref"`) marker + its `<aside>`.
+  CJK inter-element spacing, inline MathML (`<math>`), and both a footnote and an endnote
+  (`data-type="noteref"` markers) with their `<aside>` targets.
 
 The harness pairs these with a **Part-as-sibling** authored nav (built in the test) and asserts the
 fidelity contract (no unknown blocks / no shattered paragraphs / figures captured / every nav anchor
 resolves / no whole-block note-anchor `out_of_range`).
 
-## Known gap the harness surfaces
+## Wrapper-nested figures and SVG wrappers
 
-A `<figure>`/`<img>` nested **inside** a structural `<div>`/`<section>` wrapper is currently dropped by
-the top-level decomposition walk (it passes wrapper divs through the mdast pipeline, which loses
-standalone images) — so those figures produce **no** figure block and **no** fail-loud evidence. The
-figures in this corpus are therefore authored at the chapter top level. Capturing wrapper-nested figures
-(and adding the `<svg><image>` / inline-MathML / endnote constructs, plus the opt-in local corpus runner
-of #520 Part 2) are focused follow-ups.
+Earlier, a `<figure>`/`<img>` nested **inside** a structural `<div>`/`<section>` wrapper was dropped by
+the top-level decomposition walk (it handed wrapper subtrees to the mdast pipeline, which has no
+standalone-image/figure block) — producing no figure block and no fail-loud evidence. That gap is now
+fixed: `decomposeHtmlChapter` flattens `div`/`section`/`article` wrappers (transferring a wrapper's
+section id to its leading child), and the server ingestion unwraps `<svg><image>` raster wrappers into
+`<img>` before the fail-loud walk. This corpus authors the figures nested in wrappers precisely to hold
+that fix in place. The opt-in local corpus runner of #520 Part 2 remains a focused follow-up.

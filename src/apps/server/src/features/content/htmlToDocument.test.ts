@@ -763,6 +763,64 @@ describe("htmlToDocument MathML tolerance (#361)", () => {
   });
 });
 
+describe("htmlToDocument SVG image normalization", () => {
+  function imageIn(
+    blocks: ReadonlyArray<{ node: DocumentNodeJSON }>
+  ): DocumentNodeJSON | undefined {
+    return blocks
+      .map((block) => findDescendant(block.node, "image"))
+      .find((node) => node !== undefined);
+  }
+
+  it("unwraps an <svg><image href> raster wrapper into a figure image with no evidence", () => {
+    const { blocks, doc, evidence } = htmlToDocument(
+      '<svg viewBox="0 0 10 10"><image href="diagram.png" width="10" height="10"/></svg>'
+    );
+
+    // The SVG-wrapped raster becomes a real image node, and <svg> never reaches the fail-loud walk.
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+    const image = imageIn(blocks);
+    expect(image).toBeDefined();
+    expect(image!.attrs?.["src"]).toBe("diagram.png");
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("reads the SVG 1.1 xlink:href and carries the image alt", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<svg><image xlink:href="fig.png" alt="A sequence diagram"/></svg>'
+    );
+
+    expect(evidence).toHaveLength(0);
+    const image = imageIn(blocks)!;
+    expect(image.attrs?.["src"]).toBe("fig.png");
+    expect(image.attrs?.["alt"]).toBe("A sequence diagram");
+  });
+
+  it("falls back to the <svg> aria-label when the <image> carries no alt", () => {
+    const { blocks } = htmlToDocument(
+      '<svg aria-label="Cluster topology"><image href="fig.png"/></svg>'
+    );
+    const image = imageIn(blocks)!;
+
+    expect(image.attrs?.["alt"]).toBe("Cluster topology");
+  });
+
+  it("leaves a pure-vector <svg> (no <image>) to the fail-loud walk", () => {
+    const { evidence } = htmlToDocument('<p>Before.</p><svg><rect width="10" height="10"/></svg>');
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("svg");
+  });
+
+  it("leaves an <svg> whose <image> has no usable href to the fail-loud walk", () => {
+    const { evidence } = htmlToDocument('<svg><image width="10"/></svg>');
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("svg");
+  });
+});
+
 describe("htmlToDocument reference links (#368)", () => {
   // The `link` mark on a text node, if any: the marks array lives on the text node, not as a child
   // node, so the footnote-style `findDescendant` walk cannot reach it.

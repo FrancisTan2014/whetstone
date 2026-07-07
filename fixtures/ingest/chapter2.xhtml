@@ -17,10 +17,14 @@
         <dd>A replica that applies the leader's change stream.</dd>
       </dl>
       <p>写入<em>领导者</em>之后，变更会流向每一个跟随者，保持数据一致。</p>
-      <p>A dangling replica can rejoin once it catches up on the change stream it missed.<a epub:type="noteref" data-type="noteref" href="#fn1" id="fnref1">1</a></p>
+      <p>The worst-case merge cost is <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>n</mi><mo>log</mo><mi>n</mi></math> comparisons across the sorted runs.</p>
+      <p>A dangling replica can rejoin once it catches up on the change stream it missed.<a epub:type="noteref" data-type="noteref" href="#fn1" id="fnref1">1</a> Older snapshots are pruned on a schedule.<a epub:type="noteref" data-type="noteref" href="#en1" id="enref1">2</a></p>
     </div>
     <aside epub:type="footnote" data-type="footnote" id="fn1">
       <p>Catch-up replication replays the log from the last acknowledged position.<a href="#fnref1">↩</a></p>
+    </aside>
+    <aside epub:type="rearnote" data-type="rearnote" id="en1">
+      <p>Snapshot pruning is covered in the appendix on storage reclamation.<a href="#enref1">↩</a></p>
     </aside>
   </body>
 </html>
