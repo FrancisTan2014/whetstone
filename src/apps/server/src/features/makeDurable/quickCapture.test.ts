@@ -239,6 +239,47 @@ describe("quickCapture", () => {
     expect(seen).toEqual([{ target: "by and large", useContext: "summarizing" }]);
   });
 
+  it("passes no reviewed-example policy when the user has no review history (#457 fallback)", async () => {
+    let seen: unknown = "unset";
+    const spy: ProposalProvider = (_rawText, _existing, examples) => {
+      seen = examples;
+      return Promise.resolve(null);
+    };
+
+    await quickCapture(deps(spy), { text: captureText, inputMode: "typed" }, userA, t0);
+
+    expect(seen).toEqual([]);
+  });
+
+  it("threads reviewed-example policy from the user's past reviews into the proposal seam (#457)", async () => {
+    // A first capture reviewed as Save creates a recall item AND records a proposal review, which the
+    // next capture should surface as policy.
+    const first = await quickCapture(
+      deps(proposeWith(attempt())),
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
+    await reviewProposalCard(
+      { createId: () => "recall-1", db: context.db },
+      first.card?.proposalCandidateId ?? "",
+      { outcome: "saved" },
+      userA,
+      t1
+    );
+
+    let seen: ReadonlyArray<{ outcome: string; target: string }> = [];
+    const spy: ProposalProvider = (_rawText, _existing, examples) => {
+      seen = (examples ?? []) as ReadonlyArray<{ outcome: string; target: string }>;
+      return Promise.resolve(null);
+    };
+    await quickCapture(deps(spy), { text: "another capture", inputMode: "typed" }, userA, t2);
+
+    expect(seen).toContainEqual(
+      expect.objectContaining({ outcome: "saved", target: "WorkInsight is back up now" })
+    );
+  });
+
   it("carries a tagless proposal through the card and the saved recall item as empty/null tags", async () => {
     const tagless: ProposalPayload = {
       target: "WorkInsight is back up now",

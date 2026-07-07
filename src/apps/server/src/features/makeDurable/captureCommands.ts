@@ -14,6 +14,7 @@ import {
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
   evaluateProposalGate,
   PROPOSAL_PROMPT_VERSION,
+  selectPolicyExamples,
   type ExistingRecallItem
 } from "@whetstone/domain";
 
@@ -21,6 +22,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import { listRecallItems } from "../recall/recallQueries.js";
 import { countVisibleCandidates, MAKE_DURABLE_TODAY_CARD_CAP } from "./cardQueries.js";
 import { insertProposalCandidate } from "./proposalCommands.js";
+import { listReviewedProposalExamples, POLICY_REVIEW_LOOKBACK } from "./proposalQueries.js";
 import type { ProposalProvider } from "./proposalProvider.js";
 import { createTimelineCapture } from "./timelineCommands.js";
 
@@ -85,7 +87,14 @@ export async function quickCapture(
     await listRecallItems(dependencies.db, userId)
   ).map((item) => ({ target: item.text, useContext: item.useContext }));
 
-  const attempt = await dependencies.propose(request.text, existing);
+  // Reviewed-example policy (#457): pull the learner's recent proposal reviews and narrow them to a
+  // bounded, type-diverse few-shot set so the model follows past accept/skip/type decisions. Empty when
+  // there is no review history, which falls back to the pre-policy prompt.
+  const examples = selectPolicyExamples(
+    await listReviewedProposalExamples(dependencies.db, userId, POLICY_REVIEW_LOOKBACK)
+  );
+
+  const attempt = await dependencies.propose(request.text, existing, examples);
   const generated = attempt?.generation.candidates[0];
   if (attempt === null || generated === undefined) {
     return { card: null, timelineEntry };

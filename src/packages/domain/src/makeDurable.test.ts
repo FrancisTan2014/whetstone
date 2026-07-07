@@ -8,10 +8,14 @@ import {
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
   evaluateProposalGate,
   isFaithfulQuote,
+  MAX_POLICY_EXAMPLES,
   normalizeForMatch,
   PROPOSAL_PROMPT_VERSION,
-  proposalPromptInstructions
+  proposalPromptInstructions,
+  selectPolicyExamples,
+  type ReviewedProposalExample
 } from "./makeDurable.js";
+import { reviewedProposalExampleFixtures } from "./makeDurablePolicyFixtures.js";
 
 describe("buildProposalPrompt", () => {
   it("carries the invariant instructions and the capture text", () => {
@@ -82,6 +86,126 @@ describe("buildBackfillProposalPrompt", () => {
   it("adds bias the live proposal prompt does not carry", () => {
     for (const line of backfillEmphasisInstructions) {
       expect(buildProposalPrompt("capture")).not.toContain(line);
+    }
+  });
+});
+
+describe("selectPolicyExamples (#457)", () => {
+  function example(overrides: Partial<ReviewedProposalExample>): ReviewedProposalExample {
+    return {
+      outcome: "saved",
+      type: "phrase_chunk",
+      category: "work",
+      target: "a target",
+      useContext: "some context",
+      tags: [],
+      ...overrides
+    };
+  }
+
+  it("collapses duplicate targets to the most-recent (case/space-insensitive)", () => {
+    const selected = selectPolicyExamples([
+      example({ target: "Roll back the deploy", useContext: "newest" }),
+      example({ target: "roll   back the deploy", useContext: "older duplicate" })
+    ]);
+
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.useContext).toBe("newest");
+  });
+
+  it("round-robins across proposal types so no single type floods the set", () => {
+    const selected = selectPolicyExamples(
+      [
+        example({ type: "phrase_chunk", target: "p1" }),
+        example({ type: "phrase_chunk", target: "p2" }),
+        example({ type: "phrase_chunk", target: "p3" }),
+        example({ type: "recurring_pattern", target: "r1" }),
+        example({ type: "couldnt_say_gap", target: "g1" })
+      ],
+      3
+    );
+
+    expect(selected.map((item) => item.type)).toEqual([
+      "phrase_chunk",
+      "couldnt_say_gap",
+      "recurring_pattern"
+    ]);
+  });
+
+  it("caps the result and defaults to MAX_POLICY_EXAMPLES", () => {
+    const many = Array.from({ length: 20 }, (_unused, index) =>
+      example({ target: `t${index}`, type: "phrase_chunk" })
+    );
+
+    expect(selectPolicyExamples(many, 2)).toHaveLength(2);
+    expect(selectPolicyExamples(many)).toHaveLength(MAX_POLICY_EXAMPLES);
+  });
+
+  it("returns everything (deduped) when fewer than the cap and nothing for a non-positive cap", () => {
+    const two = [example({ target: "a" }), example({ target: "b" })];
+
+    expect(selectPolicyExamples(two, 6)).toHaveLength(2);
+    expect(selectPolicyExamples(two, 0)).toEqual([]);
+  });
+
+  it("selects a bounded, deduped set from the shared fixture corpus", () => {
+    const selected = selectPolicyExamples(reviewedProposalExampleFixtures);
+
+    // The fixtures include a case-variant duplicate of "roll back the deploy" that collapses.
+    expect(selected.length).toBeLessThanOrEqual(MAX_POLICY_EXAMPLES);
+    const targets = selected.map((item) => normalizeForMatch(item.target));
+    expect(new Set(targets).size).toBe(targets.length);
+  });
+});
+
+describe("reviewed-example policy in the proposal prompt (#457)", () => {
+  const examples: ReadonlyArray<ReviewedProposalExample> = [
+    {
+      outcome: "saved",
+      type: "phrase_chunk",
+      category: "work",
+      target: "roll back the deploy",
+      useContext: "incident updates",
+      tags: ["ops"]
+    },
+    {
+      outcome: "wrong_hallucinated",
+      type: "recurring_pattern",
+      category: "language",
+      target: "much informations",
+      useContext: "quantity phrasing",
+      tags: []
+    }
+  ];
+
+  it("includes a policy block instructing the model to follow past review decisions", () => {
+    const prompt = buildProposalPrompt("today's capture", [], examples);
+
+    expect(prompt).toContain("Policy from your past reviews");
+    expect(prompt).toContain('[saved] phrase_chunk (work): "roll back the deploy"');
+    expect(prompt).toContain("used when incident updates [tags: ops]");
+    expect(prompt).toContain('[wrong_hallucinated] recurring_pattern (language): "much informations"');
+    expect(prompt).toContain("do NOT propose items like those marked not_useful_now or wrong_hallucinated");
+    // The capture and retrieval framing are preserved around the policy block.
+    expect(prompt).toContain("Already remembered:");
+    expect(prompt).toContain("Capture:\ntoday's capture");
+  });
+
+  it("omits the policy block entirely when there are no reviewed examples (fallback path)", () => {
+    const withExamples = buildProposalPrompt("cap", [], examples);
+    const fallback = buildProposalPrompt("cap", []);
+
+    expect(fallback).not.toContain("Policy from your past reviews");
+    expect(fallback).toBe(buildProposalPrompt("cap", [], []));
+    expect(withExamples).not.toBe(fallback);
+  });
+
+  it("carries the policy into the backfill prompt alongside the high-value bias", () => {
+    const prompt = buildBackfillProposalPrompt("old capture", [], examples);
+
+    expect(prompt).toContain("Policy from your past reviews");
+    for (const line of backfillEmphasisInstructions) {
+      expect(prompt).toContain(line);
     }
   });
 });

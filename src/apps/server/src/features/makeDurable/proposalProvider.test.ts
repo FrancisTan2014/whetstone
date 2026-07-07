@@ -53,6 +53,36 @@ describe("createProposalProvider", () => {
     expect(prompt).toContain("It's back up now");
   });
 
+  it("threads reviewed-example policy into the prompt when examples are supplied (#457)", async () => {
+    const chat = modelReturning(JSON.stringify(validGeneration));
+    const provider = createProposalProvider(chat, "llama3.1");
+
+    await provider("the service came back", noExisting, [
+      {
+        outcome: "saved",
+        type: "phrase_chunk",
+        category: "work",
+        target: "roll back the deploy",
+        useContext: "incident updates",
+        tags: []
+      }
+    ]);
+
+    const prompt = (chat as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+    expect(prompt).toContain("Policy from your past reviews");
+    expect(prompt).toContain("roll back the deploy");
+  });
+
+  it("omits the policy block when no examples are supplied (defaults to none)", async () => {
+    const chat = modelReturning(JSON.stringify(validGeneration));
+    const provider = createProposalProvider(chat, "llama3.1");
+
+    await provider("the service came back", noExisting);
+
+    const prompt = (chat as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+    expect(prompt).not.toContain("Policy from your past reviews");
+  });
+
   it("passes through an empty candidates array (no proposal)", async () => {
     const provider = createProposalProvider(modelReturning('{"candidates":[]}'), "llama3.1");
 

@@ -9,6 +9,7 @@ import {
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
   evaluateProposalGate,
   PROPOSAL_PROMPT_VERSION,
+  selectPolicyExamples,
   type ExistingRecallItem
 } from "@whetstone/domain";
 
@@ -17,6 +18,7 @@ import { listRecallItems } from "../recall/recallQueries.js";
 import { countVisibleCandidates, MAKE_DURABLE_TODAY_CARD_CAP } from "./cardQueries.js";
 import { toReviewCard } from "./captureCommands.js";
 import { insertProposalCandidate } from "./proposalCommands.js";
+import { listReviewedProposalExamples, POLICY_REVIEW_LOOKBACK } from "./proposalQueries.js";
 import type { ProposalProvider } from "./proposalProvider.js";
 import { listBackfillableCaptures, recordBackfillScan } from "./timelineQueries.js";
 
@@ -57,11 +59,17 @@ export async function backfillMakeDurable(
     await listRecallItems(dependencies.db, userId)
   ).map((item) => ({ target: item.text, useContext: item.useContext }));
 
+  // Reviewed-example policy (#457): the same bounded, type-diverse few-shot set the live capture uses, so
+  // backfill proposals also follow the learner's past accept/skip/type decisions. Loaded once for the run.
+  const examples = selectPolicyExamples(
+    await listReviewedProposalExamples(dependencies.db, userId, POLICY_REVIEW_LOOKBACK)
+  );
+
   const captures = await listBackfillableCaptures(dependencies.db, userId, BACKFILL_SCAN_LIMIT);
 
   let scannedCount = 0;
   for (const capture of captures) {
-    const attempt = await dependencies.proposeBackfill(capture.rawInputText, existing);
+    const attempt = await dependencies.proposeBackfill(capture.rawInputText, existing, examples);
     // Model unavailable/slow/invalid output: stop and leave history unchanged from here on. When the
     // model is down this happens on the first entry, so scannedCount stays 0 (history untouched).
     if (attempt === null) {
