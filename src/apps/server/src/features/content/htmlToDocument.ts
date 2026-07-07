@@ -671,6 +671,62 @@ function normalizeSvgImages(body: HTMLElement, ownerDocument: Document): void {
   }
 }
 
+// The inline-content blocks whose content model is `inline*` (no room for a block-level figure/image):
+// an `<img>` living directly in one of these has no schema home. They split into two kinds:
+// STANDALONE-capable hosts (`<p>` and headings) where an image that is the host's SOLE content lifts
+// cleanly into a top-level standalone figure (safe, no loss); and CHILD-only containers (`<figcaption>`,
+// `<dt>`) nested inside another block, where even a sole image is mangled — it is promoted out to a
+// spurious sibling figure, leaving the caption/term empty. An image alongside real text is inline-lost
+// in either kind.
+const STANDALONE_IMAGE_HOSTS = "p,h1,h2,h3,h4,h5,h6";
+const INLINE_CONTENT_HOSTS = `${STANDALONE_IMAGE_HOSTS},figcaption,dt`;
+const CHILD_ONLY_INLINE_HOSTS = new Set(["figcaption", "dt"]);
+
+// Make inline-image loss LOUD (#523). An `<img>`/`<svg><image>` (already normalized to `<img>`) with no
+// schema home is recorded as fail-loud evidence and removed BEFORE the parse (and after
+// `normalizeSvgImages`), so the surrounding prose survives intact instead of ProseMirror silently
+// splitting the block and folding prose into a spurious caption. An `image` node is valid only inside a
+// block-level `figure`, and #368 keeps inline runs mark-based to avoid the #340 CJK shatter. Two cases
+// are caught: (1) an image alongside real text in any inline-content host (mid-paragraph/caption/term);
+// (2) a SOLE image inside a child-only container (`<figcaption>`/`<dt>`), which cannot become a
+// standalone figure and would be mangled out of its parent. A sole image in a standalone-capable host
+// (`<p>`/heading) or at body/`<div>` level still becomes a clean figure and is left alone; images inside
+// `<pre>`/`<code>` keep their existing handling (callout normalization).
+function collectInlineImageLoss(body: HTMLElement): IngestionEvidence[] {
+  const evidence: IngestionEvidence[] = [];
+
+  for (const img of Array.from(body.querySelectorAll("img"))) {
+    if (img.closest("pre,code") !== null) {
+      continue;
+    }
+
+    const host = img.closest(INLINE_CONTENT_HOSTS);
+
+    if (host === null) {
+      continue;
+    }
+
+    // An image alongside real text is inline-lost in any host. A SOLE image (no sibling text — an
+    // `<img>` contributes none) is lost only in a child-only container that cannot host a standalone
+    // figure; in a `<p>`/heading it lifts cleanly into a top-level figure, so it is left alone.
+    const hostHasText = String(host.textContent).trim().length > 0;
+    const isChildOnlyHost = CHILD_ONLY_INLINE_HOSTS.has(host.tagName.toLowerCase());
+    if (!hostHasText && !isChildOnlyHost) {
+      continue;
+    }
+
+    evidence.push({
+      adjacentText: adjacentText(img),
+      attributes: attributesOf(img),
+      path: pathOf(img),
+      tag: "img"
+    });
+    img.remove();
+  }
+
+  return evidence;
+}
+
 // Replace an unrecognized element with a sentinel `<div>` that preserves its original tag and raw
 // HTML verbatim, so the explicit `unknown` parse rule turns it into an `unknown` node (and the
 // pre-walk does not descend into it).
@@ -1018,23 +1074,51 @@ function elementDepth(element: Element): number {
 // (greatest depth) so a nested `sect1` claims its own leading block before an enclosing chapter/part
 // wrapper, which then adopts the next id-less block — nested wrappers map to DISTINCT blocks and the
 // more specific inner id wins. A block that already has its own id is never overwritten (skipped as
-// "not id-less"); a wrapper with no id-less block descendant contributes no anchor. Idempotent enough
-// for the pipeline: it runs once before parsing and only moves attributes.
-function hoistWrapperAnchorIds(body: HTMLElement): void {
+// "not id-less"). When a wrapper's anchor CANNOT be carried by any block — no id-less block descendant
+// exists, whether because the wrapper holds only inline content, only a standalone image/embed, only a
+// textless unknown construct (`<video>`/`<canvas>`/pure-vector `<svg>`), or block descendants that
+// already carry their own ids (a co-anchored nesting; a block carries a single anchor, so the outer id
+// has nowhere to land) — the anchor is genuinely lost, so ingestion records fail-loud evidence rather
+// than dropping it silently (#523 wrapper-metadata category). Only a truly empty or purely decorative
+// anchored wrapper (nothing to address — no text, all-`tolerated` descendants) drops quietly.
+// Idempotent enough for the pipeline: it runs once before parsing and only moves attributes.
+function hoistWrapperAnchorIds(body: HTMLElement): IngestionEvidence[] {
+  const evidence: IngestionEvidence[] = [];
   const wrappers = Array.from(body.querySelectorAll("*")).filter(isHoistableWrapper);
   wrappers.sort((first, second) => elementDepth(second) - elementDepth(first));
 
   for (const wrapper of wrappers) {
     const wrapperId = wrapper.getAttribute("id") as string;
-    const target = Array.from(wrapper.querySelectorAll("*")).find(
+    const descendants = Array.from(wrapper.querySelectorAll("*"));
+    const target = descendants.find(
       (descendant) => isBlockLevelElement(descendant) && !descendant.hasAttribute("id")
     );
     if (target === undefined) {
+      // No id-less block can carry this anchor. The wrapper addressed real content — so its lost anchor
+      // is made loud — unless it is empty or purely decorative. "Empty/decorative" is defined
+      // generally: no non-whitespace text, and every descendant is a `tolerated` element (a structural
+      // wrapper, inline formatting, or a decorative `<hr>`/`<br>` — none of which yields a block or
+      // evidence on its own). Any `recognized` (block-producing) or `unknown` (evidence-producing)
+      // descendant — a heading whose id is taken, an `<img>`/`<svg>`, a `<video>`/`<canvas>`, etc. —
+      // means the wrapper addressed content the tolerated element cannot, so the dropped id is loud.
+      const enclosesContent =
+        String(wrapper.textContent).trim().length > 0 ||
+        descendants.some((descendant) => classify(descendant) !== "tolerated");
+      if (enclosesContent) {
+        evidence.push({
+          adjacentText: adjacentText(wrapper),
+          attributes: attributesOf(wrapper),
+          path: pathOf(wrapper),
+          tag: wrapper.tagName.toLowerCase()
+        });
+      }
       continue;
     }
     target.setAttribute("id", wrapperId);
     wrapper.removeAttribute("id");
   }
+
+  return evidence;
 }
 
 // Convert one source HTML fragment into a whetstone document, its block-row decomposition, and the
@@ -1044,15 +1128,26 @@ export function htmlToDocument(html: string): HtmlIngestionResult {
   const { body } = window.document;
   // Hoist section-wrapper ids onto their leading block BEFORE any other walk or the parse, so a
   // fragment authored on a `<div class="sect1" id>` / `<section id>` becomes a block `anchorId` (#516)
-  // instead of being dropped when the wrapper is unwrapped.
-  hoistWrapperAnchorIds(body);
+  // instead of being dropped when the wrapper is unwrapped; an anchor that genuinely cannot be carried
+  // (inline-only content, no block to hold it) surfaces as fail-loud evidence (#523).
+  const wrapperEvidence = hoistWrapperAnchorIds(body);
   // Unwrap `<svg><image xlink:href>` raster wrappers (the DDIA diagram pattern) into plain `<img>`
   // BEFORE the fail-loud walk, so they model as figure images instead of flagging `<svg>` as unknown.
   normalizeSvgImages(body, window.document);
+  // Make inline-image loss loud (#523): record evidence for and remove any `<img>` in inline flow
+  // (mid-paragraph/caption alongside text), which the schema cannot represent and which would
+  // otherwise silently shatter its paragraph. Runs after `normalizeSvgImages` so SVG-wrapped rasters
+  // are already `<img>`, and before the callout/unknown walks so a removed image is not re-walked.
+  const inlineImageEvidence = collectInlineImageLoss(body);
   // Normalize code-listing callout markers to inline text BEFORE the fail-loud walk and the parse, so
   // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
   const calloutEvidence = normalizeCodeCallouts(body, window.document);
-  const evidence = [...calloutEvidence, ...collectUnknowns(body, window.document)];
+  const evidence = [
+    ...wrapperEvidence,
+    ...inlineImageEvidence,
+    ...calloutEvidence,
+    ...collectUnknowns(body, window.document)
+  ];
   // Strip stray inter-CJK digitization spaces from text nodes (skipping code) before parsing (#340),
   // then the spaces that straddle an inline element boundary (#358), so an emphasized/linked term
   // mid-phrase (`使用 <b>传硕计划</b> 中`) does not leave a visible gap.

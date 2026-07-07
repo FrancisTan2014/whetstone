@@ -96,7 +96,7 @@ type TestContext = Readonly<{
 
 let context: TestContext;
 
-async function buildContext(): Promise<TestContext> {
+async function buildContext(makeEpub: () => ParsedEpub = corpusEpub): Promise<TestContext> {
   const pglite = new PGlite();
   await runMigrations(pglite);
   const db = createDbClient(pglite);
@@ -112,7 +112,7 @@ async function buildContext(): Promise<TestContext> {
     createEntryId: () => `entry-${(entrySequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
-    epubParser: async () => corpusEpub(),
+    epubParser: async () => makeEpub(),
     epubUploadLimitBytes: 50 * 1024 * 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: (records) => evidence.push(...records),
@@ -165,8 +165,9 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
   it("produces no unknown blocks and records no unrecognized-construct evidence", async () => {
     const content = await ingestCorpus();
 
-    // Fail-loud (#311): every block-level construct the corpus carries is modeled, so the evidence sink
-    // is empty and no block degraded to an `unknown` type.
+    // Fail-loud (#311/#523): every construct the corpus carries is modeled, so the evidence sink is
+    // empty and no block degraded to `unknown` — the "zero un-evidenced loss" floor for a clean corpus
+    // (the loud-loss direction is asserted below and in htmlToDocument.test.ts).
     expect(context.evidence).toEqual([]);
     expect(allBlocks(content).map((block) => block.blockType)).not.toContain("unknown");
   });
@@ -247,5 +248,58 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
     }
 
     expect(textBlocksChecked).toBeGreaterThanOrEqual(CH1_PROSE.length + CH2_PROSE.length);
+  });
+
+  // #523 — the fail-loud invariant widens from "zero unknown blocks" to "zero un-evidenced loss": a
+  // construct the schema cannot represent must surface an `IngestionEvidence` record, never vanish
+  // silently. These exercise the loss categories end to end through `ingestEpub -> ingestionLogger`:
+  // INLINE (an `<img>` in flowing prose) and WRAPPER-METADATA (an anchored wrapper whose inline-only
+  // content leaves its id nowhere to land). The INTRA-ELEMENT category's loud path (unreadable code
+  // callout markers) is asserted in htmlToDocument.test.ts.
+  async function evidenceForChapter(
+    html: string,
+    images: ReadonlyArray<ParsedEpubImage>
+  ): Promise<IngestionEvidence[]> {
+    const epub: ParsedEpub = {
+      chapters: [{ html, images, sourceFile: "loss.xhtml" }],
+      metadata: { author: "Synthetic Fixtures", language: "en", title: "Loss" }
+    };
+    const lossy = await buildContext(() => epub);
+
+    try {
+      const result = await ingestEpub(lossy.dependencies, new Uint8Array([1, 2, 3]));
+      if (result.status !== "ingested") {
+        throw new Error(`expected ingested, got ${result.status}`);
+      }
+      return lossy.evidence;
+    } finally {
+      await rm(lossy.sourcesDir, { force: true, recursive: true });
+      await rm(lossy.imagesDir, { force: true, recursive: true });
+    }
+  }
+
+  it("makes inline-image loss loud through the full ingest path", async () => {
+    const evidence = await evidenceForChapter(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>See the diagram <img src="d.png" alt="D"/> here.</p></body></html>',
+      [image("d.png")]
+    );
+
+    // Loud, end to end: the dropped inline image surfaced an evidence record (tag/path/context).
+    const imgEvidence = evidence.filter((record) => record.tag === "img");
+    expect(imgEvidence).toHaveLength(1);
+    expect(imgEvidence[0]!.path).toBe("body>p>img");
+    expect(imgEvidence[0]!.attributes["src"]).toBe("d.png");
+  });
+
+  it("makes wrapper-metadata loss loud through the full ingest path", async () => {
+    const evidence = await evidenceForChapter(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><div id="orphan"><span>inline only</span></div></body></html>',
+      []
+    );
+
+    // Loud, end to end: the anchored wrapper whose id could not be carried surfaced an evidence record.
+    const wrapperEvidence = evidence.filter((record) => record.attributes["id"] === "orphan");
+    expect(wrapperEvidence).toHaveLength(1);
+    expect(wrapperEvidence[0]!.tag).toBe("div");
   });
 });

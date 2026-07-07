@@ -309,11 +309,15 @@ describe("htmlToDocument", () => {
   });
 
   it("contributes no anchor for a wrapper enclosing no block-level descendant (no crash)", () => {
-    const { blocks } = htmlToDocument('<section id="empty"></section><p id="after">After.</p>');
+    const { blocks, evidence } = htmlToDocument(
+      '<section id="empty"></section><p id="after">After.</p>'
+    );
     const paragraph = blocksOfType(blocks, "paragraph")[0] as { anchorId: string | null };
 
-    // The empty wrapper drops silently; the real block keeps its own id, and nothing throws.
+    // The empty wrapper drops silently (it addresses nothing); the real block keeps its own id, and
+    // nothing throws. An EMPTY anchored wrapper is not a content loss, so it emits no evidence (#523).
     expect(paragraph.anchorId).toBe("after");
+    expect(evidence).toHaveLength(0);
   });
 
   it("does not hoist an id off an inline tolerated element onto its block", () => {
@@ -818,6 +822,214 @@ describe("htmlToDocument SVG image normalization", () => {
 
     expect(evidence).toHaveLength(1);
     expect(evidence[0]!.tag).toBe("svg");
+  });
+});
+
+describe("htmlToDocument inline-image loss is loud (#523)", () => {
+  it("records evidence for a mid-paragraph <img> and keeps the prose as one intact paragraph", () => {
+    const { blocks, doc, evidence } = htmlToDocument(
+      '<p>See the diagram <img src="d.png" alt="A dot"/> here.</p>'
+    );
+
+    // The inline image has no schema home, so it is dropped LOUDLY: one evidence record naming the
+    // img, its path, and the surrounding prose — never a silent shatter into fragments + a caption.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("img");
+    expect(evidence[0]!.path).toBe("body>p>img");
+    expect(evidence[0]!.attributes["src"]).toBe("d.png");
+    expect(evidence[0]!.adjacentText).toContain("See the diagram");
+
+    // The prose survives intact as a single paragraph (no shattered fragments, no spurious figure).
+    const paragraphs = blocksOfType(blocks, "paragraph");
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("See the diagram here.");
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("makes an inline <svg><image> in flowing text loud too (normalized then caught)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p>See <svg><image href="d.png"/></svg> here.</p>'
+    );
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("img");
+    const paragraphs = blocksOfType(blocks, "paragraph");
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("See here.");
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+  });
+
+  it("records evidence for an inline image mid-figcaption, preserving the caption text", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<figure><img src="main.png" alt="main"/><figcaption>Panel <img src="inset.png"/> inset</figcaption></figure>'
+    );
+
+    // The figure's own image is fine; the stray inline image inside the caption is the loud loss.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("img");
+    expect(evidence[0]!.path).toContain("figcaption");
+    expect(textOf(blocksOfType(blocks, "figure")[0]!.node)).toBe("Panel inset");
+  });
+
+  it("leaves a standalone block image untouched — a lone <img> still becomes a figure", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p>Before.</p><img src="b.png" alt="B"/><p>After.</p>'
+    );
+
+    // A body-level image is a standalone figure, not inline loss: no evidence, figure preserved.
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+    expect(blocksOfType(blocks, "paragraph").map((block) => textOf(block.node))).toEqual([
+      "Before.",
+      "After."
+    ]);
+  });
+
+  it("leaves an image that is the sole content of its paragraph as a figure (not inline loss)", () => {
+    const { blocks, evidence } = htmlToDocument('<p><img src="p.png" alt="d"/></p>');
+
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+  });
+
+  it("records evidence for a SOLE image inside a figcaption (a child-only container it mangles)", () => {
+    // A figcaption is nested in its figure and cannot host a standalone figure: a sole image there is
+    // promoted to a spurious sibling figure, emptying the caption. Make it loud and keep one figure.
+    const { blocks, evidence } = htmlToDocument(
+      '<figure><img src="main.png" alt="main"/><figcaption><img src="cap.png"/></figcaption></figure>'
+    );
+
+    const imgEvidence = evidence.filter((record) => record.tag === "img");
+    expect(imgEvidence).toHaveLength(1);
+    expect(imgEvidence[0]!.attributes["src"]).toBe("cap.png");
+    expect(imgEvidence[0]!.path).toContain("figcaption");
+    // Exactly one figure (the main image); the stray caption image did not become a second figure.
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+  });
+
+  it("records evidence for a SOLE image inside a definition term (a child-only container)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<dl><dt><img src="term.png"/></dt><dd>desc</dd></dl>'
+    );
+
+    const imgEvidence = evidence.filter((record) => record.tag === "img");
+    expect(imgEvidence).toHaveLength(1);
+    expect(imgEvidence[0]!.attributes["src"]).toBe("term.png");
+    // The definition list is still produced; the mangled term image is not silently promoted.
+    expect(blocksOfType(blocks, "definitionList")).toHaveLength(1);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+  });
+
+  it("leaves a sole image in a heading as a standalone figure (not a child-only container)", () => {
+    const { blocks, evidence } = htmlToDocument('<h1><img src="banner.png" alt="b"/></h1>');
+
+    // A heading is standalone-capable like <p>: a sole image lifts into a clean figure, no loss.
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+  });
+
+  it("leaves an <img> inside a code listing to callout normalization, not inline-image loss", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<pre>text <a href="pages.html"><img src="pic.png" alt="diagram"/></a></pre>'
+    );
+
+    // Images inside <pre>/<code> keep their existing handling; the inline-image pass skips them.
+    expect(evidence).toHaveLength(0);
+    expect(blocks.some((block) => findDescendant(block.node, "image") !== undefined)).toBe(true);
+  });
+});
+
+describe("htmlToDocument wrapper-metadata loss is loud (#523)", () => {
+  it("records evidence when an anchored wrapper has only inline content (no block to carry the id)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<div id="w"><span>inline only</span></div><p id="after">After.</p>'
+    );
+
+    // The div's id can never reach the anonymous paragraph its inline content collapses into, so the
+    // lost anchor is made loud rather than silently discarded.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("div");
+    expect(evidence[0]!.path).toBe("body>div");
+    expect(evidence[0]!.attributes["id"]).toBe("w");
+
+    // The following real block keeps its own id; the inline content still becomes a paragraph.
+    const paragraphs = blocks as ReadonlyArray<{ anchorId: string | null; node: DocumentNodeJSON }>;
+    expect(textOf(paragraphs[0]!.node)).toBe("inline only");
+    expect(paragraphs[0]!.anchorId).toBeNull();
+    expect(paragraphs[1]!.anchorId).toBe("after");
+  });
+
+  it("records evidence for a co-anchored nesting whose outer id cannot reach any block", () => {
+    // The inner wrapper hoists onto the heading; the outer wrapper's id then has no block to land on
+    // (the only block already carries #inner, and a block holds a single anchor), so #outer would be
+    // silently lost — make it loud instead. Regression guard: links to #outer must not vanish.
+    const { blocks, evidence } = htmlToDocument(
+      '<div id="outer"><div id="inner"><h1>Section</h1></div></div>'
+    );
+
+    const heading = blocks[0] as { anchorId: string | null; node: DocumentNodeJSON; type: string };
+    expect(heading.type).toBe("heading");
+    expect(heading.anchorId).toBe("inner");
+
+    const outerEvidence = evidence.filter((record) => record.attributes["id"] === "outer");
+    expect(outerEvidence).toHaveLength(1);
+    expect(outerEvidence[0]!.tag).toBe("div");
+    expect(outerEvidence[0]!.path).toBe("body>div");
+  });
+  it("records evidence when an anchored wrapper holds only a standalone image (figure loses its anchor)", () => {
+    // `<div id="fig"><img/></div>`: the img becomes a figure block, but it is not a BLOCK_LEVEL_TAG and
+    // carries no text, so the wrapper has no block target for #fig. The anchor cannot ride the
+    // auto-wrapped figure, so it is made loud rather than dropped when the tolerated <div> is unwrapped.
+    const { blocks, evidence } = htmlToDocument('<div id="fig"><img src="b.png" alt="B"/></div>');
+
+    // The figure is still produced; only the wrapper's anchor is the loss.
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+    const figEvidence = evidence.filter((record) => record.attributes["id"] === "fig");
+    expect(figEvidence).toHaveLength(1);
+    expect(figEvidence[0]!.tag).toBe("div");
+    expect(figEvidence[0]!.path).toBe("body>div");
+  });
+
+  it("records evidence when an anchored wrapper holds only an <svg><image> figure", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<section id="diag"><svg><image href="d.png"/></svg></section>'
+    );
+
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+    expect(evidence.filter((record) => record.attributes["id"] === "diag")).toHaveLength(1);
+  });
+
+  it("does not flag a wrapper whose only content is a decorative textless break", () => {
+    // `<hr>` is a decorative silent-drop that yields no block; an anchored wrapper around only it
+    // addresses nothing, so it drops quietly like an empty wrapper — no evidence.
+    const { evidence } = htmlToDocument('<div id="deco"><hr/></div><p id="after">After.</p>');
+
+    expect(evidence).toHaveLength(0);
+  });
+
+  it("records evidence when an anchored wrapper holds only a textless unknown construct", () => {
+    // `<video>` is unknown (no schema rule): it has no block-level descendant, no text, and is not an
+    // image/embed, but it is NOT tolerated — it produces its own fail-loud evidence. The wrapper still
+    // addressed it, so #clip must not vanish silently when the tolerated <div> is unwrapped.
+    const { evidence } = htmlToDocument('<div id="clip"><video src="clip.mp4"></video></div>');
+
+    // The wrapper's own anchor is surfaced (distinct from the <video>'s unknown-element evidence).
+    const clipEvidence = evidence.filter((record) => record.attributes["id"] === "clip");
+    expect(clipEvidence).toHaveLength(1);
+    expect(clipEvidence[0]!.tag).toBe("div");
+    // …and the <video> still fails loud in its own right.
+    expect(evidence.some((record) => record.tag === "video")).toBe(true);
+  });
+
+  it("does not flag a wrapper enclosing only empty tolerated elements (no content produced)", () => {
+    // An empty nested structural wrapper / empty inline element yields no block and no evidence, so the
+    // outer anchor addresses nothing — a quiet drop, not a loss.
+    const { evidence } = htmlToDocument(
+      '<div id="outer"><div><span></span></div></div><p id="after">After.</p>'
+    );
+
+    expect(evidence).toHaveLength(0);
   });
 });
 
