@@ -25,15 +25,23 @@ const proseParagraph = `${anyBlock}:has(p)`;
 const MOBILE = { height: 844, width: 390 } as const;
 const DESKTOP = { height: 900, width: 1280 } as const;
 
-// Every primary route (Today, Library, Practice, Map, Search, Diary) from the app's hash router.
-const ROUTES: ReadonlyArray<readonly [string, string]> = [
-  ["Today", "#/"],
-  ["Library", "#/library"],
-  ["Practice", "#/practice"],
-  ["Map", "#/progress"],
-  ["Search", "#/search"],
-  ["Diary", "#/diary"]
+// Every primary route from the app's hash router, with an optional route-specific ready marker that
+// only mounts once the route has rendered its actual controls (so the sweep never measures a bare
+// loading state). Where a route's ready state varies too much for a single positive marker (Practice's
+// loading/empty/error/ready, Map's ready/error), the loading-indicator wait below is the guard instead.
+const ROUTES: ReadonlyArray<readonly [string, string, string | undefined]> = [
+  ["Today", "#/", 'section[aria-label="Capture a thought"]'],
+  ["Library", "#/library", 'a[href^="#/reader?work="]'],
+  ["Practice", "#/practice", undefined],
+  ["Map", "#/progress", undefined],
+  ["Search", "#/search", 'input[type="search"]'],
+  ["Diary", "#/diary", 'section[aria-label="New entry"]']
 ];
+
+// The shared `LoadingIndicator` renders `[role="status"][aria-busy="true"]`. An async route (Diary,
+// Practice, Map, Today's recall/reading cards, the Library shelf) shows it while loading, so waiting for
+// it to clear guarantees we sweep the route's READY-state controls, not a spinner (#519 review).
+const LOADING = '[role="status"][aria-busy="true"]';
 
 function report(surface: string, violations: ReadonlyArray<HitTargetViolation>): string {
   return violations
@@ -51,12 +59,18 @@ for (const [viewportName, viewport] of [
   test.describe(`${viewportName}: interactive controls meet the 44px hit target (#519)`, () => {
     test.use({ reducedMotion: "reduce", viewport });
 
-    for (const [name, hash] of ROUTES) {
+    for (const [name, hash, readyMarker] of ROUTES) {
       test(`route ${name} has no sub-44px controls`, async ({ page, setup }) => {
         await page.goto(`${setup.baseURL}${hash}`);
         await expect(page.locator("main").first()).toBeVisible();
         // The primary navigation renders on every route; wait for it so its tab targets are measured.
         await expect(page.getByRole("navigation").first()).toBeVisible();
+        // Wait out any page/section loading indicators so async routes render their real controls first.
+        await expect(page.locator(LOADING)).toHaveCount(0);
+        // ...and, where the route exposes one, an explicit ready control so the sweep covers it.
+        if (readyMarker !== undefined) {
+          await expect(page.locator(readyMarker).first()).toBeVisible();
+        }
 
         const violations = await page.evaluate(smallHitTargets, {
           exclude: ALLOWLIST,

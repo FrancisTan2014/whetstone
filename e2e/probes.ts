@@ -302,7 +302,10 @@ export function smallHitTargets(config: HitTargetSweepConfig): HitTargetViolatio
     if (isDisabled(element) || !isVisible(element, rect) || isExcluded(element)) {
       return;
     }
-    if (rect.width < 44 || rect.height < 44) {
+    // Round to the nearest CSS pixel so sub-pixel layout rounding of a genuine 44px control (e.g. a
+    // min-h-11 button measured at 43.98 because its box sits at a fractional y) is not a false positive;
+    // real defects (the historical ones were 24-40px) still fail decisively.
+    if (Math.round(rect.width) < 44 || Math.round(rect.height) < 44) {
       violations.push({
         descriptor: describe(element),
         height: Math.round(rect.height * 10) / 10,
