@@ -181,8 +181,11 @@ can navigate them from another package.
   (`active` default; authored start `needs_review`) and a unique `brief_key`; the practice ranking in
   `features/learner` only loads `active` cases, so unreviewed authored content is never practised.
   Shapes in `@whetstone/contracts` (`caseContracts.ts`).
-- Recall MCP server: `src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
-  `recallTools.ts` (five tools mapping 1:1 to the recall ops; validate via contracts; `createRecallMcpServer`)
+- Recall MCP server: `src/apps/server/src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
+  `recallTools.ts` (the recall-op tools + `deposit_recall_item` (#458): a deliberate production-style
+  Recall deposit — target/cue/useContext/category + optional tags/gloss/provenance — that reuses
+  `enrollRecallItem`/SM-2 seeding without a Make Durable proposal card, and never accepts the
+  integrity-bearing `sourceProposalCandidateId`/`chunkId`; all validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
 - Shared LLM seam: `src/llm/` — the one model-agnostic prompt→text boundary every server LLM caller

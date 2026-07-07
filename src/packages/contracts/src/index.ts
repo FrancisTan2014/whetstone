@@ -434,6 +434,7 @@ export {
 export type { PreferencesDto, UpsertPreferencesRequest } from "./preferencesContracts.js";
 export {
   enrollRecallItemRequestSchema,
+  depositRecallItemToolInputSchema,
   getRecallItemToolInputSchema,
   listDueItemsToolInputSchema,
   parseEnrollRecallItemRequest,
@@ -453,6 +454,7 @@ export {
 } from "./recallContracts.js";
 export type {
   EnrollRecallItemRequest,
+  DepositRecallItemToolInput,
   GetRecallItemToolInput,
   ListDueItemsToolInput,
   RecallCategory,

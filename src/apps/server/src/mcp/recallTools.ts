@@ -7,9 +7,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import {
+  depositRecallItemToolInputSchema,
   enrollRecallItemRequestSchema,
   getRecallItemToolInputSchema,
   listDueItemsToolInputSchema,
+  recallCategories,
   recallKinds,
   recordReviewToolInputSchema,
   searchRecallItemsToolInputSchema
@@ -96,6 +98,61 @@ const tools: ReadonlyArray<RecallTool> = [
     run: async (context, args) => {
       const input = parseArguments(enrollRecallItemRequestSchema, args);
       return enrollRecallItem(context.recall, input, userId(context), context.now());
+    }
+  },
+  {
+    description:
+      "Deliberately save ONE production-style recall item for the current user — e.g. from an observed " +
+      "English-learning mistake. Requires target/cue/useContext/category; tags, gloss, and provenanceEntryId " +
+      "are optional. Uses the standard recall enrollment and SM-2 seeding; it does NOT create a Make Durable " +
+      "proposal/Today card, scan files, or import a corpus. Returns the created item, including its id.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        category: {
+          description: "The one broad category to file the item under.",
+          enum: [...recallCategories],
+          type: "string"
+        },
+        cue: { description: "A retrieval prompt for the item.", type: "string" },
+        gloss: { description: "Optional short gloss or explanation.", type: "string" },
+        kind: { description: "What sort of item this is.", enum: [...recallKinds], type: "string" },
+        provenanceEntryId: {
+          description: "Optional id of the source/provenance entry this item came from.",
+          type: "string"
+        },
+        tags: {
+          description: "Optional narrow tags refining the category.",
+          items: { type: "string" },
+          type: "array"
+        },
+        target: {
+          description: "The phrase/pattern to remember (the recall item's text).",
+          type: "string"
+        },
+        useContext: { description: "When or where to use it.", type: "string" }
+      },
+      required: ["kind", "target", "cue", "useContext", "category"],
+      type: "object"
+    },
+    name: "deposit_recall_item",
+    run: async (context, args) => {
+      const input = parseArguments(depositRecallItemToolInputSchema, args);
+      return enrollRecallItem(
+        context.recall,
+        {
+          kind: input.kind,
+          text: input.target,
+          cue: input.cue,
+          useContext: input.useContext,
+          category: input.category,
+          tags: input.tags,
+          provenanceEntryId: input.provenanceEntryId,
+          gloss: input.gloss
+        },
+        userId(context),
+        context.now()
+      );
     }
   },
   {

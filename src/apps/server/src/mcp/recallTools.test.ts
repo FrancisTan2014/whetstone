@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDbClient, type DbClient } from "../db/dbClient.js";
 import { runMigrations } from "../db/migrate.js";
+import { entries } from "../db/schema.js";
 import { createDefaultCurrentUserProvider } from "../identity/currentUser.js";
 import { callRecallTool, createRecallMcpServer, type RecallMcpContext } from "./recallTools.js";
 
@@ -129,8 +130,117 @@ describe("callRecallTool", () => {
   });
 });
 
+describe("deposit_recall_item", () => {
+  const validArgs = {
+    kind: "phrase",
+    target: "it depends on",
+    cue: "expressing a dependency",
+    useContext: "explaining what a result hinges on",
+    category: "language",
+    tags: ["grammar", "preposition"],
+    gloss: "use 'on' after 'depends'"
+  } as const;
+
+  it("saves a production-style recall item with full metadata and SM-2 seeding, no proposal link", async () => {
+    const saved = dataOf(await callRecallTool(ctx.context, "deposit_recall_item", validArgs)) as {
+      id: string;
+      text: string;
+      kind: string;
+      cue: string | null;
+      useContext: string | null;
+      category: string | null;
+      tags: ReadonlyArray<string> | null;
+      gloss: string | null;
+      provenanceEntryId: string | null;
+      sourceProposalCandidateId: string | null;
+      chunkId: string | null;
+      review: { dueAt: string; repetitions: number };
+    };
+
+    expect(saved).toMatchObject({
+      id: "id-1",
+      text: "it depends on",
+      kind: "phrase",
+      cue: "expressing a dependency",
+      useContext: "explaining what a result hinges on",
+      category: "language",
+      tags: ["grammar", "preposition"],
+      gloss: "use 'on' after 'depends'",
+      // Deposits never forge an integrity-bearing link or a chunk association.
+      provenanceEntryId: null,
+      sourceProposalCandidateId: null,
+      chunkId: null
+    });
+    // SM-2 seeded due immediately, so it is reviewable normally right away.
+    expect(saved.review).toMatchObject({ dueAt: t0.toISOString(), repetitions: 0 });
+
+    // The deposited item is listable and fetchable through the existing recall tools.
+    const due = dataOf(await callRecallTool(ctx.context, "list_due_items", {})) as {
+      items: ReadonlyArray<{ id: string }>;
+    };
+    expect(due.items.map((i) => i.id)).toEqual(["id-1"]);
+    const fetched = dataOf(
+      await callRecallTool(ctx.context, "get_recall_item", { id: "id-1" })
+    ) as { text: string };
+    expect(fetched.text).toBe("it depends on");
+  });
+
+  it("preserves the provenance link when a valid source entry is supplied", async () => {
+    await ctx.db.insert(entries).values({ id: "prov-1", type: "timeline_entry" });
+
+    const saved = dataOf(
+      await callRecallTool(ctx.context, "deposit_recall_item", {
+        kind: "phrase",
+        target: "roll back the deploy",
+        cue: "reverting a release",
+        useContext: "incident updates",
+        category: "work",
+        provenanceEntryId: "prov-1"
+      })
+    ) as { provenanceEntryId: string | null };
+
+    expect(saved.provenanceEntryId).toBe("prov-1");
+  });
+
+  it("saves without optional metadata (tags/gloss/provenance omitted)", async () => {
+    const saved = dataOf(
+      await callRecallTool(ctx.context, "deposit_recall_item", {
+        kind: "word",
+        target: "ubiquitous",
+        cue: "everywhere at once",
+        useContext: "describing something common",
+        category: "language"
+      })
+    ) as { tags: ReadonlyArray<string> | null; gloss: string | null; provenanceEntryId: string | null };
+
+    expect(saved).toMatchObject({ tags: null, gloss: null, provenanceEntryId: null });
+  });
+
+  it.each([
+    ["target", { ...validArgs, target: "   " }],
+    ["cue", { ...validArgs, cue: "" }],
+    ["useContext", { ...validArgs, useContext: "  " }]
+  ])("rejects a blank %s with a clean validation error", async (_field, args) => {
+    const result = await callRecallTool(ctx.context, "deposit_recall_item", args);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("Invalid arguments");
+  });
+
+  it("rejects input missing a required field (category) without saving", async () => {
+    const { category: _omitted, ...withoutCategory } = validArgs;
+    const result = await callRecallTool(ctx.context, "deposit_recall_item", withoutCategory);
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("Invalid arguments");
+    const due = dataOf(await callRecallTool(ctx.context, "list_due_items", {})) as {
+      items: ReadonlyArray<unknown>;
+    };
+    expect(due.items).toEqual([]);
+  });
+});
+
 describe("createRecallMcpServer", () => {
-  it("advertises the five recall tools and serves a call end-to-end over MCP", async () => {
+  it("advertises the recall tools and serves a call end-to-end over MCP", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createRecallMcpServer(ctx.context);
     await server.connect(serverTransport);
@@ -140,6 +250,7 @@ describe("createRecallMcpServer", () => {
     try {
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
+        "deposit_recall_item",
         "get_recall_item",
         "list_due_items",
         "record_review",

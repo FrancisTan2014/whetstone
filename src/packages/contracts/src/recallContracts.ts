@@ -139,6 +139,31 @@ export const getRecallItemToolInputSchema = z
 
 export type GetRecallItemToolInput = z.infer<typeof getRecallItemToolInputSchema>;
 
+// Input for the deliberate production-style Recall deposit MCP tool (#458): a trusted agent explicitly
+// saves ONE production Recall item from observed learning material (e.g. an English-learning mistake),
+// without a Make Durable proposal card. `target` is the phrase/pattern to remember (the recall item's
+// text); `cue`/`useContext`/`category` make it production-style and are required (non-blank); `tags`,
+// `provenanceEntryId`, and `gloss` are optional. `sourceProposalCandidateId` and `chunkId` are
+// deliberately NOT accepted — they are integrity-bearing links set only through their own validated
+// paths — so a deposit never forges provenance or a proposal link.
+export const depositRecallItemToolInputSchema = z
+  .object({
+    kind: recallKindSchema,
+    target: z.string().refine(isNonBlank, { message: "target must be non-empty." }),
+    cue: z.string().refine(isNonBlank, { message: "cue must be non-empty." }),
+    useContext: z.string().refine(isNonBlank, { message: "useContext must be non-empty." }),
+    category: recallCategorySchema,
+    tags: z.array(z.string().refine(isNonBlank, { message: "tag must be non-empty." })).nullish(),
+    provenanceEntryId: z
+      .string()
+      .refine(isNonBlank, { message: "provenanceEntryId must be non-empty." })
+      .nullish(),
+    gloss: z.string().refine(isNonBlank, { message: "gloss must be non-empty." }).nullish()
+  })
+  .strict();
+
+export type DepositRecallItemToolInput = z.infer<typeof depositRecallItemToolInputSchema>;
+
 export function parseEnrollRecallItemRequest(value: unknown): EnrollRecallItemRequest {
   return enrollRecallItemRequestSchema.parse(value);
 }

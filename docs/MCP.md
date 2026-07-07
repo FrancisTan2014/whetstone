@@ -14,6 +14,7 @@ default-identity seam).
 | Tool | Input | Does |
 | --- | --- | --- |
 | `save_recall_item` | `{ text, kind, gloss? }` | Enrolls a recall item (kind ∈ pattern \| idiom \| proverb \| chunk \| word \| phrase), seeding its SM-2 schedule. Returns the created item (incl. `id`). |
+| `deposit_recall_item` | `{ kind, target, cue, useContext, category, tags?, provenanceEntryId?, gloss? }` | Deliberately saves ONE production-style recall item (e.g. from an observed learning mistake) via the same enrollment + SM-2 seeding, with no Make Durable proposal card. `target`/`cue`/`useContext` must be non-blank; the integrity-bearing `sourceProposalCandidateId`/`chunkId` are not accepted. Returns the created item (incl. `id`). |
 | `list_due_items` | `{ limit? }` | Lists the user's items due now, soonest first (default cap 20). |
 | `record_review` | `{ itemId, grade }` | Applies SM-2 to the item for the grade (0–5), persists the new state, appends a history row. Returns the updated item incl. its next `review.dueAt`. |
 | `search_recall_items` | `{ query }` | Searches the user's set by text or gloss (case-insensitive). |
