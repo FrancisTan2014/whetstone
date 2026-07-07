@@ -27,7 +27,10 @@ export type ProposalProvider = (
 export function createProposalProvider(
   chat: LlmModel,
   modelName: string,
-  buildPrompt: (rawText: string, existing: ReadonlyArray<ExistingRecallItem>) => string = buildProposalPrompt
+  buildPrompt: (
+    rawText: string,
+    existing: ReadonlyArray<ExistingRecallItem>
+  ) => string = buildProposalPrompt
 ): ProposalProvider {
   return async (rawText, existing) => {
     let reply: string;
@@ -56,6 +59,9 @@ export function createProposalProvider(
 // The backfill proposal provider (#456): the same seam/gate/schema as live capture, but built with the
 // high-value backfill prompt so mining older Timeline history prefers durable, reusable items over
 // one-off spelling/product-name corrections.
-export function createBackfillProposalProvider(chat: LlmModel, modelName: string): ProposalProvider {
+export function createBackfillProposalProvider(
+  chat: LlmModel,
+  modelName: string
+): ProposalProvider {
   return createProposalProvider(chat, modelName, buildBackfillProposalPrompt);
 }

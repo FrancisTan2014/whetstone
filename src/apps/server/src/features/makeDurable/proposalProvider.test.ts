@@ -3,10 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProposalGeneration } from "@whetstone/contracts";
 
 import type { LlmModel } from "../../llm/llmModel.js";
-import {
-  createBackfillProposalProvider,
-  createProposalProvider
-} from "./proposalProvider.js";
+import { createBackfillProposalProvider, createProposalProvider } from "./proposalProvider.js";
 
 const validGeneration: ProposalGeneration = {
   candidates: [

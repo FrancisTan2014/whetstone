@@ -275,9 +275,9 @@ describe("backfillMakeDurable", () => {
       .map((candidate) => candidate.status)
       .sort();
     expect(statuses).toEqual(["dismissed", "visible"]);
-    expect(
-      (await listPendingCards(context.db, userA)).map((card) => card.timelineEntryId)
-    ).toEqual([strongId]);
+    expect((await listPendingCards(context.db, userA)).map((card) => card.timelineEntryId)).toEqual(
+      [strongId]
+    );
   });
 
   it("suppresses a duplicate of an existing recall item (dismissed, no card)", async () => {
