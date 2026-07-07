@@ -137,11 +137,14 @@ can navigate them from another package.
   DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`). **Backfill (#456):**
   `POST /api/makedurable/backfill` runs `backfillCommands.ts` `backfillMakeDurable` — a bounded, user-
   triggered scan (`BACKFILL_SCAN_LIMIT`) that mines the user's own un-mined Timeline entries
-  (`timelineQueries.ts` `listBackfillableCaptures` = entries with no `proposal_candidates` row, oldest
-  first) through the SAME gate/dedup/one-card-cap/save path with a high-value prompt
+  (`timelineQueries.ts` `listBackfillableCaptures` = entries with no `proposal_candidates` row **and** no
+  `make_durable_backfill_scans` marker, oldest first) through the SAME gate/dedup/one-card-cap/save path
+  with a high-value prompt
   (`createBackfillProposalProvider` over domain `buildBackfillProposalPrompt`, biasing reusable patterns
   over one-off spelling/product-name fixes). It stops at the first gated-in proposal, surfaces at most one
-  visible Today card per run (else held `pending`), and leaves history unchanged when the model is down;
+  visible Today card per run (else held `pending`), records an empty-generation entry with a durable
+  `make_durable_backfill_scans` marker (`recordBackfillScan`) so the bounded scan advances past it across
+  runs, and leaves history unchanged when the model is unavailable (a null attempt writes nothing);
   `MakeDurableSection`'s "Mine my history" action (`makeDurableApi.ts` `runMakeDurableBackfill`) triggers it.
 - Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
   cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`

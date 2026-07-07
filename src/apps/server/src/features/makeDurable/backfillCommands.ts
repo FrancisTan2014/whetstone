@@ -18,7 +18,7 @@ import { countVisibleCandidates, MAKE_DURABLE_TODAY_CARD_CAP } from "./cardQueri
 import { toReviewCard } from "./captureCommands.js";
 import { insertProposalCandidate } from "./proposalCommands.js";
 import type { ProposalProvider } from "./proposalProvider.js";
-import { listBackfillableCaptures } from "./timelineQueries.js";
+import { listBackfillableCaptures, recordBackfillScan } from "./timelineQueries.js";
 
 // How many prior Timeline entries a single backfill run may consider (#456). The scan is bounded so a
 // manual trigger never turns into a bulk mining job: it stops at the first high-value proposal, or after
@@ -70,8 +70,12 @@ export async function backfillMakeDurable(
     scannedCount += 1;
 
     const generated = attempt.generation.candidates[0];
-    // The model found nothing worth keeping in this entry: store nothing, keep scanning for a better one.
+    // The model found nothing worth keeping in this entry: record a durable "evaluated, no proposal"
+    // marker so the bounded scan advances past it on later runs (otherwise the first `BACKFILL_SCAN_LIMIT`
+    // empty entries would be re-selected forever and hide a high-value entry beyond them), then keep
+    // scanning for a better one this run.
     if (generated === undefined) {
+      await recordBackfillScan(dependencies.db, capture.entryId, userId, now);
       continue;
     }
 

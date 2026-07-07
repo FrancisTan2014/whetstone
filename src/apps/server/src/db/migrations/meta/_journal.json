@@ -218,6 +218,13 @@
       "when": 1783313790900,
       "tag": "0030_white_stryfe",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1783410472272,
+      "tag": "0031_luxuriant_dorian_gray",
+      "breakpoints": true
     }
   ]
 }

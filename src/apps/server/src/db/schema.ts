@@ -671,3 +671,21 @@ export const proposalReviews = pgTable(
   },
   (table) => [index("proposal_reviews_candidate_idx").on(table.proposalCandidateId)]
 );
+
+// A durable marker that a Make Durable backfill run (#456) evaluated a Timeline entry and the model
+// returned NO proposal. It advances the bounded history scan past entries that yielded nothing, so a
+// high-value entry beyond a single run's `BACKFILL_SCAN_LIMIT` stays reachable across runs. (An entry
+// that DID produce a proposal is already excluded by its `proposal_candidates` row; this covers the
+// empty-generation case, which stores no candidate.) It is never written for a model-unavailable/null
+// attempt, so those leave history unchanged and the entry remains eligible for a later run.
+export const makeDurableBackfillScans = pgTable(
+  "make_durable_backfill_scans",
+  {
+    timelineEntryId: text("timeline_entry_id")
+      .primaryKey()
+      .references(() => timelineEntries.entryId),
+    userId: text("user_id").notNull(),
+    scannedAt: timestamp("scanned_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [index("make_durable_backfill_scans_user_idx").on(table.userId)]
+);

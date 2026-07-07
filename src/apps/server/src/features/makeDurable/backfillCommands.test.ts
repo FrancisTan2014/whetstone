@@ -21,6 +21,7 @@ import {
 import type { ProposalAttempt, ProposalProvider } from "./proposalProvider.js";
 import { reviewProposalCard } from "./reviewCommands.js";
 import { createTimelineCapture } from "./timelineCommands.js";
+import { listBackfillableCaptures } from "./timelineQueries.js";
 
 const userA = "user-a";
 const userB = "user-b";
@@ -232,6 +233,8 @@ describe("backfillMakeDurable", () => {
 
     expect(result).toEqual({ card: null, scannedCount: 0 });
     expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
+    // No scan marker is written for a null attempt, so both entries stay eligible for a later run.
+    expect(await listBackfillableCaptures(context.db, userA, BACKFILL_SCAN_LIMIT)).toHaveLength(2);
   });
 
   it("skips an entry the model finds nothing in and keeps scanning to a high-value one", async () => {
@@ -345,5 +348,47 @@ describe("backfillMakeDurable", () => {
 
     expect(result.card).toBeNull();
     expect(result.scannedCount).toBe(BACKFILL_SCAN_LIMIT);
+  });
+
+  it("does not re-scan an entry the model found nothing in on a later run (durable marker)", async () => {
+    await seedCapture(captureText, t0);
+
+    const first = await backfillMakeDurable(deps(proposeAlways(emptyAttempt)), userA, t0);
+    expect(first).toEqual({ card: null, scannedCount: 1 });
+
+    let calls = 0;
+    const spy: ProposalProvider = () => {
+      calls += 1;
+      return Promise.resolve(emptyAttempt);
+    };
+    const second = await backfillMakeDurable(deps(spy), userA, t1);
+
+    // The marker makes the entry ineligible, so the model is never asked about it again.
+    expect(calls).toBe(0);
+    expect(second).toEqual({ card: null, scannedCount: 0 });
+  });
+
+  it("reaches a high-value entry beyond the first BACKFILL_SCAN_LIMIT across runs", async () => {
+    for (let i = 0; i < BACKFILL_SCAN_LIMIT; i += 1) {
+      await seedCapture(`chatty note ${i}`, new Date(t0.getTime() + i * 1000));
+    }
+    const goldId = await seedCapture(
+      captureText,
+      new Date(t0.getTime() + (BACKFILL_SCAN_LIMIT + 1) * 1000)
+    );
+    // Empty for every chatty note, high value only for the gold capture.
+    const provider: ProposalProvider = (rawText) =>
+      Promise.resolve(rawText === captureText ? attempt() : emptyAttempt);
+
+    // Run 1 exhausts the per-run limit on the empty entries; the gold entry (position 26) is unreachable.
+    const first = await backfillMakeDurable(deps(provider), userA, t0);
+    expect(first).toEqual({ card: null, scannedCount: BACKFILL_SCAN_LIMIT });
+    expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
+
+    // Run 2: the 25 marked entries are skipped, so the gold entry is now reached and surfaced.
+    const second = await backfillMakeDurable(deps(provider), userA, t1);
+    expect(second.card?.timelineEntryId).toBe(goldId);
+    const [candidate] = await listProposalCandidatesForUser(context.db, userA);
+    expect(candidate?.status).toBe("visible");
   });
 });
