@@ -671,6 +671,50 @@ function normalizeSvgImages(body: HTMLElement, ownerDocument: Document): void {
   }
 }
 
+// The inline-content blocks whose content model is `inline*` (no room for a block-level figure/image):
+// an `<img>` living directly in one of these, alongside real text, is an inline image the schema cannot
+// represent. `<figcaption>` and `<dt>` are inline-content too, so an image mid-caption/term is caught.
+const INLINE_CONTENT_HOSTS = "p,h1,h2,h3,h4,h5,h6,figcaption,dt";
+
+// Make inline-image loss LOUD (#523). An `<img>`/`<svg><image>` (already normalized to `<img>`) sitting
+// in inline flow — inside a paragraph/heading/caption that also carries real text — has no home in the
+// schema: an `image` node is valid only inside a block-level `figure`, and #368 keeps inline runs
+// mark-based to avoid the #340 CJK shatter. Left alone, ProseMirror silently splits the paragraph and
+// folds the surrounding prose into a spurious figure caption (mangling with no evidence). So BEFORE the
+// parse (and after `normalizeSvgImages`), record fail-loud evidence for each inline-flow image and
+// remove it, so the surrounding prose survives intact as one paragraph. A standalone/block image (the
+// sole content of its host, or a body/`<div>`-level `<img>`) still becomes a figure — those have no
+// inline-content host, so the host check below skips them; images inside `<pre>`/`<code>` keep their
+// existing handling (callout normalization).
+function collectInlineImageLoss(body: HTMLElement): IngestionEvidence[] {
+  const evidence: IngestionEvidence[] = [];
+
+  for (const img of Array.from(body.querySelectorAll("img"))) {
+    if (img.closest("pre,code") !== null) {
+      continue;
+    }
+
+    const host = img.closest(INLINE_CONTENT_HOSTS);
+
+    // Only an image inside an inline-content host that ALSO holds real text is inline-lost; an
+    // image that is the sole content of its host (or lives in a block container) still becomes a
+    // figure. An `<img>` contributes no text, so any non-whitespace text in the host is a sibling's.
+    if (host === null || String(host.textContent).trim().length === 0) {
+      continue;
+    }
+
+    evidence.push({
+      adjacentText: adjacentText(img),
+      attributes: attributesOf(img),
+      path: pathOf(img),
+      tag: "img"
+    });
+    img.remove();
+  }
+
+  return evidence;
+}
+
 // Replace an unrecognized element with a sentinel `<div>` that preserves its original tag and raw
 // HTML verbatim, so the explicit `unknown` parse rule turns it into an `unknown` node (and the
 // pre-walk does not descend into it).
@@ -1049,10 +1093,19 @@ export function htmlToDocument(html: string): HtmlIngestionResult {
   // Unwrap `<svg><image xlink:href>` raster wrappers (the DDIA diagram pattern) into plain `<img>`
   // BEFORE the fail-loud walk, so they model as figure images instead of flagging `<svg>` as unknown.
   normalizeSvgImages(body, window.document);
+  // Make inline-image loss loud (#523): record evidence for and remove any `<img>` in inline flow
+  // (mid-paragraph/caption alongside text), which the schema cannot represent and which would
+  // otherwise silently shatter its paragraph. Runs after `normalizeSvgImages` so SVG-wrapped rasters
+  // are already `<img>`, and before the callout/unknown walks so a removed image is not re-walked.
+  const inlineImageEvidence = collectInlineImageLoss(body);
   // Normalize code-listing callout markers to inline text BEFORE the fail-loud walk and the parse, so
   // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
   const calloutEvidence = normalizeCodeCallouts(body, window.document);
-  const evidence = [...calloutEvidence, ...collectUnknowns(body, window.document)];
+  const evidence = [
+    ...inlineImageEvidence,
+    ...calloutEvidence,
+    ...collectUnknowns(body, window.document)
+  ];
   // Strip stray inter-CJK digitization spaces from text nodes (skipping code) before parsing (#340),
   // then the spaces that straddle an inline element boundary (#358), so an emphasized/linked term
   // mid-phrase (`使用 <b>传硕计划</b> 中`) does not leave a visible gap.

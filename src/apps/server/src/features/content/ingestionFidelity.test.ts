@@ -96,7 +96,7 @@ type TestContext = Readonly<{
 
 let context: TestContext;
 
-async function buildContext(): Promise<TestContext> {
+async function buildContext(makeEpub: () => ParsedEpub = corpusEpub): Promise<TestContext> {
   const pglite = new PGlite();
   await runMigrations(pglite);
   const db = createDbClient(pglite);
@@ -112,7 +112,7 @@ async function buildContext(): Promise<TestContext> {
     createEntryId: () => `entry-${(entrySequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
-    epubParser: async () => corpusEpub(),
+    epubParser: async () => makeEpub(),
     epubUploadLimitBytes: 50 * 1024 * 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: (records) => evidence.push(...records),
@@ -165,8 +165,9 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
   it("produces no unknown blocks and records no unrecognized-construct evidence", async () => {
     const content = await ingestCorpus();
 
-    // Fail-loud (#311): every block-level construct the corpus carries is modeled, so the evidence sink
-    // is empty and no block degraded to an `unknown` type.
+    // Fail-loud (#311/#523): every construct the corpus carries is modeled, so the evidence sink is
+    // empty and no block degraded to `unknown` — the "zero un-evidenced loss" floor for a clean corpus
+    // (the loud-loss direction is asserted below and in htmlToDocument.test.ts).
     expect(context.evidence).toEqual([]);
     expect(allBlocks(content).map((block) => block.blockType)).not.toContain("unknown");
   });
@@ -247,5 +248,40 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
     }
 
     expect(textBlocksChecked).toBeGreaterThanOrEqual(CH1_PROSE.length + CH2_PROSE.length);
+  });
+
+  // #523 — the fail-loud invariant widens from "zero unknown blocks" to "zero un-evidenced loss": a
+  // construct the schema cannot represent must surface an `IngestionEvidence` record, never vanish
+  // silently. This exercises the INLINE category (slice 1) end to end: an `<img>` in flowing prose has
+  // no schema home, so the full ingest path must surface its evidence through the ingestion logger.
+  it("makes inline-image loss loud through the full ingest path", async () => {
+    const lossyEpub: ParsedEpub = {
+      chapters: [
+        {
+          html: '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>See the diagram <img src="d.png" alt="D"/> here.</p></body></html>',
+          images: [image("d.png")],
+          sourceFile: "inline.xhtml"
+        }
+      ],
+      metadata: { author: "Synthetic Fixtures", language: "en", title: "Inline loss" }
+    };
+    const lossy = await buildContext(() => lossyEpub);
+
+    try {
+      const result = await ingestEpub(lossy.dependencies, new Uint8Array([1, 2, 3]));
+      if (result.status !== "ingested") {
+        throw new Error(`expected ingested, got ${result.status}`);
+      }
+
+      // Loud, end to end: the dropped inline image surfaced an evidence record (tag/path/context)
+      // through the ingestion logger — not a silent drop.
+      const imgEvidence = lossy.evidence.filter((record) => record.tag === "img");
+      expect(imgEvidence).toHaveLength(1);
+      expect(imgEvidence[0]!.path).toBe("body>p>img");
+      expect(imgEvidence[0]!.attributes["src"]).toBe("d.png");
+    } finally {
+      await rm(lossy.sourcesDir, { force: true, recursive: true });
+      await rm(lossy.imagesDir, { force: true, recursive: true });
+    }
   });
 });

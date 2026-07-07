@@ -821,6 +821,85 @@ describe("htmlToDocument SVG image normalization", () => {
   });
 });
 
+describe("htmlToDocument inline-image loss is loud (#523)", () => {
+  it("records evidence for a mid-paragraph <img> and keeps the prose as one intact paragraph", () => {
+    const { blocks, doc, evidence } = htmlToDocument(
+      '<p>See the diagram <img src="d.png" alt="A dot"/> here.</p>'
+    );
+
+    // The inline image has no schema home, so it is dropped LOUDLY: one evidence record naming the
+    // img, its path, and the surrounding prose — never a silent shatter into fragments + a caption.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("img");
+    expect(evidence[0]!.path).toBe("body>p>img");
+    expect(evidence[0]!.attributes["src"]).toBe("d.png");
+    expect(evidence[0]!.adjacentText).toContain("See the diagram");
+
+    // The prose survives intact as a single paragraph (no shattered fragments, no spurious figure).
+    const paragraphs = blocksOfType(blocks, "paragraph");
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("See the diagram here.");
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("makes an inline <svg><image> in flowing text loud too (normalized then caught)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p>See <svg><image href="d.png"/></svg> here.</p>'
+    );
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("img");
+    const paragraphs = blocksOfType(blocks, "paragraph");
+    expect(paragraphs).toHaveLength(1);
+    expect(textOf(paragraphs[0]!.node)).toBe("See here.");
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+  });
+
+  it("records evidence for an inline image mid-figcaption, preserving the caption text", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<figure><img src="main.png" alt="main"/><figcaption>Panel <img src="inset.png"/> inset</figcaption></figure>'
+    );
+
+    // The figure's own image is fine; the stray inline image inside the caption is the loud loss.
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.tag).toBe("img");
+    expect(evidence[0]!.path).toContain("figcaption");
+    expect(textOf(blocksOfType(blocks, "figure")[0]!.node)).toBe("Panel inset");
+  });
+
+  it("leaves a standalone block image untouched — a lone <img> still becomes a figure", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<p>Before.</p><img src="b.png" alt="B"/><p>After.</p>'
+    );
+
+    // A body-level image is a standalone figure, not inline loss: no evidence, figure preserved.
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+    expect(blocksOfType(blocks, "paragraph").map((block) => textOf(block.node))).toEqual([
+      "Before.",
+      "After."
+    ]);
+  });
+
+  it("leaves an image that is the sole content of its paragraph as a figure (not inline loss)", () => {
+    const { blocks, evidence } = htmlToDocument('<p><img src="p.png" alt="d"/></p>');
+
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+  });
+
+  it("leaves an <img> inside a code listing to callout normalization, not inline-image loss", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<pre>text <a href="pages.html"><img src="pic.png" alt="diagram"/></a></pre>'
+    );
+
+    // Images inside <pre>/<code> keep their existing handling; the inline-image pass skips them.
+    expect(evidence).toHaveLength(0);
+    expect(blocks.some((block) => findDescendant(block.node, "image") !== undefined)).toBe(true);
+  });
+});
+
 describe("htmlToDocument reference links (#368)", () => {
   // The `link` mark on a text node, if any: the marks array lives on the text node, not as a child
   // node, so the footnote-style `findDescendant` walk cannot reach it.
