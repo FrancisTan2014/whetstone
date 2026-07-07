@@ -924,14 +924,22 @@ describe("htmlToDocument wrapper-metadata loss is loud (#523)", () => {
     expect(paragraphs[1]!.anchorId).toBe("after");
   });
 
-  it("does not flag a nested wrapper whose block descendants already carry ids (resolved nesting)", () => {
-    // The inner wrapper hoists onto the heading; the outer wrapper still HAS a block descendant (that
-    // heading), so its id is a resolved nesting, not a loss — no evidence.
-    const { evidence } = htmlToDocument(
+  it("records evidence for a co-anchored nesting whose outer id cannot reach any block", () => {
+    // The inner wrapper hoists onto the heading; the outer wrapper's id then has no block to land on
+    // (the only block already carries #inner, and a block holds a single anchor), so #outer would be
+    // silently lost — make it loud instead. Regression guard: links to #outer must not vanish.
+    const { blocks, evidence } = htmlToDocument(
       '<div id="outer"><div id="inner"><h1>Section</h1></div></div>'
     );
 
-    expect(evidence).toHaveLength(0);
+    const heading = blocks[0] as { anchorId: string | null; node: DocumentNodeJSON; type: string };
+    expect(heading.type).toBe("heading");
+    expect(heading.anchorId).toBe("inner");
+
+    const outerEvidence = evidence.filter((record) => record.attributes["id"] === "outer");
+    expect(outerEvidence).toHaveLength(1);
+    expect(outerEvidence[0]!.tag).toBe("div");
+    expect(outerEvidence[0]!.path).toBe("body>div");
   });
 });
 

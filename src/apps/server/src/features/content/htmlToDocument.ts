@@ -1062,12 +1062,13 @@ function elementDepth(element: Element): number {
 // (greatest depth) so a nested `sect1` claims its own leading block before an enclosing chapter/part
 // wrapper, which then adopts the next id-less block — nested wrappers map to DISTINCT blocks and the
 // more specific inner id wins. A block that already has its own id is never overwritten (skipped as
-// "not id-less"). When a wrapper has NO block descendant at all yet carries real inline content (its
-// only content becomes an anonymous paragraph the id can never reach), the anchor is genuinely
-// unhoistable, so ingestion records fail-loud evidence rather than dropping it silently (#523
-// wrapper-metadata category) — an empty anchored wrapper (nothing to address) drops quietly, and a
-// wrapper whose only block descendants already carry ids is a resolved nesting, not a loss.
-// Idempotent enough for the pipeline: it runs once before parsing and only moves attributes.
+// "not id-less"). When a wrapper's anchor CANNOT be carried by any block — no id-less block descendant
+// exists, whether because the wrapper holds only inline content (which collapses into an anonymous
+// paragraph) or because its only block descendants already carry their own ids (a co-anchored nesting;
+// a block carries a single anchor, so the outer id has nowhere to land) — the anchor is genuinely lost,
+// so ingestion records fail-loud evidence rather than dropping it silently (#523 wrapper-metadata
+// category). Only a truly empty anchored wrapper (nothing to address) drops quietly. Idempotent enough
+// for the pipeline: it runs once before parsing and only moves attributes.
 function hoistWrapperAnchorIds(body: HTMLElement): IngestionEvidence[] {
   const evidence: IngestionEvidence[] = [];
   const wrappers = Array.from(body.querySelectorAll("*")).filter(isHoistableWrapper);
@@ -1080,11 +1081,12 @@ function hoistWrapperAnchorIds(body: HTMLElement): IngestionEvidence[] {
       (descendant) => isBlockLevelElement(descendant) && !descendant.hasAttribute("id")
     );
     if (target === undefined) {
-      // No id-less block to carry the anchor. If the wrapper has no block descendant at all but does
-      // hold real inline content, that content collapses into an anonymous paragraph the id can never
-      // reach — a genuine metadata loss, made loud. Empty or already-id'd-block wrappers drop quietly.
-      const hasBlockDescendant = descendants.some(isBlockLevelElement);
-      if (!hasBlockDescendant && String(wrapper.textContent).trim().length > 0) {
+      // No id-less block can carry this anchor. If the wrapper encloses addressable content — a block
+      // descendant whose id is already taken, or real inline content — its lost anchor is made loud.
+      // Only a truly empty wrapper (nothing to address) drops quietly.
+      const enclosesContent =
+        descendants.some(isBlockLevelElement) || String(wrapper.textContent).trim().length > 0;
+      if (enclosesContent) {
         evidence.push({
           adjacentText: adjacentText(wrapper),
           attributes: attributesOf(wrapper),
