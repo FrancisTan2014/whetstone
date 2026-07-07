@@ -893,6 +893,42 @@ describe("htmlToDocument inline-image loss is loud (#523)", () => {
     expect(blocksOfType(blocks, "figure")).toHaveLength(1);
   });
 
+  it("records evidence for a SOLE image inside a figcaption (a child-only container it mangles)", () => {
+    // A figcaption is nested in its figure and cannot host a standalone figure: a sole image there is
+    // promoted to a spurious sibling figure, emptying the caption. Make it loud and keep one figure.
+    const { blocks, evidence } = htmlToDocument(
+      '<figure><img src="main.png" alt="main"/><figcaption><img src="cap.png"/></figcaption></figure>'
+    );
+
+    const imgEvidence = evidence.filter((record) => record.tag === "img");
+    expect(imgEvidence).toHaveLength(1);
+    expect(imgEvidence[0]!.attributes["src"]).toBe("cap.png");
+    expect(imgEvidence[0]!.path).toContain("figcaption");
+    // Exactly one figure (the main image); the stray caption image did not become a second figure.
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+  });
+
+  it("records evidence for a SOLE image inside a definition term (a child-only container)", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<dl><dt><img src="term.png"/></dt><dd>desc</dd></dl>'
+    );
+
+    const imgEvidence = evidence.filter((record) => record.tag === "img");
+    expect(imgEvidence).toHaveLength(1);
+    expect(imgEvidence[0]!.attributes["src"]).toBe("term.png");
+    // The definition list is still produced; the mangled term image is not silently promoted.
+    expect(blocksOfType(blocks, "definitionList")).toHaveLength(1);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(0);
+  });
+
+  it("leaves a sole image in a heading as a standalone figure (not a child-only container)", () => {
+    const { blocks, evidence } = htmlToDocument('<h1><img src="banner.png" alt="b"/></h1>');
+
+    // A heading is standalone-capable like <p>: a sole image lifts into a clean figure, no loss.
+    expect(evidence).toHaveLength(0);
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+  });
+
   it("leaves an <img> inside a code listing to callout normalization, not inline-image loss", () => {
     const { blocks, evidence } = htmlToDocument(
       '<pre>text <a href="pages.html"><img src="pic.png" alt="diagram"/></a></pre>'
