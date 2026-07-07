@@ -272,6 +272,25 @@ describe("DiaryPage capture", () => {
     expect(mockedCreate).toHaveBeenCalledWith("a typed thought");
   });
 
+  it("scrolls a newly added entry into view so its actions clear the bottom nav (#506)", async () => {
+    mockedCreate.mockResolvedValue(entryDto("typed-1", d(30), "a fresh thought"));
+    const { capture } = makeCapture();
+
+    await renderReady(capture);
+    (Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).mockClear();
+
+    await userEvent.type(screen.getByLabelText("Or write it down"), "a fresh thought");
+    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+
+    await screen.findByText("a fresh thought");
+    // `block: "nearest"` lifts the entry the minimal amount so its Edit/Delete row is not clipped
+    // behind the mobile bottom navigation. The date-jump scroll uses no options, so this arg is what
+    // distinguishes the new-entry scroll.
+    await waitFor(() =>
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" })
+    );
+  });
+
   it("ignores an empty typed entry", async () => {
     const { capture } = makeCapture();
 

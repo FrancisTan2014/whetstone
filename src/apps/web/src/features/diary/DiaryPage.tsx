@@ -131,6 +131,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const [monthKey, setMonthKey] = useState(() => toMonthKey(toDayKey(new Date())));
   const [markedDays, setMarkedDays] = useState<ReadonlySet<string>>(new Set());
   const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+  const [pendingEntryScroll, setPendingEntryScroll] = useState<string | null>(null);
 
   // Mirrors of the paging state, read inside async callbacks (the IntersectionObserver tick, a date jump)
   // so they act on the latest committed values rather than a stale closure.
@@ -139,6 +140,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const hasMoreRef = useRef(hasMore);
   const busyRef = useRef(false);
   const dayRefs = useRef(new Map<string, HTMLElement>());
+  const entryRefs = useRef(new Map<string, HTMLElement>());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -187,6 +189,21 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       setPendingScroll(null);
     }
   }, [grouped, pendingScroll]);
+
+  // After a new entry is saved and rendered, scroll it fully into view. On mobile the compose form and
+  // the date-jump calendar sit above the timeline, so a freshly added entry lands just under the fold
+  // with its Edit/Delete actions clipped behind the bottom navigation (#506); `block: "nearest"` scrolls
+  // the minimal amount to lift the whole entry above the nav.
+  useEffect(() => {
+    if (pendingEntryScroll === null) {
+      return;
+    }
+    const element = entryRefs.current.get(pendingEntryScroll);
+    if (element !== undefined) {
+      element.scrollIntoView({ block: "nearest" });
+      setPendingEntryScroll(null);
+    }
+  }, [grouped, pendingEntryScroll]);
 
   function fail(message: string): void {
     setNotice(message);
@@ -293,6 +310,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const entry = await createDiaryEntry(trimmed);
       setEntries((previous) => [...previous, toFlat(entry)]);
       markEntryDay(entry.entryDate);
+      setPendingEntryScroll(entry.id);
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -312,6 +330,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const entry = await createDiaryEntry(text);
       setEntries((previous) => [...previous, toFlat(entry)]);
       markEntryDay(entry.entryDate);
+      setPendingEntryScroll(entry.id);
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -485,7 +504,15 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                 </h2>
                 <ul className="flex flex-col gap-2">
                   {group.entries.map((entry) => (
-                    <li className="rounded border border-border bg-surface p-3" key={entry.id}>
+                    <li
+                      className="rounded border border-border bg-surface p-3"
+                      key={entry.id}
+                      ref={(element) => {
+                        if (element !== null) {
+                          entryRefs.current.set(entry.id, element);
+                        }
+                      }}
+                    >
                       {editingId === entry.id ? (
                         <EditForm
                           initial={entry.text}
