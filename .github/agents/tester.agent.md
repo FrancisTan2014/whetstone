@@ -220,6 +220,12 @@ For each genuine, reproduced, non-duplicate defect, open one issue with `gh`:
 - **Body:** clear **repro steps**, **expected vs actual**, the **evidence** (the console error / HTTP
   status / hydration warning text, the work + block type, the tool/flow), and the `origin/main` commit
   SHA you tested. Make it implementable from the issue alone.
+- **Runnable repro (attach as evidence — never commit).** Alongside the prose steps, save a
+  **deterministic repro** — a script/spec that **fails on the tested `origin/main` SHA** — under
+  `artifacts/tester/<UTC-timestamp>/` and link it from the issue. Assert the **product contract /
+  observable behavior** (per `PRODUCT.md`) — never a CSS class, DOM shape, exact text, or timing
+  incidental — so the developer can **promote it into the committed regression test** without inheriting
+  brittleness. This is evidence, like your screenshots: you still **never commit it or edit app code**.
 
 Do not file enhancement ideas, style nits, or performance hunches here — only reproducible functional
 defects. Add `Depends on: #N` only if a fix genuinely requires another issue first.

@@ -143,6 +143,14 @@ starting fresh:
   resistance**: a planted bug in the changed logic must fail a test. Put pure enum→class/style/motion
   maps in a coverage-excluded `*.tokens.ts` module rather than a test that restates the constant.
   Full rubric: `GUIDELINES.md` › Tests.
+- **A `[Bug]` fix promotes the tester's repro; a failing regression is triaged, never silently
+  weakened.** When the issue carries a Tester repro (an `artifacts/tester/…` script that fails on the
+  tested SHA), promote **that** into the committed fail-before/pass-after regression test — it provably
+  reproduces the real scenario — rather than authoring a weaker one. When a **pre-existing** regression
+  test fails during your work, classify it before touching it: a **real regression** (your change broke
+  the contract) → fix the code; a **legitimate contract change** (`PRODUCT.md` intentionally changed) →
+  update the test **and** justify in the PR why the old assertion no longer holds. Never delete or loosen
+  a regression just to turn the gate green.
 - Work **synchronously in this session**. If you use a subagent, run it foreground/blocking and wait
   for it. Never launch a background or detached agent and then exit — it is killed with the session.
 - Commit in coherent steps with conventional commit messages and push as you go, so progress
