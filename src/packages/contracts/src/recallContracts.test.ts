@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  depositRecallItemToolInputSchema,
   parseEnrollRecallItemRequest,
   parseRecallItemDto,
   parseRecallItemListDto,
@@ -87,6 +88,61 @@ describe("enrollRecallItemRequest", () => {
 
   it("rejects unknown fields (no user id or review state from the client)", () => {
     expect(() => parseEnrollRecallItemRequest({ kind: "word", text: "x", userId: "u" })).toThrow();
+  });
+});
+
+describe("depositRecallItemToolInput (#458)", () => {
+  const valid = {
+    kind: "phrase" as const,
+    target: "it depends on",
+    cue: "expressing a dependency",
+    useContext: "explaining what a result hinges on",
+    category: "language" as const,
+    tags: ["grammar"],
+    provenanceEntryId: "entry-1",
+    gloss: "use 'on' after 'depends'"
+  };
+
+  it("accepts a full production-style deposit", () => {
+    expect(depositRecallItemToolInputSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("accepts a deposit without the optional tags/gloss/provenance", () => {
+    const minimal = {
+      kind: "word" as const,
+      target: "ubiquitous",
+      cue: "everywhere at once",
+      useContext: "describing something common",
+      category: "language" as const
+    };
+    expect(depositRecallItemToolInputSchema.parse(minimal)).toEqual(minimal);
+  });
+
+  it.each(["target", "cue", "useContext"])("rejects a blank %s", (field) => {
+    expect(() => depositRecallItemToolInputSchema.parse({ ...valid, [field]: "   " })).toThrow();
+  });
+
+  it.each(["kind", "target", "cue", "useContext", "category"])(
+    "rejects input missing the required field %s",
+    (field) => {
+      const { [field]: _omitted, ...rest } = valid;
+      expect(() => depositRecallItemToolInputSchema.parse(rest)).toThrow();
+    }
+  );
+
+  it("rejects an unknown category or kind", () => {
+    expect(() =>
+      depositRecallItemToolInputSchema.parse({ ...valid, category: "sports" })
+    ).toThrow();
+    expect(() => depositRecallItemToolInputSchema.parse({ ...valid, kind: "sentence" })).toThrow();
+  });
+
+  it("rejects integrity-bearing or unknown fields (text/sourceProposalCandidateId/chunkId)", () => {
+    expect(() => depositRecallItemToolInputSchema.parse({ ...valid, text: "x" })).toThrow();
+    expect(() =>
+      depositRecallItemToolInputSchema.parse({ ...valid, sourceProposalCandidateId: "cand-1" })
+    ).toThrow();
+    expect(() => depositRecallItemToolInputSchema.parse({ ...valid, chunkId: "c-1" })).toThrow();
   });
 });
 
