@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  OCRMYPDF_MISSING_DEPENDENCY_EXIT,
   PDF_MISSING_DEPENDENCY_EXIT,
   PdfToolchainMissingError,
   classifyDoclingError,
@@ -57,9 +58,17 @@ describe("classifyOcrError", () => {
     expect(result.message).toContain("OCRmyPDF");
   });
 
-  it("keeps a non-zero OCRmyPDF exit (a real file failure) as an ordinary error", () => {
-    // Unlike Docling, an exit code is a conversion failure here (invalid_pdf), not a toolchain gap.
-    const cause = spawnError(PDF_MISSING_DEPENDENCY_EXIT);
+  it("maps OCRmyPDF's missing-dependency exit (installed but Tesseract absent) to PdfToolchainMissingError (#510)", () => {
+    // The reviewer's case: ocrmypdf spawns fine, then exits missing_dependency (3) because Tesseract
+    // is not on PATH — a toolchain gap the runtime must NOT report as invalid_pdf.
+    const result = classifyOcrError(spawnError(OCRMYPDF_MISSING_DEPENDENCY_EXIT));
+    expect(result).toBeInstanceOf(PdfToolchainMissingError);
+    expect(result.message).toContain("Tesseract");
+  });
+
+  it("keeps a genuine OCR/input failure (other non-zero exit) as an ordinary error", () => {
+    // e.g. OCRmyPDF's input-file error (2) on a corrupt PDF → invalid_pdf, not a toolchain gap.
+    const cause = spawnError(2);
     expect(classifyOcrError(cause)).toBe(cause);
     expect(classifyOcrError(cause)).not.toBeInstanceOf(PdfToolchainMissingError);
   });

@@ -56,10 +56,12 @@ export function createOcrmypdfPreprocess(dependencies: OcrmypdfDependencies): Pd
             maxBuffer: MAX_OCR_BUFFER_BYTES,
             timeout: dependencies.timeoutMs
           },
-          // Classify the failure at the spawn boundary: an absent OCRmyPDF/Tesseract binary rejects
-          // with PdfToolchainMissingError (→ pdf_toolchain_missing) rather than being miscalled a bad
-          // PDF (#510); a non-zero exit on a real file stays a normal error (→ invalid_pdf).
-          // classifyOcrError is unit-tested directly; this callback needs a real subprocess.
+          // Classify the failure at the spawn boundary: an absent OCRmyPDF binary (ENOENT) OR an
+          // installed OCRmyPDF that exits missing-dependency because Tesseract/Ghostscript isn't found
+          // rejects with PdfToolchainMissingError (→ pdf_toolchain_missing) rather than being
+          // miscalled a bad PDF (#510); a real input-file/OCR failure stays a normal error (→
+          // invalid_pdf). classifyOcrError is unit-tested directly; this callback needs a real
+          // subprocess.
           /* v8 ignore next -- success path needs a real subprocess; the failure path is covered */
           (error) => (error === null ? resolve() : reject(classifyOcrError(error)))
         );

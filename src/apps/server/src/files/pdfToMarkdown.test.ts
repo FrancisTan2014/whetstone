@@ -109,4 +109,21 @@ describe("composePdfToMarkdown", () => {
       ["list", "onetwo"]
     ]);
   });
+
+  it("propagates a toolchain-missing error raised by the OCR pre-pass so ingestPdf can map it (#510)", async () => {
+    // Runtime path for the reviewer's case: OCRmyPDF is installed but Tesseract is absent, so the OCR
+    // stage rejects with PdfToolchainMissingError. composePdfToMarkdown must surface it through
+    // convert() (the converter is never reached) so ingestPdf reports pdf_toolchain_missing, not
+    // invalid_pdf.
+    const ocr = {
+      process: vi.fn(() => Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`.")))
+    };
+    const inner = { convert: vi.fn(async () => "# unused") };
+    const bridge = composePdfToMarkdown(ocr, inner);
+
+    await expect(bridge.convert(new Uint8Array([1]))).rejects.toBeInstanceOf(
+      PdfToolchainMissingError
+    );
+    expect(inner.convert).not.toHaveBeenCalled();
+  });
 });

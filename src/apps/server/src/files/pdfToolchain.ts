@@ -12,6 +12,12 @@
 // `EXIT_MISSING_DEPENDENCY` in pdf_to_markdown.py (ImportError -> 3). A conversion failure exits 4.
 export const PDF_MISSING_DEPENDENCY_EXIT = 3;
 
+// OCRmyPDF's exit code for a missing external program it depends on — Tesseract or Ghostscript not
+// found / not on PATH (its `ExitCode.missing_dependency`). Distinct from a genuine input-file/OCR
+// failure (other non-zero codes), so an installed `ocrmypdf` that cannot find Tesseract is a
+// toolchain gap (→ pdf_toolchain_missing), not a bad PDF (#510).
+export const OCRMYPDF_MISSING_DEPENDENCY_EXIT = 3;
+
 // Thrown when the PDF toolchain itself is absent (a binary could not be spawned, or Docling reported
 // its Python dependency missing). ingestPdf maps this to `pdf_toolchain_missing` — a provisioning
 // gap — instead of `invalid_pdf`.
@@ -54,13 +60,15 @@ export function classifyDoclingError(error: unknown): Error {
 }
 
 /**
- * Classify a failure from the OCRmyPDF pre-pass subprocess. Only an absent binary (ENOENT) is a
- * toolchain gap; a non-zero OCRmyPDF exit on a real file is a conversion failure (invalid_pdf).
+ * Classify a failure from the OCRmyPDF pre-pass subprocess. A toolchain gap is either an absent
+ * OCRmyPDF binary (ENOENT) OR an installed OCRmyPDF that exits with its missing-dependency code
+ * because Tesseract/Ghostscript is not found (exit 3) — both mean "provision the lane", not "bad
+ * file". Any other non-zero exit (a real input-file/OCR failure) stays an ordinary error (invalid_pdf).
  */
 export function classifyOcrError(error: unknown): Error {
-  if (isBinaryMissing(error)) {
+  if (isBinaryMissing(error) || errorCode(error) === OCRMYPDF_MISSING_DEPENDENCY_EXIT) {
     return new PdfToolchainMissingError(
-      "The scanned-PDF OCR pre-pass (OCRmyPDF/Tesseract) is not installed. Run `pnpm setup:pdf` to enable PDF ingestion."
+      "The scanned-PDF OCR pre-pass (OCRmyPDF/Tesseract) is not installed, or is missing a dependency such as Tesseract. Run `pnpm setup:pdf` to enable PDF ingestion."
     );
   }
   return error instanceof Error ? error : new Error(String(error));
