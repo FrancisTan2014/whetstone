@@ -7,8 +7,14 @@ import { describe, expect, it } from "vitest";
 // treatment directly on the stylesheets: in-content links (live cross-references + footnote markers, and
 // inert links) are distinguished by the reference COLOUR `--color-link`, with NO underline in any state,
 // while `.noteMark` keeps its underline (the reserved annotation channel).
-const css = readFileSync(fileURLToPath(new URL("../../styles.css", import.meta.url)), "utf8");
-const theme = readFileSync(fileURLToPath(new URL("../../styles/theme.css", import.meta.url)), "utf8");
+const css = readFileSync(
+  fileURLToPath(new URL("../../styles.css", import.meta.url)),
+  "utf8"
+).replace(/\/\*[\s\S]*?\*\//gu, "");
+const theme = readFileSync(
+  fileURLToPath(new URL("../../styles/theme.css", import.meta.url)),
+  "utf8"
+).replace(/\/\*[\s\S]*?\*\//gu, "");
 
 // The declaration body of the first rule whose selector starts with `selectorStart`.
 function body(selectorStart: string): string {
