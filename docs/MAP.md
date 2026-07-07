@@ -609,8 +609,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   (text-size, Day/Night `ThemeToggle`, the 目录 toggle as a contents icon, and the notes toggle),
   laid out as a **persistent vertical icon rail docked at the bottom-right on desktop** (beside the
   reading column, always one click away — it stays put while scrolling, never receding) and a **top bar
-  hidden by default on mobile** (a center
-  tap on the reading area toggles it; `ReaderPage.tsx` owns the narrow-screen tap state). On mobile the
+  plus a bottom tools bar shown by default on mobile** (a center
+  tap on the reading area recedes/restores it; it must not start receded, else the tools sit below the
+  fold and are untappable — #511; `ReaderPage.tsx` owns the narrow-screen tap state). On mobile the
   whole chrome recedes as one through the `data-hidden` flag; on desktop only the title recedes on
   scroll-up (via `useReaderScroll.ts`) while the tool rail persists. `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its hue key

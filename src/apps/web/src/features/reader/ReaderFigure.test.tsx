@@ -407,13 +407,14 @@ describe("ReaderPage figure image lightbox (#334)", () => {
 
     const trigger = await screen.findByRole("button", { name: "View larger: A dot" });
     const header = container.querySelector(".readingHeader") as HTMLElement;
-    // On a narrow screen the chrome starts hidden; tapping the figure must not reveal it.
-    expect(header.getAttribute("data-hidden")).toBe("true");
+    // On a narrow screen the chrome is shown by default (#511); tapping the figure is a control
+    // gesture, not a center tap, so it must not toggle the chrome.
+    expect(header.getAttribute("data-hidden")).toBeNull();
 
     await user.click(trigger);
 
     expect(await screen.findByRole("dialog", { name: "A dot" })).toBeDefined();
-    expect(header.getAttribute("data-hidden")).toBe("true");
+    expect(header.getAttribute("data-hidden")).toBeNull();
   });
 
   it("opens and closes under reduced motion (fade-only, no transform animation)", async () => {
