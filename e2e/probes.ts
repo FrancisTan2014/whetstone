@@ -227,3 +227,92 @@ export function contentPresent(selector: string): ContentPresence {
   const height = element.getBoundingClientRect().height;
   return { height, present: text.length > 0 || height > 0, text };
 }
+
+export interface HitTargetViolation {
+  descriptor: string;
+  height: number;
+  width: number;
+}
+
+// The interactive controls the hit-target sweep (#519) enumerates. Beyond the obvious `button`/`a[href]`
+// /form controls/ARIA roles, it includes a styled `label` that WRAPS a form control — the visible click
+// proxy for a control that is itself hidden (e.g. the Library "Upload" button is a button-styled
+// `<label>` around an `.sr-only` `<input type=file>`), so that proxy's real hit target is swept too.
+// Exported so the probe (which receives it as an argument — a probe body cannot read module scope) and
+// its callers/tests share ONE definition.
+export const INTERACTIVE_SELECTOR =
+  'button, a[href], input, select, textarea, summary, label:has(input), label:has(select), label:has(textarea), [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="switch"]';
+
+export interface HitTargetSweepConfig {
+  // Elements matching this selector (or nested inside one) are allowlisted out of the sweep.
+  exclude: string;
+  // The interactive-control selector to enumerate (pass `INTERACTIVE_SELECTOR`).
+  interactive: string;
+}
+
+// The systemic hit-target guard (#519): enumerate every VISIBLE, ENABLED interactive control on the
+// page and return those whose rendered rect is under 44x44 CSS px (WCAG 2.5.5) — using
+// `getBoundingClientRect`, i.e. the accessible target including padding, not just an icon glyph.
+// Controls matching `config.exclude` (or nested inside such an element) are allowlisted. Self-contained
+// for `page.evaluate`: every helper is nested and it touches only DOM globals and its serialized config.
+export function smallHitTargets(config: HitTargetSweepConfig): HitTargetViolation[] {
+  const excluded =
+    config.exclude === "" ? [] : Array.from(document.querySelectorAll(config.exclude));
+  const isExcluded = (element: Element): boolean =>
+    excluded.some((ancestor) => ancestor === element || ancestor.contains(element));
+
+  const isDisabled = (element: Element): boolean =>
+    (element as HTMLButtonElement).disabled === true ||
+    element.getAttribute("aria-disabled") === "true";
+
+  const isVisible = (element: Element, rect: DOMRect): boolean => {
+    if (rect.width === 0 && rect.height === 0) {
+      return false;
+    }
+    const style = getComputedStyle(element);
+    if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) {
+      return false;
+    }
+    // On-screen: any part inside the viewport (a control translated off-canvas is not "visible").
+    return (
+      rect.right > 0 &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.top < window.innerHeight
+    );
+  };
+
+  const describe = (element: Element): string => {
+    const tag = element.tagName.toLowerCase();
+    const id = element.id === "" ? "" : `#${element.id}`;
+    const classes =
+      typeof element.className === "string" && element.className.trim() !== ""
+        ? `.${element.className.trim().split(/\s+/).slice(0, 2).join(".")}`
+        : "";
+    const label =
+      element.getAttribute("aria-label") ??
+      element.getAttribute("title") ??
+      (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+    return `${tag}${id}${classes}${label === "" ? "" : ` "${label}"`}`;
+  };
+
+  const violations: HitTargetViolation[] = [];
+  document.querySelectorAll(config.interactive).forEach((element) => {
+    const rect = element.getBoundingClientRect();
+    if (isDisabled(element) || !isVisible(element, rect) || isExcluded(element)) {
+      return;
+    }
+    // Round to the nearest CSS pixel so sub-pixel layout rounding of a genuine 44px control (e.g. a
+    // min-h-11 button measured at 43.98 because its box sits at a fractional y) is not a false positive;
+    // real defects (the historical ones were 24-40px) still fail decisively.
+    if (Math.round(rect.width) < 44 || Math.round(rect.height) < 44) {
+      violations.push({
+        descriptor: describe(element),
+        height: Math.round(rect.height * 10) / 10,
+        width: Math.round(rect.width * 10) / 10
+      });
+    }
+  });
+
+  return violations;
+}
