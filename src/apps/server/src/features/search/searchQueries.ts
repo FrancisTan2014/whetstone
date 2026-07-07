@@ -1,4 +1,6 @@
 import type { SearchResultDto } from "@whetstone/contracts";
+import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document";
+import { type MdastNodeLike, mdastReadableText } from "@whetstone/domain";
 import { and, asc, eq, ilike, isNull, notExists, sql } from "drizzle-orm";
 import { union } from "drizzle-orm/pg-core";
 
@@ -25,17 +27,24 @@ export function escapeLikePattern(term: string): string {
 // PM-backed search hit deep-links to the block the reader actually stamps (#312). Results follow
 // reading order within a work: by reading unit order, then block order inside the unit (an
 // `order_index` is only meaningful within one unit, so it cannot order across units).
+//
+// The MATCH runs on the stored, separator-free `plaintext` (the reader-aligned character stream,
+// #344); the DISPLAYED snippet is a readable projection of the same block's stored node that inserts
+// a boundary between block-level children, so a list's items read as `valley. Second` instead of
+// running together as `valley.Second` (#503). The projection is display-only and never feeds
+// matching or anchoring.
 export async function searchBlocks(db: DbClient, query: string): Promise<SearchResultDto[]> {
   const pattern = `%${escapeLikePattern(query)}%`;
 
-  // The PM substrate: `doc_blocks` carry plaintext and are never soft-deleted, so a match returns the
-  // node id the reader renders. Their unit join also yields the reading-order key.
+  // The PM substrate: `doc_blocks` carry the node + plaintext and are never soft-deleted, so a match
+  // returns the node id the reader renders. Their unit join also yields the reading-order key.
   const docHalf = db
     .select({
       authorName: authors.name,
       blockEntryId: docBlocks.id,
+      nodeJson: docBlocks.nodeJson,
       orderIndex: sql<number>`${docBlocks.orderIndex}`.as("block_order_index"),
-      plaintext: docBlocks.plaintext,
+      substrate: sql<string>`'pm'`.as("substrate"),
       unitOrderIndex: sql<number>`${readingUnits.orderIndex}`.as("unit_order_index"),
       workEntryId: docBlocks.workEntryId,
       workTitle: workMeta.title
@@ -53,8 +62,9 @@ export async function searchBlocks(db: DbClient, query: string): Promise<SearchR
     .select({
       authorName: authors.name,
       blockEntryId: blocks.entryId,
+      nodeJson: blocks.mdastJson,
       orderIndex: sql<number>`${blocks.orderIndex}`.as("block_order_index"),
-      plaintext: blocks.plaintext,
+      substrate: sql<string>`'mdast'`.as("substrate"),
       unitOrderIndex: sql<number>`${readingUnits.orderIndex}`.as("unit_order_index"),
       workEntryId: blocks.workEntryId,
       workTitle: workMeta.title
@@ -82,7 +92,8 @@ export async function searchBlocks(db: DbClient, query: string): Promise<SearchR
     .select({
       authorName: hits.authorName,
       blockEntryId: hits.blockEntryId,
-      plaintext: hits.plaintext,
+      nodeJson: hits.nodeJson,
+      substrate: hits.substrate,
       workEntryId: hits.workEntryId,
       workTitle: hits.workTitle
     })
@@ -98,8 +109,17 @@ export async function searchBlocks(db: DbClient, query: string): Promise<SearchR
   return rows.map((row) => ({
     authorName: row.authorName,
     blockEntryId: row.blockEntryId,
-    plaintext: row.plaintext,
+    plaintext: readableSnippet(row.substrate, row.nodeJson),
     workEntryId: row.workEntryId,
     workTitle: row.workTitle
   }));
+}
+
+// Project a hit's stored block node to its readable display text, picking the reader for the node's
+// substrate: PM `doc_blocks` hold a ProseMirror node, legacy `blocks` hold an mdast node. Both
+// readers insert a single space between block-level children so a list's items keep a boundary.
+function readableSnippet(substrate: string, node: unknown): string {
+  return substrate === "pm"
+    ? documentReadableText(node as DocumentNodeJSON)
+    : mdastReadableText(node as MdastNodeLike);
 }

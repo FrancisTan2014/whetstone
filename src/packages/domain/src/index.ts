@@ -108,11 +108,12 @@ export type { NormalizedEpubMetadata, RawEpubCreator, RawEpubMetadata } from "./
 export { decomposeHtmlChapter } from "./htmlBlocks.js";
 export { createEntryLink, isLinkType, linkTypes } from "./links.js";
 export type { EntryLink, LinkType } from "./links.js";
-export { blockFromMdastNode, decomposeMarkdown } from "./markdownBlocks.js";
+export { blockFromMdastNode, decomposeMarkdown, mdastReadableText } from "./markdownBlocks.js";
 export type {
   DecomposedBlock,
   DecomposedFigureImage,
-  DecomposedReadingUnit
+  DecomposedReadingUnit,
+  MdastNodeLike
 } from "./markdownBlocks.js";
 export { renderNoteMarkdown, validateNoteAnswers } from "./noteAnswers.js";
 export type { NoteAnswers, NoteAnswerValidation } from "./noteAnswers.js";

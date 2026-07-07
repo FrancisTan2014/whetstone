@@ -1,6 +1,43 @@
 import { describe, expect, it } from "vitest";
 
-import { decomposeMarkdown } from "./markdownBlocks.js";
+import { decomposeMarkdown, type MdastNodeLike, mdastReadableText } from "./markdownBlocks.js";
+
+describe("mdastReadableText", () => {
+  it("separates a decomposed list's items with a space while stored plaintext runs them together (#503)", () => {
+    const listBlock = decomposeMarkdown(
+      "- First list item mentions a falcon gliding above the valley.\n" +
+        "- Second list item mentions a turtle walking the long sandy shore."
+    )[0]?.blocks.find((block) => block.blockType === "list");
+
+    // The stored, reader-aligned plaintext runs the two items together; the readable projection of the
+    // very same mdast node keeps a boundary between them.
+    expect(listBlock?.plaintext).toContain("valley.Second");
+    const readable = listBlock
+      ? mdastReadableText(listBlock.mdast as unknown as MdastNodeLike)
+      : "";
+    expect(readable).toBe(
+      "First list item mentions a falcon gliding above the valley. " +
+        "Second list item mentions a turtle walking the long sandy shore."
+    );
+  });
+
+  it("leaves a paragraph's inline run unseparated across nested marks", () => {
+    const paragraph: MdastNodeLike = {
+      children: [
+        { type: "text", value: "Hello " },
+        { children: [{ type: "text", value: "world" }], type: "emphasis" },
+        { type: "text", value: " today." }
+      ],
+      type: "paragraph"
+    };
+
+    expect(mdastReadableText(paragraph)).toBe("Hello world today.");
+  });
+
+  it("returns an empty string for a childless, valueless node", () => {
+    expect(mdastReadableText({ type: "thematicBreak" })).toBe("");
+  });
+});
 
 describe("decomposeMarkdown", () => {
   it("maps a heading-free document to a single untitled reading unit", () => {
