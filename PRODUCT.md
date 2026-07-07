@@ -393,6 +393,16 @@ be clean and consistent:
   flattened paragraphs.
 - Code blocks use monospace on a distinct surface; inline code is distinguished. Tables,
   blockquotes/epigraphs, and footnotes are styled for readability.
+- **Links vs. annotations — separate visual channels (settled).** In-content references (inline
+  cross-reference links and footnote/endnote reference markers) are distinguished by a **single
+  dedicated link color** — a tokenized `--color-link` (Day + Night), a **blue** clear of the four
+  annotation hues and the app accent, AA-contrast on the paper surface — and **never by an underline**.
+  Underline (and the whole-block gutter bar) is reserved **exclusively** for the reader's own **note
+  marks**, so an underlined span always means "a note lives here," never "this is a link." Live
+  references show a pointer cursor and a **non-underline** hover affordance (a faint rounded wash in the
+  link hue); inert (external / cross-work / unresolvable) references keep the color but stay
+  non-interactive. Two overlapping underline signals (link and note) are ambiguous — mature readers
+  (Kindle, 微信读书) and the source books color links and reserve underline/highlight for annotations.
 - **Code callouts** (the ❶ ❷ ❸ markers technical books attach to code lines, paired with an
   explanation list) keep the listing **one cohesive code block**: markers become inline circled-number
   text at their position (verbatim whitespace preserved), never shattering the block into figures.
