@@ -211,7 +211,11 @@ describe("deposit_recall_item", () => {
         useContext: "describing something common",
         category: "language"
       })
-    ) as { tags: ReadonlyArray<string> | null; gloss: string | null; provenanceEntryId: string | null };
+    ) as {
+      tags: ReadonlyArray<string> | null;
+      gloss: string | null;
+      provenanceEntryId: string | null;
+    };
 
     expect(saved).toMatchObject({ tags: null, gloss: null, provenanceEntryId: null });
   });
