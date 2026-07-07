@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { RecallItemDto } from "@whetstone/contracts";
 import type { ReviewRating } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { recallCardFaces } from "./recallCardFaces";
 import { fetchDueRecall, gradeRecall, snoozeRecall } from "./recallApi";
 
 type Phase = "error" | "loading" | "ready";
@@ -115,6 +116,11 @@ function renderBody(
   );
 }
 
+// One due card as a two-phase flip (#525): a self-grade only means something after a retrieval
+// attempt, so grade buttons are gated behind a reveal. Phase 1 (prompt) shows the front and the
+// reveal affordance + Snooze; no grades. Phase 2 (reveal) shows the back and the four SM-2 grades.
+// Reveal is a native <button> (so click/tap and Space/Enter all work); after reveal, focus moves to
+// the answer region for assistive tech and 1–4 optionally map to the grades. Snooze is always present.
 function RecallCard({
   grade,
   item,
@@ -124,26 +130,86 @@ function RecallCard({
   item: RecallItemDto;
   snooze: (id: string) => void;
 }>): React.JSX.Element {
-  return (
-    <li className="rounded border border-border bg-surface p-4">
-      <p className="text-lg text-text">{item.text}</p>
-      {item.gloss === null ? null : <p className="mt-1 text-sm text-text-muted">{item.gloss}</p>}
+  const [revealed, setRevealed] = useState(false);
+  const answerRef = useRef<HTMLDivElement>(null);
+  const faces = recallCardFaces(item);
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {ratingButtons.map((control) => (
-          <Button
-            key={control.rating}
-            onClick={() => grade(item.id, control.rating)}
-            size="sm"
-            variant="secondary"
+  // On reveal, move focus to the answer so a screen reader announces it (the grade buttons only enter
+  // the a11y tree now, since they render solely in this phase).
+  useEffect(() => {
+    if (revealed) {
+      answerRef.current?.focus();
+    }
+  }, [revealed]);
+
+  // After reveal, 1–4 map to Again/Hard/Good/Easy — an optional keyboard accelerator. Only wired
+  // while revealed (see `onKeyDown` below), so it never needs to re-check the phase.
+  function handleKeyDown(event: React.KeyboardEvent<HTMLLIElement>): void {
+    const index = ["1", "2", "3", "4"].indexOf(event.key);
+    if (index !== -1) {
+      event.preventDefault();
+      grade(item.id, ratingButtons[index]!.rating);
+    }
+  }
+
+  return (
+    <li
+      className="rounded border border-border bg-surface p-4"
+      onKeyDown={revealed ? handleKeyDown : undefined}
+    >
+      {revealed ? (
+        <>
+          <p className="text-lg text-text">{faces.front}</p>
+          <div
+            aria-label="Answer"
+            className="mt-2 border-t border-border pt-2 focus-visible:outline-none"
+            ref={answerRef}
+            tabIndex={-1}
           >
-            {control.label}
-          </Button>
-        ))}
-        <Button onClick={() => snooze(item.id)} size="sm" variant="ghost">
-          Snooze
-        </Button>
-      </div>
+            {faces.answerless ? (
+              <p className="text-sm text-text-muted">No saved answer — self-check from memory.</p>
+            ) : (
+              faces.back.map((line, index) => (
+                <p
+                  className={index === 0 ? "text-text" : "mt-1 text-sm text-text-muted"}
+                  key={line}
+                >
+                  {line}
+                </p>
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {ratingButtons.map((control) => (
+              <Button
+                key={control.rating}
+                onClick={() => grade(item.id, control.rating)}
+                size="sm"
+                variant="secondary"
+              >
+                {control.label}
+              </Button>
+            ))}
+            <Button onClick={() => snooze(item.id)} size="sm" variant="ghost">
+              Snooze
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-lg text-text">{faces.front}</p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button onClick={() => setRevealed(true)} size="sm" variant="primary">
+              Show answer
+            </Button>
+            <Button onClick={() => snooze(item.id)} size="sm" variant="ghost">
+              Snooze
+            </Button>
+          </div>
+        </>
+      )}
     </li>
   );
 }
