@@ -131,7 +131,6 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const [monthKey, setMonthKey] = useState(() => toMonthKey(toDayKey(new Date())));
   const [markedDays, setMarkedDays] = useState<ReadonlySet<string>>(new Set());
   const [pendingScroll, setPendingScroll] = useState<string | null>(null);
-  const [pendingEntryScroll, setPendingEntryScroll] = useState<string | null>(null);
 
   // Mirrors of the paging state, read inside async callbacks (the IntersectionObserver tick, a date jump)
   // so they act on the latest committed values rather than a stale closure.
@@ -140,7 +139,8 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const hasMoreRef = useRef(hasMore);
   const busyRef = useRef(false);
   const dayRefs = useRef(new Map<string, HTMLElement>());
-  const entryRefs = useRef(new Map<string, HTMLElement>());
+  // The id of a just-saved entry to scroll into view once it mounts (see the entry `ref` below).
+  const pendingEntryScrollRef = useRef<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -189,21 +189,6 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       setPendingScroll(null);
     }
   }, [grouped, pendingScroll]);
-
-  // After a new entry is saved and rendered, scroll it fully into view. On mobile the compose form and
-  // the date-jump calendar sit above the timeline, so a freshly added entry lands just under the fold
-  // with its Edit/Delete actions clipped behind the bottom navigation (#506); `block: "nearest"` scrolls
-  // the minimal amount to lift the whole entry above the nav.
-  useEffect(() => {
-    if (pendingEntryScroll === null) {
-      return;
-    }
-    const element = entryRefs.current.get(pendingEntryScroll);
-    if (element !== undefined) {
-      element.scrollIntoView({ block: "nearest" });
-      setPendingEntryScroll(null);
-    }
-  }, [grouped, pendingEntryScroll]);
 
   function fail(message: string): void {
     setNotice(message);
@@ -310,7 +295,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const entry = await createDiaryEntry(trimmed);
       setEntries((previous) => [...previous, toFlat(entry)]);
       markEntryDay(entry.entryDate);
-      setPendingEntryScroll(entry.id);
+      pendingEntryScrollRef.current = entry.id;
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -330,7 +315,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const entry = await createDiaryEntry(text);
       setEntries((previous) => [...previous, toFlat(entry)]);
       markEntryDay(entry.entryDate);
-      setPendingEntryScroll(entry.id);
+      pendingEntryScrollRef.current = entry.id;
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -508,8 +493,13 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                       className="rounded border border-border bg-surface p-3"
                       key={entry.id}
                       ref={(element) => {
-                        if (element !== null) {
-                          entryRefs.current.set(entry.id, element);
+                        // Scroll a freshly saved entry into view when it mounts. On mobile the compose
+                        // form and date-jump calendar sit above the timeline, so a new entry lands under
+                        // the fold with its Edit/Delete actions clipped behind the bottom navigation
+                        // (#506); `block: "nearest"` lifts the whole entry the minimal amount above the nav.
+                        if (element !== null && pendingEntryScrollRef.current === entry.id) {
+                          element.scrollIntoView({ block: "nearest" });
+                          pendingEntryScrollRef.current = null;
                         }
                       }}
                     >
