@@ -35,13 +35,81 @@ function directChildren(parent: Element, tag: string): Element[] {
 
 // --- EPUB3 nav.xhtml ---------------------------------------------------------------------------
 
+// The structural roles that mark a nav entry as a DIVISION (a Part/Volume/Book that groups the
+// chapters after it). These are the EPUB 3 `epub:type` / HTMLBook `data-type` vocabulary for exactly
+// this distinction, so grouping is driven by the authored semantic role, never by guessing from label
+// text (a chapter titled "Part of the Story" is never misread).
+const DIVISION_ROLES: ReadonlySet<string> = new Set(["part", "division", "volume", "book"]);
+
+// Whether a `<li>`'s authored role is a division. The role tokens come from `epub:type` OR `data-type`
+// (either attribute — DDIA uses `data-type`, EPUB3 authors use `epub:type`), each a whitespace-separated
+// token list; the entry is a division when any token is a division role.
+function isDivisionListItem(li: Element): boolean {
+  const tokens = `${li.getAttribute("epub:type") ?? ""} ${li.getAttribute("data-type") ?? ""}`
+    .toLowerCase()
+    .split(/\s+/);
+  return tokens.some((token) => DIVISION_ROLES.has(token));
+}
+
+// One parsed `<li>` at a level, tagged with whether it is a division, so the sibling list can be
+// normalized (below) before the role information is discarded.
+type ParsedListItem = Readonly<{ entry: NavEntry; isDivision: boolean }>;
+
+// Normalize an authored DIVISION-AS-SIBLING nav into DIVISION-AS-PARENT (#515). At one `<ol>` level, a
+// division entry that authored NO children of its own absorbs the following sibling entries as its
+// children, up to — but not including — the next division (any division ends the absorption). Entries
+// before the first division stay in place; a division that already has children is kept as-is (no
+// double-nesting) and still ends a previous division's absorption; a level with no division at all is
+// returned verbatim. So a correctly-nested nav, a plain flat nav, and the NCX path are all no-ops, and
+// an absorbing Part keeps its own label/href (it stays selectable) while gaining children.
+function groupDivisions(items: ReadonlyArray<ParsedListItem>): NavEntry[] {
+  const result: NavEntry[] = [];
+  let openDivision: { label: string; href: string; children: NavEntry[] } | null = null;
+
+  const flush = (): void => {
+    if (openDivision !== null) {
+      result.push(
+        Object.freeze({
+          label: openDivision.label,
+          href: openDivision.href,
+          children: Object.freeze(openDivision.children)
+        })
+      );
+      openDivision = null;
+    }
+  };
+
+  for (const item of items) {
+    if (item.isDivision) {
+      flush();
+      if (item.entry.children.length === 0) {
+        openDivision = { label: item.entry.label, href: item.entry.href, children: [] };
+      } else {
+        result.push(item.entry);
+      }
+      continue;
+    }
+
+    if (openDivision !== null) {
+      openDivision.children.push(item.entry);
+    } else {
+      result.push(item.entry);
+    }
+  }
+
+  flush();
+  return result;
+}
+
 // Parse one `<ol>` into its ordered entries. Each `<li>` maps to its own `<a href>` entry plus the
 // entries of its nested `<ol>` (recursing preserves depth and sibling order). A `<li>` that carries
 // neither a label nor an href but does nest a list still contributes: its children are hoisted into
 // this level in place, so a purely structural wrapper `<li>` never drops the sections beneath it while
-// a truly empty `<li>` (no label, no href, no children) contributes nothing.
+// a truly empty `<li>` (no label, no href, no children) contributes nothing. After the siblings are
+// built, an authored division-as-sibling (a Part flat beside its chapters) is normalized into a
+// division-as-parent (#515) via `groupDivisions`.
 function parseOrderedList(ol: Element): NavEntry[] {
-  const entries: NavEntry[] = [];
+  const items: ParsedListItem[] = [];
 
   for (const li of directChildren(ol, "li")) {
     const anchor = directChildren(li, "a")[0];
@@ -52,14 +120,21 @@ function parseOrderedList(ol: Element): NavEntry[] {
     const children = nestedOl ? parseOrderedList(nestedOl) : [];
 
     if (label === "" && href === "") {
-      entries.push(...children);
+      // A purely structural wrapper: hoist its (already-normalized) children into this level. They are
+      // not divisions at this level, so they never trigger or terminate grouping here.
+      for (const child of children) {
+        items.push({ entry: child, isDivision: false });
+      }
       continue;
     }
 
-    entries.push(Object.freeze({ label, href, children: Object.freeze(children) }));
+    items.push({
+      entry: Object.freeze({ label, href, children: Object.freeze(children) }),
+      isDivision: isDivisionListItem(li)
+    });
   }
 
-  return entries;
+  return groupDivisions(items);
 }
 
 // Locate the toc nav among a document's `<nav>` elements. `epub:type` is an EPUB namespaced attribute;

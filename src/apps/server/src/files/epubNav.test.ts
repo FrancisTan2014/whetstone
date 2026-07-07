@@ -169,6 +169,151 @@ describe("parseNavDocument — xhtml-nav", () => {
   });
 });
 
+describe("parseNavDocument — division-as-sibling normalization (#515)", () => {
+  // DDIA-shaped nav: a Preface (with its own section) precedes Part I; Parts are authored as flat
+  // siblings of their chapters (no nested <ol>), and chapters carry their own sections/subsections.
+  const ddiaNav = `<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+    <nav epub:type="toc"><ol>
+      <li data-type="preface"><a href="preface01.html#preface">Preface</a>
+        <ol><li><a href="preface01.html#outline">Outline</a></li></ol>
+      </li>
+      <li data-type="part"><a href="part01.html#foundations">I. Foundations</a></li>
+      <li data-type="chapter"><a href="ch01.html#intro">1. Reliable</a>
+        <ol><li><a href="ch01.html#reliability">Reliability</a>
+          <ol><li><a href="ch01.html#faults">Faults</a></li></ol>
+        </li></ol>
+      </li>
+      <li data-type="chapter"><a href="ch02.html#models">2. Data Models</a></li>
+      <li data-type="part"><a href="part02.html#distributed">II. Distributed Data</a></li>
+      <li data-type="chapter"><a href="ch05.html#replication">5. Replication</a></li>
+    </ol></nav>
+  </body></html>`;
+
+  it("nests each chapter under its Part, keeps a preceding Preface top-level, and preserves nested sections", () => {
+    expect(parseNavDocument(ddiaNav, "xhtml-nav")).toEqual([
+      {
+        label: "Preface",
+        href: "preface01.html#preface",
+        children: [{ label: "Outline", href: "preface01.html#outline", children: [] }]
+      },
+      {
+        label: "I. Foundations",
+        href: "part01.html#foundations",
+        children: [
+          {
+            label: "1. Reliable",
+            href: "ch01.html#intro",
+            children: [
+              {
+                label: "Reliability",
+                href: "ch01.html#reliability",
+                children: [{ label: "Faults", href: "ch01.html#faults", children: [] }]
+              }
+            ]
+          },
+          { label: "2. Data Models", href: "ch02.html#models", children: [] }
+        ]
+      },
+      {
+        label: "II. Distributed Data",
+        href: "part02.html#distributed",
+        children: [{ label: "5. Replication", href: "ch05.html#replication", children: [] }]
+      }
+    ]);
+  });
+
+  it("groups consecutive divisions and a trailing division correctly (incl. the volume role)", () => {
+    const nav = `<html><body><nav epub:type="toc"><ol>
+      <li data-type="part"><a href="p1.html">Part One</a></li>
+      <li data-type="part"><a href="p2.html">Part Two</a></li>
+      <li data-type="chapter"><a href="c1.html">Chapter 1</a></li>
+      <li data-type="volume"><a href="v3.html">Volume Three</a></li>
+    </ol></nav></body></html>`;
+
+    expect(parseNavDocument(nav, "xhtml-nav")).toEqual([
+      // A division immediately followed by another division absorbs nothing.
+      { label: "Part One", href: "p1.html", children: [] },
+      {
+        label: "Part Two",
+        href: "p2.html",
+        children: [{ label: "Chapter 1", href: "c1.html", children: [] }]
+      },
+      // A trailing division with no following chapters keeps empty children.
+      { label: "Volume Three", href: "v3.html", children: [] }
+    ]);
+  });
+
+  it("reads the division role from epub:type as well as data-type", () => {
+    const nav = `<html xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol>
+      <li epub:type="part"><a href="p1.html">Part One</a></li>
+      <li epub:type="chapter"><a href="c1.html">Chapter 1</a></li>
+    </ol></nav></body></html>`;
+
+    expect(parseNavDocument(nav, "xhtml-nav")).toEqual([
+      {
+        label: "Part One",
+        href: "p1.html",
+        children: [{ label: "Chapter 1", href: "c1.html", children: [] }]
+      }
+    ]);
+  });
+
+  it("leaves an already-nested Part unchanged (no double-nesting)", () => {
+    const nav = `<html><body><nav epub:type="toc"><ol>
+      <li data-type="part"><a href="part01.html">Part I</a>
+        <ol>
+          <li data-type="chapter"><a href="ch01.html">Chapter 1</a></li>
+          <li data-type="chapter"><a href="ch02.html">Chapter 2</a></li>
+        </ol>
+      </li>
+      <li data-type="part"><a href="part02.html">Part II</a>
+        <ol><li data-type="chapter"><a href="ch03.html">Chapter 3</a></li></ol>
+      </li>
+    </ol></nav></body></html>`;
+
+    expect(parseNavDocument(nav, "xhtml-nav")).toEqual([
+      {
+        label: "Part I",
+        href: "part01.html",
+        children: [
+          { label: "Chapter 1", href: "ch01.html", children: [] },
+          { label: "Chapter 2", href: "ch02.html", children: [] }
+        ]
+      },
+      {
+        label: "Part II",
+        href: "part02.html",
+        children: [{ label: "Chapter 3", href: "ch03.html", children: [] }]
+      }
+    ]);
+  });
+
+  it("leaves a flat nav with no division tokens unchanged", () => {
+    const nav = `<html><body><nav epub:type="toc"><ol>
+      <li data-type="chapter"><a href="ch01.html">Chapter 1</a></li>
+      <li data-type="chapter"><a href="ch02.html">Chapter 2</a></li>
+    </ol></nav></body></html>`;
+
+    expect(parseNavDocument(nav, "xhtml-nav")).toEqual([
+      { label: "Chapter 1", href: "ch01.html", children: [] },
+      { label: "Chapter 2", href: "ch02.html", children: [] }
+    ]);
+  });
+
+  it("leaves the NCX path unchanged (navPoint roles are not read, so nothing groups)", () => {
+    const ncx = `<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint><navLabel><text>Part I</text></navLabel><content src="part01.html"/></navPoint>
+  <navPoint><navLabel><text>Chapter 1</text></navLabel><content src="ch01.html"/></navPoint>
+</navMap></ncx>`;
+
+    expect(parseNavDocument(ncx, "ncx")).toEqual([
+      { label: "Part I", href: "part01.html", children: [] },
+      { label: "Chapter 1", href: "ch01.html", children: [] }
+    ]);
+  });
+});
+
 describe("parseNavDocument — ncx", () => {
   it("orders nested navPoints by numeric playOrder at every level with normalized labels", () => {
     expect(parseNavDocument(playOrderNcx, "ncx")).toEqual([

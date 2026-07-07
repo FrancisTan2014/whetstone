@@ -2,6 +2,7 @@ import { toEntryId } from "@whetstone/domain";
 import { describe, expect, it } from "vitest";
 
 import type { NavEntry } from "../../files/epubNav.js";
+import { parseNavDocument } from "../../files/epubNav.js";
 import { flattenNavTree, writeTocEntries, type TocEntryRow } from "./tocWriter.js";
 
 // A deterministic id source: entries are created in pre-order, so ids read e-0, e-1, … in walk order.
@@ -89,6 +90,63 @@ describe("flattenNavTree", () => {
   it("treats an empty file# fragment as a whole-file target", () => {
     expect(row("Chapter Two").targetSourceFile).toBe("OEBPS/ch02.xhtml");
     expect(row("Chapter Two").targetAnchor).toBeNull();
+  });
+});
+
+// After the division-as-sibling normalization (#515), a DDIA-shaped flat nav flattens to the promised
+// depth ladder (Part 0 › Chapter 1 › Section 2 › Subsection 3), with each chapter parented to its Part
+// and the absorbing Part still selectable.
+describe("flattenNavTree over a division-normalized DDIA nav (#515)", () => {
+  const ddiaNav = `<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+    <nav epub:type="toc"><ol>
+      <li data-type="preface"><a href="preface01.html#preface">Preface</a></li>
+      <li data-type="part"><a href="part01.html#foundations">Part I</a></li>
+      <li data-type="chapter"><a href="ch01.html#intro">Chapter 1</a>
+        <ol><li><a href="ch01.html#reliability">Reliability</a>
+          <ol><li><a href="ch01.html#faults">Faults</a></li></ol>
+        </li></ol>
+      </li>
+      <li data-type="chapter"><a href="ch02.html#models">Chapter 2</a></li>
+      <li data-type="part"><a href="part02.html#dist">Part II</a></li>
+      <li data-type="chapter"><a href="ch05.html#repl">Chapter 5</a></li>
+    </ol></nav>
+  </body></html>`;
+
+  const rows = flattenNavTree(
+    parseNavDocument(ddiaNav, "xhtml-nav"),
+    "OEBPS/nav.xhtml",
+    sequentialIds()
+  );
+  const byLabel = new Map(rows.map((entry) => [entry.label, entry]));
+
+  function row(label: string): TocEntryRow {
+    const found = byLabel.get(label);
+    if (found === undefined) {
+      throw new Error(`no flattened row for ${label}`);
+    }
+    return found;
+  }
+
+  it("assigns Part 0 › Chapter 1 › Section 2 › Subsection 3 with the Preface left top-level", () => {
+    expect(rows.map((entry) => [entry.label, entry.depth])).toEqual([
+      ["Preface", 0],
+      ["Part I", 0],
+      ["Chapter 1", 1],
+      ["Reliability", 2],
+      ["Faults", 3],
+      ["Chapter 2", 1],
+      ["Part II", 0],
+      ["Chapter 5", 1]
+    ]);
+    expect(row("Chapter 1").parentEntryId).toBe(row("Part I").entryId);
+    expect(row("Chapter 2").parentEntryId).toBe(row("Part I").entryId);
+    expect(row("Chapter 5").parentEntryId).toBe(row("Part II").entryId);
+    expect(row("Preface").parentEntryId).toBeNull();
+  });
+
+  it("keeps the absorbed Part selectable (retains its resolved target)", () => {
+    expect(row("Part I").targetSourceFile).toBe("OEBPS/part01.html");
+    expect(row("Part I").targetAnchor).toBe("foundations");
   });
 });
 
