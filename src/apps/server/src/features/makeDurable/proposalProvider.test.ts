@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProposalGeneration } from "@whetstone/contracts";
 
 import type { LlmModel } from "../../llm/llmModel.js";
-import { createProposalProvider } from "./proposalProvider.js";
+import { createBackfillProposalProvider, createProposalProvider } from "./proposalProvider.js";
 
 const validGeneration: ProposalGeneration = {
   candidates: [
@@ -88,6 +88,30 @@ describe("createProposalProvider", () => {
       candidates: [validGeneration.candidates[0], validGeneration.candidates[0]]
     });
     const provider = createProposalProvider(modelReturning(two), "m");
+
+    expect(await provider("x", noExisting)).toBeNull();
+  });
+});
+
+describe("createBackfillProposalProvider", () => {
+  it("prompts with the high-value backfill bias and returns the validated generation", async () => {
+    const chat = modelReturning(JSON.stringify(validGeneration));
+    const provider = createBackfillProposalProvider(chat, "llama3.1");
+
+    const result = await provider("an old capture", noExisting);
+
+    expect(result).toEqual({ generation: validGeneration, modelName: "llama3.1" });
+    const prompt = (chat as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+    expect(prompt).toContain("mining an OLDER capture");
+    expect(prompt.toLowerCase()).toContain("spelling");
+    expect(prompt).toContain("Capture:\nan old capture");
+  });
+
+  it("degrades to null on model failure, exactly like the live provider", async () => {
+    const provider = createBackfillProposalProvider(
+      () => Promise.reject(new Error("ECONNREFUSED")),
+      "m"
+    );
 
     expect(await provider("x", noExisting)).toBeNull();
   });

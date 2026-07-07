@@ -36,7 +36,10 @@ import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { checkCoachHealth } from "./coach/coachHealth.js";
 import { createDiaryTidy } from "./features/diary/diaryTidy.js";
-import { createProposalProvider } from "./features/makeDurable/proposalProvider.js";
+import {
+  createBackfillProposalProvider,
+  createProposalProvider
+} from "./features/makeDurable/proposalProvider.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -210,7 +213,11 @@ const server = createServer({
     createId: () => randomUUID(),
     db,
     now: () => new Date(),
-    propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel)
+    propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
+    proposeBackfill: createBackfillProposalProvider(
+      createOllamaModel(defaultCheapModel),
+      defaultCheapModel
+    )
   },
   search: { db },
   session: {

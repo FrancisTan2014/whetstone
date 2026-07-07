@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  BackfillResultDto,
   MakeDurableCardDto,
   QuickCaptureResultDto,
   RecallItemDto
 } from "@whetstone/contracts";
 
-import { fetchMakeDurableCards, reviewMakeDurableCard, submitQuickCapture } from "./makeDurableApi";
+import {
+  fetchMakeDurableCards,
+  reviewMakeDurableCard,
+  runMakeDurableBackfill,
+  submitQuickCapture
+} from "./makeDurableApi";
 
 const card: MakeDurableCardDto = {
   proposalCandidateId: "cand-1",
@@ -99,6 +105,29 @@ describe("fetchMakeDurableCards", () => {
   it("parses the pending card list", async () => {
     stubFetch({ body: { cards: [card] }, ok: true });
     expect(await fetchMakeDurableCards()).toEqual([card]);
+  });
+});
+
+describe("runMakeDurableBackfill", () => {
+  it("posts to the backfill endpoint and parses a surfaced card", async () => {
+    const result: BackfillResultDto = { card, scannedCount: 4 };
+    const fetchMock = stubFetch({ body: result, ok: true });
+
+    expect(await runMakeDurableBackfill()).toEqual(result);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/makedurable/backfill"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("parses an empty result (nothing found)", async () => {
+    stubFetch({ body: { card: null, scannedCount: 0 }, ok: true });
+    expect(await runMakeDurableBackfill()).toEqual({ card: null, scannedCount: 0 });
+  });
+
+  it("throws on a non-ok response", async () => {
+    stubFetch({ ok: false, status: 500 });
+    await expect(runMakeDurableBackfill()).rejects.toThrow();
   });
 });
 

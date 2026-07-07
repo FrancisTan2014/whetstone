@@ -63,6 +63,8 @@ export { rankReadingNudges, recencyBoost, topReadingNudge } from "./readingNudge
 export type { ReadingNudgeCandidate, RankedReadingNudge } from "./readingNudge.js";
 export { buildDiaryTidyPrompt, diaryTidyInstructions, isFaithfulTidy } from "./diaryTidy.js";
 export {
+  buildBackfillProposalPrompt,
+  backfillEmphasisInstructions,
   buildProposalPrompt,
   classifyProposalDuplicate,
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,

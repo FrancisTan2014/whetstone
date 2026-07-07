@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./makeDurableApi", () => ({
   fetchMakeDurableCards: vi.fn(),
   reviewMakeDurableCard: vi.fn(),
+  runMakeDurableBackfill: vi.fn(),
   submitQuickCapture: vi.fn()
 }));
 
@@ -20,12 +21,18 @@ import type {
 } from "@whetstone/contracts";
 
 import { transcribe } from "../session/sessionApi";
-import { fetchMakeDurableCards, reviewMakeDurableCard, submitQuickCapture } from "./makeDurableApi";
+import {
+  fetchMakeDurableCards,
+  reviewMakeDurableCard,
+  runMakeDurableBackfill,
+  submitQuickCapture
+} from "./makeDurableApi";
 import { MakeDurableSection, type QuickCaptureVoiceDependencies } from "./MakeDurableSection";
 
 const mockedFetch = vi.mocked(fetchMakeDurableCards);
 const mockedSubmit = vi.mocked(submitQuickCapture);
 const mockedReview = vi.mocked(reviewMakeDurableCard);
+const mockedBackfill = vi.mocked(runMakeDurableBackfill);
 const mockedTranscribe = vi.mocked(transcribe);
 
 // A deterministic voice capture seam: `start()` opens a fake recording whose `stop()` resolves a stub
@@ -334,6 +341,41 @@ describe("MakeDurableSection", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn't record your choice");
+  });
+});
+
+describe("MakeDurableSection backfill (#456)", () => {
+  it("mines history and surfaces the returned card on Today", async () => {
+    mockedBackfill.mockResolvedValue({ card, scannedCount: 3 });
+    render(<MakeDurableSection />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Mine my history" }));
+
+    expect(mockedBackfill).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
+  });
+
+  it("shows a calm note when the scan surfaces nothing", async () => {
+    mockedBackfill.mockResolvedValue({ card: null, scannedCount: 2 });
+    render(<MakeDurableSection />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Mine my history" }));
+
+    expect(await screen.findByText("No new suggestions from your history yet.")).toBeTruthy();
+    expect(screen.queryByText("Make this durable?")).toBeNull();
+  });
+
+  it("surfaces a quiet error when the scan fails", async () => {
+    mockedBackfill.mockRejectedValue(new Error("boom"));
+    render(<MakeDurableSection />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Mine my history" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Couldn't scan your history");
   });
 });
 

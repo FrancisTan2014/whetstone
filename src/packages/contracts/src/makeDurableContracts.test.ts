@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureInputModes,
   captureSources,
+  parseBackfillResultDto,
   parseCreateProposalCandidateRequest,
   parseCreateTimelineCaptureRequest,
   parseMakeDurableCardDto,
@@ -283,5 +284,35 @@ describe("Quick Capture review loop contracts (#452)", () => {
     ).toEqual(payload);
     expect(() => parseReviewProposalRequest({ outcome: "edited_saved" })).toThrow();
     expect(() => parseReviewProposalRequest({ outcome: "nope" })).toThrow();
+  });
+});
+
+describe("backfillResultDto (#456)", () => {
+  const card = {
+    proposalCandidateId: "cand-1",
+    timelineEntryId: "entry-1",
+    type: "recurring_pattern" as const,
+    target: "roll back the deploy",
+    cue: "reverting a release",
+    useContext: "incident updates",
+    reason: "a reusable production pattern",
+    category: "work" as const,
+    tags: [] as string[]
+  };
+
+  it("round-trips a result that surfaced a card", () => {
+    expect(parseBackfillResultDto({ card, scannedCount: 3 })).toEqual({ card, scannedCount: 3 });
+  });
+
+  it("round-trips a result that surfaced nothing", () => {
+    expect(parseBackfillResultDto({ card: null, scannedCount: 0 })).toEqual({
+      card: null,
+      scannedCount: 0
+    });
+  });
+
+  it("rejects a negative or non-integer scanned count", () => {
+    expect(() => parseBackfillResultDto({ card: null, scannedCount: -1 })).toThrow();
+    expect(() => parseBackfillResultDto({ card: null, scannedCount: 1.5 })).toThrow();
   });
 });

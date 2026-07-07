@@ -1,5 +1,9 @@
 import { proposalGenerationSchema, type ProposalGeneration } from "@whetstone/contracts";
-import { buildProposalPrompt, type ExistingRecallItem } from "@whetstone/domain";
+import {
+  buildBackfillProposalPrompt,
+  buildProposalPrompt,
+  type ExistingRecallItem
+} from "@whetstone/domain";
 
 import type { LlmModel } from "../../llm/llmModel.js";
 
@@ -15,15 +19,23 @@ export type ProposalProvider = (
   existing: ReadonlyArray<ExistingRecallItem>
 ) => Promise<ProposalAttempt | null>;
 
-// Wrap the shared `LlmModel` seam as a proposal provider: build the proposal prompt (including the
-// retrieved "Already remembered" context so the model compares before proposing), ask for JSON mode,
-// parse the reply, and validate it against the generation schema. Any failure at any step degrades to
-// null (no proposal), so the caller simply shows no card and keeps the saved Timeline entry.
-export function createProposalProvider(chat: LlmModel, modelName: string): ProposalProvider {
+// Wrap the shared `LlmModel` seam as a proposal provider: build the prompt (including the retrieved
+// "Already remembered" context so the model compares before proposing), ask for JSON mode, parse the
+// reply, and validate it against the generation schema. Any failure at any step degrades to null (no
+// proposal), so the caller simply shows no card and keeps the saved Timeline entry. `buildPrompt`
+// defaults to the live proposal prompt; the backfill provider swaps in the high-value backfill prompt.
+export function createProposalProvider(
+  chat: LlmModel,
+  modelName: string,
+  buildPrompt: (
+    rawText: string,
+    existing: ReadonlyArray<ExistingRecallItem>
+  ) => string = buildProposalPrompt
+): ProposalProvider {
   return async (rawText, existing) => {
     let reply: string;
     try {
-      reply = await chat(buildProposalPrompt(rawText, existing), { json: true });
+      reply = await chat(buildPrompt(rawText, existing), { json: true });
     } catch {
       return null;
     }
@@ -42,4 +54,14 @@ export function createProposalProvider(chat: LlmModel, modelName: string): Propo
 
     return { generation: result.data, modelName };
   };
+}
+
+// The backfill proposal provider (#456): the same seam/gate/schema as live capture, but built with the
+// high-value backfill prompt so mining older Timeline history prefers durable, reusable items over
+// one-off spelling/product-name corrections.
+export function createBackfillProposalProvider(
+  chat: LlmModel,
+  modelName: string
+): ProposalProvider {
+  return createProposalProvider(chat, modelName, buildBackfillProposalPrompt);
 }

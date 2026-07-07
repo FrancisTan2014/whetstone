@@ -1,7 +1,9 @@
 import {
+  parseBackfillResultDto,
   parseMakeDurableCardListDto,
   parseQuickCaptureResultDto,
   parseRecallItemDto,
+  type BackfillResultDto,
   type CaptureInputMode,
   type MakeDurableCardDto,
   type ProposalPayload,
@@ -46,6 +48,18 @@ export async function submitQuickCapture(
 // The pending Make Durable review cards for Today (capped server-side).
 export async function fetchMakeDurableCards(): Promise<ReadonlyArray<MakeDurableCardDto>> {
   return parseMakeDurableCardListDto(await requestJson(apiUrl("/makedurable/cards"))).cards;
+}
+
+// Trigger a bounded Make Durable backfill scan of the user's Timeline history. Returns the one review
+// card it surfaced (null when nothing high-value qualified, or Today already holds a card) plus how many
+// prior entries were evaluated.
+export async function runMakeDurableBackfill(): Promise<BackfillResultDto> {
+  return parseBackfillResultDto(
+    await requestJson(apiUrl("/makedurable/backfill"), {
+      headers: jsonHeaders,
+      method: "POST"
+    })
+  );
 }
 
 export type ReviewCardInput = Readonly<{

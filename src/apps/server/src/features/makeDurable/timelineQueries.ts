@@ -1,8 +1,8 @@
 import type { TimelineCaptureDto } from "@whetstone/contracts";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, notExists } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { timelineEntries } from "../../db/schema.js";
+import { makeDurableBackfillScans, proposalCandidates, timelineEntries } from "../../db/schema.js";
 
 // One persisted timeline-entry row, as selected from the table.
 export type TimelineEntryRow = typeof timelineEntries.$inferSelect;
@@ -49,4 +49,65 @@ export async function listTimelineCapturesForUser(
     .orderBy(desc(timelineEntries.createdAt), asc(timelineEntries.entryId));
 
   return rows.map(toTimelineCaptureDto);
+}
+
+// The user's Timeline captures that are eligible for a Make Durable backfill scan (#456): entries that
+// have NO proposal candidate (a candidate — visible, pending, saved, OR dismissed — means the model
+// already evaluated that entry under the identical gate) AND no backfill-scan marker (a prior run
+// evaluated it and the model returned nothing). Together these advance a durable cursor so a bounded run
+// never re-scans entries already judged, and a high-value entry beyond one run's limit stays reachable.
+// Oldest first, capped at `limit` per run.
+export async function listBackfillableCaptures(
+  db: DbClient,
+  userId: string,
+  limit: number
+): Promise<ReadonlyArray<TimelineCaptureDto>> {
+  const rows = await db
+    .select()
+    .from(timelineEntries)
+    .where(
+      and(
+        eq(timelineEntries.userId, userId),
+        notExists(
+          db
+            .select({ present: proposalCandidates.id })
+            .from(proposalCandidates)
+            .where(
+              and(
+                eq(proposalCandidates.timelineEntryId, timelineEntries.entryId),
+                eq(proposalCandidates.userId, userId)
+              )
+            )
+        ),
+        notExists(
+          db
+            .select({ present: makeDurableBackfillScans.timelineEntryId })
+            .from(makeDurableBackfillScans)
+            .where(
+              and(
+                eq(makeDurableBackfillScans.timelineEntryId, timelineEntries.entryId),
+                eq(makeDurableBackfillScans.userId, userId)
+              )
+            )
+        )
+      )
+    )
+    .orderBy(asc(timelineEntries.createdAt), asc(timelineEntries.entryId))
+    .limit(limit);
+
+  return rows.map(toTimelineCaptureDto);
+}
+
+// Record that a backfill run evaluated a Timeline entry and the model returned no proposal, so the
+// bounded scan advances past it on later runs (see `listBackfillableCaptures`). Idempotent per entry: a
+// re-scan cannot happen because the marker itself makes the entry ineligible.
+export async function recordBackfillScan(
+  db: DbClient,
+  entryId: string,
+  userId: string,
+  now: Date
+): Promise<void> {
+  await db
+    .insert(makeDurableBackfillScans)
+    .values({ timelineEntryId: entryId, userId, scannedAt: now });
 }
