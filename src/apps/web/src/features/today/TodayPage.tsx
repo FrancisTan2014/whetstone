@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
@@ -54,11 +54,19 @@ export function TodayPage(): React.JSX.Element {
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
-  useEffect(() => {
+  // Loading the due-recall batch is shared between the initial mount and a refresh after a Make
+  // Durable save. The initial "loading" comes from the default state; a refresh keeps the current
+  // card until the refetch resolves (no flash), so this only sets the resolved arm — never a
+  // synchronous setState in the mount effect. Stable across renders so the effect stays a one-shot.
+  const loadRecall = useCallback(() => {
     fetchDueRecall().then(
       (items) => setRecall({ items, status: "ready" }),
       () => setRecall({ status: "error" })
     );
+  }, []);
+
+  useEffect(() => {
+    loadRecall();
     fetchLatestReadingPosition().then(
       (position) => setReading({ position, status: "ready" }),
       () => setReading({ status: "error" })
@@ -71,7 +79,7 @@ export function TodayPage(): React.JSX.Element {
       (list) => setLibrary({ hasWorks: list.works.length > 0, status: "ready" }),
       () => setLibrary({ status: "error" })
     );
-  }, []);
+  }, [loadRecall]);
 
   // Dismiss = cooldown: remove the card at once (a "not now" is honoured immediately) and tell the
   // server in the background. A failed dismiss never blanks Today — the card is already gone.
@@ -96,7 +104,7 @@ export function TodayPage(): React.JSX.Element {
       <div className="mt-6 flex flex-col gap-4">
         {firstRun ? <FirstRunCard /> : null}
         <DiaryCaptureCard />
-        <MakeDurableSection />
+        <MakeDurableSection onDurableSaved={loadRecall} />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />

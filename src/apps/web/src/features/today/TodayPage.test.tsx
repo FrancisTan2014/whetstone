@@ -16,6 +16,7 @@ vi.mock("../makeDurable/makeDurableApi", () => ({
 import type {
   AuthorDto,
   LatestReadingPositionDto,
+  MakeDurableCardDto,
   NudgeDto,
   RecallItemDto,
   WorkDto,
@@ -23,6 +24,7 @@ import type {
 } from "@whetstone/contracts";
 
 import { fetchWorks } from "../library/libraryApi";
+import { fetchMakeDurableCards, reviewMakeDurableCard } from "../makeDurable/makeDurableApi";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
 import { fetchDueRecall } from "../recall/recallApi";
 import { fetchLatestReadingPosition } from "./todayApi";
@@ -33,6 +35,8 @@ const mockedReading = vi.mocked(fetchLatestReadingPosition);
 const mockedNudge = vi.mocked(fetchNudge);
 const mockedDismiss = vi.mocked(dismissNudge);
 const mockedWorks = vi.mocked(fetchWorks);
+const mockedCards = vi.mocked(fetchMakeDurableCards);
+const mockedReview = vi.mocked(reviewMakeDurableCard);
 
 const emptyWorks: WorkListDto = { works: [] };
 
@@ -94,6 +98,21 @@ function makeNudge(overrides: Partial<NudgeDto> = {}): NudgeDto {
     chunkId: "harvest-chunk-note-1",
     text: "thrive under pressure",
     workTitle: "On Grit",
+    ...overrides
+  };
+}
+
+function makeCard(overrides: Partial<MakeDurableCardDto> = {}): MakeDurableCardDto {
+  return {
+    proposalCandidateId: "cand-1",
+    timelineEntryId: "entry-1",
+    type: "phrase_chunk",
+    target: "deploy rolled back",
+    cue: "a service is back",
+    useContext: "reporting availability",
+    reason: "a reusable status phrase",
+    category: "work",
+    tags: ["service-status"],
     ...overrides
   };
 }
@@ -183,6 +202,51 @@ describe("TodayPage", () => {
     expect(await screen.findByText(/Couldn’t load recall/)).toBeDefined();
     // The page does not blank — the always-present capture invitation still renders.
     expect(screen.getByText("Capture a thought")).toBeDefined();
+  });
+
+  it("refreshes the Recall card after a Make Durable card is saved into a recall item (#509)", async () => {
+    // Reproduces #509: Today loads with nothing due; a Make Durable save then creates a recall item,
+    // and Today must refetch and surface it instead of staying on "Nothing due".
+    const created = makeItem({ id: "recall-new", text: "rollback the deployment" });
+    mockedRecall.mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedCards.mockResolvedValue([makeCard()]);
+    mockedReview.mockResolvedValue(created);
+    renderToday();
+
+    // Initially caught up, with the Make Durable review card present to act on.
+    expect(await screen.findByText(/Nothing due — you’re caught up/)).toBeDefined();
+    await screen.findByText("Make this durable?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // After the save Today refetches recall and surfaces the newly due item.
+    expect(await screen.findByText("rollback the deployment")).toBeDefined();
+    expect(screen.getByText("Recall this 1 item.")).toBeDefined();
+    expect(mockedReview).toHaveBeenCalledWith("cand-1", { outcome: "saved" });
+    expect(mockedRecall).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not refetch recall for a Make Durable outcome that creates no recall item (#509)", async () => {
+    // A negative review (Not useful now) creates no recall item, so Today must not refetch — the
+    // Recall card stays exactly as it was.
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedCards.mockResolvedValue([makeCard()]);
+    mockedReview.mockResolvedValue(null);
+    renderToday();
+
+    await screen.findByText("Make this durable?");
+    fireEvent.click(screen.getByRole("button", { name: "Not useful now" }));
+
+    await waitFor(() => expect(screen.queryByText("Make this durable?")).toBeNull());
+    expect(mockedReview).toHaveBeenCalledWith("cand-1", { outcome: "not_useful_now" });
+    // Only the initial mount load ran; no refresh was triggered.
+    expect(mockedRecall).toHaveBeenCalledTimes(1);
   });
 
   it("offers Continue reading from the latest position, deep-linking into the reader", async () => {

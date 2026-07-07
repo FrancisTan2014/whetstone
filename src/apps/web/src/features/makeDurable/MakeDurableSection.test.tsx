@@ -13,7 +13,11 @@ vi.mock("../session/sessionApi", () => ({
   transcribe: vi.fn()
 }));
 
-import type { MakeDurableCardDto, QuickCaptureResultDto } from "@whetstone/contracts";
+import type {
+  MakeDurableCardDto,
+  QuickCaptureResultDto,
+  RecallItemDto
+} from "@whetstone/contracts";
 
 import { transcribe } from "../session/sessionApi";
 import { fetchMakeDurableCards, reviewMakeDurableCard, submitQuickCapture } from "./makeDurableApi";
@@ -49,6 +53,31 @@ const card: MakeDurableCardDto = {
   category: "work",
   tags: ["service-status"]
 };
+
+function recallItem(): RecallItemDto {
+  return {
+    chunkId: null,
+    createdAt: "2026-07-06T09:30:00.000Z",
+    gloss: null,
+    id: "recall-1",
+    kind: "phrase",
+    provenanceEntryId: null,
+    review: {
+      dueAt: "2026-07-06T09:30:00.000Z",
+      easeFactor: 2.5,
+      intervalDays: 0,
+      lapses: 0,
+      lastReviewedAt: null,
+      repetitions: 0
+    },
+    text: "WorkInsight is back up now",
+    cue: "a service is back",
+    useContext: "reporting availability",
+    category: "work",
+    tags: ["service-status"],
+    sourceProposalCandidateId: "cand-1"
+  };
+}
 
 function captureResult(withCard: MakeDurableCardDto | null): QuickCaptureResultDto {
   return {
@@ -99,6 +128,16 @@ describe("MakeDurableSection", () => {
     );
   });
 
+  it("degrades quietly and still offers capture when the cards fail to load on mount", async () => {
+    mockedFetch.mockRejectedValue(new Error("boom"));
+    render(<MakeDurableSection />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    // No card and no error banner — a failed load simply leaves the always-present capture box.
+    expect(screen.queryByText("Make this durable?")).toBeNull();
+    expect(screen.getByLabelText("Quick capture text")).toBeTruthy();
+  });
+
   it("submits a capture and shows the returned review card", async () => {
     mockedSubmit.mockResolvedValue(captureResult(card));
     render(<MakeDurableSection />);
@@ -140,6 +179,57 @@ describe("MakeDurableSection", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
 
     expect(mockedReview).toHaveBeenCalledWith("cand-1", { outcome: "saved" });
+    await waitFor(() => expect(screen.queryByText("WorkInsight is back up now")).toBeNull());
+  });
+
+  it("notifies the parent when a save creates a recall item (#509)", async () => {
+    mockedFetch.mockResolvedValue([card]);
+    mockedReview.mockResolvedValue(recallItem());
+    const onDurableSaved = vi.fn();
+    render(<MakeDurableSection onDurableSaved={onDurableSaved} />);
+    await screen.findByText("WorkInsight is back up now");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onDurableSaved).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not notify the parent for a negative outcome that creates no recall item (#509)", async () => {
+    mockedFetch.mockResolvedValue([card]);
+    mockedReview.mockResolvedValue(null);
+    const onDurableSaved = vi.fn();
+    render(<MakeDurableSection onDurableSaved={onDurableSaved} />);
+    await screen.findByText("WorkInsight is back up now");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Not useful now" }));
+
+    await waitFor(() => expect(screen.queryByText("WorkInsight is back up now")).toBeNull());
+    expect(onDurableSaved).not.toHaveBeenCalled();
+  });
+
+  it("does not notify the parent when the review action fails (#509)", async () => {
+    mockedFetch.mockResolvedValue([card]);
+    mockedReview.mockRejectedValue(new Error("nope"));
+    const onDurableSaved = vi.fn();
+    render(<MakeDurableSection onDurableSaved={onDurableSaved} />);
+    await screen.findByText("WorkInsight is back up now");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("alert");
+    expect(onDurableSaved).not.toHaveBeenCalled();
+  });
+
+  it("saves without a parent listener and does not crash when a recall item is created (#509)", async () => {
+    // With no onDurableSaved prop, the optional-chain call is a no-op: the card is still removed and
+    // nothing throws.
+    mockedFetch.mockResolvedValue([card]);
+    mockedReview.mockResolvedValue(recallItem());
+    render(<MakeDurableSection />);
+    await screen.findByText("WorkInsight is back up now");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+
     await waitFor(() => expect(screen.queryByText("WorkInsight is back up now")).toBeNull());
   });
 
