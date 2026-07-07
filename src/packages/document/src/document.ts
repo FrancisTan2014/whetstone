@@ -68,6 +68,38 @@ export function documentText(node: DocumentNodeJSON): string {
   return (node.content ?? []).map(documentText).join("");
 }
 
+// The node types whose content is a single inline run (text + inline nodes): their descendant text is
+// one continuous line, so the readable projection joins their children with no separator. Every other
+// node is a block CONTAINER whose children are block-level (list items, table rows/cells, nested
+// blocks), so those children are joined with a space.
+const INLINE_CONTENT_NODE_TYPES = new Set([
+  "paragraph",
+  "heading",
+  "codeBlock",
+  "figureCaption",
+  "definitionTerm"
+]);
+
+// A readable, DOM-free projection of a document node for DISPLAY — e.g. a search snippet. Like
+// `documentText`, but it inserts a single space between adjacent block-level children so list items,
+// table cells, and stacked blocks read with a boundary instead of running together
+// (`valley.Second` becomes `valley. Second`). This is DELIBERATELY separate from `documentText`,
+// whose separator-free character stream MUST stay byte-aligned with the reader's `textContent` for
+// note-anchor offsets (#344): `documentReadableText` is never used for anchoring, storage, or offset
+// math — only for presenting text to a person.
+export function documentReadableText(node: DocumentNodeJSON): string {
+  if (node.text !== undefined) {
+    return node.text;
+  }
+
+  const separator = INLINE_CONTENT_NODE_TYPES.has(node.type) ? "" : " ";
+
+  return (node.content ?? [])
+    .map(documentReadableText)
+    .filter((part) => part.length > 0)
+    .join(separator);
+}
+
 // Whether a JSON value is a valid document for the schema, without throwing.
 export function isValidDocument(json: unknown): boolean {
   try {

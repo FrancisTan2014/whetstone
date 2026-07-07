@@ -9,6 +9,7 @@ export {
 export { documentSchema } from "./schema.js";
 export {
   assignNodeIds,
+  documentReadableText,
   documentText,
   DocumentValidationError,
   isValidDocument,

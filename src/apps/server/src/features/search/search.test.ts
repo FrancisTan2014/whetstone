@@ -20,7 +20,29 @@ import { escapeLikePattern, searchBlocks } from "./searchQueries.js";
 let db: DbClient;
 let server: ReturnType<typeof createServer>;
 
-const paragraph = { type: "paragraph" } as const;
+// A block's stored mdast node carries its text. The search snippet is a readable projection of THIS
+// node (the raw `plaintext` column still backs matching), so each seed block's node holds the same
+// text its `plaintext` asserts. A childless paragraph would project to an empty snippet.
+function textBlock(text: string): unknown {
+  return { children: [{ type: "text", value: text }], type: "paragraph" };
+}
+
+// A bullet list whose stored plaintext runs the items together (the #503 defect); the readable
+// snippet must reinsert a boundary between them.
+function listBlock(...items: string[]): unknown {
+  return {
+    children: items.map((value) => ({
+      children: [{ children: [{ type: "text", value }], type: "paragraph" }],
+      type: "listItem"
+    })),
+    type: "list"
+  };
+}
+
+const falconListItems = [
+  "First list item mentions a falcon gliding above the valley.",
+  "Second list item mentions a turtle walking the long sandy shore."
+] as const;
 
 // Two English works (Animal Farm < Fables by title) plus a Chinese work exercise ordering, the
 // case-insensitive match, CJK substring matching, the soft-deleted/detached exclusions, and the
@@ -41,7 +63,8 @@ async function seed(database: DbClient): Promise<void> {
     { id: "b-5", type: "block" },
     { id: "b-6", type: "block" },
     { id: "b-7", type: "block" },
-    { id: "b-8", type: "block" }
+    { id: "b-8", type: "block" },
+    { id: "b-9", type: "block" }
   ]);
 
   await database.insert(authors).values([
@@ -79,7 +102,7 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "paragraph",
       entryId: "b-1",
-      mdastJson: paragraph,
+      mdastJson: textBlock("The dog barked loudly."),
       orderIndex: 0,
       plaintext: "The dog barked loudly.",
       readingUnitEntryId: "unit-1",
@@ -88,7 +111,7 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "paragraph",
       entryId: "b-2",
-      mdastJson: paragraph,
+      mdastJson: textBlock("A cat sat quietly."),
       orderIndex: 1,
       plaintext: "A cat sat quietly.",
       readingUnitEntryId: "unit-1",
@@ -97,7 +120,7 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "heading",
       entryId: "b-3",
-      mdastJson: paragraph,
+      mdastJson: textBlock("The Dog and the Bone."),
       orderIndex: 0,
       plaintext: "The Dog and the Bone.",
       readingUnitEntryId: "unit-2",
@@ -107,7 +130,7 @@ async function seed(database: DbClient): Promise<void> {
       blockType: "paragraph",
       deletedAt: new Date(),
       entryId: "b-4",
-      mdastJson: paragraph,
+      mdastJson: textBlock("A soft-deleted dog line."),
       orderIndex: 2,
       plaintext: "A soft-deleted dog line.",
       readingUnitEntryId: "unit-1",
@@ -116,7 +139,7 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "paragraph",
       entryId: "b-5",
-      mdastJson: paragraph,
+      mdastJson: textBlock("A detached dog line."),
       orderIndex: 3,
       plaintext: "A detached dog line.",
       readingUnitEntryId: null,
@@ -125,7 +148,7 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "paragraph",
       entryId: "b-6",
-      mdastJson: paragraph,
+      mdastJson: textBlock("Gave 100% effort near the dog_house."),
       orderIndex: 4,
       plaintext: "Gave 100% effort near the dog_house.",
       readingUnitEntryId: "unit-1",
@@ -134,7 +157,7 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "paragraph",
       entryId: "b-7",
-      mdastJson: paragraph,
+      mdastJson: textBlock("我有一只狗。"),
       orderIndex: 0,
       plaintext: "我有一只狗。",
       readingUnitEntryId: "unit-3",
@@ -143,11 +166,22 @@ async function seed(database: DbClient): Promise<void> {
     {
       blockType: "paragraph",
       entryId: "b-8",
-      mdastJson: paragraph,
+      mdastJson: textBlock("A second-chapter dog returns."),
       orderIndex: 0,
       plaintext: "A second-chapter dog returns.",
       readingUnitEntryId: "unit-1b",
       workEntryId: "work-1"
+    },
+    {
+      blockType: "list",
+      entryId: "b-9",
+      mdastJson: listBlock(...falconListItems),
+      orderIndex: 1,
+      // The stored plaintext runs the two list items together (the #503 defect) — search still
+      // MATCHES on it, but the rendered snippet must reinsert a boundary between the items.
+      plaintext: falconListItems.join(""),
+      readingUnitEntryId: "unit-2",
+      workEntryId: "work-2"
     }
   ]);
 }
@@ -225,6 +259,16 @@ describe("searchBlocks", () => {
   it("returns an empty list when nothing matches", async () => {
     expect(await searchBlocks(db, "unicorn")).toEqual([]);
   });
+
+  it("renders a list hit's snippet with a boundary between items instead of running them together (#503)", async () => {
+    const results = await searchBlocks(db, "falcon");
+
+    expect(results.map((result) => result.blockEntryId)).toEqual(["b-9"]);
+    // The stored plaintext (which backs the match) still runs the items together; the returned
+    // snippet reinserts a single space so `valley.` and `Second` no longer collide.
+    expect(results[0]?.plaintext).toBe(falconListItems.join(" "));
+    expect(results[0]?.plaintext).not.toContain("valley.Second");
+  });
 });
 
 describe("GET /api/search", () => {
@@ -276,9 +320,18 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
 
   // One EPUB chapter whose ingestion dual-writes a legacy mdast block AND a PM doc_block per node, so
   // the same paragraph text exists in both substrates — the case the per-unit preference must resolve.
+  // The list exercises the #503 readable-snippet boundary on the PM (doc_block) substrate.
   function brownFoxEpub(): ParsedEpub {
     return {
-      chapters: [{ html: "<h1>Chapter One</h1><p>The quick brown fox.</p>", images: [] }],
+      chapters: [
+        {
+          html:
+            "<h1>Chapter One</h1><p>The quick brown fox.</p>" +
+            "<ul><li>A falcon glides above the valley.</li>" +
+            "<li>A turtle walks the sandy shore.</li></ul>",
+          images: []
+        }
+      ],
       metadata: { author: "Aesop", language: "en", title: "Fables" }
     };
   }
@@ -356,6 +409,29 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
     expect(ids).not.toContain(legacyRow?.entryId);
     expect(results.find((result) => result.blockEntryId === docBlockRow?.id)?.plaintext).toBe(
       "The quick brown fox."
+    );
+  });
+
+  it("renders a PM (doc_block) list hit's snippet with a boundary between items (#503)", async () => {
+    const response = await epub.server.inject({
+      headers: { "content-type": epubContentType },
+      method: "POST",
+      payload: Buffer.from("epub-search-list"),
+      url: "/api/works/epub"
+    });
+    expect(response.statusCode).toBe(201);
+
+    // The hit resolves to the rendered PM list doc_block; its snippet keeps a space between the two
+    // items rather than running `valley.` straight into `A turtle`.
+    const [results, listRow] = [
+      await searchBlocks(epub.db, "falcon"),
+      (await epub.db.select().from(docBlocks)).find((row) => row.plaintext.includes("falcon"))
+    ];
+
+    expect(listRow?.plaintext).toContain("valley.A turtle");
+    expect(results.map((result) => result.blockEntryId)).toContain(listRow?.id);
+    expect(results.find((result) => result.blockEntryId === listRow?.id)?.plaintext).toBe(
+      "A falcon glides above the valley. A turtle walks the sandy shore."
     );
   });
 });

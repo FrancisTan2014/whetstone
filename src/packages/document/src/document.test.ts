@@ -5,6 +5,7 @@ import {
   type DocumentNodeJSON,
   documentMarkNames,
   documentNodeNames,
+  documentReadableText,
   documentSchema,
   documentText,
   DocumentValidationError,
@@ -343,6 +344,89 @@ describe("documentText", () => {
   it("returns an empty string for a leaf node with neither text nor content", () => {
     // An image is a childless, textless atom — the content-absent branch must default to no text.
     expect(documentText({ type: "image" })).toBe("");
+  });
+});
+
+describe("documentReadableText", () => {
+  function listBlock(...items: string[]): DocumentNodeJSON {
+    return {
+      content: items.map((value) => ({
+        content: [{ content: [{ text: value, type: "text" }], type: "paragraph" }],
+        type: "listItem"
+      })),
+      type: "bulletList"
+    };
+  }
+
+  it("separates a list's items with a single space so they do not run together (#503)", () => {
+    const list = listBlock(
+      "First list item mentions a falcon gliding above the valley.",
+      "Second list item mentions a turtle walking the long sandy shore."
+    );
+
+    // documentText runs them together; the readable projection keeps a boundary between the items.
+    expect(documentText(list)).toContain("valley.Second");
+    expect(documentReadableText(list)).toBe(
+      "First list item mentions a falcon gliding above the valley. " +
+        "Second list item mentions a turtle walking the long sandy shore."
+    );
+  });
+
+  it("leaves an inline run (paragraph) unseparated, matching documentText", () => {
+    const paragraph: DocumentNodeJSON = {
+      content: [
+        { text: "Hello ", type: "text" },
+        { text: "world", type: "text" }
+      ],
+      type: "paragraph"
+    };
+
+    expect(documentReadableText(paragraph)).toBe("Hello world");
+  });
+
+  it("separates stacked block children (a blockquote's paragraphs) with a space", () => {
+    const blockquote: DocumentNodeJSON = {
+      content: [
+        { content: [{ text: "One.", type: "text" }], type: "paragraph" },
+        { content: [{ text: "Two.", type: "text" }], type: "paragraph" }
+      ],
+      type: "blockquote"
+    };
+
+    expect(documentReadableText(blockquote)).toBe("One. Two.");
+  });
+
+  it("separates nested-list items at every level", () => {
+    const nested: DocumentNodeJSON = {
+      content: [
+        {
+          content: [
+            { content: [{ text: "Outer.", type: "text" }], type: "paragraph" },
+            listBlock("Inner.")
+          ],
+          type: "listItem"
+        }
+      ],
+      type: "bulletList"
+    };
+
+    expect(documentReadableText(nested)).toBe("Outer. Inner.");
+  });
+
+  it("drops textless children so a figure reads as its caption alone (no leading space)", () => {
+    const figure: DocumentNodeJSON = {
+      content: [
+        { attrs: { src: "x.png" }, type: "image" },
+        { content: [{ text: "A caption.", type: "text" }], type: "figureCaption" }
+      ],
+      type: "figure"
+    };
+
+    expect(documentReadableText(figure)).toBe("A caption.");
+  });
+
+  it("returns an empty string for a leaf node with neither text nor content", () => {
+    expect(documentReadableText({ type: "image" })).toBe("");
   });
 });
 

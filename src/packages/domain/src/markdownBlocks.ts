@@ -51,12 +51,37 @@ const imageNodeTypes = new Set(["image", "imageReference"]);
 // A structural view of an mdast node — enough to walk children, detect images, and drop
 // `position` — so the stripping logic stays simple and avoids the mdast content-model union
 // gymnastics.
-type MdastNodeLike = {
+export type MdastNodeLike = {
   children?: MdastNodeLike[];
   position?: unknown;
   type: string;
   value?: string;
 };
+
+// The mdast block-container node types whose children are block-level (list items, nested blocks,
+// table rows). A readable projection joins their children with a single space so stacked block text
+// keeps a boundary; every other node joins its children with no separator, matching
+// `mdast-util-to-string` (phrasing content is one continuous line).
+const mdastBlockContainerTypes = new Set(["list", "listItem", "blockquote", "table", "tableRow"]);
+
+// A readable plaintext projection of a stored mdast block for DISPLAY — e.g. a search snippet. Like
+// `mdast-util-to-string`, but it inserts a single space between adjacent block-level children so list
+// items read with a boundary instead of running together (`valley.Second` becomes `valley. Second`).
+// It is never used for search MATCHING, anchoring, or offset math — the stored block `plaintext`
+// (separator-free, aligned with the reader's rendered `textContent`, #344) still backs those — only
+// for presenting a hit's text to a person.
+export function mdastReadableText(node: MdastNodeLike): string {
+  if (typeof node.value === "string") {
+    return node.value;
+  }
+
+  const separator = mdastBlockContainerTypes.has(node.type) ? " " : "";
+
+  return (node.children ?? [])
+    .map(mdastReadableText)
+    .filter((part) => part.length > 0)
+    .join(separator);
+}
 
 // v0's content model is text blocks only — images are not a block type. A node counts as an
 // image if it is an mdast image/imageReference or a raw HTML `<img>` (manually entered Markdown).
