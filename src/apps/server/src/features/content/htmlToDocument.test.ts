@@ -941,6 +941,36 @@ describe("htmlToDocument wrapper-metadata loss is loud (#523)", () => {
     expect(outerEvidence[0]!.tag).toBe("div");
     expect(outerEvidence[0]!.path).toBe("body>div");
   });
+  it("records evidence when an anchored wrapper holds only a standalone image (figure loses its anchor)", () => {
+    // `<div id="fig"><img/></div>`: the img becomes a figure block, but it is not a BLOCK_LEVEL_TAG and
+    // carries no text, so the wrapper has no block target for #fig. The anchor cannot ride the
+    // auto-wrapped figure, so it is made loud rather than dropped when the tolerated <div> is unwrapped.
+    const { blocks, evidence } = htmlToDocument('<div id="fig"><img src="b.png" alt="B"/></div>');
+
+    // The figure is still produced; only the wrapper's anchor is the loss.
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+    const figEvidence = evidence.filter((record) => record.attributes["id"] === "fig");
+    expect(figEvidence).toHaveLength(1);
+    expect(figEvidence[0]!.tag).toBe("div");
+    expect(figEvidence[0]!.path).toBe("body>div");
+  });
+
+  it("records evidence when an anchored wrapper holds only an <svg><image> figure", () => {
+    const { blocks, evidence } = htmlToDocument(
+      '<section id="diag"><svg><image href="d.png"/></svg></section>'
+    );
+
+    expect(blocksOfType(blocks, "figure")).toHaveLength(1);
+    expect(evidence.filter((record) => record.attributes["id"] === "diag")).toHaveLength(1);
+  });
+
+  it("does not flag a wrapper whose only content is a decorative textless break", () => {
+    // `<hr>` is a decorative silent-drop that yields no block; an anchored wrapper around only it
+    // addresses nothing, so it drops quietly like an empty wrapper — no evidence.
+    const { evidence } = htmlToDocument('<div id="deco"><hr/></div><p id="after">After.</p>');
+
+    expect(evidence).toHaveLength(0);
+  });
 });
 
 describe("htmlToDocument reference links (#368)", () => {
