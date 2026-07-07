@@ -40,9 +40,28 @@ function singleChapterEpub(): ParsedEpub {
   };
 }
 
+// A DDIA-style chapter (#516): each section's fragment id is authored on a `<div class="sect1" id>`
+// structural wrapper enclosing the section heading and prose — the O'Reilly / HTMLBook convention.
+// Neutral placeholder text only (the real DDIA prose is copyrighted); the element shapes are faithful.
+function ddiaStyleChapterEpub(): ParsedEpub {
+  return {
+    chapters: [
+      {
+        html:
+          '<div class="sect1" id="sec_introduction_reliability"><h1>Reliability</h1>' +
+          "<p>Section body one.</p></div>" +
+          '<div class="sect1" id="sec_introduction_scalability"><h1>Scalability</h1>' +
+          "<p>Section body two.</p></div>",
+        images: []
+      }
+    ],
+    metadata: { author: "Author", language: "en", title: "Data Systems" }
+  };
+}
+
 let context: TestContext;
 
-async function buildContext(): Promise<TestContext> {
+async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<TestContext> {
   const pglite = new PGlite();
   await runMigrations(pglite);
   const db = createDbClient(pglite);
@@ -64,7 +83,7 @@ async function buildContext(): Promise<TestContext> {
     createEntryId: () => `entry-${(entrySequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
-    epubParser: async () => singleChapterEpub(),
+    epubParser: async () => epub,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
@@ -209,5 +228,35 @@ describe("PM doc_block ids are first-class addressable anchors (#312 regression)
     });
     expect(located.statusCode).toBe(200);
     expect(located.json()).toEqual({ unitEntryId });
+  });
+
+  it("exposes a DDIA-style chapter's section-wrapper ids as doc_block anchors (#516)", async () => {
+    // The section fragment ids live on `<div class="sect1" id>` wrappers, not the headings. Before
+    // #516 they were dropped at ingest, so the work anchor index had no entry and a 目录 section link
+    // fell back to the unit top. They must now land on each section's leading heading block.
+    await context.server.close();
+    context = await buildContext(ddiaStyleChapterEpub());
+
+    const response = await context.server.inject({
+      headers: { "content-type": epubContentType },
+      method: "POST",
+      payload: Buffer.from("epub-ddia"),
+      url: "/api/works/epub"
+    });
+    expect(response.statusCode).toBe(201);
+
+    const rows = await context.db.select().from(docBlocks);
+    const anchored = new Map(
+      rows.filter((row) => row.anchorId !== null).map((row) => [row.anchorId as string, row])
+    );
+
+    // Both section anchors are indexed (spot-check the two the issue names)…
+    expect(anchored.has("sec_introduction_reliability")).toBe(true);
+    expect(anchored.has("sec_introduction_scalability")).toBe(true);
+    // …and each landed on its section's leading heading block, not a later paragraph or the unit top.
+    expect(anchored.get("sec_introduction_reliability")?.type).toBe("heading");
+    expect(anchored.get("sec_introduction_reliability")?.plaintext).toBe("Reliability");
+    expect(anchored.get("sec_introduction_scalability")?.type).toBe("heading");
+    expect(anchored.get("sec_introduction_scalability")?.plaintext).toBe("Scalability");
   });
 });

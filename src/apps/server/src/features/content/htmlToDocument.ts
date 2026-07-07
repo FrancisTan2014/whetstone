@@ -896,11 +896,116 @@ function joinInlineCjkSpacing(root: Element): void {
   flush();
 }
 
+// --- Section-wrapper anchor hoist (#516) ------------------------------------------------------
+//
+// Section/subsection fragment ids are commonly authored on a STRUCTURAL WRAPPER element
+// (`<div class="sect1" id="…">`, `<section id="…">` — the O'Reilly / HTMLBook / DocBook-HTML
+// convention) that encloses the section's heading and prose. Those wrappers are tolerated containers
+// unwrapped at parse time, so `withAnchorId` never captures their id and the section anchor is lost —
+// a 目录 section link then takes the fragment-miss fallback to the unit top (#495). BEFORE parsing,
+// hoist each wrapper id onto the first block-level descendant that lacks its own id (its leading
+// block — usually the heading), so the section resolves through the work anchor index (#366) to that
+// block. This only MOVES an `id` attribute: rendered text (the plaintext==textContent contract) is
+// unchanged.
+
+// Structural container tags whose id we hoist — a subset of the tolerated container tags. Inline
+// tolerated tags (span/a/em/…) are deliberately excluded: their id is an inline-level anchor, not a
+// section wrapper, and must not jump to a block.
+const HOISTABLE_WRAPPER_TAGS = new Set<string>([
+  "div",
+  "section",
+  "article",
+  "aside",
+  "main",
+  "header",
+  "footer",
+  "nav"
+]);
+
+// Block-level tags that become a top-level block owning an `anchorId` — the valid hoist targets.
+// Mirrors the block-group parse rules (headings, paragraph, blockquote, code, lists, table, figure,
+// definition list). Callouts and footnote targets are block-level too, matched by `data-type` below.
+const BLOCK_LEVEL_TAGS = new Set<string>([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "p",
+  "blockquote",
+  "pre",
+  "ul",
+  "ol",
+  "table",
+  "figure",
+  "dl"
+]);
+
+// Does `element` become its own top-level block (and thus already carry / can carry an anchor)? A
+// block tag, or a callout/footnote-target `data-type` element (noteref is an inline marker, not a
+// block, so it is excluded).
+function isBlockLevelElement(element: Element): boolean {
+  const dataType = element.getAttribute("data-type");
+  if (dataType !== null && RECOGNIZED_DATA_TYPES.has(dataType) && dataType !== "noteref") {
+    return true;
+  }
+  return BLOCK_LEVEL_TAGS.has(element.tagName.toLowerCase());
+}
+
+// A structural wrapper whose id should hoist: a container tag carrying an id that is not itself a
+// block (e.g. NOT a `<div data-type="note">` callout, which already captures its own id).
+function isHoistableWrapper(element: Element): boolean {
+  return (
+    element.hasAttribute("id") &&
+    HOISTABLE_WRAPPER_TAGS.has(element.tagName.toLowerCase()) &&
+    !isBlockLevelElement(element)
+  );
+}
+
+// Number of ancestor elements — the DOM depth, used to process innermost wrappers first.
+function elementDepth(element: Element): number {
+  let depth = 0;
+  let current = element.parentElement;
+  while (current !== null) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  return depth;
+}
+
+// Hoist each structural-wrapper id onto its leading block. Innermost wrappers are processed first
+// (greatest depth) so a nested `sect1` claims its own leading block before an enclosing chapter/part
+// wrapper, which then adopts the next id-less block — nested wrappers map to DISTINCT blocks and the
+// more specific inner id wins. A block that already has its own id is never overwritten (skipped as
+// "not id-less"); a wrapper with no id-less block descendant contributes no anchor. Idempotent enough
+// for the pipeline: it runs once before parsing and only moves attributes.
+function hoistWrapperAnchorIds(body: HTMLElement): void {
+  const wrappers = Array.from(body.querySelectorAll("*")).filter(isHoistableWrapper);
+  wrappers.sort((first, second) => elementDepth(second) - elementDepth(first));
+
+  for (const wrapper of wrappers) {
+    const wrapperId = wrapper.getAttribute("id") as string;
+    const target = Array.from(wrapper.querySelectorAll("*")).find(
+      (descendant) => isBlockLevelElement(descendant) && !descendant.hasAttribute("id")
+    );
+    if (target === undefined) {
+      continue;
+    }
+    target.setAttribute("id", wrapperId);
+    wrapper.removeAttribute("id");
+  }
+}
+
 // Convert one source HTML fragment into a whetstone document, its block-row decomposition, and the
 // fail-loud evidence log of unrecognized elements.
 export function htmlToDocument(html: string): HtmlIngestionResult {
   const { window } = new JSDOM(html);
   const { body } = window.document;
+  // Hoist section-wrapper ids onto their leading block BEFORE any other walk or the parse, so a
+  // fragment authored on a `<div class="sect1" id>` / `<section id>` becomes a block `anchorId` (#516)
+  // instead of being dropped when the wrapper is unwrapped.
+  hoistWrapperAnchorIds(body);
   // Normalize code-listing callout markers to inline text BEFORE the fail-loud walk and the parse, so
   // a `<pre>` with inline `<a>`/`<img>` markers parses to one cohesive `codeBlock` (#336).
   const calloutEvidence = normalizeCodeCallouts(body, window.document);

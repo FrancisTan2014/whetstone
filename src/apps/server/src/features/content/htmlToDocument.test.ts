@@ -255,6 +255,84 @@ describe("htmlToDocument", () => {
     expect(JSON.stringify(list.node)).not.toContain("anchorId");
   });
 
+  // #516: section fragment ids authored on a structural wrapper (`<div class="sect1" id>`,
+  // `<section id>`) must hoist onto the section's leading block so the anchor survives ingestion.
+  it("hoists a <div> section-wrapper id onto the section's leading block (its heading)", () => {
+    const html =
+      '<div class="sect1" id="sec_x"><h1>Reliability</h1><p>Body of the section.</p></div>';
+
+    const { blocks } = htmlToDocument(html);
+    const [heading, body] = blocks as ReadonlyArray<{
+      anchorId: string | null;
+      node: DocumentNodeJSON;
+      type: string;
+    }>;
+
+    expect(heading!.type).toBe("heading");
+    expect(heading!.anchorId).toBe("sec_x");
+    // Only the leading block adopts it; the following paragraph stays unanchored.
+    expect(body!.anchorId).toBeNull();
+    // A pure id move: the rendered text is unchanged (plaintext == textContent contract).
+    expect(textOf(heading!.node)).toBe("Reliability");
+  });
+
+  it("hoists a <section> wrapper id onto its leading block", () => {
+    const { blocks } = htmlToDocument('<section id="sec_y"><h2>Scalability</h2></section>');
+    const [heading] = blocks as ReadonlyArray<{ anchorId: string | null }>;
+
+    expect(heading!.anchorId).toBe("sec_y");
+  });
+
+  it("never overwrites a block's own id; the wrapper id falls to the next id-less block", () => {
+    const html = '<div id="wrap"><h1 id="own">Heading</h1><p>Following paragraph.</p></div>';
+
+    const { blocks } = htmlToDocument(html);
+    const [heading, paragraph] = blocks as ReadonlyArray<{ anchorId: string | null }>;
+
+    // The innermost, more specific id wins on the heading; "wrap" adopts the next block without one.
+    expect(heading!.anchorId).toBe("own");
+    expect(paragraph!.anchorId).toBe("wrap");
+  });
+
+  it("maps a nested inner wrapper and its outer wrapper to different leading blocks", () => {
+    // Innermost wins its own leading block (the heading); the outer wrapper adopts the next id-less
+    // block, so the two wrapper ids never collapse onto the same block.
+    const html =
+      '<div id="outer"><div class="sect1" id="inner"><h1>Section</h1><p>Body.</p></div></div>';
+
+    const { blocks } = htmlToDocument(html);
+    const [heading, body] = blocks as ReadonlyArray<{ anchorId: string | null; type: string }>;
+
+    expect(heading!.type).toBe("heading");
+    expect(heading!.anchorId).toBe("inner");
+    expect(body!.anchorId).toBe("outer");
+  });
+
+  it("contributes no anchor for a wrapper enclosing no block-level descendant (no crash)", () => {
+    const { blocks } = htmlToDocument('<section id="empty"></section><p id="after">After.</p>');
+    const paragraph = blocksOfType(blocks, "paragraph")[0] as { anchorId: string | null };
+
+    // The empty wrapper drops silently; the real block keeps its own id, and nothing throws.
+    expect(paragraph.anchorId).toBe("after");
+  });
+
+  it("does not hoist an id off an inline tolerated element onto its block", () => {
+    // A `<span id>` is an inline anchor, not a section wrapper: it must not jump to the paragraph.
+    const { blocks } = htmlToDocument('<p>text <span id="inline">x</span> more</p>');
+    const [paragraph] = blocks as ReadonlyArray<{ anchorId: string | null }>;
+
+    expect(paragraph!.anchorId).toBeNull();
+  });
+
+  it("leaves a callout's own id intact rather than treating the callout as a wrapper", () => {
+    // A `<div data-type="note" id>` is itself a block (it captures its own id); it is not a hoistable
+    // structural wrapper.
+    const { blocks } = htmlToDocument('<div data-type="note" id="cal"><p>Heads up.</p></div>');
+    const callout = blocksOfType(blocks, "callout")[0] as { anchorId: string | null };
+
+    expect(callout.anchorId).toBe("cal");
+  });
+
   it("flags an unknown block element with evidence and preserves its neighbors", () => {
     const html =
       "<p>Before the widget.</p>" +
