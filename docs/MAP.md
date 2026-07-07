@@ -678,10 +678,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   until it is present); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
   `/api/diary/*` endpoints and parses every response through `diaryContracts`.
   `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** items (already capped
-  server-side) as gentle, snoozeable proposals — each card shows its text/gloss with four self-grade
-  controls (Again/Hard/Good/Easy → `gradeFromRating` → an SM-2 grade) and a Snooze; grading or snoozing
-  advances past the item, with explicit loading/error/empty ("all caught up") states. The reader stays
-  calm — recall lives only here. `recallApi.ts` calls `/api/recall/*` and parses via `recallContracts`.
+  server-side) as gentle, snoozeable proposals — each card is a **two-phase flip** (#525): phase 1
+  shows a retrieval prompt (front) + **Show answer** + Snooze and **no** grades; after reveal it shows
+  the back and the four self-grade controls (Again/Hard/Good/Easy → `gradeFromRating` → an SM-2 grade).
+  Front/back precedence is derived deterministically in `recallCardFaces.ts` (cue → front=cue,
+  back=text+gloss+useContext; else front=text, back=gloss+useContext; answerless items reveal a
+  self-check hint, still gradeable). Grading or snoozing advances past the item, with explicit
+  loading/error/empty ("all caught up") states. The reader stays calm — recall lives only here.
+  `recallApi.ts` calls `/api/recall/*` and parses via `recallContracts`.
   `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
   finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
   already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,

@@ -72,31 +72,138 @@ describe("RecallPage", () => {
     expect(screen.queryByRole("list", { name: "Items due to recall" })).toBeNull();
   });
 
-  it("renders each due item with its text and gloss", async () => {
-    mockedFetch.mockResolvedValue([
-      makeItem({ gloss: "to reveal a secret" }),
-      makeItem({ gloss: null, id: "r2", text: "by and large" })
-    ]);
+  it("shows the prompt with Show answer and Snooze but no grade buttons before reveal (#525)", async () => {
+    // A self-grade is meaningless without a retrieval attempt: grades are gated behind the reveal.
+    mockedFetch.mockResolvedValue([makeItem({ gloss: "to reveal a secret" })]);
     render(<RecallPage />);
 
-    expect(await screen.findByText("spill the beans")).toBeDefined();
-    expect(screen.getByText("to reveal a secret")).toBeDefined();
-    expect(screen.getByText("by and large")).toBeDefined();
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Show answer" })).toBeDefined();
+    expect(within(card).getByRole("button", { name: "Snooze" })).toBeDefined();
+    for (const label of ["Again", "Hard", "Good", "Easy"]) {
+      expect(within(card).queryByRole("button", { name: label })).toBeNull();
+    }
+    // The back (gloss) is not revealed yet.
+    expect(within(card).queryByText("to reveal a secret")).toBeNull();
   });
 
-  it("grades an item and removes it from today's list", async () => {
+  it("reveals the answer and shows the four grade buttons after Show answer (#525)", async () => {
+    mockedFetch.mockResolvedValue([makeItem({ gloss: "to reveal a secret" })]);
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+
+    // The back appears, and only now do the four SM-2 grades enter the tree.
+    expect(within(card).getByText("to reveal a secret")).toBeDefined();
+    for (const label of ["Again", "Hard", "Good", "Easy"]) {
+      expect(within(card).getByRole("button", { name: label })).toBeDefined();
+    }
+    // The reveal control is gone; Snooze stays.
+    expect(within(card).queryByRole("button", { name: "Show answer" })).toBeNull();
+    expect(within(card).getByRole("button", { name: "Snooze" })).toBeDefined();
+  });
+
+  it("production card (cue present): front is the cue; the target is on the revealed back (#525)", async () => {
+    mockedFetch.mockResolvedValue([
+      makeItem({ cue: "Say you kept a secret in.", text: "spill the beans", gloss: "reveal it" })
+    ]);
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    // Front is the cue; the target text is NOT shown before reveal.
+    const front = await screen.findByText("Say you kept a secret in.");
+    const card = front.closest("li") as HTMLElement;
+    expect(within(card).queryByText("spill the beans")).toBeNull();
+
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+    expect(within(card).getByText("spill the beans")).toBeDefined();
+    expect(within(card).getByText("reveal it")).toBeDefined();
+  });
+
+  it("answerless card: the reveal shows a self-check hint and is still gradeable (#525)", async () => {
+    mockedFetch.mockResolvedValue([
+      makeItem({ cue: null, gloss: null, useContext: null, text: "Mitigation (noun)" })
+    ]);
+    mockedGrade.mockResolvedValue(makeItem());
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    const card = (await screen.findByText("Mitigation (noun)")).closest("li") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+
+    expect(within(card).getByText(/No saved answer/)).toBeDefined();
+    await user.click(within(card).getByRole("button", { name: "Good" }));
+    expect(mockedGrade).toHaveBeenCalledWith("r1", "good");
+  });
+
+  it("grades an item after revealing it and removes it from today's list", async () => {
     mockedFetch.mockResolvedValue([makeItem(), makeItem({ id: "r2", text: "by and large" })]);
     mockedGrade.mockResolvedValue(makeItem());
     const user = userEvent.setup();
     render(<RecallPage />);
 
-    const firstCard = (await screen.findByText("spill the beans")).closest("li");
-    expect(firstCard).not.toBeNull();
-    await user.click(within(firstCard as HTMLElement).getByRole("button", { name: "Good" }));
+    const firstCard = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    await user.click(within(firstCard).getByRole("button", { name: "Show answer" }));
+    await user.click(within(firstCard).getByRole("button", { name: "Good" }));
 
     expect(mockedGrade).toHaveBeenCalledWith("r1", "good");
     expect(screen.queryByText("spill the beans")).toBeNull();
     expect(screen.getByText("by and large")).toBeDefined();
+  });
+
+  it("reveals with the keyboard (Enter on the Show answer control) (#525)", async () => {
+    mockedFetch.mockResolvedValue([makeItem({ gloss: "to reveal a secret" })]);
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    within(card).getByRole("button", { name: "Show answer" }).focus();
+    await user.keyboard("{Enter}");
+
+    expect(within(card).getByText("to reveal a secret")).toBeDefined();
+  });
+
+  it("maps the number keys 1–4 to the four grades after reveal", async () => {
+    mockedFetch.mockResolvedValue([makeItem()]);
+    mockedGrade.mockResolvedValue(makeItem());
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+    // "3" is Good (Again/Hard/Good/Easy).
+    await user.keyboard("3");
+
+    expect(mockedGrade).toHaveBeenCalledWith("r1", "good");
+  });
+
+  it("ignores non-grade keys after reveal", async () => {
+    mockedFetch.mockResolvedValue([makeItem()]);
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+    await user.keyboard("9");
+
+    expect(mockedGrade).not.toHaveBeenCalled();
+    expect(screen.getByText("spill the beans")).toBeDefined();
+  });
+
+  it("snoozes from the revealed phase and removes the item", async () => {
+    mockedFetch.mockResolvedValue([makeItem()]);
+    mockedSnooze.mockResolvedValue(makeItem());
+    const user = userEvent.setup();
+    render(<RecallPage />);
+
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+    await user.click(within(card).getByRole("button", { name: "Snooze" }));
+
+    expect(mockedSnooze).toHaveBeenCalledWith("r1");
+    expect(screen.queryByText("spill the beans")).toBeNull();
   });
 
   it("snoozes an item and removes it from today's list", async () => {
@@ -119,8 +226,9 @@ describe("RecallPage", () => {
     const user = userEvent.setup();
     render(<RecallPage />);
 
-    await screen.findByText("spill the beans");
-    await user.click(screen.getByRole("button", { name: "Again" }));
+    const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Show answer" }));
+    await user.click(within(card).getByRole("button", { name: "Again" }));
 
     expect(await screen.findByRole("alert")).toBeDefined();
     expect(screen.getByText("spill the beans")).toBeDefined();
