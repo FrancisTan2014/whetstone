@@ -1,8 +1,19 @@
-import type { JsonObject, ProposalCandidateDto, ProposalReviewDto } from "@whetstone/contracts";
+import {
+  parseProposalPayload,
+  type JsonObject,
+  type ProposalCandidateDto,
+  type ProposalReviewDto
+} from "@whetstone/contracts";
+import type { ReviewedProposalExample } from "@whetstone/domain";
 import { and, asc, desc, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { proposalCandidates, proposalReviews } from "../../db/schema.js";
+
+// How many of the user's most-recent proposal reviews the policy layer (#457) pulls before the pure
+// domain selection narrows them to a bounded, type-diverse few-shot set. Bounds the DB read so the
+// lookback never grows with the full review history.
+export const POLICY_REVIEW_LOOKBACK = 40;
 
 export type ProposalCandidateRow = typeof proposalCandidates.$inferSelect;
 export type ProposalReviewRow = typeof proposalReviews.$inferSelect;
@@ -94,4 +105,41 @@ export async function listProposalReviewsForCandidate(
     .orderBy(asc(proposalReviews.createdAt), asc(proposalReviews.id));
 
   return rows.map(toProposalReviewDto);
+}
+
+// The learner's most-recent reviewed proposals, distilled to policy examples for the proposal prompt
+// (#457). Joins each review to its candidate (both user-scoped) and projects the decision + the kept
+// payload — the learner's EDITED payload when the review carried one (Edit + Save), otherwise the
+// candidate's own payload. Newest first (so the pure `selectPolicyExamples` can keep the most-recent on a
+// duplicate), bounded by `limit`. Payloads were schema-validated on write, so `parseProposalPayload`
+// only re-narrows the stored JSON.
+export async function listReviewedProposalExamples(
+  db: DbClient,
+  userId: string,
+  limit: number
+): Promise<ReadonlyArray<ReviewedProposalExample>> {
+  const rows = await db
+    .select({
+      outcome: proposalReviews.outcome,
+      type: proposalCandidates.type,
+      payloadJson: proposalCandidates.payloadJson,
+      editedPayloadJson: proposalReviews.editedPayloadJson
+    })
+    .from(proposalReviews)
+    .innerJoin(proposalCandidates, eq(proposalReviews.proposalCandidateId, proposalCandidates.id))
+    .where(eq(proposalReviews.userId, userId))
+    .orderBy(desc(proposalReviews.createdAt), desc(proposalReviews.id))
+    .limit(limit);
+
+  return rows.map((row) => {
+    const payload = parseProposalPayload(row.editedPayloadJson ?? row.payloadJson);
+    return {
+      outcome: row.outcome,
+      type: row.type,
+      category: payload.category,
+      target: payload.target,
+      useContext: payload.useContext,
+      tags: payload.tags ?? []
+    };
+  });
 }

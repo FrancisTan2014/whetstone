@@ -70,15 +70,21 @@ export {
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
   evaluateProposalGate,
   isFaithfulQuote,
+  MAX_POLICY_EXAMPLES,
   normalizeForMatch,
   PROPOSAL_PROMPT_VERSION,
-  proposalPromptInstructions
+  proposalPromptInstructions,
+  selectPolicyExamples
 } from "./makeDurable.js";
 export type {
   ExistingRecallItem,
   ProposalDuplicateVerdict,
-  ProposalGateVerdict
+  ProposalGateVerdict,
+  ReviewedProposalExample,
+  ReviewedProposalKind,
+  ReviewedProposalOutcome
 } from "./makeDurable.js";
+export { reviewedProposalExampleFixtures } from "./makeDurablePolicyFixtures.js";
 export {
   groupByDayDesc,
   isDayKey,

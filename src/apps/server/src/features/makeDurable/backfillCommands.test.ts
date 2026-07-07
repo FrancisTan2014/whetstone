@@ -13,7 +13,7 @@ import {
   type BackfillDependencies
 } from "./backfillCommands.js";
 import { listPendingCards } from "./cardQueries.js";
-import { insertProposalCandidate } from "./proposalCommands.js";
+import { insertProposalCandidate, recordProposalReview } from "./proposalCommands.js";
 import {
   listProposalCandidatesForUser,
   listProposalReviewsForCandidate
@@ -337,6 +337,54 @@ describe("backfillMakeDurable", () => {
     await backfillMakeDurable(deps(spy), userA, t0);
 
     expect(seen).toEqual([{ target: "by and large", useContext: "summarizing" }]);
+  });
+
+  it("threads reviewed-example policy into the backfill provider (#457)", async () => {
+    // A separate reviewed entry provides review history; it already has a candidate, so it is not itself
+    // re-mined — it only supplies policy.
+    const reviewedEntry = await seedCapture("a previously reviewed capture", t0);
+    const reviewedCandidate = await insertProposalCandidate(
+      { createId: () => "reviewed-cand", db: context.db },
+      {
+        confidence: 0.9,
+        duplicateStatus: "unique",
+        evidenceQuote: "WorkInsight is back up now",
+        modelName: "fake",
+        payload: basePayload as unknown as Record<string, unknown>,
+        promptVersion: "proposal-v1",
+        reason: "a reusable phrase",
+        relatedRecallItemId: null,
+        noveltyReason: null,
+        status: "dismissed",
+        timelineEntryId: reviewedEntry,
+        type: "phrase_chunk"
+      },
+      userA,
+      t0
+    );
+    await recordProposalReview(
+      { createId: () => "review-1", db: context.db },
+      {
+        proposalCandidateId: reviewedCandidate.id,
+        outcome: "saved",
+        feedbackTags: null,
+        editedPayload: null
+      },
+      userA,
+      t0
+    );
+    await seedCapture(captureText, t1);
+
+    let seen: ReadonlyArray<{ outcome: string; target: string }> = [];
+    const spy: ProposalProvider = (_rawText, _existing, examples) => {
+      seen = (examples ?? []) as ReadonlyArray<{ outcome: string; target: string }>;
+      return Promise.resolve(null);
+    };
+    await backfillMakeDurable(deps(spy), userA, t1);
+
+    expect(seen).toContainEqual(
+      expect.objectContaining({ outcome: "saved", target: "WorkInsight is back up now" })
+    );
   });
 
   it("scans at most BACKFILL_SCAN_LIMIT entries per run", async () => {
