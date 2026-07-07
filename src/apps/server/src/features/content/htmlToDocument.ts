@@ -1063,13 +1063,13 @@ function elementDepth(element: Element): number {
 // wrapper, which then adopts the next id-less block — nested wrappers map to DISTINCT blocks and the
 // more specific inner id wins. A block that already has its own id is never overwritten (skipped as
 // "not id-less"). When a wrapper's anchor CANNOT be carried by any block — no id-less block descendant
-// exists, whether because the wrapper holds only inline content (which collapses into an anonymous
-// paragraph), only a standalone image/embed that becomes an anonymous figure, or block descendants that
+// exists, whether because the wrapper holds only inline content, only a standalone image/embed, only a
+// textless unknown construct (`<video>`/`<canvas>`/pure-vector `<svg>`), or block descendants that
 // already carry their own ids (a co-anchored nesting; a block carries a single anchor, so the outer id
 // has nowhere to land) — the anchor is genuinely lost, so ingestion records fail-loud evidence rather
-// than dropping it silently (#523 wrapper-metadata category). Only a truly empty anchored wrapper
-// (nothing to address) drops quietly. Idempotent enough for the pipeline: it runs once before parsing
-// and only moves attributes.
+// than dropping it silently (#523 wrapper-metadata category). Only a truly empty or purely decorative
+// anchored wrapper (nothing to address — no text, all-`tolerated` descendants) drops quietly.
+// Idempotent enough for the pipeline: it runs once before parsing and only moves attributes.
 function hoistWrapperAnchorIds(body: HTMLElement): IngestionEvidence[] {
   const evidence: IngestionEvidence[] = [];
   const wrappers = Array.from(body.querySelectorAll("*")).filter(isHoistableWrapper);
@@ -1082,15 +1082,16 @@ function hoistWrapperAnchorIds(body: HTMLElement): IngestionEvidence[] {
       (descendant) => isBlockLevelElement(descendant) && !descendant.hasAttribute("id")
     );
     if (target === undefined) {
-      // No id-less block can carry this anchor. If the wrapper encloses addressable content that
-      // becomes a block — a block-level descendant whose id is already taken, a standalone image/embed
-      // that becomes a figure (`<img>`, an SVG `<image>`, or an `<object>`; these are NOT in
-      // BLOCK_LEVEL_TAGS yet still yield a block), or real inline text — its lost anchor is made loud.
-      // Only a truly empty wrapper (nothing to address) drops quietly.
+      // No id-less block can carry this anchor. The wrapper addressed real content — so its lost anchor
+      // is made loud — unless it is empty or purely decorative. "Empty/decorative" is defined
+      // generally: no non-whitespace text, and every descendant is a `tolerated` element (a structural
+      // wrapper, inline formatting, or a decorative `<hr>`/`<br>` — none of which yields a block or
+      // evidence on its own). Any `recognized` (block-producing) or `unknown` (evidence-producing)
+      // descendant — a heading whose id is taken, an `<img>`/`<svg>`, a `<video>`/`<canvas>`, etc. —
+      // means the wrapper addressed content the tolerated element cannot, so the dropped id is loud.
       const enclosesContent =
-        descendants.some(isBlockLevelElement) ||
-        wrapper.querySelector("img, image, object") !== null ||
-        String(wrapper.textContent).trim().length > 0;
+        String(wrapper.textContent).trim().length > 0 ||
+        descendants.some((descendant) => classify(descendant) !== "tolerated");
       if (enclosesContent) {
         evidence.push({
           adjacentText: adjacentText(wrapper),

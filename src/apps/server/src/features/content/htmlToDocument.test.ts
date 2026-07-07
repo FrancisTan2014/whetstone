@@ -971,6 +971,30 @@ describe("htmlToDocument wrapper-metadata loss is loud (#523)", () => {
 
     expect(evidence).toHaveLength(0);
   });
+
+  it("records evidence when an anchored wrapper holds only a textless unknown construct", () => {
+    // `<video>` is unknown (no schema rule): it has no block-level descendant, no text, and is not an
+    // image/embed, but it is NOT tolerated — it produces its own fail-loud evidence. The wrapper still
+    // addressed it, so #clip must not vanish silently when the tolerated <div> is unwrapped.
+    const { evidence } = htmlToDocument('<div id="clip"><video src="clip.mp4"></video></div>');
+
+    // The wrapper's own anchor is surfaced (distinct from the <video>'s unknown-element evidence).
+    const clipEvidence = evidence.filter((record) => record.attributes["id"] === "clip");
+    expect(clipEvidence).toHaveLength(1);
+    expect(clipEvidence[0]!.tag).toBe("div");
+    // …and the <video> still fails loud in its own right.
+    expect(evidence.some((record) => record.tag === "video")).toBe(true);
+  });
+
+  it("does not flag a wrapper enclosing only empty tolerated elements (no content produced)", () => {
+    // An empty nested structural wrapper / empty inline element yields no block and no evidence, so the
+    // outer anchor addresses nothing — a quiet drop, not a loss.
+    const { evidence } = htmlToDocument(
+      '<div id="outer"><div><span></span></div></div><p id="after">After.</p>'
+    );
+
+    expect(evidence).toHaveLength(0);
+  });
 });
 
 describe("htmlToDocument reference links (#368)", () => {
