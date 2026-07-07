@@ -172,6 +172,47 @@ describe("decomposeHtmlChapter", () => {
     expect(unit.blocks.some((block) => block.blockType === "figure")).toBe(false);
   });
 
+  it("hoists a <figure> nested in <div>/<section> wrappers into its own figure block (#520)", () => {
+    // A publisher's sectioning wrappers around a figure previously handed the whole subtree to the
+    // mdast pipeline, which has no figure/image block, so the figure vanished. Flattening the wrappers
+    // lets the nested figure be modeled; the outer section id hoists to its first id-less child.
+    const unit = decomposeHtmlChapter(
+      '<div class="sect1" id="sec5">\n' +
+        "<h2>Diagrams</h2>\n" +
+        '<section><figure><img src="img/f.png" alt="d"/><figcaption>Figure 5-1.</figcaption></figure></section>\n' +
+        "<p>After.</p></div>"
+    );
+
+    expect(unit.blocks.map((block) => [block.blockType, block.plaintext])).toEqual([
+      ["heading", "Diagrams"],
+      ["figure", "Figure 5-1."],
+      ["paragraph", "After."]
+    ]);
+    expect(unit.blocks[1]?.image).toEqual({ alt: "d", src: "img/f.png" });
+    // The section-wrapper id hoists to the leading id-less child (the heading), so the anchor survives.
+    expect(unit.blocks[0]?.anchorId).toBe("sec5");
+  });
+
+  it("transfers a wrapper id to the first id-less child, skipping a child with its own id", () => {
+    const unit = decomposeHtmlChapter(
+      '<section id="wrap"><h2 id="own">Kept</h2><p>Adopts wrap.</p></section>'
+    );
+
+    const anchorByText = new Map(unit.blocks.map((block) => [block.plaintext, block.anchorId]));
+    // The heading keeps its own more-specific id; the id-less paragraph adopts the wrapper id.
+    expect(anchorByText.get("Kept")).toBe("own");
+    expect(anchorByText.get("Adopts wrap.")).toBe("wrap");
+  });
+
+  it("drops a wrapper id when it encloses no id-less element child (no crash)", () => {
+    const unit = decomposeHtmlChapter('<div id="empty"></div><p>After.</p>');
+
+    // The empty wrapper contributes no block and no anchor; the real paragraph is untouched.
+    expect(unit.blocks.map((block) => [block.blockType, block.anchorId])).toEqual([
+      ["paragraph", undefined]
+    ]);
+  });
+
   it("preserves a host element id as the block's anchor for in-work cross-references (#252)", () => {
     const unit = decomposeHtmlChapter(
       '<p id="intro">An opening.</p>' +
