@@ -234,17 +234,30 @@ export interface HitTargetViolation {
   width: number;
 }
 
+// The interactive controls the hit-target sweep (#519) enumerates. Beyond the obvious `button`/`a[href]`
+// /form controls/ARIA roles, it includes a styled `label` that WRAPS a form control — the visible click
+// proxy for a control that is itself hidden (e.g. the Library "Upload" button is a button-styled
+// `<label>` around an `.sr-only` `<input type=file>`), so that proxy's real hit target is swept too.
+// Exported so the probe (which receives it as an argument — a probe body cannot read module scope) and
+// its callers/tests share ONE definition.
+export const INTERACTIVE_SELECTOR =
+  'button, a[href], input, select, textarea, summary, label:has(input), label:has(select), label:has(textarea), [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="switch"]';
+
+export interface HitTargetSweepConfig {
+  // Elements matching this selector (or nested inside one) are allowlisted out of the sweep.
+  exclude: string;
+  // The interactive-control selector to enumerate (pass `INTERACTIVE_SELECTOR`).
+  interactive: string;
+}
+
 // The systemic hit-target guard (#519): enumerate every VISIBLE, ENABLED interactive control on the
 // page and return those whose rendered rect is under 44x44 CSS px (WCAG 2.5.5) — using
 // `getBoundingClientRect`, i.e. the accessible target including padding, not just an icon glyph.
-// Controls matching `excludeSelector` (or nested inside such an element) are allowlisted. Self-contained
-// for `page.evaluate`: every helper is nested and it touches only DOM globals.
-export function smallHitTargets(excludeSelector: string): HitTargetViolation[] {
-  const interactive =
-    'button, a[href], input, select, textarea, summary, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="switch"]';
-
+// Controls matching `config.exclude` (or nested inside such an element) are allowlisted. Self-contained
+// for `page.evaluate`: every helper is nested and it touches only DOM globals and its serialized config.
+export function smallHitTargets(config: HitTargetSweepConfig): HitTargetViolation[] {
   const excluded =
-    excludeSelector === "" ? [] : Array.from(document.querySelectorAll(excludeSelector));
+    config.exclude === "" ? [] : Array.from(document.querySelectorAll(config.exclude));
   const isExcluded = (element: Element): boolean =>
     excluded.some((ancestor) => ancestor === element || ancestor.contains(element));
 
@@ -284,7 +297,7 @@ export function smallHitTargets(excludeSelector: string): HitTargetViolation[] {
   };
 
   const violations: HitTargetViolation[] = [];
-  document.querySelectorAll(interactive).forEach((element) => {
+  document.querySelectorAll(config.interactive).forEach((element) => {
     const rect = element.getBoundingClientRect();
     if (isDisabled(element) || !isVisible(element, rect) || isExcluded(element)) {
       return;

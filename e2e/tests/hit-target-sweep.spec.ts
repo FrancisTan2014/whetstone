@@ -1,4 +1,4 @@
-import { smallHitTargets, type HitTargetViolation } from "../probes";
+import { INTERACTIVE_SELECTOR, smallHitTargets, type HitTargetViolation } from "../probes";
 import { expect, test } from "../fixtures";
 import { selectWordIn } from "../select";
 
@@ -58,7 +58,10 @@ for (const [viewportName, viewport] of [
         // The primary navigation renders on every route; wait for it so its tab targets are measured.
         await expect(page.getByRole("navigation").first()).toBeVisible();
 
-        const violations = await page.evaluate(smallHitTargets, ALLOWLIST);
+        const violations = await page.evaluate(smallHitTargets, {
+          exclude: ALLOWLIST,
+          interactive: INTERACTIVE_SELECTOR
+        });
         expect(violations, `sub-44px controls on ${name}:\n${report(name, violations)}`).toEqual(
           []
         );
@@ -70,7 +73,10 @@ for (const [viewportName, viewport] of [
       setup
     }) => {
       const sweep = async (state: string): Promise<void> => {
-        const violations = await page.evaluate(smallHitTargets, ALLOWLIST);
+        const violations = await page.evaluate(smallHitTargets, {
+          exclude: ALLOWLIST,
+          interactive: INTERACTIVE_SELECTOR
+        });
         expect(
           violations,
           `sub-44px controls in reader (${state}):\n${report(`reader/${state}`, violations)}`
@@ -109,3 +115,33 @@ for (const [viewportName, viewport] of [
     });
   });
 }
+
+// Regression for the sweep's own coverage (#519): the Library "Upload" control is a button-styled
+// `<label>` wrapping an `.sr-only` `<input type=file>`. The hidden input is allowlisted, so if the
+// sweep did not also enumerate the visible label proxy (its earlier blind spot), this whole class of
+// app chrome would go unguarded. Assert the label IS matched by the sweep's interactive selector and
+// meets the 44px bar — so a regression of the visible proxy would fail the sweep.
+test("the Library Upload proxy label is swept and meets the 44px bar (#519)", async ({
+  page,
+  setup
+}) => {
+  await page.setViewportSize({ height: 900, width: 1280 });
+  await page.goto(`${setup.baseURL}#/library`);
+
+  const upload = page.locator('label:has(input[type="file"])').filter({ hasText: "Upload" });
+  await expect(upload).toBeVisible();
+
+  // The visible proxy — not just the hidden input — is in the enumerated set the sweep measures.
+  const swept = await upload.evaluate(
+    (element, selector) => element.matches(selector),
+    INTERACTIVE_SELECTOR
+  );
+  expect(swept, "the Upload label proxy must be enumerated by the sweep").toBe(true);
+
+  const box = await upload.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { height: rect.height, width: rect.width };
+  });
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeGreaterThanOrEqual(44);
+});
