@@ -305,7 +305,11 @@ can navigate them from another package.
   one chapter's XHTML → a `@whetstone/document` PM/Tiptap doc via a `DOMParser` built from an explicit
   rules array bound to `documentSchema` (the pure package carries no `parseDOM` specs), decomposed into
   block rows; fail-loud — any unrecognized block-level element becomes an `unknown` node (raw HTML kept
-  verbatim) and emits a structured evidence record, so nothing is silently dropped. `ingestEpub` wires
+  verbatim) and emits a structured evidence record, so nothing is silently dropped. A pre-parse walk
+  (`hoistWrapperAnchorIds`, #516) first moves a section fragment id authored on a structural wrapper
+  (`<div class="sect1" id>` / `<section id>`) onto its leading block, so section anchors survive
+  unwrapping and reach the work anchor index (innermost wrapper wins; a block's own id is never
+  overwritten). `ingestEpub` wires
   this into the real flow: `resolveChapters` runs `htmlToDocument` per chapter, resolves each PM
   `image` node's `src` against that chapter's stored content-addressed images (the same resolution used
   for mdast figures, via `figureImageResolver.ts`) and stamps the resolved store id onto the node's
