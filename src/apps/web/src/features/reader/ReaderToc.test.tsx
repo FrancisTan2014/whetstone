@@ -263,6 +263,23 @@ describe("ReaderToc tree mode", () => {
     expect(screen.queryByRole("button", { name: "Chapter Three" })).toBeNull();
   });
 
+  it("exposes each entry's full label via a title so a clamped label stays discoverable (#514)", () => {
+    const { entries } = buildTree();
+    render(
+      <ReaderToc
+        activeEntryId="t-sec"
+        entries={entries}
+        mode="tree"
+        onClose={vi.fn()}
+        open={true}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Section 2.1" }).getAttribute("title")).toBe(
+      "Section 2.1"
+    );
+  });
+
   it("indents each node by its authored depth via the token data attribute and custom property", () => {
     const { entries } = buildTree();
     render(
