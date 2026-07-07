@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
@@ -54,14 +54,30 @@ export function TodayPage(): React.JSX.Element {
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
+  // Monotonic id for the in-flight recall request. The recall arm loads on mount AND again after a
+  // Make Durable save, so two loads can overlap: latest-wins guards against a slower earlier request
+  // resolving last and clobbering the newer result (e.g. the pre-save empty list overwriting the just
+  // -saved item, reintroducing #509 under a different ordering). Only the latest request may write.
+  const recallRequestRef = useRef(0);
+
   // Loading the due-recall batch is shared between the initial mount and a refresh after a Make
   // Durable save. The initial "loading" comes from the default state; a refresh keeps the current
   // card until the refetch resolves (no flash), so this only sets the resolved arm — never a
   // synchronous setState in the mount effect. Stable across renders so the effect stays a one-shot.
   const loadRecall = useCallback(() => {
+    recallRequestRef.current += 1;
+    const requestId = recallRequestRef.current;
     fetchDueRecall().then(
-      (items) => setRecall({ items, status: "ready" }),
-      () => setRecall({ status: "error" })
+      (items) => {
+        if (recallRequestRef.current === requestId) {
+          setRecall({ items, status: "ready" });
+        }
+      },
+      () => {
+        if (recallRequestRef.current === requestId) {
+          setRecall({ status: "error" });
+        }
+      }
     );
   }, []);
 
