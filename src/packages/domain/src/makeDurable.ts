@@ -25,6 +25,17 @@ export const proposalPromptInstructions: ReadonlyArray<string> = [
   'Reply with ONLY strict JSON of the form {"candidates":[{"type":"...","confidence":0.0,"reason":"...","evidenceQuote":"...","payload":{"target":"...","cue":"...","useContext":"...","category":"...","tags":["..."]}}]} — an empty candidates array when nothing qualifies.'
 ];
 
+// The extra instruction lines the BACKFILL prompt adds on top of the shared ones (#456). Mining older
+// history must be MORE selective than live capture: prefer durable, reusable production value (a
+// recurring pattern, a genuinely reusable phrase, or a real "couldn't say it" gap) and pass over
+// one-off spelling, typo, or product/proper-name fixes, which carry no reusable value. Exported so a
+// test asserts the high-value bias survives prompt edits.
+export const backfillEmphasisInstructions: ReadonlyArray<string> = [
+  "You are mining an OLDER capture from history for durable value, so be MORE selective than live capture.",
+  "Propose ONLY reusable production value: a recurring_pattern (a repeated error worth a durable fix), a phrase_chunk (a genuinely reusable phrase), or a real couldnt_say_gap.",
+  "Do NOT propose one-off spelling fixes, typos, or product/proper-name corrections — they carry no reusable production value, so prefer NO candidate for them."
+];
+
 // A small slice of the learner's existing recall for retrieve-before-generate: the target they already
 // remember, plus when they use it. Passed into the proposal prompt so the model can avoid re-proposing
 // something already covered (the deterministic `classifyProposalDuplicate` remains the safety net).
@@ -43,19 +54,44 @@ function renderRememberedItems(existing: ReadonlyArray<ExistingRecallItem>): str
     .join("\n");
 }
 
+// Assemble a proposal prompt from a chosen instruction set: the instructions, the retrieved "Already
+// remembered" context (so the model compares before proposing), then the capture text. Shared by the
+// live and backfill builders so both keep the identical retrieval/capture framing.
+function assembleProposalPrompt(
+  instructions: ReadonlyArray<string>,
+  rawText: string,
+  existing: ReadonlyArray<ExistingRecallItem>
+): string {
+  return [
+    ...instructions,
+    "",
+    `Already remembered:\n${renderRememberedItems(existing)}`,
+    "",
+    `Capture:\n${rawText}`
+  ].join("\n");
+}
+
 // Build the proposal prompt for a raw capture: the fixed invariant instructions, the retrieved
 // "Already remembered" context (so the model compares before proposing), then the capture text.
 export function buildProposalPrompt(
   rawText: string,
   existing: ReadonlyArray<ExistingRecallItem> = []
 ): string {
-  return [
-    ...proposalPromptInstructions,
-    "",
-    `Already remembered:\n${renderRememberedItems(existing)}`,
-    "",
-    `Capture:\n${rawText}`
-  ].join("\n");
+  return assembleProposalPrompt(proposalPromptInstructions, rawText, existing);
+}
+
+// Build the BACKFILL proposal prompt (#456): the shared invariant instructions plus the high-value
+// backfill bias, over the same retrieval/capture framing. Used when mining existing Timeline history so
+// only durable, reusable items surface — not one-off spelling/product-name corrections.
+export function buildBackfillProposalPrompt(
+  rawText: string,
+  existing: ReadonlyArray<ExistingRecallItem> = []
+): string {
+  return assembleProposalPrompt(
+    [...proposalPromptInstructions, ...backfillEmphasisInstructions],
+    rawText,
+    existing
+  );
 }
 
 // Normalize free text for faithful-quote / duplicate comparison: trim, lowercase, and collapse internal

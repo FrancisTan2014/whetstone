@@ -34,7 +34,12 @@ export type QuickCaptureDependencies = Readonly<{
   propose: ProposalProvider;
 }>;
 
-function toCard(candidate: ProposalCandidateDto, payload: ProposalPayload): MakeDurableCardDto {
+// Build a Today review card from an inserted candidate DTO + its (already schema-valid) payload. Shared
+// by Quick Capture and the backfill scan so both surface the identical card shape.
+export function toReviewCard(
+  candidate: ProposalCandidateDto,
+  payload: ProposalPayload
+): MakeDurableCardDto {
   return {
     proposalCandidateId: candidate.id,
     timelineEntryId: candidate.timelineEntryId,
@@ -126,5 +131,5 @@ export async function quickCapture(
     return { card: null, timelineEntry };
   }
 
-  return { card: toCard(candidate, generated.payload), timelineEntry };
+  return { card: toReviewCard(candidate, generated.payload), timelineEntry };
 }

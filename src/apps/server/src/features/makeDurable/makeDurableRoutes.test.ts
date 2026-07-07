@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
+  BackfillResultDto,
   MakeDurableCardListDto,
   QuickCaptureResultDto,
   RecallItemDto
@@ -42,7 +43,10 @@ type TestContext = Readonly<{
 
 let context: TestContext;
 
-function buildContext(propose: ProposalProvider): Promise<TestContext> {
+function buildContext(
+  propose: ProposalProvider,
+  proposeBackfill: ProposalProvider = propose
+): Promise<TestContext> {
   const pglite = new PGlite();
   let sequence = 0;
   return runMigrations(pglite).then(() => {
@@ -55,7 +59,8 @@ function buildContext(propose: ProposalProvider): Promise<TestContext> {
           createId: () => `id-${(sequence += 1)}`,
           db,
           now: () => new Date("2026-07-06T09:30:00.000Z"),
-          propose
+          propose,
+          proposeBackfill
         }
       })
     };
@@ -144,6 +149,43 @@ describe("GET /api/makedurable/cards", () => {
   it("is empty when nothing is pending", async () => {
     const response = await context.server.inject({ method: "GET", url: "/api/makedurable/cards" });
     expect(response.json()).toEqual({ cards: [] });
+  });
+});
+
+describe("POST /api/makedurable/backfill", () => {
+  it("mines an un-mined capture from history into one Today card", async () => {
+    // The live model proposes nothing, so the capture leaves a Timeline entry with no candidate; the
+    // backfill model then finds a high-value item in it.
+    context = await buildContext(
+      () => Promise.resolve(null),
+      () => Promise.resolve(validAttempt)
+    );
+    await capture();
+
+    const response = await context.server.inject({
+      method: "POST",
+      url: "/api/makedurable/backfill"
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as BackfillResultDto;
+    expect(body.scannedCount).toBe(1);
+    expect(body.card?.target).toBe("WorkInsight is back up now");
+
+    const cards = await context.server.inject({ method: "GET", url: "/api/makedurable/cards" });
+    expect((cards.json() as MakeDurableCardListDto).cards).toHaveLength(1);
+  });
+
+  it("returns a null card and zero scanned when there is no history to mine", async () => {
+    context = await buildContext(() => Promise.resolve(validAttempt));
+
+    const response = await context.server.inject({
+      method: "POST",
+      url: "/api/makedurable/backfill"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ card: null, scannedCount: 0 });
   });
 });
 

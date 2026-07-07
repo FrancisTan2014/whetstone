@@ -63,6 +63,7 @@ export type {
   UpdateDiaryEntryRequest
 } from "./diaryContracts.js";
 export {
+  backfillResultDtoSchema,
   captureInputModes,
   captureInputModeSchema,
   captureSources,
@@ -76,6 +77,7 @@ export {
   parseCreateTimelineCaptureRequest,
   parseMakeDurableCardDto,
   parseMakeDurableCardListDto,
+  parseBackfillResultDto,
   parseProposalCandidateDto,
   parseProposalGeneration,
   parseProposalPayload,
@@ -105,6 +107,7 @@ export {
   timelineCaptureDtoSchema
 } from "./makeDurableContracts.js";
 export type {
+  BackfillResultDto,
   CaptureInputMode,
   CaptureSource,
   CreateProposalCandidateRequest,

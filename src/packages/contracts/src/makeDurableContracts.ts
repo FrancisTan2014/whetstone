@@ -323,6 +323,19 @@ export const quickCaptureResultDtoSchema = z
 
 export type QuickCaptureResultDto = z.infer<typeof quickCaptureResultDtoSchema>;
 
+// The bounded Make Durable backfill result (#456): the one review card this run surfaced (null when the
+// scan found no gated-in high-value proposal, or Today already holds a card so the proposal was held),
+// plus how many prior Timeline entries the model actually evaluated this run (0 when the model was
+// unavailable, so history is unchanged).
+export const backfillResultDtoSchema = z
+  .object({
+    card: makeDurableCardDtoSchema.nullable(),
+    scannedCount: z.number().int().nonnegative()
+  })
+  .strict();
+
+export type BackfillResultDto = z.infer<typeof backfillResultDtoSchema>;
+
 // The review-card action body: the outcome, plus (for Edit + Save) the edited payload and optional
 // feedback tags. The candidate id comes from the route path.
 export const reviewProposalRequestSchema = z
@@ -363,6 +376,10 @@ export function parseMakeDurableCardListDto(value: unknown): MakeDurableCardList
 
 export function parseQuickCaptureResultDto(value: unknown): QuickCaptureResultDto {
   return quickCaptureResultDtoSchema.parse(value);
+}
+
+export function parseBackfillResultDto(value: unknown): BackfillResultDto {
+  return backfillResultDtoSchema.parse(value);
 }
 
 export function parseReviewProposalRequest(value: unknown): ReviewProposalRequest {

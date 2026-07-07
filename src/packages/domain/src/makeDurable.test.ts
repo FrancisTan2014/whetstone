@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  backfillEmphasisInstructions,
+  buildBackfillProposalPrompt,
   buildProposalPrompt,
   classifyProposalDuplicate,
   DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
@@ -48,6 +50,39 @@ describe("buildProposalPrompt", () => {
 
   it("pins a stable prompt version", () => {
     expect(PROPOSAL_PROMPT_VERSION).toBe("proposal-v1");
+  });
+});
+
+describe("buildBackfillProposalPrompt", () => {
+  it("carries the shared invariant instructions, the retrieval context, and the capture", () => {
+    const prompt = buildBackfillProposalPrompt("an old capture I never mined", [
+      { target: "It's back up now", useContext: "reporting availability" }
+    ]);
+
+    for (const line of proposalPromptInstructions) {
+      expect(prompt).toContain(line);
+    }
+    expect(prompt).toContain("Already remembered:");
+    expect(prompt).toContain("- It's back up now — reporting availability");
+    expect(prompt).toContain("Capture:\nan old capture I never mined");
+  });
+
+  it("adds the high-value backfill bias (prefer reusable value, skip one-off spelling/product names)", () => {
+    const prompt = buildBackfillProposalPrompt("capture");
+
+    for (const line of backfillEmphasisInstructions) {
+      expect(prompt).toContain(line);
+    }
+    const joined = backfillEmphasisInstructions.join(" ").toLowerCase();
+    expect(joined).toContain("reusable");
+    expect(joined).toContain("spelling");
+    expect(joined).toContain("product");
+  });
+
+  it("adds bias the live proposal prompt does not carry", () => {
+    for (const line of backfillEmphasisInstructions) {
+      expect(buildProposalPrompt("capture")).not.toContain(line);
+    }
   });
 });
 

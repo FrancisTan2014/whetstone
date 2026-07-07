@@ -14,6 +14,7 @@ import { createQuickCaptureVoice } from "./makeDurableCapture";
 import {
   fetchMakeDurableCards,
   reviewMakeDurableCard,
+  runMakeDurableBackfill,
   submitQuickCapture,
   type ReviewCardInput
 } from "./makeDurableApi";
@@ -63,6 +64,8 @@ export function MakeDurableSection({
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillNote, setBackfillNote] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMakeDurableCards().then(
@@ -161,6 +164,28 @@ export function MakeDurableSection({
     }
   }
 
+  // Mine the learner's Timeline history for one high-value proposal (#456). The server surfaces at most
+  // one card per run; if it returns one, prepend it, otherwise show a calm "nothing found" note. A
+  // failure degrades to the same generic error and never blanks the section.
+  async function mineHistory(): Promise<void> {
+    setError(null);
+    setBackfillNote(null);
+    setBackfilling(true);
+    try {
+      const result = await runMakeDurableBackfill();
+      if (result.card !== null) {
+        const card = result.card;
+        setCards((current) => [card, ...current]);
+      } else {
+        setBackfillNote("No new suggestions from your history yet.");
+      }
+    } catch {
+      setError("Couldn't scan your history. Please try again.");
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
   const transcribing = phase === "transcribing";
 
   return (
@@ -218,6 +243,24 @@ export function MakeDurableSection({
           </Button>
         </div>
       </form>
+
+      <div className="mt-3 flex flex-col gap-1">
+        <div>
+          <Button
+            disabled={busy || transcribing || backfilling}
+            onClick={() => void mineHistory()}
+            type="button"
+            variant="secondary"
+          >
+            {backfilling ? "Scanning…" : "Mine my history"}
+          </Button>
+        </div>
+        {backfillNote === null ? null : (
+          <p className="text-sm text-text-muted" role="status">
+            {backfillNote}
+          </p>
+        )}
+      </div>
 
       {error === null ? null : (
         <p className="mt-2 text-text-muted" role="alert">

@@ -1,6 +1,7 @@
 import { quickCaptureRequestSchema, reviewProposalRequestSchema } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
 
+import { backfillMakeDurable, type BackfillDependencies } from "./backfillCommands.js";
 import { listPendingCards } from "./cardQueries.js";
 import { quickCapture, type QuickCaptureDependencies } from "./captureCommands.js";
 import { reviewProposalCard } from "./reviewCommands.js";
@@ -8,9 +9,11 @@ import { reviewProposalCard } from "./reviewCommands.js";
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
 
-// The Make Durable route dependencies are the Quick Capture dependencies (id/db/clock + the proposal
-// seam); the card query and review command need only the db/id/clock subset.
-export type MakeDurableRouteDependencies = QuickCaptureDependencies;
+// The Make Durable route dependencies: the Quick Capture dependencies (id/db/clock + the live proposal
+// seam) plus the backfill proposal seam (the high-value prompt) used by the history-mining scan. The
+// card query and review command need only the db/id/clock subset.
+export type MakeDurableRouteDependencies = QuickCaptureDependencies &
+  Pick<BackfillDependencies, "proposeBackfill">;
 
 type ReviewParams = Readonly<{ id: string }>;
 
@@ -42,6 +45,28 @@ export function registerMakeDurableRoutes(
     );
 
     return reply.code(201).send(result);
+  });
+
+  // Bounded backfill scan (#456): mine the current user's Timeline history for ONE high-value Recall
+  // proposal, reusing the live gate/dedup/save path with a high-value prompt. Returns the surfaced card
+  // (or null when nothing qualified / a card is already up) and how many entries were evaluated. The
+  // scan never blocks Today rendering and leaves history unchanged when the model is unavailable.
+  server.post("/api/makedurable/backfill", async (request, reply) => {
+    const result = await backfillMakeDurable(
+      dependencies,
+      request.server.currentUser.getCurrentUserId(),
+      dependencies.now()
+    );
+    request.log.info(
+      {
+        backfillCard: result.card !== null,
+        route: "POST /api/makedurable/backfill",
+        scannedCount: result.scannedCount
+      },
+      "make_durable_backfill"
+    );
+
+    return reply.code(200).send(result);
   });
 
   // The pending Make Durable cards for Today (capped, newest first). Empty when nothing is awaiting review.
