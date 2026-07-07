@@ -2457,23 +2457,41 @@ describe("ReaderPage reading controls", () => {
     };
   }
 
-  it("on a narrow screen hides the chrome by default and toggles it with a center tap", async () => {
+  it("on a narrow screen shows the chrome by default (tools reachable) and toggles it with a center tap (#511)", async () => {
     const user = userEvent.setup();
     const restore = mockNarrowViewport();
     try {
       const container = await openMultiUnitWork();
       const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
 
-      // Mobile chrome is hidden by default.
-      expect(header().getAttribute("data-hidden")).toBe("true");
-
-      // A center tap on the reading text (no selection, not a control) reveals the chrome…
-      await user.click(screen.getByText("Intro paragraph."));
+      // Mobile chrome is SHOWN by default, so the docked bottom tools bar stays inside the viewport
+      // and the reading tools are tappable on load (a hidden-by-default bar receded off-screen, #511).
       expect(header().getAttribute("data-hidden")).toBeNull();
 
-      // …and tapping again hides it.
+      // A center tap on the reading text (no selection, not a control) recedes the chrome…
       await user.click(screen.getByText("Intro paragraph."));
       expect(header().getAttribute("data-hidden")).toBe("true");
+
+      // …and tapping again brings it back.
+      await user.click(screen.getByText("Intro paragraph."));
+      expect(header().getAttribute("data-hidden")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it("on a narrow screen opens the notes panel from the reading tools without a center tap first (#511)", async () => {
+    // The reported failure: on mobile the tools were receded off-screen by default, so tapping "Your
+    // notes" was impossible. With the chrome shown by default the control is reachable immediately.
+    const user = userEvent.setup();
+    const restore = mockNarrowViewport();
+    try {
+      const container = await openMultiUnitWork();
+      const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
+      expect(header().getAttribute("data-hidden")).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Your notes" }));
+      expect(await screen.findByRole("dialog", { name: "Your notes" })).toBeDefined();
     } finally {
       restore();
     }
@@ -2484,7 +2502,7 @@ describe("ReaderPage reading controls", () => {
     try {
       const container = await openMultiUnitWork();
       const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
-      expect(header().getAttribute("data-hidden")).toBe("true");
+      expect(header().getAttribute("data-hidden")).toBeNull();
 
       const paragraph = screen.getByText("Intro paragraph.");
       const range = document.createRange();
@@ -2494,9 +2512,9 @@ describe("ReaderPage reading controls", () => {
       selection.addRange(range);
       expect(selection.isCollapsed).toBe(false);
 
-      // A click that ends a selection is a selection gesture, not a chrome toggle.
+      // A click that ends a selection is a selection gesture, not a chrome toggle: chrome stays shown.
       fireEvent.click(paragraph);
-      expect(header().getAttribute("data-hidden")).toBe("true");
+      expect(header().getAttribute("data-hidden")).toBeNull();
     } finally {
       restore();
     }
@@ -2509,8 +2527,7 @@ describe("ReaderPage reading controls", () => {
       const container = await openMultiUnitWork();
       const header = (): HTMLElement => container.querySelector(".readingHeader") as HTMLElement;
 
-      // Reveal the chrome, then tap a tool: the tool acts, but the chrome stays put.
-      await user.click(screen.getByText("Intro paragraph."));
+      // The chrome is shown by default; tapping a tool acts but never recedes the chrome.
       expect(header().getAttribute("data-hidden")).toBeNull();
 
       await user.click(screen.getByRole("button", { name: "Increase reading text size" }));

@@ -382,12 +382,14 @@ export function ReaderPage({
   const [notesOpen, setNotesOpen] = useState(false);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const scroll = useReaderScroll();
-  // Below the desktop rail's fit width the chrome is a top bar, hidden by default and toggled on a
-  // center tap of the reading area. At/above it the rail is persistent (PRODUCT.md: a fixed right-edge
-  // rail), so it never recedes on scroll — only mobile auto-hides where space is scarce. The 56rem
-  // threshold matches the `min-width: 56rem` rail layout. `useReaderScroll` still drives progress.
+  // Below the desktop rail's fit width the chrome is a top bar + bottom tools bar, shown by default
+  // and toggled to recede on a center tap of the reading area. It must NOT start hidden: a receded
+  // bottom bar sits below the fold (translateY(130%)), so hiding by default left the reading tools
+  // unreachable on load with no affordance to summon them (#511). At/above 56rem the rail is
+  // persistent (PRODUCT.md: a fixed right-edge rail) and never recedes. `useReaderScroll` still
+  // drives progress.
   const isNarrow = useMediaQuery("(max-width: 55.999rem)");
-  const [chromeTapHidden, setChromeTapHidden] = useState(true);
+  const [chromeTapHidden, setChromeTapHidden] = useState(false);
   const onToggleChrome = useCallback(() => setChromeTapHidden((value) => !value), []);
   const chromeHidden = isNarrow ? chromeTapHidden : false;
   const toast = useToast();

@@ -944,8 +944,9 @@
 
 @media (max-width: 55.999rem) {
   /* Mobile: dock the tools as a bottom bar within the safe area (matching the app's mobile bottom
-     tabs), hidden by default and toggled by a center tap. Below the desktop rail's fit width this is
-     the fallback, so the rail never overlaps the reading text and no control sits above the fold. */
+     tabs), shown by default and receded (translateY below the fold) on a center tap. It must not
+     start receded — that left the tools off-screen and untappable on load (#511). Below the desktop
+     rail's fit width this is the fallback, so the rail never overlaps the reading text. */
   .readingTools {
     inset-block-start: auto;
     inset-block-end: 0;
