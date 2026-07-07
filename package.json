@@ -14,6 +14,7 @@
     "setup:minimal": "node scripts/setup.mjs --minimal",
     "setup:voice": "node scripts/setup.mjs --voice",
     "setup:coach": "node scripts/setup.mjs --coach",
+    "setup:pdf": "node scripts/setup.mjs --pdf",
     "setup:all": "node scripts/setup.mjs --all",
     "typecheck": "tsc -b --pretty false",
     "lint": "pnpm lint:eslint && pnpm format:check",

@@ -35,6 +35,11 @@ const newAuthorOption = "new-author-or-source";
 // scanned or corrupt file — mirrors the Manage-content panel's copy so the one front door reads the same.
 const invalidPdfMessage = "We couldn’t read this PDF. Please try a different file.";
 
+// Shown when the host has no PDF toolchain provisioned (the server's 503 `pdf_toolchain_missing`) —
+// a setup gap, not a bad file, so the copy points at the fix rather than blaming the PDF (#510).
+const pdfToolchainMissingMessage =
+  "PDF ingestion isn’t set up on the server yet. Run `pnpm setup:pdf` (or `pnpm setup:doctor` to check), then try again.";
+
 // Shown when a PDF/Markdown produced no readable blocks (the server's 422 `empty_content`), e.g. an
 // image-only document — v0 has no image block, so there is nothing to add.
 const emptyContentMessage =
@@ -232,6 +237,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
       if (outcome.status === "invalid_pdf") {
         return invalidPdfMessage;
+      }
+
+      if (outcome.status === "pdf_toolchain_missing") {
+        return pdfToolchainMissingMessage;
       }
 
       if (outcome.status === "empty_content") {

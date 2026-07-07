@@ -18,7 +18,7 @@ if (args.unknown.length > 0) {
     `[setup] ignoring unrecognized flag(s): ${args.unknown.join(", ")}. ` +
       "`pnpm setup` already installs every capability (reader + voice + coach), consent-gated. " +
       "Use a baked-in script instead of a flag — `pnpm setup:minimal` (base only, no voice/coach), " +
-      "`pnpm setup:doctor` (--check), `pnpm setup:voice`, `pnpm setup:coach`, `pnpm setup:all` — " +
+      "`pnpm setup:doctor` (--check), `pnpm setup:voice`, `pnpm setup:coach`, `pnpm setup:pdf`, `pnpm setup:all` — " +
       "or forward a raw flag/env combo with `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes`). " +
       "Passing a flag to `pnpm setup` directly collides with pnpm's built-in `setup` command and fails."
   );
@@ -28,6 +28,7 @@ const ctx = createContext(repoRoot, { yes: args.yes });
 const selected = selectSteps(steps, {
   voice: args.voice,
   coach: args.coach,
+  pdf: args.pdf,
   all: args.all,
   minimal: args.minimal
 });

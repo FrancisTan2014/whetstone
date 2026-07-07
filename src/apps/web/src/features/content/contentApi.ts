@@ -80,12 +80,14 @@ export async function ingestMarkdown(
 }
 
 // Ingesting a PDF hands its raw bytes to the server's doc-AI worker, which converts it into the same
-// block pipeline as a .md upload. It can fail two distinct ways the panel messages differently: the
-// worker could not read the PDF (422 `invalid_pdf`), or it produced no readable blocks (422
-// `empty_content`). Both arrive as 422, distinguished by the response body's `error`.
+// block pipeline as a .md upload. It can fail three distinct ways the panel messages differently: the
+// worker could not read the PDF (422 `invalid_pdf`), it produced no readable blocks (422
+// `empty_content`), or the host's PDF toolchain is not installed (503 `pdf_toolchain_missing`, a
+// provisioning gap — not a bad file). The 422s are distinguished by the response body's `error`.
 export type IngestPdfOutcome =
   | Readonly<{ content: WorkContentDto; status: "ingested" }>
   | Readonly<{ status: "invalid_pdf" }>
+  | Readonly<{ status: "pdf_toolchain_missing" }>
   | Readonly<{ status: "empty_content" }>;
 
 export async function ingestPdf(workEntryId: string, file: File): Promise<IngestPdfOutcome> {
@@ -95,6 +97,12 @@ export async function ingestPdf(workEntryId: string, file: File): Promise<Ingest
     headers: { "content-type": pdfContentType },
     method: "POST"
   });
+
+  // The PDF lane is not provisioned on the server (Python/Docling/OCRmyPDF missing): surfaced as 503
+  // so it reads as "enable the capability", not "your file is broken" (#510).
+  if (response.status === 503) {
+    return { status: "pdf_toolchain_missing" };
+  }
 
   if (response.status === 422) {
     const body = (await response.json()) as { error?: string };

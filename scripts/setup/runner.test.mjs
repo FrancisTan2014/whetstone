@@ -14,6 +14,7 @@ describe("parseArgs", () => {
       doctor: false,
       voice: false,
       coach: false,
+      pdf: false,
       all: false,
       minimal: false,
       yes: false,
@@ -31,11 +32,16 @@ describe("parseArgs", () => {
       doctor: false,
       voice: true,
       coach: true,
+      pdf: false,
       all: false,
       minimal: false,
       yes: false,
       unknown: []
     });
+  });
+
+  it("recognizes --pdf for the PDF-ingestion capability", () => {
+    expect(parseArgs(["--pdf"]).pdf).toBe(true);
   });
 
   it("recognizes --all and --yes for unattended, all-capability setup", () => {
@@ -57,20 +63,22 @@ describe("selectSteps", () => {
   const base = createFakeStep({ id: "base" }).step;
   const voice = createFakeStep({ id: "voice", optional: true, capability: "voice" }).step;
   const coach = createFakeStep({ id: "coach", optional: true, capability: "coach" }).step;
+  const pdf = createFakeStep({ id: "pdf", optional: true, capability: "pdf" }).step;
   const optionalNoCapability = createFakeStep({ id: "loose", optional: true }).step;
-  const steps = [base, voice, coach, optionalNoCapability];
+  const steps = [base, voice, coach, pdf, optionalNoCapability];
 
   it("includes every optional capability by default (bare `pnpm setup` = full install)", () => {
-    expect(selectSteps(steps, { voice: false, coach: false })).toEqual([base, voice, coach]);
+    expect(selectSteps(steps, { voice: false, coach: false })).toEqual([base, voice, coach, pdf]);
   });
 
   it("narrows to base-only under --minimal", () => {
     expect(selectSteps(steps, { voice: false, coach: false, minimal: true })).toEqual([base]);
   });
 
-  it("adds only the matching optional capability when its flag is set (setup:voice / setup:coach)", () => {
+  it("adds only the matching optional capability when its flag is set (setup:voice / setup:coach / setup:pdf)", () => {
     expect(selectSteps(steps, { voice: true, coach: false })).toEqual([base, voice]);
     expect(selectSteps(steps, { voice: false, coach: true })).toEqual([base, coach]);
+    expect(selectSteps(steps, { voice: false, coach: false, pdf: true })).toEqual([base, pdf]);
   });
 
   it("adds both when both flags are set", () => {
@@ -81,7 +89,8 @@ describe("selectSteps", () => {
     expect(selectSteps(steps, { voice: false, coach: false, all: true })).toEqual([
       base,
       voice,
-      coach
+      coach,
+      pdf
     ]);
   });
 });

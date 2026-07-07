@@ -25,25 +25,25 @@ are skipped). To just check readiness without changing anything:
 pnpm setup:doctor   # report each capability as ready / optional-missing / failed; never mutates
 ```
 
-Heavy/system capabilities (voice, local coach) are **included in the base `pnpm setup`**, but each
-system install stays **consent-gated**: on a terminal you press **Y** before Ollama/Python is
-installed; decline (or run non-interactively, e.g. CI) and that step falls back to instruct-only and
-the run still exits 0 — nothing installs silently. For a lean run that skips voice/coach entirely
-(fast iteration, reader-only, CI), use the opt-out:
+Heavy/system capabilities (voice, local coach, PDF ingestion) are **included in the base `pnpm
+setup`**, but each system install stays **consent-gated**: on a terminal you press **Y** before
+Ollama/Python/OCRmyPDF is installed; decline (or run non-interactively, e.g. CI) and that step falls
+back to instruct-only and the run still exits 0 — nothing installs silently. For a lean run that
+skips voice/coach/PDF entirely (fast iteration, reader-only, CI), use the opt-out:
 
 ```powershell
-pnpm setup:minimal   # base only: toolchain, install, build, E2E browser, .env — no voice/coach, no prompts
+pnpm setup:minimal   # base only: toolchain, install, build, E2E browser, .env — no voice/coach/pdf, no prompts
 ```
 
-You can also (re)run a single capability on its own with `pnpm setup:voice`, `pnpm setup:coach`, or
-`pnpm setup:all` (both). The canonical set: `pnpm setup` (full, consent-gated) / `pnpm setup:minimal`
-(lean) / `pnpm setup:doctor` (probe only).
+You can also (re)run a single capability on its own with `pnpm setup:voice`, `pnpm setup:coach`,
+`pnpm setup:pdf`, or `pnpm setup:all` (every capability). The canonical set: `pnpm setup` (full,
+consent-gated) / `pnpm setup:minimal` (lean) / `pnpm setup:doctor` (probe only).
 
 > **Why baked-in scripts and not a flag on `pnpm setup`?** `setup` is a **built-in pnpm command**, so
 > `pnpm setup` with any flag is routed to pnpm's built-in and fails with `Unknown option`. The
-> capability scripts (`setup:minimal`, `setup:voice`, `setup:coach`, `setup:all`, `setup:doctor`) bake
-> the flag in and don't collide. For a raw flag/env combo, use the explicit run form:
-> `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes` for unattended consent).
+> capability scripts (`setup:minimal`, `setup:voice`, `setup:coach`, `setup:pdf`, `setup:all`,
+> `setup:doctor`) bake the flag in and don't collide. For a raw flag/env combo, use the explicit run
+> form: `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes` for unattended consent).
 
 ### Voice input (optional)
 
@@ -59,6 +59,25 @@ pnpm setup:voice   # installs faster-whisper + the whetstone-whisper wrapper, fe
 Pick a different model with `WHISPER_MODEL` (default `small`, multilingual): e.g.
 `WHISPER_MODEL=base.en pnpm run setup -- --voice` for English-only. After it finishes, restart `pnpm dev`
 and speaking yields a real transcript. Details and the STT contract: [docs/SPEECH.md](./SPEECH.md).
+
+### PDF ingestion (optional)
+
+Uploading a `.pdf` converts it to Markdown with the local **Docling** worker behind an
+**OCRmyPDF/Tesseract** pre-pass for scanned pages. Unlike voice/coach there is **no runtime fake**, so
+if the toolchain is absent a perfectly valid PDF fails to convert — the app now says so distinctly
+("PDF ingestion isn't set up on the server yet. Run `pnpm setup:pdf`…") instead of blaming the file,
+and a genuinely corrupt/unsupported PDF still reads as "We couldn't read this PDF." Check or enable the
+lane with:
+
+```powershell
+pnpm setup:doctor   # reports the PDF lane: which of Python / Docling / OCRmyPDF / Tesseract is missing
+pnpm setup:pdf      # installs Python (consent-gated) + the Docling pip package; OCRmyPDF/Tesseract are consent-gated where a clean install exists, else instruct-only
+```
+
+`setup:pdf` auto-installs what it safely can (Python via winget/brew after a Y, then `pip install
+docling`) and reports the exact remedy for the heavier system tools (OCRmyPDF + Tesseract) where no
+clean one-command install exists (notably Windows). Nothing installs silently; a declined or
+non-interactive run stays green and prints how to finish by hand.
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine
 ([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no

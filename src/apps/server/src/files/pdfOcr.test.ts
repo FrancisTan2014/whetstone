@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createIdentityPdfOcr, createOcrmypdfPreprocess } from "./pdfOcr.js";
+import { PdfToolchainMissingError } from "./pdfToolchain.js";
 
 describe("createIdentityPdfOcr", () => {
   it("returns the input bytes unchanged, so the gate is green without an OCR toolchain", async () => {
@@ -45,12 +46,14 @@ describe("createOcrmypdfPreprocess", () => {
     );
   });
 
-  it("spawns the configured binary by default and rejects when it cannot run", async () => {
+  it("rejects with PdfToolchainMissingError when the OCRmyPDF binary is not installed (#510)", async () => {
+    // A missing binary is a toolchain gap, not a bad PDF — the spawn boundary classifies ENOENT so
+    // ingestPdf can report pdf_toolchain_missing instead of invalid_pdf.
     const ocr = createOcrmypdfPreprocess({
       ocrmypdfBinary: "whetstone-no-such-ocrmypdf",
       timeoutMs: 60_000
     });
 
-    await expect(ocr.process(new Uint8Array([1]))).rejects.toThrow();
+    await expect(ocr.process(new Uint8Array([1]))).rejects.toBeInstanceOf(PdfToolchainMissingError);
   });
 });
