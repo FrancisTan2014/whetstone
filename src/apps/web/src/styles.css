@@ -884,9 +884,10 @@ code {
   text-decoration: none;
 }
 
-/* A live same-work cross-reference (#252): a real control, but styled inline like prose with a subtle
-   accent underline so it reads as a tappable reference, not a button. Tokenized for Day/Night; the
-   inline padding keeps a comfortable touch target without breaking the text line. */
+/* A live same-work cross-reference (#252): a real control, styled inline like prose but distinguished
+   by a dedicated reference COLOUR — not an underline, which is now reserved for the reader's note marks
+   (#517). Tokenized for Day/Night; the inline padding keeps a comfortable touch target without breaking
+   the line. */
 .readerXref {
   appearance: none;
   margin: 0;
@@ -894,25 +895,32 @@ code {
   background: transparent;
   border: none;
   font: inherit;
-  color: var(--color-accent);
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
+  color: var(--color-link);
   cursor: pointer;
 }
 
+/* Hover/focus deepen the link colour and add a faint rounded wash — never an underline in any state
+   (the whole point of #517). The focus-visible outline is unchanged. */
+.readerXref:hover,
+.readerXref:focus-visible {
+  color: var(--color-link-hover);
+  background: color-mix(in oklch, var(--color-link) 14%, transparent);
+  border-radius: 0.15em;
+}
+
 /* An inert `link` mark (#368): an external/cross-work target, or a link with no resolvable anchor. It
-   keeps a quiet dotted underline to show it was a link in the source without inviting a tap, and stays
-   inline so CJK inter-character spacing is preserved (`见周髀之术`). A live same-work link layers
-   `.readerXref` on the inert base instead, so this treatment is reserved for inert links only. */
+   carries the reference colour so it reads as a link from the source, but without an underline or a tap
+   affordance (it does not navigate). Stays inline so CJK inter-character spacing is preserved
+   (`见周髀之术`). A live same-work link layers `.readerXref` on the inert base instead. */
 .readerLink--inert {
-  color: inherit;
-  text-decoration: underline dotted;
+  color: var(--color-link);
   cursor: default;
 }
 
 /* A footnote marker (#250): the live cross-reference rendered as a quiet raised superscript, like a
-   printed footnote number, so it reads as a reference without breaking the line. The inner control keeps
-   the underlined-accent affordance; on coarse pointers it grows to a ≥44px touch target. */
+   printed footnote number, so it reads as a reference without breaking the line. The inner control
+   composes `.readerXref`, so it inherits the reference colour (no underline, #517); on coarse pointers
+   it grows to a >=44px touch target. */
 .readerNoteref {
   font-size: 0.7em;
   line-height: 0;
