@@ -139,6 +139,8 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const hasMoreRef = useRef(hasMore);
   const busyRef = useRef(false);
   const dayRefs = useRef(new Map<string, HTMLElement>());
+  // The id of a just-saved entry to scroll into view once it mounts (see the entry `ref` below).
+  const pendingEntryScrollRef = useRef<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -293,6 +295,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const entry = await createDiaryEntry(trimmed);
       setEntries((previous) => [...previous, toFlat(entry)]);
       markEntryDay(entry.entryDate);
+      pendingEntryScrollRef.current = entry.id;
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -312,6 +315,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const entry = await createDiaryEntry(text);
       setEntries((previous) => [...previous, toFlat(entry)]);
       markEntryDay(entry.entryDate);
+      pendingEntryScrollRef.current = entry.id;
       setPhase("idle");
     } catch {
       fail("Something went wrong saving your entry.");
@@ -485,7 +489,20 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                 </h2>
                 <ul className="flex flex-col gap-2">
                   {group.entries.map((entry) => (
-                    <li className="rounded border border-border bg-surface p-3" key={entry.id}>
+                    <li
+                      className="rounded border border-border bg-surface p-3"
+                      key={entry.id}
+                      ref={(element) => {
+                        // Scroll a freshly saved entry into view when it mounts. On mobile the compose
+                        // form and date-jump calendar sit above the timeline, so a new entry lands under
+                        // the fold with its Edit/Delete actions clipped behind the bottom navigation
+                        // (#506); `block: "nearest"` lifts the whole entry the minimal amount above the nav.
+                        if (element !== null && pendingEntryScrollRef.current === entry.id) {
+                          element.scrollIntoView({ block: "nearest" });
+                          pendingEntryScrollRef.current = null;
+                        }
+                      }}
+                    >
                       {editingId === entry.id ? (
                         <EditForm
                           initial={entry.text}
