@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <head><title>Constructs and notes</title></head>
+  <body>
+    <div class="sect1" id="ch2_constructs">
+      <h1>Distributed Data</h1>
+      <p>Replication keeps a copy of the same data on multiple machines connected via a network.</p>
+      <pre><code>def replicate(record):
+    log.append(record)      # 1
+    for peer in followers:  # 2
+        peer.send(record)</code></pre>
+      <p>The callouts above mark the append <tt>log.append</tt> step and the fan-out to followers.</p>
+      <dl>
+        <dt>Leader</dt>
+        <dd>The replica that accepts writes.</dd>
+        <dt>Follower</dt>
+        <dd>A replica that applies the leader's change stream.</dd>
+      </dl>
+      <p>写入<em>领导者</em>之后，变更会流向每一个跟随者，保持数据一致。</p>
+      <p>A dangling replica can rejoin once it catches up on the change stream it missed.<a epub:type="noteref" data-type="noteref" href="#fn1" id="fnref1">1</a></p>
+    </div>
+    <aside epub:type="footnote" data-type="footnote" id="fn1">
+      <p>Catch-up replication replays the log from the last acknowledged position.<a href="#fnref1">↩</a></p>
+    </aside>
+  </body>
+</html>
