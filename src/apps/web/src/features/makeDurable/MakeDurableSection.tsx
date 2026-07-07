@@ -48,8 +48,15 @@ const voicePhaseLabels: Readonly<Record<VoicePhase, string>> = {
 // only appears when a proposal passed the gate. Load/model/mic failures degrade quietly so this never
 // blanks Today.
 export function MakeDurableSection({
-  capture = createQuickCaptureVoice()
-}: Readonly<{ capture?: QuickCaptureVoiceDependencies }>): React.JSX.Element {
+  capture = createQuickCaptureVoice(),
+  onDurableSaved
+}: Readonly<{
+  capture?: QuickCaptureVoiceDependencies;
+  // Fired after a review creates a recall item (Save / Edit + Save). Today uses it to refresh its
+  // Recall card so the newly due item shows at once instead of going stale (#509). The negative
+  // outcomes create no recall item, so this never fires for them.
+  onDurableSaved?: () => void;
+}>): React.JSX.Element {
   const [cards, setCards] = useState<ReadonlyArray<MakeDurableCardDto>>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -142,8 +149,13 @@ export function MakeDurableSection({
   async function act(id: string, input: ReviewCardInput): Promise<void> {
     setError(null);
     try {
-      await reviewMakeDurableCard(id, input);
+      const recallItem = await reviewMakeDurableCard(id, input);
       removeCard(id);
+      // Save / Edit + Save create a recall item (the negative outcomes return null); tell Today so
+      // its Recall card reflects the newly due item rather than staying stale (#509).
+      if (recallItem !== null) {
+        onDurableSaved?.();
+      }
     } catch {
       setError("Couldn't record your choice. Please try again.");
     }
