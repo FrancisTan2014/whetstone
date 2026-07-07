@@ -7,6 +7,7 @@ import { buildStep } from "./build.mjs";
 import { coachStep } from "./coach.mjs";
 import { envStep } from "./env.mjs";
 import { installStep } from "./install.mjs";
+import { pdfStep } from "./pdf.mjs";
 import { playwrightStep } from "./playwright.mjs";
 import { toolchainStep } from "./toolchain.mjs";
 import { voiceStep } from "./voice.mjs";
@@ -19,5 +20,6 @@ export const steps = [
   playwrightStep,
   envStep,
   voiceStep,
-  coachStep
+  coachStep,
+  pdfStep
 ];

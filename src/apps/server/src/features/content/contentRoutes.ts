@@ -16,6 +16,10 @@ import {
 const invalidRequestBody = { error: "invalid_request" } as const;
 const invalidEpubBody = { error: "invalid_epub" } as const;
 const invalidPdfBody = { error: "invalid_pdf" } as const;
+// The PDF toolchain (Python/Docling/OCRmyPDF) is not provisioned on this host — a capability gap,
+// not a bad file. 503 (Service Unavailable) + a distinct body so the client points at `pnpm
+// setup:pdf` instead of blaming the PDF (#510).
+const pdfToolchainMissingBody = { error: "pdf_toolchain_missing" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 const emptyContentBody = { error: "empty_content" } as const;
 const unitNotFoundBody = { error: "unit_not_found" } as const;
@@ -120,6 +124,10 @@ export function registerContentRoutes(
 
       if (result.status === "invalid_pdf") {
         return reply.code(422).send(invalidPdfBody);
+      }
+
+      if (result.status === "pdf_toolchain_missing") {
+        return reply.code(503).send(pdfToolchainMissingBody);
       }
 
       if (result.status === "empty_content") {

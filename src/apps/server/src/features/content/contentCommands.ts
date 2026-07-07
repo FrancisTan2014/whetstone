@@ -5,6 +5,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import type { EpubParser } from "../../files/epubSource.js";
 import type { ImageResourceStore } from "../../files/imageResourceStore.js";
 import type { PdfToMarkdown } from "../../files/pdfToMarkdown.js";
+import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
 import { workSources } from "../../db/schema.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
@@ -36,11 +37,16 @@ export type IngestMarkdownResult =
   | Readonly<{ status: "empty_content" }>
   | Readonly<{ status: "work_not_found" }>;
 
-export type IngestPdfResult = IngestMarkdownResult | Readonly<{ status: "invalid_pdf" }>;
+export type IngestPdfResult =
+  | IngestMarkdownResult
+  | Readonly<{ status: "invalid_pdf" }>
+  | Readonly<{ status: "pdf_toolchain_missing" }>;
 
 // PDF ingestion converges on the Markdown pipeline (#15): the doc-AI worker converts the PDF to clean
 // Markdown one-shot, which is ingested exactly like an uploaded .md so a PDF and the equivalent .md
-// decompose to identical blocks. A conversion failure (no/garbled PDF) is invalid_pdf, not a crash.
+// decompose to identical blocks. A conversion failure (no/garbled PDF) is invalid_pdf, not a crash;
+// a MISSING toolchain (no Python/Docling/OCRmyPDF on the host) is reported distinctly as
+// pdf_toolchain_missing so the app can point at `pnpm setup:pdf` instead of blaming the file (#510).
 export async function ingestPdf(
   dependencies: ContentDependencies,
   workEntryId: EntryId,
@@ -51,8 +57,10 @@ export async function ingestPdf(
 
   try {
     markdown = await dependencies.pdfToMarkdown.convert(bytes);
-  } catch {
-    return { status: "invalid_pdf" };
+  } catch (cause) {
+    return cause instanceof PdfToolchainMissingError
+      ? { status: "pdf_toolchain_missing" }
+      : { status: "invalid_pdf" };
   }
 
   // Gate before retaining anything so a failure never orphans a PDF file with no work_sources row:

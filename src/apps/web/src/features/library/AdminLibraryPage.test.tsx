@@ -658,6 +658,29 @@ describe("AdminLibraryPage", () => {
     });
   });
 
+  it("surfaces a distinct setup message when the PDF toolchain is missing (not a bad file) (#510)", async () => {
+    const onManageContent = vi.fn();
+    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedIngestPdf.mockResolvedValue({ status: "pdf_toolchain_missing" });
+    const user = await renderReady(onManageContent);
+
+    const file = new File([new Uint8Array([1])], "valid.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    const message = await screen.findByText(/PDF ingestion isn’t set up on the server yet/);
+    expect(message.textContent).toContain("pnpm setup:pdf");
+    // It must NOT read as an unreadable/corrupt file.
+    expect(
+      screen.queryByText("We couldn’t read this PDF. Please try a different file.")
+    ).toBeNull();
+    // The Work was created, so it stays retryable once the lane is provisioned.
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+  });
+
   it("surfaces the empty-content message when a PDF has no readable text", async () => {
     mockedCreateWork.mockResolvedValue(essayWorkItem);
     mockedIngestPdf.mockResolvedValue({ status: "empty_content" });

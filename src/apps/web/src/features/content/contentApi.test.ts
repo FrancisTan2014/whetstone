@@ -167,6 +167,14 @@ describe("contentApi", () => {
     });
   });
 
+  it("reports pdf_toolchain_missing when the server's PDF lane is not provisioned (503) (#510)", async () => {
+    stubFetch({ body: { error: "pdf_toolchain_missing" }, ok: false, status: 503 });
+
+    await expect(ingestPdf("work-1", pdfFile(new Uint8Array([1])))).resolves.toEqual({
+      status: "pdf_toolchain_missing"
+    });
+  });
+
   it("throws when ingesting a PDF fails with another status", async () => {
     stubFetch({ ok: false, status: 500 });
 

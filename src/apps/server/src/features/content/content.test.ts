@@ -34,6 +34,7 @@ import { writeReadingUnits } from "./blockWriter.js";
 import { loadWorkContent } from "./contentQueries.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
+import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
@@ -530,6 +531,20 @@ describe("content routes", () => {
     const response = await ingestPdf(workEntryId, Buffer.from("%PDF"));
     expect(response.statusCode).toBe(422);
     expect(response.json()).toEqual({ error: "invalid_pdf" });
+  });
+
+  it("returns 503 pdf_toolchain_missing when the PDF toolchain is not installed (#510)", async () => {
+    // A missing toolchain is a provisioning gap, not a bad file: it must be distinguishable from
+    // invalid_pdf so the client can point at `pnpm setup:pdf`.
+    pdfResponder = async () =>
+      Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`."));
+    const workEntryId = await createWork();
+
+    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.6 valid"));
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: "pdf_toolchain_missing" });
+    // A capability gap must not orphan a source file for an otherwise-valid PDF.
+    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
   it("rejects an empty PDF body with 400", async () => {

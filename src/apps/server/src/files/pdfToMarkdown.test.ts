@@ -8,6 +8,7 @@ import {
   createDoclingPdfToMarkdown,
   createFakePdfToMarkdown
 } from "./pdfToMarkdown.js";
+import { PdfToolchainMissingError } from "./pdfToolchain.js";
 
 describe("createFakePdfToMarkdown", () => {
   it("returns its canned Markdown regardless of input, so the gate is green without Python", async () => {
@@ -45,14 +46,18 @@ describe("createDoclingPdfToMarkdown", () => {
     await expect(bridge.convert(new Uint8Array([1]))).rejects.toThrow("boom");
   });
 
-  it("spawns the configured python binary by default and rejects when it cannot run", async () => {
+  it("rejects with PdfToolchainMissingError when the python binary is not installed (#510)", async () => {
+    // A missing python interpreter is a toolchain gap: the spawn boundary classifies ENOENT so
+    // ingestPdf reports pdf_toolchain_missing instead of blaming the PDF as invalid_pdf.
     const bridge = createDoclingPdfToMarkdown({
       pythonBinary: "whetstone-no-such-python",
       scriptPath: "s.py",
       timeoutMs: 60_000
     });
 
-    await expect(bridge.convert(new Uint8Array([1]))).rejects.toThrow();
+    await expect(bridge.convert(new Uint8Array([1]))).rejects.toBeInstanceOf(
+      PdfToolchainMissingError
+    );
   });
 
   it("rejects at the configured timeout instead of hanging when the worker never resolves (#403)", async () => {

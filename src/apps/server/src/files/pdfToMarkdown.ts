@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { PdfOcr } from "./pdfOcr.js";
+import { classifyDoclingError } from "./pdfToolchain.js";
 import { withTimeout } from "./withTimeout.js";
 
 // The PDF-to-Markdown seam (#15): PDF ingestion converges on the existing Markdown -> mdast ->
@@ -49,8 +50,13 @@ export function createDoclingPdfToMarkdown(dependencies: DoclingDependencies): P
           // Bound the subprocess itself: on timeout execFile sends killSignal, so a slow/oversized
           // PDF is killed (not abandoned) and the callback rejects → route maps it to 422 (#403).
           { killSignal: "SIGKILL", maxBuffer: MAX_OUTPUT_BYTES, timeout: dependencies.timeoutMs },
+          // Classify the failure at the spawn boundary: a missing python/Docling toolchain rejects
+          // with PdfToolchainMissingError (→ pdf_toolchain_missing) so it is not miscalled a bad PDF
+          // (#510); every other failure stays a normal error (→ invalid_pdf). classifyDoclingError
+          // is unit-tested directly; this callback needs a real subprocess for the success path.
           /* v8 ignore next -- success path needs a real subprocess; failure path is covered */
-          (error, stdout) => (error === null ? resolve(stdout) : reject(error))
+          (error, stdout) =>
+            error === null ? resolve(stdout) : reject(classifyDoclingError(error))
         );
       }));
 

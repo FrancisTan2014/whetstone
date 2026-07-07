@@ -11,7 +11,7 @@ import { parseNodeMajor, toolchainStep } from "./toolchain.mjs";
 import { createFakeContext } from "../testSupport.mjs";
 
 describe("registry", () => {
-  it("orders the base steps, then the optional voice and coach steps", () => {
+  it("orders the base steps, then the optional voice, coach, and pdf steps", () => {
     expect(steps.map((s) => s.id)).toEqual([
       "toolchain",
       "install",
@@ -19,9 +19,11 @@ describe("registry", () => {
       "playwright",
       "env",
       "voice",
-      "coach"
+      "coach",
+      "pdf"
     ]);
-    const base = steps.filter((s) => s.id !== "voice" && s.id !== "coach");
+    const optionalIds = new Set(["voice", "coach", "pdf"]);
+    const base = steps.filter((s) => !optionalIds.has(s.id));
     for (const step of base) {
       expect(step.optional).toBeUndefined();
     }
@@ -31,6 +33,9 @@ describe("registry", () => {
     const coach = steps.find((s) => s.id === "coach");
     expect(coach?.optional).toBe(true);
     expect(coach?.capability).toBe("coach");
+    const pdf = steps.find((s) => s.id === "pdf");
+    expect(pdf?.optional).toBe(true);
+    expect(pdf?.capability).toBe("pdf");
   });
 });
 
