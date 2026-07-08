@@ -9,7 +9,7 @@ import { authors, blocks, docBlocks, readingUnits, workMeta } from "../../db/sch
 
 // Cap result rows: v0 search is a usable substring scan, not ranked relevance (PRODUCT.md
 // "v0 search"), so a fixed ceiling keeps a broad term from shipping the whole library.
-export const searchResultLimit = 50;
+const searchResultLimit = 50;
 
 // Escape the LIKE wildcards (`%`, `_`) and the escape character (`\`) so a user's literal
 // `%`/`_`/`\` matches literally instead of acting as a pattern. Postgres LIKE/ILIKE treats

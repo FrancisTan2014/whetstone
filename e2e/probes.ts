@@ -15,7 +15,7 @@
 //   - geometry:  "button 32×32 < 44 at header .menu-toggle"  /  "off-screen rect at .popover"
 //   - content:   "surface blank: 0 text, 0 height at main"
 
-export interface ContrastFailure {
+interface ContrastFailure {
   background: string;
   color: string;
   ratio: number;
@@ -110,14 +110,14 @@ export function contrast(selector: string): ContrastResult {
   return { failures, minRatio };
 }
 
-export interface GeometryRect {
+interface GeometryRect {
   height: number;
   width: number;
   x: number;
   y: number;
 }
 
-export interface GeometryIssue {
+interface GeometryIssue {
   flags: string[];
   index: number;
   rect: GeometryRect;

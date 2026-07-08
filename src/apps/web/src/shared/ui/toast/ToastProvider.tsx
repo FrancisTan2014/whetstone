@@ -10,7 +10,7 @@ import {
 
 export type ToastIntent = "success" | "error";
 
-export type ToastItem = Readonly<{
+type ToastItem = Readonly<{
   id: number;
   intent: ToastIntent;
   message: string;

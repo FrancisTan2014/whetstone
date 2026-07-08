@@ -18,9 +18,7 @@ import type { CoachProvider } from "./coachProvider.js";
 // to a "strong" or "cheap" tier per call type. The judge that turns the loop honest — the end-of-round
 // `analyze` — is the one paid strong call per round; everything else (converse/judge/propose/author)
 // runs cheap (local). Overridable per call type via env.
-export const coachCallTypes = ["judge", "propose", "author", "converse", "analyze"] as const;
-
-export type CoachCallType = (typeof coachCallTypes)[number];
+export type CoachCallType = "judge" | "propose" | "author" | "converse" | "analyze";
 
 export const coachTiers = ["cheap", "strong"] as const;
 

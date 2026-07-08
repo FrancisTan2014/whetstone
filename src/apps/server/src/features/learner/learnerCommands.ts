@@ -52,7 +52,7 @@ export async function depositTurnOutcome(
 }
 
 // The signals the rolling profile is distilled from, deterministically.
-export type ProfileSignals = Readonly<{
+type ProfileSignals = Readonly<{
   focus: string;
   level: ProficiencyLevel;
   strengths: ReadonlyArray<string>;

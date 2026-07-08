@@ -247,7 +247,7 @@ function errorResult(message: string): CallToolResult {
 }
 
 // The tool descriptors advertised by tools/list.
-export function recallToolDescriptors(): Tool[] {
+function recallToolDescriptors(): Tool[] {
   return tools.map((tool) => ({
     description: tool.description,
     inputSchema: tool.inputSchema,

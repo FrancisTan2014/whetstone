@@ -12,7 +12,7 @@ export const MAKE_DURABLE_TODAY_CARD_CAP = 1;
 // Build a Today review card from a visible candidate row: the ids/type/reason come from the row, the
 // target/cue/use-context/category/tags from its stored (schema-validated) payload. `tags` is normalized
 // to an array (never null) for the client.
-export function toMakeDurableCard(row: ProposalCandidateRow): MakeDurableCardDto {
+function toMakeDurableCard(row: ProposalCandidateRow): MakeDurableCardDto {
   const payload = proposalPayloadSchema.parse(row.payloadJson);
   return {
     proposalCandidateId: row.id,

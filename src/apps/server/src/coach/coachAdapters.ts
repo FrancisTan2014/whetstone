@@ -9,7 +9,7 @@ export const defaultCheapModel = "llama3.1:8b";
 
 // The cloud model behind the strong tier — named here so the fallback log (#432) can report it and the
 // cloud call below uses the same identifier (one source of truth).
-export const defaultStrongModel = "gpt-5-mini";
+const defaultStrongModel = "gpt-5-mini";
 
 /* v8 ignore start -- cloud network boundary, exercised via an injected LlmModel in tests */
 function createCloudChat(apiKey: string): LlmModel {

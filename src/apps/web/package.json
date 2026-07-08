@@ -29,8 +29,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.6.2",
     "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "^4.0.1",
-    "tslib": "^2.8.1"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@rolldown/plugin-babel": "0.2.3",

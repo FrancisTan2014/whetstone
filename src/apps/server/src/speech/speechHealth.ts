@@ -5,7 +5,7 @@ import type { SpeechConfig } from "./speechConfig.js";
 // Whisper is configured, so a missing model never crashes the loop. Without this, spoken practice
 // silently returns an empty transcript with no signal; the warning turns that silent degrade into a
 // clear "run `pnpm setup:voice`" hint.
-export type SpeechHealthStatus = "fake" | "configured";
+type SpeechHealthStatus = "fake" | "configured";
 
 export type SpeechHealthReport = Readonly<{
   message: string;

@@ -13,7 +13,7 @@ export const cedictAttribution = "Definitions from CC-CEDICT (CC BY-SA 4.0).";
 const maxSenses = 5;
 
 // One CC-CEDICT entry: both surface forms, the tone-numbered pinyin, and the English glosses.
-export type CedictEntry = Readonly<{
+type CedictEntry = Readonly<{
   glosses: ReadonlyArray<string>;
   pinyin: string;
   simplified: string;

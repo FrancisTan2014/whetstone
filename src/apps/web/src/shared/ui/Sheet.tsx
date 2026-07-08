@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { motionSprings, withReducedMotion } from "../motion/motion.js";
 import { useMediaQuery } from "./useMediaQuery.js";
 
-export type SheetSide = "right" | "bottom";
+type SheetSide = "right" | "bottom";
 
 export type SheetProps = Readonly<{
   children: React.ReactNode;

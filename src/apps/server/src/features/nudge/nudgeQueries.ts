@@ -20,11 +20,11 @@ export type RecentReadingCapture = Readonly<{
 
 // The harvest case id for a captured note. Kept here (and reused by `harvestReadingCase`) so the
 // nudge, the dismiss cooldown, and the practice lead all key off the same deterministic id.
-export function harvestCaseId(noteEntryId: string): string {
+function harvestCaseId(noteEntryId: string): string {
   return `harvest-${noteEntryId}`;
 }
 
-export function harvestChunkId(noteEntryId: string): string {
+function harvestChunkId(noteEntryId: string): string {
   return `harvest-chunk-${noteEntryId}`;
 }
 
