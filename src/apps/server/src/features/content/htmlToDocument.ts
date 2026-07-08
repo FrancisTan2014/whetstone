@@ -210,6 +210,16 @@ function elementText(element: HTMLElement): string {
   return String(element.textContent).trim();
 }
 
+// @lingo-reader rewrites every intra-EPUB reference href to a virtual `epub:` scheme carrying the
+// manifest-root path (`epub:OEBPS/ch10.html`), which the reading unit's `source_file` and the work
+// anchor index do NOT carry (#501/#507). Rewrite it to a root-absolute path so the reference resolves
+// to the scheme-less (source_file, anchor) the index is keyed on: left as-is, `isExternalHref` treats
+// the `epub:` scheme as an external URL (rendering an inert xref) and `resolveRelativeHref` mangles the
+// stamped `targetSourceFile` into `OEBPS/epub:OEBPS/...`. A non-`epub:` href is returned unchanged.
+function normalizeReferenceHref(href: string): string {
+  return href.replace(/^epub:\/?/iu, "/");
+}
+
 // A footnote marker references its target by `refId` and, for a cross-file endnote, the file part
 // `refFile`: a `href="path#id"` splits into (`path` -> refFile, `id` -> refId), a same-document
 // `href="#id"` yields (null, id), and an explicit `data-target` yields (null, target). An empty path
@@ -219,7 +229,8 @@ function readFootnoteRef(element: HTMLElement): {
   refFile: string | null;
   refId: string | null;
 } {
-  const href = element.getAttribute("href");
+  const rawHref = element.getAttribute("href");
+  const href = rawHref === null ? null : normalizeReferenceHref(rawHref);
 
   if (href !== null && href.includes("#")) {
     const hashIndex = href.indexOf("#");
@@ -279,12 +290,13 @@ function splitHref(href: string): { anchor: string | null; refFile: string | nul
 // `targetSourceFile` stamp (#366). `a[data-type=noteref]` never reaches this rule — the footnoteMarker
 // node rule precedes it and wins.
 function readLinkAttrs(element: HTMLElement): false | Record<string, unknown> {
-  const href = element.getAttribute("href");
+  const rawHref = element.getAttribute("href");
 
-  if (href === null || href === "") {
+  if (rawHref === null || rawHref === "") {
     return false;
   }
 
+  const href = normalizeReferenceHref(rawHref);
   const kind = element.getAttribute("data-type") === "xref" ? "xref" : "href";
 
   if (isExternalHref(href)) {
