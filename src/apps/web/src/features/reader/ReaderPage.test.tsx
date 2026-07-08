@@ -1189,6 +1189,29 @@ describe("ReaderPage", () => {
     expect(section.closest("li.readerTocNode")?.getAttribute("data-depth")).toBe("2");
   });
 
+  it("reveals and marks the restored sub-section on a cold load (#542)", async () => {
+    // Reopen the work deep inside Chapter Two's Section 2.1 (its anchored block b-2b), as a refresh
+    // would: the derived active entry must follow the restored position, not just the chapter head.
+    mockedFetchReadingPosition.mockResolvedValue({
+      anchorBlockEntryId: "b-2b",
+      unitEntryId: "u-2"
+    });
+    seedNavWork();
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Section two body.");
+
+    const toc = await openTocDrawer(user);
+    // The restored position falls inside Section 2.1, so its ancestor chain (Part One → Chapter Two)
+    // auto-expands and the section itself is revealed and marked current — not the collapsed chapter.
+    const section = within(toc).getByRole("button", { name: "Section 2.1" });
+    expect(section.getAttribute("aria-current")).toBe("true");
+    expect(section.closest("li.readerTocNode")?.getAttribute("data-depth")).toBe("2");
+    expect(
+      within(toc).getByRole("button", { name: "Chapter Two" }).getAttribute("aria-current")
+    ).toBeNull();
+  });
+
   it("marks no nav entry current when the open unit is not an authored target", async () => {
     // A nav tree whose only entry targets the second unit, while the reader opens the first — so no
     // entry is active and none is marked current.

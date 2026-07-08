@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ReaderStructure, ReaderTocEntry, ReaderUnitMeta } from "./readerModel";
 import {
   activeTocEntryId,
+  activeTocEntryIdForPosition,
   clampUnitIndex,
   firstSubstantiveUnitIndex,
   resolveTocEntryNavigation,
@@ -223,5 +224,93 @@ describe("activeTocEntryId", () => {
 
   it("is undefined when no entry targets the active unit", () => {
     expect(activeTocEntryId(entries, "u-3")).toBeUndefined();
+  });
+});
+
+describe("activeTocEntryIdForPosition", () => {
+  // Chapter one (u-1) has a top intro then two authored sections; chapter two (u-2) is a separate unit.
+  const entries: ReadonlyArray<ReaderTocEntry> = [
+    tocEntry({ depth: 0, entryId: "e-ch", targetUnitEntryId: "u-1" }),
+    tocEntry({
+      depth: 1,
+      entryId: "e-s1",
+      parentEntryId: "e-ch",
+      targetAnchor: "sec-1",
+      targetUnitEntryId: "u-1"
+    }),
+    tocEntry({
+      depth: 1,
+      entryId: "e-s2",
+      parentEntryId: "e-ch",
+      targetAnchor: "sec-2",
+      targetUnitEntryId: "u-1"
+    }),
+    tocEntry({
+      depth: 1,
+      entryId: "e-bad",
+      parentEntryId: "e-ch",
+      targetAnchor: "gone",
+      targetUnitEntryId: "u-1"
+    }),
+    tocEntry({ depth: 0, entryId: "e-2", targetUnitEntryId: "u-2" })
+  ];
+
+  // u-1's ordered blocks: intro (b0), section one starts at b1, section two starts at b3.
+  const unitBlocks = [
+    { entryId: "b0" },
+    { anchorId: "sec-1", entryId: "b1" },
+    { entryId: "b2" },
+    { anchorId: "sec-2", entryId: "b3" },
+    { entryId: "b4" }
+  ];
+
+  it("falls back to the chapter floor when there is no current block", () => {
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, undefined)).toBe("e-ch");
+  });
+
+  it("is undefined when no unit is active", () => {
+    expect(activeTocEntryIdForPosition(entries, undefined, unitBlocks, "b2")).toBeUndefined();
+  });
+
+  it("is undefined when no entry targets the active unit", () => {
+    expect(activeTocEntryIdForPosition(entries, "u-3", unitBlocks, "b2")).toBeUndefined();
+  });
+
+  it("falls back to the chapter floor at the top of the unit", () => {
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, "b0")).toBe("e-ch");
+  });
+
+  it("reveals the deepest section the restored block falls within", () => {
+    // b2 is inside section one (b1..b2); b3/b4 are inside section two.
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, "b2")).toBe("e-s1");
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, "b3")).toBe("e-s2");
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, "b4")).toBe("e-s2");
+  });
+
+  it("ignores a section whose anchor is not among the unit's blocks", () => {
+    // e-bad ("gone") never resolves, so a position past section two still picks section two.
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, "b4")).toBe("e-s2");
+  });
+
+  it("falls back to the chapter floor when the current block is not in the active unit", () => {
+    expect(activeTocEntryIdForPosition(entries, "u-1", unitBlocks, "other-unit-block")).toBe(
+      "e-ch"
+    );
+  });
+
+  it("resolves a tie to the deeper (later pre-order) entry sharing the same start block", () => {
+    const tied: ReadonlyArray<ReaderTocEntry> = [
+      tocEntry({ depth: 0, entryId: "e-top", targetUnitEntryId: "u-1" }),
+      tocEntry({
+        depth: 1,
+        entryId: "e-top-section",
+        parentEntryId: "e-top",
+        targetAnchor: "sec-0",
+        targetUnitEntryId: "u-1"
+      })
+    ];
+    const blocks = [{ anchorId: "sec-0", entryId: "b0" }, { entryId: "b1" }];
+
+    expect(activeTocEntryIdForPosition(tied, "u-1", blocks, "b0")).toBe("e-top-section");
   });
 });

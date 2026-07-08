@@ -125,3 +125,54 @@ export function activeTocEntryId(
 
   return entries.find((entry) => entry.targetUnitEntryId === activeUnitEntryId)?.entryId;
 }
+
+// The TOC entry to mark active for the reader's CURRENT position within the active unit (#542): the
+// deepest authored section the current block falls within, so on a cold load (refresh / reopen) the
+// drawer reopens revealed and highlighted around where the reader actually is — not just the chapter
+// head. Among the entries that open the active unit, pick the one whose section-start block is the
+// nearest at-or-before the current block in the unit's reading order; a tie resolves to the later
+// (deeper) entry in the authored pre-order. Falls back to the chapter-level floor (`activeTocEntryId`)
+// when there is no current block, the block is not in this unit, or no section starts at-or-before it —
+// so behaviour is unchanged whenever the position cannot be resolved to a deeper section.
+export function activeTocEntryIdForPosition(
+  entries: ReadonlyArray<ReaderTocEntry>,
+  activeUnitEntryId: string | undefined,
+  unitBlocks: ReadonlyArray<{ anchorId?: string; entryId: string }>,
+  currentBlockEntryId: string | undefined
+): string | undefined {
+  const floor = activeTocEntryId(entries, activeUnitEntryId);
+  if (floor === undefined || currentBlockEntryId === undefined) {
+    return floor;
+  }
+
+  const orderByBlockId = new Map<string, number>();
+  const orderByAnchor = new Map<string, number>();
+  unitBlocks.forEach((block, index) => {
+    orderByBlockId.set(block.entryId, index);
+    if (block.anchorId !== undefined) {
+      orderByAnchor.set(block.anchorId, index);
+    }
+  });
+
+  const currentIndex = orderByBlockId.get(currentBlockEntryId);
+  if (currentIndex === undefined) {
+    return floor;
+  }
+
+  let best: { entryId: string; rank: number; start: number } | undefined;
+  entries.forEach((entry, rank) => {
+    if (entry.targetUnitEntryId !== activeUnitEntryId) {
+      return;
+    }
+    // A whole-unit entry starts at the unit top (index 0); a section entry starts at its anchor's block.
+    const start = entry.targetAnchor === undefined ? 0 : orderByAnchor.get(entry.targetAnchor);
+    if (start === undefined || start > currentIndex) {
+      return;
+    }
+    if (best === undefined || start > best.start || (start === best.start && rank > best.rank)) {
+      best = { entryId: entry.entryId, rank, start };
+    }
+  });
+
+  return best?.entryId ?? floor;
+}
