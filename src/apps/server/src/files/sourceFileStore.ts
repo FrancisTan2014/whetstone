@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 export type WriteMarkdownSourceInput = Readonly<{
@@ -20,6 +20,11 @@ export type WrittenMarkdownSource = Readonly<{
 export type WrittenEpubSource = WrittenMarkdownSource;
 
 export type SourceFileStore = Readonly<{
+  // Best-effort removal of a retained source file by its stored relative path (`work_sources.file_path`).
+  // Deleting an absent file is a no-op; a real filesystem error (e.g. permissions) still throws so the
+  // caller can log it. The path is resolved within the source directory, so a stored path can never
+  // escape it.
+  deleteSourceFile: (relativePath: string) => Promise<void>;
   hashBytes: (bytes: Uint8Array) => string;
   hashMarkdown: (markdown: string) => string;
   writeEpubSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
@@ -92,7 +97,13 @@ export function createSourceFileStore(sourceFilesDir: string): SourceFileStore {
     return Object.freeze({ path, sha256: hashBytes(input.bytes) });
   }
 
+  async function deleteSourceFile(relativePath: string): Promise<void> {
+    const target = resolveWithinDirectory(sourceFilesDir, relativePath);
+    await rm(target, { force: true });
+  }
+
   return Object.freeze({
+    deleteSourceFile,
     hashBytes,
     hashMarkdown,
     writeEpubSource,

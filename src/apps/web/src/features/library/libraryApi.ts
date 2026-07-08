@@ -73,3 +73,14 @@ export async function ingestEpub(file: File): Promise<IngestEpubResultDto> {
     method: "POST"
   });
 }
+
+// Permanently delete a work and its content (#541). A 204 resolves; a 404 (unknown work) or any other
+// non-ok status throws so the caller can surface a failure toast.
+export async function deleteWork(workEntryId: string): Promise<void> {
+  const path = apiUrl(`/works/${encodeURIComponent(workEntryId)}`);
+  const response = await fetch(path, { method: "DELETE" });
+
+  if (!response.ok) {
+    throw new Error(`Request to ${path} failed with status ${response.status}.`);
+  }
+}

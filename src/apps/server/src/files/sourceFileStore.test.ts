@@ -108,4 +108,25 @@ describe("createSourceFileStore", () => {
     expect(written.sha256).toBe(hashBytes(bytes));
     expect(new Uint8Array(await readFile(join(directory, "source-3.pdf")))).toEqual(bytes);
   });
+
+  it("deletes a retained source file by its relative path", async () => {
+    const store = createSourceFileStore(directory);
+    const written = await store.writeEpubSource({ bytes: new Uint8Array([1, 2]), id: "source-4" });
+
+    await store.deleteSourceFile(written.path);
+
+    await expect(readFile(join(directory, "source-4.epub"))).rejects.toThrow();
+  });
+
+  it("treats deleting an absent file as a no-op", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(store.deleteSourceFile("never-written.epub")).resolves.toBeUndefined();
+  });
+
+  it("refuses to delete a path that escapes the source directory", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(store.deleteSourceFile("../escape.epub")).rejects.toThrow();
+  });
 });

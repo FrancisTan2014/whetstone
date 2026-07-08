@@ -1,12 +1,38 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 
-import { createDbClient } from "../../db/dbClient.js";
+import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import type { LibraryDependencies } from "./libraryCommands.js";
+import {
+  authors as authorsTable,
+  blocks,
+  cases,
+  chunks,
+  docBlocks,
+  domains,
+  entries,
+  entryLinks,
+  noteAnchors,
+  notes,
+  readingPositions,
+  readingUnits,
+  recallItems,
+  tocEntries,
+  workMeta,
+  workSources
+} from "../../db/schema.js";
+import type { LibraryRouteDependencies } from "./libraryRoutes.js";
 import { createServer } from "../../http/createServer.js";
 
 type TestContext = Readonly<{
+  db: DbClient;
+  // Source-file relative paths the delete cascade asked to unlink, in order.
+  deletedPaths: string[];
+  // When set, the injected unlink throws this error for every path (to exercise the best-effort path).
+  failUnlinkWith: { error: Error | undefined };
+  // Structured unlink failures the command logged (best-effort path).
+  unlinkFailures: Array<{ error: unknown; filePath: string }>;
   server: ReturnType<typeof createServer>;
 }>;
 
@@ -19,13 +45,30 @@ async function buildContext(): Promise<TestContext> {
 
   let authorSequence = 0;
   let entrySequence = 0;
-  const dependencies: LibraryDependencies = {
+  const deletedPaths: string[] = [];
+  const unlinkFailures: Array<{ error: unknown; filePath: string }> = [];
+  const failUnlinkWith: { error: Error | undefined } = { error: undefined };
+
+  const dependencies: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(authorSequence += 1)}`,
     createEntryId: () => `work-${(entrySequence += 1)}`,
-    db
+    db,
+    deleteSourceFile: async (relativePath) => {
+      deletedPaths.push(relativePath);
+      if (failUnlinkWith.error !== undefined) {
+        throw failUnlinkWith.error;
+      }
+    },
+    logSourceUnlinkFailure: (info) => unlinkFailures.push(info)
   };
 
-  return { server: createServer({ library: dependencies, logger: false }) };
+  return {
+    db,
+    deletedPaths,
+    failUnlinkWith,
+    unlinkFailures,
+    server: createServer({ library: dependencies, logger: false })
+  };
 }
 
 beforeEach(async () => {
@@ -191,5 +234,256 @@ describe("library routes", () => {
 
     expect(authors.json()).toEqual({ authors: [] });
     expect(works.json()).toEqual({ works: [] });
+  });
+});
+
+// Seed one fully-populated work ("work-1") plus recall/chunk references and a second untouched work
+// ("work-2"), so a delete can assert both the cascade and the preservation guarantees.
+async function seedWorkWithContent(db: DbClient): Promise<void> {
+  await db.insert(authorsTable).values({ id: "author-1", name: "Author" });
+  await db.insert(domains).values({ id: "dom-1", name: "Domain", orderIndex: 0, weight: 1 });
+  await db.insert(cases).values({
+    communicativeFunction: "fn",
+    domainId: "dom-1",
+    id: "case-1",
+    orderIndex: 0,
+    situation: "sit"
+  });
+
+  await db.insert(entries).values([
+    { id: "work-1", type: "work" },
+    { id: "unit-1", type: "reading_unit" },
+    { id: "block-1", type: "block" },
+    { id: "pmblock-1", type: "block" },
+    { id: "toc-1", type: "toc_entry" },
+    { id: "note-1", type: "note" },
+    { id: "work-2", type: "work" }
+  ]);
+  await db.insert(workMeta).values([
+    { authorId: "author-1", entryId: "work-1", language: "en", title: "Doomed", workType: "book" },
+    { authorId: "author-1", entryId: "work-2", language: "en", title: "Kept", workType: "book" }
+  ]);
+  await db.insert(readingUnits).values({ entryId: "unit-1", orderIndex: 0, workEntryId: "work-1" });
+  await db.insert(blocks).values({
+    blockType: "paragraph",
+    entryId: "block-1",
+    mdastJson: {},
+    orderIndex: 0,
+    plaintext: "legacy",
+    readingUnitEntryId: "unit-1",
+    workEntryId: "work-1"
+  });
+  await db.insert(docBlocks).values({
+    id: "pmblock-1",
+    nodeJson: {},
+    orderIndex: 0,
+    plaintext: "pm",
+    readingUnitEntryId: "unit-1",
+    type: "paragraph",
+    workEntryId: "work-1"
+  });
+  await db.insert(tocEntries).values({
+    depth: 0,
+    entryId: "toc-1",
+    label: "Chapter",
+    orderIndex: 0,
+    workEntryId: "work-1"
+  });
+  await db.insert(workSources).values({
+    fileName: "doomed.epub",
+    filePath: "work-1.epub",
+    id: "source-1",
+    kind: "upload",
+    sha256: "hash",
+    workEntryId: "work-1"
+  });
+  await db
+    .insert(notes)
+    .values({ answersJson: {}, entryId: "note-1", markdownBody: "note", userId: "user-a" });
+  await db.insert(noteAnchors).values({
+    blockEntryId: "block-1",
+    contextSnapshot: "ctx",
+    endBlockEntryId: "block-1",
+    noteEntryId: "note-1",
+    selectedText: "sel"
+  });
+  await db.insert(entryLinks).values([
+    { fromEntryId: "work-1", toEntryId: "unit-1", type: "contains" },
+    { fromEntryId: "unit-1", toEntryId: "block-1", type: "contains" },
+    { fromEntryId: "unit-1", toEntryId: "pmblock-1", type: "contains" },
+    { fromEntryId: "note-1", toEntryId: "block-1", type: "annotates" }
+  ]);
+  await db.insert(readingPositions).values({
+    anchorBlockEntryId: "block-1",
+    unitEntryId: "unit-1",
+    userId: "user-a",
+    workEntryId: "work-1"
+  });
+  await db.insert(chunks).values({
+    caseId: "case-1",
+    id: "chunk-1",
+    orderIndex: 0,
+    sourceBlockEntryId: "block-1",
+    text: "chunk"
+  });
+
+  const reviewState = {
+    dueAt: new Date("2026-01-01T00:00:00.000Z"),
+    easeFactor: 2.5,
+    intervalDays: 0,
+    lapses: 0,
+    lastReviewedAt: null,
+    repetitions: 0
+  };
+  await db.insert(recallItems).values([
+    {
+      id: "recall-block",
+      kind: "word",
+      provenanceEntryId: "block-1",
+      text: "a",
+      userId: "user-a",
+      ...reviewState
+    },
+    {
+      id: "recall-pm",
+      kind: "word",
+      provenanceEntryId: "pmblock-1",
+      text: "b",
+      userId: "user-a",
+      ...reviewState
+    },
+    {
+      id: "recall-note",
+      kind: "phrase",
+      provenanceEntryId: "note-1",
+      text: "c",
+      userId: "user-a",
+      ...reviewState
+    },
+    {
+      id: "recall-other",
+      kind: "word",
+      provenanceEntryId: null,
+      text: "d",
+      userId: "user-a",
+      ...reviewState
+    }
+  ]);
+}
+
+async function rowsFor(db: DbClient): Promise<Record<string, number>> {
+  const count = async (rows: Promise<ReadonlyArray<unknown>>): Promise<number> =>
+    (await rows).length;
+  return {
+    blocks: await count(db.select().from(blocks).where(eq(blocks.workEntryId, "work-1"))),
+    docBlocks: await count(db.select().from(docBlocks).where(eq(docBlocks.workEntryId, "work-1"))),
+    noteAnchors: await count(
+      db.select().from(noteAnchors).where(eq(noteAnchors.noteEntryId, "note-1"))
+    ),
+    notes: await count(db.select().from(notes).where(eq(notes.entryId, "note-1"))),
+    readingPositions: await count(
+      db.select().from(readingPositions).where(eq(readingPositions.workEntryId, "work-1"))
+    ),
+    readingUnits: await count(
+      db.select().from(readingUnits).where(eq(readingUnits.workEntryId, "work-1"))
+    ),
+    tocEntries: await count(
+      db.select().from(tocEntries).where(eq(tocEntries.workEntryId, "work-1"))
+    ),
+    workMeta: await count(db.select().from(workMeta).where(eq(workMeta.entryId, "work-1"))),
+    workSources: await count(
+      db.select().from(workSources).where(eq(workSources.workEntryId, "work-1"))
+    )
+  };
+}
+
+describe("DELETE /api/works/:workEntryId", () => {
+  it("cascades the work's owned content and returns 204", async () => {
+    await seedWorkWithContent(context.db);
+
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.body).toBe("");
+
+    // Every owned table is empty for the deleted work.
+    expect(await rowsFor(context.db)).toEqual({
+      blocks: 0,
+      docBlocks: 0,
+      noteAnchors: 0,
+      notes: 0,
+      readingPositions: 0,
+      readingUnits: 0,
+      tocEntries: 0,
+      workMeta: 0,
+      workSources: 0
+    });
+
+    // The owned entries rows are gone; the untouched second work's entry remains.
+    const remainingEntries = (await context.db.select().from(entries)).map((row) => row.id).sort();
+    expect(remainingEntries).toEqual(["work-2"]);
+
+    // No containment/annotation edges linger.
+    expect(await context.db.select().from(entryLinks)).toHaveLength(0);
+
+    // The retained source file was unlinked.
+    expect(context.deletedPaths).toEqual(["work-1.epub"]);
+  });
+
+  it("preserves recall items and harvested chunks, nulling their references to deleted content", async () => {
+    await seedWorkWithContent(context.db);
+
+    await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+
+    const recall = await context.db.select().from(recallItems);
+    expect(recall).toHaveLength(4);
+    expect(recall.every((item) => item.provenanceEntryId === null)).toBe(true);
+
+    const chunkRows = await context.db.select().from(chunks);
+    expect(chunkRows).toHaveLength(1);
+    expect(chunkRows[0]?.sourceBlockEntryId).toBeNull();
+  });
+
+  it("returns 404 for an unknown work and touches nothing", async () => {
+    await seedWorkWithContent(context.db);
+
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/missing" });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "work_not_found" });
+    expect((await rowsFor(context.db)).workMeta).toBe(1);
+    expect(context.deletedPaths).toEqual([]);
+  });
+
+  it("deletes an empty work (a failed/empty import) with no content", async () => {
+    await context.db.insert(authorsTable).values({ id: "author-1", name: "Author" });
+    await context.db.insert(entries).values({ id: "work-1", type: "work" });
+    await context.db.insert(workMeta).values({
+      authorId: "author-1",
+      entryId: "work-1",
+      language: "en",
+      title: "Empty",
+      workType: "book"
+    });
+
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+
+    expect(response.statusCode).toBe(204);
+    expect(await context.db.select().from(workMeta)).toHaveLength(0);
+    expect(await context.db.select().from(entries)).toHaveLength(0);
+  });
+
+  it("still deletes the work and logs when a source-file unlink fails (best-effort)", async () => {
+    await seedWorkWithContent(context.db);
+    context.failUnlinkWith.error = new Error("EACCES");
+
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+
+    // The DB delete committed despite the filesystem error.
+    expect(response.statusCode).toBe(204);
+    expect((await rowsFor(context.db)).workMeta).toBe(0);
+    // The failure was logged, not thrown.
+    expect(context.unlinkFailures).toHaveLength(1);
+    expect(context.unlinkFailures[0]?.filePath).toBe("work-1.epub");
   });
 });

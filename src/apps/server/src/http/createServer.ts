@@ -12,7 +12,7 @@ import {
 } from "@whetstone/contracts";
 
 import { registerLibraryRoutes } from "../features/library/libraryRoutes.js";
-import type { LibraryDependencies } from "../features/library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../features/library/libraryRoutes.js";
 import { registerContentRoutes } from "../features/content/contentRoutes.js";
 import type { ContentDependencies } from "../features/content/contentCommands.js";
 import { registerNoteRoutes } from "../features/notes/noteRoutes.js";
@@ -60,7 +60,7 @@ export type CreateServerOptions = Readonly<{
   currentUser?: CurrentUserProvider;
   diary?: DiaryDependencies;
   images?: ImageDependencies;
-  library?: LibraryDependencies;
+  library?: LibraryRouteDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
   map?: MapDependencies;
