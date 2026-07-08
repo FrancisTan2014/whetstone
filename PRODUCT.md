@@ -679,6 +679,17 @@ its input is rough and user-directed. It extends `recall_items` rather than repl
 `provenance_entry_id` stay load-bearing for the Map, case mastery, and source provenance; Make Durable adds
 production metadata such as cue, use context, broad category, optional narrow tag, and source Timeline entry.
 
+**Every recall item carries a back (answer).** A recall card must hold something to retrieve _against_ — a
+`gloss`, `cue`, or `useContext`; a bare `text` prompt (e.g. "Mitigation (noun)") is not a real card, because
+there is nothing to reveal and self-check. Guarantee a back at the **enroll boundary**, without burdening
+capture: for `word`/`phrase` kinds, auto-fill `gloss` from the **offline bundled dictionaries only** — WordNet
+for English, CC-CEDICT for Chinese, language chosen by script — so capture never touches the network; feeders
+that own context set `useContext` (reading harvest already has the source sentence). Kinds a dictionary cannot
+cover (`pattern`/`idiom`/`proverb`/`chunk`) that arrive with no back keep the honest reveal-time floor
+("self-check from memory"). **No hard enroll-time answer requirement** — it would break legitimate bare-text
+feeders and violate _capture never blocks_. The offline autofill fails soft: a not-found term leaves `gloss`
+null and falls to the floor, never erroring the enroll.
+
 **Why a home, not scattered surfaces.** A proactive assistant needs one place that reaches you; without it the
 engine only speaks when you walk into Practice and recall has no surface at all. The Today home **supersedes**
 the earlier "quiet Library-landing pointer" — that pointer becomes a Today card. Each arm stays capped and
