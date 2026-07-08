@@ -313,4 +313,37 @@ describe("activeTocEntryIdForPosition", () => {
 
     expect(activeTocEntryIdForPosition(tied, "u-1", blocks, "b0")).toBe("e-top-section");
   });
+
+  it("keeps the nearer preceding section when a later entry starts further back", () => {
+    // Pre-order does not match block order: e-late's section starts at b1, e-early's at b0. At b2 both
+    // precede the position, but the nearer (deeper) section — e-late at b1 — must win, so the
+    // earlier-starting e-early does not replace it.
+    const ordered: ReadonlyArray<ReaderTocEntry> = [
+      tocEntry({ depth: 1, entryId: "e-late", targetAnchor: "sec-late", targetUnitEntryId: "u-1" }),
+      tocEntry({
+        depth: 1,
+        entryId: "e-early",
+        targetAnchor: "sec-early",
+        targetUnitEntryId: "u-1"
+      })
+    ];
+    const orderedBlocks = [
+      { anchorId: "sec-early", entryId: "b0" },
+      { anchorId: "sec-late", entryId: "b1" },
+      { entryId: "b2" }
+    ];
+
+    expect(activeTocEntryIdForPosition(ordered, "u-1", orderedBlocks, "b2")).toBe("e-late");
+  });
+
+  it("falls back to the floor when the position precedes every section entry", () => {
+    // The unit's only entry is a section that starts at b1; at b0 (before it) nothing qualifies, so the
+    // result falls back to the floor entry rather than leaving the drawer with no active entry.
+    const sectionsOnly: ReadonlyArray<ReaderTocEntry> = [
+      tocEntry({ depth: 1, entryId: "e-sec", targetAnchor: "sec-mid", targetUnitEntryId: "u-1" })
+    ];
+    const blocks = [{ entryId: "b0" }, { anchorId: "sec-mid", entryId: "b1" }];
+
+    expect(activeTocEntryIdForPosition(sectionsOnly, "u-1", blocks, "b0")).toBe("e-sec");
+  });
 });
