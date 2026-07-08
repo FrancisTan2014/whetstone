@@ -179,13 +179,9 @@ export async function submitTurn(
   const grade = dependencies.coach.gradeForScheduler(judgement);
   const errorCategory = mistakeCategoryFromIssues(judgement.issues);
 
-  const recallDeps = {
-    createId: dependencies.createId,
-    db: dependencies.db,
-    ...(dependencies.resolveOfflineGloss
-      ? { resolveOfflineGloss: dependencies.resolveOfflineGloss }
-      : {})
-  };
+  // This deposit only ever enrolls `chunk` items, which are never dictionary-glossable, so it needs no
+  // offline glosser (unlike the pushed-target phrase enroll below, #526).
+  const recallDeps = { createId: dependencies.createId, db: dependencies.db };
   const existing = await getRecallItemByChunkForUser(dependencies.db, userId, request.chunkId);
   const item =
     existing ??
