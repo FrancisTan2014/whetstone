@@ -11,7 +11,7 @@ const hueByTemplate: Readonly<Record<string, AnnotationHue>> = {
   vocabulary: "vocab"
 };
 
-export function annotationHueKey(templateId: string | null): AnnotationHue {
+function annotationHueKey(templateId: string | null): AnnotationHue {
   if (templateId === null) {
     return "gem";
   }

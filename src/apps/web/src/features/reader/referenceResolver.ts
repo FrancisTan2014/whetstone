@@ -10,7 +10,7 @@ import type { WorkAnchorIndexDto } from "@whetstone/contracts";
 // The target of a cross-reference: the anchor (source-HTML id) it points at, plus the source file
 // that anchor lives in. `sourceFile` is undefined for a same-file reference whose owning unit has no
 // recorded source file (the Markdown/PDF path), which the index stores as an empty-string key.
-export type ReferenceTarget = Readonly<{
+type ReferenceTarget = Readonly<{
   anchor: string;
   sourceFile?: string;
 }>;

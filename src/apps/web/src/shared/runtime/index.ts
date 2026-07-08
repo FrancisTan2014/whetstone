@@ -1,1 +1,1 @@
-export { apiUrl, bootstrapApiRuntime, hostPlatform, initializeApiRuntime } from "./apiRuntime";
+export { apiUrl, bootstrapApiRuntime } from "./apiRuntime";

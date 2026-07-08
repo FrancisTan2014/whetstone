@@ -17,7 +17,7 @@ import {
 // caller still parses the JSON — so it is not a typed-object seam.
 export type LlmModel = (prompt: string, options?: LlmCallOptions) => Promise<string>;
 
-export type LlmCallOptions = Readonly<{ json?: boolean }>;
+type LlmCallOptions = Readonly<{ json?: boolean }>;
 
 // A chat-capable model instance (the SDK's own model object), excluding the bare model-id string form
 // of `LanguageModel` — `wrapLanguageModel` needs a concrete model, not an id.
@@ -32,7 +32,7 @@ export const ollamaBaseUrl = "http://127.0.0.1:11434";
 // daemon must never hang a coach/diary/explain request unbounded (closing the old no-timeout gap on the
 // coach path). 60s is generous enough for real local generation while still bounding a hung daemon; on
 // timeout the SDK aborts and the call rejects, so each consumer degrades to its own fallback.
-export const llmTimeoutMs = 60_000;
+const llmTimeoutMs = 60_000;
 
 // Force the provider's JSON object mode for one call. `generateText` always sets a default
 // `responseFormat: { type: "text" }` on the model params, and `defaultSettingsMiddleware` can't override

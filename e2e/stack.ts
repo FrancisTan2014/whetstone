@@ -31,7 +31,7 @@ const markdownSource = [
   "- Second list item mentions a turtle walking the long sandy shore."
 ].join("\n");
 
-export type WorkRef = Readonly<{ entryId: string; title: string }>;
+type WorkRef = Readonly<{ entryId: string; title: string }>;
 export type SetupData = Readonly<{ baseURL: string; epub: WorkRef; markdown: WorkRef }>;
 export type Stack = Readonly<{ setup: SetupData; teardown: () => Promise<void> }>;
 

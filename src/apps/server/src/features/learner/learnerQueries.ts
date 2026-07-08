@@ -30,11 +30,11 @@ import { rowToReviewState } from "../recall/recallQueries.js";
 // The bounded slice compiled for each coaching call stays roughly constant in size regardless of
 // history: the top gap x frequency chunks, the most frequent/recent errors, and the most recent
 // outcomes are each capped here.
-export const DEFAULT_CHUNK_LIMIT = 10;
-export const DEFAULT_ERROR_LIMIT = 5;
-export const DEFAULT_OUTCOME_LIMIT = 10;
+const DEFAULT_CHUNK_LIMIT = 10;
+const DEFAULT_ERROR_LIMIT = 5;
+const DEFAULT_OUTCOME_LIMIT = 10;
 // How many recent user turns the bilingual dial averages for its English-share trend (#270).
-export const DEFAULT_LANGUAGE_MIX_LIMIT = 10;
+const DEFAULT_LANGUAGE_MIX_LIMIT = 10;
 
 // A candidate chunk enriched with its domain name (for profile strengths), on top of the fields the
 // pure ranker needs.

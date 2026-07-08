@@ -29,9 +29,9 @@ export function isImageResourceId(id: string): boolean {
   return imageResourceIdPattern.test(id);
 }
 
-export type StoreImageInput = Readonly<{ bytes: Uint8Array; contentType: string }>;
+type StoreImageInput = Readonly<{ bytes: Uint8Array; contentType: string }>;
 
-export type StoredImageResource = Readonly<{ id: string }>;
+type StoredImageResource = Readonly<{ id: string }>;
 
 export type ImageResource = Readonly<{ bytes: Uint8Array; contentType: string }>;
 

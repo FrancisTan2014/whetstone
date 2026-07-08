@@ -2,22 +2,22 @@ import { createHash } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
-export type WriteMarkdownSourceInput = Readonly<{
+type WriteMarkdownSourceInput = Readonly<{
   id: string;
   markdown: string;
 }>;
 
-export type WriteEpubSourceInput = Readonly<{
+type WriteEpubSourceInput = Readonly<{
   bytes: Uint8Array;
   id: string;
 }>;
 
-export type WrittenMarkdownSource = Readonly<{
+type WrittenMarkdownSource = Readonly<{
   path: string;
   sha256: string;
 }>;
 
-export type WrittenEpubSource = WrittenMarkdownSource;
+type WrittenEpubSource = WrittenMarkdownSource;
 
 export type SourceFileStore = Readonly<{
   // Best-effort removal of a retained source file by its stored relative path (`work_sources.file_path`).

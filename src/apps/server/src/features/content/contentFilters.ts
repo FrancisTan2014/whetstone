@@ -26,7 +26,7 @@ export function applyContentFilters(
 // e.g. 7sbook 公版书 editions). Each is a distinctive multi-character phrase or the publisher domain
 // that does not occur in real 文言文 chapter prose, so a substring match is conservative: only
 // boilerplate units are dropped, never a real chapter. Extend this list to catch new boilerplate.
-export const publisherBoilerplateMarkers = [
+const publisherBoilerplateMarkers = [
   "公版书",
   "制作说明",
   "关于我们",

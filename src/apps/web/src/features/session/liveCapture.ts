@@ -45,7 +45,7 @@ export type LiveCapture = Readonly<{
 // Defaults tuned for conversational speech sampled at 30ms frames: a short start window so the turn
 // feels responsive, and a generous end-silence that acts only as a backstop — the learner owns the turn
 // boundary via the "Done" control (#436), so a natural mid-sentence pause (1-3s) never cuts them off.
-export const defaultEndpointConfig: EndpointConfig = {
+const defaultEndpointConfig: EndpointConfig = {
   endSilenceMs: 3000,
   frameMs: 30,
   minSpeechMs: 150,

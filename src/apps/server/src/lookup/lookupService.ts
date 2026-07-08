@@ -12,7 +12,7 @@ const notFound: LookupResponse = { found: false };
 // optional local-LLM "AI 解释"). Each fetches independently, so one source being slow/down/empty fails
 // to its own tab — never the popover. `options` carries the request language and the selection's
 // containing block text (`context`) for the LLM source (#341); dictionary sources ignore it.
-export type LookupOptions = Readonly<{ context: string | undefined; language: string }>;
+type LookupOptions = Readonly<{ context: string | undefined; language: string }>;
 
 export type LookupSource = Readonly<{
   id: LookupSourceId;

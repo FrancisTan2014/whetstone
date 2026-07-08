@@ -5,7 +5,7 @@ import type { CoachConfig } from "./coachConfig.js";
 // deterministic fake, so a missing model or a downed daemon never crashes the loop — those calls just
 // fall back to the fake. The report turns that silent degrade into a clear "pull the model" hint on a
 // fresh deploy (#271).
-export type CoachHealthStatus = "fake" | "cloud_only" | "local_ready" | "local_unavailable";
+type CoachHealthStatus = "fake" | "cloud_only" | "local_ready" | "local_unavailable";
 
 export type CoachHealthReport = Readonly<{
   message: string;

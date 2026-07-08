@@ -4,7 +4,7 @@
 // so callers branch on data, never on thrown exceptions. The transport is injected so tests
 // run against a fake and never touch the network.
 
-export type HttpError =
+type HttpError =
   | Readonly<{ kind: "network" }>
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "http"; status: number }>
@@ -14,7 +14,7 @@ export type HttpResult<T> =
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ error: HttpError; ok: false }>;
 
-export type HttpRequestOptions = Readonly<{
+type HttpRequestOptions = Readonly<{
   headers?: Readonly<Record<string, string>>;
   timeoutMs?: number;
 }>;
