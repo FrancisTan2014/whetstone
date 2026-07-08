@@ -95,6 +95,91 @@ describe("enrollRecallItem", () => {
   });
 });
 
+describe("enrollRecallItem gloss autofill (#526)", () => {
+  function depsWithGlosser(
+    resolveOfflineGloss: (text: string) => Promise<string | null>
+  ): RecallDependencies {
+    let sequence = 0;
+    return { createId: () => `id-${(sequence += 1)}`, db: context.db, resolveOfflineGloss };
+  }
+
+  it("auto-fills a bare word's gloss from the offline glosser", async () => {
+    const seen: string[] = [];
+    const deps = depsWithGlosser(async (text) => {
+      seen.push(text);
+      return "noun: a lessening";
+    });
+
+    const item = await enrollRecallItem(deps, { kind: "word", text: "mitigation" }, userA, t0);
+
+    expect(item.gloss).toBe("noun: a lessening");
+    expect(seen).toEqual(["mitigation"]);
+  });
+
+  it("auto-fills a bare phrase's gloss the same way", async () => {
+    const deps = depsWithGlosser(async () => "to reveal a secret");
+
+    const item = await enrollRecallItem(
+      deps,
+      { kind: "phrase", text: "spill the beans" },
+      userA,
+      t0
+    );
+
+    expect(item.gloss).toBe("to reveal a secret");
+  });
+
+  it("preserves a caller-supplied gloss and never calls the glosser", async () => {
+    const seen: string[] = [];
+    const deps = depsWithGlosser(async (text) => {
+      seen.push(text);
+      return "autofilled";
+    });
+
+    const item = await enrollRecallItem(
+      deps,
+      { kind: "word", text: "mitigation", gloss: "my own note" },
+      userA,
+      t0
+    );
+
+    expect(item.gloss).toBe("my own note");
+    expect(seen).toEqual([]);
+  });
+
+  it("does not auto-fill a kind outside word/phrase", async () => {
+    const seen: string[] = [];
+    const deps = depsWithGlosser(async (text) => {
+      seen.push(text);
+      return "autofilled";
+    });
+
+    const item = await enrollRecallItem(
+      deps,
+      { kind: "idiom", text: "spill the beans" },
+      userA,
+      t0
+    );
+
+    expect(item.gloss).toBeNull();
+    expect(seen).toEqual([]);
+  });
+
+  it("enrolls with a null gloss when the glosser does not know the term", async () => {
+    const deps = depsWithGlosser(async () => null);
+
+    const item = await enrollRecallItem(deps, { kind: "word", text: "unknownium" }, userA, t0);
+
+    expect(item.gloss).toBeNull();
+  });
+
+  it("leaves the gloss null when no glosser is wired", async () => {
+    const item = await enroll({ kind: "word", text: "mitigation" }, userA, t0);
+
+    expect(item.gloss).toBeNull();
+  });
+});
+
 describe("recordRecallReview", () => {
   it("applies SM-2, persists the new state, and appends a history row", async () => {
     const enrolled = await enroll({ kind: "word", text: "quick" }, userA, t0);

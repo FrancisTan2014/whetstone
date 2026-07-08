@@ -34,6 +34,10 @@ export type QuickCaptureDependencies = Readonly<{
   db: DbClient;
   now: () => Date;
   propose: ProposalProvider;
+  // Offline gloss autofill (#526): threaded to `saveProposalRecallItem` so a saved `phrase` proposal
+  // with no explanation still gets a back auto-filled from the bundled dictionaries. Optional; absent
+  // means no autofill.
+  resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
 
 // Build a Today review card from an inserted candidate DTO + its (already schema-valid) payload. Shared

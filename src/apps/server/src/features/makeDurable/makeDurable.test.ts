@@ -394,6 +394,32 @@ describe("saveProposalRecallItem (Make Durable save step)", () => {
     });
   });
 
+  it("auto-fills the gloss for a saved phrase proposal that has no explanation (#526)", async () => {
+    const candidate = await seed();
+    const deps: MakeDurableDependencies = {
+      createId: () => "recall-gloss",
+      db: context.db,
+      resolveOfflineGloss: async (text) => `gloss for ${text}`
+    };
+
+    const item = await saveProposalRecallItem(
+      deps,
+      candidate,
+      {
+        target: "spill the beans",
+        cue: "a secret slipped out",
+        useContext: "warning a friend",
+        category: "daily_life",
+        tags: []
+      },
+      userA,
+      t2
+    );
+
+    expect(item.kind).toBe("phrase");
+    expect(item.gloss).toBe("gloss for spill the beans");
+  });
+
   it("maps a recurring_pattern proposal to a pattern recall item", async () => {
     const cap = await capture(userA, t0);
     const candidate = await createCandidate({
