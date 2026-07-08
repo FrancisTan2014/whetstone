@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { isValidDocument, parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 
 import { htmlToDocument } from "./htmlToDocument.js";
+import { resolveRelativeHref } from "./resolveRelativeHref.js";
 
 // Synthetic, structurally-faithful O'Reilly HTMLBook fixtures with neutral placeholder text. The real
 // DDIA HTML is copyrighted, so these reproduce the publisher's element shapes (figures, definition
@@ -215,6 +216,24 @@ describe("htmlToDocument", () => {
 
     const emptyId = findDescendant(paragraphs[1]!.node, "footnoteMarker")!;
     expect(emptyId.attrs).toMatchObject({ refFile: "notes.xhtml", refId: null });
+  });
+
+  it("strips @lingo-reader's `epub:` virtual scheme from a cross-file noteref so it resolves scheme-less (#543)", () => {
+    // @lingo-reader rewrites intra-EPUB hrefs to `epub:<manifest-root path>`; left as-is the joined
+    // targetSourceFile mangles to `OEBPS/epub:OEBPS/ch10.html` and the marker can never match the index.
+    const html =
+      '<p>Cite<a data-type="noteref" href="epub:OEBPS/ch10.html#Ovsiannikov2013da">20</a>.</p>';
+    const { blocks } = htmlToDocument(html);
+    const marker = findDescendant(blocksOfType(blocks, "paragraph")[0]!.node, "footnoteMarker")!;
+
+    expect(marker.attrs).toMatchObject({
+      refFile: "/OEBPS/ch10.html",
+      refId: "Ovsiannikov2013da"
+    });
+    // The root-absolute refFile resolves (from any chapter) to the scheme-less work-anchor-index key.
+    expect(resolveRelativeHref("OEBPS/ch09.html", marker.attrs!["refFile"] as string)).toBe(
+      "OEBPS/ch10.html"
+    );
   });
 
   it("lifts a block's source-HTML id into IngestedBlock.anchorId without leaking it into node JSON", () => {
@@ -1087,6 +1106,27 @@ describe("htmlToDocument reference links (#368)", () => {
     // The linked text stays in the inline run — no descended-text-with-lost-href, no paragraph shatter.
     expect(findLinkedText(paragraph.node)).toBe("Chapter 1");
     expect(blocksOfType(blocks, "unknown")).toHaveLength(0);
+  });
+
+  it("strips the `epub:` scheme from a cross-chapter xref so it stays live and resolves scheme-less (#543)", () => {
+    // Without stripping, the `epub:` scheme makes isExternalHref treat this xref as external -> inert.
+    const { blocks } = htmlToDocument(
+      '<p>See <a data-type="xref" href="epub:OEBPS/part02.html#part_distributed_data">Part II</a>.</p>'
+    );
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
+    const link = findLinkMark(paragraph.node)!;
+
+    expect(link).toEqual({
+      anchor: "part_distributed_data",
+      inert: false,
+      kind: "xref",
+      refFile: "/OEBPS/part02.html",
+      targetSourceFile: null
+    });
+    expect(resolveRelativeHref("OEBPS/ch09.html", link["refFile"] as string)).toBe(
+      "OEBPS/part02.html"
+    );
+    expect(findLinkedText(paragraph.node)).toBe("Part II");
   });
 
   it("preserves a same-chapter `#id` link with a null file part and the generic `href` kind", () => {
