@@ -10,6 +10,9 @@ import { toTimelineCaptureDto } from "./timelineQueries.js";
 export type MakeDurableDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
+  // Offline gloss autofill (#526): passed through to `enrollRecallItem` by `saveProposalRecallItem`.
+  // Optional; absent means no autofill (the item keeps whatever gloss the proposal supplied).
+  resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
 
 // Save a Quick Capture as a Timeline entry: register its owning Entry (`type = "timeline_entry"`) and

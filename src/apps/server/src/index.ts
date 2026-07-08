@@ -25,6 +25,7 @@ import { createHttpClient } from "./lookup/httpClient.js";
 import { createInMemoryLookupCache } from "./lookup/lookupCache.js";
 import { createLookupService, type LookupSource } from "./lookup/lookupService.js";
 import { createMoedictProvider } from "./lookup/moedictProvider.js";
+import { createOfflineGloss } from "./lookup/offlineGloss.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
 import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
 import { readExplainConfig, resolveExplainer } from "./lookup/explainProvider.js";
@@ -117,6 +118,15 @@ const lookupService = createLookupService({
   sources: lookupSources
 });
 
+// Offline gloss autofill (#526): compose a `resolveOfflineGloss` from the offline dictionaries already
+// built above — WordNet for English, CC-CEDICT for Chinese (chosen by script). Offline-only by
+// construction (no networked/LLM source is wired here), so enrolling a `word`/`phrase` with no back
+// never blocks capture on the network. Threaded into the recall and Make Durable enroll feeders below.
+const resolveOfflineGloss = createOfflineGloss({
+  english: (term) => wordNetLookup(term),
+  chinese: (term) => cedict.lookup(term)
+});
+
 // The coach (#206) and speech (#207) seams: config-gated and absent-config-safe. With no key the
 // coach still runs its LOCAL cheap tier (routing sends converse/analyze there after `pnpm setup
 // --coach`); strong-routed calls with no key, and any model failure, degrade to the deterministic
@@ -200,7 +210,8 @@ const server = createServer({
   recall: {
     createId: () => randomUUID(),
     db,
-    now: () => new Date()
+    now: () => new Date(),
+    resolveOfflineGloss
   },
   nudge: {
     db,
@@ -217,7 +228,8 @@ const server = createServer({
     proposeBackfill: createBackfillProposalProvider(
       createOllamaModel(defaultCheapModel),
       defaultCheapModel
-    )
+    ),
+    resolveOfflineGloss
   },
   search: { db },
   session: {
@@ -225,6 +237,7 @@ const server = createServer({
     createId: () => randomUUID(),
     db,
     now: () => new Date(),
+    resolveOfflineGloss,
     saveAudio: (audio) => {
       const path = join(tmpdir(), `whetstone-${randomUUID()}.audio`);
       writeFileSync(path, audio);

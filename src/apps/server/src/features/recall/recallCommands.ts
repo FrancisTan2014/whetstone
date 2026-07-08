@@ -1,4 +1,4 @@
-import type { EnrollRecallItemRequest, RecallItemDto } from "@whetstone/contracts";
+import type { EnrollRecallItemRequest, RecallItemDto, RecallKind } from "@whetstone/contracts";
 import { newReviewState, scheduleReview, type ReviewGrade } from "@whetstone/domain";
 import { and, eq } from "drizzle-orm";
 
@@ -17,7 +17,17 @@ import {
 export type RecallDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
+  // Offline gloss autofill (#526): resolve a short back for a bare `word`/`phrase` from the bundled
+  // offline dictionaries so the reveal step (#525) always has something to retrieve against. Optional
+  // because chunk/reading-only feeders (e.g. the session engine) never enroll a glossable kind and so
+  // need not wire it; absent means no autofill and `gloss` stays null. Offline-only by construction —
+  // enroll never blocks on the network (see `createOfflineGloss`).
+  resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
+
+// The only kinds a dictionary can honestly gloss. Other kinds (pattern/idiom/proverb/chunk) keep the
+// #525 reveal-time floor — no autofill is attempted for them.
+const glossableKinds: ReadonlySet<RecallKind> = new Set(["word", "phrase"]);
 
 export type RecordReviewResult =
   | Readonly<{ item: RecallItemDto; status: "recorded" }>
@@ -30,6 +40,26 @@ export type SnoozeRecallResult =
 // How far a snooze defers an item: one day, so it leaves today's batch and reappears tomorrow.
 const SNOOZE_DEFER_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Resolve the gloss (back) to persist for an enroll. A caller-supplied gloss always wins and is never
+// overwritten. Only when a `word`/`phrase` arrives with no gloss AND an offline glosser is wired do we
+// autofill from the bundled dictionaries (#526); the glosser fails soft to null, so a term the offline
+// dictionary does not know enrolls with `gloss` null and never throws — keeping the #525 reveal floor.
+async function resolveEnrollGloss(
+  dependencies: RecallDependencies,
+  request: EnrollRecallItemRequest
+): Promise<string | null> {
+  const supplied = request.gloss ?? null;
+  if (
+    supplied !== null ||
+    !glossableKinds.has(request.kind) ||
+    dependencies.resolveOfflineGloss === undefined
+  ) {
+    return supplied;
+  }
+
+  return dependencies.resolveOfflineGloss(request.text);
+}
 
 // Enroll a recall item for a user, seeding its SM-2 review state (due immediately). Provenance and
 // gloss are optional; absent means jotted / LLM-supplied. `sourceProposalCandidateId` is an INTERNAL
@@ -45,10 +75,11 @@ export async function enrollRecallItem(
 ): Promise<RecallItemDto> {
   const id = dependencies.createId();
   const review = newReviewState(now);
+  const gloss = await resolveEnrollGloss(dependencies, request);
   const row = {
     chunkId: request.chunkId ?? null,
     createdAt: now,
-    gloss: request.gloss ?? null,
+    gloss,
     id,
     kind: request.kind,
     provenanceEntryId: request.provenanceEntryId ?? null,

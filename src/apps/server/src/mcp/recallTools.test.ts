@@ -89,6 +89,20 @@ describe("callRecallTool", () => {
     expect(found.items.map((i) => i.id)).toEqual(["id-1"]);
   });
 
+  it("auto-fills a bare word's gloss via the offline glosser wired into the recall deps (#526)", async () => {
+    const context: RecallMcpContext = {
+      ...ctx.context,
+      recall: { ...ctx.context.recall, resolveOfflineGloss: async (text) => `back for ${text}` }
+    };
+
+    const saved = (await callRecallTool(context, "save_recall_item", {
+      kind: "word",
+      text: "mitigation"
+    })) as Awaited<ReturnType<typeof callRecallTool>>;
+    const item = dataOf(saved) as { gloss: string | null };
+    expect(item.gloss).toBe("back for mitigation");
+  });
+
   it("honors an explicit list_due_items limit", async () => {
     await callRecallTool(ctx.context, "save_recall_item", { kind: "word", text: "one" });
     await callRecallTool(ctx.context, "save_recall_item", { kind: "word", text: "two" });
