@@ -78,6 +78,10 @@ export type SessionDependencies = Readonly<{
   // Persist a recorded audio upload and return a path the speech seam can read.
   saveAudio: (audio: Buffer) => Promise<string>;
   speech: SpeechInput;
+  // Offline gloss autofill (#526): threaded into the recall enroll deps below so a coach-pushed English
+  // target (enrolled as a bare `phrase`) still gets a back from the bundled dictionaries. Optional;
+  // absent means no autofill.
+  resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
 
 export type SubmitTurnOutcome =
@@ -175,7 +179,13 @@ export async function submitTurn(
   const grade = dependencies.coach.gradeForScheduler(judgement);
   const errorCategory = mistakeCategoryFromIssues(judgement.issues);
 
-  const recallDeps = { createId: dependencies.createId, db: dependencies.db };
+  const recallDeps = {
+    createId: dependencies.createId,
+    db: dependencies.db,
+    ...(dependencies.resolveOfflineGloss
+      ? { resolveOfflineGloss: dependencies.resolveOfflineGloss }
+      : {})
+  };
   const existing = await getRecallItemByChunkForUser(dependencies.db, userId, request.chunkId);
   const item =
     existing ??
@@ -326,7 +336,13 @@ export async function endSession(
     words: [...request.words]
   });
 
-  const learnerDeps = { createId: dependencies.createId, db: dependencies.db };
+  const learnerDeps = {
+    createId: dependencies.createId,
+    db: dependencies.db,
+    ...(dependencies.resolveOfflineGloss
+      ? { resolveOfflineGloss: dependencies.resolveOfflineGloss }
+      : {})
+  };
   const textByChunkId = new Map(targetChunks.map((chunk) => [chunk.chunkId, chunk.text]));
   const blockByChunkId = new Map(
     targetChunks.map((chunk) => [chunk.chunkId, chunk.sourceBlockEntryId])

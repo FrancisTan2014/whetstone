@@ -237,6 +237,7 @@ const server = createServer({
     createId: () => randomUUID(),
     db,
     now: () => new Date(),
+    resolveOfflineGloss,
     saveAudio: (audio) => {
       const path = join(tmpdir(), `whetstone-${randomUUID()}.audio`);
       writeFileSync(path, audio);

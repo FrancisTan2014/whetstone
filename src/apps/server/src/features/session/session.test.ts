@@ -514,6 +514,35 @@ describe("endSession", () => {
     expect(phrases).toHaveLength(1);
   });
 
+  it("auto-fills a back for the coach-pushed English target's phrase recall item (#526)", async () => {
+    const deps: SessionDependencies = {
+      ...makeDeps(),
+      resolveOfflineGloss: async (text) => `back for ${text}`
+    };
+    const plan = await startSession(deps, userA, t0);
+    const caseId = plan.cues[0]?.caseId;
+    if (caseId === undefined) {
+      throw new Error("expected a cue");
+    }
+
+    await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
+    const outcome = await endSession(
+      deps,
+      { caseId, words: [] },
+      userA,
+      new Date(t0.getTime() + 60_000)
+    );
+    if (outcome.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // The pushed target enrolls as a phrase with a back auto-filled from the offline glosser, so it is
+    // never an answerless recall card (#526).
+    const item = await getRecallItemByTextForUser(db, userA, "Let's try that in English.");
+    expect(item?.kind).toBe("phrase");
+    expect(item?.gloss).toBe("back for Let's try that in English.");
+  });
+
   it("does not re-deposit a pushed English target already enrolled from an earlier round (#270)", async () => {
     const deps = makeDeps();
     const plan = await startSession(deps, userA, t0);
