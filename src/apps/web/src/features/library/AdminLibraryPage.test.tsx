@@ -888,6 +888,20 @@ describe("AdminLibraryPage", () => {
     ).toBeDefined();
   });
 
+  it("dismisses the delete confirmation on Escape without deleting", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await screen.findByRole("dialog", { name: "Delete work" });
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete work" })).toBeNull();
+    });
+    expect(mockedDeleteWork).not.toHaveBeenCalled();
+  });
+
   it("surfaces an error and keeps the work when the delete fails", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     mockedDeleteWork.mockRejectedValue(new Error("boom"));

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAuthor,
   createWork,
+  deleteWork,
   fetchAuthors,
   fetchWorks,
   fetchWorksWithReadingPosition,
@@ -136,5 +137,18 @@ describe("libraryApi", () => {
     expect(call[1].method).toBe("POST");
     expect(call[1].headers).toEqual({ "content-type": "application/epub+zip" });
     expect(new Uint8Array(call[1].body as Uint8Array)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("sends a DELETE to the work endpoint and resolves on success", async () => {
+    const fetchMock = stubFetch({ ok: true, status: 204 });
+
+    await expect(deleteWork("work-1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work-1", { method: "DELETE" });
+  });
+
+  it("throws when deleting a work fails", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(deleteWork("missing")).rejects.toThrow("failed with status 404");
   });
 });
