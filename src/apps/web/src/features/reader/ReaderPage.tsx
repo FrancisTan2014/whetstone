@@ -48,7 +48,7 @@ import {
 import { isUnitTitleRedundant } from "./readerHeadings";
 import { buildAnchorIndex, type AnchorIndex } from "./referenceResolver";
 import {
-  activeTocEntryId,
+  activeTocEntryIdForPosition,
   clampUnitIndex,
   resolveTocEntryNavigation,
   unitIndexForEntryId,
@@ -1139,6 +1139,7 @@ function renderReading(
         reading.activeUnit,
         reading.workEntryId,
         reading.activeUnitIndex,
+        reading.scrollBlockEntryId,
         onSelectUnit,
         onSelectTocEntry,
         onRetryUnit,
@@ -1153,6 +1154,7 @@ function renderViewing(
   activeUnit: ActiveUnit,
   workEntryId: string,
   activeUnitIndex: number,
+  currentBlockEntryId: string | undefined,
   onSelectUnit: (index: number) => void,
   onSelectTocEntry: (structure: ReaderStructure, entry: ReaderTocEntry) => void,
   onRetryUnit: () => void,
@@ -1166,7 +1168,14 @@ function renderViewing(
   // navigates by its reading-unit list, and a single-unit work (an essay) reads without a 目录.
   const tree = structure.tableOfContents;
   const activeEntryId =
-    tree === undefined ? undefined : activeTocEntryId(tree, units[activeUnitIndex]?.entryId);
+    tree === undefined
+      ? undefined
+      : activeTocEntryIdForPosition(
+          tree,
+          units[activeUnitIndex]?.entryId,
+          activeUnit.status === "loaded" ? activeUnit.unit.blocks : [],
+          currentBlockEntryId
+        );
   const hasToc = tree !== undefined || units.length > 1;
   const toc =
     tree !== undefined ? (
