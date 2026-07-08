@@ -12,6 +12,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 vi.mock("./libraryApi", () => ({
   createWork: vi.fn(),
+  deleteWork: vi.fn(),
   fetchAuthors: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("../content/contentApi", () => ({
 
 import {
   createWork,
+  deleteWork,
   fetchAuthors,
   fetchWorks,
   fetchWorksWithReadingPosition,
@@ -57,6 +59,7 @@ const mockedFetchAuthors = vi.mocked(fetchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
 const mockedCreateWork = vi.mocked(createWork);
+const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
 const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
 const mockedIngestPdf = vi.mocked(ingestPdf);
@@ -839,5 +842,63 @@ describe("AdminLibraryPage", () => {
     expect(
       await screen.findByRole("heading", { name: "Politics and the English Language" })
     ).toBeDefined();
+  });
+
+  it("deletes a work after an explicit confirmation naming it (#541)", async () => {
+    mockedFetchWorks
+      .mockResolvedValueOnce({ works: [essayWorkItem] })
+      .mockResolvedValue({ works: [] });
+    mockedDeleteWork.mockResolvedValue(undefined);
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    // The confirm dialog names the work and the destructive act.
+    const dialog = await screen.findByRole("dialog", { name: "Delete work" });
+    expect(within(dialog).getByText(/Politics and the English Language/)).toBeDefined();
+
+    await user.click(within(dialog).getByRole("button", { name: "Delete work" }));
+
+    await waitFor(() => {
+      expect(mockedDeleteWork).toHaveBeenCalledWith(essayWorkItem.work.entryId);
+    });
+    // The shelf refreshed and the work is gone.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "Politics and the English Language" })
+      ).toBeNull();
+    });
+    expect(await screen.findByText("Deleted “Politics and the English Language”.")).toBeDefined();
+  });
+
+  it("keeps the work when the delete confirmation is cancelled", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete work" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete work" })).toBeNull();
+    });
+    expect(mockedDeleteWork).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: "Politics and the English Language" })
+    ).toBeDefined();
+  });
+
+  it("surfaces an error and keeps the work when the delete fails", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    mockedDeleteWork.mockRejectedValue(new Error("boom"));
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete work" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete work" }));
+
+    expect(await screen.findByText("Could not delete the work. Please try again.")).toBeDefined();
+    // The confirm dialog stays open (the work was not removed).
+    expect(screen.getByRole("dialog", { name: "Delete work" })).toBeDefined();
   });
 });

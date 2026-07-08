@@ -22,6 +22,7 @@ import { detectUploadKind, stripFileExtension } from "../../shared/files/fileTyp
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import {
   createWork,
+  deleteWork,
   fetchAuthors,
   fetchWorks,
   fetchWorksWithReadingPosition,
@@ -89,6 +90,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [pendingUpload, setPendingUpload] = useState<File | undefined>(undefined);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadKind, setUploadKind] = useState<UploadKind | undefined>(undefined);
+
+  // The work awaiting an explicit delete confirmation (destructive + irreversible), and whether the
+  // confirmed delete is in flight, so the confirm dialog names the work and disables while deleting.
+  const [pendingDelete, setPendingDelete] = useState<WorkListItemDto | undefined>(undefined);
+  const [deleting, setDeleting] = useState(false);
 
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const toast = useToast();
@@ -305,6 +311,23 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     toast.error(unsupportedUploadMessage);
   }
 
+  // The confirmed delete: remove the work, refresh the shelf, and close the dialog. A failure keeps the
+  // work and surfaces a toast; the confirm step (naming the work) is the guard for this irreversible act.
+  async function onConfirmDelete(target: WorkListItemDto): Promise<void> {
+    setDeleting(true);
+
+    try {
+      await deleteWork(target.work.entryId);
+      setPendingDelete(undefined);
+      await reload();
+      toast.success(`Deleted “${target.work.title}”.`);
+    } catch {
+      toast.error("Could not delete the work. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const listVariants: Variants = {
     hidden: {},
     visible: { transition: { staggerChildren: prefersReducedMotion ? 0 : 0.05 } }
@@ -355,6 +378,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         ? renderLibrary(groups, {
             cardVariants,
             listVariants,
+            onDelete: setPendingDelete,
             onManageContent,
             worksWithPosition
           })
@@ -445,6 +469,29 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
           </form>
         </Sheet>
       ) : null}
+
+      {pendingDelete !== undefined ? (
+        <Sheet onOpenChange={() => setPendingDelete(undefined)} open title="Delete work">
+          <div className="flex flex-col gap-4">
+            <p className="text-text">
+              Permanently delete <span className="font-semibold">“{pendingDelete.work.title}”</span>{" "}
+              and all of its content? This can’t be undone.
+            </p>
+            <div className="flex flex-wrap justify-end gap-3">
+              <Button onClick={() => setPendingDelete(undefined)} type="button" variant="secondary">
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void onConfirmDelete(pendingDelete)}
+                pending={deleting}
+                type="button"
+              >
+                Delete work
+              </Button>
+            </div>
+          </div>
+        </Sheet>
+      ) : null}
     </main>
   );
 }
@@ -452,6 +499,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 type RenderLibraryOptions = Readonly<{
   cardVariants: Variants;
   listVariants: Variants;
+  onDelete: (item: WorkListItemDto) => void;
   onManageContent: (workEntryId: string) => void;
   worksWithPosition: ReadonlySet<string>;
 }>;
@@ -537,6 +585,13 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
         >
           Export Markdown
         </a>
+        <button
+          className={`${cardActionClass} text-danger hover:text-danger`}
+          onClick={() => options.onDelete(item)}
+          type="button"
+        >
+          Delete
+        </button>
       </div>
     </motion.li>
   );

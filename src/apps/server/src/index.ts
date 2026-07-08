@@ -196,7 +196,15 @@ const server = createServer({
   library: {
     createAuthorId: () => randomUUID(),
     createEntryId: () => randomUUID(),
-    db
+    db,
+    deleteSourceFile: (relativePath) => sourceFileStore.deleteSourceFile(relativePath),
+    // A retained source file that could not be unlinked on work delete (#541) is logged as one
+    // structured warn — the DB delete has already committed, so this never fails the request.
+    logSourceUnlinkFailure: ({ error, filePath }) =>
+      console.warn(
+        "[library] failed to unlink work source file on delete",
+        JSON.stringify({ filePath, reason: error instanceof Error ? error.message : String(error) })
+      )
   },
   logger: createLoggerOptions(config.logLevel),
   lookup: { lookup: lookupService.lookup },
