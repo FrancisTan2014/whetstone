@@ -23,7 +23,7 @@ import { listRecallItems } from "../recall/recallQueries.js";
 import { countVisibleCandidates, MAKE_DURABLE_TODAY_CARD_CAP } from "./cardQueries.js";
 import { insertProposalCandidate } from "./proposalCommands.js";
 import { listReviewedProposalExamples, POLICY_REVIEW_LOOKBACK } from "./proposalQueries.js";
-import type { ProposalProvider } from "./proposalProvider.js";
+import type { ProposalAttempt, ProposalProvider } from "./proposalProvider.js";
 import { createTimelineCapture } from "./timelineCommands.js";
 
 // Everything the Quick Capture command needs: id/db/clock plus the proposal seam (the local model,
