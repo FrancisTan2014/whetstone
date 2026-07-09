@@ -45,6 +45,7 @@ export function registerDiaryRoutes(
       dependencies,
       parsed.data.transcript,
       parsed.data.inputMode,
+      parsed.data.language,
       userId,
       now
     );

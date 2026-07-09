@@ -96,7 +96,7 @@ function captureResult(withCard: MakeDurableCardDto | null): DiaryCaptureResultD
       createdAt: "2026-07-06T09:30:00.000Z",
       entryDate: "2026-07-06",
       id: "entry-1",
-      language: null,
+      language: "en",
       text: "the deploy failed"
     }
   };
@@ -104,6 +104,7 @@ function captureResult(withCard: MakeDurableCardDto | null): DiaryCaptureResultD
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   mockedFetch.mockResolvedValue([]);
 });
 
@@ -134,6 +135,44 @@ describe("CaptureCard", () => {
     );
   });
 
+  it("renders a compact bilingual selector with English as the first-use default", async () => {
+    render(<CaptureCard />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    expect(screen.getByRole("button", { name: "中文" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "EN" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("uses a stored English language default", async () => {
+    window.localStorage.setItem("whetstone.capture.language", "en");
+
+    render(<CaptureCard />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    expect(screen.getByRole("button", { name: "EN" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("remembers the selected language and threads it into typed captures", async () => {
+    mockedSubmit.mockResolvedValue(captureResult(null));
+    render(<CaptureCard />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    await user.type(screen.getByLabelText("Capture text"), "今天我读了一本书");
+    await user.click(screen.getByRole("button", { name: "Capture" }));
+
+    expect(window.localStorage.getItem("whetstone.capture.language")).toBe("zh");
+    expect(mockedSubmit).toHaveBeenCalledWith("今天我读了一本书", "typed", "zh");
+
+    cleanup();
+    vi.clearAllMocks();
+    mockedFetch.mockResolvedValue([]);
+    render(<CaptureCard />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "中文" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("degrades quietly and still offers capture when the cards fail to load on mount", async () => {
     mockedFetch.mockRejectedValue(new Error("boom"));
     render(<CaptureCard />);
@@ -151,7 +190,7 @@ describe("CaptureCard", () => {
 
     await typeCapture("I couldn't say it");
 
-    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed");
+    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed", "en");
     expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
   });
 
@@ -409,9 +448,24 @@ describe("CaptureCard voice capture", () => {
     await user.click(screen.getByRole("button", { name: "Tap to talk" }));
     await user.click(await screen.findByRole("button", { name: "Stop & save" }));
 
-    expect(mockedTranscribe).toHaveBeenCalled();
-    expect(mockedSubmit).toHaveBeenCalledWith("WorkInsight is back up now", "voice");
+    expect(mockedTranscribe).toHaveBeenCalledWith(expect.any(Blob), "en");
+    expect(mockedSubmit).toHaveBeenCalledWith("WorkInsight is back up now", "voice", "en");
     expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
+  });
+
+  it("threads the selected language into voice transcription and capture", async () => {
+    mockedTranscribe.mockResolvedValue({ transcript: "今天我读了一本书", words: [] });
+    mockedSubmit.mockResolvedValue(captureResult(null));
+    render(<CaptureCard capture={fakeVoice()} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    expect(mockedTranscribe).toHaveBeenCalledWith(expect.any(Blob), "zh");
+    expect(mockedSubmit).toHaveBeenCalledWith("今天我读了一本书", "voice", "zh");
   });
 
   it("shows a calm retry and submits nothing when no speech is caught", async () => {

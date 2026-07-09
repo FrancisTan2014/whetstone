@@ -2,7 +2,8 @@ import {
   audioContentType,
   coachSayRequestSchema,
   endSessionRequestSchema,
-  submitTurnRequestSchema
+  submitTurnRequestSchema,
+  transcribeQuerySchema
 } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
 
@@ -32,13 +33,21 @@ export function registerSessionRoutes(
   // transcribes via the speech seam. The web submits the returned transcript to the turn endpoint; the
   // typed fallback skips this.
   server.post("/api/session/transcribe", async (request, reply) => {
+    const parsedQuery = transcribeQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+
     const body = request.body;
     if (!Buffer.isBuffer(body) || body.length === 0) {
       return reply.code(400).send(invalidRequest);
     }
-
     const path = await dependencies.saveAudio(body);
-    const { transcript, words } = await dependencies.speech.transcribe({ path });
+    const audio =
+      parsedQuery.data.language === undefined
+        ? { path }
+        : { language: parsedQuery.data.language, path };
+    const { transcript, words } = await dependencies.speech.transcribe(audio);
     return { transcript, words };
   });
 

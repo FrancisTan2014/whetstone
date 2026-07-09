@@ -7,8 +7,10 @@ scoring is out of scope; it plugs in later behind the same seam.
 
 ## Components
 
-- `SpeechInput` (`speechInput.ts`) — `transcribe({ path }) -> { transcript, words: [{ text, start, end }] }`.
-  Word `start`/`end` are integer **milliseconds** from the start of the recording.
+- `SpeechInput` (`speechInput.ts`) — `transcribe({ path, language? }) -> { transcript, words:
+  [{ text, start, end }] }`. `language` is a per-request override (`zh`/`en` from capture today);
+  when omitted the adapter uses the configured default. Word `start`/`end` are integer
+  **milliseconds** from the start of the recording.
 - `FakeSpeechInput` (`fakeSpeechInput.ts`) — deterministic; the `pnpm validate` gate has no mic, so
   the loop tests on the fake (inject a fixed transcription, or a function of the audio).
 - Local Whisper adapter (`whisperSpeechInput.ts`) — runs a configured Whisper CLI over the audio file
@@ -26,7 +28,7 @@ crashes for a missing model.
 | -------------------- | ---------------------------------------------------- | -------- |
 | `WHISPER_BINARY`     | Path to the Whisper CLI / wrapper                    | yes      |
 | `WHISPER_MODEL_PATH` | Path to the local model file                         | yes      |
-| `WHISPER_LANGUAGE`   | Language code passed to the model (default `en`)     | no       |
+| `WHISPER_LANGUAGE`   | Fallback language code passed to the model when a request omits one (default `en`) | no       |
 
 A local Whisper is configured only when **both** `WHISPER_BINARY` and `WHISPER_MODEL_PATH` are
 present; otherwise resolution falls back to the fake.
@@ -58,7 +60,8 @@ Use an OSS Whisper runtime, e.g.:
   (e.g. `ggml-base.en.bin`); CPU-only and fully offline.
 - **faster-whisper** — a small CLI wrapper around `WhisperModel` works too.
 
-The adapter invokes the binary as:
+The adapter invokes the binary as below. A request language overrides `WHISPER_LANGUAGE`; when the
+request omits language (for example, the coach path), the configured fallback is used.
 
 ```
 <WHISPER_BINARY> --model <WHISPER_MODEL_PATH> --language <lang> --output json --word-timestamps <audio>

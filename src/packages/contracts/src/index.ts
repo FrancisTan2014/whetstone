@@ -18,9 +18,12 @@ export {
   sessionSummaryDtoSchema,
   sessionTurnRecordSchema,
   submitTurnRequestSchema,
+  transcribeQuerySchema,
   transcribeResultDtoSchema,
   turnResultDtoSchema
 } from "./sessionContracts.js";
+export { captureLanguages, captureLanguageSchema } from "./captureContracts.js";
+export type { CaptureLanguage } from "./captureContracts.js";
 export type {
   CoachSayRequest,
   DebriefDto,
@@ -32,6 +35,7 @@ export type {
   SessionSummaryDto,
   SessionTurnRecord,
   SubmitTurnRequest,
+  TranscribeQuery,
   TranscribeResultDto,
   TurnResultDto
 } from "./sessionContracts.js";

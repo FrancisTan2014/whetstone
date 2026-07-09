@@ -133,12 +133,13 @@ can navigate them from another package.
   (`createProposalCandidate`/`insertProposalCandidate` scope `timeline_entry_id` to the user;
   `recordProposalReview` → `not_found` for a forged/foreign candidate). **Web:**
   `src/apps/web/src/features/capture/` — `CaptureCard` is the single typed + tap-and-talk capture surface
-  used by both Today and Diary. It posts through `diaryApi.ts` `submitDiaryCapture(text, inputMode)` to
-  `/api/diary/entries`, prepends an optional returned review card, and keeps the Save/Edit/Not-useful/Wrong
-  card behavior unchanged. Voice records via the coverage-excluded browser boundary `captureVoice.ts`
-  (wraps the shared `liveCapture` seam into one-shot record/stop), transcribes with the session `transcribe`
-  STT seam, then submits the transcript as a `voice` capture; a missing mic/STT falls back to the
-  always-present typed box. `recall_items`
+  used by both Today and Diary. It owns the remembered 中文/EN capture-language selector, posts through
+  `diaryApi.ts` `submitDiaryCapture(text, inputMode, language)` to `/api/diary/entries`, prepends an
+  optional returned review card, and keeps the Save/Edit/Not-useful/Wrong card behavior unchanged. Voice
+  records via the coverage-excluded browser boundary `captureVoice.ts` (wraps the shared `liveCapture`
+  seam into one-shot record/stop), transcribes with the session `transcribe(audio, language)` STT seam,
+  then submits the transcript as a `voice` capture; a missing mic/STT falls back to the always-present typed
+  box. `recall_items`
   carries nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
   `source_proposal_candidate_id`); the `timeline_entry` type is in `@whetstone/domain` (`entry.ts`),
   DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`). **Backfill (#456):**
@@ -224,9 +225,10 @@ can navigate them from another package.
     hint) / `cloud_only` / `fake`, so a missing model degrades cleanly to the fake instead of
     crashing. Deploy + provisioning steps: `docs/COACH.md`.
 - Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`
-  interface: `transcribe(audio) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
+  interface: `transcribe({ path, language? }) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
-  offline CLI args, validates the word-timestamped JSON at the boundary, maps to a `Transcription`),
+  offline CLI args, using the per-request language before the `WHISPER_LANGUAGE` config fallback; validates
+  the word-timestamped JSON at the boundary; maps to a `Transcription`),
   `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
   safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured).
   `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`, mirrors `checkCoachHealth`) logs a
@@ -264,8 +266,9 @@ can navigate them from another package.
   the coach's `analyze`, and DEPOSITS the durable trace deterministically — chunk grades -> SM-2 recall
   (#188/#189, which also advances case mastery and so the map #210), tagged mistakes -> error-pattern
   counts (#208), and the rolling profile (#208) — then returns the compact debrief. The
-  spoken path posts recorded audio bytes to `POST /api/session/transcribe` (the STT seam, via injected
-  `saveAudio` + speech, returning transcript + word-timings) and submits the recognized transcript; typing
+  spoken path posts recorded audio bytes to `POST /api/session/transcribe` (optionally
+  `?language=zh|en` for capture; the coach omits it and uses the fallback default), via injected
+  `saveAudio` + speech, returning transcript + word-timings, and submits the recognized transcript; typing
   is the fallback. `sessionRoutes.ts`: `POST /api/session/` `start|transcribe|turn|say|end`. The
   coach/speech seams are resolved (fakes when unconfigured) in `index.ts`. Mistake-category map is pure in
   `@whetstone/domain` (`mistakeCategory.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
@@ -287,12 +290,13 @@ can navigate them from another package.
   After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
   nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
 - Voice diary: `src/features/diary/` (#246) — tap-and-talk capture that REUSES the session STT seam
-  (`transcribe`) and the shared `src/llm/` seam, then files a tidied, timestamped block under today's date in the
-  coach-readable learner history. `diaryTidy.ts` `createDiaryTidy(chat: LlmModel)` wraps the injected
+  (`transcribe`) and the shared `src/llm/` seam, then files a tidied, timestamped block under today's date,
+  including the chosen capture language, in the coach-readable learner history. `diaryTidy.ts`
+  `createDiaryTidy(chat: LlmModel)` wraps the injected
   model with the `@whetstone/domain` tidy prompt (drop fillers/false starts/repeats + light reorder,
   but preserve wording/meaning/voice — never upgrade vocabulary or translate; language-agnostic);
-  `diaryCommands.ts` (`createDiaryEntry` runs the tidy then persists, server-owned `entry_date`=today +
-  `created_at`; `updateDiaryEntry`/`deleteDiaryEntry` are user-scoped → 404 otherwise),
+  `diaryCommands.ts` (`createDiaryEntry` runs the tidy then persists the input mode + chosen language,
+  server-owned `entry_date`=today + `created_at`; `updateDiaryEntry`/`deleteDiaryEntry` are user-scoped → 404 otherwise),
   `diaryQueries.ts` (`listTimelinePage` pages distinct days newest-first via the exclusive `before`
   day-key cursor bounded by `limit` days; `listCalendarDates` returns days-with-entries in a range;
   `listDiaryEntriesForUser` is the coach-readable facet). `diaryRoutes.ts`:

@@ -7,6 +7,7 @@ import type { Transcription } from "@whetstone/contracts";
 // A recorded utterance to transcribe: a path to an audio file already saved on the server. Audio
 // never leaves the machine — it is handed to a local transcriber by path.
 export type SpeechAudio = Readonly<{
+  language?: string;
   path: string;
 }>;
 
