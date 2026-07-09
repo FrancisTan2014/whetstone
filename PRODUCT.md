@@ -649,12 +649,14 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 **freely — no streak, no guilt, no back-judge** (_rest is earned, not stolen_). On a low day the board
 **shrinks**; a missed day is recovered from, never punished. Three arms, one restrained surface:
 
-- **Capture — Timeline + Make Durable.** One capture entry point feeds the learner trace. Typed **Quick
-  Capture** saves a Timeline entry immediately and may asynchronously produce one high-confidence,
-  evidence-backed proposal ("Make this durable?") as a capped Today card. Tap-and-talk voice diary uses
-  the same Timeline spine: STT → an LLM **tidy pass (never a polish or rewrite)** → one entry under
-  today's date. Every capture preserves the raw input and feeds the learner history; only reviewed,
-  approved Quick Capture proposals become Recall items.
+- **Capture — one bilingual Tap-and-Talk.** A single capture entry point feeds the learner trace:
+  **tap and talk — or type — in your chosen language** (**中文 / EN**, manually selected, remembered).
+  STT → an LLM **tidy pass (never a polish or rewrite)** → **one diary entry** under today's date, saved
+  first and never lost. That same entry may then **propose** one high-confidence, evidence-backed
+  **"Make this durable?"** card (capped on Today); reviewed and approved, it becomes a Recall item.
+  _Journaling is the always-on value; the durable proposal is opportunistic._ Diary and Quick Capture
+  are **the same capture** — **Diary is a filtered view over the Timeline** (its designed model), not a
+  separate store. Every capture preserves the raw input and feeds the learner history.
 - **Coach — recall proposals.** Today's **due** items (the built **SM-2** scheduler + recall store) surfaced as
   a **gentle, capped, snoozeable proposal** — _proposals, not an obligation_; a backlog never piles into a
   wall. Completing an item feeds its grade back to SM-2. **FSRS is a future swap behind the same grade-driven
@@ -669,9 +671,10 @@ phrasing to native, or translate. Polishing would erase the raw production signa
 **Make Durable (the Quick Capture invariant).** Capture never blocks on the local model: the Timeline entry is
 saved first; proposal generation is asynchronous, timeout-safe, and allowed to produce nothing. A proposal is
 visible only when it is schema-valid, evidence-backed, deduped against existing Recall items, and high-confidence.
-The first Make Durable slice is Recall-first: typed Quick Capture → Timeline entry → at most one Today review
-card → Save/Edit/Not useful/Wrong → production-style Recall item. Reader captures, voice Quick Capture, external
-share, Practice/Connection artifacts, tag taxonomies, and a review inbox are out of this first slice.
+The capture path is Recall-first: capture → Timeline entry → at most one Today review card →
+Save/Edit/Not useful/Wrong → production-style Recall item — the **same path the voice diary capture runs**,
+now that Diary and Quick Capture are one surface rather than two. Reader captures, external share,
+Practice/Connection artifacts, tag taxonomies, and a review inbox remain out of scope.
 
 **Recall deposits from Quick Capture.** Existing recall feeders remain intentional: reading harvest and
 speech end-of-round deposits may continue to write directly to Recall. Quick Capture is the gated path because
