@@ -274,6 +274,62 @@ describe("htmlToDocument", () => {
     expect(JSON.stringify(list.node)).not.toContain("anchorId");
   });
 
+  // #550: a container block must retain the complete source-id → PM-node-id map — the top-level id AND
+  // every id nested inside — so a cross-reference to a nested target resolves and jumps precisely
+  // (ingestion used to keep only the top-level id and drop the rest, leaving ~72% of DDIA xrefs dead).
+  it("captures anchors for BOTH a container block's own id and its nested id-bearing node", () => {
+    const html = '<ul id="list-1"><li><p id="item-para">Nested paragraph.</p></li></ul>';
+
+    const { blocks } = htmlToDocument(html);
+    const list = blocksOfType(blocks, "bulletList")[0] as {
+      anchorId: string | null;
+      anchors: Array<{ anchor: string; nodeId: string }>;
+      id: string;
+      node: DocumentNodeJSON;
+    };
+
+    // The block's own id comes first, with nodeId === the block's PM id; the nested paragraph's id —
+    // the one ingestion used to lose — follows, keyed to the nested node's assigned PM id.
+    const nestedParagraph = findDescendant(list.node, "paragraph")!;
+    const nestedId = (nestedParagraph.attrs ?? {})["id"] as string;
+
+    expect(list.anchors).toEqual([
+      { anchor: "list-1", nodeId: list.id },
+      { anchor: "item-para", nodeId: nestedId }
+    ]);
+    // Purity (#366): the map is separate metadata; no anchorId leaks into the stored node JSON.
+    expect(JSON.stringify(list.node)).not.toContain("anchorId");
+  });
+
+  it("captures anchors for a nested heading inside a blockquote (element-precise target)", () => {
+    const html =
+      '<blockquote id="q-1"><h3 id="q-head">Quoted heading</h3><p>Body.</p></blockquote>';
+
+    const { blocks } = htmlToDocument(html);
+    const quote = blocksOfType(blocks, "blockquote")[0] as {
+      anchors: Array<{ anchor: string; nodeId: string }>;
+      id: string;
+      node: DocumentNodeJSON;
+    };
+
+    const nestedHeading = findDescendant(quote.node, "heading")!;
+    const headingId = (nestedHeading.attrs ?? {})["id"] as string;
+
+    expect(quote.anchors).toEqual([
+      { anchor: "q-1", nodeId: quote.id },
+      { anchor: "q-head", nodeId: headingId }
+    ]);
+  });
+
+  it("yields an empty anchors map for a block with no source ids", () => {
+    const { blocks } = htmlToDocument("<p>A paragraph without any id.</p>");
+    const [paragraph] = blocks as ReadonlyArray<{
+      anchors: Array<{ anchor: string; nodeId: string }>;
+    }>;
+
+    expect(paragraph!.anchors).toEqual([]);
+  });
+
   // #516: section fragment ids authored on a structural wrapper (`<div class="sect1" id>`,
   // `<section id>`) must hoist onto the section's leading block so the anchor survives ingestion.
   it("hoists a <div> section-wrapper id onto the section's leading block (its heading)", () => {

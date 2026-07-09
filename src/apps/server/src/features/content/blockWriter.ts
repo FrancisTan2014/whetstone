@@ -89,6 +89,7 @@ export async function writeReadingUnits(
   // Transitional PM block rows (#311): one row per top-level PM node, keyed by its stable id.
   const docBlockRows: {
     anchorId: string | null;
+    anchors: ReadonlyArray<{ anchor: string; nodeId: string }>;
     id: string;
     nodeJson: unknown;
     orderIndex: number;
@@ -121,6 +122,7 @@ export async function writeReadingUnits(
       linkRows.push({ fromEntryId: unitEntryId, toEntryId: docBlock.id, type: "contains" });
       docBlockRows.push({
         anchorId: docBlock.anchorId,
+        anchors: docBlock.anchors,
         id: docBlock.id,
         nodeJson: docBlock.node,
         orderIndex: docBlockIndex,
