@@ -1,6 +1,6 @@
 import type { DiaryEntryDto, TimelineDayDto } from "@whetstone/contracts";
 import { groupByDayDesc } from "@whetstone/domain";
-import { and, asc, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { timelineEntries } from "../../db/schema.js";
@@ -10,6 +10,18 @@ import { timelineEntries } from "../../db/schema.js";
 // Diary. The displayed text is the tidied form, falling back to the verbatim raw transcript when tidy has
 // not run (null), matching the create/edit projection.
 const diarySource = "diary" as const;
+
+// A diary read only surfaces entries ready to display: a synchronous capture (status null — typed diary /
+// legacy) or a voice capture the worker has finished (`ready`). An in-flight or failed async voice capture
+// (#565) — queued/transcribing/tidying/failed — is NOT shown in the Timeline/calendar (its transcript is
+// empty or absent); the frontend polls the voice-capture status endpoint for those instead.
+function diaryScope(userId: string) {
+  return and(
+    eq(timelineEntries.userId, userId),
+    eq(timelineEntries.captureSource, diarySource),
+    or(isNull(timelineEntries.processingStatus), eq(timelineEntries.processingStatus, "ready"))
+  );
+}
 
 // One timeline row enriched with its day key, ready for `groupByDayDesc`.
 type TimelineRow = Readonly<{
@@ -33,10 +45,7 @@ export async function listTimelinePage(
   // `before` is an exclusive cursor: the next page is the days STRICTLY before it (the oldest day already
   // shown), so a same-day row never repeats across pages. Day keys are fixed-width `YYYY-MM-DD`, so a
   // lexicographic `<` is an exact day comparison.
-  const scope = and(
-    eq(timelineEntries.userId, userId),
-    eq(timelineEntries.captureSource, diarySource)
-  );
+  const scope = diaryScope(userId);
   const dayFilter =
     before === undefined ? scope : and(scope, lt(timelineEntries.entryDate, before));
 
@@ -98,8 +107,7 @@ export async function listCalendarDates(
     .from(timelineEntries)
     .where(
       and(
-        eq(timelineEntries.userId, userId),
-        eq(timelineEntries.captureSource, diarySource),
+        diaryScope(userId),
         gte(timelineEntries.entryDate, from),
         lte(timelineEntries.entryDate, to)
       )
@@ -125,7 +133,7 @@ export async function listDiaryEntriesForUser(
       tidiedText: timelineEntries.tidiedText
     })
     .from(timelineEntries)
-    .where(and(eq(timelineEntries.userId, userId), eq(timelineEntries.captureSource, diarySource)))
+    .where(diaryScope(userId))
     .orderBy(desc(timelineEntries.createdAt));
 
   return rows.map((row) => ({

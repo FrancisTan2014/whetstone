@@ -37,7 +37,9 @@ export async function createTimelineCapture(
     rawInputText: request.rawInputText,
     tidiedText: request.tidiedText ?? null,
     language: request.language ?? null,
-    rawAudioPath: request.rawAudioPath ?? null
+    rawAudioPath: request.rawAudioPath ?? null,
+    processingStatus: null,
+    failureReason: null
   } as const;
 
   await dependencies.db.transaction(async (tx) => {

@@ -1,5 +1,4 @@
 import {
-  audioContentType,
   coachSayRequestSchema,
   endSessionRequestSchema,
   submitTurnRequestSchema,
@@ -21,10 +20,6 @@ export function registerSessionRoutes(
   server: FastifyInstance,
   dependencies: SessionDependencies
 ): void {
-  server.addContentTypeParser(audioContentType, { parseAs: "buffer" }, (_request, body, done) =>
-    done(null, body)
-  );
-
   server.post("/api/session/start", async (request) =>
     startSession(dependencies, request.server.currentUser.getCurrentUserId(), dependencies.now())
   );

@@ -1,10 +1,12 @@
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ProposalPayload } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
+import { entries, timelineEntries } from "../../db/schema.js";
 import { enrollRecallItem } from "../recall/recallCommands.js";
 import { getRecallItemForUser } from "../recall/recallQueries.js";
 import {
@@ -101,6 +103,36 @@ async function seedCapture(text: string, now: Date, userId = userA): Promise<str
     now
   );
   return entry.entryId;
+}
+
+// Seed an async voice capture (#565) directly with a chosen processing status, bypassing the worker.
+// `queued`/`transcribing`/`tidying`/`failed` are pending/terminal-failed states whose transcript is not
+// display-ready; only a `ready` (or synchronous null-status) diary row should be mineable by backfill.
+async function seedVoiceCapture(
+  text: string,
+  processingStatus: "queued" | "transcribing" | "tidying" | "ready" | "failed",
+  now: Date,
+  userId = userA
+): Promise<string> {
+  const entryId = `voice-${(sequence += 1)}`;
+  await context.db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: entryId, type: "timeline_entry" });
+    await tx.insert(timelineEntries).values({
+      entryId,
+      userId,
+      createdAt: now,
+      entryDate: now.toISOString().slice(0, 10),
+      inputMode: "voice",
+      captureSource: "diary",
+      rawInputText: text,
+      tidiedText: processingStatus === "ready" ? text : null,
+      language: "en",
+      rawAudioPath: `audio-${entryId}`,
+      processingStatus,
+      failureReason: processingStatus === "failed" ? "empty_transcript" : null
+    });
+  });
+  return entryId;
 }
 
 beforeEach(async () => {
@@ -438,5 +470,46 @@ describe("backfillMakeDurable", () => {
     expect(second.card?.timelineEntryId).toBe(goldId);
     const [candidate] = await listProposalCandidatesForUser(context.db, userA);
     expect(candidate?.status).toBe("visible");
+  });
+
+  it("excludes pending and failed voice captures from the backfill-eligible set (#565)", async () => {
+    await seedVoiceCapture("queued clip", "queued", t0);
+    await seedVoiceCapture("transcribing clip", "transcribing", t0);
+    await seedVoiceCapture("tidying clip", "tidying", t0);
+    await seedVoiceCapture("failed clip", "failed", t0);
+    const readyId = await seedVoiceCapture("a ready voice capture", "ready", t1);
+    const syncId = await seedCapture("a synchronous diary note", t1);
+
+    const eligible = await listBackfillableCaptures(context.db, userA, BACKFILL_SCAN_LIMIT);
+
+    // Only the display-ready voice capture and the synchronous (null-status) diary row qualify.
+    expect(eligible.map((capture) => capture.entryId).sort()).toEqual([readyId, syncId].sort());
+  });
+
+  it("never mines a pending voice capture, keeping it mineable once ready (#565)", async () => {
+    const voiceId = await seedVoiceCapture(captureText, "queued", t0);
+
+    // A provider that WOULD propose for this exact text — proving exclusion is by status, not content.
+    let calls = 0;
+    const provider: ProposalProvider = (rawText) => {
+      calls += 1;
+      return Promise.resolve(rawText === captureText ? attempt() : null);
+    };
+
+    const pending = await backfillMakeDurable(deps(provider), userA, t0);
+
+    expect(pending).toEqual({ card: null, scannedCount: 0 });
+    // The pending capture was never handed to the model, nor marked scanned or candidated.
+    expect(calls).toBe(0);
+    expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
+
+    // Once the worker marks it ready, the real transcript is still eligible and gets mined.
+    await context.db
+      .update(timelineEntries)
+      .set({ processingStatus: "ready", tidiedText: captureText })
+      .where(eq(timelineEntries.entryId, voiceId));
+
+    const afterReady = await backfillMakeDurable(deps(provider), userA, t1);
+    expect(afterReady.card?.timelineEntryId).toBe(voiceId);
   });
 });
