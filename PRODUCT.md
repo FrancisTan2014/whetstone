@@ -651,8 +651,9 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 
 - **Capture — one bilingual Tap-and-Talk.** A single capture entry point feeds the learner trace:
   **tap and talk — or type — in your chosen language** (**中文 / EN**, manually selected, remembered).
-  STT → an LLM **tidy pass (never a polish or rewrite)** → **one diary entry** under today's date, saved
-  first and never lost. That same entry may then **propose** one high-confidence, evidence-backed
+  Voice capture saves the raw audio first; STT → an LLM **tidy pass (never a polish or rewrite)** then
+  fills **one diary entry** under today's date. Typed capture saves text directly. That same entry may then
+  **propose** one high-confidence, evidence-backed
   **"Make this durable?"** card (capped on Today); reviewed and approved, it becomes a Recall item.
   _Journaling is the always-on value; the durable proposal is opportunistic._ Diary and Quick Capture
   are **the same capture** — **Diary is a filtered view over the Timeline** (its designed model), not a
@@ -667,6 +668,15 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 **Tidy, not polish (the diary's invariant).** Tidy = drop fillers/false starts/repeats and lightly reorder for
 readability while **preserving the speaker's wording, meaning, and voice** — never upgrade vocabulary, "fix"
 phrasing to native, or translate. Polishing would erase the raw production signal the coach needs.
+
+**Tap-and-Talk is asynchronous.** The durable boundary for voice capture is **audio saved**, not transcript
+ready. When the learner stops a clip, Whetstone stores the raw audio, language, and capture metadata
+immediately, creates a pending diary Timeline row under today's date, and returns a saved state so the learner
+can keep talking. A single background worker processes pending voice captures **one at a time, in capture
+order**: transcribe → tidy → update the Timeline text → run the Make Durable proposal gate. The UI preserves
+capture order, shows `queued` / `transcribing` / `tidying` / `ready` / `failed` states, polls for updates, and
+offers retry on failure while keeping the raw audio. The learner never waits for STT or the local model before
+recording the next thought.
 
 **Make Durable (the Quick Capture invariant).** Capture never blocks on the local model: the Timeline entry is
 saved first; proposal generation is asynchronous, timeout-safe, and allowed to produce nothing. A proposal is
