@@ -17,7 +17,12 @@ vi.mock("../makeDurable/makeDurableApi", () => ({
   runMakeDurableBackfill: vi.fn()
 }));
 
-vi.mock("../session/sessionApi", () => ({ transcribe: vi.fn() }));
+vi.mock("../capture/voiceCaptureApi", () => ({
+  submitVoiceCapture: vi.fn(),
+  fetchActiveVoiceCaptures: vi.fn(),
+  fetchVoiceCaptureStatus: vi.fn(),
+  retryVoiceCapture: vi.fn()
+}));
 
 import type {
   DiaryCaptureResultDto,
@@ -27,7 +32,7 @@ import type {
 } from "@whetstone/contracts";
 import { toDayKey } from "@whetstone/domain";
 
-import { transcribe } from "../session/sessionApi";
+import { submitVoiceCapture, fetchActiveVoiceCaptures } from "../capture/voiceCaptureApi";
 import { fetchMakeDurableCards } from "../makeDurable/makeDurableApi";
 import {
   submitDiaryCapture,
@@ -45,7 +50,8 @@ const mockedSubmit = vi.mocked(submitDiaryCapture);
 const mockedFetchCards = vi.mocked(fetchMakeDurableCards);
 const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
-const mockedTranscribe = vi.mocked(transcribe);
+const mockedVoiceSubmit = vi.mocked(submitVoiceCapture);
+const mockedVoiceActive = vi.mocked(fetchActiveVoiceCaptures);
 
 // Dates are built inside the diary's current month so the date-jump calendar actually renders their
 // buttons (the grid only draws the visible month).
@@ -143,6 +149,7 @@ beforeEach(() => {
   mockedTimeline.mockResolvedValue({ days: [] });
   mockedCalendar.mockResolvedValue({ dates: [] });
   mockedFetchCards.mockResolvedValue([]);
+  mockedVoiceActive.mockResolvedValue([]);
   vi.stubGlobal("IntersectionObserver", StubObserver);
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -197,9 +204,19 @@ describe("DiaryPage timeline", () => {
 });
 
 describe("DiaryPage capture", () => {
-  it("records, transcribes, tidies and files a new entry under today", async () => {
-    mockedTranscribe.mockResolvedValue({ transcript: "um hello there", words: [] });
-    mockedSubmit.mockResolvedValue(captureResult(entryDto("new-1", d(30), "hello there")));
+  it("saves a recorded voice capture first and shows it processing", async () => {
+    mockedVoiceSubmit.mockResolvedValue({ id: "vc-1", status: "queued" });
+    mockedVoiceActive.mockResolvedValueOnce([]).mockResolvedValue([
+      {
+        createdAt: `${d(30)}T08:00:00.000Z`,
+        entryDate: d(30),
+        failureReason: null,
+        id: "vc-1",
+        language: "en",
+        status: "queued",
+        text: null
+      }
+    ]);
     const { capture, start, stop } = makeCapture();
 
     await renderReady(capture);
@@ -210,43 +227,22 @@ describe("DiaryPage capture", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Stop & save" }));
 
-    await screen.findByText("hello there");
+    await screen.findByText("Saved — waiting to transcribe…");
     expect(stop).toHaveBeenCalledOnce();
-    expect(mockedTranscribe).toHaveBeenCalledWith(expect.any(Blob), "en");
-    expect(mockedSubmit).toHaveBeenCalledWith("um hello there", "voice", "en");
+    expect(mockedVoiceSubmit).toHaveBeenCalledWith(expect.any(Blob), "en");
+    // Saved-first: the audio is filed immediately; no synchronous diary text is written on stop.
+    expect(mockedSubmit).not.toHaveBeenCalled();
   });
 
-  it("warns and saves nothing when the transcript is blank", async () => {
-    mockedTranscribe.mockResolvedValue({ transcript: "   ", words: [] });
-    const { capture } = makeCapture();
+  it("warns and saves nothing when no speech is caught", async () => {
+    const { capture } = makeCapture({ stop: async () => new Blob() });
 
     await renderReady(capture);
     await userEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await userEvent.click(screen.getByRole("button", { name: "Stop & save" }));
 
     await screen.findByText(/Didn't catch any speech/);
-    expect(mockedSubmit).not.toHaveBeenCalled();
-  });
-
-  it("takes the no-speech retry and keeps typing usable when the capture is empty audio (#467)", async () => {
-    // A no-utterance stop settles empty audio; DiaryPage must not post it to /transcribe (which 400s) or
-    // hang in "transcribing" — it shows the calm retry, returns to idle, and leaves the typed box usable.
-    const { capture, stop } = makeCapture({ stop: async () => new Blob() });
-
-    await renderReady(capture);
-    await userEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-    await userEvent.click(screen.getByRole("button", { name: "Stop & save" }));
-
-    await screen.findByText(/Didn't catch any speech/);
-    expect(stop).toHaveBeenCalledOnce();
-    expect(mockedTranscribe).not.toHaveBeenCalled();
-    expect(mockedSubmit).not.toHaveBeenCalled();
-    // The typed fallback stays usable (not stuck busy).
-    const textbox = screen.getByLabelText("Capture text");
-    await userEvent.type(textbox, "typed fallback");
-    expect((screen.getByRole("button", { name: "Capture" }) as HTMLButtonElement).disabled).toBe(
-      false
-    );
+    expect(mockedVoiceSubmit).not.toHaveBeenCalled();
   });
 
   it("warns when the microphone cannot be opened", async () => {
@@ -258,8 +254,8 @@ describe("DiaryPage capture", () => {
     await screen.findByText(/Couldn't reach the microphone/);
   });
 
-  it("warns when transcription or saving fails", async () => {
-    mockedTranscribe.mockRejectedValue(new Error("stt down"));
+  it("warns when saving the recorded audio fails", async () => {
+    mockedVoiceSubmit.mockRejectedValue(new Error("save down"));
     const { capture } = makeCapture();
 
     await renderReady(capture);

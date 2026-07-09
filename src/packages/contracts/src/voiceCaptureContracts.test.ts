@@ -74,7 +74,9 @@ describe("parseVoiceCaptureListDto", () => {
   };
 
   it("round-trips a list of pending captures", () => {
-    const list = { captures: [queued, { ...queued, id: "cap-2", status: "transcribing" as const }] };
+    const list = {
+      captures: [queued, { ...queued, id: "cap-2", status: "transcribing" as const }]
+    };
     expect(parseVoiceCaptureListDto(list)).toEqual(list);
   });
 

@@ -43,9 +43,7 @@ export async function submitVoiceCapture(
 // Rebuild the pending UI on load/refresh: the user's still-in-flight and failed captures, oldest first.
 // Ready captures are omitted — they already appear in the Timeline as ordinary entries.
 export async function fetchActiveVoiceCaptures(): Promise<ReadonlyArray<VoiceCaptureStatusDto>> {
-  const { captures } = parseVoiceCaptureListDto(
-    await requestJson(apiUrl("/diary/voice-captures"))
-  );
+  const { captures } = parseVoiceCaptureListDto(await requestJson(apiUrl("/diary/voice-captures")));
   return captures;
 }
 

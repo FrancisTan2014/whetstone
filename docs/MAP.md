@@ -138,10 +138,15 @@ can navigate them from another package.
   used by both Today and Diary. It owns the remembered 中文/EN capture-language selector, posts through
   `diaryApi.ts` `submitDiaryCapture(text, inputMode, language)` to `/api/diary/entries`, prepends an
   optional returned review card, and keeps the Save/Edit/Not-useful/Wrong card behavior unchanged. Voice
-  records via the coverage-excluded browser boundary `captureVoice.ts` (wraps the shared `liveCapture`
-  seam into one-shot record/stop), transcribes with the session `transcribe(audio, language)` STT seam,
-  then submits the transcript as a `voice` capture; a missing mic/STT falls back to the always-present typed
-  box. `recall_items`
+  is **saved-first** (#566): it records via the coverage-excluded browser boundary `captureVoice.ts` (wraps
+  the shared `liveCapture` seam into one-shot record/stop), then the reusable `useVoiceCaptures.ts` hook
+  submits the raw audio through `voiceCaptureApi.ts` (`submitVoiceCapture`/`fetchActiveVoiceCaptures`/
+  `fetchVoiceCaptureStatus`/`retryVoiceCapture` over `/api/diary/voice-captures*`), rebuilds the pending
+  list from the server on mount/submit, self-schedules polling of non-terminal captures until each is
+  `ready` (handed to `onCaptured` → Timeline in capture order) or `failed` (kept visible with a Retry),
+  and drives a `beforeunload` guard over the only-lossy record/save window. Empty audio is the calm
+  no-speech retry (never saved); status copy lives in the coverage-excluded `voiceCaptureLabels.tokens.ts`.
+  A missing mic falls back to the always-present typed box. `recall_items`
   carries nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
   `source_proposal_candidate_id`); the `timeline_entry` type is in `@whetstone/domain` (`entry.ts`),
   DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`). **Backfill (#456):**
@@ -319,7 +324,10 @@ can navigate them from another package.
   missing audio → `failed` + `failure_reason` with audio kept; `requeueStalledVoiceCaptures` resets
   in-flight `transcribing`/`tidying` rows to `queued` at startup). `diaryRoutes.ts` adds
   `POST /api/diary/voice-captures`, `GET /api/diary/voice-captures/:id`,
-  `POST /api/diary/voice-captures/:id/retry`. `diaryQueries.ts` `diaryScope()` filters Timeline/calendar/
+  `POST /api/diary/voice-captures/:id/retry`, and `GET /api/diary/voice-captures`
+  (`listActiveVoiceCaptures` — the exact complement of `diaryScope`: the user's `capture_source="diary"`
+  captures with `processing_status IS NOT NULL AND != "ready"`, oldest-first — so the client can rebuild
+  its pending/failed rows, #566). `diaryQueries.ts` `diaryScope()` filters Timeline/calendar/
   coach-history reads to `processing_status IS NULL OR = "ready"` (pending/failed captures stay hidden
   until ready). Wired in `index.ts`: `saveVoiceCaptureAudio` durable boundary + a `setInterval` drain loop
   over `processNextVoiceCapture`, `requeueStalledVoiceCaptures` at startup. Contracts in

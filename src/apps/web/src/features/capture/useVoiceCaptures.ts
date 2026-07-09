@@ -93,13 +93,16 @@ export function useVoiceCaptures(options: UseVoiceCapturesOptions = {}): UseVoic
   const [submitting, setSubmitting] = useState(false);
 
   // Injected api / onReady kept in refs so the poll loop always sees the latest without re-subscribing.
+  // The latest committed captures are likewise mirrored into a ref the interval callback reads (it would
+  // otherwise close over a stale render). Refs are synced in an effect (after commit), never during render.
   const apiRef = useRef(options.api ?? defaultApi);
-  apiRef.current = options.api ?? defaultApi;
   const onReadyRef = useRef(options.onReady);
-  onReadyRef.current = options.onReady;
-  // The latest committed captures, read inside the interval callback (which closes over a stale render).
   const capturesRef = useRef(captures);
-  capturesRef.current = captures;
+  useEffect(() => {
+    apiRef.current = options.api ?? defaultApi;
+    onReadyRef.current = options.onReady;
+    capturesRef.current = captures;
+  });
 
   // Rebuild the pending list from the server (mount + after each submit): the server is the single source
   // of truth, so a refresh recovers saved pending/failed captures with no local-only queue state.

@@ -194,7 +194,10 @@ async function getStatus(id: string): Promise<{ code: number; body: VoiceCapture
   return { code: response.statusCode, body: response.json() as VoiceCaptureStatusDto };
 }
 
-async function listActive(): Promise<{ code: number; captures: ReadonlyArray<VoiceCaptureStatusDto> }> {
+async function listActive(): Promise<{
+  code: number;
+  captures: ReadonlyArray<VoiceCaptureStatusDto>;
+}> {
   const response = await route.server.inject({ method: "GET", url: "/api/diary/voice-captures" });
   return {
     code: response.statusCode,
@@ -436,11 +439,7 @@ describe("listActiveVoiceCaptures", () => {
 
     const active = await listActiveVoiceCaptures(db, DEFAULT_USER_ID);
 
-    expect(active.map((capture) => capture.id)).toEqual([
-      "a-transcribing",
-      "a-failed",
-      "a-queued"
-    ]);
+    expect(active.map((capture) => capture.id)).toEqual(["a-transcribing", "a-failed", "a-queued"]);
   });
 
   it("returns an empty list when nothing is pending", async () => {

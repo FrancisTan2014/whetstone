@@ -15,8 +15,11 @@ vi.mock("../makeDurable/makeDurableApi", () => ({
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
 }));
-vi.mock("../session/sessionApi", () => ({
-  transcribe: vi.fn()
+vi.mock("../capture/voiceCaptureApi", () => ({
+  submitVoiceCapture: vi.fn(),
+  fetchActiveVoiceCaptures: vi.fn(() => Promise.resolve([])),
+  fetchVoiceCaptureStatus: vi.fn(),
+  retryVoiceCapture: vi.fn()
 }));
 
 import type {
