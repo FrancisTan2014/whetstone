@@ -702,3 +702,148 @@ describe("PmDocument reference links (#368)", () => {
     expect(container.querySelector("button.readerLink")?.textContent).toBe("周髀");
   });
 });
+
+describe("PmDocument element-precise anchor stamping (#550)", () => {
+  // A blockquote (a CONTAINER top-level block) with a NESTED heading. Ingestion records BOTH the
+  // block's own id and the nested heading's id in the block's anchor map; the reader passes that map
+  // so the renderer stamps `data-anchor-id` onto the precise nested element, not just the block top.
+  const containerDoc = assignNodeIds({
+    content: [
+      {
+        content: [
+          {
+            attrs: { level: 3 },
+            content: [{ text: "Nested target", type: "text" }],
+            type: "heading"
+          },
+          { content: [{ text: "Body prose.", type: "text" }], type: "paragraph" }
+        ],
+        type: "blockquote"
+      }
+    ],
+    type: "doc"
+  } as unknown as DocumentNodeJSON);
+
+  // The blockquote is the single top-level block; its nested heading is the element a cross-reference
+  // to `#nested-target` must land on.
+  const blockNode = (containerDoc.content ?? [])[0] as DocumentNodeJSON;
+  const blockId = blockNode.attrs?.["id"] as string;
+  const headingNode = (blockNode.content ?? [])[0] as DocumentNodeJSON;
+  const headingId = headingNode.attrs?.["id"] as string;
+
+  it("stamps data-anchor-id onto the precise nested element, not just the block top", () => {
+    const anchorByNodeId = new Map<string, string>([
+      [blockId, "block-top"],
+      [headingId, "nested-target"]
+    ]);
+    const { container } = render(<PmBlock anchorByNodeId={anchorByNodeId} node={blockNode} />);
+
+    // The nested heading carries its own source anchor, element-precise.
+    const heading = container.querySelector("h3");
+    expect(heading?.getAttribute("data-anchor-id")).toBe("nested-target");
+    // The block's own top-level element carries the block-top anchor (nodeId === block id).
+    expect(container.querySelector("blockquote")?.getAttribute("data-anchor-id")).toBe("block-top");
+  });
+
+  it("leaves an id-bearing node unstamped when the anchor map does not know it", () => {
+    const anchorByNodeId = new Map<string, string>([[blockId, "block-top"]]);
+    const { container } = render(<PmBlock anchorByNodeId={anchorByNodeId} node={blockNode} />);
+
+    // The heading's id is not in the map, so it gets no source anchor stamp.
+    expect(container.querySelector("h3")?.hasAttribute("data-anchor-id")).toBe(false);
+  });
+
+  it("stamps nothing when no anchor map is provided (a raw render)", () => {
+    const { container } = render(<PmBlock node={blockNode} />);
+
+    expect(container.querySelector("h3")?.hasAttribute("data-anchor-id")).toBe(false);
+    expect(container.querySelector("blockquote")?.hasAttribute("data-anchor-id")).toBe(false);
+  });
+});
+
+describe("PmDocument resolvability inert gate (#550)", () => {
+  const markerDoc = {
+    content: [
+      {
+        content: [
+          { text: "See ", type: "text" },
+          {
+            attrs: { label: "5", refId: "note5", targetSourceFile: "text/notes.xhtml" },
+            type: "footnoteMarker"
+          }
+        ],
+        type: "paragraph"
+      }
+    ],
+    type: "doc"
+  } as unknown as DocumentNodeJSON;
+
+  const linkDoc = {
+    content: [
+      {
+        content: [
+          {
+            marks: [
+              {
+                attrs: {
+                  anchor: "ch_two",
+                  inert: false,
+                  kind: "href",
+                  refFile: null,
+                  targetSourceFile: "text/ch02.html"
+                },
+                type: "link"
+              }
+            ],
+            text: "Chapter 2",
+            type: "text"
+          }
+        ],
+        type: "paragraph"
+      }
+    ],
+    type: "doc"
+  } as unknown as DocumentNodeJSON;
+
+  it("renders a wired-but-unresolvable footnote marker inert (dead target)", () => {
+    const { container } = render(
+      <PmBlock canResolve={() => false} node={markerDoc} onActivateAnchor={vi.fn()} />
+    );
+
+    const sup = container.querySelector("sup.readerNoteref");
+    expect(sup?.textContent).toBe("5");
+    expect(sup?.querySelector("button")).toBeNull();
+  });
+
+  it("renders a resolvable footnote marker as a live control and passes its target file", () => {
+    const onActivateAnchor = vi.fn();
+    const canResolve = vi.fn(() => true);
+    const { container } = render(
+      <PmBlock canResolve={canResolve} node={markerDoc} onActivateAnchor={onActivateAnchor} />
+    );
+
+    const button = container.querySelector("button.readerXref");
+    expect(button).not.toBeNull();
+    fireEvent.click(button as HTMLElement);
+    expect(onActivateAnchor).toHaveBeenCalledWith("note5", "text/notes.xhtml");
+    // The gate is consulted with the reference's (anchor, targetSourceFile).
+    expect(canResolve).toHaveBeenCalledWith("note5", "text/notes.xhtml");
+  });
+
+  it("renders a wired-but-unresolvable reference link inert (dead target)", () => {
+    const { container } = render(
+      <PmBlock canResolve={() => false} node={linkDoc} onActivateAnchor={vi.fn()} />
+    );
+
+    expect(container.querySelector("span.readerLink")).not.toBeNull();
+    expect(container.querySelector("button.readerLink")).toBeNull();
+  });
+
+  it("renders a resolvable reference link as a live control", () => {
+    const { container } = render(
+      <PmBlock canResolve={() => true} node={linkDoc} onActivateAnchor={vi.fn()} />
+    );
+
+    expect(container.querySelector("button.readerLink")?.textContent).toBe("Chapter 2");
+  });
+});

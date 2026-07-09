@@ -6,7 +6,7 @@ import {
   renderJSONContentToReactElement
 } from "@tiptap/static-renderer/json/react";
 import type { DocumentNodeJSON } from "@whetstone/document";
-import { createContext, useContext } from "react";
+import { createContext, useContext, useMemo } from "react";
 
 import { calloutKindClass, headingTag } from "./PmDocument.tokens";
 import { stripFlankingFootnoteBrackets } from "./pmFootnotes";
@@ -53,11 +53,21 @@ const ActivateAnchorContext = createContext<
   ((anchor: string, targetSourceFile?: string) => void) | undefined
 >(undefined);
 
-// A footnote/endnote reference marker. With a `refId` and the reader's jump wired, it renders an
-// accent-styled, keyboard-focusable superscript control that scrolls+highlights its footnote target
-// (reusing `onActivateAnchor`, the same block-jump the mdast path uses); the target's own back-link
-// returns here via the derived `${refId}-ref` anchor stamped on the control. Without a resolvable
-// `refId` or a jump handler it is a clean, non-interactive superscript number — no dead button.
+// Whether a same-work reference's (targetSourceFile, anchor) has a live target in the work anchor
+// index (#550). Threaded like `ActivateAnchorContext` because the renderer builds its mapping at
+// module scope. A footnote marker / link mark consults it to render INERT when its target cannot be
+// resolved — never a live-but-dead control. Absent (a raw render with no reader wiring) leaves the
+// gate open so a bare `<PmDocument>` keeps rendering markers as before.
+const CanResolveContext = createContext<
+  ((anchor: string, targetSourceFile?: string) => boolean) | undefined
+>(undefined);
+
+// A footnote/endnote reference marker. With a `refId`, the reader's jump wired, AND a resolvable
+// target (#550), it renders an accent-styled, keyboard-focusable superscript control that
+// scrolls+highlights its footnote target (reusing `onActivateAnchor`, the same block-jump the mdast
+// path uses); the target's own back-link returns here via the derived `${refId}-ref` anchor stamped on
+// the control. Without a resolvable `refId`, a jump handler, or a target that resolves in the index, it
+// is a clean, non-interactive superscript number — no dead button.
 function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
   const label = stringAttr(node, "label");
   const refId = stringAttr(node, "refId");
@@ -66,9 +76,12 @@ function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
   // in-file reference, which resolves against the current unit.
   const targetSourceFile = stringAttr(node, "targetSourceFile");
   const onActivateAnchor = useContext(ActivateAnchorContext);
+  const canResolve = useContext(CanResolveContext);
   const text = label ?? refId ?? "";
+  const resolvable =
+    refId !== undefined && (canResolve === undefined || canResolve(refId, targetSourceFile));
 
-  if (refId === undefined || onActivateAnchor === undefined) {
+  if (refId === undefined || onActivateAnchor === undefined || !resolvable) {
     return (
       <sup
         className="readerNoteref"
@@ -95,10 +108,11 @@ function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
 
 // A same-work reference link mark (#368). It keeps its text IN the paragraph's inline run (a mark, not
 // an atom) so CJK inter-character spacing is preserved (`见周髀之术`, #340/#358). With a resolvable
-// `anchor` and the reader's jump wired, it renders a focusable inline control that scrolls+highlights
-// its target via `onActivateAnchor` — the SAME work-scoped resolution the footnote/endnote markers use
-// (#366), threading the mark's `targetSourceFile` so a cross-chapter reference lands in the right unit.
-// An INERT link (external/cross-work), a link with no anchor, or a raw render with no jump wired stays
+// `anchor`, the reader's jump wired, AND a live target in the index (#550), it renders a focusable
+// inline control that scrolls+highlights its target via `onActivateAnchor` — the SAME work-scoped
+// resolution the footnote/endnote markers use (#366), threading the mark's `targetSourceFile` so a
+// cross-chapter reference lands in the right unit. An INERT link (external/cross-work), a link with no
+// anchor, a raw render with no jump wired, OR a same-work link whose target does not resolve stays
 // styled but non-navigating text: a `<span>`, never a live `<a href>` that could hijack the SPA route.
 function LinkMark({
   children,
@@ -111,8 +125,11 @@ function LinkMark({
   const targetSourceFile = markStringAttr(mark, "targetSourceFile");
   const inert = mark.attrs?.["inert"] === true;
   const onActivateAnchor = useContext(ActivateAnchorContext);
+  const canResolve = useContext(CanResolveContext);
+  const resolvable =
+    anchor !== undefined && (canResolve === undefined || canResolve(anchor, targetSourceFile));
 
-  if (inert || anchor === undefined || onActivateAnchor === undefined) {
+  if (inert || anchor === undefined || onActivateAnchor === undefined || !resolvable) {
     return <span className="readerLink readerLink--inert">{children}</span>;
   }
 
@@ -142,142 +159,175 @@ function topLevelBlockAttrs(
   return id === undefined ? {} : { "data-block-id": id };
 }
 
-const nodeMapping: Record<string, PmNodeRenderer> = {
-  blockquote: ({ children, node, parent }) => (
-    <blockquote {...topLevelBlockAttrs(node, parent)}>{children}</blockquote>
-  ),
-  bulletList: ({ children, node, parent }) => (
-    <ul {...topLevelBlockAttrs(node, parent)}>{children}</ul>
-  ),
-  callout: ({ children, node, parent }) => {
-    const kind = stringAttr(node, "kind");
-    const marker = stringAttr(node, "marker") ?? numberAttr(node, "marker");
-    const modifier = calloutKindClass(kind);
-    const className = modifier === undefined ? "readerCallout" : `readerCallout ${modifier}`;
+// The map from a block's stable PM node ids to the source-HTML anchor each id-bearing element carries
+// (#550), threaded to the renderer so it can stamp `data-anchor-id` onto the PRECISE nested element —
+// not just the top-level block — for element-precise cross-reference jumps.
+export type AnchorByNodeId = ReadonlyMap<string, string>;
 
-    return (
-      <aside
-        className={className}
-        {...(kind === undefined ? {} : { "data-callout-kind": kind })}
-        {...topLevelBlockAttrs(node, parent)}
-      >
-        {marker === undefined ? null : (
-          <span className="readerCalloutMarker">{String(marker)}</span>
-        )}
+// Element-precise anchor stamp: when this node's stable id is one the block's anchor map knows, stamp
+// its source-HTML anchor as `data-anchor-id` so a cross-reference resolving to this element scrolls to
+// it exactly. Applies at any depth (a nested heading/figure/anchor), unlike `data-block-id` which only
+// addresses the top-level block. Kept as a render-time DOM attribute; the stored node JSON stays pure.
+function anchorIdAttrs(
+  node: PmNode,
+  anchorByNodeId: AnchorByNodeId
+): { "data-anchor-id"?: string } {
+  const id = stringAttr(node, "id");
+
+  if (id === undefined) {
+    return {};
+  }
+
+  const anchor = anchorByNodeId.get(id);
+  return anchor === undefined ? {} : { "data-anchor-id": anchor };
+}
+
+// Build the per-node React mapping, closing over the block's anchor map so every block-level renderer
+// stamps both its addressable `data-block-id` (top-level only) and, at any depth, the element-precise
+// `data-anchor-id` (#550). Rebuilt per render from a stable map, so memoized blocks do not churn.
+function createNodeMapping(anchorByNodeId: AnchorByNodeId): Record<string, PmNodeRenderer> {
+  // The combined block attributes: the addressable top-level id plus the element-precise anchor stamp.
+  const blockAttrs = (
+    node: PmNode,
+    parent: PmNode | undefined
+  ): { "data-anchor-id"?: string; "data-block-id"?: string } => ({
+    ...topLevelBlockAttrs(node, parent),
+    ...anchorIdAttrs(node, anchorByNodeId)
+  });
+
+  return {
+    blockquote: ({ children, node, parent }) => (
+      <blockquote {...blockAttrs(node, parent)}>{children}</blockquote>
+    ),
+    bulletList: ({ children, node, parent }) => <ul {...blockAttrs(node, parent)}>{children}</ul>,
+    callout: ({ children, node, parent }) => {
+      const kind = stringAttr(node, "kind");
+      const marker = stringAttr(node, "marker") ?? numberAttr(node, "marker");
+      const modifier = calloutKindClass(kind);
+      const className = modifier === undefined ? "readerCallout" : `readerCallout ${modifier}`;
+
+      return (
+        <aside
+          className={className}
+          {...(kind === undefined ? {} : { "data-callout-kind": kind })}
+          {...blockAttrs(node, parent)}
+        >
+          {marker === undefined ? null : (
+            <span className="readerCalloutMarker">{String(marker)}</span>
+          )}
+          {children}
+        </aside>
+      );
+    },
+    codeBlock: ({ children, node, parent }) => {
+      const language = stringAttr(node, "language");
+
+      return (
+        <pre {...blockAttrs(node, parent)}>
+          <code {...(language === undefined ? {} : { "data-language": language })}>{children}</code>
+        </pre>
+      );
+    },
+    definitionDescription: ({ children }) => <dd>{children}</dd>,
+    definitionList: ({ children, node, parent }) => (
+      <dl {...blockAttrs(node, parent)}>{children}</dl>
+    ),
+    definitionTerm: ({ children }) => <dt>{children}</dt>,
+    doc: ({ children }) => <div className="reader pmDocument">{children}</div>,
+    figure: ({ children, node, parent }) => (
+      <figure className="readerFigure" {...blockAttrs(node, parent)}>
         {children}
-      </aside>
-    );
-  },
-  codeBlock: ({ children, node, parent }) => {
-    const language = stringAttr(node, "language");
+      </figure>
+    ),
+    // The image is display-only and never fetched in v0 (mirrors the mdast reader, which dropped
+    // `<img>`): an inert placeholder exposes the alt text but issues no network request, and the
+    // figure's caption carries the readable content.
+    figureCaption: ({ children }) => (
+      <figcaption className="readerFigureCaption">{children}</figcaption>
+    ),
+    footnoteMarker: ({ node }) => <FootnoteMarker node={node} />,
+    footnoteTarget: ({ children, node, parent }) => {
+      const label = stringAttr(node, "label");
+      const refId = stringAttr(node, "refId");
 
-    return (
-      <pre {...topLevelBlockAttrs(node, parent)}>
-        <code {...(language === undefined ? {} : { "data-language": language })}>{children}</code>
+      return (
+        <aside
+          className="readerFootnoteTarget"
+          {...(refId === undefined ? {} : { "data-footnote-id": refId })}
+          {...blockAttrs(node, parent)}
+        >
+          {label === undefined ? null : <span className="readerFootnoteLabel">{label}</span>}
+          {children}
+        </aside>
+      );
+    },
+    heading: ({ children, node, parent }) => {
+      const Tag = headingTag(numberAttr(node, "level"));
+      return <Tag {...blockAttrs(node, parent)}>{children}</Tag>;
+    },
+    image: ({ node }) => (
+      <span
+        aria-label={stringAttr(node, "alt") ?? ""}
+        className="readerFigureImage"
+        data-pm-image=""
+        role="img"
+      />
+    ),
+    listItem: ({ children }) => <li>{children}</li>,
+    orderedList: ({ children, node, parent }) => {
+      const start = numberAttr(node, "start");
+
+      return (
+        <ol
+          {...blockAttrs(node, parent)}
+          {...(start === undefined || start === 1 ? {} : { start })}
+        >
+          {children}
+        </ol>
+      );
+    },
+    paragraph: ({ children, node, parent }) => <p {...blockAttrs(node, parent)}>{children}</p>,
+    table: ({ children, node, parent }) => (
+      <table {...blockAttrs(node, parent)}>
+        <tbody>{children}</tbody>
+      </table>
+    ),
+    tableCell: ({ children, node }) => {
+      const colSpan = numberAttr(node, "colspan");
+      const rowSpan = numberAttr(node, "rowspan");
+
+      return (
+        <td
+          {...(colSpan === undefined ? {} : { colSpan })}
+          {...(rowSpan === undefined ? {} : { rowSpan })}
+        >
+          {children}
+        </td>
+      );
+    },
+    tableHeader: ({ children, node }) => {
+      const colSpan = numberAttr(node, "colspan");
+      const rowSpan = numberAttr(node, "rowspan");
+
+      return (
+        <th
+          scope="col"
+          {...(colSpan === undefined ? {} : { colSpan })}
+          {...(rowSpan === undefined ? {} : { rowSpan })}
+        >
+          {children}
+        </th>
+      );
+    },
+    tableRow: ({ children }) => <tr>{children}</tr>,
+    text: ({ node }) => node.text ?? null,
+    unknown: ({ node, parent }) => (
+      <pre className="readerUnknown" data-pm-unknown="" {...blockAttrs(node, parent)}>
+        {stringAttr(node, "html") ?? ""}
       </pre>
-    );
-  },
-  definitionDescription: ({ children }) => <dd>{children}</dd>,
-  definitionList: ({ children, node, parent }) => (
-    <dl {...topLevelBlockAttrs(node, parent)}>{children}</dl>
-  ),
-  definitionTerm: ({ children }) => <dt>{children}</dt>,
-  doc: ({ children }) => <div className="reader pmDocument">{children}</div>,
-  figure: ({ children, node, parent }) => (
-    <figure className="readerFigure" {...topLevelBlockAttrs(node, parent)}>
-      {children}
-    </figure>
-  ),
-  // The image is display-only and never fetched in v0 (mirrors the mdast reader, which dropped
-  // `<img>`): an inert placeholder exposes the alt text but issues no network request, and the
-  // figure's caption carries the readable content.
-  figureCaption: ({ children }) => (
-    <figcaption className="readerFigureCaption">{children}</figcaption>
-  ),
-  footnoteMarker: ({ node }) => <FootnoteMarker node={node} />,
-  footnoteTarget: ({ children, node, parent }) => {
-    const label = stringAttr(node, "label");
-    const refId = stringAttr(node, "refId");
-
-    return (
-      <aside
-        className="readerFootnoteTarget"
-        {...(refId === undefined ? {} : { "data-footnote-id": refId })}
-        {...topLevelBlockAttrs(node, parent)}
-      >
-        {label === undefined ? null : <span className="readerFootnoteLabel">{label}</span>}
-        {children}
-      </aside>
-    );
-  },
-  heading: ({ children, node, parent }) => {
-    const Tag = headingTag(numberAttr(node, "level"));
-    return <Tag {...topLevelBlockAttrs(node, parent)}>{children}</Tag>;
-  },
-  image: ({ node }) => (
-    <span
-      aria-label={stringAttr(node, "alt") ?? ""}
-      className="readerFigureImage"
-      data-pm-image=""
-      role="img"
-    />
-  ),
-  listItem: ({ children }) => <li>{children}</li>,
-  orderedList: ({ children, node, parent }) => {
-    const start = numberAttr(node, "start");
-
-    return (
-      <ol
-        {...topLevelBlockAttrs(node, parent)}
-        {...(start === undefined || start === 1 ? {} : { start })}
-      >
-        {children}
-      </ol>
-    );
-  },
-  paragraph: ({ children, node, parent }) => (
-    <p {...topLevelBlockAttrs(node, parent)}>{children}</p>
-  ),
-  table: ({ children, node, parent }) => (
-    <table {...topLevelBlockAttrs(node, parent)}>
-      <tbody>{children}</tbody>
-    </table>
-  ),
-  tableCell: ({ children, node }) => {
-    const colSpan = numberAttr(node, "colspan");
-    const rowSpan = numberAttr(node, "rowspan");
-
-    return (
-      <td
-        {...(colSpan === undefined ? {} : { colSpan })}
-        {...(rowSpan === undefined ? {} : { rowSpan })}
-      >
-        {children}
-      </td>
-    );
-  },
-  tableHeader: ({ children, node }) => {
-    const colSpan = numberAttr(node, "colspan");
-    const rowSpan = numberAttr(node, "rowspan");
-
-    return (
-      <th
-        scope="col"
-        {...(colSpan === undefined ? {} : { colSpan })}
-        {...(rowSpan === undefined ? {} : { rowSpan })}
-      >
-        {children}
-      </th>
-    );
-  },
-  tableRow: ({ children }) => <tr>{children}</tr>,
-  text: ({ node }) => node.text ?? null,
-  unknown: ({ node, parent }) => (
-    <pre className="readerUnknown" data-pm-unknown="" {...topLevelBlockAttrs(node, parent)}>
-      {stringAttr(node, "html") ?? ""}
-    </pre>
-  )
-};
+    )
+  };
+}
 
 const markMapping = {
   link: ({ children, mark }: MarkProps<PmMark, React.ReactNode, PmNode>) => (
@@ -285,7 +335,8 @@ const markMapping = {
   )
 };
 
-const renderDocument = renderJSONContentToReactElement({ markMapping, nodeMapping });
+// A stable empty anchor map for a raw render (no reader wiring): stamping simply never fires.
+const emptyAnchorByNodeId: AnchorByNodeId = new Map();
 
 export interface PmDocumentProps {
   readonly document: DocumentNodeJSON;
@@ -293,37 +344,71 @@ export interface PmDocumentProps {
   // render leaves them inert. Absent by default so a bare `<PmDocument>` stays presentation-only. The
   // optional second argument carries a reference's target source file for cross-file resolution (#366).
   readonly onActivateAnchor?: (anchor: string, targetSourceFile?: string) => void;
+  // The block's PM-node-id → source-anchor map (#550). Element-precise `data-anchor-id` is stamped on
+  // each id-bearing node it knows. Absent leaves nested elements unstamped (a raw render).
+  readonly anchorByNodeId?: AnchorByNodeId;
+  // The work-anchor-index resolvability gate (#550). When provided, a same-work link/marker whose
+  // target does not resolve renders inert. Absent leaves the gate open (a raw render stays as before).
+  readonly canResolve?: (anchor: string, targetSourceFile?: string) => boolean;
 }
 
 // Render a stored PM document to React. The doc root carries the `.reader` class so the existing
 // reader typography and Day/Night theme tokens (CSS variables on an ancestor) style the output with
 // no per-theme component logic. Flanking footnote brackets are stripped at render (#335).
-export function PmDocument({ document, onActivateAnchor }: PmDocumentProps): React.ReactElement {
+export function PmDocument({
+  anchorByNodeId,
+  canResolve,
+  document,
+  onActivateAnchor
+}: PmDocumentProps): React.ReactElement {
   // `DocumentNodeJSON` and the renderer's `JSONNodeType` are the same on-the-wire PM JSON; one
   // structural cast at the boundary lets the typed node handlers above drive the render.
   const content = stripFlankingFootnoteBrackets(document) as unknown as JSONNodeType;
+  const anchors = anchorByNodeId ?? emptyAnchorByNodeId;
+  const renderDocument = useMemo(
+    () => renderJSONContentToReactElement({ markMapping, nodeMapping: createNodeMapping(anchors) }),
+    [anchors]
+  );
   return (
-    <ActivateAnchorContext.Provider value={onActivateAnchor}>
-      {renderDocument({ content })}
-    </ActivateAnchorContext.Provider>
+    <CanResolveContext.Provider value={canResolve}>
+      <ActivateAnchorContext.Provider value={onActivateAnchor}>
+        {renderDocument({ content })}
+      </ActivateAnchorContext.Provider>
+    </CanResolveContext.Provider>
   );
 }
 
 export interface PmBlockProps {
   readonly node: DocumentNodeJSON;
   readonly onActivateAnchor?: (anchor: string, targetSourceFile?: string) => void;
+  readonly anchorByNodeId?: AnchorByNodeId;
+  readonly canResolve?: (anchor: string, targetSourceFile?: string) => boolean;
 }
 
 // Render a single stored PM block node (not the whole doc) to React, reusing the same per-node
 // mapping. The live reader memoizes one of these per block (#72) and stamps the addressable
 // `data-block-id` on its own wrapper element, so the block's own element stays unaddressed here
-// (`topLevelBlockAttrs` only addresses a child of a `doc`, and this node has no `doc` parent). When
-// the reader wires `onActivateAnchor`, an in-block footnote marker becomes a live jump (#335).
-export function PmBlock({ node, onActivateAnchor }: PmBlockProps): React.ReactElement {
+// (`topLevelBlockAttrs` only addresses a child of a `doc`, and this node has no `doc` parent). The
+// reader threads this block's `anchorByNodeId` so element-precise `data-anchor-id` lands on the exact
+// nested node (#550). When it wires `onActivateAnchor`, an in-block footnote marker becomes a live
+// jump (#335); `canResolve` renders a same-work reference inert when its target is dead.
+export function PmBlock({
+  anchorByNodeId,
+  canResolve,
+  node,
+  onActivateAnchor
+}: PmBlockProps): React.ReactElement {
   const content = stripFlankingFootnoteBrackets(node) as unknown as JSONNodeType;
+  const anchors = anchorByNodeId ?? emptyAnchorByNodeId;
+  const renderDocument = useMemo(
+    () => renderJSONContentToReactElement({ markMapping, nodeMapping: createNodeMapping(anchors) }),
+    [anchors]
+  );
   return (
-    <ActivateAnchorContext.Provider value={onActivateAnchor}>
-      {renderDocument({ content })}
-    </ActivateAnchorContext.Provider>
+    <CanResolveContext.Provider value={canResolve}>
+      <ActivateAnchorContext.Provider value={onActivateAnchor}>
+        {renderDocument({ content })}
+      </ActivateAnchorContext.Provider>
+    </CanResolveContext.Provider>
   );
 }

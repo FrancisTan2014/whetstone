@@ -22,7 +22,7 @@ import { lookupTerm } from "../lookup/lookupApi";
 import { highlightBirthMotion } from "./highlightBirth";
 import { ImageLightbox } from "./ImageLightbox";
 import { BlockContent } from "./mdastBlock";
-import { PmBlock } from "./PmDocument";
+import { PmBlock, type AnchorByNodeId } from "./PmDocument";
 import { draftOverlapsNotes, indexBlocks } from "./readerMarks";
 import {
   fetchUnitContent,
@@ -46,7 +46,7 @@ import {
   type ReaderUnit
 } from "./readerModel";
 import { isUnitTitleRedundant } from "./readerHeadings";
-import { buildAnchorIndex, type AnchorIndex } from "./referenceResolver";
+import { buildAnchorIndex, type AnchorIndex, type BlockAnchor } from "./referenceResolver";
 import {
   activeTocEntryIdForPosition,
   clampUnitIndex,
@@ -131,6 +131,11 @@ type ReadingState =
       // a stale target never re-scrolls. `scrollBlockEntryId` jumps to a block — a deep link, a
       // jump to a note/highlight, or a restored reading position's block anchor.
       scrollBlockEntryId?: string | undefined;
+      // The element-precise companion to `scrollBlockEntryId` (#550): the source anchor of the exact
+      // nested element a cross-reference targets. When present, the post-load scroll prefers the
+      // `[data-anchor-id]` element (a nested heading/figure), falling back to the block top when the
+      // element is absent. Carried so a cross-unit jump lands on the element once the unit renders.
+      scrollAnchorId?: string | undefined;
       status: "viewing";
       structure: ReaderStructure;
       workEntryId: string;
@@ -153,7 +158,10 @@ export function applyUnitSelection(state: ReaderState, index: number): ReaderSta
   const clamped = clampUnitIndex(state.reading.structure, index);
 
   if (clamped === state.reading.activeUnitIndex) {
-    return { ...state, reading: { ...state.reading, scrollBlockEntryId: undefined } };
+    return {
+      ...state,
+      reading: { ...state.reading, scrollAnchorId: undefined, scrollBlockEntryId: undefined }
+    };
   }
 
   return {
@@ -163,6 +171,7 @@ export function applyUnitSelection(state: ReaderState, index: number): ReaderSta
       activeUnit: { status: "loading" },
       activeUnitIndex: clamped,
       loadNonce: state.reading.loadNonce + 1,
+      scrollAnchorId: undefined,
       scrollBlockEntryId: undefined
     }
   };
@@ -171,12 +180,15 @@ export function applyUnitSelection(state: ReaderState, index: number): ReaderSta
 // Switching the open unit to the one a locator resolved for a block (jumping to a note or
 // highlight, or a deep link). The owning unit's entry id is resolved to its index; an unknown unit
 // (a locator miss for a removed block) no-ops. A same-unit jump only sets the scroll target;
-// a cross-unit jump moves to the unit with a fresh load and scrolls once its blocks render. A
+// a cross-unit jump moves to the unit with a fresh load and scrolls once its blocks render. The
+// optional `anchorId` (#550) carries the source anchor of the exact nested element a cross-reference
+// targets, so the post-load scroll lands element-precisely rather than at the block top. A
 // no-op for any non-viewing state. Pure and exported so the jump-across-units logic tests alone.
 export function applyUnitForBlock(
   state: ReaderState,
   unitEntryId: string,
-  blockEntryId: string
+  blockEntryId: string,
+  anchorId?: string
 ): ReaderState {
   if (state.status !== "ready" || state.reading.status !== "viewing") {
     return state;
@@ -189,7 +201,10 @@ export function applyUnitForBlock(
   }
 
   if (index === state.reading.activeUnitIndex) {
-    return { ...state, reading: { ...state.reading, scrollBlockEntryId: blockEntryId } };
+    return {
+      ...state,
+      reading: { ...state.reading, scrollAnchorId: anchorId, scrollBlockEntryId: blockEntryId }
+    };
   }
 
   return {
@@ -199,6 +214,7 @@ export function applyUnitForBlock(
       activeUnit: { status: "loading" },
       activeUnitIndex: index,
       loadNonce: state.reading.loadNonce + 1,
+      scrollAnchorId: anchorId,
       scrollBlockEntryId: blockEntryId
     }
   };
@@ -318,6 +334,11 @@ type ReaderHandlers = Readonly<{
   // The optional second argument is the reference's target source file, so a cross-file endnote
   // resolves against that file, not the current unit (#366).
   onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
+  // The complete work anchor index, exposed as two render helpers (#550): `anchorsForBlock` gives a
+  // block's PM-node-id → source-anchor pairs so the renderer stamps element-precise `data-anchor-id`
+  // on each nested target; `canResolve` gates a same-work reference inert when its target is dead.
+  anchorsForBlock: (blockEntryId: string) => ReadonlyArray<BlockAnchor>;
+  canResolve: (anchor: string, targetSourceFile?: string) => boolean;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
   templates: ReadonlyArray<NoteTemplateDto>;
@@ -429,14 +450,14 @@ export function ReaderPage({
       return;
     }
 
-    const { activeUnit, scrollBlockEntryId } = state.reading;
+    const { activeUnit, scrollAnchorId, scrollBlockEntryId } = state.reading;
 
     if (activeUnit.status !== "loaded") {
       return;
     }
 
     if (scrollBlockEntryId !== undefined) {
-      scrollToBlock(scrollBlockEntryId);
+      scrollToBlock(scrollBlockEntryId, scrollAnchorId);
       // The restore/jump scroll has been applied; position writes may resume.
       restorePendingRef.current = false;
     }
@@ -668,7 +689,7 @@ export function ReaderPage({
   // target, which the pending-scroll effect consumes. Only reachable while viewing (the note UI
   // lives in the viewing render), so the active work id is known.
   const jumpToBlock = useCallback(
-    (blockEntryId: string): void => {
+    (blockEntryId: string, anchorId?: string): void => {
       setPanel(undefined);
       setTocOpen(false);
       setNotesOpen(false);
@@ -676,7 +697,7 @@ export function ReaderPage({
       void locateBlockUnit(viewingWorkEntryId as string, blockEntryId)
         .then((unitEntryId) => {
           if (unitEntryId !== undefined) {
-            setState((current) => applyUnitForBlock(current, unitEntryId, blockEntryId));
+            setState((current) => applyUnitForBlock(current, unitEntryId, blockEntryId, anchorId));
             // Briefly highlight the landing block so a jump (a note, a restored position, or a
             // cross-reference) is visible where it lands (#252).
             setBornBlockEntryId(blockEntryId);
@@ -689,14 +710,16 @@ export function ReaderPage({
     [viewingWorkEntryId]
   );
 
-  // Activate an internal cross-reference (#252, #366): first try the same-unit fast path — resolve the
-  // target block from the rendered DOM by its anchor id (no ref read in render) and jump there, which
-  // preserves the in-file footnote behavior (#335). When the DOM has no such anchor (an endnote whose
-  // target lives in another reading unit/file), fall back to the work-scoped resolver: resolve the
-  // reference against its target source file (a marker passes its `targetSourceFile`) or, absent one,
-  // the current unit's source file, and jump to the resolved block. An unresolvable reference no-ops.
-  // The resolver and active source file only change on a work open / unit switch, so memoized blocks
-  // stay flat during unrelated interactions (opening the toolbar or a lookup).
+  // Activate an internal cross-reference (#252, #366, #550): first try the same-unit fast path —
+  // resolve the target block from the rendered DOM by its anchor id (no ref read in render) and jump
+  // there element-precisely, carrying the source anchor so the scroll lands on the exact nested
+  // element (a heading/figure), not the block top; this preserves the in-file footnote behavior
+  // (#335). When the DOM has no such anchor (an endnote/cross-reference whose target lives in another
+  // reading unit/file), fall back to the work-scoped resolver: resolve the reference against its
+  // target source file (a marker passes its `targetSourceFile`) or, absent one, the current unit's
+  // source file, and jump to the resolved block carrying the same anchor so the post-load scroll is
+  // element-precise. An unresolvable reference no-ops. The resolver and active source file only change
+  // on a work open / unit switch, so memoized blocks stay flat during unrelated interactions.
   const onActivateAnchor = useCallback(
     (anchorId: string, targetSourceFile?: string): void => {
       // Escape quotes/backslashes for the attribute selector; ingest ids are plain html ids.
@@ -709,7 +732,7 @@ export function ReaderPage({
 
       if (domTarget !== undefined) {
         captureOrigin(domTarget);
-        jumpToBlock(domTarget);
+        jumpToBlock(domTarget, anchorId);
         return;
       }
 
@@ -722,11 +745,34 @@ export function ReaderPage({
       });
 
       if (resolved !== undefined) {
-        captureOrigin(resolved);
-        jumpToBlock(resolved);
+        captureOrigin(resolved.blockEntryId);
+        jumpToBlock(resolved.blockEntryId, anchorId);
       }
     },
     [activeUnitSourceFile, captureOrigin, jumpToBlock, viewingAnchorIndex]
+  );
+
+  // The block's id-bearing elements (#550), so the renderer can stamp element-precise `data-anchor-id`
+  // on each nested target. Stable across unrelated interactions — the index only changes on a work
+  // open — so the memoized block list stays flat.
+  const anchorsForBlock = useCallback(
+    (blockEntryId: string): ReadonlyArray<BlockAnchor> =>
+      viewingAnchorIndex.anchorsForBlock(blockEntryId),
+    [viewingAnchorIndex]
+  );
+
+  // The inert gate (#550): whether a same-work reference's (targetSourceFile, anchor) has a live
+  // target in the complete index. A marker/link passes its `targetSourceFile`; absent one, the
+  // reference is same-file and resolves against the unit the reader is in. Stable like the resolver.
+  const canResolveAnchor = useCallback(
+    (anchor: string, targetSourceFile?: string): boolean => {
+      const sourceFile = targetSourceFile ?? activeUnitSourceFile;
+      return viewingAnchorIndex.canResolve({
+        anchor,
+        ...(sourceFile === undefined ? {} : { sourceFile })
+      });
+    },
+    [activeUnitSourceFile, viewingAnchorIndex]
   );
 
   // Navigate the nav-derived TOC (#379): resolve the selected entry to its intent through the same
@@ -1054,6 +1100,8 @@ export function ReaderPage({
     onEditNote,
     onJumpToBlock: (note) => jumpToBlock(note.blockEntryId),
     onActivateAnchor,
+    anchorsForBlock,
+    canResolve: canResolveAnchor,
     onOpenBlockNotes,
     prefersReducedMotion,
     templates
@@ -1411,8 +1459,10 @@ function renderUnit(
 
         return (
           <ReaderBlockView
+            anchorsForBlock={handlers.anchorsForBlock}
             block={block}
             born={born}
+            canResolve={handlers.canResolve}
             key={born ? `${block.entryId}-born` : block.entryId}
             notes={handlers.notes}
             onActivateAnchor={handlers.onActivateAnchor}
@@ -1427,8 +1477,10 @@ function renderUnit(
 }
 
 type ReaderBlockViewProps = Readonly<{
+  anchorsForBlock: (blockEntryId: string) => ReadonlyArray<BlockAnchor>;
   block: ReaderBlock;
   born: boolean;
+  canResolve: (anchor: string, targetSourceFile?: string) => boolean;
   notes: ReadonlyArray<NoteDto>;
   onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
@@ -1442,10 +1494,14 @@ type ReaderBlockViewProps = Readonly<{
 // fails to load at runtime. The caption keeps the block's text, so it stays selectable and
 // annotatable through the normal block selection flow; the image carries no text.
 function ReaderFigure({
+  anchorByNodeId,
   block,
+  canResolve,
   onActivateAnchor
 }: {
+  anchorByNodeId: AnchorByNodeId;
   block: ReaderBlock;
+  canResolve: (anchor: string, targetSourceFile?: string) => boolean;
   onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
 }): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
@@ -1463,7 +1519,12 @@ function ReaderFigure({
           src={imageSrc}
         />
       ) : null}
-      <FigureCaption block={block} onActivateAnchor={onActivateAnchor} />
+      <FigureCaption
+        anchorByNodeId={anchorByNodeId}
+        block={block}
+        canResolve={canResolve}
+        onActivateAnchor={onActivateAnchor}
+      />
     </figure>
   );
 }
@@ -1480,17 +1541,26 @@ function figureCaptionNode(node: unknown): DocumentNodeJSON | undefined {
 // block is PM-backed, else from the stored mdast caption (Markdown fallback). An image-only figure
 // (no caption) renders nothing.
 function FigureCaption({
+  anchorByNodeId,
   block,
+  canResolve,
   onActivateAnchor
 }: {
+  anchorByNodeId: AnchorByNodeId;
   block: ReaderBlock;
+  canResolve: (anchor: string, targetSourceFile?: string) => boolean;
   onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
 }): React.ReactNode {
   if (block.node !== undefined) {
     const caption = figureCaptionNode(block.node);
 
     return caption === undefined ? null : (
-      <PmBlock node={caption} onActivateAnchor={onActivateAnchor} />
+      <PmBlock
+        anchorByNodeId={anchorByNodeId}
+        canResolve={canResolve}
+        node={caption}
+        onActivateAnchor={onActivateAnchor}
+      />
     );
   }
 
@@ -1507,8 +1577,10 @@ function FigureCaption({
 // rendering for every block in the unit — the cause of the ~500ms handlers. Only the
 // born/animating block pays for framer-motion; every other block is a plain element.
 const ReaderBlockView = memo(function ReaderBlockView({
+  anchorsForBlock,
   block,
   born,
+  canResolve,
   notes,
   onActivateAnchor,
   onOpenBlockNotes,
@@ -1517,6 +1589,13 @@ const ReaderBlockView = memo(function ReaderBlockView({
 }: ReaderBlockViewProps): React.JSX.Element {
   const blockNotes = useMemo(() => notesForBlock(notes, block.entryId), [notes, block.entryId]);
   const annotated = blockNotes.length > 0;
+
+  // This block's PM-node-id → source-anchor map (#550), so `PmBlock` stamps element-precise
+  // `data-anchor-id` on each nested target. Memoized on the block so the render stays flat.
+  const anchorByNodeId = useMemo<AnchorByNodeId>(
+    () => new Map(anchorsForBlock(block.entryId).map((entry) => [entry.nodeId, entry.anchor])),
+    [anchorsForBlock, block.entryId]
+  );
 
   // A whole-block note (no sub-block offsets) gets a restrained hue gutter bar instead of an
   // underline. By the disjoint invariant a block has at most one such note; if legacy data carries
@@ -1533,9 +1612,19 @@ const ReaderBlockView = memo(function ReaderBlockView({
   const body = (
     <>
       {block.blockType === "figure" ? (
-        <ReaderFigure block={block} onActivateAnchor={onActivateAnchor} />
+        <ReaderFigure
+          anchorByNodeId={anchorByNodeId}
+          block={block}
+          canResolve={canResolve}
+          onActivateAnchor={onActivateAnchor}
+        />
       ) : block.node !== undefined ? (
-        <PmBlock node={block.node as DocumentNodeJSON} onActivateAnchor={onActivateAnchor} />
+        <PmBlock
+          anchorByNodeId={anchorByNodeId}
+          canResolve={canResolve}
+          node={block.node as DocumentNodeJSON}
+          onActivateAnchor={onActivateAnchor}
+        />
       ) : (
         <BlockContent node={block.mdast} onActivateAnchor={onActivateAnchor} />
       )}
