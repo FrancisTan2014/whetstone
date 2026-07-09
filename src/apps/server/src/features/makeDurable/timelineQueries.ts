@@ -1,5 +1,5 @@
 import type { TimelineCaptureDto } from "@whetstone/contracts";
-import { and, asc, desc, eq, notExists } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, notExists, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { makeDurableBackfillScans, proposalCandidates, timelineEntries } from "../../db/schema.js";
@@ -59,6 +59,11 @@ export async function listTimelineCapturesForUser(
 // history" should scan that learner-authored diary history for one high-value proposal.
 // Together these advance a durable cursor so a bounded run never re-scans entries already judged, and a
 // high-value entry beyond one run's limit stays reachable. Oldest first, capped at `limit` per run.
+// Only display-ready diary rows are eligible: a pending or failed async voice capture (#565 —
+// queued/transcribing/tidying/failed) has an empty/absent transcript, so mining it would waste the scan
+// AND poison the real capture — a no-candidate result records a permanent scan marker and a dismissed
+// candidate later blocks the worker's own proposal (`hasProposalForEntry`), leaving the finished
+// transcript unmineable. So only `processing_status IS NULL` (synchronous/legacy) or `= "ready"` qualifies.
 export async function listBackfillableCaptures(
   db: DbClient,
   userId: string,
@@ -71,6 +76,7 @@ export async function listBackfillableCaptures(
       and(
         eq(timelineEntries.userId, userId),
         eq(timelineEntries.captureSource, "diary"),
+        or(isNull(timelineEntries.processingStatus), eq(timelineEntries.processingStatus, "ready")),
         notExists(
           db
             .select({ present: proposalCandidates.id })
