@@ -50,6 +50,37 @@ function stripStructuralWhitespace(node: HastNodes): void {
   }
 }
 
+// `mdast-util-to-hast`'s `code` handler emits a fenced code block's text as `node.value + "\n"` — a
+// trailing newline that renders `<pre><code>` faithfully but is NOT part of the block's stored
+// `plaintext` (`mdast-util-to-string` of the code node is exactly `node.value`). Left in, that extra
+// character makes the rendered block's `textContent` one longer than the plaintext, so the whole-block
+// `contextSnapshot` fails the server's `plaintext.includes(...)` check and every capture offset is
+// shifted — the mark/note is rejected as `anchor_out_of_range` (#553, the code-block twin of the #344
+// blockquote/list separator bug). Drop that single trailing newline from the `<code>`'s last text node
+// so a code block's `textContent` equals its stored `plaintext` and note-anchor offsets align.
+function stripCodeBlockTrailingNewline(node: HastNodes): void {
+  if (node.type !== "root" && node.type !== "element") {
+    return;
+  }
+
+  if (node.type === "element" && node.tagName === "pre") {
+    const code = node.children.find(
+      (child): child is HastElement => child.type === "element" && child.tagName === "code"
+    );
+    const lastChild = code?.children[code.children.length - 1];
+
+    if (lastChild !== undefined && lastChild.type === "text" && lastChild.value.endsWith("\n")) {
+      lastChild.value = lastChild.value.slice(0, -1);
+    }
+
+    return;
+  }
+
+  for (const child of node.children) {
+    stripCodeBlockTrailingNewline(child as HastNodes);
+  }
+}
+
 // rehype-sanitize's schema is hast-util-sanitize's `defaultSchema`. We additionally drop `img`
 // (v0 has no image blocks) so no external image is ever fetched or rendered. Raw HTML never gets
 // a hast representation in the first place (toHast runs without `allowDangerousHtml`), so the
@@ -126,6 +157,7 @@ export const BlockContent = memo(function BlockContent({
   const safeNode = unwrapBlockLinks(node as RootContent);
   const hast: HastNodes = toHast({ type: "root", children: [safeNode] });
   stripStructuralWhitespace(hast);
+  stripCodeBlockTrailingNewline(hast);
   const sanitized = sanitize(hast, sanitizeSchema) as Root;
 
   return toJsxRuntime(sanitized, {

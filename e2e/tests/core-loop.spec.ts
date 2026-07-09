@@ -80,6 +80,31 @@ test.describe("core reader loop", () => {
     await expect(annotatedBlockquote).toBeVisible();
   });
 
+  test("marks a word inside a fenced code block (no anchor_out_of_range, #553)", async ({
+    page,
+    setup
+  }) => {
+    await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
+    await expect(page.locator(anyBlock).first()).toBeVisible();
+
+    // Select a word inside the fenced code block and mark it. Before #553 the code block's rendered
+    // textContent carried mdast-util-to-hast's appended trailing "\n", so the whole-block context
+    // snapshot was one character longer than the stored plaintext and the server rejected the mark
+    // with 400 anchor_out_of_range — no highlight appeared.
+    await selectWordIn(page, blockWith("pre code"));
+    await expect(page.getByRole("toolbar", toolbar)).toBeVisible();
+
+    await page.getByRole("button", { name: "Mark" }).click();
+
+    // The mark anchors and persists on the code block, and it survives a reload.
+    const markedCode = page.locator(`${blockWith("pre code")}[data-has-notes="true"]`);
+    await expect(markedCode).toBeVisible();
+
+    await page.reload();
+    await expect(page.locator(anyBlock).first()).toBeVisible();
+    await expect(markedCode).toBeVisible();
+  });
+
   test("looks up a word and shows a definition", async ({ page, setup }) => {
     await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
     await expect(page.locator(anyBlock).first()).toBeVisible();
