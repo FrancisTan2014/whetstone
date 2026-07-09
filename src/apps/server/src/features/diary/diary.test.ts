@@ -432,6 +432,28 @@ describe("capture_source filtering between Diary and Make Durable (#559)", () =>
     expect(backfillable.map((capture) => capture.entryId)).toEqual(["qc-backfill"]);
     expect(backfillable.every((capture) => capture.captureSource !== "diary")).toBe(true);
   });
+
+  it("falls back to the raw transcript when a diary entry has no tidied text (#559)", async () => {
+    // The read projection is `tidied_text`, falling back to `raw_input_text` when null. A diary-sourced
+    // Timeline row with no tidied text must display its verbatim raw transcript in both the timeline page
+    // and the coach-readable list.
+    await seedTimelineRow(context.db, {
+      captureSource: "diary",
+      createdAt: "2026-06-30T09:00:00.000Z",
+      entryDate: "2026-06-30",
+      id: "diary-raw-only",
+      language: null,
+      rawInputText: "raw only, not yet tidied",
+      tidiedText: null,
+      userId: DEFAULT_USER_ID
+    });
+
+    const page = await timeline();
+    expect(page.days[0]?.entries.map((entry) => entry.text)).toEqual(["raw only, not yet tidied"]);
+
+    const listed = await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID);
+    expect(listed.map((entry) => entry.text)).toEqual(["raw only, not yet tidied"]);
+  });
 });
 
 describe("diary_entries → timeline_entries migration (#559)", () => {

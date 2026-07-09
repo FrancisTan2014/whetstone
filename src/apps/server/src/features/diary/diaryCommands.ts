@@ -23,29 +23,6 @@ export type DeleteDiaryEntryResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "not_found" }>;
 
-type DiaryRow = Readonly<{
-  createdAt: Date;
-  entryDate: string;
-  id: string;
-  language: string | null;
-  rawInputText: string;
-  tidiedText: string | null;
-}>;
-
-// The Diary is a filtered view over the shared Timeline store (#559): a diary entry is a
-// `timeline_entries` row with `capture_source = "diary"`. Its displayed text is the tidied form, falling
-// back to the verbatim raw transcript when tidy has not (or could not) run — the same projection every
-// diary read uses, so create/read/edit agree.
-function toDiaryEntryDto(row: DiaryRow): DiaryEntryDto {
-  return {
-    createdAt: row.createdAt.toISOString(),
-    entryDate: row.entryDate,
-    id: row.id,
-    language: row.language,
-    text: row.tidiedText ?? row.rawInputText
-  };
-}
-
 // Capture an entry: tidy the transcript (the LLM seam), then persist it onto the Timeline as a
 // diary-sourced voice capture filed under today for the current user. The raw transcript is preserved
 // verbatim in `raw_input_text` and the tidy-pass result in `tidied_text`. Registering the owning Entry
@@ -78,14 +55,15 @@ export async function createDiaryEntry(
     await tx.insert(timelineEntries).values(row);
   });
 
-  return toDiaryEntryDto({
-    createdAt: now,
+  // Create always sets `tidied_text` (the tidy result — or the raw transcript when tidy degraded), so
+  // the returned text is that value directly; there is no null-fallback path on this write.
+  return {
+    createdAt: now.toISOString(),
     entryDate: row.entryDate,
     id: entryId,
     language: null,
-    rawInputText: transcript,
-    tidiedText: tidied
-  });
+    text: tidied
+  };
 }
 
 // Edit an entry's tidied text. Scoped to the current user AND to diary-sourced captures, so a forged id,
@@ -111,9 +89,7 @@ export async function updateDiaryEntry(
       createdAt: timelineEntries.createdAt,
       entryDate: timelineEntries.entryDate,
       id: timelineEntries.entryId,
-      language: timelineEntries.language,
-      rawInputText: timelineEntries.rawInputText,
-      tidiedText: timelineEntries.tidiedText
+      language: timelineEntries.language
     });
   const row = updated[0];
 
@@ -121,7 +97,17 @@ export async function updateDiaryEntry(
     return { status: "not_found" };
   }
 
-  return { entry: toDiaryEntryDto(row), status: "updated" };
+  // The update just set `tidied_text = text`, so the entry's displayed text is `text` directly.
+  return {
+    entry: {
+      createdAt: row.createdAt.toISOString(),
+      entryDate: row.entryDate,
+      id: row.id,
+      language: row.language,
+      text
+    },
+    status: "updated"
+  };
 }
 
 // Delete an entry: remove the diary-sourced Timeline row and its owning Entry (the timeline row
