@@ -3380,3 +3380,130 @@ describe("ReaderPage selection toolbar lifecycle", () => {
     expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
   });
 });
+
+describe("ReaderPage back pill (#549)", () => {
+  // topmostVisibleBlockId reads live layout, which jsdom reports as all-zero rects; make the given
+  // block report a positive bottom so it counts as the top-of-viewport origin at capture time.
+  function makeVisible(block: HTMLElement): void {
+    const rect = {
+      bottom: 10,
+      height: 10,
+      left: 0,
+      right: 0,
+      toJSON: () => ({}),
+      top: 0,
+      width: 0,
+      x: 0,
+      y: 0
+    };
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue(rect as DOMRect);
+  }
+
+  async function openNavAtChapterOne(): Promise<HTMLElement> {
+    seedNavWork();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Chapter one body.");
+
+    return container;
+  }
+
+  it("shows a Back pill naming the origin after a cross-chapter jump", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+    await screen.findByText("Chapter two intro.");
+
+    expect(screen.getByRole("button", { name: "Back to Chapter One" })).toBeDefined();
+  });
+
+  it("returns to the exact origin block when tapped, then hides the pill", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+    await screen.findByText("Chapter two intro.");
+
+    await user.click(screen.getByRole("button", { name: "Back to Chapter One" }));
+
+    await screen.findByText("Chapter one body.");
+    await waitFor(() => expect(mockedLocateBlockUnit).toHaveBeenCalledWith("work-1", "b-1"));
+    expect(screen.queryByRole("button", { name: /^Back to/u })).toBeNull();
+  });
+
+  it("replaces the return point when a second jump moves the reader again", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    let toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+    await screen.findByText("Chapter two intro.");
+    expect(screen.getByRole("button", { name: "Back to Chapter One" })).toBeDefined();
+
+    // A second jump (Chapter Two → Chapter One) re-points the single return point at Chapter Two.
+    makeVisible(blockElement(container, "b-2"));
+    toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter One" }));
+    await screen.findByText("Chapter one body.");
+
+    expect(screen.getByRole("button", { name: "Back to Chapter Two" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Back to Chapter One" })).toBeNull();
+  });
+
+  it("dismisses the pill without navigating when the close control is tapped", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+    await screen.findByText("Chapter two intro.");
+    mockedLocateBlockUnit.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Dismiss back" }));
+
+    expect(screen.queryByRole("button", { name: /^Back to/u })).toBeNull();
+    // Still on Chapter Two — dismiss must never route back through the block locator.
+    expect(screen.getByText("Chapter two intro.")).toBeDefined();
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the pill across an advanced timer — it has no timeout", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+    await screen.findByText("Chapter two intro.");
+    expect(screen.getByRole("button", { name: "Back to Chapter One" })).toBeDefined();
+
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(600_000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(screen.getByRole("button", { name: "Back to Chapter One" })).toBeDefined();
+  });
+
+  it("shows no pill before any jump, or after re-selecting the current chapter", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    expect(screen.queryByRole("button", { name: /^Back to/u })).toBeNull();
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter One" }));
+
+    // Re-selecting the chapter the reader is already in is a no-op — no return point, no pill.
+    expect(screen.queryByRole("button", { name: /^Back to/u })).toBeNull();
+  });
+});
