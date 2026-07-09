@@ -16,7 +16,7 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { listProposalCandidatesForUser } from "../makeDurable/proposalQueries.js";
 import type { ProposalAttempt, ProposalProvider } from "../makeDurable/proposalProvider.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
-import type { SpeechInput } from "../../speech/speechInput.js";
+import type { SpeechAudio, SpeechInput } from "../../speech/speechInput.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
 import type { DiaryTidy } from "./diaryTidy.js";
 import type { DiaryRouteDependencies } from "./diaryRoutes.js";
@@ -69,6 +69,11 @@ const throwingSpeech: SpeechInput = {
   transcribe: () => Promise.reject(new Error("whisper crashed"))
 };
 
+// Rejects with a non-Error value so the worker's `describeError` fallback (String(error)) is exercised.
+const throwingNonErrorSpeech: SpeechInput = {
+  transcribe: () => Promise.reject("stt offline")
+};
+
 type WorkerOverrides = Readonly<{
   propose?: ProposalProvider;
   speech?: SpeechInput;
@@ -117,7 +122,7 @@ async function seedVoiceCapture(
       captureSource: "diary",
       rawInputText: row.rawInputText ?? "",
       tidiedText: row.tidiedText ?? null,
-      language: row.language ?? "en",
+      language: row.language === undefined ? "en" : row.language,
       rawAudioPath: row.rawAudioPath === undefined ? `audio-${row.id}` : row.rawAudioPath,
       processingStatus: row.processingStatus,
       failureReason: null
@@ -271,6 +276,46 @@ describe("processNextVoiceCapture", () => {
     expect(row.rawAudioPath).toBe("audio-keepme");
   });
 
+  it("stringifies a non-Error transcription failure into the capture's reason", async () => {
+    await seedVoiceCapture(db, {
+      id: "cap-str",
+      createdAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "queued"
+    });
+
+    const result = await processNextVoiceCapture(
+      buildWorker(db, { speech: throwingNonErrorSpeech }),
+      new Date()
+    );
+
+    expect(result).toEqual({ status: "failed", id: "cap-str", reason: "stt offline" });
+    expect((await readRow(db, "cap-str")).failureReason).toBe("stt offline");
+  });
+
+  it("transcribes a capture with no language using only the audio path", async () => {
+    await seedVoiceCapture(db, {
+      id: "cap-nolang",
+      createdAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "queued",
+      language: null
+    });
+    let seenAudio: SpeechAudio | undefined;
+    const speech: SpeechInput = {
+      transcribe: (audio) => {
+        seenAudio = audio;
+        return Promise.resolve({ transcript: "the deploy is green", words: [] });
+      }
+    };
+
+    const result = await processNextVoiceCapture(buildWorker(db, { speech }), new Date());
+
+    expect(result).toMatchObject({ status: "processed", id: "cap-nolang" });
+    expect(seenAudio).toEqual({ path: "audio-cap-nolang" });
+    const row = await readRow(db, "cap-nolang");
+    expect(row.processingStatus).toBe("ready");
+    expect(row.language).toBeNull();
+  });
+
   it("fails a capture whose transcript is empty rather than persisting a hollow ready entry", async () => {
     await seedVoiceCapture(db, {
       id: "cap-empty",
@@ -411,6 +456,22 @@ describe("voice capture routes", () => {
   it("returns 404 for an unknown capture id", async () => {
     const { code } = await getStatus("nope");
     expect(code).toBe(404);
+  });
+
+  it("shows the raw transcript for a ready capture that has no tidied text", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "ready-raw",
+      createdAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "ready",
+      rawInputText: "raw fallback text",
+      tidiedText: null
+    });
+
+    const { code, body } = await getStatus("ready-raw");
+
+    expect(code).toBe(200);
+    expect(body.status).toBe("ready");
+    expect(body.text).toBe("raw fallback text");
   });
 
   it("does not expose another user's capture", async () => {
