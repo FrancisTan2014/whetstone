@@ -295,8 +295,10 @@ can navigate them from another package.
   day-key cursor bounded by `limit` days; `listCalendarDates` returns days-with-entries in a range;
   `listDiaryEntriesForUser` is the coach-readable facet). `diaryRoutes.ts`:
   `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`, `GET /api/diary/calendar?from&to`,
-  `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). Storage is the
-  `diary_entries` table; the tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`.
+  `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). Storage is the shared
+  `timeline_entries` store filtered to `capture_source = "diary"` (#559 — the Diary is a filtered view
+  over the Timeline; `diary_entries` was retired); the tidy seam is wired in `index.ts` via
+  `createDiaryTidy(createOllamaModel(...))`.
   Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
