@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn internal_dev_host_stays_in_app() {
-        let url = Url::parse("http://localhost:5173/").unwrap();
+        let url = Url::parse("http://localhost:5273/").unwrap();
         assert!(!is_external_navigation(&url));
     }
 
@@ -91,7 +91,7 @@ mod tests {
     fn new_window_to_internal_host_stays_in_app() {
         let bundled = Url::parse("http://tauri.localhost/index.html#/reader").unwrap();
         assert_eq!(classify_new_window(&bundled), NewWindowDecision::AllowInApp);
-        let dev = Url::parse("http://localhost:5173/#/library").unwrap();
+        let dev = Url::parse("http://localhost:5273/#/library").unwrap();
         assert_eq!(classify_new_window(&dev), NewWindowDecision::AllowInApp);
     }
 

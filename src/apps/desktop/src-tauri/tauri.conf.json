@@ -7,7 +7,7 @@
     "frontendDist": "../../web/dist",
     "beforeBuildCommand": "pnpm --filter @whetstone/web build",
     "beforeDevCommand": "pnpm --filter @whetstone/web dev",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5273"
   },
   "app": {
     "windows": [],

@@ -278,7 +278,7 @@ is live on the next request **without a manual `pnpm build`** — no more stale 
 local folder by default (see [Data directory](#data-directory)), so ingested content and notes
 survive each reload. Press Ctrl-C to stop both.
 
-The server listens on `http://127.0.0.1:3000` and the web app on `http://127.0.0.1:5173` (the
+The server listens on `http://127.0.0.1:3000` and the web app on `http://127.0.0.1:5273` (the
 web dev server proxies all `/api` requests to the server). Environment configuration (step 2)
 is optional. Health check:
 
@@ -309,7 +309,7 @@ pnpm --filter @whetstone/server start
 ```
 
 The server applies migrations and seeds the v0 note templates on boot. Open the web app's
-printed URL (by default `http://127.0.0.1:5173`) and keep the server running.
+printed URL (by default `http://127.0.0.1:5273`) and keep the server running.
 
 ### Host runtime config (native shells)
 
@@ -419,7 +419,7 @@ relative value triggers the fail-loud startup screen from #445). Set it via the
 
 ```powershell
 # Point the desktop shell at a reachable API server (dev: the local server via the Vite proxy)
-$env:WHETSTONE_API_BASE_URL = "http://localhost:5173/api"   # dev
+$env:WHETSTONE_API_BASE_URL = "http://localhost:5273/api"   # dev
 # $env:WHETSTONE_API_BASE_URL = "https://whetstone.example.ts.net/api"  # packaged, your server
 ```
 

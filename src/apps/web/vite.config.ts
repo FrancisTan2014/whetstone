@@ -64,6 +64,12 @@ export default defineConfig({
     }
   },
   server: {
+    // A non-default dev port so `pnpm dev` never collides with other Vite projects (their default is
+    // 5173). `strictPort` makes a clash fail loudly instead of silently drifting to another port and
+    // desyncing the values that mirror this one: the desktop devUrl (tauri.conf.json) and QUICK_START.
+    // The E2E / screenshot harnesses pass their own `--port` on the CLI, which overrides this.
+    port: 5273,
+    strictPort: true,
     proxy: {
       "/api": apiProxyTarget
     }

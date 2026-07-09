@@ -28,7 +28,7 @@ function run(args) {
 
 // Tear a tracked dev server down completely. On Windows the shell-wrapped `pnpm.cmd` child IS
 // `cmd.exe`; killing it does NOT stop the `pnpm` -> `node`/`tsx`/Vite descendants (Windows does not
-// signal a process's children), which would orphan the servers on ports 3000 / 5173. Kill the whole
+// signal a process's children), which would orphan the servers on ports 3000 / 5273. Kill the whole
 // tree by PID instead. On posix `child.kill()` is unchanged.
 function killTree(child) {
   if (process.platform === "win32" && child.pid !== undefined) {
