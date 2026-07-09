@@ -7,7 +7,8 @@ import {
   parseSessionPlanDto,
   parseSessionSummaryDto,
   parseSubmitTurnRequest,
-  parseTurnResultDto
+  parseTurnResultDto,
+  transcribeQuerySchema
 } from "./sessionContracts.js";
 
 describe("parseCoachSayRequest", () => {
@@ -56,6 +57,19 @@ describe("parseEndSessionRequest", () => {
 
   it("rejects a blank case id", () => {
     expect(() => parseEndSessionRequest({ caseId: "  ", words: [] })).toThrow();
+  });
+});
+
+describe("transcribeQuerySchema", () => {
+  it("accepts an omitted or supported per-request language", () => {
+    expect(transcribeQuerySchema.parse({})).toEqual({});
+    expect(transcribeQuerySchema.parse({ language: "zh" })).toEqual({ language: "zh" });
+    expect(transcribeQuerySchema.parse({ language: " en " })).toEqual({ language: "en" });
+  });
+
+  it("rejects unsupported languages and unknown fields", () => {
+    expect(() => transcribeQuerySchema.parse({ language: "fr" })).toThrow();
+    expect(() => transcribeQuerySchema.parse({ extra: 1, language: "en" })).toThrow();
   });
 });
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { productionJudgementSchema } from "./coachContracts.js";
+import { captureLanguageSchema } from "./captureContracts.js";
 import { errorCategorySchema } from "./learnerContracts.js";
 import { transcribedWordSchema } from "./speechContracts.js";
 
@@ -82,6 +83,14 @@ export const transcribeResultDtoSchema = z
   .strict();
 
 export type TranscribeResultDto = z.infer<typeof transcribeResultDtoSchema>;
+
+export const transcribeQuerySchema = z
+  .object({
+    language: captureLanguageSchema.optional()
+  })
+  .strict();
+
+export type TranscribeQuery = z.infer<typeof transcribeQuerySchema>;
 
 // One turn the client reports at session end (the grade + mistake category it was told).
 export const sessionTurnRecordSchema = z

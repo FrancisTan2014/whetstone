@@ -39,7 +39,7 @@ const mapped = {
 
 describe("buildWhisperArgs", () => {
   it("builds the documented offline CLI arguments", () => {
-    expect(buildWhisperArgs(config, "/tmp/utterance.wav")).toEqual([
+    expect(buildWhisperArgs(config, "recordings\\utterance.wav")).toEqual([
       "--model",
       "/models/base.en.bin",
       "--language",
@@ -47,7 +47,20 @@ describe("buildWhisperArgs", () => {
       "--output",
       "json",
       "--word-timestamps",
-      "/tmp/utterance.wav"
+      "recordings\\utterance.wav"
+    ]);
+  });
+
+  it("lets a per-request language override the config fallback", () => {
+    expect(buildWhisperArgs(config, "recordings\\utterance.wav", "zh")).toEqual([
+      "--model",
+      "/models/base.en.bin",
+      "--language",
+      "zh",
+      "--output",
+      "json",
+      "--word-timestamps",
+      "recordings\\utterance.wav"
     ]);
   });
 });
@@ -100,11 +113,11 @@ describe("createWhisperSpeechInput", () => {
     };
 
     const speech = createWhisperSpeechInput({ config, run });
-    const result = await speech.transcribe({ path: "/tmp/utterance.wav" });
+    const result = await speech.transcribe({ language: "zh", path: "recordings\\utterance.wav" });
 
     expect(result).toEqual(mapped);
     expect(seen?.binaryPath).toBe("whisper-cli");
-    expect(seen?.args).toEqual(buildWhisperArgs(config, "/tmp/utterance.wav"));
+    expect(seen?.args).toEqual(buildWhisperArgs(config, "recordings\\utterance.wav", "zh"));
   });
 
   it("uses the real process runner by default", async () => {
@@ -112,6 +125,6 @@ describe("createWhisperSpeechInput", () => {
       config: { binaryPath: process.execPath, language: "en", modelPath: "m" }
     });
     // Node rejects the Whisper-shaped args, exercising the default runner end-to-end.
-    await expect(speech.transcribe({ path: "/tmp/a.wav" })).rejects.toThrow();
+    await expect(speech.transcribe({ path: "recordings\\a.wav" })).rejects.toThrow();
   });
 });

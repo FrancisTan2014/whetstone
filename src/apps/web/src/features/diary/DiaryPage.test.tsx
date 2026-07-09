@@ -212,7 +212,8 @@ describe("DiaryPage capture", () => {
 
     await screen.findByText("hello there");
     expect(stop).toHaveBeenCalledOnce();
-    expect(mockedSubmit).toHaveBeenCalledWith("um hello there", "voice");
+    expect(mockedTranscribe).toHaveBeenCalledWith(expect.any(Blob), "en");
+    expect(mockedSubmit).toHaveBeenCalledWith("um hello there", "voice", "en");
   });
 
   it("warns and saves nothing when the transcript is blank", async () => {
@@ -286,7 +287,7 @@ describe("DiaryPage capture", () => {
     act(() => resolveCreate(captureResult(entryDto("typed-1", d(30), "a typed thought"))));
 
     await screen.findByText("a typed thought");
-    expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed");
+    expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed", "en");
   });
 
   it("scrolls a newly added entry into view so its actions clear the bottom nav (#506)", async () => {

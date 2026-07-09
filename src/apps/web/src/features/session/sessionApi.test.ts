@@ -41,6 +41,19 @@ describe("sessionApi", () => {
     });
   });
 
+  it("passes an explicit capture language to the STT endpoint", async () => {
+    const body = { transcript: "你好", words: [] };
+    const fetchMock = stubFetch({ body, ok: true });
+    const audio = new Uint8Array([1, 2, 3]);
+
+    await expect(transcribe(audio, "zh")).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledWith("/api/session/transcribe?language=zh", {
+      body: audio,
+      headers: { "content-type": "application/octet-stream" },
+      method: "POST"
+    });
+  });
+
   it("throws when transcription fails", async () => {
     stubFetch({ ok: false, status: 500 });
     await expect(transcribe(new Uint8Array([1]))).rejects.toThrow("status 500");

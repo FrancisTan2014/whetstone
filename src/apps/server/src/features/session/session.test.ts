@@ -12,6 +12,7 @@ import { errorPatterns, recallItems, sessionExchanges, turnOutcomes } from "../.
 import { entries, noteAnchors, notes, noteTemplates } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
+import type { SpeechAudio } from "../../speech/speechInput.js";
 import { depositTurnOutcome } from "../learner/learnerCommands.js";
 import { getLearnerProfile } from "../learner/learnerQueries.js";
 import { compileProgressMap } from "../map/mapQueries.js";
@@ -41,7 +42,7 @@ function makeDeps(speechTranscript = "scripted speech"): SessionDependencies {
     createId: () => `id-${(sequence += 1)}`,
     db,
     now: () => t0,
-    saveAudio: () => Promise.resolve("/tmp/saved.audio"),
+    saveAudio: () => Promise.resolve("recordings\\saved.audio"),
     speech: createFakeSpeechInput(scripted)
   };
 }
@@ -733,6 +734,36 @@ describe("session routes", () => {
     }
   });
 
+  it("passes an explicit transcribe language through to the speech seam", async () => {
+    let receivedAudio: SpeechAudio | undefined;
+    const server = createServer({
+      logger: createLoggerOptions("silent"),
+      session: {
+        ...makeDeps("你好"),
+        speech: {
+          transcribe: (audio: SpeechAudio) => {
+            receivedAudio = audio;
+            return Promise.resolve({ transcript: "你好", words: [] });
+          }
+        }
+      }
+    });
+    try {
+      const response = await server.inject({
+        headers: { "content-type": "application/octet-stream" },
+        method: "POST",
+        payload: Buffer.from("fake-audio-bytes"),
+        url: "/api/session/transcribe?language=zh"
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().transcript).toBe("你好");
+      expect(receivedAudio).toEqual({ language: "zh", path: "recordings\\saved.audio" });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("holds a conversational coach turn over /api/session/say", async () => {
     const server = buildServer();
     try {
@@ -778,6 +809,16 @@ describe("session routes", () => {
             method: "POST",
             payload: Buffer.alloc(0),
             url: "/api/session/transcribe"
+          })
+        ).statusCode
+      ).toBe(400);
+      expect(
+        (
+          await server.inject({
+            headers: { "content-type": "application/octet-stream" },
+            method: "POST",
+            payload: Buffer.from("fake-audio-bytes"),
+            url: "/api/session/transcribe?language=fr"
           })
         ).statusCode
       ).toBe(400);

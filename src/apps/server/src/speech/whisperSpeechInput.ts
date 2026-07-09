@@ -18,12 +18,16 @@ export type WhisperConfig = Readonly<{
 
 // The CLI arguments handed to the Whisper binary. The operator points `binaryPath` at a tool/wrapper
 // that honours these and emits the documented JSON contract on stdout.
-export function buildWhisperArgs(config: WhisperConfig, audioPath: string): ReadonlyArray<string> {
+export function buildWhisperArgs(
+  config: WhisperConfig,
+  audioPath: string,
+  language?: string
+): ReadonlyArray<string> {
   return [
     "--model",
     config.modelPath,
     "--language",
-    config.language,
+    language ?? config.language,
     "--output",
     "json",
     "--word-timestamps",
@@ -132,7 +136,7 @@ export function createWhisperSpeechInput(
     async transcribe(audio: SpeechAudio): Promise<Transcription> {
       const stdout = await run(
         dependencies.config.binaryPath,
-        buildWhisperArgs(dependencies.config, audio.path)
+        buildWhisperArgs(dependencies.config, audio.path, audio.language)
       );
       return parseWhisperOutput(stdout);
     }

@@ -3,6 +3,7 @@ import {
   parseDiaryCaptureResultDto,
   parseDiaryEntryDto,
   parseTimelineDto,
+  type CaptureLanguage,
   type CaptureInputMode,
   type DiaryCalendarDto,
   type DiaryCaptureResultDto,
@@ -32,11 +33,12 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
 // Durable review card.
 export async function submitDiaryCapture(
   transcript: string,
-  inputMode: CaptureInputMode
+  inputMode: CaptureInputMode,
+  language: CaptureLanguage
 ): Promise<DiaryCaptureResultDto> {
   return parseDiaryCaptureResultDto(
     await requestJson(apiUrl("/diary/entries"), {
-      body: JSON.stringify({ inputMode, transcript }),
+      body: JSON.stringify({ inputMode, language, transcript }),
       headers: jsonHeaders,
       method: "POST"
     })

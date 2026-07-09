@@ -139,11 +139,12 @@ async function buildContext(): Promise<TestContext> {
 
 async function createEntry(
   transcript: string,
-  inputMode: CaptureInputMode = "voice"
+  inputMode: CaptureInputMode = "voice",
+  language: "zh" | "en" = "en"
 ): Promise<DiaryEntryDto> {
   const response = await context.server.inject({
     method: "POST",
-    payload: { inputMode, transcript },
+    payload: { inputMode, language, transcript },
     url: "/api/diary/entries"
   });
   expect(response.statusCode).toBe(201);
@@ -177,7 +178,7 @@ describe("POST /api/diary/entries", () => {
       createdAt: "2026-06-30T20:38:00.000Z",
       entryDate: "2026-06-30",
       id: "diary-1",
-      language: null,
+      language: "en",
       text: "so today I, I went to the park"
     });
   });
@@ -209,7 +210,7 @@ describe("POST /api/diary/entries", () => {
 
     const response = await failingServer.inject({
       method: "POST",
-      payload: { inputMode: "voice", transcript: "um today I went to the park" },
+      payload: { inputMode: "voice", language: "en", transcript: "um today I went to the park" },
       url: "/api/diary/entries"
     });
 
@@ -225,7 +226,7 @@ describe("POST /api/diary/entries", () => {
   it("rejects a blank transcript", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "typed", transcript: "   " },
+      payload: { inputMode: "typed", language: "en", transcript: "   " },
       url: "/api/diary/entries"
     });
 
@@ -236,7 +237,7 @@ describe("POST /api/diary/entries", () => {
   it("rejects a missing or invalid input mode", async () => {
     const missing = await context.server.inject({
       method: "POST",
-      payload: { transcript: "a valid thought" },
+      payload: { language: "en", transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
     expect(missing.statusCode).toBe(400);
@@ -244,10 +245,26 @@ describe("POST /api/diary/entries", () => {
 
     const invalid = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "handwritten", transcript: "a valid thought" },
+      payload: { inputMode: "handwritten", language: "en", transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
     expect(invalid.statusCode).toBe(400);
+  });
+
+  it("rejects a missing or unsupported capture language", async () => {
+    const missing = await context.server.inject({
+      method: "POST",
+      payload: { inputMode: "typed", transcript: "a valid thought" },
+      url: "/api/diary/entries"
+    });
+    expect(missing.statusCode).toBe(400);
+
+    const unsupported = await context.server.inject({
+      method: "POST",
+      payload: { inputMode: "typed", language: "fr", transcript: "a valid thought" },
+      url: "/api/diary/entries"
+    });
+    expect(unsupported.statusCode).toBe(400);
   });
 
   it("persists the capture's input mode (typed stays typed, voice stays voice) (#560)", async () => {
@@ -262,11 +279,14 @@ describe("POST /api/diary/entries", () => {
     expect(typedRow?.captureSource).toBe("diary");
   });
 
-  it("round-trips a non-English entry with its text and language unchanged (no translation)", async () => {
-    const entry = await createEntry("今天 我 去 了 公园");
+  it("stores the chosen language without translating the entry text", async () => {
+    const entry = await createEntry("今天 我 去 了 公园", "voice", "zh");
 
     expect(entry.text).toBe("今天 我 去 了 公园");
-    expect(entry.language).toBeNull();
+    expect(entry.language).toBe("zh");
+
+    const row = await getTimelineCaptureForUser(context.db, entry.id, DEFAULT_USER_ID);
+    expect(row?.language).toBe("zh");
   });
 
   it("writes the entry to the coach-readable learner-history store for the user", async () => {
@@ -299,6 +319,7 @@ describe("POST /api/diary/entries", () => {
       method: "POST",
       payload: {
         inputMode: "typed",
+        language: "en",
         transcript: "I wanted to say WorkInsight is back up now but I could not"
       },
       url: "/api/diary/entries"

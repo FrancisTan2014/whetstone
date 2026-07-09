@@ -1,5 +1,6 @@
 import {
   audioContentType,
+  type CaptureLanguage,
   type CoachConverseResult,
   type CoachSayRequest,
   type DebriefDto,
@@ -32,8 +33,15 @@ export async function startSession(): Promise<SessionPlanDto> {
 
 // The STT seam (#207): post a recorded utterance's bytes, get back the transcript. The live call loop
 // (#221) calls this on each utterance-end before asking the coach; browser SpeechRecognition is not used.
-export async function transcribe(audio: Blob | Uint8Array): Promise<TranscribeResultDto> {
-  const path = apiUrl("/session/transcribe");
+export async function transcribe(
+  audio: Blob | Uint8Array,
+  language?: CaptureLanguage
+): Promise<TranscribeResultDto> {
+  const path = apiUrl(
+    language === undefined
+      ? "/session/transcribe"
+      : `/session/transcribe?language=${encodeURIComponent(language)}`
+  );
   const response = await fetch(path, {
     body: audio as BodyInit,
     headers: { "content-type": audioContentType },

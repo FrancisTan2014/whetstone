@@ -14,27 +14,46 @@ import {
 describe("parseCreateDiaryEntryRequest", () => {
   it("accepts a non-blank transcript with an input mode", () => {
     expect(
-      parseCreateDiaryEntryRequest({ inputMode: "typed", transcript: "today I read a book" })
+      parseCreateDiaryEntryRequest({
+        inputMode: "typed",
+        language: "en",
+        transcript: "today I read a book"
+      })
     ).toEqual({
       inputMode: "typed",
+      language: "en",
       transcript: "today I read a book"
     });
   });
 
   it("rejects a blank transcript", () => {
-    expect(() => parseCreateDiaryEntryRequest({ inputMode: "voice", transcript: "   " })).toThrow();
+    expect(() =>
+      parseCreateDiaryEntryRequest({ inputMode: "voice", language: "zh", transcript: "   " })
+    ).toThrow();
   });
 
   it("rejects a missing or invalid input mode (#560)", () => {
-    expect(() => parseCreateDiaryEntryRequest({ transcript: "x" })).toThrow();
+    expect(() => parseCreateDiaryEntryRequest({ language: "en", transcript: "x" })).toThrow();
     expect(() =>
-      parseCreateDiaryEntryRequest({ inputMode: "handwritten", transcript: "x" })
+      parseCreateDiaryEntryRequest({ inputMode: "handwritten", language: "en", transcript: "x" })
+    ).toThrow();
+  });
+
+  it("rejects a missing or unsupported capture language", () => {
+    expect(() => parseCreateDiaryEntryRequest({ inputMode: "typed", transcript: "x" })).toThrow();
+    expect(() =>
+      parseCreateDiaryEntryRequest({ inputMode: "typed", language: "fr", transcript: "x" })
     ).toThrow();
   });
 
   it("rejects unknown keys", () => {
     expect(() =>
-      parseCreateDiaryEntryRequest({ extra: 1, inputMode: "typed", transcript: "x" })
+      parseCreateDiaryEntryRequest({
+        extra: 1,
+        inputMode: "typed",
+        language: "en",
+        transcript: "x"
+      })
     ).toThrow();
   });
 });

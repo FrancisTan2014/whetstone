@@ -125,7 +125,9 @@ truth for what to build now.
 5. **Capture** — one entry point for lived learning friction. Typed **Quick Capture** and tap-and-talk
    voice diary both save a chronological Timeline entry first (raw input preserved, then lightly
    **tidied**, never polished). From Quick Capture, Whetstone may propose one evidence-backed learning
-   deposit for review on Today; approved proposals become production-style Recall items.
+   deposit for review on Today; approved proposals become production-style Recall items. Capture is
+   bilingual by explicit choice: a compact 中文 / EN selector sets the language for STT and the saved entry,
+   with the last-used language remembered for the next capture.
 6. **Recall** — surface **due** items (the built SM-2 scheduler) as **gentle, capped, snoozeable proposals**;
    completing one feeds its grade back to the scheduler.
 7. **A proactive Today home** — the assistant's front door, composing capture + recall + the

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   type DiaryEntryDto,
   recallCategories,
+  type CaptureLanguage,
   type CaptureInputMode,
   type MakeDurableCardDto,
   type ProposalPayload,
@@ -42,6 +43,18 @@ const voicePhaseLabels: Readonly<Record<VoicePhase, string>> = {
   transcribing: "Transcribing…"
 };
 
+const captureLanguageStorageKey = "whetstone.capture.language";
+
+const captureLanguageOptions: ReadonlyArray<Readonly<{ label: string; value: CaptureLanguage }>> = [
+  { label: "中文", value: "zh" },
+  { label: "EN", value: "en" }
+];
+
+function readInitialCaptureLanguage(): CaptureLanguage {
+  const stored = window.localStorage.getItem(captureLanguageStorageKey);
+  return stored === "zh" || stored === "en" ? stored : "en";
+}
+
 // The unified capture surface used by Today and Diary: a typed box and — when the browser supports it —
 // tap-and-talk voice capture. Every capture saves a diary entry first; then the shared Make Durable
 // proposal gate may surface at most one review card. Load/model/mic failures degrade quietly so this
@@ -66,6 +79,7 @@ export function CaptureCard({
   const [error, setError] = useState<string | null>(null);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillNote, setBackfillNote] = useState<string | null>(null);
+  const [language, setLanguage] = useState<CaptureLanguage>(readInitialCaptureLanguage);
 
   useEffect(() => {
     fetchMakeDurableCards().then(
@@ -76,6 +90,11 @@ export function CaptureCard({
 
   function removeCard(id: string): void {
     setCards((current) => current.filter((card) => card.proposalCandidateId !== id));
+  }
+
+  function chooseLanguage(nextLanguage: CaptureLanguage): void {
+    setLanguage(nextLanguage);
+    window.localStorage.setItem(captureLanguageStorageKey, nextLanguage);
   }
 
   // The single path both typed and voice capture funnel through: the Timeline entry is always saved,
@@ -90,7 +109,7 @@ export function CaptureCard({
     setBusy(true);
     setError(null);
     try {
-      const result = await submitDiaryCapture(trimmed, inputMode);
+      const result = await submitDiaryCapture(trimmed, inputMode, language);
       onCaptured?.(result.entry);
       const card = result.card;
       if (card !== null) {
@@ -137,7 +156,7 @@ export function CaptureCard({
         setError("Didn't catch any speech — try again.");
         return;
       }
-      const { transcript } = await transcribe(audio);
+      const { transcript } = await transcribe(audio, language);
       setPhase("idle");
       if (transcript.trim().length === 0) {
         setError("Didn't catch any speech — try again.");
@@ -196,6 +215,32 @@ export function CaptureCard({
         Tap and talk — or write it down. It lands in your diary, then one useful note may be
         proposed.
       </p>
+
+      <div className="mt-3" role="group" aria-labelledby="capture-language-label">
+        <p className="text-sm font-medium text-text" id="capture-language-label">
+          Capture language
+        </p>
+        <div className="mt-1 inline-flex rounded border border-border bg-bg p-1">
+          {captureLanguageOptions.map((option) => {
+            const selected = option.value === language;
+            return (
+              <button
+                aria-pressed={selected}
+                className={
+                  selected
+                    ? "min-h-11 min-w-11 rounded bg-accent px-3 text-sm font-medium text-accent-fg"
+                    : "min-h-11 min-w-11 rounded px-3 text-sm font-medium text-text-muted hover:bg-surface hover:text-text"
+                }
+                key={option.value}
+                onClick={() => chooseLanguage(option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {capture.supported ? (
         <div className="mt-3 flex flex-col gap-2">
