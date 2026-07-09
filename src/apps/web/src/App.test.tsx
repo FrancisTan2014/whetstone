@@ -78,7 +78,7 @@ describe("App shell and routes", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain('id="today-heading"');
-    expect(markup).toContain("Capture a thought");
+    expect(markup).toContain("Capture today");
     // Today is the landing now — the Library no longer mounts at the index route.
     expect(markup).not.toContain("Work detail");
   });
@@ -111,7 +111,7 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain('aria-label="Practice nudge"');
     expect(markup).not.toContain("Practise now");
     expect(markup).not.toContain('id="today-heading"');
-    expect(markup).not.toContain("Capture a thought");
+    expect(markup).not.toContain("Capture today");
   });
 
   it("resolves the recall route to the due-recall page (still reachable off-nav)", () => {

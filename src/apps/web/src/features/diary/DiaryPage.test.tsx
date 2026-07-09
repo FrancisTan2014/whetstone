@@ -4,37 +4,45 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./diaryApi", () => ({
-  createDiaryEntry: vi.fn(),
+  submitDiaryCapture: vi.fn(),
   deleteDiaryEntry: vi.fn(),
   fetchDiaryCalendar: vi.fn(),
   fetchTimeline: vi.fn(),
   updateDiaryEntry: vi.fn()
 }));
 
+vi.mock("../makeDurable/makeDurableApi", () => ({
+  fetchMakeDurableCards: vi.fn(),
+  reviewMakeDurableCard: vi.fn(),
+  runMakeDurableBackfill: vi.fn()
+}));
+
 vi.mock("../session/sessionApi", () => ({ transcribe: vi.fn() }));
 
-import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
+import type {
+  DiaryCaptureResultDto,
+  DiaryEntryDto,
+  TimelineDayDto,
+  TimelineEntryDto
+} from "@whetstone/contracts";
 import { toDayKey } from "@whetstone/domain";
 
 import { transcribe } from "../session/sessionApi";
+import { fetchMakeDurableCards } from "../makeDurable/makeDurableApi";
 import {
-  createDiaryEntry,
+  submitDiaryCapture,
   deleteDiaryEntry,
   fetchDiaryCalendar,
   fetchTimeline,
   updateDiaryEntry
 } from "./diaryApi";
-import {
-  DiaryPage,
-  dayToUnmarkAfterDelete,
-  type DiaryCaptureDependencies,
-  type DiaryRecording,
-  type FlatEntry
-} from "./DiaryPage";
+import { DiaryPage, dayToUnmarkAfterDelete, type FlatEntry } from "./DiaryPage";
+import type { CaptureVoiceDependencies, VoiceRecording } from "../capture/CaptureCard";
 
 const mockedTimeline = vi.mocked(fetchTimeline);
 const mockedCalendar = vi.mocked(fetchDiaryCalendar);
-const mockedCreate = vi.mocked(createDiaryEntry);
+const mockedSubmit = vi.mocked(submitDiaryCapture);
+const mockedFetchCards = vi.mocked(fetchMakeDurableCards);
 const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
 const mockedTranscribe = vi.mocked(transcribe);
@@ -54,6 +62,10 @@ function tDay(date: string, entries: TimelineEntryDto[]): TimelineDayDto {
 
 function entryDto(id: string, entryDate: string, text: string): DiaryEntryDto {
   return { createdAt: `${entryDate}T12:00:00.000Z`, entryDate, id, language: null, text };
+}
+
+function captureResult(entry: DiaryEntryDto): DiaryCaptureResultDto {
+  return { entry, card: null };
 }
 
 type FakeIntersectionObserver = {
@@ -100,12 +112,12 @@ async function waitForObserver(): Promise<FakeIntersectionObserver> {
 function makeCapture(
   overrides?: Partial<{ supported: boolean; startRejects: boolean; stop: () => Promise<Blob> }>
 ): {
-  capture: DiaryCaptureDependencies;
+  capture: CaptureVoiceDependencies;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
 } {
   const stop = vi.fn(overrides?.stop ?? (async () => new Blob(["audio"])));
-  const recording: DiaryRecording = { stop };
+  const recording: VoiceRecording = { stop };
   const start = vi.fn(async () => {
     if (overrides?.startRejects === true) {
       throw new Error("denied");
@@ -120,7 +132,7 @@ function makeCapture(
   };
 }
 
-async function renderReady(capture: DiaryCaptureDependencies): Promise<void> {
+async function renderReady(capture: CaptureVoiceDependencies): Promise<void> {
   render(<DiaryPage capture={capture} />);
   await screen.findByRole("heading", { level: 1, name: "Diary" });
 }
@@ -130,6 +142,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedTimeline.mockResolvedValue({ days: [] });
   mockedCalendar.mockResolvedValue({ dates: [] });
+  mockedFetchCards.mockResolvedValue([]);
   vi.stubGlobal("IntersectionObserver", StubObserver);
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -173,7 +186,9 @@ describe("DiaryPage timeline", () => {
 
     await renderReady(makeCapture().capture);
 
-    const headings = screen.getAllByRole("heading", { level: 2 });
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .filter((heading) => heading.textContent !== "Capture today");
     expect(headings[0]?.textContent).toContain("30");
     expect(headings[1]?.textContent).toContain("29");
     expect(screen.getByText("first on the 30th")).toBeTruthy();
@@ -184,7 +199,7 @@ describe("DiaryPage timeline", () => {
 describe("DiaryPage capture", () => {
   it("records, transcribes, tidies and files a new entry under today", async () => {
     mockedTranscribe.mockResolvedValue({ transcript: "um hello there", words: [] });
-    mockedCreate.mockResolvedValue(entryDto("new-1", d(30), "hello there"));
+    mockedSubmit.mockResolvedValue(captureResult(entryDto("new-1", d(30), "hello there")));
     const { capture, start, stop } = makeCapture();
 
     await renderReady(capture);
@@ -197,7 +212,7 @@ describe("DiaryPage capture", () => {
 
     await screen.findByText("hello there");
     expect(stop).toHaveBeenCalledOnce();
-    expect(mockedCreate).toHaveBeenCalledWith("um hello there");
+    expect(mockedSubmit).toHaveBeenCalledWith("um hello there", "voice");
   });
 
   it("warns and saves nothing when the transcript is blank", async () => {
@@ -209,7 +224,7 @@ describe("DiaryPage capture", () => {
     await userEvent.click(screen.getByRole("button", { name: "Stop & save" }));
 
     await screen.findByText(/Didn't catch any speech/);
-    expect(mockedCreate).not.toHaveBeenCalled();
+    expect(mockedSubmit).not.toHaveBeenCalled();
   });
 
   it("takes the no-speech retry and keeps typing usable when the capture is empty audio (#467)", async () => {
@@ -224,9 +239,11 @@ describe("DiaryPage capture", () => {
     await screen.findByText(/Didn't catch any speech/);
     expect(stop).toHaveBeenCalledOnce();
     expect(mockedTranscribe).not.toHaveBeenCalled();
-    expect(mockedCreate).not.toHaveBeenCalled();
-    // The typed fallback stays usable (not stuck disabled/busy).
-    expect((screen.getByRole("button", { name: "Add entry" }) as HTMLButtonElement).disabled).toBe(
+    expect(mockedSubmit).not.toHaveBeenCalled();
+    // The typed fallback stays usable (not stuck busy).
+    const textbox = screen.getByLabelText("Capture text");
+    await userEvent.type(textbox, "typed fallback");
+    expect((screen.getByRole("button", { name: "Capture" }) as HTMLButtonElement).disabled).toBe(
       false
     );
   });
@@ -237,7 +254,7 @@ describe("DiaryPage capture", () => {
     await renderReady(capture);
     await userEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
-    await screen.findByText(/Couldn't access the microphone/);
+    await screen.findByText(/Couldn't reach the microphone/);
   });
 
   it("warns when transcription or saving fails", async () => {
@@ -248,39 +265,39 @@ describe("DiaryPage capture", () => {
     await userEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await userEvent.click(screen.getByRole("button", { name: "Stop & save" }));
 
-    await screen.findByText(/Something went wrong saving your entry/);
+    await screen.findByText(/Couldn't save your capture/);
   });
 
   it("adds a typed entry via the fallback box and shows a saving state", async () => {
-    let resolveCreate: (entry: DiaryEntryDto) => void = () => {};
-    mockedCreate.mockImplementation(
+    let resolveCreate: (result: DiaryCaptureResultDto) => void = () => {};
+    mockedSubmit.mockImplementation(
       () =>
-        new Promise<DiaryEntryDto>((resolve) => {
+        new Promise<DiaryCaptureResultDto>((resolve) => {
           resolveCreate = resolve;
         })
     );
     const { capture } = makeCapture();
 
     await renderReady(capture);
-    await userEvent.type(screen.getByLabelText("Or write it down"), "a typed thought");
-    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await userEvent.type(screen.getByLabelText("Capture text"), "a typed thought");
+    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     expect(screen.getAllByText("Saving…").length).toBeGreaterThan(0);
-    act(() => resolveCreate(entryDto("typed-1", d(30), "a typed thought")));
+    act(() => resolveCreate(captureResult(entryDto("typed-1", d(30), "a typed thought"))));
 
     await screen.findByText("a typed thought");
-    expect(mockedCreate).toHaveBeenCalledWith("a typed thought");
+    expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed");
   });
 
   it("scrolls a newly added entry into view so its actions clear the bottom nav (#506)", async () => {
-    mockedCreate.mockResolvedValue(entryDto("typed-1", d(30), "a fresh thought"));
+    mockedSubmit.mockResolvedValue(captureResult(entryDto("typed-1", d(30), "a fresh thought")));
     const { capture } = makeCapture();
 
     await renderReady(capture);
     (Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).mockClear();
 
-    await userEvent.type(screen.getByLabelText("Or write it down"), "a fresh thought");
-    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await userEvent.type(screen.getByLabelText("Capture text"), "a fresh thought");
+    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await screen.findByText("a fresh thought");
     // `block: "nearest"` lifts the entry the minimal amount so its Edit/Delete row is not clipped
@@ -295,20 +312,20 @@ describe("DiaryPage capture", () => {
     const { capture } = makeCapture();
 
     await renderReady(capture);
-    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
-    expect(mockedCreate).not.toHaveBeenCalled();
+    expect(mockedSubmit).not.toHaveBeenCalled();
   });
 
   it("warns when a typed entry fails to save", async () => {
-    mockedCreate.mockRejectedValue(new Error("nope"));
+    mockedSubmit.mockRejectedValue(new Error("nope"));
     const { capture } = makeCapture();
 
     await renderReady(capture);
-    await userEvent.type(screen.getByLabelText("Or write it down"), "boom");
-    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await userEvent.type(screen.getByLabelText("Capture text"), "boom");
+    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
-    await screen.findByText(/Something went wrong saving your entry/);
+    await screen.findByText(/Couldn't save your capture/);
   });
 
   it("hides the record button when voice capture is unsupported but keeps the typed box", async () => {
@@ -317,7 +334,7 @@ describe("DiaryPage capture", () => {
     await renderReady(capture);
 
     expect(screen.queryByRole("button", { name: "Tap to talk" })).toBeNull();
-    expect(screen.getByLabelText("Or write it down")).toBeTruthy();
+    expect(screen.getByLabelText("Capture text")).toBeTruthy();
   });
 });
 
@@ -577,14 +594,14 @@ describe("DiaryPage date-jump calendar", () => {
   });
 
   it("marks the new entry's day on the calendar immediately after saving (#471)", async () => {
-    mockedCreate.mockResolvedValue(entryDto("typed-1", d(6), "a fresh thought"));
+    mockedSubmit.mockResolvedValue(captureResult(entryDto("typed-1", d(6), "a fresh thought")));
     await renderReady(makeCapture().capture);
 
     // No marks yet (the calendar fetch returns none).
     expect(screen.queryByRole("button", { name: `Go to ${d(6)}` })).toBeNull();
 
-    await userEvent.type(screen.getByLabelText("Or write it down"), "a fresh thought");
-    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await userEvent.type(screen.getByLabelText("Capture text"), "a fresh thought");
+    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await screen.findByText("a fresh thought");
     // The day is marked immediately, without a month toggle or reload.
@@ -595,12 +612,12 @@ describe("DiaryPage date-jump calendar", () => {
     // The day is already marked from the calendar fetch; saving another entry that day keeps the mark
     // (the marked-day set is left unchanged rather than needlessly rebuilt).
     mockedCalendar.mockResolvedValue({ dates: [d(6)] });
-    mockedCreate.mockResolvedValue(entryDto("typed-2", d(6), "another thought"));
+    mockedSubmit.mockResolvedValue(captureResult(entryDto("typed-2", d(6), "another thought")));
     await renderReady(makeCapture().capture);
     await screen.findByRole("button", { name: `Go to ${d(6)}` });
 
-    await userEvent.type(screen.getByLabelText("Or write it down"), "another thought");
-    await userEvent.click(screen.getByRole("button", { name: "Add entry" }));
+    await userEvent.type(screen.getByLabelText("Capture text"), "another thought");
+    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await screen.findByText("another thought");
     expect(screen.getByRole("button", { name: `Go to ${d(6)}` })).toBeTruthy();

@@ -32,7 +32,7 @@ import type { MapDependencies } from "../features/map/mapRoutes.js";
 import { registerSessionRoutes } from "../features/session/sessionRoutes.js";
 import type { SessionDependencies } from "../features/session/sessionEngine.js";
 import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
-import type { DiaryDependencies } from "../features/diary/diaryCommands.js";
+import type { DiaryRouteDependencies } from "../features/diary/diaryRoutes.js";
 import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
 import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
@@ -58,7 +58,7 @@ export type CreateServerOptions = Readonly<{
   // The identity seam: the source of the current user id for user-owned reads/writes. Defaults to
   // the v0 DEFAULT_USER_ID provider; tests (and future auth) inject their own.
   currentUser?: CurrentUserProvider;
-  diary?: DiaryDependencies;
+  diary?: DiaryRouteDependencies;
   images?: ImageDependencies;
   library?: LibraryRouteDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;

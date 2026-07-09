@@ -1,4 +1,4 @@
-import type { DiaryEntryDto } from "@whetstone/contracts";
+import type { CaptureInputMode, DiaryEntryDto } from "@whetstone/contracts";
 import { toDayKey } from "@whetstone/domain";
 import { and, eq } from "drizzle-orm";
 
@@ -24,14 +24,16 @@ export type DeleteDiaryEntryResult =
   | Readonly<{ status: "not_found" }>;
 
 // Capture an entry: tidy the transcript (the LLM seam), then persist it onto the Timeline as a
-// diary-sourced voice capture filed under today for the current user. The raw transcript is preserved
-// verbatim in `raw_input_text` and the tidy-pass result in `tidied_text`. Registering the owning Entry
-// (`type = "timeline_entry"`) and the capture row in one transaction keeps a capture from ever existing
-// without its Entry. The server owns `entry_date` (today, from `now`) and `created_at` (`now`) so the
-// client cannot backdate or forge a day. Language is unknown in v0 and stored null.
+// diary-sourced capture filed under today for the current user. `inputMode` records how the entry was
+// made — the typed box or tap-and-talk voice (#560) — so a typed capture is not misrecorded as voice.
+// The raw transcript is preserved verbatim in `raw_input_text` and the tidy-pass result in `tidied_text`.
+// Registering the owning Entry (`type = "timeline_entry"`) and the capture row in one transaction keeps a
+// capture from ever existing without its Entry. The server owns `entry_date` (today, from `now`) and
+// `created_at` (`now`) so the client cannot backdate or forge a day. Language is unknown in v0 and null.
 export async function createDiaryEntry(
   dependencies: DiaryDependencies,
   transcript: string,
+  inputMode: CaptureInputMode,
   userId: string,
   now: Date
 ): Promise<DiaryEntryDto> {
@@ -42,7 +44,7 @@ export async function createDiaryEntry(
     userId,
     createdAt: now,
     entryDate: toDayKey(now),
-    inputMode: "voice" as const,
+    inputMode,
     captureSource: "diary" as const,
     rawInputText: transcript,
     tidiedText: tidied,

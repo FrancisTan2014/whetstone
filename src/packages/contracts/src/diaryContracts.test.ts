@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   diaryCalendarQuerySchema,
   parseCreateDiaryEntryRequest,
+  parseDiaryCaptureResultDto,
   parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
@@ -11,18 +12,30 @@ import {
 } from "./diaryContracts.js";
 
 describe("parseCreateDiaryEntryRequest", () => {
-  it("accepts a non-blank transcript", () => {
-    expect(parseCreateDiaryEntryRequest({ transcript: "today I read a book" })).toEqual({
+  it("accepts a non-blank transcript with an input mode", () => {
+    expect(
+      parseCreateDiaryEntryRequest({ inputMode: "typed", transcript: "today I read a book" })
+    ).toEqual({
+      inputMode: "typed",
       transcript: "today I read a book"
     });
   });
 
   it("rejects a blank transcript", () => {
-    expect(() => parseCreateDiaryEntryRequest({ transcript: "   " })).toThrow();
+    expect(() => parseCreateDiaryEntryRequest({ inputMode: "voice", transcript: "   " })).toThrow();
+  });
+
+  it("rejects a missing or invalid input mode (#560)", () => {
+    expect(() => parseCreateDiaryEntryRequest({ transcript: "x" })).toThrow();
+    expect(() =>
+      parseCreateDiaryEntryRequest({ inputMode: "handwritten", transcript: "x" })
+    ).toThrow();
   });
 
   it("rejects unknown keys", () => {
-    expect(() => parseCreateDiaryEntryRequest({ extra: 1, transcript: "x" })).toThrow();
+    expect(() =>
+      parseCreateDiaryEntryRequest({ extra: 1, inputMode: "typed", transcript: "x" })
+    ).toThrow();
   });
 });
 
@@ -68,6 +81,42 @@ describe("parseDiaryEntryDto", () => {
         language: null,
         text: "x"
       })
+    ).toThrow();
+  });
+});
+
+describe("parseDiaryCaptureResultDto", () => {
+  const entry = {
+    createdAt: "2026-06-30T20:38:00.000Z",
+    entryDate: "2026-06-30",
+    id: "diary-1",
+    language: null,
+    text: "I went to the park."
+  };
+
+  const card = {
+    proposalCandidateId: "candidate-1",
+    timelineEntryId: "diary-1",
+    type: "phrase_chunk" as const,
+    target: "back up now",
+    cue: "a service recovered",
+    useContext: "status update",
+    reason: "useful phrase",
+    category: "work" as const,
+    tags: ["status"]
+  };
+
+  it("accepts a saved diary entry with no proposal card", () => {
+    expect(parseDiaryCaptureResultDto({ entry, card: null })).toEqual({ entry, card: null });
+  });
+
+  it("accepts a saved diary entry with one Make Durable review card", () => {
+    expect(parseDiaryCaptureResultDto({ entry, card })).toEqual({ entry, card });
+  });
+
+  it("rejects a malformed nested card", () => {
+    expect(() =>
+      parseDiaryCaptureResultDto({ entry, card: { ...card, category: "unknown" } })
     ).toThrow();
   });
 });

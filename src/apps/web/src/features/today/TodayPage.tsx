@@ -8,7 +8,7 @@ import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
 import { fetchWorks } from "../library/libraryApi.js";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
-import { MakeDurableSection } from "../makeDurable/MakeDurableSection.js";
+import { CaptureCard } from "../capture/CaptureCard.js";
 import { fetchLatestReadingPosition } from "./todayApi.js";
 
 // Today is a calm, finite, clearable daily board (PRODUCT.md "v0 assistant home (Today)" + "The
@@ -119,8 +119,7 @@ export function TodayPage(): React.JSX.Element {
 
       <div className="mt-6 flex flex-col gap-4">
         {firstRun ? <FirstRunCard /> : null}
-        <DiaryCaptureCard />
-        <MakeDurableSection onDurableSaved={loadRecall} />
+        <CaptureCard onDurableSaved={loadRecall} />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
@@ -168,22 +167,6 @@ function FirstRunCard(): React.JSX.Element {
       <p className="mt-1 text-text-muted">Add or import a reading — one work is enough to begin.</p>
       <Link className={`${buttonVariants({ variant: "primary" })} mt-3`} to="/library">
         Open Library
-      </Link>
-    </section>
-  );
-}
-
-// Capture is an invitation, not a task, so the quick-capture card is always present. The full
-// tap-and-talk capture lives in the Diary (#246); Today only links there — it never duplicates it.
-function DiaryCaptureCard(): React.JSX.Element {
-  return (
-    <section aria-label="Capture a thought" className="rounded border border-border bg-surface p-4">
-      <h2 className="text-lg font-medium text-text">Capture a thought</h2>
-      <p className="mt-1 text-text-muted">
-        Tap and talk — say what&rsquo;s on your mind and it lands in your diary.
-      </p>
-      <Link className={`${buttonVariants({ variant: "primary" })} mt-3`} to="/diary">
-        Open your diary
       </Link>
     </section>
   );

@@ -37,10 +37,12 @@ export type {
 } from "./sessionContracts.js";
 export {
   createDiaryEntryRequestSchema,
+  diaryCaptureResultDtoSchema,
   diaryCalendarDtoSchema,
   diaryCalendarQuerySchema,
   diaryEntryDtoSchema,
   parseCreateDiaryEntryRequest,
+  parseDiaryCaptureResultDto,
   parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
@@ -53,6 +55,7 @@ export {
 } from "./diaryContracts.js";
 export type {
   CreateDiaryEntryRequest,
+  DiaryCaptureResultDto,
   DiaryCalendarDto,
   DiaryCalendarQuery,
   DiaryEntryDto,

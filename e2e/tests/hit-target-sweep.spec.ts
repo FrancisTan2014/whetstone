@@ -30,12 +30,12 @@ const DESKTOP = { height: 900, width: 1280 } as const;
 // loading state). Where a route's ready state varies too much for a single positive marker (Practice's
 // loading/empty/error/ready, Map's ready/error), the loading-indicator wait below is the guard instead.
 const ROUTES: ReadonlyArray<readonly [string, string, string | undefined]> = [
-  ["Today", "#/", 'section[aria-label="Capture a thought"]'],
+  ["Today", "#/", 'section[aria-label="Capture today"]'],
   ["Library", "#/library", 'a[href^="#/reader?work="]'],
   ["Practice", "#/practice", undefined],
   ["Map", "#/progress", undefined],
   ["Search", "#/search", 'input[type="search"]'],
-  ["Diary", "#/diary", 'section[aria-label="New entry"]']
+  ["Diary", "#/diary", 'section[aria-label="Capture today"]']
 ];
 
 // The shared `LoadingIndicator` renders `[role="status"][aria-busy="true"]`. An async route (Diary,

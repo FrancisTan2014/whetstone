@@ -11,6 +11,8 @@ import type {
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { createServer } from "../../http/createServer.js";
+import { entries, timelineEntries } from "../../db/schema.js";
+import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ProposalAttempt, ProposalProvider } from "./proposalProvider.js";
 
 const captureText = "I wanted to say WorkInsight is back up now but I could not";
@@ -75,6 +77,24 @@ async function capture(text = captureText): Promise<QuickCaptureResultDto> {
   });
   expect(response.statusCode).toBe(201);
   return response.json() as QuickCaptureResultDto;
+}
+
+async function seedDiaryCapture(): Promise<void> {
+  await context.db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: "diary-history-1", type: "timeline_entry" });
+    await tx.insert(timelineEntries).values({
+      captureSource: "diary",
+      createdAt: new Date("2026-07-06T08:30:00.000Z"),
+      entryDate: "2026-07-06",
+      entryId: "diary-history-1",
+      inputMode: "typed",
+      language: null,
+      rawAudioPath: null,
+      rawInputText: captureText,
+      tidiedText: captureText,
+      userId: DEFAULT_USER_ID
+    });
+  });
 }
 
 afterEach(async () => {
@@ -160,7 +180,7 @@ describe("POST /api/makedurable/backfill", () => {
       () => Promise.resolve(null),
       () => Promise.resolve(validAttempt)
     );
-    await capture();
+    await seedDiaryCapture();
 
     const response = await context.server.inject({
       method: "POST",

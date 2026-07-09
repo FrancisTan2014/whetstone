@@ -90,7 +90,7 @@ async function seedCapture(text: string, now: Date, userId = userA): Promise<str
   const entry = await createTimelineCapture(
     { createId: () => `entry-${(sequence += 1)}`, db: context.db },
     {
-      captureSource: "quick_capture",
+      captureSource: "diary",
       inputMode: "typed",
       language: null,
       rawAudioPath: null,

@@ -12,9 +12,8 @@ import {
 
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
-import { transcribe } from "../session/sessionApi.js";
+import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCard.js";
 import {
-  createDiaryEntry,
   deleteDiaryEntry,
   fetchDiaryCalendar,
   fetchTimeline,
@@ -23,18 +22,6 @@ import {
 
 // How many days the Timeline loads per page (matches the server's default page size).
 const PAGE_SIZE = 7;
-
-// One tap-and-talk recording: stop finalizes the audio and hands it back for STT. The browser audio
-// boundary (createDiaryCapture in diaryCapture.ts) is injected so the page tests with a deterministic
-// fake, exactly as the session page injects its live capture.
-export type DiaryRecording = Readonly<{ stop: () => Promise<Blob> }>;
-
-export type DiaryCaptureDependencies = Readonly<{
-  start: () => Promise<DiaryRecording>;
-  // Feature-detect from `isVoiceCaptureSupported`: false on a non-secure context or no mic device, so the
-  // record button is hidden and the diary falls back to the always-present typed box — never a dead end.
-  supported: boolean;
-}>;
 
 // A timeline entry flattened with the day it falls under, so the pure `groupByDayDesc` can regroup the
 // loaded entries (capture prepends, lazy-load appends older) into day sections without another fetch.
@@ -46,9 +33,6 @@ export type FlatEntry = Readonly<{
   language: string | null;
   text: string;
 }>;
-
-// Where the capture pipeline is: idle, recording (mic open), transcribing (STT), or saving (tidy+persist).
-type Phase = "idle" | "recording" | "transcribing" | "saving";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -114,7 +98,7 @@ function timeLabel(createdAt: string): string {
   return new Date(createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-type DiaryPageProps = Readonly<{ capture: DiaryCaptureDependencies }>;
+type DiaryPageProps = Readonly<{ capture: CaptureVoiceDependencies }>;
 
 export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const [load, setLoad] = useState<LoadState>("loading");
@@ -123,9 +107,6 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [recording, setRecording] = useState<DiaryRecording | null>(null);
-  const [typed, setTyped] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [monthKey, setMonthKey] = useState(() => toMonthKey(toDayKey(new Date())));
@@ -259,68 +240,11 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, hasMore]);
 
-  async function startRecording(): Promise<void> {
+  function handleCaptured(entry: DiaryEntryDto): void {
     setNotice(null);
-    try {
-      const handle = await capture.start();
-      setRecording(handle);
-      setPhase("recording");
-    } catch {
-      fail("Couldn't access the microphone.");
-    }
-  }
-
-  async function stopRecording(handle: DiaryRecording): Promise<void> {
-    setNotice(null);
-    setRecording(null);
-    setPhase("transcribing");
-    try {
-      const audio = await handle.stop();
-      // The voice adapter settles with empty audio when no utterance was confirmed (tap → silence →
-      // stop). Posting that to /transcribe would 400; instead take the calm no-speech retry and return
-      // to idle so the typed fallback stays usable (#467), never hanging in "transcribing".
-      if (audio.size === 0) {
-        fail("Didn't catch any speech — try again.");
-        setPhase("idle");
-        return;
-      }
-      const { transcript } = await transcribe(audio);
-      const trimmed = transcript.trim();
-      if (trimmed.length === 0) {
-        fail("Didn't catch any speech — try again.");
-        setPhase("idle");
-        return;
-      }
-      setPhase("saving");
-      const entry = await createDiaryEntry(trimmed);
-      setEntries((previous) => [...previous, toFlat(entry)]);
-      markEntryDay(entry.entryDate);
-      pendingEntryScrollRef.current = entry.id;
-      setPhase("idle");
-    } catch {
-      fail("Something went wrong saving your entry.");
-      setPhase("idle");
-    }
-  }
-
-  async function addTyped(): Promise<void> {
-    const text = typed.trim();
-    if (text.length === 0) {
-      return;
-    }
-    setNotice(null);
-    setTyped("");
-    setPhase("saving");
-    try {
-      const entry = await createDiaryEntry(text);
-      setEntries((previous) => [...previous, toFlat(entry)]);
-      markEntryDay(entry.entryDate);
-      pendingEntryScrollRef.current = entry.id;
-      setPhase("idle");
-    } catch {
-      fail("Something went wrong saving your entry.");
-      setPhase("idle");
-    }
+    setEntries((previous) => [...previous, toFlat(entry)]);
+    markEntryDay(entry.entryDate);
+    pendingEntryScrollRef.current = entry.id;
   }
 
   async function saveEdit(id: string, text: string): Promise<void> {
@@ -399,55 +323,10 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     );
   }
 
-  const busy = phase === "transcribing" || phase === "saving";
-
   return (
     <Shell>
       <div className="flex flex-col gap-6">
-        <section aria-label="New entry" className="flex flex-col gap-3">
-          {capture.supported ? (
-            recording === null ? (
-              <Button onClick={() => void startRecording()} pending={busy} type="button">
-                {busy ? "Saving…" : "Tap to talk"}
-              </Button>
-            ) : (
-              <Button
-                onClick={() => void stopRecording(recording)}
-                type="button"
-                variant="secondary"
-              >
-                Stop &amp; save
-              </Button>
-            )
-          ) : null}
-
-          {phase !== "idle" ? (
-            <p className="text-sm font-medium text-text" role="status">
-              {phaseLabels[phase]}
-            </p>
-          ) : null}
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm text-text-muted" htmlFor="diary-typed">
-              Or write it down
-            </label>
-            <textarea
-              className="min-h-20 rounded border border-border bg-surface p-3 text-text"
-              id="diary-typed"
-              onChange={(event) => setTyped(event.currentTarget.value)}
-              value={typed}
-            />
-            <Button
-              className="self-start"
-              onClick={() => void addTyped()}
-              pending={busy}
-              type="button"
-              variant="secondary"
-            >
-              Add entry
-            </Button>
-          </div>
-        </section>
+        <CaptureCard capture={capture} onCaptured={handleCaptured} />
 
         {notice !== null ? (
           <p
@@ -550,13 +429,6 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     </Shell>
   );
 }
-
-const phaseLabels: Readonly<Record<Phase, string>> = {
-  idle: "",
-  recording: "Listening…",
-  saving: "Saving…",
-  transcribing: "Transcribing…"
-};
 
 function Shell({ children }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
   return (

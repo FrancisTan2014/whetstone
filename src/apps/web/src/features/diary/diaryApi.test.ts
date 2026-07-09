@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiaryEntryDto } from "@whetstone/contracts";
 
 import {
-  createDiaryEntry,
   deleteDiaryEntry,
   fetchDiaryCalendar,
   fetchTimeline,
+  submitDiaryCapture,
   updateDiaryEntry
 } from "./diaryApi";
 
@@ -38,12 +38,24 @@ afterEach(() => {
 });
 
 describe("diaryApi", () => {
-  it("posts a transcript to create an entry and parses the entry", async () => {
-    const fetchMock = stubFetch({ body: entry, ok: true });
+  it("posts the transcript and input mode to create an entry and parses the capture result", async () => {
+    const result = { entry, card: null };
+    const fetchMock = stubFetch({ body: result, ok: true });
 
-    await expect(createDiaryEntry("today I read a book")).resolves.toEqual(entry);
+    await expect(submitDiaryCapture("today I read a book", "typed")).resolves.toEqual(result);
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries", {
-      body: JSON.stringify({ transcript: "today I read a book" }),
+      body: JSON.stringify({ inputMode: "typed", transcript: "today I read a book" }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("threads a voice input mode through to the capture request (#560)", async () => {
+    const fetchMock = stubFetch({ body: { entry, card: null }, ok: true });
+
+    await submitDiaryCapture("spoken out loud", "voice");
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries", {
+      body: JSON.stringify({ inputMode: "voice", transcript: "spoken out loud" }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });

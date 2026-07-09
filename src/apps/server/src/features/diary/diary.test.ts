@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { DiaryEntryDto, TimelineDto } from "@whetstone/contracts";
+import type {
+  CaptureInputMode,
+  DiaryCaptureResultDto,
+  DiaryEntryDto,
+  ProposalPayload,
+  TimelineDto
+} from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -14,7 +20,9 @@ import {
   getTimelineCaptureForUser,
   listBackfillableCaptures
 } from "../makeDurable/timelineQueries.js";
-import type { DiaryDependencies } from "./diaryCommands.js";
+import type { ProposalAttempt, ProposalProvider } from "../makeDurable/proposalProvider.js";
+import { listProposalCandidatesForUser } from "../makeDurable/proposalQueries.js";
+import type { DiaryRouteDependencies } from "./diaryRoutes.js";
 import { createDiaryTidy } from "./diaryTidy.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
 
@@ -70,6 +78,33 @@ function fakeTidy(transcript: string): string {
   return kept.join(" ");
 }
 
+const proposalPayload: ProposalPayload = {
+  target: "WorkInsight is back up now",
+  cue: "a service is back",
+  useContext: "reporting availability",
+  category: "work",
+  tags: ["service-status"]
+};
+
+function proposalAttempt(): ProposalAttempt {
+  return {
+    modelName: "fake-model",
+    generation: {
+      candidates: [
+        {
+          type: "phrase_chunk",
+          confidence: 0.9,
+          reason: "a reusable status phrase",
+          evidenceQuote: "WorkInsight is back up now",
+          payload: proposalPayload
+        }
+      ]
+    }
+  };
+}
+
+const proposeNothing: ProposalProvider = () => Promise.resolve(null);
+
 type TestContext = Readonly<{
   db: DbClient;
   server: ReturnType<typeof createServer>;
@@ -85,10 +120,11 @@ async function buildContext(): Promise<TestContext> {
 
   let now = new Date("2026-06-30T20:38:00.000Z");
   let sequence = 0;
-  const diary: DiaryDependencies = {
+  const diary: DiaryRouteDependencies = {
     createId: () => `diary-${(sequence += 1)}`,
     db,
     now: () => now,
+    propose: proposeNothing,
     tidy: (transcript) => Promise.resolve(fakeTidy(transcript))
   };
 
@@ -101,14 +137,17 @@ async function buildContext(): Promise<TestContext> {
   };
 }
 
-async function createEntry(transcript: string): Promise<DiaryEntryDto> {
+async function createEntry(
+  transcript: string,
+  inputMode: CaptureInputMode = "voice"
+): Promise<DiaryEntryDto> {
   const response = await context.server.inject({
     method: "POST",
-    payload: { transcript },
+    payload: { inputMode, transcript },
     url: "/api/diary/entries"
   });
   expect(response.statusCode).toBe(201);
-  return response.json() as DiaryEntryDto;
+  return (response.json() as DiaryCaptureResultDto).entry;
 }
 
 async function timeline(query = ""): Promise<TimelineDto> {
@@ -162,6 +201,7 @@ describe("POST /api/diary/entries", () => {
         createId: () => "diary-fail-1",
         db,
         now: () => new Date("2026-06-30T20:38:00.000Z"),
+        propose: proposeNothing,
         tidy: createDiaryTidy(() => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:11434")))
       },
       logger: false
@@ -169,12 +209,14 @@ describe("POST /api/diary/entries", () => {
 
     const response = await failingServer.inject({
       method: "POST",
-      payload: { transcript: "um today I went to the park" },
+      payload: { inputMode: "voice", transcript: "um today I went to the park" },
       url: "/api/diary/entries"
     });
 
     expect(response.statusCode).toBe(201);
-    expect((response.json() as DiaryEntryDto).text).toBe("um today I went to the park");
+    expect((response.json() as DiaryCaptureResultDto).entry.text).toBe(
+      "um today I went to the park"
+    );
     expect(await listDiaryEntriesForUser(db, DEFAULT_USER_ID)).toHaveLength(1);
 
     await failingServer.close();
@@ -183,12 +225,41 @@ describe("POST /api/diary/entries", () => {
   it("rejects a blank transcript", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { transcript: "   " },
+      payload: { inputMode: "typed", transcript: "   " },
       url: "/api/diary/entries"
     });
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects a missing or invalid input mode", async () => {
+    const missing = await context.server.inject({
+      method: "POST",
+      payload: { transcript: "a valid thought" },
+      url: "/api/diary/entries"
+    });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toEqual({ error: "invalid_request" });
+
+    const invalid = await context.server.inject({
+      method: "POST",
+      payload: { inputMode: "handwritten", transcript: "a valid thought" },
+      url: "/api/diary/entries"
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
+  it("persists the capture's input mode (typed stays typed, voice stays voice) (#560)", async () => {
+    context.setNow("2026-06-30T20:38:00.000Z");
+    const typed = await createEntry("typed at the keyboard", "typed");
+    const voice = await createEntry("spoken out loud", "voice");
+
+    const typedRow = await getTimelineCaptureForUser(context.db, typed.id, DEFAULT_USER_ID);
+    const voiceRow = await getTimelineCaptureForUser(context.db, voice.id, DEFAULT_USER_ID);
+    expect(typedRow?.inputMode).toBe("typed");
+    expect(voiceRow?.inputMode).toBe("voice");
+    expect(typedRow?.captureSource).toBe("diary");
   });
 
   it("round-trips a non-English entry with its text and language unchanged (no translation)", async () => {
@@ -204,6 +275,49 @@ describe("POST /api/diary/entries", () => {
     const stored = await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID);
 
     expect(stored).toContainEqual(created);
+  });
+
+  it("returns a Make Durable review card when the diary capture passes the proposal gate", async () => {
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    const db = createDbClient(pglite);
+    const server = createServer({
+      diary: {
+        createId: (() => {
+          let sequence = 0;
+          return () => `proposed-${(sequence += 1)}`;
+        })(),
+        db,
+        now: () => new Date("2026-07-06T09:30:00.000Z"),
+        propose: () => Promise.resolve(proposalAttempt()),
+        tidy: (transcript) => Promise.resolve(fakeTidy(transcript))
+      },
+      logger: false
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      payload: {
+        inputMode: "typed",
+        transcript: "I wanted to say WorkInsight is back up now but I could not"
+      },
+      url: "/api/diary/entries"
+    });
+
+    expect(response.statusCode).toBe(201);
+    const result = response.json() as DiaryCaptureResultDto;
+    expect(result.entry).toMatchObject({
+      id: "proposed-1",
+      text: "I wanted to say WorkInsight is back up now but I could not"
+    });
+    expect(result.card).toMatchObject({
+      target: "WorkInsight is back up now",
+      timelineEntryId: "proposed-1",
+      type: "phrase_chunk"
+    });
+    expect(await listProposalCandidatesForUser(db, DEFAULT_USER_ID)).toHaveLength(1);
+
+    await server.close();
   });
 });
 
@@ -414,10 +528,8 @@ describe("capture_source filtering between Diary and Make Durable (#559)", () =>
     expect(listed.map((entry) => entry.id)).toEqual([diaryEntry.id]);
   });
 
-  it("keeps a diary entry out of the Make Durable backfill scan", async () => {
-    // A diary-sourced capture must not be mined by Make Durable in this task; only the Quick Capture is
-    // backfill-eligible.
-    await createEntry("a diary entry the model must not mine");
+  it("mines diary entries, not legacy Quick Capture rows, in the Make Durable backfill scan", async () => {
+    const diaryEntry = await createEntry("a diary entry the model may mine");
     await seedTimelineRow(context.db, {
       captureSource: "quick_capture",
       createdAt: "2026-06-30T10:00:00.000Z",
@@ -429,8 +541,8 @@ describe("capture_source filtering between Diary and Make Durable (#559)", () =>
     });
 
     const backfillable = await listBackfillableCaptures(context.db, DEFAULT_USER_ID, 100);
-    expect(backfillable.map((capture) => capture.entryId)).toEqual(["qc-backfill"]);
-    expect(backfillable.every((capture) => capture.captureSource !== "diary")).toBe(true);
+    expect(backfillable.map((capture) => capture.entryId)).toEqual([diaryEntry.id]);
+    expect(backfillable.every((capture) => capture.captureSource === "diary")).toBe(true);
   });
 
   it("falls back to the raw transcript when a diary entry has no tidied text (#559)", async () => {

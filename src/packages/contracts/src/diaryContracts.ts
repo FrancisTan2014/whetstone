@@ -1,6 +1,8 @@
 import { isDayKey } from "@whetstone/domain";
 import { z } from "zod";
 
+import { captureInputModeSchema, makeDurableCardDtoSchema } from "./makeDurableContracts.js";
+
 // Shared, Zod-validated shapes for the tap-and-talk voice diary (#246): the create/edit requests, the
 // persisted diary entry, the day-grouped Timeline page (a generic dated-trace shape so notes/practice
 // deposits can join later as a `kind` filter), and the date-jump calendar's marked dates. Every value
@@ -12,9 +14,12 @@ function isNonBlank(value: string): boolean {
 
 const dayKeySchema = z.string().refine(isDayKey, { message: "must be a YYYY-MM-DD date." });
 
-// Capture: the web posts the STT transcript; the server runs the tidy pass and stamps today + now.
+// Capture: the web posts the STT transcript plus how it was entered (`inputMode`: typed box vs
+// tap-and-talk voice). The server runs the tidy pass, stamps today + now, and persists the input mode so
+// the Timeline capture metadata reflects how the entry was actually made (#560).
 export const createDiaryEntryRequestSchema = z
   .object({
+    inputMode: captureInputModeSchema,
     transcript: z.string().refine(isNonBlank, { message: "transcript must be non-empty." })
   })
   .strict();
@@ -43,6 +48,17 @@ export const diaryEntryDtoSchema = z
   .strict();
 
 export type DiaryEntryDto = z.infer<typeof diaryEntryDtoSchema>;
+
+// Unified capture result: a diary entry is always saved, and the Make Durable proposal gate may return
+// one review card when the capture produces a visible candidate.
+export const diaryCaptureResultDtoSchema = z
+  .object({
+    entry: diaryEntryDtoSchema,
+    card: makeDurableCardDtoSchema.nullable()
+  })
+  .strict();
+
+export type DiaryCaptureResultDto = z.infer<typeof diaryCaptureResultDtoSchema>;
 
 // One entry in the Timeline. `kind` is a discriminator so other dated traces can join the timeline later
 // as filters; in v0 the only kind is "diary", backed by `timeline_entries` filtered to
@@ -102,6 +118,10 @@ export type DiaryCalendarQuery = z.infer<typeof diaryCalendarQuerySchema>;
 
 export function parseDiaryEntryDto(value: unknown): DiaryEntryDto {
   return diaryEntryDtoSchema.parse(value);
+}
+
+export function parseDiaryCaptureResultDto(value: unknown): DiaryCaptureResultDto {
+  return diaryCaptureResultDtoSchema.parse(value);
 }
 
 export function parseTimelineDto(value: unknown): TimelineDto {

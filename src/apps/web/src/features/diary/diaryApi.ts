@@ -1,8 +1,11 @@
 import {
   parseDiaryCalendarDto,
+  parseDiaryCaptureResultDto,
   parseDiaryEntryDto,
   parseTimelineDto,
+  type CaptureInputMode,
   type DiaryCalendarDto,
+  type DiaryCaptureResultDto,
   type DiaryEntryDto,
   type TimelineDto
 } from "@whetstone/contracts";
@@ -24,11 +27,16 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-// Capture: post the STT transcript; the server tidies it and files it under today.
-export async function createDiaryEntry(transcript: string): Promise<DiaryEntryDto> {
-  return parseDiaryEntryDto(
+// Capture: post the transcript and how it was entered (`inputMode`: typed box vs tap-and-talk voice);
+// the server tidies it, files it as a diary entry preserving that input mode, and may return one Make
+// Durable review card.
+export async function submitDiaryCapture(
+  transcript: string,
+  inputMode: CaptureInputMode
+): Promise<DiaryCaptureResultDto> {
+  return parseDiaryCaptureResultDto(
     await requestJson(apiUrl("/diary/entries"), {
-      body: JSON.stringify({ transcript }),
+      body: JSON.stringify({ inputMode, transcript }),
       headers: jsonHeaders,
       method: "POST"
     })
