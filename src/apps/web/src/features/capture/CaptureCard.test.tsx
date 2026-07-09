@@ -585,6 +585,118 @@ describe("CaptureCard voice capture (saved-first, #566)", () => {
     }
   });
 
+  it("surfaces a quiet error when finalizing the recording throws", async () => {
+    // handle.stop() rejecting (a mic/encoder glitch) is the catch path: nothing is submitted and the
+    // learner sees the calm save error rather than a crash.
+    const start = vi.fn(async () => ({
+      stop: async () => {
+        throw new Error("mic glitch");
+      }
+    }));
+    render(<CaptureCard capture={fakeVoice({ start })} />);
+    await waitFor(() => expect(mockedVoiceActive).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Couldn't save your capture");
+    expect(mockedVoiceSubmit).not.toHaveBeenCalled();
+  });
+
+  it("guards a refresh/navigation while a recording is in flight", async () => {
+    // While recording (before the audio is saved) the beforeunload guard is armed so a refresh cannot
+    // silently drop the clip: the event is cancelled.
+    render(<CaptureCard capture={fakeVoice()} />);
+    await waitFor(() => expect(mockedVoiceActive).toHaveBeenCalled());
+    await userEvent.setup().click(screen.getByRole("button", { name: "Tap to talk" }));
+    await screen.findByRole("button", { name: "Stop & save" });
+
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("still files a ready capture when the Make Durable card refetch fails", async () => {
+    // A ready capture must reach the Timeline even if the follow-up card refresh errors: the rejection
+    // is swallowed and onCaptured still fires.
+    vi.useFakeTimers();
+    try {
+      mockedVoiceActive.mockResolvedValue([voiceStatus({ id: "vc-1", status: "transcribing" })]);
+      mockedVoiceStatus.mockResolvedValue(
+        voiceStatus({ id: "vc-1", status: "ready", text: "the deploy is green" })
+      );
+      mockedFetch.mockRejectedValue(new Error("cards down"));
+      const onCaptured = vi.fn();
+      render(<CaptureCard capture={fakeVoice()} onCaptured={onCaptured} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(onCaptured).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "vc-1", text: "the deploy is green" })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a ready capture without a parent listener without crashing", async () => {
+    // No onCaptured prop (Today mounts CaptureCard without one): the ready capture still graduates out of
+    // the processing list; the optional handoff is simply skipped.
+    vi.useFakeTimers();
+    try {
+      mockedVoiceActive.mockResolvedValue([voiceStatus({ id: "vc-1", status: "transcribing" })]);
+      mockedVoiceStatus.mockResolvedValue(
+        voiceStatus({ id: "vc-1", status: "ready", text: "all clear" })
+      );
+      render(<CaptureCard capture={fakeVoice()} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(screen.queryByText("Transcribing…")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not push a ready capture with no text to the timeline", async () => {
+    // A ready row that carries no text is not a diary entry: it graduates out but onCaptured never fires.
+    vi.useFakeTimers();
+    try {
+      mockedVoiceActive.mockResolvedValue([voiceStatus({ id: "vc-1", status: "transcribing" })]);
+      mockedVoiceStatus.mockResolvedValue(voiceStatus({ id: "vc-1", status: "ready", text: null }));
+      const onCaptured = vi.fn();
+      render(<CaptureCard capture={fakeVoice()} onCaptured={onCaptured} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(onCaptured).not.toHaveBeenCalled();
+      expect(screen.queryByText("Transcribing…")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows a failed capture with a Retry that re-queues it", async () => {
     mockedVoiceActive.mockResolvedValue([voiceStatus({ id: "vc-1", status: "failed" })]);
     mockedVoiceRetry.mockResolvedValue(voiceStatus({ id: "vc-1", status: "queued" }));

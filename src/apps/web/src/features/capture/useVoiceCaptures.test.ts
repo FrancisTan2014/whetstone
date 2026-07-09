@@ -289,6 +289,87 @@ describe("useVoiceCaptures", () => {
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
+  it("re-arms the poll each cycle until a capture becomes ready", async () => {
+    // Two full poll cycles: the first leaves the capture non-terminal so the loop re-arms (firing the
+    // scheduled `() => void tick()`), the second graduates it. Proves the self-scheduling keeps running.
+    const fetchStatus = vi
+      .fn<VoiceCaptureApi["fetchStatus"]>()
+      .mockResolvedValueOnce(capture({ id: "cap-1", status: "tidying" }))
+      .mockResolvedValue(capture({ id: "cap-1", status: "ready", text: "done" }));
+    const onReady = vi.fn();
+    const api = makeApi({
+      fetchActive: vi.fn(async () => [capture({ id: "cap-1", status: "transcribing" })]),
+      fetchStatus
+    });
+    const { result } = renderHook(() =>
+      useVoiceCaptures({ api, onReady, pollIntervalMs: POLL_MS })
+    );
+    await flush();
+
+    await tick();
+    expect(result.current.captures[0]?.status).toBe("tidying");
+
+    await tick();
+    expect(result.current.captures).toEqual([]);
+    expect(onReady).toHaveBeenCalledWith(expect.objectContaining({ id: "cap-1", status: "ready" }));
+  });
+
+  it("does not re-arm the poll after the hook unmounts mid-request", async () => {
+    // Tear down while a status request is in flight: when it resolves, the loop must see it was
+    // cancelled and skip the re-arm rather than schedule another poll on a dead hook.
+    let resolveStatus: (value: VoiceCaptureStatusDto) => void = () => undefined;
+    const fetchStatus = vi.fn(
+      () =>
+        new Promise<VoiceCaptureStatusDto>((resolve) => {
+          resolveStatus = resolve;
+        })
+    );
+    const api = makeApi({
+      fetchActive: vi.fn(async () => [capture({ id: "cap-1", status: "transcribing" })]),
+      fetchStatus
+    });
+    const { unmount } = renderHook(() => useVoiceCaptures({ api, pollIntervalMs: POLL_MS }));
+    await flush();
+
+    // Fire the poll timer; the tick starts and blocks on the still-pending status request.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    });
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await act(async () => {
+      resolveStatus(capture({ id: "cap-1", status: "tidying" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // No further poll was scheduled after teardown.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+    });
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries one capture without disturbing its siblings", async () => {
+    const api = makeApi({
+      fetchActive: vi.fn(async () => [
+        capture({ id: "cap-1", createdAt: "2026-07-09T10:00:00.000Z", status: "failed" }),
+        capture({ id: "cap-2", createdAt: "2026-07-09T10:01:00.000Z", status: "failed" })
+      ]),
+      retry: vi.fn(async (id: string) => capture({ id, status: "queued" }))
+    });
+    const { result } = renderHook(() => useVoiceCaptures({ api, pollIntervalMs: POLL_MS }));
+    await flush();
+
+    await act(async () => {
+      await result.current.retry("cap-1");
+    });
+
+    expect(result.current.captures.find((c) => c.id === "cap-1")?.status).toBe("queued");
+    expect(result.current.captures.find((c) => c.id === "cap-2")?.status).toBe("failed");
+  });
+
   it("uses the default poll interval and real api bindings when none are injected", async () => {
     // Exercises the default-options path (defaultApi + DEFAULT_POLL_INTERVAL_MS) without a server: the
     // default fetchActive rejects under jsdom, so the list simply stays empty.
