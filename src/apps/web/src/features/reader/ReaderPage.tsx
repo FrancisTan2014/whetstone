@@ -60,10 +60,13 @@ import { readingEntranceMotion } from "./readingEntrance";
 import { fetchReadingPosition, saveReadingPosition } from "./readingPositionApi";
 import { useReadingPositionWriter, type SaveReadingPosition } from "./useReadingPositionWriter";
 import { FrontMatterNotice } from "./FrontMatterNotice";
+import { ReaderBackPill } from "./ReaderBackPill";
 import { ReaderToc } from "./ReaderToc";
 import { ReadingHeader } from "./ReadingHeader";
 import { readingMeasureRem } from "./readingMeasure";
 import { defaultReadingSize, readingSizeToRem, type ReadingSize } from "./readingSize";
+import { topmostVisibleBlockId } from "./readingAnchor";
+import { captureReturnPoint, type ReaderReturnPoint } from "./returnPoint";
 import { scrollToBlock } from "./scrollToBlock";
 import { selectionRect } from "./selectionRect";
 import { useReaderScroll, type ReaderScroll } from "./useReaderScroll";
@@ -364,6 +367,10 @@ export function ReaderPage({
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
   const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
   const [bornBlockEntryId, setBornBlockEntryId] = useState<string | undefined>(undefined);
+  // The reader's single-level Back return point (#549): the origin captured before an internal jump,
+  // shown as a persistent Back pill until the reader taps it, jumps again (replacing it), or dismisses
+  // it. Undefined means no pill.
+  const [returnPoint, setReturnPoint] = useState<ReaderReturnPoint | undefined>(undefined);
   const [size, setSize] = useState<ReadingSize>(defaultReadingSize);
 
   // Reader text size is a server-owned preference (#234): restore it on mount and persist changes
@@ -482,6 +489,35 @@ export function ReaderPage({
       ? undefined
       : viewing.structure.units[viewing.activeUnitIndex]?.sourceFile;
 
+  // The active unit the reader is currently in (its title, for the Back pill's label). Its entry id
+  // is `activeUnitEntryId` above. Both feed the capture below and, like `activeUnitSourceFile`, only
+  // change on a work open or unit switch.
+  const activeUnitTitle =
+    viewing === undefined ? undefined : viewing.structure.units[viewing.activeUnitIndex]?.title;
+
+  // Record the origin the reader is about to leave, before an internal jump moves them (#549): the
+  // active unit (a callback dependency, so the origin tracks the unit the reader is in) and the
+  // top-of-viewport block (from live layout at capture time). A real move replaces any existing
+  // return point; a no-op (the target block is already where the reader is) or an unmeasurable origin
+  // leaves the current point untouched.
+  const captureOrigin = useCallback(
+    (targetBlockEntryId: string | undefined): void => {
+      const captured = captureReturnPoint({
+        origin: {
+          blockEntryId: topmostVisibleBlockId(),
+          unitEntryId: activeUnitEntryId,
+          ...(activeUnitTitle === undefined ? {} : { unitTitle: activeUnitTitle })
+        },
+        ...(targetBlockEntryId === undefined ? {} : { targetBlockEntryId })
+      });
+
+      if (captured !== undefined) {
+        setReturnPoint(captured);
+      }
+    },
+    [activeUnitEntryId, activeUnitTitle]
+  );
+
   useEffect(() => {
     // The initial open is inlined here (rather than calling a component-scoped openWork) so the
     // effect has no forward reference and no external function dependency: on mount it fetches
@@ -508,6 +544,9 @@ export function ReaderPage({
       setTocOpen(false);
       setNotesOpen(false);
       setNotes([]);
+      // Opening (or switching) a work drops any Back return point from a prior work — its origin is no
+      // longer reachable (#549).
+      setReturnPoint(undefined);
 
       try {
         const structureDto = await fetchWorkStructure(workEntryId);
@@ -669,6 +708,7 @@ export function ReaderPage({
           ?.getAttribute("data-block-id") ?? undefined;
 
       if (domTarget !== undefined) {
+        captureOrigin(domTarget);
         jumpToBlock(domTarget);
         return;
       }
@@ -682,10 +722,11 @@ export function ReaderPage({
       });
 
       if (resolved !== undefined) {
+        captureOrigin(resolved);
         jumpToBlock(resolved);
       }
     },
-    [activeUnitSourceFile, jumpToBlock, viewingAnchorIndex]
+    [activeUnitSourceFile, captureOrigin, jumpToBlock, viewingAnchorIndex]
   );
 
   // Navigate the nav-derived TOC (#379): resolve the selected entry to its intent through the same
@@ -698,15 +739,37 @@ export function ReaderPage({
 
     switch (navigation.kind) {
       case "unit":
+        // A whole-unit entry moves the reader only when it targets a different unit; selecting the
+        // current unit is a no-op and must not arm the Back pill.
+        if (navigation.unitIndex !== viewing?.activeUnitIndex) {
+          captureOrigin(undefined);
+        }
         selectUnit(navigation.unitIndex);
         break;
       case "block":
+        captureOrigin(navigation.blockEntryId);
         jumpToBlock(navigation.blockEntryId);
         break;
       case "none":
         break;
     }
   }
+
+  // Return to the captured origin: switch straight to the stored unit + block and re-land there,
+  // never via a fresh locateBlockUnit — so the return works offline and cannot strand the reader if
+  // the locator would fail (the pill is their only return affordance). Reuses the same unit-switch +
+  // pending-scroll + "born" landing highlight the block index uses, and clears the pill. The point is
+  // passed in from the render site (where it is known to exist), so there is no unreachable branch.
+  const onReturnToOrigin = useCallback((point: ReaderReturnPoint): void => {
+    setReturnPoint(undefined);
+    setPanel(undefined);
+    setTocOpen(false);
+    setNotesOpen(false);
+    setState((current) => applyUnitForBlock(current, point.unitEntryId, point.blockEntryId));
+    setBornBlockEntryId(point.blockEntryId);
+  }, []);
+
+  const onDismissReturn = useCallback((): void => setReturnPoint(undefined), []);
 
   // The open work's language (for routing a lookup), derived for every ready state so an idle
   // reader resolves it the same way — no open work falls back to English.
@@ -1057,6 +1120,14 @@ export function ReaderPage({
           open={true}
           tabs={lookup.tabs}
           term={lookup.term}
+        />
+      )}
+
+      {returnPoint === undefined ? null : (
+        <ReaderBackPill
+          onDismiss={onDismissReturn}
+          onReturn={() => onReturnToOrigin(returnPoint)}
+          returnPoint={returnPoint}
         />
       )}
 

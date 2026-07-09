@@ -578,7 +578,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   builds `resolve(target)` from `fetchWorkAnchorIndex`; `onActivateAnchor` first tries a same-unit DOM
   anchor, then resolves `(sourceFile, anchor)` → block → the existing cross-unit `jumpToBlock`, so
   footnote/endnote markers **and same-work `<a>` cross-references** now navigate **across
-  chapters/files**, #366/#368 — a same-work `<a>` parses to the document schema's `link` **mark**
+  chapters/files**, #366/#368 — after any such jump (marker, cross-reference, or a location-changing
+  TOC entry) `ReaderPage` captures the origin (`returnPoint.ts` — pure capture/no-op/label rules) and
+  shows a quiet, persistent single-level **Back pill** (`ReaderBackPill.tsx`) that returns to the exact
+  block, replacing on each new jump with no timeout (#549) — a same-work `<a>` parses to the document
+  schema's `link` **mark**
   (`nodes.ts`; kept inline so #340 CJK spacing survives, `见周髀之术`), stamped with a resolved
   `targetSourceFile` at ingest like a footnote (`figureImageResolver.ts`), and rendered by
   `PmDocument.tsx`'s `link` mark mapping as an inline jump control; an external/cross-work link is
