@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import {
+  type DiaryEntryDto,
   recallCategories,
   type CaptureInputMode,
   type MakeDurableCardDto,
@@ -9,22 +10,22 @@ import {
 } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
+import { submitDiaryCapture } from "../diary/diaryApi";
 import { transcribe } from "../session/sessionApi";
-import { createQuickCaptureVoice } from "./makeDurableCapture";
 import {
   fetchMakeDurableCards,
   reviewMakeDurableCard,
   runMakeDurableBackfill,
-  submitQuickCapture,
   type ReviewCardInput
-} from "./makeDurableApi";
+} from "../makeDurable/makeDurableApi";
+import { createCaptureVoice } from "./captureVoice";
 
 // One tap-and-talk recording: stop finalizes the audio and hands it back for STT. The browser audio
-// boundary (createQuickCaptureVoice in makeDurableCapture.ts) is injected so the section tests with a
+// boundary (createCaptureVoice in captureVoice.ts) is injected so the card tests with a
 // deterministic fake, exactly as the diary page injects its live capture.
 export type VoiceRecording = Readonly<{ stop: () => Promise<Blob> }>;
 
-export type QuickCaptureVoiceDependencies = Readonly<{
+export type CaptureVoiceDependencies = Readonly<{
   start: () => Promise<VoiceRecording>;
   // Feature-detected from `isVoiceCaptureSupported`: false on a non-secure context or no mic device, so
   // the record button is hidden and capture falls back to the always-present typed box — never a dead end.
@@ -41,18 +42,17 @@ const voicePhaseLabels: Readonly<Record<VoicePhase, string>> = {
   transcribing: "Transcribing…"
 };
 
-// The Make Durable Quick Capture surface on Today (#452, #455): a typed capture box and — when the
-// browser supports it — a tap-and-talk voice capture, plus at most one calm review card when the local
-// model proposes something worth keeping. A voice capture records → transcribes with the shared STT seam
-// → submits the transcript exactly like a typed capture (`inputMode = "voice"`), so both follow the same
-// gate/dedup/Today-card path. Capture is an invitation — the entry is always saved server-side; the card
-// only appears when a proposal passed the gate. Load/model/mic failures degrade quietly so this never
-// blanks Today.
-export function MakeDurableSection({
-  capture = createQuickCaptureVoice(),
+// The unified capture surface used by Today and Diary: a typed box and — when the browser supports it —
+// tap-and-talk voice capture. Every capture saves a diary entry first; then the shared Make Durable
+// proposal gate may surface at most one review card. Load/model/mic failures degrade quietly so this
+// never blanks Today or the Diary timeline.
+export function CaptureCard({
+  capture = createCaptureVoice(),
+  onCaptured,
   onDurableSaved
 }: Readonly<{
-  capture?: QuickCaptureVoiceDependencies;
+  capture?: CaptureVoiceDependencies;
+  onCaptured?: (entry: DiaryEntryDto) => void;
   // Fired after a review creates a recall item (Save / Edit + Save). Today uses it to refresh its
   // Recall card so the newly due item shows at once instead of going stale (#509). The negative
   // outcomes create no recall item, so this never fires for them.
@@ -90,7 +90,8 @@ export function MakeDurableSection({
     setBusy(true);
     setError(null);
     try {
-      const result = await submitQuickCapture(trimmed, inputMode);
+      const result = await submitDiaryCapture(trimmed, inputMode);
+      onCaptured?.(result.entry);
       const card = result.card;
       if (card !== null) {
         setCards((current) => [card, ...current]);
@@ -189,13 +190,11 @@ export function MakeDurableSection({
   const transcribing = phase === "transcribing";
 
   return (
-    <section
-      aria-label="Make a note durable"
-      className="rounded border border-border bg-surface p-4"
-    >
-      <h2 className="text-lg font-medium text-text">Make a note durable</h2>
+    <section aria-label="Capture today" className="rounded border border-border bg-surface p-4">
+      <h2 className="text-lg font-medium text-text">Capture today</h2>
       <p className="mt-1 text-text-muted">
-        Jot — or say — a phrase you reached for, or a moment you couldn&rsquo;t say in English.
+        Tap and talk — or write it down. It lands in your diary, then one useful note may be
+        proposed.
       </p>
 
       {capture.supported ? (
@@ -224,7 +223,7 @@ export function MakeDurableSection({
 
       <form className="mt-3 flex flex-col gap-2" onSubmit={captureTyped}>
         <label className="sr-only" htmlFor="quick-capture">
-          Quick capture text
+          Capture text
         </label>
         <textarea
           className="min-h-20 rounded border border-border bg-bg p-2 text-text"

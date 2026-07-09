@@ -96,16 +96,17 @@ can navigate them from another package.
   `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
 - Make Durable (#451 data foundation, #452 Quick Capture loop, #455 voice input, #456 history backfill):
   `src/apps/server/src/features/makeDurable/`
-  turns a typed or voice Quick Capture into gated recall. **Data model:** `timelineCommands.ts`
+  turns a typed or voice capture into gated recall. **Data model:** `timelineCommands.ts`
   `createTimelineCapture` registers a `timeline_entry` Entry + a `timeline_entries` capture row in one
   transaction (server-owned id/`created_at`/`entry_date`; `raw_input_text` verbatim; `input_mode` typed|voice);
   `proposalCommands.ts`/
   `proposalQueries.ts` own `proposal_candidates` (type/status/confidence/evidence/`payload_json`/duplicate
-  status/model+prompt) and `proposal_reviews`. **Quick Capture endpoint** (`makeDurableRoutes.ts`, wired in
-  `createServer.ts`/`index.ts`): `POST /api/makedurable/capture` runs `quickCapture` — the `inputMode`
-  (`typed`, default, or `voice`) is recorded on the Timeline entry and a voice capture submits its transcript
-  as the text, so both follow the identical path from here. The Timeline entry
-  is saved FIRST, then the `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
+  status/model+prompt) and `proposal_reviews`. **Proposal after capture:** `captureCommands.ts`
+  `proposeForCapture` runs after a capture row already exists. The unified Diary capture endpoint
+  (`POST /api/diary/entries`) saves the diary-sourced Timeline entry first, then calls this shared proposal
+  path and returns `{ entry, card }`; the legacy `POST /api/makedurable/capture` route is retained for the
+  machinery/tests and delegates to the same proposal helper after its Timeline write. The
+  `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
   attempts one proposal — retrieve-before-generate: a small slice of the user's existing recall is loaded
   first and passed into the prompt's "Already remembered" block (domain `buildProposalPrompt`) so the model
   can prefer no candidate when already covered; any failure/timeout/invalid output yields no card. The prompt
@@ -131,19 +132,20 @@ can navigate them from another package.
   promoted to `visible` (`promoteOldestPendingCandidate`) so held proposals surface without an inbox. Ownership is enforced at the command boundary
   (`createProposalCandidate`/`insertProposalCandidate` scope `timeline_entry_id` to the user;
   `recordProposalReview` → `not_found` for a forged/foreign candidate). **Web:**
-  `src/apps/web/src/features/makeDurable/` — `MakeDurableSection` (a typed capture box, an optional
-  tap-and-talk voice capture when `isVoiceCaptureSupported`, + at most one review card
-  with Save/Edit/Not-useful/Wrong) on Today (`TodayPage.tsx`), over `makeDurableApi.ts`
-  (`submitQuickCapture(text, inputMode)`). Voice records via the coverage-excluded browser boundary
-  `makeDurableCapture.ts` (wraps the shared `liveCapture` seam into one-shot record/stop), transcribes with
-  the session `transcribe` STT seam, then submits the transcript as a `voice` capture; a missing mic/STT
-  falls back to the always-present typed box. `recall_items`
+  `src/apps/web/src/features/capture/` — `CaptureCard` is the single typed + tap-and-talk capture surface
+  used by both Today and Diary. It posts through `diaryApi.ts` `submitDiaryCapture(text, inputMode)` to
+  `/api/diary/entries`, prepends an optional returned review card, and keeps the Save/Edit/Not-useful/Wrong
+  card behavior unchanged. Voice records via the coverage-excluded browser boundary `captureVoice.ts`
+  (wraps the shared `liveCapture` seam into one-shot record/stop), transcribes with the session `transcribe`
+  STT seam, then submits the transcript as a `voice` capture; a missing mic/STT falls back to the
+  always-present typed box. `recall_items`
   carries nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
   `source_proposal_candidate_id`); the `timeline_entry` type is in `@whetstone/domain` (`entry.ts`),
   DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`). **Backfill (#456):**
   `POST /api/makedurable/backfill` runs `backfillCommands.ts` `backfillMakeDurable` — a bounded, user-
-  triggered scan (`BACKFILL_SCAN_LIMIT`) that mines the user's own un-mined Timeline entries
-  (`timelineQueries.ts` `listBackfillableCaptures` = entries with no `proposal_candidates` row **and** no
+  triggered scan (`BACKFILL_SCAN_LIMIT`) that mines the user's own un-mined diary-sourced Timeline entries
+  (`timelineQueries.ts` `listBackfillableCaptures` = `capture_source = "diary"` entries with no
+  `proposal_candidates` row **and** no
   `make_durable_backfill_scans` marker, oldest first) through the SAME gate/dedup/one-card-cap/save path
   with a high-value prompt
   (`createBackfillProposalProvider` over domain `buildBackfillProposalPrompt`, biasing reusable patterns
@@ -151,7 +153,7 @@ can navigate them from another package.
   visible Today card per run (else held `pending`), records an empty-generation entry with a durable
   `make_durable_backfill_scans` marker (`recordBackfillScan`) so the bounded scan advances past it across
   runs, and leaves history unchanged when the model is unavailable (a null attempt writes nothing);
-  `MakeDurableSection`'s "Mine my history" action (`makeDurableApi.ts` `runMakeDurableBackfill`) triggers it.
+  `CaptureCard`'s "Mine my history" action (`makeDurableApi.ts` `runMakeDurableBackfill`) triggers it.
 - Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
   cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
   `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's
@@ -705,11 +707,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   job (#417); this panel edits an existing Work's content via `ingestMarkdown` — #418) reporting the ingestion result, and a units/blocks overview
   that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
   behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
-  `diary/` is the Diary mode (#246): `DiaryPage.tsx` is the tap-and-talk surface — a record button
-  (reusing the session capture seam, injected via `createDiaryCapture` in the coverage-excluded
-  `diaryCapture.ts`; falls back to an always-present typed box when capture is unsupported) that records →
-  `transcribe` (the session STT seam) → `createDiaryEntry`, with explicit recording/transcribing/saving/
-  error states. Below it a **Timeline** history groups entries by day newest-first (pure `groupByDayDesc`)
+  `diary/` is the Diary mode (#246): `DiaryPage.tsx` renders the shared `capture/CaptureCard` at the top,
+  wiring `onCaptured` to prepend the newly saved diary entry into the browsable Timeline. The POST
+  `/api/diary/entries` response is now `{ entry, card }`: the entry is always the diary-sourced Timeline
+  capture, and `card` is the optional Make Durable review card from the shared proposal gate. Below capture,
+  the **Timeline** history groups entries by day newest-first (pure `groupByDayDesc`)
   with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
   → next `before` page), and a **date-jump mini-calendar** marks days-with-entries (from the calendar
   endpoint, pure `monthGrid`/`monthBounds`/`shiftMonth`) and scrolls to a chosen day (loading older pages

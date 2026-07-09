@@ -1,7 +1,7 @@
 import { Route, Routes, useSearchParams } from "react-router-dom";
 
+import { createCaptureVoice } from "../features/capture/captureVoice.js";
 import { DiaryPage } from "../features/diary/DiaryPage.js";
-import { createDiaryCapture } from "../features/diary/diaryCapture.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
@@ -60,7 +60,7 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<RecallPage />} path="recall" />
         <Route element={<NotesRoute />} path="notes" />
-        <Route element={<DiaryPage capture={createDiaryCapture()} />} path="diary" />
+        <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />
       </Route>
     </Routes>

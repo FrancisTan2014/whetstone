@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   diaryCalendarQuerySchema,
   parseCreateDiaryEntryRequest,
+  parseDiaryCaptureResultDto,
   parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
@@ -68,6 +69,42 @@ describe("parseDiaryEntryDto", () => {
         language: null,
         text: "x"
       })
+    ).toThrow();
+  });
+});
+
+describe("parseDiaryCaptureResultDto", () => {
+  const entry = {
+    createdAt: "2026-06-30T20:38:00.000Z",
+    entryDate: "2026-06-30",
+    id: "diary-1",
+    language: null,
+    text: "I went to the park."
+  };
+
+  const card = {
+    proposalCandidateId: "candidate-1",
+    timelineEntryId: "diary-1",
+    type: "phrase_chunk" as const,
+    target: "back up now",
+    cue: "a service recovered",
+    useContext: "status update",
+    reason: "useful phrase",
+    category: "work" as const,
+    tags: ["status"]
+  };
+
+  it("accepts a saved diary entry with no proposal card", () => {
+    expect(parseDiaryCaptureResultDto({ entry, card: null })).toEqual({ entry, card: null });
+  });
+
+  it("accepts a saved diary entry with one Make Durable review card", () => {
+    expect(parseDiaryCaptureResultDto({ entry, card })).toEqual({ entry, card });
+  });
+
+  it("rejects a malformed nested card", () => {
+    expect(() =>
+      parseDiaryCaptureResultDto({ entry, card: { ...card, category: "unknown" } })
     ).toThrow();
   });
 });

@@ -13,6 +13,10 @@ import {
   type DiaryDependencies
 } from "./diaryCommands.js";
 import { listCalendarDates, listTimelinePage } from "./diaryQueries.js";
+import {
+  proposeForCapture,
+  type CaptureProposalDependencies
+} from "../makeDurable/captureCommands.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
@@ -22,26 +26,35 @@ const DEFAULT_TIMELINE_DAYS = 7;
 
 type EntryParams = Readonly<{ id: string }>;
 
+export type DiaryRouteDependencies = DiaryDependencies & CaptureProposalDependencies;
+
 export function registerDiaryRoutes(
   server: FastifyInstance,
-  dependencies: DiaryDependencies
+  dependencies: DiaryRouteDependencies
 ): void {
-  // Capture: the web posts the STT transcript; the server tidies it and files it under today.
+  // Capture: save a diary-sourced Timeline entry first, then run the shared Make Durable proposal gate.
   server.post("/api/diary/entries", async (request, reply) => {
     const parsed = createDiaryEntryRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send(invalidRequest);
     }
 
-    const entry = await createDiaryEntry(
+    const now = dependencies.now();
+    const userId = request.server.currentUser.getCurrentUserId();
+    const entry = await createDiaryEntry(dependencies, parsed.data.transcript, userId, now);
+    const card = await proposeForCapture(
       dependencies,
       parsed.data.transcript,
-      request.server.currentUser.getCurrentUserId(),
-      dependencies.now()
+      userId,
+      entry.id,
+      now
     );
-    request.log.info({ diaryEntryId: entry.id, route: "POST /api/diary/entries" }, "diary_created");
+    request.log.info(
+      { diaryEntryId: entry.id, makeDurableCard: card !== null, route: "POST /api/diary/entries" },
+      "diary_created"
+    );
 
-    return reply.code(201).send(entry);
+    return reply.code(201).send({ entry, card });
   });
 
   // The lazy-loaded Timeline: the next page of days (newest-first), bounded by `limit` days and paged via

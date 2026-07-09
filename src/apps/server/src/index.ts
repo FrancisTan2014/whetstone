@@ -190,6 +190,8 @@ const server = createServer({
     createId: () => randomUUID(),
     db,
     now: () => new Date(),
+    propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
+    resolveOfflineGloss,
     tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
   },
   images: { imageResourceStore },

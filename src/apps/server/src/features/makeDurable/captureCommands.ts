@@ -45,6 +45,16 @@ export type QuickCaptureDependencies = Readonly<{
   resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
 
+export type CaptureProposalDependencies = Pick<
+  QuickCaptureDependencies,
+  | "confidenceThreshold"
+  | "createId"
+  | "db"
+  | "propose"
+  | "proposalTimeoutMs"
+  | "resolveOfflineGloss"
+>;
+
 // The interactive Quick Capture proposal budget (#554). The shared `LlmModel` seam already hard-bounds a
 // stalled daemon at 60s, but that ceiling is a background safety net, not an interactive one: waiting it
 // out would hang the capture. This shorter wall-clock bound keeps the typed/voice capture responsive —
@@ -97,32 +107,17 @@ export function toReviewCard(
   };
 }
 
-// Quick Capture (#452, #455). The Timeline entry is saved FIRST and is never lost: only after it is
-// persisted does the proposal seam run, and any failure there (model down, timeout, invalid output)
-// simply yields no card. The proposal wait is time-boxed to an interactive budget (#554): a stalled or
-// slow local daemon is abandoned so the capture returns promptly with the saved entry and no card,
-// never blocking on the model. A capture may be typed or voice (`request.inputMode`); a voice capture
-// submits its transcript as the text and follows the exact same path from here on. When a candidate is
-// produced it is gated (confidence + faithful evidence quote) and deduped against the user's recall
-// items; it is stored either `visible` (a card is returned) or `dismissed` (gated out / duplicate — no
-// card). At most one candidate per capture, so the "one card per capture" rule holds by construction.
-export async function quickCapture(
-  dependencies: QuickCaptureDependencies,
-  request: QuickCaptureRequest,
+// Run the Make Durable proposal path for an already-persisted capture. Shared by legacy Quick Capture
+// and the unified Diary capture: persistence happens first, then this best-effort proposal pass may
+// insert at most one candidate and return at most one visible Today review card.
+export async function proposeForCapture(
+  dependencies: CaptureProposalDependencies,
+  rawText: string,
   userId: string,
+  timelineEntryId: string,
   now: Date
-): Promise<QuickCaptureResultDto> {
+): Promise<MakeDurableCardDto | null> {
   const md = { createId: dependencies.createId, db: dependencies.db };
-
-  const captureRequest: CreateTimelineCaptureRequest = {
-    captureSource: "quick_capture",
-    inputMode: request.inputMode,
-    language: null,
-    rawAudioPath: null,
-    rawInputText: request.text,
-    tidiedText: null
-  };
-  const timelineEntry = await createTimelineCapture(md, captureRequest, userId, now);
 
   // Retrieve-before-generate (#452): load a small slice of the learner's existing recall FIRST, so the
   // proposal seam can compare against it in the prompt and prefer no candidate when already covered. The
@@ -142,19 +137,19 @@ export async function quickCapture(
   // A stalled/slow daemon (or a model that returns nothing) degrades to no card — the Timeline entry is
   // already saved — so the capture never blocks. The abandoned generation is left to settle harmlessly.
   const outcome = await proposeWithinBudget(
-    dependencies.propose(request.text, existing, examples),
+    dependencies.propose(rawText, existing, examples),
     dependencies.proposalTimeoutMs ?? QUICK_CAPTURE_PROPOSAL_TIMEOUT_MS
   );
   const attempt = outcome === PROPOSAL_TIMED_OUT ? null : outcome;
   const generated = attempt?.generation.candidates[0];
   if (attempt === null || generated === undefined) {
-    return { card: null, timelineEntry };
+    return null;
   }
 
   const gate = evaluateProposalGate({
     confidence: generated.confidence,
     evidenceQuote: generated.evidenceQuote,
-    rawText: request.text,
+    rawText,
     threshold: dependencies.confidenceThreshold ?? DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD
   });
 
@@ -182,14 +177,47 @@ export async function quickCapture(
     relatedRecallItemId: null,
     noveltyReason: null,
     status,
-    timelineEntryId: timelineEntry.entryId,
+    timelineEntryId,
     type: generated.type
   };
   const candidate = await insertProposalCandidate(md, candidateRequest, userId, now);
 
   if (status !== "visible") {
-    return { card: null, timelineEntry };
+    return null;
   }
 
-  return { card: toReviewCard(candidate, generated.payload), timelineEntry };
+  return toReviewCard(candidate, generated.payload);
+}
+
+// Quick Capture (#452, #455). The Timeline entry is saved FIRST and is never lost: only after it is
+// persisted does the proposal seam run, and any failure there (model down, timeout, invalid output)
+// simply yields no card. The proposal wait is time-boxed to an interactive budget (#554): a stalled or
+// slow local daemon is abandoned so the capture returns promptly with the saved entry and no card,
+// never blocking on the model. A capture may be typed or voice (`request.inputMode`); a voice capture
+// submits its transcript as the text and follows the exact same path from here on. When a candidate is
+// produced it is gated (confidence + faithful evidence quote) and deduped against the user's recall
+// items; it is stored either `visible` (a card is returned) or `dismissed` (gated out / duplicate — no
+// card). At most one candidate per capture, so the "one card per capture" rule holds by construction.
+export async function quickCapture(
+  dependencies: QuickCaptureDependencies,
+  request: QuickCaptureRequest,
+  userId: string,
+  now: Date
+): Promise<QuickCaptureResultDto> {
+  const md = { createId: dependencies.createId, db: dependencies.db };
+
+  const captureRequest: CreateTimelineCaptureRequest = {
+    captureSource: "quick_capture",
+    inputMode: request.inputMode,
+    language: null,
+    rawAudioPath: null,
+    rawInputText: request.text,
+    tidiedText: null
+  };
+  const timelineEntry = await createTimelineCapture(md, captureRequest, userId, now);
+
+  return {
+    card: await proposeForCapture(dependencies, request.text, userId, timelineEntry.entryId, now),
+    timelineEntry
+  };
 }

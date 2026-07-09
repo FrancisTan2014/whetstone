@@ -3,11 +3,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./makeDurableApi", () => ({
+vi.mock("../makeDurable/makeDurableApi", () => ({
   fetchMakeDurableCards: vi.fn(),
   reviewMakeDurableCard: vi.fn(),
-  runMakeDurableBackfill: vi.fn(),
-  submitQuickCapture: vi.fn()
+  runMakeDurableBackfill: vi.fn()
+}));
+
+vi.mock("../diary/diaryApi", () => ({
+  submitDiaryCapture: vi.fn()
 }));
 
 vi.mock("../session/sessionApi", () => ({
@@ -15,8 +18,8 @@ vi.mock("../session/sessionApi", () => ({
 }));
 
 import type {
+  DiaryCaptureResultDto,
   MakeDurableCardDto,
-  QuickCaptureResultDto,
   RecallItemDto
 } from "@whetstone/contracts";
 
@@ -24,13 +27,13 @@ import { transcribe } from "../session/sessionApi";
 import {
   fetchMakeDurableCards,
   reviewMakeDurableCard,
-  runMakeDurableBackfill,
-  submitQuickCapture
-} from "./makeDurableApi";
-import { MakeDurableSection, type QuickCaptureVoiceDependencies } from "./MakeDurableSection";
+  runMakeDurableBackfill
+} from "../makeDurable/makeDurableApi";
+import { submitDiaryCapture } from "../diary/diaryApi";
+import { CaptureCard, type CaptureVoiceDependencies } from "./CaptureCard";
 
 const mockedFetch = vi.mocked(fetchMakeDurableCards);
-const mockedSubmit = vi.mocked(submitQuickCapture);
+const mockedSubmit = vi.mocked(submitDiaryCapture);
 const mockedReview = vi.mocked(reviewMakeDurableCard);
 const mockedBackfill = vi.mocked(runMakeDurableBackfill);
 const mockedTranscribe = vi.mocked(transcribe);
@@ -39,10 +42,10 @@ const mockedTranscribe = vi.mocked(transcribe);
 // audio blob (the real MediaRecorder/Web Audio path is not exercisable in jsdom).
 function fakeVoice(
   overrides: Partial<{
-    start: QuickCaptureVoiceDependencies["start"];
+    start: CaptureVoiceDependencies["start"];
     supported: boolean;
   }> = {}
-): QuickCaptureVoiceDependencies {
+): CaptureVoiceDependencies {
   return {
     start: overrides.start ?? (async () => ({ stop: async () => new Blob(["audio"]) })),
     supported: overrides.supported ?? true
@@ -86,19 +89,15 @@ function recallItem(): RecallItemDto {
   };
 }
 
-function captureResult(withCard: MakeDurableCardDto | null): QuickCaptureResultDto {
+function captureResult(withCard: MakeDurableCardDto | null): DiaryCaptureResultDto {
   return {
     card: withCard,
-    timelineEntry: {
-      entryId: "entry-1",
+    entry: {
       createdAt: "2026-07-06T09:30:00.000Z",
       entryDate: "2026-07-06",
-      inputMode: "typed",
-      captureSource: "quick_capture",
-      rawInputText: "the deploy failed",
-      tidiedText: null,
+      id: "entry-1",
       language: null,
-      rawAudioPath: null
+      text: "the deploy failed"
     }
   };
 }
@@ -114,20 +113,20 @@ afterEach(() => {
 
 async function typeCapture(text: string): Promise<void> {
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText("Quick capture text"), text);
+  await user.type(screen.getByLabelText("Capture text"), text);
   await user.click(screen.getByRole("button", { name: "Capture" }));
 }
 
-describe("MakeDurableSection", () => {
+describe("CaptureCard", () => {
   it("loads and shows pending cards on mount", async () => {
     mockedFetch.mockResolvedValue([card]);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
 
     expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
   });
 
   it("keeps Capture disabled until there is text", async () => {
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     expect((screen.getByRole("button", { name: "Capture" }) as HTMLButtonElement).disabled).toBe(
@@ -137,17 +136,17 @@ describe("MakeDurableSection", () => {
 
   it("degrades quietly and still offers capture when the cards fail to load on mount", async () => {
     mockedFetch.mockRejectedValue(new Error("boom"));
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     // No card and no error banner — a failed load simply leaves the always-present capture box.
     expect(screen.queryByText("Make this durable?")).toBeNull();
-    expect(screen.getByLabelText("Quick capture text")).toBeTruthy();
+    expect(screen.getByLabelText("Capture text")).toBeTruthy();
   });
 
   it("submits a capture and shows the returned review card", async () => {
     mockedSubmit.mockResolvedValue(captureResult(card));
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await typeCapture("I couldn't say it");
@@ -156,9 +155,21 @@ describe("MakeDurableSection", () => {
     expect(await screen.findByText("WorkInsight is back up now")).toBeTruthy();
   });
 
+  it("notifies the parent with the saved diary entry after capture", async () => {
+    const result = captureResult(null);
+    mockedSubmit.mockResolvedValue(result);
+    const onCaptured = vi.fn();
+    render(<CaptureCard onCaptured={onCaptured} />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+
+    await typeCapture("diary text");
+
+    expect(onCaptured).toHaveBeenCalledWith(result.entry);
+  });
+
   it("shows no card when the capture yields no proposal", async () => {
     mockedSubmit.mockResolvedValue(captureResult(null));
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await typeCapture("nothing special");
@@ -168,7 +179,7 @@ describe("MakeDurableSection", () => {
 
   it("surfaces a quiet error when the capture fails", async () => {
     mockedSubmit.mockRejectedValue(new Error("boom"));
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await typeCapture("try me");
@@ -180,7 +191,7 @@ describe("MakeDurableSection", () => {
   it("saves an approved card and removes it", async () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(null);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
@@ -193,7 +204,7 @@ describe("MakeDurableSection", () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(recallItem());
     const onDurableSaved = vi.fn();
-    render(<MakeDurableSection onDurableSaved={onDurableSaved} />);
+    render(<CaptureCard onDurableSaved={onDurableSaved} />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
@@ -205,7 +216,7 @@ describe("MakeDurableSection", () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(null);
     const onDurableSaved = vi.fn();
-    render(<MakeDurableSection onDurableSaved={onDurableSaved} />);
+    render(<CaptureCard onDurableSaved={onDurableSaved} />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Not useful now" }));
@@ -218,7 +229,7 @@ describe("MakeDurableSection", () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockRejectedValue(new Error("nope"));
     const onDurableSaved = vi.fn();
-    render(<MakeDurableSection onDurableSaved={onDurableSaved} />);
+    render(<CaptureCard onDurableSaved={onDurableSaved} />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
@@ -232,7 +243,7 @@ describe("MakeDurableSection", () => {
     // nothing throws.
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(recallItem());
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
@@ -243,7 +254,7 @@ describe("MakeDurableSection", () => {
   it("dismisses a card on Not useful now", async () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(null);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Not useful now" }));
@@ -255,7 +266,7 @@ describe("MakeDurableSection", () => {
   it("marks a card Wrong", async () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(null);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Wrong" }));
@@ -266,7 +277,7 @@ describe("MakeDurableSection", () => {
   it("edits every field and saves the edited payload", async () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockResolvedValue(null);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
     const user = userEvent.setup();
 
@@ -297,7 +308,7 @@ describe("MakeDurableSection", () => {
 
   it("does not save an edit when a required field is blank", async () => {
     mockedFetch.mockResolvedValue([card]);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
     const user = userEvent.setup();
 
@@ -309,10 +320,10 @@ describe("MakeDurableSection", () => {
   });
 
   it("ignores a capture submit with no text", async () => {
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
-    const form = screen.getByLabelText("Quick capture text").closest("form");
+    const form = screen.getByLabelText("Capture text").closest("form");
     fireEvent.submit(form as HTMLFormElement);
 
     expect(mockedSubmit).not.toHaveBeenCalled();
@@ -320,7 +331,7 @@ describe("MakeDurableSection", () => {
 
   it("cancels an edit without saving", async () => {
     mockedFetch.mockResolvedValue([card]);
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
     const user = userEvent.setup();
 
@@ -334,7 +345,7 @@ describe("MakeDurableSection", () => {
   it("surfaces a quiet error when a review action fails", async () => {
     mockedFetch.mockResolvedValue([card]);
     mockedReview.mockRejectedValue(new Error("nope"));
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await screen.findByText("WorkInsight is back up now");
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
@@ -344,10 +355,10 @@ describe("MakeDurableSection", () => {
   });
 });
 
-describe("MakeDurableSection backfill (#456)", () => {
+describe("CaptureCard backfill (#456)", () => {
   it("mines history and surfaces the returned card on Today", async () => {
     mockedBackfill.mockResolvedValue({ card, scannedCount: 3 });
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Mine my history" }));
@@ -358,7 +369,7 @@ describe("MakeDurableSection backfill (#456)", () => {
 
   it("shows a calm note when the scan surfaces nothing", async () => {
     mockedBackfill.mockResolvedValue({ card: null, scannedCount: 2 });
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Mine my history" }));
@@ -369,7 +380,7 @@ describe("MakeDurableSection backfill (#456)", () => {
 
   it("surfaces a quiet error when the scan fails", async () => {
     mockedBackfill.mockRejectedValue(new Error("boom"));
-    render(<MakeDurableSection />);
+    render(<CaptureCard />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Mine my history" }));
@@ -379,19 +390,19 @@ describe("MakeDurableSection backfill (#456)", () => {
   });
 });
 
-describe("MakeDurableSection voice capture", () => {
+describe("CaptureCard voice capture", () => {
   it("hides the voice control when capture is unsupported (typed box remains)", async () => {
-    render(<MakeDurableSection capture={fakeVoice({ supported: false })} />);
+    render(<CaptureCard capture={fakeVoice({ supported: false })} />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     expect(screen.queryByRole("button", { name: "Tap to talk" })).toBeNull();
-    expect(screen.getByLabelText("Quick capture text")).toBeTruthy();
+    expect(screen.getByLabelText("Capture text")).toBeTruthy();
   });
 
   it("records, transcribes, and submits the transcript as a voice capture", async () => {
     mockedTranscribe.mockResolvedValue({ transcript: "WorkInsight is back up now", words: [] });
     mockedSubmit.mockResolvedValue(captureResult(card));
-    render(<MakeDurableSection capture={fakeVoice()} />);
+    render(<CaptureCard capture={fakeVoice()} />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
     const user = userEvent.setup();
 
@@ -405,7 +416,7 @@ describe("MakeDurableSection voice capture", () => {
 
   it("shows a calm retry and submits nothing when no speech is caught", async () => {
     mockedTranscribe.mockResolvedValue({ transcript: "   ", words: [] });
-    render(<MakeDurableSection capture={fakeVoice()} />);
+    render(<CaptureCard capture={fakeVoice()} />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
     const user = userEvent.setup();
 
@@ -421,7 +432,7 @@ describe("MakeDurableSection voice capture", () => {
     // The adapter settles empty audio on a no-utterance stop; the section must NOT post it to
     // /transcribe (which 400s) — it takes the calm retry path without ever calling transcribe.
     const start = vi.fn(async () => ({ stop: async () => new Blob() }));
-    render(<MakeDurableSection capture={fakeVoice({ start })} />);
+    render(<CaptureCard capture={fakeVoice({ start })} />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
     const user = userEvent.setup();
 
@@ -438,19 +449,19 @@ describe("MakeDurableSection voice capture", () => {
 
   it("falls back to typing when the microphone can't be reached", async () => {
     const start = vi.fn().mockRejectedValue(new Error("denied"));
-    render(<MakeDurableSection capture={fakeVoice({ start })} />);
+    render(<CaptureCard capture={fakeVoice({ start })} />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Tap to talk" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn't reach the microphone");
-    expect(screen.getByLabelText("Quick capture text")).toBeTruthy();
+    expect(screen.getByLabelText("Capture text")).toBeTruthy();
   });
 
   it("surfaces a quiet error when transcription or saving fails", async () => {
     mockedTranscribe.mockRejectedValue(new Error("stt down"));
-    render(<MakeDurableSection capture={fakeVoice()} />);
+    render(<CaptureCard capture={fakeVoice()} />);
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
     const user = userEvent.setup();
 

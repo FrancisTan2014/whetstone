@@ -1,5 +1,5 @@
 import type { TimelineCaptureDto } from "@whetstone/contracts";
-import { and, asc, desc, eq, ne, notExists } from "drizzle-orm";
+import { and, asc, desc, eq, notExists } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { makeDurableBackfillScans, proposalCandidates, timelineEntries } from "../../db/schema.js";
@@ -54,9 +54,9 @@ export async function listTimelineCapturesForUser(
 // The user's Timeline captures that are eligible for a Make Durable backfill scan (#456): entries that
 // have NO proposal candidate (a candidate — visible, pending, saved, OR dismissed — means the model
 // already evaluated that entry under the identical gate) AND no backfill-scan marker (a prior run
-// evaluated it and the model returned nothing). Diary-sourced captures are excluded (#559): the Diary is
-// a filtered view over the same store, but Make Durable never mines diary entries in this task (that is
-// a later capture-consolidation step), so its output is unchanged by diary rows landing in the store.
+// evaluated it and the model returned nothing). Make Durable now mines diary-sourced captures: the
+// unified capture path saves every new Today/Diary capture as `capture_source = "diary"`, and "Mine my
+// history" should scan that learner-authored diary history for one high-value proposal.
 // Together these advance a durable cursor so a bounded run never re-scans entries already judged, and a
 // high-value entry beyond one run's limit stays reachable. Oldest first, capped at `limit` per run.
 export async function listBackfillableCaptures(
@@ -70,7 +70,7 @@ export async function listBackfillableCaptures(
     .where(
       and(
         eq(timelineEntries.userId, userId),
-        ne(timelineEntries.captureSource, "diary"),
+        eq(timelineEntries.captureSource, "diary"),
         notExists(
           db
             .select({ present: proposalCandidates.id })

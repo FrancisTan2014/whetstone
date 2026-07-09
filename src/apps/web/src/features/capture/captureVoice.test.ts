@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { LiveCaptureCallbacks } from "../session/liveCapture";
-import { createQuickCaptureVoice, type CreateLiveCapture } from "./makeDurableCapture";
+import { createCaptureVoice, type CreateLiveCapture } from "./captureVoice";
 
 // A deterministic stand-in for the browser live-capture seam: it records the callbacks the adapter
 // wires up and exposes spies + triggers so a test can drive the confirmed and no-utterance paths
@@ -27,10 +27,10 @@ function fakeLiveCapture() {
   };
 }
 
-describe("createQuickCaptureVoice", () => {
+describe("createCaptureVoice", () => {
   it("settles empty and releases the mic when no utterance is ever confirmed", async () => {
     const fake = fakeLiveCapture();
-    const recording = await createQuickCaptureVoice(fake.create).start();
+    const recording = await createCaptureVoice(fake.create).start();
 
     // The real hang risk: tap → say nothing → stop. finishUtterance emits nothing, so this must still
     // resolve (with empty audio) rather than await onUtterance forever.
@@ -43,7 +43,7 @@ describe("createQuickCaptureVoice", () => {
 
   it("returns the finalized audio when a confirmed utterance ends on stop", async () => {
     const fake = fakeLiveCapture();
-    const recording = await createQuickCaptureVoice(fake.create).start();
+    const recording = await createCaptureVoice(fake.create).start();
 
     fake.confirmStart();
     // A confirmed utterance is finalized by finishUtterance, which the engine turns into onUtterance.
@@ -57,7 +57,7 @@ describe("createQuickCaptureVoice", () => {
 
   it("returns audio already delivered when the utterance ended naturally before stop", async () => {
     const fake = fakeLiveCapture();
-    const recording = await createQuickCaptureVoice(fake.create).start();
+    const recording = await createCaptureVoice(fake.create).start();
 
     fake.confirmStart();
     fake.emitUtterance(new Blob(["natural"]));

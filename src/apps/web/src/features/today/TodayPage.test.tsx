@@ -10,7 +10,13 @@ vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
 vi.mock("../makeDurable/makeDurableApi", () => ({
   fetchMakeDurableCards: vi.fn(() => Promise.resolve([])),
   reviewMakeDurableCard: vi.fn(),
-  submitQuickCapture: vi.fn()
+  runMakeDurableBackfill: vi.fn()
+}));
+vi.mock("../diary/diaryApi", () => ({
+  submitDiaryCapture: vi.fn()
+}));
+vi.mock("../session/sessionApi", () => ({
+  transcribe: vi.fn()
 }));
 
 import type {
@@ -159,12 +165,12 @@ afterEach(() => {
 });
 
 describe("TodayPage", () => {
-  it("always offers the voice-diary quick-capture, linking to the diary", () => {
+  it("always offers the unified tap-and-talk plus typed capture", () => {
     renderToday();
 
-    const link = screen.getByRole("link", { name: "Open your diary" });
-    expect(link.getAttribute("href")).toBe("/diary");
-    expect(screen.getByText("Capture a thought")).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
+    expect(screen.getByLabelText("Capture text")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Mine my history" })).toBeDefined();
   });
 
   it("shows the calm greeting header without any metric or streak", () => {
@@ -217,7 +223,7 @@ describe("TodayPage", () => {
 
     expect(await screen.findByText(/Couldn’t load recall/)).toBeDefined();
     // The page does not blank — the always-present capture invitation still renders.
-    expect(screen.getByText("Capture a thought")).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
   });
 
   it("refreshes the Recall card after a Make Durable card is saved into a recall item (#509)", async () => {
@@ -403,7 +409,7 @@ describe("TodayPage", () => {
     await waitFor(() => {
       expect(screen.queryByRole("region", { name: "Practice nudge" })).toBeNull();
     });
-    expect(screen.getByText("Capture a thought")).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
   });
 
   it("renders no nudge card when there is nothing to surface (null)", async () => {
@@ -419,7 +425,7 @@ describe("TodayPage", () => {
     mockedNudge.mockRejectedValue(new Error("boom"));
     renderToday();
 
-    expect(await screen.findByText("Capture a thought")).toBeDefined();
+    expect(await screen.findByText("Capture today")).toBeDefined();
     expect(screen.queryByRole("region", { name: "Practice nudge" })).toBeNull();
   });
 
@@ -535,7 +541,7 @@ describe("TodayPage", () => {
     await screen.findByText(/Nothing to continue yet/);
     expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
     expect(screen.queryByText(/You’re done for today/)).toBeNull();
-    expect(screen.getByText("Capture a thought")).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
   });
 
   it("shows the cleared board for a returning learner known only by a reading position", async () => {
@@ -573,6 +579,6 @@ describe("TodayPage", () => {
 
     await screen.findByText(/Nothing to continue yet/);
     expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-    expect(screen.getByText("Capture a thought")).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
   });
 });
