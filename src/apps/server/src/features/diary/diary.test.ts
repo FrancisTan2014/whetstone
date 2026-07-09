@@ -500,4 +500,3 @@ describe("diary_entries → timeline_entries migration (#559)", () => {
     await db.$client.close();
   });
 });
-
