@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   type DiaryEntryDto,
@@ -7,12 +7,12 @@ import {
   type CaptureInputMode,
   type MakeDurableCardDto,
   type ProposalPayload,
-  type RecallCategory
+  type RecallCategory,
+  type VoiceCaptureStatusDto
 } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
 import { submitDiaryCapture } from "../diary/diaryApi";
-import { transcribe } from "../session/sessionApi";
 import {
   fetchMakeDurableCards,
   reviewMakeDurableCard,
@@ -20,6 +20,8 @@ import {
   type ReviewCardInput
 } from "../makeDurable/makeDurableApi";
 import { createCaptureVoice } from "./captureVoice";
+import { useVoiceCaptures } from "./useVoiceCaptures";
+import { voiceCaptureStatusLabels } from "./voiceCaptureLabels.tokens";
 
 // One tap-and-talk recording: stop finalizes the audio and hands it back for STT. The browser audio
 // boundary (createCaptureVoice in captureVoice.ts) is injected so the card tests with a
@@ -32,16 +34,6 @@ export type CaptureVoiceDependencies = Readonly<{
   // the record button is hidden and capture falls back to the always-present typed box — never a dead end.
   supported: boolean;
 }>;
-
-// Where the voice pipeline is: idle, recording (mic open), or transcribing (STT). Saving is shown on
-// the buttons via `busy`; a typed capture never leaves `idle`.
-type VoicePhase = "idle" | "recording" | "transcribing";
-
-const voicePhaseLabels: Readonly<Record<VoicePhase, string>> = {
-  idle: "",
-  recording: "Listening…",
-  transcribing: "Transcribing…"
-};
 
 const captureLanguageStorageKey = "whetstone.capture.language";
 
@@ -74,7 +66,7 @@ export function CaptureCard({
   const [cards, setCards] = useState<ReadonlyArray<MakeDurableCardDto>>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<VoicePhase>("idle");
+  const [savingVoice, setSavingVoice] = useState(false);
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backfilling, setBackfilling] = useState(false);
@@ -87,6 +79,47 @@ export function CaptureCard({
       () => undefined
     );
   }, []);
+
+  // A background voice capture just became ready (#566): it now has its tidied text and is a real diary
+  // entry, so hand it to the Timeline (Diary inserts it in capture order) and drop it from the pending
+  // rows. A ready capture may also have produced a Make Durable card server-side, so refresh cards — the
+  // one-card cap is still enforced by the server and the slice(0, 1) render below.
+  const handleVoiceReady = useCallback(
+    (ready: VoiceCaptureStatusDto): void => {
+      if (ready.text !== null) {
+        onCaptured?.({
+          createdAt: ready.createdAt,
+          entryDate: ready.entryDate,
+          id: ready.id,
+          language: ready.language,
+          text: ready.text
+        });
+      }
+      fetchMakeDurableCards().then(
+        (loaded) => setCards(loaded),
+        () => undefined
+      );
+    },
+    [onCaptured]
+  );
+
+  const voice = useVoiceCaptures({ onReady: handleVoiceReady });
+
+  // Protect the only lossy window (#566): while recording OR the pre-acknowledgement save is in flight, a
+  // refresh/navigation would drop audio the server has not accepted yet, so install the native browser
+  // confirmation. It is removed the moment the save resolves — queued/background processing never nags.
+  const guardNavigation = recording !== null || savingVoice;
+  useEffect(() => {
+    if (!guardNavigation) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [guardNavigation]);
 
   function removeCard(id: string): void {
     setCards((current) => current.filter((card) => card.proposalCandidateId !== id));
@@ -136,36 +169,42 @@ export function CaptureCard({
     try {
       const handle = await capture.start();
       setRecording(handle);
-      setPhase("recording");
     } catch {
       setError("Couldn't reach the microphone. You can type instead.");
     }
   }
 
+  // Saved-first stop (#566): finalize the audio and submit it. An empty clip (no confirmed utterance) is
+  // the calm no-speech retry and is never saved as a pending job. Otherwise the clip is saved immediately
+  // and the card returns to a usable state — transcription/tidy run in the background as a pending row.
   async function stopRecording(handle: VoiceRecording): Promise<void> {
     setError(null);
     setRecording(null);
-    setPhase("transcribing");
+    setSavingVoice(true);
     try {
       const audio = await handle.stop();
-      // The voice adapter settles with empty audio when no utterance was confirmed (tap → silence →
-      // stop). Posting that to /transcribe would 400; instead take the calm no-speech retry directly
-      // (#465), never the generic save error.
       if (audio.size === 0) {
-        setPhase("idle");
         setError("Didn't catch any speech — try again.");
         return;
       }
-      const { transcript } = await transcribe(audio, language);
-      setPhase("idle");
-      if (transcript.trim().length === 0) {
-        setError("Didn't catch any speech — try again.");
-        return;
+      const saved = await voice.submit(audio, language);
+      if (!saved) {
+        setError("Couldn't save your capture. Please try again.");
       }
-      await runCapture(transcript, "voice");
     } catch {
-      setPhase("idle");
       setError("Couldn't save your capture. Please try again.");
+    } finally {
+      setSavingVoice(false);
+    }
+  }
+
+  // Retry a failed capture from its saved audio (#566): the raw clip was never lost, so this re-queues the
+  // same recording. The hook re-queues it in place and resumes polling.
+  async function retryVoice(id: string): Promise<void> {
+    setError(null);
+    const ok = await voice.retry(id);
+    if (!ok) {
+      setError("Couldn't retry that capture. Please try again.");
     }
   }
 
@@ -206,7 +245,7 @@ export function CaptureCard({
     }
   }
 
-  const transcribing = phase === "transcribing";
+  const voiceBusy = busy || savingVoice;
 
   return (
     <section aria-label="Capture today" className="rounded border border-border bg-surface p-4">
@@ -246,7 +285,7 @@ export function CaptureCard({
         <div className="mt-3 flex flex-col gap-2">
           {recording === null ? (
             <Button
-              disabled={busy || transcribing}
+              disabled={voiceBusy}
               onClick={() => void startRecording()}
               type="button"
               variant="primary"
@@ -258,13 +297,43 @@ export function CaptureCard({
               Stop &amp; save
             </Button>
           )}
-          {phase === "idle" ? null : (
+          {recording !== null ? (
             <p className="text-sm font-medium text-text" role="status">
-              {voicePhaseLabels[phase]}
+              Listening…
             </p>
-          )}
+          ) : savingVoice ? (
+            <p className="text-sm font-medium text-text" role="status">
+              Saving…
+            </p>
+          ) : null}
         </div>
       ) : null}
+
+      {voice.captures.length === 0 ? null : (
+        <ul aria-label="Voice captures in progress" className="mt-3 flex flex-col gap-2">
+          {voice.captures.map((pending) => (
+            <li className="rounded border border-border bg-bg p-3" key={pending.id}>
+              {pending.status === "failed" ? (
+                <div className="flex flex-wrap items-center justify-between gap-2" role="alert">
+                  <span className="text-sm text-text-muted">{voiceCaptureStatusLabels.failed}</span>
+                  <Button
+                    onClick={() => void retryVoice(pending.id)}
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-sm text-text-muted" role="status">
+                  {voiceCaptureStatusLabels[pending.status]}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <form className="mt-3 flex flex-col gap-2" onSubmit={captureTyped}>
         <label className="sr-only" htmlFor="quick-capture">
@@ -278,11 +347,7 @@ export function CaptureCard({
           value={text}
         />
         <div>
-          <Button
-            disabled={busy || transcribing || text.trim().length === 0}
-            type="submit"
-            variant="primary"
-          >
+          <Button disabled={voiceBusy || text.trim().length === 0} type="submit" variant="primary">
             {busy ? "Saving…" : "Capture"}
           </Button>
         </div>
@@ -291,7 +356,7 @@ export function CaptureCard({
       <div className="mt-3 flex flex-col gap-1">
         <div>
           <Button
-            disabled={busy || transcribing || backfilling}
+            disabled={voiceBusy || backfilling}
             onClick={() => void mineHistory()}
             type="button"
             variant="secondary"
