@@ -99,14 +99,14 @@ export function resolveTocEntryNavigation(
       return { kind: "unit", unitIndex };
     }
 
-    const blockEntryId = anchorIndex.resolve({
+    const resolved = anchorIndex.resolve({
       anchor: entry.targetAnchor,
       ...(unit.sourceFile === undefined ? {} : { sourceFile: unit.sourceFile })
     });
 
-    return blockEntryId === undefined
+    return resolved === undefined
       ? { kind: "unit", unitIndex }
-      : { blockEntryId, kind: "block" };
+      : { blockEntryId: resolved.blockEntryId, kind: "block" };
   }
 
   return { kind: "none" };

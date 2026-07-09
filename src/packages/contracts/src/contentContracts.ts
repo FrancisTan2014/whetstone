@@ -159,14 +159,17 @@ export type BlockUnitLocatorDto = Readonly<{
   unitEntryId: EntryId;
 }>;
 
-// One entry in a work's anchor index: an addressable block reachable by its source-HTML `anchor`,
-// scoped by the owning unit's `sourceFile` (null for a format with no per-unit source file). The
-// (sourceFile, anchor) pair is the key a cross-reference resolves through; `blockEntryId` is the
-// target `doc_blocks` id (fed to the reader's block-jump) and `unitEntryId` its owning unit (#366).
+// One entry in a work's anchor index: an addressable id-bearing element reachable by its source-HTML
+// `anchor`, scoped by the owning unit's `sourceFile` (null for a format with no per-unit source file).
+// The (sourceFile, anchor) pair is the key a cross-reference resolves through; `blockEntryId` is the
+// owning `doc_blocks` id (fed to the reader's block-jump), `nodeId` the stable PM node id of the exact
+// element the anchor lives on (element-precise jump within the block; `nodeId === blockEntryId` when
+// the anchor is the block's own top-level id), and `unitEntryId` its owning unit (#366, #550).
 export const workAnchorEntryDtoSchema = z
   .object({
     anchor: z.string(),
     blockEntryId: z.string(),
+    nodeId: z.string(),
     sourceFile: z.string().nullable(),
     unitEntryId: z.string()
   })

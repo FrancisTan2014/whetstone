@@ -1,0 +1,1 @@
+ALTER TABLE "doc_blocks" ADD COLUMN "anchors" jsonb DEFAULT '[]'::jsonb NOT NULL;

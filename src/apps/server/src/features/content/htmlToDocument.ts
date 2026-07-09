@@ -40,6 +40,13 @@ export interface IngestedBlock {
   type: string;
   node: DocumentNodeJSON;
   anchorId: string | null;
+  // The complete map from every id-bearing source element inside this block to the stable PM node id
+  // that carries it, in pre-order. Unlike `anchorId` (only the block's own top-level id), this keeps
+  // every id nested inside a container block, so a cross-reference to a nested heading/figure/anchor
+  // has something to resolve against — and the node id gives element-precise jump within the block
+  // (#550). The block's own top-level id, when present, is the first entry (nodeId === id). Empty when
+  // the block bears no ids. Addressing metadata, never stored in the node JSON (#366).
+  anchors: Array<{ anchor: string; nodeId: string }>;
 }
 
 // The full result of ingesting one HTML fragment: the whole document, its decomposition into block
@@ -812,16 +819,51 @@ function stripAnchorId(node: DocumentNodeJSON): DocumentNodeJSON {
   return next;
 }
 
+// Walk a block's node tree in pre-order and collect, for every node that carries both a source-HTML
+// `anchorId` (a non-empty string) and a stamped PM `id`, the pair `{ anchor, nodeId }`. Runs on the
+// node BEFORE `stripAnchorId`, so the `anchorId` attributes are still present. The result is the
+// block's complete id map: the top-level block's own id (when it has one) comes first, followed by
+// every id nested inside — the ids ingestion used to drop (#550). Pure: reads only, mutates nothing.
+export function collectBlockAnchors(
+  node: DocumentNodeJSON
+): Array<{ anchor: string; nodeId: string }> {
+  const collected: Array<{ anchor: string; nodeId: string }> = [];
+
+  const walk = (current: DocumentNodeJSON): void => {
+    const attrs = current.attrs;
+
+    if (attrs !== undefined) {
+      const anchor = attrs["anchorId"];
+      const nodeId = attrs["id"];
+
+      if (typeof anchor === "string" && anchor.length > 0 && typeof nodeId === "string") {
+        collected.push({ anchor, nodeId });
+      }
+    }
+
+    if (current.content !== undefined) {
+      current.content.forEach(walk);
+    }
+  };
+
+  walk(node);
+
+  return collected;
+}
+
 // Top-level blocks always carry an id after `assignNodeIds`, so read it through a typed view rather
 // than an optional chain whose null branch could never be taken (keeps branch coverage exact). The
 // block's source-HTML `anchorId` is lifted off the top-level node and the attribute stripped from the
-// stored JSON, so the id becomes the `doc_blocks.anchor_id` addressing column (#366).
+// stored JSON, so the id becomes the `doc_blocks.anchor_id` addressing column (#366). Its complete id
+// map (`anchors`) — the block's own id plus every id nested inside — is captured before stripping, so
+// a cross-reference to a nested target resolves and jumps element-precisely (#550).
 function toBlock(node: DocumentNodeJSON): IngestedBlock {
   const attrs = node.attrs as Record<string, unknown>;
   const anchorIdValue = attrs["anchorId"];
   const anchorId = typeof anchorIdValue === "string" ? anchorIdValue : null;
+  const anchors = collectBlockAnchors(node);
 
-  return { anchorId, id: String(attrs["id"]), node: stripAnchorId(node), type: node.type };
+  return { anchorId, anchors, id: String(attrs["id"]), node: stripAnchorId(node), type: node.type };
 }
 
 // --- CJK inter-character spacing (#340) -------------------------------------------------------

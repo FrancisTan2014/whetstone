@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   doublePrecision,
   index,
@@ -113,6 +114,17 @@ export const docBlocks = pgTable(
     // `source_file` it forms the work anchor index a cross-reference resolves through. Null when the
     // source element had no id; mirrors the legacy `blocks.anchor_id` column.
     anchorId: text("anchor_id"),
+    // The complete per-block map from every id-bearing source element inside this block to the stable
+    // PM node id that carries it: `[{ anchor: <sourceHtmlId>, nodeId: <pmNodeId> }, ...]`. Ingestion
+    // used to lift only the top-level block's own id onto `anchor_id`, dropping every id nested inside
+    // a container block, so a cross-reference to a nested target had nothing to resolve against. This
+    // column keeps all of them, forming the complete work anchor index a reference resolves through,
+    // and the node id gives element-precise jump within the block (#550). The block's own top-level id
+    // (when present) is the first entry, with `nodeId === id`. Never null: empty when the block bears
+    // no ids. Kept separate from `node_json` so the stored node stays pure render content (#366).
+    anchors: jsonb("anchors")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     id: text("id").primaryKey(),
     nodeJson: jsonb("node_json").notNull(),
     orderIndex: integer("order_index").notNull(),

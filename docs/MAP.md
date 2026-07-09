@@ -336,7 +336,11 @@ can navigate them from another package.
   `imageResourceId` attr (#310/#312), then the document's top-level PM nodes are dual-written at the
   block-row boundary to the `doc_blocks` table (one row per node, keyed by the node's stable id from
   `assignNodeIds`, with `node_json` carrying the PM node and a `plaintext` column — the in-order
-  concatenation of the node's descendant text via `@whetstone/document`'s `documentText`) alongside the
+  concatenation of the node's descendant text via `@whetstone/document`'s `documentText` — plus an
+  `anchors` JSONB column: the block's **complete** source-id → PM-node-id map `[{ anchor, nodeId }]`
+  for every id-bearing node inside it (own + nested), captured by `collectBlockAnchors` before
+  `stripAnchorId`, so ingestion no longer drops nested ids and the flattened work anchor index can
+  resolve a cross-reference to a nested target element-precisely, #550) alongside the
   existing mdast `blocks` rows; each `doc_blocks` row is also registered as a first-class `entries` row
   (`type: "block"`) under a `contains` link from its unit, so a PM block id is an addressable anchor
   (the reader renders these PM block rows for EPUB content (#312) and stamps the id as `data-block-id`;
@@ -360,11 +364,13 @@ can navigate them from another package.
   `GET …/structure` (units + block counts, no content), `GET …/units/:unitId/content` (one unit's
   ordered blocks — both the mdast `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`,
   the reader's render source), `GET …/blocks/:blockId/unit` (block → owning unit for deep-links /
-  jump-to-note, via `locateBlockUnit`), and `GET …/anchors` (the **work anchor index** — every
-  addressable block keyed by `(reading_units.source_file, doc_blocks.anchor_id)` →
-  `{ blockEntryId, unitEntryId }`, so an id reused across chapters resolves per source file, not by
-  collision; backs work-scoped internal-reference resolution, #366), each 404ing an unknown/out-of-work
-  target. `GET …/structure` additively carries the work's nav-derived **table of contents** when it has
+  jump-to-note, via `locateBlockUnit`), and `GET …/anchors` (the **work anchor index** — the
+  **complete** source-id → PM-node-id map flattened from every block's `doc_blocks.anchors` JSONB
+  (one entry per id-bearing node, block + nested), keyed by `(reading_units.source_file, anchor)` →
+  `{ blockEntryId, nodeId, unitEntryId }`, so a reference to a **nested** target resolves and jumps
+  element-precisely — not just to the owning block — and an id reused across chapters resolves per
+  source file, not by collision; backs work-scoped internal-reference resolution, #366/#550), each
+  404ing an unknown/out-of-work target. `GET …/structure` additively carries the work's nav-derived **table of contents** when it has
   one (`tableOfContents?: TocEntryDto[]` — pre-order authored entries with `depth`/`parentEntryId`/`label`
   and a `targetUnitEntryId` resolved from each entry's `target_source_file` via `reading_units.source_file`,
   plus an optional `targetAnchor`; omitted, never empty, for a nav-less work, so `readingUnits` is
@@ -575,10 +581,16 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   #310 node type (the specs carry no `renderHTML`), stamps `data-block-id` = the PM node's stable
   UniqueID on each top-level block (so notes/position/search/selection anchor by block + offset),
   resolves internal references **work-scoped** through the work anchor index (`referenceResolver.ts`
-  builds `resolve(target)` from `fetchWorkAnchorIndex`; `onActivateAnchor` first tries a same-unit DOM
+  builds `resolve(target)` → `{ blockEntryId, nodeId }` and a `canResolve(target)` predicate from
+  `fetchWorkAnchorIndex`; `onActivateAnchor` first tries a same-unit DOM
   anchor, then resolves `(sourceFile, anchor)` → block → the existing cross-unit `jumpToBlock`, so
   footnote/endnote markers **and same-work `<a>` cross-references** now navigate **across
-  chapters/files**, #366/#368 — after any such jump (marker, cross-reference, or a location-changing
+  chapters/files**, #366/#368; the jump is **element-precise** (#550): `PmDocument` stamps
+  `data-anchor-id` onto each nested id-bearing node (via the per-block `anchorByNodeId` map derived
+  from the complete index), and `scrollToBlock` prefers that `[data-anchor-id]` element over the block
+  top, so a cross-reference to a nested heading/figure lands on the exact element; an unresolvable
+  same-work reference renders **inert** (a `canResolve` gate on `LinkMark`/`FootnoteMarker`), never a
+  live dead button — after any such jump (marker, cross-reference, or a location-changing
   TOC entry) `ReaderPage` captures the origin (`returnPoint.ts` — pure capture/no-op/label rules) and
   shows a quiet, persistent single-level **Back pill** (`ReaderBackPill.tsx`) that returns to the exact
   block, replacing on each new jump with no timeout (#549) — a same-work `<a>` parses to the document

@@ -67,8 +67,20 @@ describe("parseWorkAnchorIndex", () => {
   it("accepts a work anchor index with a null and a non-null source file", () => {
     const index = {
       anchors: [
-        { anchor: "fn1", blockEntryId: "b-1", sourceFile: "text/ch01.xhtml", unitEntryId: "u-1" },
-        { anchor: "fn2", blockEntryId: "b-2", sourceFile: null, unitEntryId: "u-2" }
+        {
+          anchor: "fn1",
+          blockEntryId: "b-1",
+          nodeId: "node-1",
+          sourceFile: "text/ch01.xhtml",
+          unitEntryId: "u-1"
+        },
+        {
+          anchor: "fn2",
+          blockEntryId: "b-2",
+          nodeId: "node-2",
+          sourceFile: null,
+          unitEntryId: "u-2"
+        }
       ],
       workEntryId: "work-1"
     };
@@ -79,7 +91,18 @@ describe("parseWorkAnchorIndex", () => {
   it("rejects an anchor entry missing its block id", () => {
     expect(() =>
       parseWorkAnchorIndex({
-        anchors: [{ anchor: "fn1", sourceFile: null, unitEntryId: "u-1" }],
+        anchors: [{ anchor: "fn1", nodeId: "node-1", sourceFile: null, unitEntryId: "u-1" }],
+        workEntryId: "work-1"
+      })
+    ).toThrow();
+  });
+
+  // #550: the within-block locator (the target PM node id) is required so a cross-reference can jump
+  // element-precisely to a nested target, not merely to the owning block.
+  it("rejects an anchor entry missing its node id", () => {
+    expect(() =>
+      parseWorkAnchorIndex({
+        anchors: [{ anchor: "fn1", blockEntryId: "b-1", sourceFile: null, unitEntryId: "u-1" }],
         workEntryId: "work-1"
       })
     ).toThrow();
@@ -89,7 +112,14 @@ describe("parseWorkAnchorIndex", () => {
     expect(() =>
       parseWorkAnchorIndex({
         anchors: [
-          { anchor: "fn1", blockEntryId: "b-1", extra: true, sourceFile: null, unitEntryId: "u-1" }
+          {
+            anchor: "fn1",
+            blockEntryId: "b-1",
+            extra: true,
+            nodeId: "node-1",
+            sourceFile: null,
+            unitEntryId: "u-1"
+          }
         ],
         workEntryId: "work-1"
       })

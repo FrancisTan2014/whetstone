@@ -336,6 +336,7 @@ function seedNavWork(): void {
       {
         anchor: "sec-2",
         blockEntryId: toEntryId("b-2b"),
+        nodeId: "b-2b",
         sourceFile: "OEBPS/chap2.xhtml",
         unitEntryId: toEntryId("u-2")
       }
@@ -662,6 +663,75 @@ const pmCrossUnitFootnoteContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A cross-file reference whose anchor id is ALSO reused in the CURRENT unit (a common repeated-
+// footnote-id EPUB pattern): the marker (pm-c1) in the ch01 unit points at "note9" in the notes file,
+// while a DECOY block (pm-cd) in THIS unit carries the same "note9" anchor. Clicking the marker must
+// resolve through the (sourceFile, anchor) index to the notes file, never the same-unit DOM match that
+// would spring the decoy (#550).
+const pmCrossFileSharedAnchorContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-cd"),
+          node: {
+            attrs: { id: "pm-cd" },
+            content: [{ text: "Decoy note nine in this chapter.", type: "text" }],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          type: "paragraph"
+        },
+        {
+          entryId: toEntryId("pm-c1"),
+          node: {
+            attrs: { id: "pm-c1" },
+            content: [
+              { text: "See ", type: "text" },
+              {
+                attrs: { label: "9", refId: "note9", targetSourceFile: "text/notes.xhtml" },
+                type: "footnoteMarker"
+              }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 1,
+          type: "paragraph"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0,
+      sourceFile: "text/ch01.xhtml"
+    },
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-c2"),
+          node: {
+            attrs: { id: "pm-c2", label: "9", refId: "note9" },
+            content: [
+              {
+                content: [{ text: "The real note nine in the notes file.", type: "text" }],
+                type: "paragraph"
+              }
+            ],
+            type: "footnoteTarget"
+          },
+          orderIndex: 0,
+          type: "footnoteTarget"
+        }
+      ],
+      entryId: toEntryId("u-2"),
+      orderIndex: 1,
+      sourceFile: "text/notes.xhtml",
+      title: "Notes"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 // A same-file cross-reference (#366) reached through the index fallback: the marker carries NO
 // `targetSourceFile`, so the resolver must scope it by the ACTIVE unit's source file. The target lives
 // in another unit (same source file), so the same-unit DOM lookup misses and the index takes over.
@@ -709,6 +779,70 @@ const pmSameFileFallbackContent: WorkContentDto = {
       orderIndex: 1,
       sourceFile: "text/ch01.xhtml",
       title: "More"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
+// A same-work cross-reference to a NESTED element (#550): the source paragraph (pm-c1) links to
+// `#nested-sec`, whose target is a heading NESTED inside a blockquote container block (pm-c2). The
+// complete index maps that source anchor to the heading's PM node id, so the reader stamps
+// `data-anchor-id` on the exact heading and scrolls there element-precisely — not to the block top.
+const pmNestedTargetContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-c1"),
+          node: {
+            attrs: { id: "pm-c1" },
+            content: [
+              { text: "Refer to ", type: "text" },
+              {
+                marks: [
+                  {
+                    attrs: {
+                      anchor: "nested-sec",
+                      inert: false,
+                      kind: "href",
+                      refFile: null,
+                      targetSourceFile: "text/ch01.xhtml"
+                    },
+                    type: "link"
+                  }
+                ],
+                text: "the nested section",
+                type: "text"
+              },
+              { text: ".", type: "text" }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          type: "paragraph"
+        },
+        {
+          entryId: toEntryId("pm-c2"),
+          node: {
+            attrs: { id: "pm-c2" },
+            content: [
+              {
+                attrs: { id: "pm-c2-heading", level: 3 },
+                content: [{ text: "The Nested Section", type: "text" }],
+                type: "heading"
+              },
+              { content: [{ text: "Section body.", type: "text" }], type: "paragraph" }
+            ],
+            type: "blockquote"
+          },
+          orderIndex: 1,
+          type: "blockquote"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0,
+      sourceFile: "text/ch01.xhtml"
     }
   ],
   workEntryId: toEntryId("work-1")
@@ -1423,6 +1557,51 @@ describe("ReaderPage", () => {
     );
   });
 
+  it("scrolls a same-work cross-reference to the exact NESTED element, not the block top (#550)", async () => {
+    seedWorkContent(pmNestedTargetContent);
+    // The complete index maps the source anchor to the nested heading's PM node id (not the block id),
+    // so the reader stamps + scrolls to the heading element precisely.
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [
+        {
+          anchor: "nested-sec",
+          blockEntryId: toEntryId("pm-c2"),
+          nodeId: "pm-c2-heading",
+          sourceFile: "text/ch01.xhtml",
+          unitEntryId: toEntryId("u-1")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    });
+    // Capture which element each scrollIntoView targets — the prototype mock alone cannot prove
+    // element-precision, so record the receiver (`this`) to assert the jump lands on the heading.
+    const scrolled: Element[] = [];
+    HTMLElement.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("The Nested Section");
+
+    // #550 stamping: the nested heading — not just the block wrapper — carries the source anchor.
+    const heading = container.querySelector('[data-anchor-id="nested-sec"]') as HTMLElement;
+    expect(heading.tagName).toBe("H3");
+    expect(heading.closest("[data-block-id]")?.getAttribute("data-block-id")).toBe("pm-c2");
+
+    await user.click(screen.getByRole("button", { name: "the nested section" }));
+
+    // The owning block is highlighted (born)…
+    await waitFor(() =>
+      expect(blockElement(container, "pm-c2").getAttribute("data-born")).toBe("true")
+    );
+    // …and the scroll lands element-precisely on the nested heading, never the block top.
+    await waitFor(() => {
+      const landed = scrolled.at(-1);
+      expect(landed?.getAttribute("data-anchor-id")).toBe("nested-sec");
+      expect(landed).not.toBe(blockElement(container, "pm-c2"));
+    });
+  });
+
   it("jumps marker→note and note→marker for a footnote pair (#250)", async () => {
     seedWorkContent(footnoteContent);
     const user = userEvent.setup();
@@ -1446,6 +1625,20 @@ describe("ReaderPage", () => {
 
   it("jumps marker→note and note→marker for a PM footnote pair, brackets stripped (#335)", async () => {
     seedWorkContent(pmFootnoteContent);
+    // The complete work anchor index (#550) carries the footnote target's id, so the marker resolves
+    // and renders as a live control (an unresolvable marker would be inert).
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [
+        {
+          anchor: "fn3",
+          blockEntryId: toEntryId("pm-b2"),
+          nodeId: "pm-b2",
+          sourceFile: null,
+          unitEntryId: toEntryId("u-1")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    });
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("There are other reasons too.");
@@ -1477,6 +1670,7 @@ describe("ReaderPage", () => {
         {
           anchor: "note5",
           blockEntryId: toEntryId("pm-x2"),
+          nodeId: "pm-x2",
           sourceFile: "text/notes.xhtml",
           unitEntryId: toEntryId("u-2")
         }
@@ -1499,22 +1693,66 @@ describe("ReaderPage", () => {
     );
   });
 
-  it("no-ops when a cross-unit endnote has no matching anchor in the index (#366)", async () => {
+  it("routes a cross-file marker through the scoped index, not a same-anchor decoy in the current unit (#550)", async () => {
+    seedWorkContent(pmCrossFileSharedAnchorContent);
+    // The SAME anchor id ("note9") lives in the current chapter (decoy pm-cd) AND the notes file
+    // (pm-c2). The marker names text/notes.xhtml, so the (sourceFile, anchor) index must win over the
+    // same-unit DOM match — otherwise the click jumps to the wrong block in the current chapter.
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [
+        {
+          anchor: "note9",
+          blockEntryId: toEntryId("pm-cd"),
+          nodeId: "pm-cd",
+          sourceFile: "text/ch01.xhtml",
+          unitEntryId: toEntryId("u-1")
+        },
+        {
+          anchor: "note9",
+          blockEntryId: toEntryId("pm-c2"),
+          nodeId: "pm-c2",
+          sourceFile: "text/notes.xhtml",
+          unitEntryId: toEntryId("u-2")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    const marker = await screen.findByRole("button", { name: "9" });
+
+    // The decoy is present in the current unit with the SAME data-anchor-id — the trap a source-file-
+    // unaware fast path would spring.
+    expect(container.querySelector('[data-anchor-id="note9"]')).not.toBeNull();
+
+    await user.click(marker);
+
+    // It must land in the notes file (pm-c2), never on the decoy in the current chapter.
+    await screen.findByText("The real note nine in the notes file.");
+    await waitFor(() =>
+      expect(blockElement(container, "pm-c2").getAttribute("data-born")).toBe("true")
+    );
+    expect(screen.queryByText("Decoy note nine in this chapter.")).toBeNull();
+  });
+
+  it("renders an unresolvable cross-unit endnote marker inert — no live control (#550)", async () => {
     seedWorkContent(pmCrossUnitFootnoteContent);
-    // The anchor index is empty, so the target file+id resolves to nothing: the jump must not fire.
+    // The anchor index is empty, so the target file+id resolves to nothing: with the complete-index
+    // inert gate (#550), the marker must render inert — a plain superscript, never a live dead button.
     mockedFetchWorkAnchorIndex.mockResolvedValue({
       anchors: [],
       workEntryId: toEntryId("work-1")
     });
-    const user = userEvent.setup();
     render(<ReaderPage initialWorkEntryId="work-1" />);
-    const marker = await screen.findByRole("button", { name: "5" });
+    await screen.findByText(/Body text/);
 
-    await user.click(marker);
-
-    // An unresolvable reference leaves the reader in place: no locator lookup, no unit switch.
+    // No clickable control renders for the dead reference.
+    expect(screen.queryByRole("button", { name: "5" })).toBeNull();
+    // It is still shown as a quiet, inert superscript number carrying its ref id — just not activatable.
+    const marker = document.querySelector("sup.readerNoteref");
+    expect(marker?.textContent).toBe("5");
+    expect(marker?.querySelector("button")).toBeNull();
     expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
-    expect(screen.queryByText("The endnote in the notes file.")).toBeNull();
   });
 
   it("scopes a marker with no target file by the active unit's source file, jumping cross-unit (#366)", async () => {
@@ -1526,6 +1764,7 @@ describe("ReaderPage", () => {
         {
           anchor: "t7",
           blockEntryId: toEntryId("pm-s2"),
+          nodeId: "pm-s2",
           sourceFile: "text/ch01.xhtml",
           unitEntryId: toEntryId("u-2")
         }
@@ -1547,16 +1786,15 @@ describe("ReaderPage", () => {
   it("still opens the work when the anchor index fails to load, degrading cross-unit resolution (#366)", async () => {
     seedWorkContent(pmCrossUnitFootnoteContent);
     // A failed anchor-index load must not fail the open: it degrades to an empty index, so the work
-    // still renders and cross-unit references simply resolve to nothing.
+    // still renders and cross-unit references simply resolve to nothing (rendered inert, #550).
     mockedFetchWorkAnchorIndex.mockRejectedValue(new Error("index unavailable"));
-    const user = userEvent.setup();
     render(<ReaderPage initialWorkEntryId="work-1" />);
-    const marker = await screen.findByRole("button", { name: "5" });
 
-    await user.click(marker);
-
+    // The work still opens and renders its body despite the failed index.
+    await screen.findByText(/Body text/);
+    // The now-unresolvable marker degrades to an inert superscript rather than a live dead button.
+    expect(screen.queryByRole("button", { name: "5" })).toBeNull();
     expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
-    expect(screen.queryByText("The endnote in the notes file.")).toBeNull();
   });
 
   it("opens the selection toolbar then the editor when text is selected in a block", async () => {
