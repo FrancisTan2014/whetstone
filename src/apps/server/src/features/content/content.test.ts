@@ -1653,6 +1653,53 @@ describe("work-scoped reference foundation (#366)", () => {
     ).toBe(true);
   });
 
+  // #550: ingestion used to lift only a block's top-level id and DROP every id nested inside a
+  // container, so a cross-reference to a nested target had nothing to resolve against. The complete
+  // per-block map must now flatten into the index, yielding an entry for the nested target keyed to
+  // its owning block AND the nested node's own PM id — element-precise, distinct from the block's id.
+  it("indexes a nested target id (previously dropped) keyed to its owning block and node id", async () => {
+    epubResponder = async () => ({
+      chapters: [
+        {
+          html:
+            "<h1>Chapter One</h1>" +
+            '<blockquote id="q-outer"><h3 id="q-nested">Nested heading</h3><p>Quote body.</p></blockquote>',
+          images: [],
+          sourceFile: "text/ch01.xhtml"
+        }
+      ],
+      metadata: { author: "Anon", language: "en", title: "Nested" }
+    });
+    const ingestResponse = await ingestEpub(Buffer.from("epub-nested"));
+    expect(ingestResponse.statusCode).toBe(201);
+    const workEntryId = (ingestResponse.json() as IngestEpubResultDto).work.entryId;
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/anchors`
+    });
+    expect(response.statusCode).toBe(200);
+    const index = response.json() as WorkAnchorIndexDto;
+
+    const outer = index.anchors.find((entry) => entry.anchor === "q-outer");
+    const nested = index.anchors.find((entry) => entry.anchor === "q-nested");
+
+    // The nested id is now indexed (previously absent), keyed to the SAME owning block as its
+    // container, but to a DIFFERENT node id — the nested heading's own PM id.
+    expect(nested).toBeDefined();
+    expect(nested!.blockEntryId).toBe(outer!.blockEntryId);
+    expect(nested!.sourceFile).toBe("text/ch01.xhtml");
+    expect(nested!.nodeId).not.toBe(outer!.nodeId);
+
+    // The nodeId genuinely addresses the nested heading node inside the owning block's stored JSON.
+    const [ownerRow] = await context.db
+      .select()
+      .from(docBlocks)
+      .where(eq(docBlocks.anchorId, "q-outer"));
+    const heading = findNode(ownerRow!.nodeJson as PmNode, "heading");
+    expect(heading?.attrs?.["id"]).toBe(nested!.nodeId);
+  });
+
   it("stamps a cross-file endnote marker with the resolved target source file", async () => {
     const workEntryId = await ingestRefs();
 

@@ -6,12 +6,11 @@ import type {
   ReadingUnitDto,
   ReadingUnitStructureDto,
   TocEntryDto,
-  WorkAnchorEntryDto,
   WorkAnchorIndexDto,
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { and, asc, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -382,43 +381,39 @@ export async function locateBlockUnit(
   return row === undefined ? undefined : toEntryId(row.unitEntryId);
 }
 
-// The work's anchor index: every PM `doc_blocks` block that carries a source-HTML id (`anchor_id`),
-// paired with its owning unit's `source_file`, so the reader can build a work-scoped resolver that
-// jumps a cross-reference to another unit (#366). Keyed by (source_file, anchor) at the consumer, so
-// the same anchor id reused in two source files yields two distinct, non-colliding entries. Only PM
-// `doc_blocks` carry an ingest-captured `anchor_id`, so the legacy mdast `blocks` are not unioned in
-// here (their `blocks.anchor_id` served the #252 same-unit path over the DOM, not this index).
+// The work's anchor index: every id-bearing source element inside a PM `doc_blocks` block, paired
+// with its owning unit's `source_file`, so the reader can build a work-scoped resolver that jumps a
+// cross-reference to the exact element it points at (#366, #550). Each block's complete `anchors` map
+// is flattened — one index entry per `{ anchor, nodeId }` — so a reference to a target nested inside a
+// container block resolves too (previously only the block's own top-level id survived, ~72% of xrefs
+// were dead). Keyed by (source_file, anchor) at the consumer, so the same anchor id reused in two
+// source files yields two distinct, non-colliding entries. Reading order is preserved (block
+// order, then in-block pre-order) so first-wins in the resolver stays correct.
 export async function loadWorkAnchorIndex(
   db: DbClient,
   workEntryId: EntryId
 ): Promise<WorkAnchorIndexDto> {
   const rows = await db
     .select({
-      anchor: docBlocks.anchorId,
+      anchors: docBlocks.anchors,
       blockEntryId: docBlocks.id,
       sourceFile: readingUnits.sourceFile,
       unitEntryId: docBlocks.readingUnitEntryId
     })
     .from(docBlocks)
     .innerJoin(readingUnits, eq(docBlocks.readingUnitEntryId, readingUnits.entryId))
-    .where(and(eq(docBlocks.workEntryId, workEntryId), isNotNull(docBlocks.anchorId)))
+    .where(eq(docBlocks.workEntryId, workEntryId))
     .orderBy(asc(docBlocks.orderIndex));
 
-  return { anchors: rows.map(toAnchorEntryDto), workEntryId };
-}
+  const anchors = rows.flatMap((row) =>
+    (row.anchors as ReadonlyArray<{ anchor: string; nodeId: string }>).map((entry) => ({
+      anchor: entry.anchor,
+      blockEntryId: row.blockEntryId,
+      nodeId: entry.nodeId,
+      sourceFile: row.sourceFile,
+      unitEntryId: row.unitEntryId
+    }))
+  );
 
-function toAnchorEntryDto(row: {
-  anchor: string | null;
-  blockEntryId: string;
-  sourceFile: string | null;
-  unitEntryId: string;
-}): WorkAnchorEntryDto {
-  return {
-    // The `IS NOT NULL` filter guarantees a string `anchor`; read it through a cast rather than a
-    // null-coalesce whose fallback branch could never run (keeps branch coverage exact).
-    anchor: row.anchor as string,
-    blockEntryId: row.blockEntryId,
-    sourceFile: row.sourceFile,
-    unitEntryId: row.unitEntryId
-  };
+  return { anchors, workEntryId };
 }
