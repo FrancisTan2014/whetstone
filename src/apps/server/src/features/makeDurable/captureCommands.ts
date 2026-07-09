@@ -23,7 +23,7 @@ import { listRecallItems } from "../recall/recallQueries.js";
 import { countVisibleCandidates, MAKE_DURABLE_TODAY_CARD_CAP } from "./cardQueries.js";
 import { insertProposalCandidate } from "./proposalCommands.js";
 import { listReviewedProposalExamples, POLICY_REVIEW_LOOKBACK } from "./proposalQueries.js";
-import type { ProposalProvider } from "./proposalProvider.js";
+import type { ProposalAttempt, ProposalProvider } from "./proposalProvider.js";
 import { createTimelineCapture } from "./timelineCommands.js";
 
 // Everything the Quick Capture command needs: id/db/clock plus the proposal seam (the local model,
@@ -34,11 +34,49 @@ export type QuickCaptureDependencies = Readonly<{
   db: DbClient;
   now: () => Date;
   propose: ProposalProvider;
+  // Interactive budget (ms) for the best-effort proposal seam (#554). Quick Capture saves the Timeline
+  // entry first and must return promptly, so it waits at most this long for the local model; a stalled
+  // or slow daemon is abandoned and the capture degrades to no card rather than blocking. Optional so
+  // production uses `QUICK_CAPTURE_PROPOSAL_TIMEOUT_MS`; tests inject a tiny budget.
+  proposalTimeoutMs?: number;
   // Offline gloss autofill (#526): threaded to `saveProposalRecallItem` so a saved `phrase` proposal
   // with no explanation still gets a back auto-filled from the bundled dictionaries. Optional; absent
   // means no autofill.
   resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
+
+// The interactive Quick Capture proposal budget (#554). The shared `LlmModel` seam already hard-bounds a
+// stalled daemon at 60s, but that ceiling is a background safety net, not an interactive one: waiting it
+// out would hang the capture. This shorter wall-clock bound keeps the typed/voice capture responsive —
+// a fast local model still returns a card within it, while a slow or unresponsive daemon is abandoned so
+// the capture returns promptly with no card (the Timeline entry is already saved). Injectable via
+// `QuickCaptureDependencies.proposalTimeoutMs`; tests inject a tiny value.
+export const QUICK_CAPTURE_PROPOSAL_TIMEOUT_MS = 8_000;
+
+// Sentinel resolved by the budget timer, so a timed-out proposal is distinguished from a model that
+// genuinely returned `null` (unavailable / no candidate) — both degrade to no card, but only the former
+// leaves the abandoned generation running.
+const PROPOSAL_TIMED_OUT = Symbol("proposal_timed_out");
+
+// Wait at most `budgetMs` for the best-effort proposal. Resolves with the model's attempt (or its `null`)
+// when it wins, or the `PROPOSAL_TIMED_OUT` sentinel when the budget elapses first. The provider never
+// rejects (its contract degrades every failure to `null`), and `Promise.race` keeps a handler attached to
+// the generation, so an abandoned generation never surfaces an unhandled rejection.
+async function proposeWithinBudget(
+  generation: Promise<ProposalAttempt | null>,
+  budgetMs: number
+): Promise<ProposalAttempt | null | typeof PROPOSAL_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<typeof PROPOSAL_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(PROPOSAL_TIMED_OUT), budgetMs);
+  });
+
+  try {
+    return await Promise.race([generation, budget]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Build a Today review card from an inserted candidate DTO + its (already schema-valid) payload. Shared
 // by Quick Capture and the backfill scan so both surface the identical card shape.
@@ -61,11 +99,13 @@ export function toReviewCard(
 
 // Quick Capture (#452, #455). The Timeline entry is saved FIRST and is never lost: only after it is
 // persisted does the proposal seam run, and any failure there (model down, timeout, invalid output)
-// simply yields no card. A capture may be typed or voice (`request.inputMode`); a voice capture submits
-// its transcript as the text and follows the exact same path from here on. When a candidate is produced
-// it is gated (confidence + faithful evidence quote) and deduped against the user's recall items; it is
-// stored either `visible` (a card is returned) or `dismissed` (gated out / duplicate — no card). At most
-// one candidate per capture, so the "one card per capture" rule holds by construction.
+// simply yields no card. The proposal wait is time-boxed to an interactive budget (#554): a stalled or
+// slow local daemon is abandoned so the capture returns promptly with the saved entry and no card,
+// never blocking on the model. A capture may be typed or voice (`request.inputMode`); a voice capture
+// submits its transcript as the text and follows the exact same path from here on. When a candidate is
+// produced it is gated (confidence + faithful evidence quote) and deduped against the user's recall
+// items; it is stored either `visible` (a card is returned) or `dismissed` (gated out / duplicate — no
+// card). At most one candidate per capture, so the "one card per capture" rule holds by construction.
 export async function quickCapture(
   dependencies: QuickCaptureDependencies,
   request: QuickCaptureRequest,
@@ -98,7 +138,14 @@ export async function quickCapture(
     await listReviewedProposalExamples(dependencies.db, userId, POLICY_REVIEW_LOOKBACK)
   );
 
-  const attempt = await dependencies.propose(request.text, existing, examples);
+  // Best-effort proposal, time-boxed (#554): wait at most the interactive budget for the local model.
+  // A stalled/slow daemon (or a model that returns nothing) degrades to no card — the Timeline entry is
+  // already saved — so the capture never blocks. The abandoned generation is left to settle harmlessly.
+  const outcome = await proposeWithinBudget(
+    dependencies.propose(request.text, existing, examples),
+    dependencies.proposalTimeoutMs ?? QUICK_CAPTURE_PROPOSAL_TIMEOUT_MS
+  );
+  const attempt = outcome === PROPOSAL_TIMED_OUT ? null : outcome;
   const generated = attempt?.generation.candidates[0];
   if (attempt === null || generated === undefined) {
     return { card: null, timelineEntry };

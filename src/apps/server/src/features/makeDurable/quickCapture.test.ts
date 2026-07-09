@@ -109,6 +109,45 @@ describe("quickCapture", () => {
     expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
   });
 
+  it("returns promptly with no card when the proposal model does not respond in time (#554)", async () => {
+    // A stalled local daemon: the provider never settles. Before #554 the capture awaited it unbounded
+    // (up to the model's 60s ceiling) and the request hung; now the interactive budget abandons it.
+    const proposeHang: ProposalProvider = () => new Promise<never>(() => undefined);
+    const started = Date.now();
+
+    const result = await quickCapture(
+      { ...deps(proposeHang), proposalTimeoutMs: 20 },
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
+
+    // The capture returns well within the budget with the saved entry and no card — it does not block.
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result.card).toBeNull();
+    expect(result.timelineEntry.rawInputText).toBe(captureText);
+    // The Timeline entry is saved; the abandoned generation stores no candidate.
+    expect(await listProposalCandidatesForUser(context.db, userA)).toEqual([]);
+  });
+
+  it("still returns a card when the model responds within the interactive budget (#554)", async () => {
+    // A slow-but-in-time model: it settles after a short delay under the injected budget, so the card
+    // is still surfaced synchronously — the timeout only guards a stall, it does not drop a timely card.
+    const proposeSlow: ProposalProvider = () =>
+      new Promise((resolve) => setTimeout(() => resolve(attempt()), 10));
+
+    const result = await quickCapture(
+      { ...deps(proposeSlow), proposalTimeoutMs: 2_000 },
+      { text: captureText, inputMode: "typed" },
+      userA,
+      t0
+    );
+
+    expect(result.card).toMatchObject({ target: "WorkInsight is back up now" });
+    const [candidate] = await listProposalCandidatesForUser(context.db, userA);
+    expect(candidate?.status).toBe("visible");
+  });
+
   it("returns a review card and stores a visible candidate for a gated, non-duplicate proposal", async () => {
     const result = await quickCapture(
       deps(proposeWith(attempt())),
