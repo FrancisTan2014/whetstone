@@ -41,7 +41,13 @@ export function registerDiaryRoutes(
 
     const now = dependencies.now();
     const userId = request.server.currentUser.getCurrentUserId();
-    const entry = await createDiaryEntry(dependencies, parsed.data.transcript, userId, now);
+    const entry = await createDiaryEntry(
+      dependencies,
+      parsed.data.transcript,
+      parsed.data.inputMode,
+      userId,
+      now
+    );
     const card = await proposeForCapture(
       dependencies,
       parsed.data.transcript,

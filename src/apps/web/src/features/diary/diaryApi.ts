@@ -27,16 +27,16 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-// Capture: post the transcript; the server tidies it, files it as a diary entry, and may return one
-// Make Durable review card. `inputMode` is accepted by the unified UI seam; diary capture storage keeps
-// the existing server-side shape for this slice.
+// Capture: post the transcript and how it was entered (`inputMode`: typed box vs tap-and-talk voice);
+// the server tidies it, files it as a diary entry preserving that input mode, and may return one Make
+// Durable review card.
 export async function submitDiaryCapture(
   transcript: string,
-  _inputMode: CaptureInputMode
+  inputMode: CaptureInputMode
 ): Promise<DiaryCaptureResultDto> {
   return parseDiaryCaptureResultDto(
     await requestJson(apiUrl("/diary/entries"), {
-      body: JSON.stringify({ transcript }),
+      body: JSON.stringify({ inputMode, transcript }),
       headers: jsonHeaders,
       method: "POST"
     })

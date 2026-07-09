@@ -12,18 +12,30 @@ import {
 } from "./diaryContracts.js";
 
 describe("parseCreateDiaryEntryRequest", () => {
-  it("accepts a non-blank transcript", () => {
-    expect(parseCreateDiaryEntryRequest({ transcript: "today I read a book" })).toEqual({
+  it("accepts a non-blank transcript with an input mode", () => {
+    expect(
+      parseCreateDiaryEntryRequest({ inputMode: "typed", transcript: "today I read a book" })
+    ).toEqual({
+      inputMode: "typed",
       transcript: "today I read a book"
     });
   });
 
   it("rejects a blank transcript", () => {
-    expect(() => parseCreateDiaryEntryRequest({ transcript: "   " })).toThrow();
+    expect(() => parseCreateDiaryEntryRequest({ inputMode: "voice", transcript: "   " })).toThrow();
+  });
+
+  it("rejects a missing or invalid input mode (#560)", () => {
+    expect(() => parseCreateDiaryEntryRequest({ transcript: "x" })).toThrow();
+    expect(() =>
+      parseCreateDiaryEntryRequest({ inputMode: "handwritten", transcript: "x" })
+    ).toThrow();
   });
 
   it("rejects unknown keys", () => {
-    expect(() => parseCreateDiaryEntryRequest({ extra: 1, transcript: "x" })).toThrow();
+    expect(() =>
+      parseCreateDiaryEntryRequest({ extra: 1, inputMode: "typed", transcript: "x" })
+    ).toThrow();
   });
 });
 

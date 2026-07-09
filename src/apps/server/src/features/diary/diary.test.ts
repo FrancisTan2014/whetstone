@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
+  CaptureInputMode,
   DiaryCaptureResultDto,
   DiaryEntryDto,
   ProposalPayload,
@@ -136,10 +137,13 @@ async function buildContext(): Promise<TestContext> {
   };
 }
 
-async function createEntry(transcript: string): Promise<DiaryEntryDto> {
+async function createEntry(
+  transcript: string,
+  inputMode: CaptureInputMode = "voice"
+): Promise<DiaryEntryDto> {
   const response = await context.server.inject({
     method: "POST",
-    payload: { transcript },
+    payload: { inputMode, transcript },
     url: "/api/diary/entries"
   });
   expect(response.statusCode).toBe(201);
@@ -205,7 +209,7 @@ describe("POST /api/diary/entries", () => {
 
     const response = await failingServer.inject({
       method: "POST",
-      payload: { transcript: "um today I went to the park" },
+      payload: { inputMode: "voice", transcript: "um today I went to the park" },
       url: "/api/diary/entries"
     });
 
@@ -221,12 +225,41 @@ describe("POST /api/diary/entries", () => {
   it("rejects a blank transcript", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { transcript: "   " },
+      payload: { inputMode: "typed", transcript: "   " },
       url: "/api/diary/entries"
     });
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects a missing or invalid input mode", async () => {
+    const missing = await context.server.inject({
+      method: "POST",
+      payload: { transcript: "a valid thought" },
+      url: "/api/diary/entries"
+    });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toEqual({ error: "invalid_request" });
+
+    const invalid = await context.server.inject({
+      method: "POST",
+      payload: { inputMode: "handwritten", transcript: "a valid thought" },
+      url: "/api/diary/entries"
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
+  it("persists the capture's input mode (typed stays typed, voice stays voice) (#560)", async () => {
+    context.setNow("2026-06-30T20:38:00.000Z");
+    const typed = await createEntry("typed at the keyboard", "typed");
+    const voice = await createEntry("spoken out loud", "voice");
+
+    const typedRow = await getTimelineCaptureForUser(context.db, typed.id, DEFAULT_USER_ID);
+    const voiceRow = await getTimelineCaptureForUser(context.db, voice.id, DEFAULT_USER_ID);
+    expect(typedRow?.inputMode).toBe("typed");
+    expect(voiceRow?.inputMode).toBe("voice");
+    expect(typedRow?.captureSource).toBe("diary");
   });
 
   it("round-trips a non-English entry with its text and language unchanged (no translation)", async () => {
@@ -264,7 +297,10 @@ describe("POST /api/diary/entries", () => {
 
     const response = await server.inject({
       method: "POST",
-      payload: { transcript: "I wanted to say WorkInsight is back up now but I could not" },
+      payload: {
+        inputMode: "typed",
+        transcript: "I wanted to say WorkInsight is back up now but I could not"
+      },
       url: "/api/diary/entries"
     });
 

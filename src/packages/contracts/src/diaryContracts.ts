@@ -1,7 +1,7 @@
 import { isDayKey } from "@whetstone/domain";
 import { z } from "zod";
 
-import { makeDurableCardDtoSchema } from "./makeDurableContracts.js";
+import { captureInputModeSchema, makeDurableCardDtoSchema } from "./makeDurableContracts.js";
 
 // Shared, Zod-validated shapes for the tap-and-talk voice diary (#246): the create/edit requests, the
 // persisted diary entry, the day-grouped Timeline page (a generic dated-trace shape so notes/practice
@@ -14,9 +14,12 @@ function isNonBlank(value: string): boolean {
 
 const dayKeySchema = z.string().refine(isDayKey, { message: "must be a YYYY-MM-DD date." });
 
-// Capture: the web posts the STT transcript; the server runs the tidy pass and stamps today + now.
+// Capture: the web posts the STT transcript plus how it was entered (`inputMode`: typed box vs
+// tap-and-talk voice). The server runs the tidy pass, stamps today + now, and persists the input mode so
+// the Timeline capture metadata reflects how the entry was actually made (#560).
 export const createDiaryEntryRequestSchema = z
   .object({
+    inputMode: captureInputModeSchema,
     transcript: z.string().refine(isNonBlank, { message: "transcript must be non-empty." })
   })
   .strict();
