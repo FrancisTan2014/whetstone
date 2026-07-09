@@ -5,7 +5,7 @@ import type {
   VoiceCaptureStatusDto
 } from "@whetstone/contracts";
 import { toDayKey } from "@whetstone/domain";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, timelineEntries } from "../../db/schema.js";
@@ -104,6 +104,30 @@ export async function submitVoiceCapture(
   });
 
   return { id: entryId, status: "queued" };
+}
+
+// List the user's active voice captures for the frontend to rebuild its pending UI on load/refresh
+// (#566): every capture still in flight (`queued`/`transcribing`/`tidying`) or `failed`. Ready captures
+// are excluded — they already appear in the Timeline as ordinary entries, so returning them here would
+// double them. Scoped to the current user AND diary-sourced voice captures (a status is set), ordered by
+// capture time (oldest first) so pending rows render in the user's capture order.
+export async function listActiveVoiceCaptures(
+  db: DbClient,
+  userId: string
+): Promise<ReadonlyArray<VoiceCaptureStatusDto>> {
+  const rows = await db
+    .select(statusColumns)
+    .from(timelineEntries)
+    .where(
+      and(
+        eq(timelineEntries.userId, userId),
+        eq(timelineEntries.captureSource, "diary"),
+        isNotNull(timelineEntries.processingStatus),
+        ne(timelineEntries.processingStatus, "ready")
+      )
+    )
+    .orderBy(asc(timelineEntries.createdAt));
+  return (rows as ReadonlyArray<VoiceCaptureRow>).map(toVoiceCaptureStatusDto);
 }
 
 async function loadVoiceCaptureRow(

@@ -16,6 +16,7 @@ import {
 import { listCalendarDates, listTimelinePage } from "./diaryQueries.js";
 import {
   getVoiceCaptureStatus,
+  listActiveVoiceCaptures,
   retryVoiceCapture,
   submitVoiceCapture,
   type VoiceCaptureDependencies
@@ -102,6 +103,17 @@ export function registerDiaryRoutes(
     );
 
     return reply.code(202).send(accepted);
+  });
+
+  // List the user's active voice captures (queued/transcribing/tidying/failed) so the client rebuilds its
+  // pending UI on load/refresh without any local-only queue state (#566). Ready captures are omitted —
+  // they already surface in the Timeline. User-scoped; ordered by capture time (oldest first).
+  server.get("/api/diary/voice-captures", async (request) => {
+    const captures = await listActiveVoiceCaptures(
+      dependencies.db,
+      request.server.currentUser.getCurrentUserId()
+    );
+    return { captures };
   });
 
   // Poll a voice capture's processing status (queued/transcribing/tidying/ready/failed). User-scoped: an

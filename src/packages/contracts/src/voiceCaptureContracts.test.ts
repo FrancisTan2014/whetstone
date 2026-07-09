@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseVoiceCaptureAcceptedDto,
+  parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto
 } from "./voiceCaptureContracts.js";
 
@@ -58,5 +59,36 @@ describe("parseVoiceCaptureStatusDto", () => {
 
   it("rejects unknown fields", () => {
     expect(() => parseVoiceCaptureStatusDto({ ...ready, extra: true })).toThrow();
+  });
+});
+
+describe("parseVoiceCaptureListDto", () => {
+  const queued = {
+    createdAt: "2026-07-09T10:00:00.000Z",
+    entryDate: "2026-07-09",
+    failureReason: null,
+    id: "cap-1",
+    language: "en" as const,
+    status: "queued" as const,
+    text: null
+  };
+
+  it("round-trips a list of pending captures", () => {
+    const list = { captures: [queued, { ...queued, id: "cap-2", status: "transcribing" as const }] };
+    expect(parseVoiceCaptureListDto(list)).toEqual(list);
+  });
+
+  it("round-trips an empty list", () => {
+    expect(parseVoiceCaptureListDto({ captures: [] })).toEqual({ captures: [] });
+  });
+
+  it("rejects a capture with an unknown status", () => {
+    expect(() =>
+      parseVoiceCaptureListDto({ captures: [{ ...queued, status: "processing" }] })
+    ).toThrow();
+  });
+
+  it("rejects unknown fields", () => {
+    expect(() => parseVoiceCaptureListDto({ captures: [], extra: true })).toThrow();
   });
 });

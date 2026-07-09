@@ -71,9 +71,11 @@ export type {
 } from "./diaryContracts.js";
 export {
   parseVoiceCaptureAcceptedDto,
+  parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto,
   submitVoiceCaptureQuerySchema,
   voiceCaptureAcceptedDtoSchema,
+  voiceCaptureListDtoSchema,
   voiceCaptureStatuses,
   voiceCaptureStatusDtoSchema,
   voiceCaptureStatusSchema
@@ -81,6 +83,7 @@ export {
 export type {
   SubmitVoiceCaptureQuery,
   VoiceCaptureAcceptedDto,
+  VoiceCaptureListDto,
   VoiceCaptureStatus,
   VoiceCaptureStatusDto
 } from "./voiceCaptureContracts.js";

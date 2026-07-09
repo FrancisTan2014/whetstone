@@ -61,10 +61,24 @@ export const voiceCaptureStatusDtoSchema = z
 
 export type VoiceCaptureStatusDto = z.infer<typeof voiceCaptureStatusDtoSchema>;
 
+// The active voice captures the client rebuilds its pending UI from on load/refresh (#566): every capture
+// still in flight (`queued`/`transcribing`/`tidying`) or `failed`. Ready captures are omitted — they are
+// already in the Timeline as ordinary entries, so listing them here would duplicate them. Ordered by
+// capture time (oldest first) so the client renders pending rows in the user's capture order.
+export const voiceCaptureListDtoSchema = z
+  .object({ captures: z.array(voiceCaptureStatusDtoSchema) })
+  .strict();
+
+export type VoiceCaptureListDto = z.infer<typeof voiceCaptureListDtoSchema>;
+
 export function parseVoiceCaptureAcceptedDto(value: unknown): VoiceCaptureAcceptedDto {
   return voiceCaptureAcceptedDtoSchema.parse(value);
 }
 
 export function parseVoiceCaptureStatusDto(value: unknown): VoiceCaptureStatusDto {
   return voiceCaptureStatusDtoSchema.parse(value);
+}
+
+export function parseVoiceCaptureListDto(value: unknown): VoiceCaptureListDto {
+  return voiceCaptureListDtoSchema.parse(value);
 }

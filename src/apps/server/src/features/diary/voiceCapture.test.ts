@@ -18,6 +18,7 @@ import type { ProposalAttempt, ProposalProvider } from "../makeDurable/proposalP
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
 import type { SpeechAudio, SpeechInput } from "../../speech/speechInput.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
+import { listActiveVoiceCaptures } from "./voiceCaptureCommands.js";
 import type { DiaryTidy } from "./diaryTidy.js";
 import type { DiaryRouteDependencies } from "./diaryRoutes.js";
 import {
@@ -191,6 +192,14 @@ async function getStatus(id: string): Promise<{ code: number; body: VoiceCapture
     url: `/api/diary/voice-captures/${id}`
   });
   return { code: response.statusCode, body: response.json() as VoiceCaptureStatusDto };
+}
+
+async function listActive(): Promise<{ code: number; captures: ReadonlyArray<VoiceCaptureStatusDto> }> {
+  const response = await route.server.inject({ method: "GET", url: "/api/diary/voice-captures" });
+  return {
+    code: response.statusCode,
+    captures: (response.json() as { captures: ReadonlyArray<VoiceCaptureStatusDto> }).captures
+  };
 }
 
 describe("processNextVoiceCapture", () => {
@@ -395,6 +404,51 @@ describe("requeueStalledVoiceCaptures", () => {
   });
 });
 
+describe("listActiveVoiceCaptures", () => {
+  it("returns only the user's in-flight and failed captures, oldest first, excluding ready ones", async () => {
+    const db = await buildDb();
+    await seedVoiceCapture(db, {
+      id: "a-queued",
+      createdAt: "2026-07-09T09:03:00.000Z",
+      processingStatus: "queued"
+    });
+    await seedVoiceCapture(db, {
+      id: "a-transcribing",
+      createdAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "transcribing"
+    });
+    await seedVoiceCapture(db, {
+      id: "a-failed",
+      createdAt: "2026-07-09T09:02:00.000Z",
+      processingStatus: "failed"
+    });
+    await seedVoiceCapture(db, {
+      id: "a-ready",
+      createdAt: "2026-07-09T09:01:00.000Z",
+      processingStatus: "ready"
+    });
+    await seedVoiceCapture(db, {
+      id: "a-other",
+      createdAt: "2026-07-09T08:00:00.000Z",
+      processingStatus: "queued",
+      userId: OTHER_USER_ID
+    });
+
+    const active = await listActiveVoiceCaptures(db, DEFAULT_USER_ID);
+
+    expect(active.map((capture) => capture.id)).toEqual([
+      "a-transcribing",
+      "a-failed",
+      "a-queued"
+    ]);
+  });
+
+  it("returns an empty list when nothing is pending", async () => {
+    const db = await buildDb();
+    expect(await listActiveVoiceCaptures(db, DEFAULT_USER_ID)).toEqual([]);
+  });
+});
+
 describe("voice capture routes", () => {
   beforeEach(async () => {
     route = await buildRouteContext();
@@ -456,6 +510,34 @@ describe("voice capture routes", () => {
   it("returns 404 for an unknown capture id", async () => {
     const { code } = await getStatus("nope");
     expect(code).toBe(404);
+  });
+
+  it("lists active captures for refresh recovery and drops them once ready", async () => {
+    const first = await submit("en", "clip-one");
+    const second = await submit("zh", "clip-two-longer");
+
+    const beforeReady = await listActive();
+    expect(beforeReady.code).toBe(200);
+    expect(beforeReady.captures.map((capture) => capture.id)).toEqual([first.id, second.id]);
+    expect(beforeReady.captures[0]).toMatchObject({ status: "queued", text: null });
+
+    // Process the oldest (first) capture to ready; it must leave the active list (it is now in the Timeline).
+    await processNextVoiceCapture(buildWorker(route.db), new Date());
+
+    const afterReady = await listActive();
+    expect(afterReady.captures.map((capture) => capture.id)).toEqual([second.id]);
+  });
+
+  it("lists a failed capture so the client can offer Retry", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "listed-fail",
+      createdAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed"
+    });
+
+    const { captures } = await listActive();
+    expect(captures.map((capture) => capture.id)).toContain("listed-fail");
+    expect(captures.find((capture) => capture.id === "listed-fail")?.status).toBe("failed");
   });
 
   it("shows the raw transcript for a ready capture that has no tidied text", async () => {
