@@ -9,6 +9,13 @@
 // to the base file. Otherwise `refFile` is resolved relative to the base file's directory, normalizing
 // `.` and `..` segments and stripping any `?query`/`#fragment`, yielding a path comparable to another
 // unit's spine href.
+//
+// A ref that names no file of its own but instead points at the base file's directory — a same-document
+// reference such as `.`, `./`, `./#frag`, or the manifest-root directory `epub:OEBPS` (`/OEBPS`) that
+// @lingo-reader can emit — must resolve to the base FILE, not to that directory (#550). Left unguarded,
+// such a ref collapses to `OEBPS` (a directory) and can never match the `(source_file, anchor)` the work
+// anchor index is keyed on, so the reference is dead-but-clickable. Detecting that the resolved path is
+// an ancestor directory of the base (or empty) is what keeps a same-file reference keyed to its own file.
 export function resolveRelativeHref(
   baseSourceFile: string | null,
   refFile: string | null
@@ -43,5 +50,17 @@ export function resolveRelativeHref(
     segments.push(segment);
   }
 
-  return segments.join("/");
+  const resolved = segments.join("/");
+
+  // The ref resolved to the base file's own directory (or an ancestor of it) rather than to a file:
+  // it is a same-document reference, so key it to the base file, not to that directory.
+  if (
+    baseSourceFile !== null &&
+    resolved !== baseSourceFile &&
+    (resolved === "" || baseSourceFile.startsWith(`${resolved}/`))
+  ) {
+    return baseSourceFile;
+  }
+
+  return resolved;
 }
