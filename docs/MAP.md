@@ -55,6 +55,8 @@ Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts
 (the `/api/search` query validator + the block-level `SearchResultsDto`), `diaryContracts.ts` (#246
 voice-diary create/edit/timeline-page/calendar DTOs + query validators; the timeline is a generic
 dated-trace shape with a `kind` discriminator so other deposits can join later),
+`voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
+`queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
 (`platform` + `apiBaseUrl`) schema, `resolveHostRuntimeConfig` (validates the injected config, fails
 loud, defaults browser web to `/api`), and the pure `resolveApiUrl` base+path joiner), `health.ts`. Tests colocated.
@@ -306,6 +308,22 @@ can navigate them from another package.
   over the Timeline; `diary_entries` was retired); the tidy seam is wired in `index.ts` via
   `createDiaryTidy(createOllamaModel(...))`.
   Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
+- Async Tap-and-Talk voice capture: `src/features/diary/` (#565) — moves the durable boundary BEFORE
+  speech-to-text. `voiceCaptureCommands.ts` (`submitVoiceCapture` saves the raw audio via the server
+  file boundary then inserts a pending `timeline_entries` row — `capture_source="diary"`,
+  `input_mode="voice"`, server-owned owner/instant/day/language/audioPath, `processing_status="queued"`,
+  no fake transcript; `getVoiceCaptureStatus`/`retryVoiceCapture` are user-scoped → 404, retry only a
+  `failed` capture → 409 otherwise). `voiceCaptureWorker.ts` (`processNextVoiceCapture` atomically claims
+  the oldest `queued` row → `transcribing`, transcribes via the STT seam, tidies, commits `ready` BEFORE
+  running the shared Make Durable proposal gate deduped by `hasProposalForEntry`; a throw/empty transcript/
+  missing audio → `failed` + `failure_reason` with audio kept; `requeueStalledVoiceCaptures` resets
+  in-flight `transcribing`/`tidying` rows to `queued` at startup). `diaryRoutes.ts` adds
+  `POST /api/diary/voice-captures`, `GET /api/diary/voice-captures/:id`,
+  `POST /api/diary/voice-captures/:id/retry`. `diaryQueries.ts` `diaryScope()` filters Timeline/calendar/
+  coach-history reads to `processing_status IS NULL OR = "ready"` (pending/failed captures stay hidden
+  until ready). Wired in `index.ts`: `saveVoiceCaptureAudio` durable boundary + a `setInterval` drain loop
+  over `processNextVoiceCapture`, `requeueStalledVoiceCaptures` at startup. Contracts in
+  `voiceCaptureContracts.ts`.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
   `entries` (the addressable-id spine), works/authors, `reading_units`, mdast `blocks` + PM `doc_blocks`,

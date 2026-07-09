@@ -125,6 +125,7 @@ async function buildContext(): Promise<TestContext> {
     db,
     now: () => now,
     propose: proposeNothing,
+    saveAudio: () => Promise.resolve("voice-captures/test.audio"),
     tidy: (transcript) => Promise.resolve(fakeTidy(transcript))
   };
 
