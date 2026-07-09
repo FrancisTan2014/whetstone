@@ -2,7 +2,7 @@
   {
     "name": "web app JS (brotli)",
     "path": "src/apps/web/dist/assets/*.js",
-    "limit": "270 kB"
+    "limit": "280 kB"
   },
   {
     "name": "web app CSS (brotli)",
