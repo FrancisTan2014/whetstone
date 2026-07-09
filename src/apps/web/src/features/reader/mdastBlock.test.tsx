@@ -386,4 +386,42 @@ describe("BlockContent", () => {
     // is kept, matching mdast-util-to-string's "a\nb".
     expect(container.textContent).toBe("a\nb");
   });
+
+  // `mdast-util-to-hast` appends a trailing "\n" to a fenced code block's `<code>` text, which used to
+  // leak into textContent — one character longer than the stored plaintext (mdast-util-to-string of the
+  // code node) — so a mark/note inside a code block was rejected as anchor_out_of_range (#553). These
+  // lock that the trailing newline is stripped while inner newlines (real content) are preserved.
+  it("renders a fenced code block whose textContent drops the appended trailing newline (#553)", () => {
+    const value = "const durable = 'reader-note-anchor';\nconsole.log(durable);";
+    const { container } = render(<BlockContent node={{ lang: "ts", type: "code", value }} />);
+
+    expect(container.querySelector("pre code")).not.toBeNull();
+    // Matches the stored plaintext (mdast-util-to-string) exactly: inner newline kept, no trailing one.
+    expect(container.textContent).toBe(value);
+  });
+
+  it("renders an empty fenced code block without adding a stray newline (#553)", () => {
+    const { container } = render(<BlockContent node={{ type: "code", value: "" }} />);
+
+    expect(container.querySelector("pre code")).not.toBeNull();
+    expect(container.textContent).toBe("");
+  });
+
+  it("leaves inline code untouched — it carries no appended trailing newline (#553)", () => {
+    const { container } = render(
+      <BlockContent
+        node={{
+          children: [
+            { type: "text", value: "run " },
+            { type: "inlineCode", value: "npm test" }
+          ],
+          type: "paragraph"
+        }}
+      />
+    );
+
+    expect(container.querySelector("code")).not.toBeNull();
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.textContent).toBe("run npm test");
+  });
 });

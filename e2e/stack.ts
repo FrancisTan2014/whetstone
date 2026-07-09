@@ -19,7 +19,8 @@ const viteBin = join(webDir, "node_modules", "vite", "bin", "vite.js");
 const epubFixture = join(root, "fixtures", "epub", "aesop-fables.epub");
 
 // A small deterministic Markdown work giving the reader one of every block the annotation tests
-// need: a paragraph, a blockquote, and a list (the EPUB fixtures are heading/paragraph only).
+// need: a paragraph, a blockquote, a list, and a fenced code block (the EPUB fixtures are
+// heading/paragraph only).
 const markdownSource = [
   "# Smoke Chapter",
   "",
@@ -28,7 +29,12 @@ const markdownSource = [
   "> A blockquote about a clever fox and a hungry lion deep in the quiet forest.",
   "",
   "- First list item mentions a falcon gliding above the valley.",
-  "- Second list item mentions a turtle walking the long sandy shore."
+  "- Second list item mentions a turtle walking the long sandy shore.",
+  "",
+  "```ts",
+  "const durable = 'reader-note-anchor';",
+  "console.log(durable);",
+  "```"
 ].join("\n");
 
 type WorkRef = Readonly<{ entryId: string; title: string }>;
