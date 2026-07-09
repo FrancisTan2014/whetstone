@@ -29,6 +29,15 @@
   --color-text-muted: oklch(0.53 0.018 80);
   --color-border: #e3dfd4;
   --color-border: oklch(0.9 0.01 90);
+  /* Reader figure surface (#556): a subtle light, rounded, padded card the figure image sits on, so a
+     white/transparent diagram reads as a deliberate framed figure rather than a raw box. Deliberately a
+     near-white card in BOTH themes (the SAME values are set in the .dark block) — a theme-robust frame,
+     not a Night-only patch — with a low-contrast border. This is what stops a diagram glaring as a white
+     gash on the dark Night page while staying a calm card on the Day paper. */
+  --figure-surface: #f4f2eb;
+  --figure-surface: oklch(0.95 0.006 90);
+  --figure-border: #dcd7ca;
+  --figure-border: oklch(0.88 0.01 90);
   --color-accent: #4f46e5;
   --color-accent: oklch(0.52 0.18 280);
   --color-accent-hover: #4338ca;
@@ -111,6 +120,13 @@
   --color-text-muted: oklch(0.7 0.02 85);
   --color-border: #34312a;
   --color-border: oklch(0.34 0.01 85);
+  /* Reader figure surface (#556) — deliberately the SAME near-white card in Night as in Day, so a
+     white/transparent diagram reads as a framed figure instead of glaring as a raw white box on the
+     dark page. Kept in sync with the Day (@theme) values above; theme-robust, not a Night-only patch. */
+  --figure-surface: #f4f2eb;
+  --figure-surface: oklch(0.95 0.006 90);
+  --figure-border: #dcd7ca;
+  --figure-border: oklch(0.88 0.01 90);
   --color-accent: #818cf8;
   --color-accent: oklch(0.72 0.13 280);
   --color-accent-hover: #a5b4fc;
@@ -319,15 +335,20 @@
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
-/* Figure image lightbox (#334): the figure image is a transparent, keyboard-focusable button that opens
-   a centered fit-to-viewport modal. `zoom-in` cursor on fine pointers signals the enlarge affordance. */
+/* Figure image lightbox (#334): the figure image is a keyboard-focusable button that opens a centered
+   fit-to-viewport modal. The button is also the framed figure surface (#556): a subtle rounded, padded,
+   near-white card (tokenized, identical in Day and Night) with a low-contrast border, so a white or
+   transparent diagram reads as a deliberate framed figure — clean on the Day paper and no longer a white
+   gash on the dark Night page. It spans the full reading measure so the image fills the column.
+   `zoom-in` cursor on fine pointers signals the enlarge affordance. */
 .readerFigureTrigger {
   display: block;
   inline-size: 100%;
   margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
+  padding: 0.875rem;
+  border: 1px solid var(--figure-border);
+  border-radius: 0.5rem;
+  background: var(--figure-surface);
   cursor: pointer;
 }
 
@@ -600,9 +621,15 @@
   margin: 0;
 }
 
+/* The image fills the framed surface (#556): `width: 100%` spans the column measure so a small diagram
+   upscales to figure scale, with `height: auto` preserving its aspect ratio (never distorted, never a
+   fixed height). `display: block` drops the inline-image baseline gap so the surface padding stays even.
+   A gentle radius softens the image within the card. */
 .readerFigureImage {
-  max-width: 100%;
+  display: block;
+  width: 100%;
   height: auto;
+  border-radius: 0.25rem;
   user-select: none;
   -webkit-user-select: none;
 }
