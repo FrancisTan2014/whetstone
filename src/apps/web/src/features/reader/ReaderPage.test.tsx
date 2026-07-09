@@ -663,6 +663,75 @@ const pmCrossUnitFootnoteContent: WorkContentDto = {
   workEntryId: toEntryId("work-1")
 };
 
+// A cross-file reference whose anchor id is ALSO reused in the CURRENT unit (a common repeated-
+// footnote-id EPUB pattern): the marker (pm-c1) in the ch01 unit points at "note9" in the notes file,
+// while a DECOY block (pm-cd) in THIS unit carries the same "note9" anchor. Clicking the marker must
+// resolve through the (sourceFile, anchor) index to the notes file, never the same-unit DOM match that
+// would spring the decoy (#550).
+const pmCrossFileSharedAnchorContent: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-cd"),
+          node: {
+            attrs: { id: "pm-cd" },
+            content: [{ text: "Decoy note nine in this chapter.", type: "text" }],
+            type: "paragraph"
+          },
+          orderIndex: 0,
+          type: "paragraph"
+        },
+        {
+          entryId: toEntryId("pm-c1"),
+          node: {
+            attrs: { id: "pm-c1" },
+            content: [
+              { text: "See ", type: "text" },
+              {
+                attrs: { label: "9", refId: "note9", targetSourceFile: "text/notes.xhtml" },
+                type: "footnoteMarker"
+              }
+            ],
+            type: "paragraph"
+          },
+          orderIndex: 1,
+          type: "paragraph"
+        }
+      ],
+      entryId: toEntryId("u-1"),
+      orderIndex: 0,
+      sourceFile: "text/ch01.xhtml"
+    },
+    {
+      blocks: [],
+      docBlocks: [
+        {
+          entryId: toEntryId("pm-c2"),
+          node: {
+            attrs: { id: "pm-c2", label: "9", refId: "note9" },
+            content: [
+              {
+                content: [{ text: "The real note nine in the notes file.", type: "text" }],
+                type: "paragraph"
+              }
+            ],
+            type: "footnoteTarget"
+          },
+          orderIndex: 0,
+          type: "footnoteTarget"
+        }
+      ],
+      entryId: toEntryId("u-2"),
+      orderIndex: 1,
+      sourceFile: "text/notes.xhtml",
+      title: "Notes"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 // A same-file cross-reference (#366) reached through the index fallback: the marker carries NO
 // `targetSourceFile`, so the resolver must scope it by the ACTIVE unit's source file. The target lives
 // in another unit (same source file), so the same-unit DOM lookup misses and the index takes over.
@@ -1622,6 +1691,48 @@ describe("ReaderPage", () => {
     await waitFor(() =>
       expect(blockElement(container, "pm-x2").getAttribute("data-born")).toBe("true")
     );
+  });
+
+  it("routes a cross-file marker through the scoped index, not a same-anchor decoy in the current unit (#550)", async () => {
+    seedWorkContent(pmCrossFileSharedAnchorContent);
+    // The SAME anchor id ("note9") lives in the current chapter (decoy pm-cd) AND the notes file
+    // (pm-c2). The marker names text/notes.xhtml, so the (sourceFile, anchor) index must win over the
+    // same-unit DOM match — otherwise the click jumps to the wrong block in the current chapter.
+    mockedFetchWorkAnchorIndex.mockResolvedValue({
+      anchors: [
+        {
+          anchor: "note9",
+          blockEntryId: toEntryId("pm-cd"),
+          nodeId: "pm-cd",
+          sourceFile: "text/ch01.xhtml",
+          unitEntryId: toEntryId("u-1")
+        },
+        {
+          anchor: "note9",
+          blockEntryId: toEntryId("pm-c2"),
+          nodeId: "pm-c2",
+          sourceFile: "text/notes.xhtml",
+          unitEntryId: toEntryId("u-2")
+        }
+      ],
+      workEntryId: toEntryId("work-1")
+    });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    const marker = await screen.findByRole("button", { name: "9" });
+
+    // The decoy is present in the current unit with the SAME data-anchor-id — the trap a source-file-
+    // unaware fast path would spring.
+    expect(container.querySelector('[data-anchor-id="note9"]')).not.toBeNull();
+
+    await user.click(marker);
+
+    // It must land in the notes file (pm-c2), never on the decoy in the current chapter.
+    await screen.findByText("The real note nine in the notes file.");
+    await waitFor(() =>
+      expect(blockElement(container, "pm-c2").getAttribute("data-born")).toBe("true")
+    );
+    expect(screen.queryByText("Decoy note nine in this chapter.")).toBeNull();
   });
 
   it("renders an unresolvable cross-unit endnote marker inert — no live control (#550)", async () => {

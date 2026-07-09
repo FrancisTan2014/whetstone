@@ -710,30 +710,37 @@ export function ReaderPage({
     [viewingWorkEntryId]
   );
 
-  // Activate an internal cross-reference (#252, #366, #550): first try the same-unit fast path —
-  // resolve the target block from the rendered DOM by its anchor id (no ref read in render) and jump
-  // there element-precisely, carrying the source anchor so the scroll lands on the exact nested
-  // element (a heading/figure), not the block top; this preserves the in-file footnote behavior
-  // (#335). When the DOM has no such anchor (an endnote/cross-reference whose target lives in another
-  // reading unit/file), fall back to the work-scoped resolver: resolve the reference against its
-  // target source file (a marker passes its `targetSourceFile`) or, absent one, the current unit's
-  // source file, and jump to the resolved block carrying the same anchor so the post-load scroll is
-  // element-precise. An unresolvable reference no-ops. The resolver and active source file only change
-  // on a work open / unit switch, so memoized blocks stay flat during unrelated interactions.
+  // Activate an internal cross-reference (#252, #366, #550): a reference that names an explicit target
+  // file DIFFERENT from the unit the reader is in is resolved ONLY through the (sourceFile, anchor)-
+  // scoped index — never the same-unit DOM fast path, which would wrongly match the same anchor id
+  // reused in the current chapter (a common repeated-footnote-id EPUB pattern) and jump to the wrong
+  // block. For a same-file (or file-less) reference, the DOM fast path stays: resolve the target block
+  // from the rendered DOM by its anchor id and jump there element-precisely, carrying the source anchor
+  // so the scroll lands on the exact nested element (a heading/figure), not the block top — preserving
+  // the in-file footnote behavior (#335). Otherwise (a cross-file target, or the anchor is not in the
+  // current DOM) fall back to the work-scoped resolver, keyed by the reference's target source file (a
+  // marker passes its `targetSourceFile`) or, absent one, the current unit's source file, and jump to
+  // the resolved block carrying the same anchor for an element-precise post-load scroll. An
+  // unresolvable reference no-ops. The resolver and active source file only change on a work open /
+  // unit switch, so memoized blocks stay flat during unrelated interactions.
   const onActivateAnchor = useCallback(
     (anchorId: string, targetSourceFile?: string): void => {
-      // Escape quotes/backslashes for the attribute selector; ingest ids are plain html ids.
-      const escaped = anchorId.replace(/["\\]/g, "\\$&");
-      const domTarget =
-        document
-          .querySelector(`.reader [data-anchor-id="${escaped}"]`)
-          ?.closest("[data-block-id]")
-          ?.getAttribute("data-block-id") ?? undefined;
+      const crossFile = targetSourceFile !== undefined && targetSourceFile !== activeUnitSourceFile;
 
-      if (domTarget !== undefined) {
-        captureOrigin(domTarget);
-        jumpToBlock(domTarget, anchorId);
-        return;
+      if (!crossFile) {
+        // Escape quotes/backslashes for the attribute selector; ingest ids are plain html ids.
+        const escaped = anchorId.replace(/["\\]/g, "\\$&");
+        const domTarget =
+          document
+            .querySelector(`.reader [data-anchor-id="${escaped}"]`)
+            ?.closest("[data-block-id]")
+            ?.getAttribute("data-block-id") ?? undefined;
+
+        if (domTarget !== undefined) {
+          captureOrigin(domTarget);
+          jumpToBlock(domTarget, anchorId);
+          return;
+        }
       }
 
       // A marker's target file wins (a cross-file endnote); otherwise the reference is same-file, so it
