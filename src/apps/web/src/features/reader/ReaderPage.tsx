@@ -755,17 +755,19 @@ export function ReaderPage({
     }
   }
 
-  // Return to the captured origin: jump back to the exact block the reader left and clear the pill.
-  // The jump itself never re-captures (only cross-references and TOC entries do), so returning does
-  // not leave a new return point behind. The point is passed in from the render site (where it is
-  // known to exist), so there is no unreachable "no point" branch here.
-  const onReturnToOrigin = useCallback(
-    (point: ReaderReturnPoint): void => {
-      setReturnPoint(undefined);
-      jumpToBlock(point.blockEntryId);
-    },
-    [jumpToBlock]
-  );
+  // Return to the captured origin: switch straight to the stored unit + block and re-land there,
+  // never via a fresh locateBlockUnit — so the return works offline and cannot strand the reader if
+  // the locator would fail (the pill is their only return affordance). Reuses the same unit-switch +
+  // pending-scroll + "born" landing highlight the block index uses, and clears the pill. The point is
+  // passed in from the render site (where it is known to exist), so there is no unreachable branch.
+  const onReturnToOrigin = useCallback((point: ReaderReturnPoint): void => {
+    setReturnPoint(undefined);
+    setPanel(undefined);
+    setTocOpen(false);
+    setNotesOpen(false);
+    setState((current) => applyUnitForBlock(current, point.unitEntryId, point.blockEntryId));
+    setBornBlockEntryId(point.blockEntryId);
+  }, []);
 
   const onDismissReturn = useCallback((): void => setReturnPoint(undefined), []);
 

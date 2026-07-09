@@ -3419,7 +3419,7 @@ describe("ReaderPage back pill (#549)", () => {
     expect(screen.getByRole("button", { name: "Back to Chapter One" })).toBeDefined();
   });
 
-  it("returns to the exact origin block when tapped, then hides the pill", async () => {
+  it("returns to the exact origin block when tapped, without re-locating it, then hides", async () => {
     const user = userEvent.setup();
     const container = await openNavAtChapterOne();
     makeVisible(blockElement(container, "b-1"));
@@ -3427,11 +3427,32 @@ describe("ReaderPage back pill (#549)", () => {
     const toc = await openTocDrawer(user);
     await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
     await screen.findByText("Chapter two intro.");
+    // The return must use the stored unit + block directly, never a fresh block-locator request.
+    mockedLocateBlockUnit.mockClear();
 
     await user.click(screen.getByRole("button", { name: "Back to Chapter One" }));
 
     await screen.findByText("Chapter one body.");
-    await waitFor(() => expect(mockedLocateBlockUnit).toHaveBeenCalledWith("work-1", "b-1"));
+    expect(mockedLocateBlockUnit).not.toHaveBeenCalled();
+    await waitFor(() => expect(blockElement(container, "b-1").scrollIntoView).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /^Back to/u })).toBeNull();
+  });
+
+  it("still returns when the block locator would fail (offline), never stranding the reader", async () => {
+    const user = userEvent.setup();
+    const container = await openNavAtChapterOne();
+    makeVisible(blockElement(container, "b-1"));
+
+    const toc = await openTocDrawer(user);
+    await user.click(within(toc).getByRole("button", { name: "Chapter Two" }));
+    await screen.findByText("Chapter two intro.");
+    // A dead locator must not break Back: the stored origin (unit + block) is enough to return.
+    mockedLocateBlockUnit.mockRejectedValue(new Error("offline"));
+
+    await user.click(screen.getByRole("button", { name: "Back to Chapter One" }));
+
+    expect(await screen.findByText("Chapter one body.")).toBeDefined();
+    expect(screen.queryByText("Chapter two intro.")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Back to/u })).toBeNull();
   });
 
