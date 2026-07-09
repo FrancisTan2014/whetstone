@@ -552,26 +552,6 @@ export const sessionExchanges = pgTable(
   ]
 );
 
-// The voice diary (#246): one tidied entry per row, filed under the local day it was captured. This IS
-// the coach-readable learner-history facet for diary capture (un-anchored, any language) — persisted and
-// queryable by user. `entry_date` is the `YYYY-MM-DD` day (the server computes "today" at create);
-// `created_at` is the capture instant (timeline order within a day); `text` is the tidied entry;
-// `language` is the free-form detected/provided language (null when unknown in v0). User-owned: stamped
-// on create and filtered on every read. Indexed on (user, day) for the day-grouped Timeline and the
-// date-jump calendar's range scans.
-export const diaryEntries = pgTable(
-  "diary_entries",
-  {
-    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
-    entryDate: text("entry_date").notNull(),
-    id: text("id").primaryKey(),
-    language: text("language"),
-    text: text("text").notNull(),
-    userId: text("user_id").notNull()
-  },
-  (table) => [index("diary_entries_user_date_idx").on(table.userId, table.entryDate)]
-);
-
 // Per-chunk nudge interaction state (#245): the lightweight, user-owned record behind the
 // reading->practice nudge. The ranking is derived LIVE each time from the user's recent captures; only
 // this interaction state is persisted. One row per (user, chunk). `dismissed_until` is the cooldown
@@ -595,7 +575,9 @@ export const nudgeState = pgTable(
 // `entry_links`. `entry_date` is the local `YYYY-MM-DD` day; `created_at` is the capture instant.
 // `raw_input_text` is preserved verbatim; `tidied_text` is the noise-removed form (null until/unless
 // tidy runs — tidy is async and may fail, and capture never blocks on it). `capture_source` spans quick
-// capture, diary, speech, reader, and writing so Diary can later be a filtered view over Timeline.
+// capture, diary, speech, reader, and writing — the Diary IS the `capture_source = "diary"` filtered view
+// over this store (its former `diary_entries` table was retired into this one, #559), the coach-readable
+// learner-history facet for diary capture.
 export const timelineEntries = pgTable(
   "timeline_entries",
   {

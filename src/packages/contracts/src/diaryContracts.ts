@@ -45,7 +45,8 @@ export const diaryEntryDtoSchema = z
 export type DiaryEntryDto = z.infer<typeof diaryEntryDtoSchema>;
 
 // One entry in the Timeline. `kind` is a discriminator so other dated traces can join the timeline later
-// as filters; in v0 the only kind is "diary", backed by `diary_entries`.
+// as filters; in v0 the only kind is "diary", backed by `timeline_entries` filtered to
+// `capture_source = "diary"` (#559).
 export const timelineEntryDtoSchema = z
   .object({
     createdAt: z.string(),

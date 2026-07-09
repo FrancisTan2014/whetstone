@@ -3,7 +3,13 @@ import { groupByDayDesc } from "@whetstone/domain";
 import { and, asc, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { diaryEntries } from "../../db/schema.js";
+import { timelineEntries } from "../../db/schema.js";
+
+// The Diary reads the shared Timeline store filtered to diary-sourced captures (#559): every diary read
+// scopes to the current user AND `capture_source = "diary"`, so a Quick Capture never surfaces in the
+// Diary. The displayed text is the tidied form, falling back to the verbatim raw transcript when tidy has
+// not run (null), matching the create/edit projection.
+const diarySource = "diary" as const;
 
 // One timeline row enriched with its day key, ready for `groupByDayDesc`.
 type TimelineRow = Readonly<{
@@ -27,16 +33,18 @@ export async function listTimelinePage(
   // `before` is an exclusive cursor: the next page is the days STRICTLY before it (the oldest day already
   // shown), so a same-day row never repeats across pages. Day keys are fixed-width `YYYY-MM-DD`, so a
   // lexicographic `<` is an exact day comparison.
+  const scope = and(
+    eq(timelineEntries.userId, userId),
+    eq(timelineEntries.captureSource, diarySource)
+  );
   const dayFilter =
-    before === undefined
-      ? eq(diaryEntries.userId, userId)
-      : and(eq(diaryEntries.userId, userId), lt(diaryEntries.entryDate, before));
+    before === undefined ? scope : and(scope, lt(timelineEntries.entryDate, before));
 
   const dayRows = await db
-    .selectDistinct({ entryDate: diaryEntries.entryDate })
-    .from(diaryEntries)
+    .selectDistinct({ entryDate: timelineEntries.entryDate })
+    .from(timelineEntries)
     .where(dayFilter)
-    .orderBy(desc(diaryEntries.entryDate))
+    .orderBy(desc(timelineEntries.entryDate))
     .limit(limitDays);
   const dates = dayRows.map((row) => row.entryDate);
 
@@ -46,14 +54,15 @@ export async function listTimelinePage(
 
   const rows = await db
     .select({
-      createdAt: diaryEntries.createdAt,
-      entryDate: diaryEntries.entryDate,
-      id: diaryEntries.id,
-      language: diaryEntries.language,
-      text: diaryEntries.text
+      createdAt: timelineEntries.createdAt,
+      entryDate: timelineEntries.entryDate,
+      id: timelineEntries.entryId,
+      language: timelineEntries.language,
+      rawInputText: timelineEntries.rawInputText,
+      tidiedText: timelineEntries.tidiedText
     })
-    .from(diaryEntries)
-    .where(and(eq(diaryEntries.userId, userId), inArray(diaryEntries.entryDate, dates)));
+    .from(timelineEntries)
+    .where(and(scope, inArray(timelineEntries.entryDate, dates)));
 
   const timelineRows: ReadonlyArray<TimelineRow> = rows.map((row) => ({
     createdAt: row.createdAt.toISOString(),
@@ -61,7 +70,7 @@ export async function listTimelinePage(
     id: row.id,
     kind: "diary",
     language: row.language,
-    text: row.text
+    text: row.tidiedText ?? row.rawInputText
   }));
 
   return groupByDayDesc(timelineRows).map((group) => ({
@@ -76,8 +85,8 @@ export async function listTimelinePage(
   }));
 }
 
-// The dates in `[from, to]` that have ≥1 entry for the user — the date-jump calendar's marks. Distinct,
-// ascending.
+// The dates in `[from, to]` that have ≥1 diary entry for the user — the date-jump calendar's marks.
+// Distinct, ascending.
 export async function listCalendarDates(
   db: DbClient,
   userId: string,
@@ -85,43 +94,45 @@ export async function listCalendarDates(
   to: string
 ): Promise<ReadonlyArray<string>> {
   const rows = await db
-    .selectDistinct({ entryDate: diaryEntries.entryDate })
-    .from(diaryEntries)
+    .selectDistinct({ entryDate: timelineEntries.entryDate })
+    .from(timelineEntries)
     .where(
       and(
-        eq(diaryEntries.userId, userId),
-        gte(diaryEntries.entryDate, from),
-        lte(diaryEntries.entryDate, to)
+        eq(timelineEntries.userId, userId),
+        eq(timelineEntries.captureSource, diarySource),
+        gte(timelineEntries.entryDate, from),
+        lte(timelineEntries.entryDate, to)
       )
     )
-    .orderBy(asc(diaryEntries.entryDate));
+    .orderBy(asc(timelineEntries.entryDate));
 
   return rows.map((row) => row.entryDate);
 }
 
 // Every diary entry the user owns — the coach-readable learner-history facet for diary capture, queried
-// for the user (newest first). Used to prove capture deposits into the learner history the coach reads.
+// for the user (newest first). Scoped to diary-sourced captures so a Quick Capture never appears here.
 export async function listDiaryEntriesForUser(
   db: DbClient,
   userId: string
 ): Promise<ReadonlyArray<DiaryEntryDto>> {
   const rows = await db
     .select({
-      createdAt: diaryEntries.createdAt,
-      entryDate: diaryEntries.entryDate,
-      id: diaryEntries.id,
-      language: diaryEntries.language,
-      text: diaryEntries.text
+      createdAt: timelineEntries.createdAt,
+      entryDate: timelineEntries.entryDate,
+      id: timelineEntries.entryId,
+      language: timelineEntries.language,
+      rawInputText: timelineEntries.rawInputText,
+      tidiedText: timelineEntries.tidiedText
     })
-    .from(diaryEntries)
-    .where(eq(diaryEntries.userId, userId))
-    .orderBy(desc(diaryEntries.createdAt));
+    .from(timelineEntries)
+    .where(and(eq(timelineEntries.userId, userId), eq(timelineEntries.captureSource, diarySource)))
+    .orderBy(desc(timelineEntries.createdAt));
 
   return rows.map((row) => ({
     createdAt: row.createdAt.toISOString(),
     entryDate: row.entryDate,
     id: row.id,
     language: row.language,
-    text: row.text
+    text: row.tidiedText ?? row.rawInputText
   }));
 }
