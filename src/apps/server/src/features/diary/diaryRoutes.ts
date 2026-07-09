@@ -1,6 +1,7 @@
 import {
   createDiaryEntryRequestSchema,
   diaryCalendarQuerySchema,
+  submitVoiceCaptureQuerySchema,
   timelineQuerySchema,
   updateDiaryEntryRequestSchema
 } from "@whetstone/contracts";
@@ -14,19 +15,28 @@ import {
 } from "./diaryCommands.js";
 import { listCalendarDates, listTimelinePage } from "./diaryQueries.js";
 import {
+  getVoiceCaptureStatus,
+  retryVoiceCapture,
+  submitVoiceCapture,
+  type VoiceCaptureDependencies
+} from "./voiceCaptureCommands.js";
+import {
   proposeForCapture,
   type CaptureProposalDependencies
 } from "../makeDurable/captureCommands.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
+const notFailed = { error: "not_failed" } as const;
 
 // How many days the Timeline returns when the client does not specify a page size.
 const DEFAULT_TIMELINE_DAYS = 7;
 
 type EntryParams = Readonly<{ id: string }>;
 
-export type DiaryRouteDependencies = DiaryDependencies & CaptureProposalDependencies;
+export type DiaryRouteDependencies = DiaryDependencies &
+  CaptureProposalDependencies &
+  VoiceCaptureDependencies;
 
 export function registerDiaryRoutes(
   server: FastifyInstance,
@@ -63,6 +73,74 @@ export function registerDiaryRoutes(
 
     return reply.code(201).send({ entry, card });
   });
+
+  // Async Tap-and-Talk (#565): save the raw audio and create a pending, diary-sourced voice capture
+  // immediately, returning its id + `queued` status so the user can record again without waiting for STT.
+  // A background worker transcribes → tidies → makes it ready later. The audio bytes arrive as the raw
+  // octet-stream body (parsed to a Buffer in `createServer`); the manual language is a query param (#561).
+  server.post("/api/diary/voice-captures", async (request, reply) => {
+    const parsed = submitVoiceCaptureQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+
+    const body = request.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return reply.code(400).send(invalidRequest);
+    }
+
+    const accepted = await submitVoiceCapture(
+      dependencies,
+      body,
+      parsed.data.language,
+      request.server.currentUser.getCurrentUserId(),
+      dependencies.now()
+    );
+    request.log.info(
+      { route: "POST /api/diary/voice-captures", voiceCaptureId: accepted.id },
+      "voice_capture_queued"
+    );
+
+    return reply.code(202).send(accepted);
+  });
+
+  // Poll a voice capture's processing status (queued/transcribing/tidying/ready/failed). User-scoped: an
+  // unknown id or another user's capture returns 404.
+  server.get<{ Params: EntryParams }>("/api/diary/voice-captures/:id", async (request, reply) => {
+    const result = await getVoiceCaptureStatus(
+      dependencies.db,
+      request.params.id,
+      request.server.currentUser.getCurrentUserId()
+    );
+    if (result.status === "not_found") {
+      return reply.code(404).send(notFound);
+    }
+    return reply.code(200).send(result.capture);
+  });
+
+  // Retry a failed voice capture: re-queue it for the worker from the same saved audio. Only a `failed`
+  // capture is retryable (409 otherwise); an unknown id is 404.
+  server.post<{ Params: EntryParams }>(
+    "/api/diary/voice-captures/:id/retry",
+    async (request, reply) => {
+      const result = await retryVoiceCapture(
+        dependencies.db,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      if (result.status === "not_failed") {
+        return reply.code(409).send(notFailed);
+      }
+      request.log.info(
+        { route: "POST /api/diary/voice-captures/:id/retry", voiceCaptureId: request.params.id },
+        "voice_capture_retried"
+      );
+      return reply.code(200).send(result.capture);
+    }
+  );
 
   // The lazy-loaded Timeline: the next page of days (newest-first), bounded by `limit` days and paged via
   // the exclusive `before` day-key cursor.

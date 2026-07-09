@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +37,11 @@ import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { checkCoachHealth } from "./coach/coachHealth.js";
 import { createDiaryTidy } from "./features/diary/diaryTidy.js";
+import {
+  processNextVoiceCapture,
+  requeueStalledVoiceCaptures,
+  type VoiceCaptureWorkerDependencies
+} from "./features/diary/voiceCaptureWorker.js";
 import {
   createBackfillProposalProvider,
   createProposalProvider
@@ -153,6 +158,17 @@ const speech = resolveSpeechInput({
   fake: createFakeSpeechInput({ transcript: "", words: [] })
 });
 
+// Durable store for recorded Tap-and-Talk clips (#565): unlike the session STT boundary (which writes to
+// the OS temp dir, fine for a synchronous transcribe), an async voice capture must survive a restart
+// until the worker transcribes it, so its audio is written under the server-owned sources dir.
+const voiceCaptureAudioDir = join(config.sourceFilesDir, "voice-captures");
+mkdirSync(voiceCaptureAudioDir, { recursive: true });
+const saveVoiceCaptureAudio = (audio: Buffer): Promise<string> => {
+  const path = join(voiceCaptureAudioDir, `${randomUUID()}.audio`);
+  writeFileSync(path, audio);
+  return Promise.resolve(path);
+};
+
 const server = createServer({
   content: {
     createAuthorId: () => randomUUID(),
@@ -192,6 +208,7 @@ const server = createServer({
     now: () => new Date(),
     propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
     resolveOfflineGloss,
+    saveAudio: saveVoiceCaptureAudio,
     tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
   },
   images: { imageResourceStore },
@@ -260,9 +277,52 @@ const server = createServer({
   web: config.webDir !== undefined ? { dir: config.webDir } : undefined
 });
 
+// The async Tap-and-Talk worker (#565): one in-process background loop that drains queued voice captures
+// one at a time (transcribe → tidy → ready → Make Durable gate). It reuses the same local model seams as
+// diary tidy and the proposal provider. No cloud queue or external runtime — an in-process worker suits
+// the local-first app.
+const voiceCaptureWorker: VoiceCaptureWorkerDependencies = {
+  createId: () => randomUUID(),
+  db,
+  propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
+  resolveOfflineGloss,
+  speech,
+  tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
+};
+const VOICE_CAPTURE_POLL_MS = 1_000;
+let voiceCaptureDraining = false;
+// Drain the queue to empty on each tick, but never run two drains at once (one capture at a time), so a
+// slow STT/model does not overlap ticks. Failures are logged; the loop continues on the next tick.
+const drainVoiceCaptureQueue = async (): Promise<void> => {
+  if (voiceCaptureDraining) {
+    return;
+  }
+  voiceCaptureDraining = true;
+  try {
+    let result = await processNextVoiceCapture(voiceCaptureWorker, new Date());
+    while (result.status !== "idle") {
+      result = await processNextVoiceCapture(voiceCaptureWorker, new Date());
+    }
+  } catch (error) {
+    server.log.error({ err: error }, "voice_capture_worker_failed");
+  } finally {
+    voiceCaptureDraining = false;
+  }
+};
+
 try {
   await server.listen({ host: config.host, port: config.port });
   server.log.info({ host: config.host, port: config.port }, "server_started");
+
+  // Recover any voice captures a previous process left mid-flight (transcribing/tidying), then start the
+  // background drain loop so queued clips are processed without the user waiting.
+  const requeued = await requeueStalledVoiceCaptures(db);
+  if (requeued > 0) {
+    server.log.info({ requeued }, "voice_capture_requeued_stalled");
+  }
+  setInterval(() => {
+    void drainVoiceCaptureQueue();
+  }, VOICE_CAPTURE_POLL_MS).unref();
 
   // Report the coach model wiring (#271): a clean "pull the model" hint when the local tier is
   // configured but its Ollama model is not serving, instead of a silent fallback to the fake.

@@ -5,6 +5,7 @@ import Fastify, {
 } from "fastify";
 
 import {
+  audioContentType,
   createHealthResponse,
   healthEndpointPath,
   healthResponseJsonSchema,
@@ -84,6 +85,13 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   });
 
   server.decorate("currentUser", options.currentUser ?? createDefaultCurrentUserProvider());
+
+  // Raw audio uploads (recorded clips) arrive as an octet-stream body the speech seam / voice-capture
+  // worker read as bytes. Registered once here — both the session STT boundary and the async
+  // Tap-and-Talk capture consume it, so a per-route registration would double-register and throw.
+  server.addContentTypeParser(audioContentType, { parseAs: "buffer" }, (_request, body, done) =>
+    done(null, body)
+  );
 
   server.get(
     healthEndpointPath,
