@@ -138,10 +138,17 @@ const anchorIndex: AnchorIndex = buildAnchorIndex({
     {
       anchor: "sec-2",
       blockEntryId: "block-sec-2",
+      nodeId: "block-sec-2",
       sourceFile: "OEBPS/chap1.xhtml",
       unitEntryId: "u-1"
     },
-    { anchor: "note-a", blockEntryId: "block-note-a", sourceFile: null, unitEntryId: "u-3" }
+    {
+      anchor: "note-a",
+      blockEntryId: "block-note-a",
+      nodeId: "block-note-a",
+      sourceFile: null,
+      unitEntryId: "u-3"
+    }
   ],
   workEntryId: "work-1"
 });
