@@ -70,6 +70,21 @@ export type {
   UpdateDiaryEntryRequest
 } from "./diaryContracts.js";
 export {
+  parseVoiceCaptureAcceptedDto,
+  parseVoiceCaptureStatusDto,
+  submitVoiceCaptureQuerySchema,
+  voiceCaptureAcceptedDtoSchema,
+  voiceCaptureStatuses,
+  voiceCaptureStatusDtoSchema,
+  voiceCaptureStatusSchema
+} from "./voiceCaptureContracts.js";
+export type {
+  SubmitVoiceCaptureQuery,
+  VoiceCaptureAcceptedDto,
+  VoiceCaptureStatus,
+  VoiceCaptureStatusDto
+} from "./voiceCaptureContracts.js";
+export {
   backfillResultDtoSchema,
   captureInputModes,
   captureInputModeSchema,

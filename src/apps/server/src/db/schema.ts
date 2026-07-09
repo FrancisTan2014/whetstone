@@ -594,7 +594,18 @@ export const timelineEntries = pgTable(
     rawInputText: text("raw_input_text").notNull(),
     tidiedText: text("tidied_text"),
     language: text("language"),
-    rawAudioPath: text("raw_audio_path")
+    rawAudioPath: text("raw_audio_path"),
+    // Async Tap-and-Talk (#565): a voice capture is durable BEFORE speech-to-text runs. The raw audio is
+    // saved and the row created immediately with `processing_status = "queued"`, then a single background
+    // worker walks it `queued -> transcribing -> tidying -> ready` (or `failed`) one capture at a time,
+    // oldest first, so the user never waits for STT or the local model before recording again. NULL means
+    // a synchronous capture that was ready on write (typed Quick Capture / typed diary / legacy rows) and
+    // never entered the queue; only the queued voice path carries an explicit status. `failure_reason`
+    // records why the worker gave up so a `failed` capture can be retried without losing the raw audio.
+    processingStatus: text("processing_status", {
+      enum: ["queued", "transcribing", "tidying", "ready", "failed"] as const
+    }),
+    failureReason: text("failure_reason")
   },
   (table) => [index("timeline_entries_user_date_idx").on(table.userId, table.entryDate)]
 );
