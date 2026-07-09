@@ -35,7 +35,7 @@ const ROUTES: ReadonlyArray<readonly [string, string, string | undefined]> = [
   ["Practice", "#/practice", undefined],
   ["Map", "#/progress", undefined],
   ["Search", "#/search", 'input[type="search"]'],
-  ["Diary", "#/diary", 'section[aria-label="New entry"]']
+  ["Diary", "#/diary", 'section[aria-label="Capture today"]']
 ];
 
 // The shared `LoadingIndicator` renders `[role="status"][aria-busy="true"]`. An async route (Diary,
