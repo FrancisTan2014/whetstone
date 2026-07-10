@@ -10,7 +10,7 @@ import type {
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, ne, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -121,17 +121,27 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
     .where(eq(readingUnits.workEntryId, workEntryId))
     .orderBy(asc(docBlocks.orderIndex));
 
+  // An in-app authored Work (#576) keeps its canonical content only in PM `doc_blocks` and records no
+  // provenance source, whereas an imported Markdown/EPUB Work always writes a `work_sources` row. That
+  // provenance is the reliable authored-vs-imported signal — a source file is not, since a parsed
+  // chapter may carry none.
+  const authored = !(await workHasSource(db, workEntryId));
+
   const readingUnitDtos = unitRows.flatMap((unit) => {
     const unitBlocks = blockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
     const unitDocBlocks = docBlockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
+    const hasRenderableDocBlock = unitDocBlocks.some((block) => block.type !== "unknown");
 
-    // A reading unit with no non-deleted mdast blocks — an unknown-only / PM-only chapter (#311,
-    // persisted so its `doc_blocks` can reference the unit) or a unit whose blocks were all
-    // soft-deleted — has nothing the reader can render, so it is excluded here. Every readable EPUB
-    // chapter carries mdast blocks, so all real chapters surface and render via their `doc_blocks`.
-    return unitBlocks.length === 0
-      ? []
-      : [toReadingUnitDto(unit, unitBlocks.map(toBlockDto), unitDocBlocks.map(toDocBlockDto))];
+    // A reading unit surfaces when it has renderable content in the substrate that owns it: non-deleted
+    // mdast blocks for an ingested Work, or — for an authored Work, whose content lives only in PM
+    // `doc_blocks` — at least one non-`unknown` `doc_blocks` row. The `authored` gate keeps this fallback
+    // to authored Works, so an imported chapter with no mdast blocks (an unknown-only chapter kept only
+    // for its `unknown` PM nodes, #311, or an unstorable-figure-only chapter) stays excluded exactly as
+    // before. A unit with neither has nothing the reader can render.
+    const surfaces = unitBlocks.length > 0 || (authored && hasRenderableDocBlock);
+    return surfaces
+      ? [toReadingUnitDto(unit, unitBlocks.map(toBlockDto), unitDocBlocks.map(toDocBlockDto))]
+      : [];
   });
 
   return { readingUnits: readingUnitDtos, workEntryId };
@@ -187,13 +197,12 @@ export async function loadWorkStructure(
 ): Promise<WorkStructureDto> {
   const rows = await db
     .select({
-      blockCount: count(blocks.entryId),
       entryId: readingUnits.entryId,
       // A unit carries substantive text when any non-figure block has non-whitespace plaintext; a
-      // cover/plate unit of only figure blocks (or empty text) is false. `bool_or` over the unit's
-      // blocks is non-null here because only units with at least one block survive the blockCount
-      // filter below (#394).
-      hasSubstantiveText: sql<boolean>`bool_or(${blocks.blockType} <> 'figure' and btrim(${blocks.plaintext}) <> '')`,
+      // cover/plate unit of only figure blocks (or empty text) is false. `bool_or` over zero blocks is
+      // null (a PM-only authored unit), so it is only trusted when the unit has mdast blocks below.
+      hasSubstantiveMdast: sql<boolean>`bool_or(${blocks.blockType} <> 'figure' and btrim(${blocks.plaintext}) <> '')`,
+      mdastCount: count(blocks.entryId),
       orderIndex: readingUnits.orderIndex,
       sourceFile: readingUnits.sourceFile,
       title: readingUnits.title
@@ -212,13 +221,61 @@ export async function loadWorkStructure(
     )
     .orderBy(asc(readingUnits.orderIndex));
 
-  const structureUnits = rows.filter((row) => row.blockCount > 0);
+  // Renderable PM `doc_blocks` per unit (#576): an authored Work's canonical content lives only in
+  // `doc_blocks`, so a unit with no mdast blocks still surfaces when it has non-`unknown` PM content.
+  // `ne(type, 'unknown')` drops the `unknown` PM nodes an unknown-only EPUB chapter (#311) persists.
+  const docRows = await db
+    .select({
+      docCount: count(docBlocks.id),
+      hasSubstantiveDoc: sql<boolean>`bool_or(btrim(${docBlocks.plaintext}) <> '')`,
+      readingUnitEntryId: docBlocks.readingUnitEntryId
+    })
+    .from(docBlocks)
+    .where(and(eq(docBlocks.workEntryId, workEntryId), ne(docBlocks.type, "unknown")))
+    .groupBy(docBlocks.readingUnitEntryId);
+  // The `doc_blocks` fallback is scoped to authored Works via their absent provenance (`work_sources`),
+  // the reliable authored-vs-imported signal — so for an imported Work `docByUnit` stays empty and its
+  // no-mdast chapters (unknown-only or unstorable-figure-only) are excluded exactly as before.
+  const authored = !(await workHasSource(db, workEntryId));
+  const docByUnit = authored
+    ? new Map(docRows.map((row) => [row.readingUnitEntryId, row]))
+    : new Map<string, (typeof docRows)[number]>();
+
+  // A unit is readable when it has content in the substrate that owns it. Mdast is authoritative for
+  // count and substantiveness when present (EPUB/Markdown behavior unchanged). With no mdast, only an
+  // authored unit surfaces (via `docByUnit`); an imported chapter with no mdast — an unknown-only or
+  // unstorable-figure-only EPUB chapter — is absent from `docByUnit` and excluded.
+  const structureUnits = rows.flatMap((row) => {
+    if (row.mdastCount > 0) {
+      return [
+        {
+          blockCount: row.mdastCount,
+          entryId: row.entryId,
+          hasSubstantiveText: row.hasSubstantiveMdast,
+          orderIndex: row.orderIndex,
+          sourceFile: row.sourceFile,
+          title: row.title
+        }
+      ];
+    }
+    const doc = docByUnit.get(row.entryId);
+    if (doc === undefined) {
+      return [];
+    }
+    return [
+      {
+        blockCount: doc.docCount,
+        entryId: row.entryId,
+        hasSubstantiveText: doc.hasSubstantiveDoc,
+        orderIndex: row.orderIndex,
+        sourceFile: row.sourceFile,
+        title: row.title
+      }
+    ];
+  });
   const tableOfContents = await loadTableOfContents(db, workEntryId, structureUnits);
 
   return {
-    // Exclude units with no renderable mdast blocks (an unknown-only / PM-only chapter persisted for
-    // its `doc_blocks`, or a unit whose blocks were all soft-deleted); the mdast reader shows only
-    // units with content until #312 swaps it to the PM block rows (mirrors loadWorkContent).
     readingUnits: structureUnits.map(toStructureDto),
     workEntryId,
     // Additive nav-derived TOC (#379): present only for a work with an authored nav; omitted (never

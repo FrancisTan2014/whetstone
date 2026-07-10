@@ -20,6 +20,7 @@ import {
   personalEntries
 } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
+import { loadWorkContent, loadWorkStructure } from "../content/contentQueries.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { deleteWork } from "../library/libraryCommands.js";
 import type { AuthoredWorkRouteDependencies } from "./authoredWorkRoutes.js";
@@ -438,5 +439,50 @@ describe("deleting an authored Work", () => {
 
     const listed = await context.server.inject({ method: "GET", url: "/api/authored-works" });
     expect((listed.json() as AuthoredWorkListDto).works).toHaveLength(0);
+  });
+});
+
+describe("authored Works are first-class in the shared reader (#576)", () => {
+  it("surfaces a saved authored Work's unit through loadWorkStructure with a truthful, substantive block count", async () => {
+    const work = await createWork({ title: "On Writing" });
+    const document = doc(para("First paragraph.", "b1"), para("Second paragraph.", "b2"));
+    await saveWork(work.entryId, document);
+
+    const structure = await loadWorkStructure(context.db, toEntryId(work.entryId));
+
+    expect(structure.readingUnits).toHaveLength(1);
+    const unit = structure.readingUnits[0];
+    // The count reflects the PM doc_blocks (an authored Work has no legacy mdast blocks), and the unit
+    // is substantive so the reader opens it rather than skipping it as front matter.
+    expect(unit?.blockCount).toBe(2);
+    expect(unit?.hasSubstantiveText).toBe(true);
+  });
+
+  it("returns the authored Work's PM blocks through loadWorkContent so the reader renders and anchors notes to them", async () => {
+    const work = await createWork({ title: "On Reading" });
+    const document = doc(para("Only paragraph.", "only"));
+    await saveWork(work.entryId, document);
+
+    const content = await loadWorkContent(context.db, toEntryId(work.entryId));
+
+    expect(content.readingUnits).toHaveLength(1);
+    const unit = content.readingUnits[0];
+    // Authored content lives only in doc_blocks; the mdast block list is empty and the reader renders
+    // the PM nodes (toReaderBlocks prefers docBlocks). The block ids match the saved document so notes
+    // anchor to them.
+    expect(unit?.blocks).toEqual([]);
+    expect(unit?.docBlocks.map((block) => block.entryId)).toEqual([blockId(document, 0)]);
+    expect(unit?.docBlocks[0]?.type).toBe("paragraph");
+  });
+
+  it("still surfaces a brand-new empty authored Work, marking its empty unit non-substantive", async () => {
+    const work = await createWork({ title: "Blank" });
+
+    const structure = await loadWorkStructure(context.db, toEntryId(work.entryId));
+
+    expect(structure.readingUnits).toHaveLength(1);
+    // The initial empty paragraph is present (so the reader can open the unit) but not substantive.
+    expect(structure.readingUnits[0]?.blockCount).toBe(1);
+    expect(structure.readingUnits[0]?.hasSubstantiveText).toBe(false);
   });
 });

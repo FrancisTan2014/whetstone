@@ -931,7 +931,7 @@ describe("AdminLibraryPage", () => {
     expect(screen.getByRole("dialog", { name: "Delete work" })).toBeDefined();
   });
 
-  it("marks a Work authored with a badge, opens it in the editor, and hides Manage content (#576)", async () => {
+  it("marks a Work authored with a badge, opens it in the reader and editor, and hides Manage content + Markdown export (#576)", async () => {
     const authoredSummary: AuthoredWorkSummaryDto = {
       createdAt: "2026-07-01T00:00:00.000Z",
       entryId: "work-1",
@@ -950,13 +950,23 @@ describe("AdminLibraryPage", () => {
       .closest("li");
     expect(authoredCard).not.toBeNull();
     const authored = within(authoredCard as HTMLElement);
-    // The authored badge and an editor deep link, with no reader/Manage-content actions.
+    // The authored badge plus a shared-reader Read link (where selection → notes and search deep-links
+    // work) and an editor Edit link — but no Manage-content and no broken Markdown export (#576).
     expect(authored.getByText("Authored")).toBeDefined();
-    const openLink = authored.getByRole("link", { name: "Open" });
-    expect(openLink.getAttribute("href")).toBe("#/write?work=work-1");
+    expect(authored.getByRole("link", { name: "Read" }).getAttribute("href")).toBe(
+      "#/reader?work=work-1"
+    );
+    expect(authored.getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
+      "#/write?work=work-1"
+    );
     expect(authored.queryByRole("button", { name: "Manage content" })).toBeNull();
+    expect(authored.queryByRole("link", { name: "Export Markdown" })).toBeNull();
+    // Notes stays available across both authored and imported works.
+    expect(authored.getByRole("link", { name: "Notes" }).getAttribute("href")).toBe(
+      "#/notes?work=work-1"
+    );
 
-    // A non-authored Work keeps the reader flow.
+    // A non-authored Work keeps the reader flow, Manage content, and Markdown export.
     const importedCard = within(group).getByRole("heading", { name: "Animal Farm" }).closest("li");
     const imported = within(importedCard as HTMLElement);
     expect(imported.queryByText("Authored")).toBeNull();
@@ -964,6 +974,7 @@ describe("AdminLibraryPage", () => {
       "#/reader?work=work-2"
     );
     expect(imported.getByRole("button", { name: "Manage content" })).toBeDefined();
+    expect(imported.getByRole("link", { name: "Export Markdown" })).toBeDefined();
   });
 
   it("creates a new authored document and jumps into the editor (#576)", async () => {

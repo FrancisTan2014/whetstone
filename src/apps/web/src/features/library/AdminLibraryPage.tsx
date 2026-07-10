@@ -653,8 +653,10 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
   const workEntryId = item.work.entryId;
   // "Continue" only when the reader has a saved position for this work; otherwise a truthful "Read".
   const resumes = options.worksWithPosition.has(workEntryId);
-  // Authored documents open in the editor (read + edit) rather than the reader, and carry a badge so the
-  // one shelf distinguishes them from imported sources without a separate silo (#576).
+  // Authored documents are first-class in the shared reader: reading opens `#/reader` (selection → note
+  // capture, search deep-links, highlights — identical to imported works), while editing opens the full
+  // rich editor at `#/write`. They carry a badge so the one shelf distinguishes them from imported
+  // sources without a separate silo (#576).
   const authored = options.authoredWorkIds.has(workEntryId);
 
   return (
@@ -675,21 +677,17 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
         ) : null}
       </p>
       <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <a
+          className={`${cardActionClass} font-medium`}
+          href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
+        >
+          {resumes ? "Continue" : "Read"}
+        </a>
         {authored ? (
-          <a
-            className={`${cardActionClass} font-medium`}
-            href={`#/write?work=${encodeURIComponent(workEntryId)}`}
-          >
-            Open
+          <a className={cardActionClass} href={`#/write?work=${encodeURIComponent(workEntryId)}`}>
+            Edit
           </a>
-        ) : (
-          <a
-            className={`${cardActionClass} font-medium`}
-            href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
-          >
-            {resumes ? "Continue" : "Read"}
-          </a>
-        )}
+        ) : null}
         {authored ? null : (
           <button
             className={cardActionClass}
@@ -702,13 +700,15 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
         <a className={cardActionClass} href={`#/notes?work=${encodeURIComponent(workEntryId)}`}>
           Notes
         </a>
-        <a
-          className={cardActionClass}
-          download={`${item.work.title}.md`}
-          href={apiUrl(`/works/${workEntryId}/content/markdown`)}
-        >
-          Export Markdown
-        </a>
+        {authored ? null : (
+          <a
+            className={cardActionClass}
+            download={`${item.work.title}.md`}
+            href={apiUrl(`/works/${workEntryId}/content/markdown`)}
+          >
+            Export Markdown
+          </a>
+        )}
         <button
           className={`${cardActionClass} text-danger hover:text-danger`}
           onClick={() => options.onDelete(item)}
