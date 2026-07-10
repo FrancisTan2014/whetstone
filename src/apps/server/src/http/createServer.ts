@@ -38,6 +38,8 @@ import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWo
 import type { AuthoredWorkRouteDependencies } from "../features/authoredWorks/authoredWorkRoutes.js";
 import { registerRecitationRoutes } from "../features/recitation/recitationRoutes.js";
 import type { RecitationRouteDependencies } from "../features/recitation/recitationRoutes.js";
+import { registerRecitationPassageRoutes } from "../features/recitationPassages/recitationPassageRoutes.js";
+import type { RecitationPassageRouteDependencies } from "../features/recitationPassages/recitationPassageRoutes.js";
 import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
 import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
@@ -73,6 +75,7 @@ export type CreateServerOptions = Readonly<{
   readingPosition?: ReadingPositionDependencies;
   recall?: RecallRouteDependencies;
   recitation?: RecitationRouteDependencies;
+  recitationPassages?: RecitationPassageRouteDependencies;
   nudge?: NudgeRouteDependencies;
   search?: SearchDependencies;
   session?: SessionDependencies;
@@ -154,6 +157,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.recitation !== undefined) {
     registerRecitationRoutes(server, options.recitation);
+  }
+
+  if (options.recitationPassages !== undefined) {
+    registerRecitationPassageRoutes(server, options.recitationPassages);
   }
 
   if (options.recall !== undefined) {

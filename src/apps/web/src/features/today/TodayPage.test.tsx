@@ -13,6 +13,10 @@ vi.mock("../recitation/recitationApi", () => ({
   recordRecitationSession: vi.fn(),
   setRecitationPhase: vi.fn()
 }));
+vi.mock("../recitation/recitationPassageApi", () => ({
+  fetchDuePassage: vi.fn(),
+  reviewPassage: vi.fn()
+}));
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
 }));
@@ -27,6 +31,7 @@ import type {
   AuthorDto,
   AuthoredWorkSummaryDto,
   ContinueRecitationDto,
+  DueRecitationPassageDto,
   LatestReadingPositionDto,
   NudgeDto,
   RecallItemDto,
@@ -41,6 +46,7 @@ import {
   recordRecitationSession,
   setRecitationPhase
 } from "../recitation/recitationApi";
+import { fetchDuePassage, reviewPassage } from "../recitation/recitationPassageApi";
 import { fetchWorks } from "../library/libraryApi";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
 import { fetchDueRecall } from "../recall/recallApi";
@@ -56,6 +62,8 @@ const mockedWriting = vi.mocked(fetchContinueWriting);
 const mockedRecitation = vi.mocked(fetchContinueRecitation);
 const mockedStartReciting = vi.mocked(setRecitationPhase);
 const mockedRecitationSession = vi.mocked(recordRecitationSession);
+const mockedDuePassage = vi.mocked(fetchDuePassage);
+const mockedReviewPassage = vi.mocked(reviewPassage);
 
 const emptyWorks: WorkListDto = { works: [] };
 
@@ -144,6 +152,20 @@ function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecitationPassageDto {
+  return {
+    anchorStatus: "anchored",
+    context: "Aesop's Fables · The Fox and the Grapes",
+    defaultCueStrength: "opening",
+    passageEntryId: "passage-2",
+    planEntryId: "plan-1",
+    precedingText: "Earlier line here.",
+    targetText: "The quick brown fox jumps.",
+    workTitle: "Aesop's Fables",
+    ...overrides
+  };
+}
+
 function renderToday(): void {
   render(
     <MemoryRouter>
@@ -160,6 +182,7 @@ beforeEach(() => {
   mockedWorks.mockReturnValue(pending<WorkListDto>());
   mockedWriting.mockReturnValue(pending<{ work: AuthoredWorkSummaryDto | null }>());
   mockedRecitation.mockReturnValue(pending<ContinueRecitationDto>());
+  mockedDuePassage.mockReturnValue(pending<DueRecitationPassageDto | null>());
 });
 
 afterEach(() => {
@@ -595,5 +618,63 @@ describe("TodayPage", () => {
     const card = screen.getByRole("region", { name: "Continue recitation" });
     expect(await within(card).findByText(/Couldn’t load your recitation/)).toBeDefined();
     expect(screen.getByText("Capture today")).toBeDefined();
+  });
+
+  it("surfaces the next due recitation passage as a bounded practice attempt", async () => {
+    mockedDuePassage.mockResolvedValue(makeDuePassage());
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByLabelText("Cue")).toBeDefined();
+    // The full target stays hidden until Reveal (no overdue wall, one attempt at a time).
+    expect(within(card).queryByText("The quick brown fox jumps.")).toBeNull();
+  });
+
+  it("shows a caught-up line when no recitation passage is due", async () => {
+    mockedDuePassage.mockResolvedValue(null);
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
+  });
+
+  it("shows a quiet inline note when the due passage fails to load", async () => {
+    mockedDuePassage.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByText(/Couldn’t load your recitation passage/)).toBeDefined();
+  });
+
+  it("fetches the next due passage after one is reviewed, stopping when caught up", async () => {
+    mockedReviewPassage.mockResolvedValue({} as never);
+    mockedDuePassage.mockResolvedValueOnce(makeDuePassage()).mockResolvedValueOnce(null);
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    fireEvent.click(await within(card).findByRole("button", { name: "Reveal" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Couldn't continue" }));
+
+    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
+    expect(mockedDuePassage).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets to the cue phase for the next passage after a review, hiding its target until Reveal", async () => {
+    mockedReviewPassage.mockResolvedValue({} as never);
+    mockedDuePassage
+      .mockResolvedValueOnce(makeDuePassage())
+      .mockResolvedValueOnce(
+        makeDuePassage({ passageEntryId: "passage-3", targetText: "A second hidden line." })
+      );
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    fireEvent.click(await within(card).findByRole("button", { name: "Reveal" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Clean and natural" }));
+
+    // The next passage re-enters the cue phase: Reveal returns and the new target stays hidden until
+    // the learner reveals it (a stale revealed state would leak the answer without a retrieval attempt).
+    expect(await within(card).findByRole("button", { name: "Reveal" })).toBeDefined();
+    expect(within(card).queryByText("A second hidden line.")).toBeNull();
   });
 });

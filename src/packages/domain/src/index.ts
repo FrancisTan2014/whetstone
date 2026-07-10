@@ -138,6 +138,31 @@ export { isWorkType, workTypes } from "./work.js";
 export { isRecitationPhase, recitationPhases } from "./recitation.js";
 export type { RecitationPhase } from "./recitation.js";
 export {
+  coveredPassageText,
+  isRecitationCueStrength,
+  mergePassageRanges,
+  OPENING_CUE_CHARS,
+  passageAnchorStatuses,
+  passageCueText,
+  PRECEDING_LINE_MAX_CHARS,
+  reanchorPassageRange,
+  recitationCueStrengths,
+  recitationRatingChoices,
+  seedPassageRanges,
+  splitPassageRange
+} from "./recitationPassage.js";
+export type {
+  AnchoredPassage,
+  MergePassagesResult,
+  PassageAnchorStatus,
+  PassageBlock,
+  PassageRange,
+  ReanchorOutcome,
+  RecitationCueStrength,
+  SplitInvalidReason,
+  SplitPassageResult
+} from "./recitationPassage.js";
+export {
   isWorkLanguage,
   normalizeWorkLanguage,
   workLanguageLabels,

@@ -754,9 +754,42 @@ schedule**.
 - **On the Timeline as a durable Entry.** The adopted plan itself is a personal Entry, so it appears in the
   logical Timeline (with the Work title and phase) like any other owned Entry; the per-session state does not.
 - **Calm by construction.** A missed day carries **no** streak loss, backlog, warning, or moralized copy.
-  10–15 minutes is guidance, not a timer or enforcement. Non-goals: passage segmentation, hiding/fading, FSRS
-  grading, speech recognition, pronunciation scoring, LLM judgement, a recording requirement, or a whole-work
-  test.
+  10–15 minutes is guidance, not a timer or enforcement. At the routine level the phases stay calm reading;
+  the structured **passage practice with scheduled self-review** below is the opt-in Learning-phase engine.
+  Non-goals of the routine itself: hiding/fading, speech recognition, pronunciation scoring, LLM judgement, a
+  recording requirement, or a whole-work test.
+
+## Passage practice with scheduled self-review
+
+In the `learning` phase a recitation routine becomes a structured practice loop over **passages** — contiguous
+ranges of the Work the learner recites one at a time. This is the opt-in memory engine layered on the calm
+routine above; it never changes the canonical Work text.
+
+- **Passages are learner-editable source ranges, seeded then shaped.** A Work is first **divided into
+  passages** seeded from its top-level text blocks in source order. On a segmentation view the learner can
+  **split** a passage at a text position or **merge** it with the next — editing boundaries only. The Work
+  text is never copied or edited; a passage is an addressable personal practice **Entry** linked to its exact
+  source range and its recitation plan. There is **no** automatic one-flashcard-per-sentence.
+- **Each passage schedules independently (FSRS).** A passage's prompt is an Entry carrying its own FSRS state,
+  so passages come due on their own schedules. Editing a boundary (split/merge) resets that passage's schedule.
+- **A due review opens from a restrained cue.** It first shows the Work/section context plus **either** the
+  preceding passage's final line **or** the target passage's first few characters — never the whole target,
+  which stays hidden until **Reveal**. The learner may **switch cue strength before attempting**; the cue
+  choice alone never updates the schedule.
+- **Attempt aloud, reveal, then self-assess.** After attempting from memory and revealing the exact source, the
+  learner grades with domain copy mapped to FSRS: **Couldn't continue** (Again), **Needed cues** (Hard),
+  **Complete, with effort** (Good), **Clean and natural** (Easy). **Only the final self-rating** updates FSRS —
+  revealing without rating leaves the schedule unchanged.
+- **Today surfaces the next due passage, bounded.** Today shows the single next due passage as one attempt and
+  refetches the next only after it is reviewed — never an overdue wall, and the session can be stopped after
+  one passage.
+- **Progress lives in the plan, not the Timeline.** A passage's review progress and history appear with its
+  recitation plan; review events remain **history rows / metadata**, never Timeline Entries.
+- **Source edits never practise stale text.** When the Work text changes, a passage range is **re-anchored**
+  safely where it can still be located, or marked **needs repair** and shown as a repair prompt instead of
+  practising wrong text.
+- **Non-goals (#578).** No speech-to-text, automatic exactness scoring, LLM grading, audio requirement,
+  progressive fading, adjacent-passage chaining, or whole-work maintenance in this scope.
 
 ## Future direction protected by v0
 

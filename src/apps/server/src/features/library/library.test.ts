@@ -21,7 +21,9 @@ import {
   readingPositions,
   readingUnits,
   recallItems,
+  recitationPassages,
   recitationPlans,
+  recitationReviews,
   tocEntries,
   workMeta,
   workSources
@@ -437,7 +439,7 @@ describe("DELETE /api/works/:workEntryId", () => {
     expect(context.deletedPaths).toEqual(["work-1.epub"]);
   });
 
-  it("deletes a work a learner has adopted as a recitation routine, tearing the plan down (#577)", async () => {
+  it("deletes a work a learner has adopted as a recitation routine, tearing the plan and its passages down (#577, #578)", async () => {
     await seedWorkWithContent(context.db);
 
     // Adopt work-1 as a recitation routine: an owned plan Entry + its personal_entries chronology facet
@@ -456,15 +458,75 @@ describe("DELETE /api/works/:workEntryId", () => {
       workEntryId: "work-1"
     });
 
+    // Divide the plan into a scheduled passage with a recorded review: the passage FKs the plan AND the
+    // Work's block Entry, and the review FKs the passage — every edge the delete cascade must unwind.
+    await context.db.insert(entries).values({ id: "passage-1", type: "recitation_passage" });
+    await context.db.insert(recitationPassages).values({
+      anchorStatus: "anchored",
+      contextSnapshot: "Doomed",
+      difficulty: 0,
+      dueAt: new Date("2026-02-01T00:00:00.000Z"),
+      elapsedDays: 0,
+      endBlockEntryId: "pmblock-1",
+      endOffset: 2,
+      entryId: "passage-1",
+      lapses: 0,
+      lastReviewedAt: null,
+      learningSteps: 0,
+      orderIndex: 0,
+      planEntryId: "recite-1",
+      reps: 0,
+      scheduledDays: 0,
+      sourceText: "pm",
+      stability: 0,
+      startBlockEntryId: "pmblock-1",
+      startOffset: 0,
+      state: "new"
+    });
+    await context.db.insert(recitationReviews).values({
+      cueStrength: "opening",
+      id: "prev-1",
+      passageEntryId: "passage-1",
+      rating: "good",
+      reviewedAt: new Date("2026-02-01T00:00:00.000Z")
+    });
+
     // Without the cascade this FK violates and the delete fails, stranding the Work in the Library.
     const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
     expect(response.statusCode).toBe(204);
 
-    // The plan and both its facets are gone; the Work entry is gone; the untouched work-2 remains.
+    // The plan, its passages, and their reviews are all gone, with both plan facets; work-2 remains.
     expect(await context.db.select().from(recitationPlans)).toHaveLength(0);
+    expect(await context.db.select().from(recitationPassages)).toHaveLength(0);
+    expect(await context.db.select().from(recitationReviews)).toHaveLength(0);
     expect(
       await context.db.select().from(personalEntries).where(eq(personalEntries.entryId, "recite-1"))
     ).toHaveLength(0);
+    const remainingEntries = (await context.db.select().from(entries)).map((row) => row.id).sort();
+    expect(remainingEntries).toEqual(["work-2"]);
+  });
+
+  it("deletes an adopted plan that was never divided into passages (#577)", async () => {
+    await seedWorkWithContent(context.db);
+
+    await context.db.insert(entries).values({ id: "recite-1", type: "recitation_plan" });
+    await context.db.insert(personalEntries).values({
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      entryId: "recite-1",
+      occurredAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      userId: "user-a"
+    });
+    await context.db.insert(recitationPlans).values({
+      entryId: "recite-1",
+      phase: "familiarizing",
+      workEntryId: "work-1"
+    });
+
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+
+    expect(response.statusCode).toBe(204);
+    expect(await context.db.select().from(recitationPlans)).toHaveLength(0);
     const remainingEntries = (await context.db.select().from(entries)).map((row) => row.id).sort();
     expect(remainingEntries).toEqual(["work-2"]);
   });

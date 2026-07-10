@@ -1098,6 +1098,9 @@ describe("AdminLibraryPage", () => {
     // The card now shows the quiet reciting status instead of the adopt action.
     expect(await screen.findByText("Reciting · Familiarizing")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
+    // A familiarizing plan does NOT expose passage practice — that is the opt-in Learning-phase engine,
+    // reached first via Today's "Start reciting" (#578).
+    expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
   });
 
   it("shows the reciting status (not an adopt button) for an already-adopted Work (#577)", async () => {
@@ -1111,6 +1114,9 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Reciting · Learning")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Divide into passages" }).getAttribute("href")).toBe(
+      "#/recite?plan=plan-work-1"
+    );
   });
 
   it("surfaces an error when adopting a recitation routine fails, keeping the sheet open (#577)", async () => {

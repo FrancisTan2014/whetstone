@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import type {
   AuthoredWorkSummaryDto,
+  DueRecitationPassageDto,
   LatestReadingPositionDto,
   NudgeDto,
   RecallItemDto,
@@ -20,6 +21,8 @@ import {
   recordRecitationSession,
   setRecitationPhase
 } from "../recitation/recitationApi.js";
+import { fetchDuePassage } from "../recitation/recitationPassageApi.js";
+import { RecitationReviewCard } from "../recitation/RecitationReviewCard.js";
 import { recitationPhaseLabels } from "../recitation/recitationLabels.js";
 import { CaptureCard } from "../capture/CaptureCard.js";
 import { fetchLatestReadingPosition } from "./todayApi.js";
@@ -75,11 +78,21 @@ type LibraryState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ hasWorks: boolean; status: "ready" }>;
 
+// The next due recitation passage (#578), if any. A due passage is a single bounded practice attempt;
+// `passage: undefined` (nothing scheduled) is a quiet caught-up line, and a failed load is a quiet note.
+// Kept independent of the first-run/cleared logic — like Continue reading, it is an invitation, not a
+// gate — so it never contributes to an "overdue wall".
+type ReciteState =
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ passage: DueRecitationPassageDto | undefined; status: "ready" }>;
+
 export function TodayPage(): React.JSX.Element {
   const [recall, setRecall] = useState<RecallState>({ status: "loading" });
   const [reading, setReading] = useState<ContinueState>({ status: "loading" });
   const [writing, setWriting] = useState<WritingState>({ status: "loading" });
   const [recitation, setRecitation] = useState<RecitationState>({ status: "loading" });
+  const [recite, setRecite] = useState<ReciteState>({ status: "loading" });
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
@@ -94,8 +107,19 @@ export function TodayPage(): React.JSX.Element {
     );
   }, []);
 
+  // Load the next due passage. Stable so the mount effect stays one-shot and so a completed review can
+  // refetch the next due passage (one at a time — never an overdue wall). Set only after the fetch
+  // settles (no synchronous setState in the effect).
+  const loadDuePassage = useCallback(() => {
+    fetchDuePassage().then(
+      (passage) => setRecite({ passage: passage ?? undefined, status: "ready" }),
+      () => setRecite({ status: "error" })
+    );
+  }, []);
+
   useEffect(() => {
     loadRecall();
+    loadDuePassage();
     fetchLatestReadingPosition().then(
       (position) => setReading({ position, status: "ready" }),
       () => setReading({ status: "error" })
@@ -116,7 +140,7 @@ export function TodayPage(): React.JSX.Element {
       (list) => setLibrary({ hasWorks: list.works.length > 0, status: "ready" }),
       () => setLibrary({ status: "error" })
     );
-  }, [loadRecall]);
+  }, [loadDuePassage, loadRecall]);
 
   // Dismiss = cooldown: remove the card at once (a "not now" is honoured immediately) and tell the
   // server in the background. A failed dismiss never blanks Today — the card is already gone.
@@ -165,6 +189,7 @@ export function TodayPage(): React.JSX.Element {
           onStartReciting={handleStartReciting}
           state={recitation}
         />
+        <ReciteCard onReviewed={loadDuePassage} state={recite} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
         <ClearedState library={library} reading={reading} recall={recall} nudge={nudge} />
       </div>
@@ -422,6 +447,52 @@ function renderRecitation(
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Recite (#578): the next due recitation passage as one bounded practice attempt, composed from the
+// shared RecitationReviewCard (cue → reveal → self-assess). Present -> the card; a completed review
+// refetches the next due passage (one at a time, never an overdue wall). None -> a quiet caught-up
+// line; a failure -> a quiet inline note. Independent of the first-run/cleared logic — an invitation,
+// never a gate.
+function ReciteCard({
+  onReviewed,
+  state
+}: Readonly<{
+  onReviewed: () => void;
+  state: ReciteState;
+}>): React.JSX.Element {
+  return (
+    <section aria-label="Recite" className="rounded border border-border bg-surface p-4">
+      <h2 className="text-lg font-medium text-text">Recite</h2>
+      <div className="mt-2">{renderRecite(state, onReviewed)}</div>
+    </section>
+  );
+}
+
+function renderRecite(state: ReciteState, onReviewed: () => void): React.JSX.Element {
+  if (state.status === "loading") {
+    return <LoadingIndicator label="Finding your next passage…" />;
+  }
+
+  if (state.status === "error") {
+    return (
+      <p className="text-text-muted" role="alert">
+        Couldn&rsquo;t load your recitation passage right now.
+      </p>
+    );
+  }
+
+  if (state.passage === undefined) {
+    return <p className="text-text-muted">Nothing to recite — you&rsquo;re caught up.</p>;
+  }
+
+  return (
+    <RecitationReviewCard
+      key={state.passage.passageEntryId}
+      onReviewed={onReviewed}
+      passage={state.passage}
+    />
   );
 }
 

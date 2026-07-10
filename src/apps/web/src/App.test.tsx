@@ -161,6 +161,20 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain('aria-label="Primary"');
   });
 
+  it("prompts to open a routine at the recite route with no plan param", () => {
+    const markup = renderAt("/recite");
+
+    expect(markup).toContain("Open a recitation routine from your Library to divide it.");
+  });
+
+  it("resolves the recite route with a plan query param to the segmentation page", () => {
+    const markup = renderAt("/recite?plan=plan-1");
+
+    // Effects do not run under static render, so the page mounts in its loading arm while it would
+    // otherwise fetch the plan's passages.
+    expect(markup).toContain("Loading passages…");
+  });
+
   it("resolves the search route to the library search page", () => {
     const markup = renderAt("/search");
 

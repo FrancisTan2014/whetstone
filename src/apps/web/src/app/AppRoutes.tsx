@@ -7,6 +7,7 @@ import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { RecallPage } from "../features/recall/RecallPage.js";
+import { RecitePage } from "../features/recitation/RecitePage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { SessionPage } from "../features/session/SessionPage.js";
 import { TodayPage } from "../features/today/TodayPage.js";
@@ -48,6 +49,15 @@ function NotesRoute(): React.JSX.Element {
   return <NotesPage focusWorkEntryId={searchParams.get("work") ?? undefined} />;
 }
 
+// The Library's "Divide into passages" action on a recitation plan routes to `#/recite?plan=<entryId>`;
+// the route reads that param so the segmentation page can load one plan's passages. Without it, the page
+// prompts the learner to open a routine from the Library.
+function ReciteRoute(): React.JSX.Element {
+  const [searchParams] = useSearchParams();
+
+  return <RecitePage planEntryId={searchParams.get("plan") ?? undefined} />;
+}
+
 // Routes for the four navigation modes, all nested under the shell layout. Hash/memory
 // routing is provided by the composition root so this works under file/Capacitor/Tauri.
 export function AppRoutes(): React.JSX.Element {
@@ -72,6 +82,7 @@ export function AppRoutes(): React.JSX.Element {
         />
         <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<RecallPage />} path="recall" />
+        <Route element={<ReciteRoute />} path="recite" />
         <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />

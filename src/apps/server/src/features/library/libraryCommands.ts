@@ -22,7 +22,9 @@ import {
   readingPositions,
   readingUnits,
   recallItems,
+  recitationPassages,
   recitationPlans,
+  recitationReviews,
   tocEntries,
   workMeta,
   workSources
@@ -236,6 +238,23 @@ export async function deleteWork(
         .where(eq(recitationPlans.workEntryId, workEntryId))
     ).map((row) => row.id);
     if (recitationPlanIds.length > 0) {
+      // Each plan may have been divided into scheduled recitation passages (#578): passage rows FK the
+      // plan AND the Work's block Entries, and review-history rows FK the passages. Tear them down —
+      // reviews, then passages, then the passages' own `entries` rows — before the plans and blocks, or
+      // the FKs block the Work delete.
+      const passageIds = (
+        await tx
+          .select({ id: recitationPassages.entryId })
+          .from(recitationPassages)
+          .where(inArray(recitationPassages.planEntryId, recitationPlanIds))
+      ).map((row) => row.id);
+      if (passageIds.length > 0) {
+        await tx
+          .delete(recitationReviews)
+          .where(inArray(recitationReviews.passageEntryId, passageIds));
+        await tx.delete(recitationPassages).where(inArray(recitationPassages.entryId, passageIds));
+        await tx.delete(entries).where(inArray(entries.id, passageIds));
+      }
       await tx.delete(recitationPlans).where(inArray(recitationPlans.entryId, recitationPlanIds));
       await tx.delete(personalEntries).where(inArray(personalEntries.entryId, recitationPlanIds));
       await tx.delete(entries).where(inArray(entries.id, recitationPlanIds));

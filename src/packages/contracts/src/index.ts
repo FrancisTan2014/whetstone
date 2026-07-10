@@ -87,6 +87,35 @@ export type {
   SetRecitationPhaseRequest
 } from "./recitationContracts.js";
 export {
+  dueRecitationPassageDtoSchema,
+  dueRecitationPassageResponseSchema,
+  parseDueRecitationPassageResponse,
+  parseRecitationPassageListDto,
+  parseRecordRecitationReviewRequest,
+  parseRecordRecitationReviewResponse,
+  parseSplitRecitationPassageRequest,
+  recitationAnchorStatusDtoSchema,
+  recitationCueStrengthDtoSchema,
+  recitationPassageDtoSchema,
+  recitationPassageListDtoSchema,
+  recitationReviewRatingSchema,
+  recordRecitationReviewRequestSchema,
+  recordRecitationReviewResponseSchema,
+  splitRecitationPassageRequestSchema
+} from "./recitationPassageContracts.js";
+export type {
+  DueRecitationPassageDto,
+  DueRecitationPassageResponse,
+  RecitationAnchorStatusDto,
+  RecitationCueStrengthDto,
+  RecitationPassageDto,
+  RecitationPassageListDto,
+  RecitationReviewRating,
+  RecordRecitationReviewRequest,
+  RecordRecitationReviewResponse,
+  SplitRecitationPassageRequest
+} from "./recitationPassageContracts.js";
+export {
   createDiaryEntryRequestSchema,
   diaryCalendarDtoSchema,
   diaryCalendarQuerySchema,

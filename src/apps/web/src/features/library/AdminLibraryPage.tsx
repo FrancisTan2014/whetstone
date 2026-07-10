@@ -740,8 +740,10 @@ function renderLibrary(
 const cardActionClass =
   "inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-accent hover:text-accent-hover";
 
-// A Work already adopted for recitation shows a quiet, non-actionable status ("Reciting · <phase>"); an
-// un-adopted Work offers "Practise recitation" to open the initial-phase picker (#577).
+// A Work already adopted for recitation shows its phase status ("Reciting · <phase>"). Passage practice
+// is the opt-in Learning-phase engine, so only a `learning` plan also offers the "Divide into passages"
+// link into the segmentation + progress surface (#578); a `familiarizing` plan reaches Learning first via
+// Today's "Start reciting". An un-adopted Work offers "Practise recitation" to open the phase picker (#577).
 function renderRecitationAction(
   item: WorkListItemDto,
   options: RenderLibraryOptions
@@ -749,9 +751,16 @@ function renderRecitationAction(
   const plan = options.recitationByWork.get(item.work.entryId);
   if (plan !== undefined) {
     return (
-      <span className="inline-flex min-h-11 items-center px-2 text-sm text-text-muted">
-        Reciting · {recitationPhaseLabels[plan.phase]}
-      </span>
+      <>
+        <span className="inline-flex min-h-11 items-center px-2 text-sm text-text-muted">
+          Reciting · {recitationPhaseLabels[plan.phase]}
+        </span>
+        {plan.phase === "learning" ? (
+          <a className={cardActionClass} href={`#/recite?plan=${encodeURIComponent(plan.entryId)}`}>
+            Divide into passages
+          </a>
+        ) : null}
+      </>
     );
   }
 

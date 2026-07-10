@@ -27,7 +27,8 @@ export const entries = pgTable("entries", {
       "note",
       "toc_entry",
       "diary_entry",
-      "recitation_plan"
+      "recitation_plan",
+      "recitation_passage"
     ] as const
   }).notNull()
 });
@@ -300,6 +301,80 @@ export const recitationPlans = pgTable(
       .references(() => entries.id)
   },
   (table) => [index("recitation_plans_work_idx").on(table.workEntryId)]
+);
+
+// A recitation passage (#578): a contiguous, learner-editable source range of a recitation Work that is
+// practised and scheduled as one unit. Each passage is an addressable Entry linked to its plan and to
+// its exact source range (mirroring `note_anchors`: start offset on the start block, end offset on the
+// end block; equal block ids for a single-block passage). It carries an inlined FSRS card (like
+// `recall_items`) so every passage is scheduled independently. A passage has NO `personal_entries` row
+// of its own — it is owned transitively through its plan's `personal_entries` row, so passages and their
+// reviews never surface on the Timeline. `source_text` is the exact anchored snapshot used for the
+// hidden target, cue derivation, and re-anchoring; `anchor_status` flips to `needs_repair` when the
+// source drifts beyond a safe relocate, so stale text is never silently practised.
+export const recitationPassages = pgTable(
+  "recitation_passages",
+  {
+    entryId: text("entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    planEntryId: text("plan_entry_id")
+      .notNull()
+      .references(() => recitationPlans.entryId),
+    orderIndex: integer("order_index").notNull(),
+    startBlockEntryId: text("start_block_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    startOffset: integer("start_offset").notNull(),
+    endBlockEntryId: text("end_block_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    endOffset: integer("end_offset").notNull(),
+    sourceText: text("source_text").notNull(),
+    contextSnapshot: text("context_snapshot").notNull(),
+    anchorStatus: text("anchor_status", {
+      enum: ["anchored", "needs_repair"] as const
+    }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572), mirroring `recall_items`.
+    stability: doublePrecision("stability").notNull(),
+    difficulty: doublePrecision("difficulty").notNull(),
+    elapsedDays: integer("elapsed_days").notNull(),
+    scheduledDays: integer("scheduled_days").notNull(),
+    learningSteps: integer("learning_steps").notNull(),
+    reps: integer("reps").notNull(),
+    lapses: integer("lapses").notNull(),
+    state: text("state", {
+      enum: ["new", "learning", "review", "relearning"] as const
+    }).notNull(),
+    lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
+    dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [
+    index("recitation_passages_plan_order_idx").on(table.planEntryId, table.orderIndex),
+    index("recitation_passages_plan_due_idx").on(table.planEntryId, table.dueAt)
+  ]
+);
+
+// The append-only recitation review log (#578): one row per recorded self-assessment — the FSRS rating,
+// the cue strength the learner attempted from, and when — so a passage's practice history is auditable
+// independently of its current (overwritten) FSRS card. Revealing without rating writes no row.
+export const recitationReviews = pgTable(
+  "recitation_reviews",
+  {
+    id: text("id").primaryKey(),
+    passageEntryId: text("passage_entry_id")
+      .notNull()
+      .references(() => recitationPassages.entryId),
+    rating: text("rating", {
+      enum: ["again", "hard", "good", "easy"] as const
+    }).notNull(),
+    cueStrength: text("cue_strength", {
+      enum: ["preceding_line", "opening"] as const
+    }).notNull(),
+    reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
+  },
+  (table) => [index("recitation_reviews_passage_idx").on(table.passageEntryId)]
 );
 
 // Per-user reader preferences (work-independent): text size and Day/Night theme, server-owned so they
