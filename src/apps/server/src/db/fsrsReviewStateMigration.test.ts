@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { runMigrations } from "./migrate.js";
+
 // Regression for #572 review feedback: 0037 adds NOT NULL FSRS columns and then drops the SM-2
 // columns. `ALTER TABLE ... ADD COLUMN ... NOT NULL` is rejected by PostgreSQL/PGlite on a non-empty
 // table with no default, so the migration must be runnable against a local DB that already holds
@@ -73,5 +75,29 @@ describe("0037 FSRS review-state migration", () => {
           VALUES ('review-fsrs', 'item-fsrs', 'good');
       `)
     ).resolves.toBeDefined();
+  });
+
+  // The only other FK to recall_items was proposal_candidates.related_recall_item_id (migration
+  // 0030), but migration 0035 drops proposal_candidates (CASCADE) — removing that FK — well before
+  // 0037 runs. So at 0037 the sole live referrer of recall_items is recall_reviews, which the leading
+  // DELETEs already clear in FK order. This guards that fact so the forward chain stays runnable.
+  it("has no proposal_candidates table by the time 0037 runs, so no other FK can block the clear", async () => {
+    const pglite = new PGlite();
+    await expect(runMigrations(pglite)).resolves.toBeUndefined();
+
+    const proposalTable = await pglite.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.proposal_candidates') IS NOT NULL AS exists"
+    );
+    expect(proposalTable.rows[0]?.exists).toBe(false);
+
+    const referrers = await pglite.query<{ table_name: string }>(`
+      SELECT tc.table_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+      WHERE tc.constraint_type = 'FOREIGN KEY' AND ccu.table_name = 'recall_items'
+      ORDER BY tc.table_name
+    `);
+    expect(referrers.rows.map((row) => row.table_name)).toEqual(["recall_reviews"]);
   });
 });
