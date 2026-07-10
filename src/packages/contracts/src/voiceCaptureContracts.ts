@@ -1,4 +1,3 @@
-import { isDayKey } from "@whetstone/domain";
 import { z } from "zod";
 
 import { captureLanguageSchema } from "./captureContracts.js";
@@ -42,18 +41,16 @@ export const voiceCaptureAcceptedDtoSchema = z
 
 export type VoiceCaptureAcceptedDto = z.infer<typeof voiceCaptureAcceptedDtoSchema>;
 
-const dayKeySchema = z.string().refine(isDayKey, { message: "must be a YYYY-MM-DD date." });
-
 // The pollable status of one voice capture. `text` is the tidied entry once ready (null while pending or
-// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language`/`entryDate`
-// /`createdAt` mirror the persisted capture so the client can render the pending row in place.
+// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language`/`occurredAt`
+// mirror the persisted capture so the client can render the pending row in place and, once ready, build
+// the Timeline entry from it (its day is derived from `occurredAt`).
 export const voiceCaptureStatusDtoSchema = z
   .object({
-    createdAt: z.string(),
-    entryDate: dayKeySchema,
     failureReason: z.string().nullable(),
     id: z.string(),
     language: captureLanguageSchema.nullable(),
+    occurredAt: z.string(),
     status: voiceCaptureStatusSchema,
     text: z.string().nullable()
   })

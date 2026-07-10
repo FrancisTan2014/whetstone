@@ -25,11 +25,10 @@ describe("parseVoiceCaptureAcceptedDto", () => {
 
 describe("parseVoiceCaptureStatusDto", () => {
   const ready = {
-    createdAt: "2026-07-09T10:00:00.000Z",
-    entryDate: "2026-07-09",
     failureReason: null,
     id: "cap-1",
     language: "en" as const,
+    occurredAt: "2026-07-09T10:00:00.000Z",
     status: "ready" as const,
     text: "the deploy is green"
   };
@@ -49,8 +48,9 @@ describe("parseVoiceCaptureStatusDto", () => {
     expect(parseVoiceCaptureStatusDto(failed)).toEqual(failed);
   });
 
-  it("rejects a malformed entry date", () => {
-    expect(() => parseVoiceCaptureStatusDto({ ...ready, entryDate: "2026-7-9" })).toThrow();
+  it("rejects a missing occurredAt", () => {
+    const { occurredAt: _omit, ...withoutOccurredAt } = ready;
+    expect(() => parseVoiceCaptureStatusDto(withoutOccurredAt)).toThrow();
   });
 
   it("rejects an unknown status", () => {
@@ -64,11 +64,10 @@ describe("parseVoiceCaptureStatusDto", () => {
 
 describe("parseVoiceCaptureListDto", () => {
   const queued = {
-    createdAt: "2026-07-09T10:00:00.000Z",
-    entryDate: "2026-07-09",
     failureReason: null,
     id: "cap-1",
     language: "en" as const,
+    occurredAt: "2026-07-09T10:00:00.000Z",
     status: "queued" as const,
     text: null
   };

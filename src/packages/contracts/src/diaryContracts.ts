@@ -1,13 +1,14 @@
-import { isDayKey } from "@whetstone/domain";
+import { type DocumentNodeJSON, isValidDocument } from "@whetstone/document";
+import { isDayKey, timelineEntryKinds } from "@whetstone/domain";
 import { z } from "zod";
 
-import { captureLanguageSchema } from "./captureContracts.js";
-import { captureInputModeSchema, makeDurableCardDtoSchema } from "./makeDurableContracts.js";
+import { captureInputModeSchema, captureLanguageSchema } from "./captureContracts.js";
 
-// Shared, Zod-validated shapes for the tap-and-talk voice diary (#246): the create/edit requests, the
-// persisted diary entry, the day-grouped Timeline page (a generic dated-trace shape so notes/practice
-// deposits can join later as a `kind` filter), and the date-jump calendar's marked dates. Every value
-// crossing the diary API is described here; the server validates once at the boundary.
+// Shared, Zod-validated shapes for the rich Diary Entry and the logical Timeline (#571). A diary artifact
+// is a personal Entry whose durable body is a ProseMirror/Tiptap document edited through the shared rich
+// editor; the Timeline is a chronological view over the current user's personal Entries (diary + note),
+// never a stored object. Every value crossing the diary/timeline API is described here; the server
+// validates once at the boundary.
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
@@ -15,9 +16,21 @@ function isNonBlank(value: string): boolean {
 
 const dayKeySchema = z.string().refine(isDayKey, { message: "must be a YYYY-MM-DD date." });
 
-// Capture: the web posts the STT transcript plus how it was entered (`inputMode`: typed box vs
-// tap-and-talk voice) and the manual capture language. The server runs the tidy pass, stamps today + now,
-// and persists the input mode/language so the Timeline capture metadata reflects how the entry was made.
+// A ProseMirror/Tiptap document, validated against the shared document schema so a malformed or unsafe
+// body never reaches storage or a client. Typed as `DocumentNodeJSON` for consumers.
+export const documentJsonSchema = z.custom<DocumentNodeJSON>(isValidDocument, {
+  message: "must be a valid document."
+});
+
+const processingStatuses = ["queued", "transcribing", "tidying", "ready", "failed"] as const;
+
+export const diaryProcessingStatusSchema = z.enum(processingStatuses);
+
+export type DiaryProcessingStatus = z.infer<typeof diaryProcessingStatusSchema>;
+
+// Capture: the web posts the transcript (typed text or STT transcript) plus how it was entered
+// (`inputMode`) and the manual capture language. The server saves the Diary Entry FIRST (before any async
+// tidy/transcription), stamps occurredAt/createdAt/updatedAt, and builds the initial body from the text.
 export const createDiaryEntryRequestSchema = z
   .object({
     inputMode: captureInputModeSchema,
@@ -28,56 +41,77 @@ export const createDiaryEntryRequestSchema = z
 
 export type CreateDiaryEntryRequest = z.infer<typeof createDiaryEntryRequestSchema>;
 
-// Editing changes only the tidied text; the entry's date and timestamp are fixed at capture.
+// Editing a diary body replaces the rich document (`bodyDoc`) through the shared editor, and may update
+// the language. The entry's occurredAt/createdAt are fixed at capture; the server bumps updatedAt.
 export const updateDiaryEntryRequestSchema = z
   .object({
-    text: z.string().refine(isNonBlank, { message: "text must be non-empty." })
+    bodyDoc: documentJsonSchema,
+    language: captureLanguageSchema.nullish()
   })
   .strict();
 
 export type UpdateDiaryEntryRequest = z.infer<typeof updateDiaryEntryRequestSchema>;
 
-// A persisted diary entry. `language` is the free-form detected/provided language (null when unknown in
-// v0); `entryDate` is the `YYYY-MM-DD` day it is filed under; `createdAt` is the ISO capture instant.
+// A persisted Diary Entry. `bodyDoc` is the durable ProseMirror/Tiptap document; `bodyText` is its
+// plaintext projection (preview/search). `occurredAt`/`createdAt`/`updatedAt` are ISO instants from the
+// shared personal-entry chronology facet. `processingStatus` is null for a synchronous typed capture that
+// is ready on write; only the queued voice path carries a status. `failureReason` is set only on failure.
 export const diaryEntryDtoSchema = z
   .object({
+    bodyDoc: documentJsonSchema,
+    bodyText: z.string(),
     createdAt: z.string(),
-    entryDate: dayKeySchema,
+    failureReason: z.string().nullable(),
     id: z.string(),
+    inputMode: captureInputModeSchema,
     language: z.string().nullable(),
-    text: z.string()
+    occurredAt: z.string(),
+    processingStatus: diaryProcessingStatusSchema.nullable(),
+    updatedAt: z.string()
   })
   .strict();
 
 export type DiaryEntryDto = z.infer<typeof diaryEntryDtoSchema>;
 
-// Unified capture result: a diary entry is always saved, and the Make Durable proposal gate may return
-// one review card when the capture produces a visible candidate.
-export const diaryCaptureResultDtoSchema = z
+// One entry in the logical Timeline, discriminated by `kind`. A `diary` row IS a diary Entry (carrying
+// its rich body) and a `note` row IS a note Entry — every kind resolves to a real Entry type, so no
+// Timeline-only identity exists. The Diary listing is the `kind === "diary"` filter over this result.
+export const timelineDiaryEntryDtoSchema = z
   .object({
-    entry: diaryEntryDtoSchema,
-    card: makeDurableCardDtoSchema.nullable()
+    bodyDoc: documentJsonSchema,
+    bodyText: z.string(),
+    entryId: z.string(),
+    kind: z.literal("diary"),
+    language: z.string().nullable(),
+    occurredAt: z.string()
   })
   .strict();
 
-export type DiaryCaptureResultDto = z.infer<typeof diaryCaptureResultDtoSchema>;
+export type TimelineDiaryEntryDto = z.infer<typeof timelineDiaryEntryDtoSchema>;
 
-// One entry in the Timeline. `kind` is a discriminator so other dated traces can join the timeline later
-// as filters; in v0 the only kind is "diary", backed by `timeline_entries` filtered to
-// `capture_source = "diary"` (#559).
-export const timelineEntryDtoSchema = z
+export const timelineNoteEntryDtoSchema = z
   .object({
-    createdAt: z.string(),
-    id: z.string(),
-    kind: z.literal("diary"),
-    language: z.string().nullable(),
+    entryId: z.string(),
+    kind: z.literal("note"),
+    occurredAt: z.string(),
     text: z.string()
   })
   .strict();
 
+export type TimelineNoteEntryDto = z.infer<typeof timelineNoteEntryDtoSchema>;
+
+export const timelineEntryDtoSchema = z.discriminatedUnion("kind", [
+  timelineDiaryEntryDtoSchema,
+  timelineNoteEntryDtoSchema
+]);
+
 export type TimelineEntryDto = z.infer<typeof timelineEntryDtoSchema>;
 
-// A day's worth of timeline entries (entries within a day ordered oldest-first by `createdAt`).
+// The discriminated Timeline kinds, kept in lockstep with the domain vocabulary so a new stored-object
+// kind can never appear in the DTO without the domain agreeing.
+export const timelineEntryDtoKinds = timelineEntryKinds;
+
+// A day's worth of timeline entries (within a day, newest-first by occurredAt with a stable tie-break).
 export const timelineDayDtoSchema = z
   .object({
     date: dayKeySchema,
@@ -122,12 +156,12 @@ export function parseDiaryEntryDto(value: unknown): DiaryEntryDto {
   return diaryEntryDtoSchema.parse(value);
 }
 
-export function parseDiaryCaptureResultDto(value: unknown): DiaryCaptureResultDto {
-  return diaryCaptureResultDtoSchema.parse(value);
-}
-
 export function parseTimelineDto(value: unknown): TimelineDto {
   return timelineDtoSchema.parse(value);
+}
+
+export function parseTimelineEntryDto(value: unknown): TimelineEntryDto {
+  return timelineEntryDtoSchema.parse(value);
 }
 
 export function parseDiaryCalendarDto(value: unknown): DiaryCalendarDto {

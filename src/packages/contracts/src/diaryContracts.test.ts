@@ -1,29 +1,41 @@
+import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
   diaryCalendarQuerySchema,
+  documentJsonSchema,
   parseCreateDiaryEntryRequest,
-  parseDiaryCaptureResultDto,
   parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
+  parseTimelineEntryDto,
   parseUpdateDiaryEntryRequest,
+  timelineEntryDtoKinds,
   timelineQuerySchema
 } from "./diaryContracts.js";
 
+const bodyDoc = createTextDocument("I went to the park.");
+const otherDoc = createTextDocument("edited body");
+
+describe("documentJsonSchema", () => {
+  it("accepts a valid document and rejects a malformed one", () => {
+    expect(documentJsonSchema.safeParse(bodyDoc).success).toBe(true);
+    expect(
+      documentJsonSchema.safeParse({ type: "doc", content: [{ type: "bogus" }] }).success
+    ).toBe(false);
+    expect(documentJsonSchema.safeParse("not a doc").success).toBe(false);
+  });
+});
+
 describe("parseCreateDiaryEntryRequest", () => {
-  it("accepts a non-blank transcript with an input mode", () => {
+  it("accepts a non-blank transcript with an input mode and language", () => {
     expect(
       parseCreateDiaryEntryRequest({
         inputMode: "typed",
         language: "en",
         transcript: "today I read a book"
       })
-    ).toEqual({
-      inputMode: "typed",
-      language: "en",
-      transcript: "today I read a book"
-    });
+    ).toEqual({ inputMode: "typed", language: "en", transcript: "today I read a book" });
   });
 
   it("rejects a blank transcript", () => {
@@ -32,7 +44,7 @@ describe("parseCreateDiaryEntryRequest", () => {
     ).toThrow();
   });
 
-  it("rejects a missing or invalid input mode (#560)", () => {
+  it("rejects a missing or invalid input mode", () => {
     expect(() => parseCreateDiaryEntryRequest({ language: "en", transcript: "x" })).toThrow();
     expect(() =>
       parseCreateDiaryEntryRequest({ inputMode: "handwritten", language: "en", transcript: "x" })
@@ -59,100 +71,133 @@ describe("parseCreateDiaryEntryRequest", () => {
 });
 
 describe("parseUpdateDiaryEntryRequest", () => {
-  it("accepts a non-blank text", () => {
-    expect(parseUpdateDiaryEntryRequest({ text: "edited" })).toEqual({ text: "edited" });
+  it("accepts a rich body document with an optional language", () => {
+    expect(parseUpdateDiaryEntryRequest({ bodyDoc: otherDoc, language: "en" })).toEqual({
+      bodyDoc: otherDoc,
+      language: "en"
+    });
   });
 
-  it("rejects a blank text", () => {
-    expect(() => parseUpdateDiaryEntryRequest({ text: "" })).toThrow();
+  it("accepts a body document without a language", () => {
+    expect(parseUpdateDiaryEntryRequest({ bodyDoc: otherDoc })).toEqual({ bodyDoc: otherDoc });
+  });
+
+  it("rejects a malformed body document", () => {
+    expect(() =>
+      parseUpdateDiaryEntryRequest({ bodyDoc: { type: "doc", content: [{ type: "bogus" }] } })
+    ).toThrow();
+  });
+
+  it("rejects an unsupported language", () => {
+    expect(() => parseUpdateDiaryEntryRequest({ bodyDoc: otherDoc, language: "fr" })).toThrow();
   });
 });
 
 describe("parseDiaryEntryDto", () => {
-  it("accepts an entry with a null language", () => {
-    const dto = {
-      createdAt: "2026-06-30T20:38:00.000Z",
-      entryDate: "2026-06-30",
-      id: "diary-1",
-      language: null,
-      text: "I went to the park."
-    };
-    expect(parseDiaryEntryDto(dto)).toEqual(dto);
+  const base = {
+    bodyDoc,
+    bodyText: "I went to the park.",
+    createdAt: "2026-06-30T20:38:00.000Z",
+    failureReason: null,
+    id: "diary-1",
+    inputMode: "typed" as const,
+    language: null,
+    occurredAt: "2026-06-30T20:38:00.000Z",
+    processingStatus: null,
+    updatedAt: "2026-06-30T20:38:00.000Z"
+  };
+
+  it("accepts a synchronous typed entry (null processing status)", () => {
+    expect(parseDiaryEntryDto(base)).toEqual(base);
   });
 
-  it("accepts an entry with a free-form language", () => {
+  it("accepts a queued voice entry with a processing status and language", () => {
     const dto = {
-      createdAt: "2026-06-30T20:38:00.000Z",
-      entryDate: "2026-06-30",
+      ...base,
       id: "diary-2",
+      inputMode: "voice" as const,
       language: "zh",
-      text: "今天我去了公园。"
+      processingStatus: "queued" as const
     };
     expect(parseDiaryEntryDto(dto)).toEqual(dto);
   });
 
-  it("rejects a malformed entryDate", () => {
+  it("accepts a failed entry with a failure reason", () => {
+    const dto = {
+      ...base,
+      failureReason: "model unavailable",
+      processingStatus: "failed" as const
+    };
+    expect(parseDiaryEntryDto(dto)).toEqual(dto);
+  });
+
+  it("rejects an invalid processing status", () => {
+    expect(() => parseDiaryEntryDto({ ...base, processingStatus: "done" })).toThrow();
+  });
+
+  it("rejects a malformed body document", () => {
     expect(() =>
-      parseDiaryEntryDto({
-        createdAt: "2026-06-30T20:38:00.000Z",
-        entryDate: "2026/06/30",
-        id: "diary-3",
-        language: null,
-        text: "x"
-      })
+      parseDiaryEntryDto({ ...base, bodyDoc: { type: "doc", content: [{ type: "bogus" }] } })
     ).toThrow();
   });
 });
 
-describe("parseDiaryCaptureResultDto", () => {
-  const entry = {
-    createdAt: "2026-06-30T20:38:00.000Z",
-    entryDate: "2026-06-30",
-    id: "diary-1",
-    language: null,
-    text: "I went to the park."
-  };
-
-  const card = {
-    proposalCandidateId: "candidate-1",
-    timelineEntryId: "diary-1",
-    type: "phrase_chunk" as const,
-    target: "back up now",
-    cue: "a service recovered",
-    useContext: "status update",
-    reason: "useful phrase",
-    category: "work" as const,
-    tags: ["status"]
-  };
-
-  it("accepts a saved diary entry with no proposal card", () => {
-    expect(parseDiaryCaptureResultDto({ entry, card: null })).toEqual({ entry, card: null });
+describe("parseTimelineEntryDto", () => {
+  it("accepts a diary entry", () => {
+    const dto = {
+      bodyDoc,
+      bodyText: "I went to the park.",
+      entryId: "diary-1",
+      kind: "diary" as const,
+      language: null,
+      occurredAt: "2026-06-30T20:38:00.000Z"
+    };
+    expect(parseTimelineEntryDto(dto)).toEqual(dto);
   });
 
-  it("accepts a saved diary entry with one Make Durable review card", () => {
-    expect(parseDiaryCaptureResultDto({ entry, card })).toEqual({ entry, card });
+  it("accepts a note entry", () => {
+    const dto = {
+      entryId: "note-1",
+      kind: "note" as const,
+      occurredAt: "2026-06-29T10:00:00.000Z",
+      text: "a note body"
+    };
+    expect(parseTimelineEntryDto(dto)).toEqual(dto);
   });
 
-  it("rejects a malformed nested card", () => {
+  it("rejects an unknown kind", () => {
     expect(() =>
-      parseDiaryCaptureResultDto({ entry, card: { ...card, category: "unknown" } })
+      parseTimelineEntryDto({ entryId: "x", kind: "highlight", occurredAt: "x", text: "y" })
     ).toThrow();
+  });
+});
+
+describe("timelineEntryDtoKinds", () => {
+  it("matches the diary and note discriminants", () => {
+    expect(timelineEntryDtoKinds).toEqual(["diary", "note"]);
   });
 });
 
 describe("parseTimelineDto", () => {
-  it("accepts day-grouped diary entries", () => {
+  it("accepts a day-grouped page mixing diary and note entries", () => {
     const dto = {
       days: [
         {
           date: "2026-06-30",
           entries: [
             {
-              createdAt: "2026-06-30T20:38:00.000Z",
-              id: "diary-1",
-              kind: "diary",
+              bodyDoc,
+              bodyText: "I went to the park.",
+              entryId: "diary-1",
+              kind: "diary" as const,
               language: null,
-              text: "I went to the park."
+              occurredAt: "2026-06-30T20:38:00.000Z"
+            },
+            {
+              entryId: "note-1",
+              kind: "note" as const,
+              occurredAt: "2026-06-30T09:00:00.000Z",
+              text: "a note"
             }
           ]
         }
@@ -165,25 +210,8 @@ describe("parseTimelineDto", () => {
     expect(parseTimelineDto({ days: [] })).toEqual({ days: [] });
   });
 
-  it("rejects an unknown entry kind", () => {
-    expect(() =>
-      parseTimelineDto({
-        days: [
-          {
-            date: "2026-06-30",
-            entries: [
-              {
-                createdAt: "2026-06-30T20:38:00.000Z",
-                id: "x",
-                kind: "note",
-                language: null,
-                text: "x"
-              }
-            ]
-          }
-        ]
-      })
-    ).toThrow();
+  it("rejects a malformed day key", () => {
+    expect(() => parseTimelineDto({ days: [{ date: "2026/06/30", entries: [] }] })).toThrow();
   });
 });
 
@@ -207,7 +235,7 @@ describe("timelineQuerySchema", () => {
     });
   });
 
-  it("accepts an empty query (first page, default limit applied by the route)", () => {
+  it("accepts an empty query", () => {
     expect(timelineQuerySchema.parse({})).toEqual({});
   });
 
