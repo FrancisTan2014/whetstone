@@ -10,10 +10,11 @@ export const entryTypes = [
   "block",
   "note",
   "toc_entry",
-  // `timeline_entry` (#451): a Make Durable / Quick Capture chronological capture is a first-class
-  // addressable Entry, so a Recall item created from a capture can point at it via
-  // `recall_items.provenance_entry_id` and captures can join the typed link graph via `entry_links`.
-  "timeline_entry"
+  // `diary_entry` (#571): a personal diary artifact is a first-class addressable Entry, so a Recall item
+  // created from it can point at it via `recall_items.provenance_entry_id` and it can join the typed link
+  // graph via `entry_links`. Its ownership + chronology live in the shared `personal_entries` facet, and
+  // the Timeline is a logical view over those personal entries — never a stored `timeline_entry` object.
+  "diary_entry"
 ] as const;
 
 export type EntryType = (typeof entryTypes)[number];

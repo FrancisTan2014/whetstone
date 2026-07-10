@@ -62,6 +62,20 @@ export function serializeDocument(node: ProseMirrorNode): DocumentNodeJSON {
   return node.toJSON() as DocumentNodeJSON;
 }
 
+// Build a valid document from plain text: a single paragraph carrying the text verbatim (a whitespace-
+// only or empty string yields an empty paragraph, the same shape an empty editor starts from). The text
+// is kept as one text node so `documentText` round-trips it exactly — the diary's durable body is stored
+// as this document and its plaintext projection stays byte-identical to the source (tidied/typed) text.
+// Validated through `parseDocument`, so the returned JSON is always a well-formed whetstone document.
+export function createTextDocument(text: string): DocumentNodeJSON {
+  const paragraph: DocumentNodeJSON =
+    text.length === 0
+      ? { type: "paragraph" }
+      : { content: [{ text, type: "text" }], type: "paragraph" };
+
+  return serializeDocument(parseDocument({ content: [paragraph], type: "doc" }));
+}
+
 // The plaintext of a document node: the in-order concatenation of its descendant text, with no
 // structural whitespace inserted between blocks or inline runs — the same character stream a renderer
 // paints. Pure and DOM-free, so the server can derive a stored PM block's searchable/anchorable
