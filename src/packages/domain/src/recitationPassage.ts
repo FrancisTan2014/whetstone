@@ -84,8 +84,8 @@ export const passageAnchorStatuses = ["anchored", "needs_repair"] as const;
 
 export type PassageAnchorStatus = (typeof passageAnchorStatuses)[number];
 
-// A stable ordering key for a position (block, offset) within the Work, using each block's source order.
-function positionKey(order: ReadonlyMap<string, number>, blockEntryId: string, offset: number): number {
+// The source-order index of a block, or NaN when the block is not part of the Work layout.
+function blockIndexOf(order: ReadonlyMap<string, number>, blockEntryId: string): number {
   const blockIndex = order.get(blockEntryId);
   return blockIndex === undefined ? Number.NaN : blockIndex;
 }
@@ -142,9 +142,9 @@ export function splitPassageRange(
   at: Readonly<{ blockEntryId: string; offset: number }>
 ): SplitPassageResult {
   const order = orderOf(blocks);
-  const atIndex = positionKey(order, at.blockEntryId, at.offset);
-  const startIndex = positionKey(order, passage.startBlockEntryId, passage.startOffset);
-  const endIndex = positionKey(order, passage.endBlockEntryId, passage.endOffset);
+  const atIndex = blockIndexOf(order, at.blockEntryId);
+  const startIndex = blockIndexOf(order, passage.startBlockEntryId);
+  const endIndex = blockIndexOf(order, passage.endBlockEntryId);
   if (Number.isNaN(atIndex) || Number.isNaN(startIndex) || Number.isNaN(endIndex)) {
     return { reason: "unknown_block", status: "invalid" };
   }
