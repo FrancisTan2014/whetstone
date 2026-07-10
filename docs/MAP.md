@@ -43,12 +43,12 @@ rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`
 `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
-`diaryTimeline.ts` (#246 voice-diary pure date logic — `toDayKey`/`isDayKey`/`toMonthKey`, `groupByDayDesc`
-day-grouping newest-first, and `monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar),
+`diaryTimeline.ts` (#246 voice-diary pure date logic — `toDayKey`/`isDayKey`/`toMonthKey`, and
+`monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar; day-grouping now lives in `timeline.ts`),
 `timeline.ts` (#571 the logical Timeline: the `diary`/`note` discriminated-kind vocabulary, each kind
 mapped to a real Entry type — there is no `timeline_entry`; the deterministic order `occurredAt` DESC with a
-stable `entryId` ASC tie-break; and day-grouping/`timelineDays` so the Timeline is a derived view, never a
-store) and `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
+stable `entryId` ASC tie-break; and day-grouping/`timelineDays`/`groupTimelineEntriesByDay` so the Timeline
+is a derived view, never a store) and `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
@@ -715,7 +715,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   durable body is a **ProseMirror/Tiptap document** displayed via its `bodyText` and **edited with the
   shared `RichContentEditor`** (`src/apps/web/src/shared/editor`, #570) — titles/dates/language/processing
   state stay structured metadata; `saveEdit` PATCHes the rich `bodyDoc` (guarding a blank body). Below
-  capture, the **Timeline** history groups entries by day newest-first (pure `groupByDayDesc`)
+  capture, the **Timeline** history groups entries by day newest-first (pure `groupTimelineEntriesByDay`)
   with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
   → next `before` page), and a **date-jump mini-calendar** marks days-with-entries (from the calendar
   endpoint, pure `monthGrid`/`monthBounds`/`shiftMonth`) and scrolls to a chosen day (loading older pages
