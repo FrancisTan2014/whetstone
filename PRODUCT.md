@@ -279,7 +279,11 @@ tokens live in code (the Tailwind theme) once built; this section records the du
   - `Work` is a readable work; v0 type is `book`, `essay`, `blog_post`, or `classical_text`; it has a
     language field inherited by its units. v0 supports three languages, stored as fixed codes chosen
     from a dropdown (no free-text): Simplified Chinese (`zh-CN`), Traditional Chinese (`zh-TW`),
-    and English (`en`). EPUB metadata languages are normalized into this set on ingestion.
+    and English (`en`). EPUB metadata languages are normalized into this set on ingestion. A Work is
+    usually **ingested** (shared, no owner), but may instead be **authored** — created by the current
+    user in the shared rich editor (#576). An authored Work's blocks are **canonical** (composed, not
+    regenerated from a source) and the Work is **owned**; it is otherwise the same block/document model
+    and reads back in the same reader. See "Editing & the document model" and "Identity & ownership".
   - `ReadingUnit` is an ordered unit within a work (chapter/section/essay). It is a container/ordering
     entry, linked from the Work via `contains`.
   - **`Block` is the atomic, addressable unit** — one content block (paragraph, heading, list item,
@@ -770,6 +774,11 @@ block)` for the _whole_ work, keyed by **real per-unit source file** (not an anc
     layer** — comments are already modeled (decorations + `user_id`), but _shared_ reading/commenting needs the
     deferred **multi-user** step, so **authoring lands single-user first** (it crosses no new non-goal). All of
     this sits **after the bedrock pivot** (the editor is its final slice).
+    - **Landed (#576):** a learner creates an owned Work from the Library ("New document"), edits it at an
+      immersive `#/write?work=<id>` surface in the shared rich editor with **debounced, latest-write-safe
+      autosave** (and a navigate-away guard while a save is pending), toggles to read it back through the same
+      reader renderer, and resumes the most recently edited draft from Today's **Continue writing** card. The
+      Library marks authored Works with a badge and opens them in the editor rather than the reader.
 
 ## Deferred scope (post current diary/Timeline slice)
 

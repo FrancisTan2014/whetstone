@@ -496,7 +496,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"
   `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Practice =
   `SessionPage`, Progress = `ProgressMapPage`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
-  `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`); `AppShell.tsx` is the responsive frame (one `Primary`
+  `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`, Write =
+  `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
   `ToastViewport` live region). `navigation.ts` holds the **five** primary destinations — Today,
   Library, Practice, **Map** (the user-facing label for the `/progress` route), Search — rendered as a
@@ -504,8 +505,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   their routes but are NOT primary: Reader is an immersive destination opened from context, and the
   others are reached from where they belong (Today links to Recall/Diary; Library links to the
   all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
-  wrap the mobile row). On the `/reader` route the nav (and the toggle bar) recedes so the reading column
-  owns the viewport (immersive reading room); the reader provides its own back-to-Library control.
+  wrap the mobile row). On the `/reader` and `/write` routes the nav (and the toggle bar) recede so the
+  reading/writing column owns the viewport (immersive room); each provides its own back-to-Library control.
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
@@ -551,7 +552,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `GET /api/reading-position/works` → the set of work ids with a position), a **Manage content**
   button (emits `onManageContent` up to `LibraryMode`, which opens the content sheet), a contextual
   **Notes** link (`#/notes?work=<entryId>`), and **Export Markdown**. Creating a work auto-opens its
-  Manage-content sheet (add content right after create); an EPUB import does not. `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
+  Manage-content sheet (add content right after create); an EPUB import does not. A **New document**
+  action (#576) opens a minimal sheet (title/type/language — the current user is the author) that calls
+  `authoredWorks/authoredWorkApi.createAuthoredWork` and hash-navigates into the editor
+  (`#/write?work=<id>`); works the current user authored (loaded via `listAuthoredWorks`) carry an
+  **Authored** badge and route their card's primary action to the editor (**Open** → `#/write?work=`)
+  instead of the reader, hiding **Manage content**. `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
   transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
   each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
   `fetchUnitContent` / `locateBlockUnit` / `fetchWorkAnchorIndex`), with an explicit per-unit loading
@@ -737,7 +743,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,
   a restrained Recall card (`fetchDueRecall`: the first due item at a glance + a Review link to
   `/recall`, else a quiet "caught up" line), a Continue-reading card (`todayApi.fetchLatestReadingPosition`
-  → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), and the
+  → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), a
+  Continue-writing card (#576, `authoredWorks/authoredWorkApi.fetchContinueWriting` →
+  `GET /api/authored-works/continue`, the most recently edited authored Work, deep-linking
+  `#/write?work=`, else a quiet "no drafts yet" line), and the
   reading→practice nudge card (#245) in its `nudge/` slice: `nudgeApi.ts` `fetchNudge` (`GET /api/nudge`,
   null → undefined) renders ONE quiet, dismissible card — "Practise _‹snippet›_ from _‹work›_" with an
   accept link to `/practice` (where `startSession` leads with the same proposed case) and a ✕ that calls
@@ -745,6 +754,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   null/loading/error (no placeholder). When the actionable arms clear (no recall due AND no present
   nudge) it shows a compassionate "done for today" — NO streak/guilt/penalty. Each async arm loads
   independently so one failing never blanks the page; the reader stays calm.
+  `authoredWorks/` is the owned-Work editor slice (#576): `AuthoredWorkPage.tsx` is the immersive
+  `/write?work=<id>` surface that loads a user-authored Work's canonical ProseMirror document
+  (`authoredWorkApi.fetchAuthoredWork`), edits it in the shared `RichContentEditor`, and reads it back
+  through the same reader renderer (`reader/PmDocument`) with no format conversion — a missing/failed
+  load falls back to a calm inline state. `useAutosave.ts` is a debounced (800ms), serialized,
+  latest-write-safe autosave hook (5-state `idle|unsaved|saving|saved|error`; `saveAuthoredWorkContent`
+  → `PUT /api/authored-works/:id/content`); `useUnsavedChangesWarning.ts` guards navigation while a save
+  is pending. `authoredWork.tokens.ts` holds the pure status→label/class maps (coverage-excluded).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 
