@@ -30,15 +30,13 @@ async function seedDiaryEntry(
   const bodyDoc = createTextDocument(row.bodyText);
   await db.transaction(async (tx) => {
     await tx.insert(entries).values({ id: row.id, type: "diary_entry" });
-    await tx
-      .insert(personalEntries)
-      .values({
-        createdAt: at,
-        entryId: row.id,
-        occurredAt: at,
-        updatedAt: at,
-        userId: row.userId
-      });
+    await tx.insert(personalEntries).values({
+      createdAt: at,
+      entryId: row.id,
+      occurredAt: at,
+      updatedAt: at,
+      userId: row.userId
+    });
     await tx.insert(diaryEntries).values({
       bodyDoc,
       bodyText: row.bodyText,
@@ -64,15 +62,13 @@ async function seedNote(
   const at = new Date(row.occurredAt);
   await db.transaction(async (tx) => {
     await tx.insert(entries).values({ id: row.id, type: "note" });
-    await tx
-      .insert(personalEntries)
-      .values({
-        createdAt: at,
-        entryId: row.id,
-        occurredAt: at,
-        updatedAt: at,
-        userId: row.userId
-      });
+    await tx.insert(personalEntries).values({
+      createdAt: at,
+      entryId: row.id,
+      occurredAt: at,
+      updatedAt: at,
+      userId: row.userId
+    });
     await tx.insert(notes).values({
       answersJson: {},
       entryId: row.id,
