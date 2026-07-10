@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { DiaryEntryDto, TimelineDayDto } from "@whetstone/contracts";
+import { documentText, type DocumentNodeJSON } from "@whetstone/document";
 import {
   groupByDayDesc,
   monthBounds,
@@ -12,6 +13,7 @@ import {
 
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
+import { RichContentEditor } from "../../shared/editor/index.js";
 import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCard.js";
 import {
   deleteDiaryEntry,
@@ -23,40 +25,53 @@ import {
 // How many days the Timeline loads per page (matches the server's default page size).
 const PAGE_SIZE = 7;
 
-// A timeline entry flattened with the day it falls under, so the pure `groupByDayDesc` can regroup the
-// loaded entries (capture prepends, lazy-load appends older) into day sections without another fetch.
+// A diary timeline entry flattened with the day it falls under, so the pure `groupByDayDesc` can regroup
+// the loaded entries (capture prepends, lazy-load appends older) into day sections without another fetch.
+// The durable body is the rich ProseMirror/Tiptap document; `bodyText` is its plaintext projection used
+// for the read view and for the collapsed timeline preview.
 export type FlatEntry = Readonly<{
+  bodyDoc: DocumentNodeJSON;
+  bodyText: string;
   createdAt: string;
   date: string;
   id: string;
   kind: "diary";
   language: string | null;
-  text: string;
 }>;
 
 type LoadState = "loading" | "ready" | "error";
 
+// The Timeline is a mixed logical view over the current user's personal Entries (#571); the Diary is the
+// `kind === "diary"` filter over it, so note rows are dropped here.
 function flatten(days: ReadonlyArray<TimelineDayDto>): ReadonlyArray<FlatEntry> {
   return days.flatMap((day) =>
-    day.entries.map((entry) => ({
-      createdAt: entry.createdAt,
-      date: day.date,
-      id: entry.id,
-      kind: entry.kind,
-      language: entry.language,
-      text: entry.text
-    }))
+    day.entries.flatMap((entry) =>
+      entry.kind === "diary"
+        ? [
+            {
+              bodyDoc: entry.bodyDoc,
+              bodyText: entry.bodyText,
+              createdAt: entry.occurredAt,
+              date: day.date,
+              id: entry.entryId,
+              kind: "diary" as const,
+              language: entry.language
+            }
+          ]
+        : []
+    )
   );
 }
 
 function toFlat(entry: DiaryEntryDto): FlatEntry {
   return {
-    createdAt: entry.createdAt,
-    date: entry.entryDate,
+    bodyDoc: entry.bodyDoc,
+    bodyText: entry.bodyText,
+    createdAt: entry.occurredAt,
+    date: toDayKey(new Date(entry.occurredAt)),
     id: entry.id,
     kind: "diary",
-    language: entry.language,
-    text: entry.text
+    language: entry.language
   };
 }
 
@@ -242,21 +257,26 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
 
   function handleCaptured(entry: DiaryEntryDto): void {
     setNotice(null);
-    setEntries((previous) => [...previous, toFlat(entry)]);
-    markEntryDay(entry.entryDate);
+    const flat = toFlat(entry);
+    setEntries((previous) => [...previous, flat]);
+    markEntryDay(flat.date);
     pendingEntryScrollRef.current = entry.id;
   }
 
-  async function saveEdit(id: string, text: string): Promise<void> {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) {
+  async function saveEdit(id: string, bodyDoc: DocumentNodeJSON): Promise<void> {
+    // A blank body is not a diary edit — keep the entry as it was rather than emptying it.
+    if (documentText(bodyDoc).trim().length === 0) {
       return;
     }
     setNotice(null);
     try {
-      const updated = await updateDiaryEntry(id, trimmed);
+      const updated = await updateDiaryEntry(id, bodyDoc);
       setEntries((previous) =>
-        previous.map((entry) => (entry.id === id ? { ...entry, text: updated.text } : entry))
+        previous.map((entry) =>
+          entry.id === id
+            ? { ...entry, bodyDoc: updated.bodyDoc, bodyText: updated.bodyText }
+            : entry
+        )
       );
       setEditingId(null);
     } catch {
@@ -384,13 +404,13 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                     >
                       {editingId === entry.id ? (
                         <EditForm
-                          initial={entry.text}
+                          initial={entry.bodyDoc}
                           onCancel={() => setEditingId(null)}
-                          onSave={(text) => void saveEdit(entry.id, text)}
+                          onSave={(bodyDoc) => void saveEdit(entry.id, bodyDoc)}
                         />
                       ) : (
                         <div className="flex flex-col gap-2">
-                          <p className="whitespace-pre-wrap text-text">{entry.text}</p>
+                          <p className="whitespace-pre-wrap text-text">{entry.bodyText}</p>
                           <div className="flex items-center gap-3">
                             <span className="text-xs text-text-muted">
                               {timeLabel(entry.createdAt)}
@@ -441,24 +461,27 @@ function Shell({ children }: Readonly<{ children: React.ReactNode }>): React.JSX
   );
 }
 
+// Editing a diary body uses the shared rich editor (#571): the durable ProseMirror/Tiptap document is
+// edited in place, and Save persists the new document. `draft` mirrors the editor's live document so the
+// explicit Save button (and the editor's own Save affordance) persist the latest content.
 function EditForm({
   initial,
   onCancel,
   onSave
 }: Readonly<{
-  initial: string;
+  initial: DocumentNodeJSON;
   onCancel: () => void;
-  onSave: (text: string) => void;
+  onSave: (bodyDoc: DocumentNodeJSON) => void;
 }>): React.JSX.Element {
-  const [draft, setDraft] = useState(initial);
+  const [draft, setDraft] = useState<DocumentNodeJSON>(initial);
 
   return (
     <div className="flex flex-col gap-2">
-      <textarea
-        aria-label="Edit entry"
-        className="min-h-16 rounded border border-border bg-surface p-2 text-text"
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        value={draft}
+      <RichContentEditor
+        ariaLabel="Edit entry"
+        document={initial}
+        onChange={setDraft}
+        onSave={onSave}
       />
       <div className="flex gap-2">
         <Button onClick={() => onSave(draft)} size="sm">

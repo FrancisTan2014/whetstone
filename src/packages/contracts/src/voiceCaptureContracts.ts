@@ -9,9 +9,9 @@ import { captureLanguageSchema } from "./captureContracts.js";
 // voice-capture API is described here; the server validates once at the boundary.
 
 // The lifecycle a queued voice capture walks: created `queued`, claimed by the worker as `transcribing`,
-// then `tidying`, then `ready` (its Timeline text is filled and the Make Durable gate has run) — or
-// `failed` when the worker gave up (the raw audio is kept so it can be retried). Ordered from first to
-// terminal so the frontend can render progress.
+// then `tidying`, then `ready` (its durable diary body is built from the tidied text) — or `failed` when
+// the worker gave up (the raw audio is kept so it can be retried). Ordered from first to terminal so the
+// frontend can render progress.
 export const voiceCaptureStatuses = [
   "queued",
   "transcribing",

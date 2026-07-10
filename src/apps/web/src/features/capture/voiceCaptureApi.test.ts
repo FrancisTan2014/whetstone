@@ -10,11 +10,10 @@ import {
 } from "./voiceCaptureApi";
 
 const queued: VoiceCaptureStatusDto = {
-  createdAt: "2026-07-09T10:00:00.000Z",
-  entryDate: "2026-07-09",
   failureReason: null,
   id: "cap-1",
   language: "en",
+  occurredAt: "2026-07-09T10:00:00.000Z",
   status: "queued",
   text: null
 };

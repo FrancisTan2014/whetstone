@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
@@ -54,30 +54,14 @@ export function TodayPage(): React.JSX.Element {
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
-  // Monotonic id for the in-flight recall request. The recall arm loads on mount AND again after a
-  // Make Durable save, so two loads can overlap: latest-wins guards against a slower earlier request
-  // resolving last and clobbering the newer result (e.g. the pre-save empty list overwriting the just
-  // -saved item, reintroducing #509 under a different ordering). Only the latest request may write.
-  const recallRequestRef = useRef(0);
-
-  // Loading the due-recall batch is shared between the initial mount and a refresh after a Make
-  // Durable save. The initial "loading" comes from the default state; a refresh keeps the current
-  // card until the refetch resolves (no flash), so this only sets the resolved arm — never a
-  // synchronous setState in the mount effect. Stable across renders so the effect stays a one-shot.
+  // Load the due-recall batch on mount. A diary capture journals only (#571) — nothing on Today mutates
+  // recall after mount — so this is a plain one-shot load with no in-flight reconciliation. Stable across
+  // renders so the effect stays a one-shot, and the resolved arm is set only after the fetch settles (no
+  // synchronous setState in the mount effect).
   const loadRecall = useCallback(() => {
-    recallRequestRef.current += 1;
-    const requestId = recallRequestRef.current;
     fetchDueRecall().then(
-      (items) => {
-        if (recallRequestRef.current === requestId) {
-          setRecall({ items, status: "ready" });
-        }
-      },
-      () => {
-        if (recallRequestRef.current === requestId) {
-          setRecall({ status: "error" });
-        }
-      }
+      (items) => setRecall({ items, status: "ready" }),
+      () => setRecall({ status: "error" })
     );
   }, []);
 
@@ -119,7 +103,7 @@ export function TodayPage(): React.JSX.Element {
 
       <div className="mt-6 flex flex-col gap-4">
         {firstRun ? <FirstRunCard /> : null}
-        <CaptureCard onDurableSaved={loadRecall} />
+        <CaptureCard />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />

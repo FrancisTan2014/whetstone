@@ -1,15 +1,14 @@
 import {
   parseDiaryCalendarDto,
-  parseDiaryCaptureResultDto,
   parseDiaryEntryDto,
   parseTimelineDto,
   type CaptureLanguage,
   type CaptureInputMode,
   type DiaryCalendarDto,
-  type DiaryCaptureResultDto,
   type DiaryEntryDto,
   type TimelineDto
 } from "@whetstone/contracts";
+import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { apiUrl } from "../../shared/runtime";
 
@@ -28,15 +27,15 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-// Capture: post the transcript and how it was entered (`inputMode`: typed box vs tap-and-talk voice);
-// the server tidies it, files it as a diary entry preserving that input mode, and may return one Make
-// Durable review card.
+// Capture: post the transcript and how it was entered (`inputMode`: typed box vs tap-and-talk voice).
+// A diary capture journals only (#571) — the server saves it as a rich diary Entry immediately (no
+// proposal step) and returns that Entry.
 export async function submitDiaryCapture(
   transcript: string,
   inputMode: CaptureInputMode,
   language: CaptureLanguage
-): Promise<DiaryCaptureResultDto> {
-  return parseDiaryCaptureResultDto(
+): Promise<DiaryEntryDto> {
+  return parseDiaryEntryDto(
     await requestJson(apiUrl("/diary/entries"), {
       body: JSON.stringify({ inputMode, language, transcript }),
       headers: jsonHeaders,
@@ -66,10 +65,14 @@ export async function fetchDiaryCalendar(from: string, to: string): Promise<Diar
   return parseDiaryCalendarDto(await requestJson(apiUrl(`/diary/calendar?${params.toString()}`)));
 }
 
-export async function updateDiaryEntry(id: string, text: string): Promise<DiaryEntryDto> {
+// Edit a diary Entry's rich body through the shared editor: PATCH the new ProseMirror/Tiptap document.
+export async function updateDiaryEntry(
+  id: string,
+  bodyDoc: DocumentNodeJSON
+): Promise<DiaryEntryDto> {
   return parseDiaryEntryDto(
     await requestJson(apiUrl(`/diary/entries/${encodeURIComponent(id)}`), {
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ bodyDoc }),
       headers: jsonHeaders,
       method: "PATCH"
     })

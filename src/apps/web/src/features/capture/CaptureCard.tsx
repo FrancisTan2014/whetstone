@@ -1,24 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   type DiaryEntryDto,
-  recallCategories,
   type CaptureLanguage,
   type CaptureInputMode,
-  type MakeDurableCardDto,
-  type ProposalPayload,
-  type RecallCategory,
   type VoiceCaptureStatusDto
 } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 
 import { Button } from "../../shared/ui/Button";
 import { submitDiaryCapture } from "../diary/diaryApi";
-import {
-  fetchMakeDurableCards,
-  reviewMakeDurableCard,
-  runMakeDurableBackfill,
-  type ReviewCardInput
-} from "../makeDurable/makeDurableApi";
 import { createCaptureVoice } from "./captureVoice";
 import { useVoiceCaptures } from "./useVoiceCaptures";
 import { voiceCaptureStatusLabels } from "./voiceCaptureLabels.tokens";
@@ -47,61 +38,51 @@ function readInitialCaptureLanguage(): CaptureLanguage {
   return stored === "zh" || stored === "en" ? stored : "en";
 }
 
+// Build the DiaryEntryDto a just-ready voice capture becomes, so the Timeline can insert it in place
+// without a refetch (#566). The status carries the tidied text + occurred instant; the durable body is
+// the same single-paragraph document the server built from that text (`createTextDocument`), so the
+// entry is immediately rich-editable.
+function readyVoiceEntry(ready: VoiceCaptureStatusDto, text: string): DiaryEntryDto {
+  return {
+    bodyDoc: createTextDocument(text),
+    bodyText: text,
+    createdAt: ready.occurredAt,
+    failureReason: null,
+    id: ready.id,
+    inputMode: "voice",
+    language: ready.language,
+    occurredAt: ready.occurredAt,
+    processingStatus: "ready",
+    updatedAt: ready.occurredAt
+  };
+}
+
 // The unified capture surface used by Today and Diary: a typed box and — when the browser supports it —
-// tap-and-talk voice capture. Every capture saves a diary entry first; then the shared Make Durable
-// proposal gate may surface at most one review card. Load/model/mic failures degrade quietly so this
-// never blanks Today or the Diary timeline.
+// tap-and-talk voice capture. A diary capture journals only (#571): every capture saves a diary Entry
+// first and nothing else — no proposal or Make Durable step blocks or slows it. Load/mic failures
+// degrade quietly so this never blanks Today or the Diary timeline.
 export function CaptureCard({
   capture = createCaptureVoice(),
-  onCaptured,
-  onDurableSaved
+  onCaptured
 }: Readonly<{
   capture?: CaptureVoiceDependencies;
   onCaptured?: (entry: DiaryEntryDto) => void;
-  // Fired after a review creates a recall item (Save / Edit + Save). Today uses it to refresh its
-  // Recall card so the newly due item shows at once instead of going stale (#509). The negative
-  // outcomes create no recall item, so this never fires for them.
-  onDurableSaved?: () => void;
 }>): React.JSX.Element {
-  const [cards, setCards] = useState<ReadonlyArray<MakeDurableCardDto>>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [savingVoice, setSavingVoice] = useState(false);
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [backfilling, setBackfilling] = useState(false);
-  const [backfillNote, setBackfillNote] = useState<string | null>(null);
   const [language, setLanguage] = useState<CaptureLanguage>(readInitialCaptureLanguage);
 
-  useEffect(() => {
-    fetchMakeDurableCards().then(
-      (loaded) => setCards(loaded),
-      () => undefined
-    );
-  }, []);
-
   // A background voice capture just became ready (#566): it now has its tidied text and is a real diary
-  // entry, so hand it to the Timeline (Diary inserts it in capture order) and drop it from the pending
-  // rows. A ready capture may also have produced a Make Durable card server-side, so refresh cards — the
-  // one-card cap is still enforced by the server and the slice(0, 1) render below.
-  const handleVoiceReady = useCallback(
-    (ready: VoiceCaptureStatusDto): void => {
-      if (ready.text !== null) {
-        onCaptured?.({
-          createdAt: ready.createdAt,
-          entryDate: ready.entryDate,
-          id: ready.id,
-          language: ready.language,
-          text: ready.text
-        });
-      }
-      fetchMakeDurableCards().then(
-        (loaded) => setCards(loaded),
-        () => undefined
-      );
-    },
-    [onCaptured]
-  );
+  // Entry, so hand it to the Timeline (Diary inserts it in capture order). The hook drops it from the
+  // pending rows.
+  const handleVoiceReady = (ready: VoiceCaptureStatusDto): void => {
+    if (ready.text !== null) {
+      onCaptured?.(readyVoiceEntry(ready, ready.text));
+    }
+  };
 
   const voice = useVoiceCaptures({ onReady: handleVoiceReady });
 
@@ -121,18 +102,13 @@ export function CaptureCard({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [guardNavigation]);
 
-  function removeCard(id: string): void {
-    setCards((current) => current.filter((card) => card.proposalCandidateId !== id));
-  }
-
   function chooseLanguage(nextLanguage: CaptureLanguage): void {
     setLanguage(nextLanguage);
     window.localStorage.setItem(captureLanguageStorageKey, nextLanguage);
   }
 
-  // The single path both typed and voice capture funnel through: the Timeline entry is always saved,
-  // and a returned review card (if any) is prepended. Returns whether the submit succeeded so the caller
-  // can clear its input only on success.
+  // The single path both typed and voice capture funnel through: save the diary Entry, then hand it to
+  // the Timeline. Returns whether the submit succeeded so the caller can clear its input only on success.
   async function runCapture(rawText: string, inputMode: CaptureInputMode): Promise<boolean> {
     const trimmed = rawText.trim();
     if (trimmed.length === 0) {
@@ -142,12 +118,8 @@ export function CaptureCard({
     setBusy(true);
     setError(null);
     try {
-      const result = await submitDiaryCapture(trimmed, inputMode, language);
-      onCaptured?.(result.entry);
-      const card = result.card;
-      if (card !== null) {
-        setCards((current) => [card, ...current]);
-      }
+      const entry = await submitDiaryCapture(trimmed, inputMode, language);
+      onCaptured?.(entry);
       return true;
     } catch {
       setError("Couldn't save your capture. Please try again.");
@@ -208,51 +180,13 @@ export function CaptureCard({
     }
   }
 
-  async function act(id: string, input: ReviewCardInput): Promise<void> {
-    setError(null);
-    try {
-      const recallItem = await reviewMakeDurableCard(id, input);
-      removeCard(id);
-      // Save / Edit + Save create a recall item (the negative outcomes return null); tell Today so
-      // its Recall card reflects the newly due item rather than staying stale (#509).
-      if (recallItem !== null) {
-        onDurableSaved?.();
-      }
-    } catch {
-      setError("Couldn't record your choice. Please try again.");
-    }
-  }
-
-  // Mine the learner's Timeline history for one high-value proposal (#456). The server surfaces at most
-  // one card per run; if it returns one, prepend it, otherwise show a calm "nothing found" note. A
-  // failure degrades to the same generic error and never blanks the section.
-  async function mineHistory(): Promise<void> {
-    setError(null);
-    setBackfillNote(null);
-    setBackfilling(true);
-    try {
-      const result = await runMakeDurableBackfill();
-      if (result.card !== null) {
-        const card = result.card;
-        setCards((current) => [card, ...current]);
-      } else {
-        setBackfillNote("No new suggestions from your history yet.");
-      }
-    } catch {
-      setError("Couldn't scan your history. Please try again.");
-    } finally {
-      setBackfilling(false);
-    }
-  }
-
   const voiceBusy = busy || savingVoice;
 
   return (
     <section aria-label="Capture today" className="rounded border border-border bg-surface p-4">
       <h2 className="text-lg font-medium text-text">Capture today</h2>
       <p className="mt-1 text-text-muted">
-        Tap and talk — or write it down. It lands in your diary, then one useful note may be
-        proposed.
+        Tap and talk — or write it down. It lands in your diary.
       </p>
 
       <div className="mt-3" role="group" aria-labelledby="capture-language-label">
@@ -353,205 +287,11 @@ export function CaptureCard({
         </div>
       </form>
 
-      <div className="mt-3 flex flex-col gap-1">
-        <div>
-          <Button
-            disabled={voiceBusy || backfilling}
-            onClick={() => void mineHistory()}
-            type="button"
-            variant="secondary"
-          >
-            {backfilling ? "Scanning…" : "Mine my history"}
-          </Button>
-        </div>
-        {backfillNote === null ? null : (
-          <p className="text-sm text-text-muted" role="status">
-            {backfillNote}
-          </p>
-        )}
-      </div>
-
       {error === null ? null : (
         <p className="mt-2 text-text-muted" role="alert">
           {error}
         </p>
       )}
-
-      {cards.length === 0 ? null : (
-        <div className="mt-4 flex flex-col gap-3">
-          {/* Today shows at most one Make Durable card (never an inbox). The server enforces this
-              (a second gated proposal is held, not surfaced); rendering only the first card is a
-              defensive client-side guarantee of the same rule. */}
-          {cards.slice(0, 1).map((card) => (
-            <MakeDurableReviewCard card={card} key={card.proposalCandidateId} onAct={act} />
-          ))}
-        </div>
-      )}
     </section>
-  );
-}
-
-// One review card. Reads as "Make this durable?" with the proposed cue/target/context, and offers the
-// four outcomes. Edit opens an inline form to correct the target/cue/context/category before saving.
-function MakeDurableReviewCard({
-  card,
-  onAct
-}: Readonly<{
-  card: MakeDurableCardDto;
-  onAct: (id: string, input: ReviewCardInput) => void;
-}>): React.JSX.Element {
-  const [editing, setEditing] = useState(false);
-
-  return (
-    <article
-      aria-label={`Make durable: ${card.target}`}
-      className="rounded border border-border bg-bg p-3"
-    >
-      <p className="text-sm font-medium text-text-muted">Make this durable?</p>
-      <dl className="mt-2 flex flex-col gap-1 text-text">
-        <div>
-          <dt className="text-xs uppercase text-text-muted">Target</dt>
-          <dd className="text-lg">{card.target}</dd>
-        </div>
-        <div>
-          <dt className="text-xs uppercase text-text-muted">Cue</dt>
-          <dd>{card.cue}</dd>
-        </div>
-        <div>
-          <dt className="text-xs uppercase text-text-muted">When to use it</dt>
-          <dd>{card.useContext}</dd>
-        </div>
-      </dl>
-      <p className="mt-2 text-sm text-text-muted">{card.reason}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="rounded bg-surface px-2 py-0.5 text-xs text-text-muted">
-          {card.category}
-        </span>
-        {card.tags.map((tag) => (
-          <span className="rounded bg-surface px-2 py-0.5 text-xs text-text-muted" key={tag}>
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      {editing ? (
-        <EditForm
-          card={card}
-          onCancel={() => setEditing(false)}
-          onSave={(editedPayload) =>
-            onAct(card.proposalCandidateId, { editedPayload, outcome: "edited_saved" })
-          }
-        />
-      ) : (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            onClick={() => onAct(card.proposalCandidateId, { outcome: "saved" })}
-            type="button"
-            variant="primary"
-          >
-            Save
-          </Button>
-          <Button onClick={() => setEditing(true)} type="button" variant="secondary">
-            Edit
-          </Button>
-          <Button
-            onClick={() => onAct(card.proposalCandidateId, { outcome: "not_useful_now" })}
-            type="button"
-            variant="secondary"
-          >
-            Not useful now
-          </Button>
-          <Button
-            onClick={() => onAct(card.proposalCandidateId, { outcome: "wrong_hallucinated" })}
-            type="button"
-            variant="secondary"
-          >
-            Wrong
-          </Button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-// The inline edit form: correct the target/cue/context/category, then Save. Tags carry over unchanged
-// (v0 keeps tag editing out of scope).
-function EditForm({
-  card,
-  onCancel,
-  onSave
-}: Readonly<{
-  card: MakeDurableCardDto;
-  onCancel: () => void;
-  onSave: (payload: ProposalPayload) => void;
-}>): React.JSX.Element {
-  const [target, setTarget] = useState(card.target);
-  const [cue, setCue] = useState(card.cue);
-  const [useContext, setUseContext] = useState(card.useContext);
-  const [category, setCategory] = useState<RecallCategory>(card.category);
-
-  function submit(event: React.FormEvent): void {
-    event.preventDefault();
-    if (target.trim().length === 0 || cue.trim().length === 0 || useContext.trim().length === 0) {
-      return;
-    }
-    onSave({
-      target: target.trim(),
-      cue: cue.trim(),
-      useContext: useContext.trim(),
-      category,
-      tags: card.tags
-    });
-  }
-
-  return (
-    <form className="mt-3 flex flex-col gap-2" onSubmit={submit}>
-      <label className="flex flex-col gap-1 text-sm text-text-muted">
-        Target
-        <input
-          className="rounded border border-border bg-bg p-2 text-text"
-          onChange={(event) => setTarget(event.target.value)}
-          value={target}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text-muted">
-        Cue
-        <input
-          className="rounded border border-border bg-bg p-2 text-text"
-          onChange={(event) => setCue(event.target.value)}
-          value={cue}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text-muted">
-        When to use it
-        <input
-          className="rounded border border-border bg-bg p-2 text-text"
-          onChange={(event) => setUseContext(event.target.value)}
-          value={useContext}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text-muted">
-        Category
-        <select
-          className="rounded border border-border bg-bg p-2 text-text"
-          onChange={(event) => setCategory(event.target.value as RecallCategory)}
-          value={category}
-        >
-          {recallCategories.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="flex gap-2">
-        <Button type="submit" variant="primary">
-          Save changes
-        </Button>
-        <Button onClick={onCancel} type="button" variant="secondary">
-          Cancel
-        </Button>
-      </div>
-    </form>
   );
 }
