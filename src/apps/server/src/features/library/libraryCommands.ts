@@ -22,6 +22,7 @@ import {
   readingPositions,
   readingUnits,
   recallItems,
+  recitationPlans,
   tocEntries,
   workMeta,
   workSources
@@ -223,6 +224,22 @@ export async function deleteWork(
     }
 
     await tx.delete(readingPositions).where(eq(readingPositions.workEntryId, workEntryId));
+
+    // A learner may have adopted this Work as a recitation routine (#577): each plan is an owned Entry
+    // whose `recitation_plans` facet has an FK to the Work's Entry, so it must be torn down before the
+    // Work Entry is deleted. Remove the facet row, then its `personal_entries` chronology facet, then the
+    // owning `entries` row — otherwise the FK blocks the delete and the Work is stuck in the Library.
+    const recitationPlanIds = (
+      await tx
+        .select({ id: recitationPlans.entryId })
+        .from(recitationPlans)
+        .where(eq(recitationPlans.workEntryId, workEntryId))
+    ).map((row) => row.id);
+    if (recitationPlanIds.length > 0) {
+      await tx.delete(recitationPlans).where(inArray(recitationPlans.entryId, recitationPlanIds));
+      await tx.delete(personalEntries).where(inArray(personalEntries.entryId, recitationPlanIds));
+      await tx.delete(entries).where(inArray(entries.id, recitationPlanIds));
+    }
 
     // An authored (owned) Work carries its own `personal_entries` chronology facet (#576); remove it with
     // the Work so no ownership row dangles off the deleted Entry. A no-op for an imported Work (none exists).
