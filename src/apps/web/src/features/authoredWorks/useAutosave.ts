@@ -46,9 +46,6 @@ export function useAutosave(
   const savingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mountedRef = useRef(true);
-  // Holds the latest `runSave` so the save loop can re-enter itself (a newer edit landed mid-save)
-  // without the callback closing over itself — a stable indirection the linter is happy with.
-  const runSaveRef = useRef<() => void>(() => {});
 
   const setStatusIfMounted = useCallback((next: AutosaveStatus): void => {
     if (mountedRef.current) {
@@ -57,50 +54,56 @@ export function useAutosave(
   }, []);
 
   const runSave = useCallback((): void => {
-    if (savingRef.current) {
-      return;
-    }
-
-    const document = pendingRef.current;
-    if (document === undefined) {
-      return;
-    }
-
-    savingRef.current = true;
-    pendingRef.current = undefined;
-    setStatusIfMounted("saving");
-
-    saveRef.current(document).then(
-      () => {
-        savingRef.current = false;
-        if (pendingRef.current === undefined) {
-          setStatusIfMounted("saved");
-          if (mountedRef.current) {
-            setHasUnsavedChanges(false);
-          }
-          return;
-        }
-        // A newer edit landed while this save was in flight — persist it too, staying in "saving".
-        runSaveRef.current();
-      },
-      () => {
-        savingRef.current = false;
-        // Keep the document pending (unless a newer edit already replaced it) so a retry can save it,
-        // and leave `hasUnsavedChanges` true so navigation warns.
-        if (pendingRef.current === undefined) {
-          pendingRef.current = document;
-        }
-        setStatusIfMounted("error");
+    // A hoisted declaration so the mid-save re-entry can reference the loop itself without an extra ref
+    // indirection (a `const`/`useCallback` self-reference would trip react-hooks; a function declaration
+    // hoists, so it does not).
+    const begin = (): void => {
+      if (savingRef.current) {
+        return;
       }
-    );
+
+      const document = pendingRef.current;
+      if (document === undefined) {
+        return;
+      }
+
+      savingRef.current = true;
+      pendingRef.current = undefined;
+      setStatusIfMounted("saving");
+
+      saveRef.current(document).then(
+        () => {
+          savingRef.current = false;
+          if (pendingRef.current === undefined) {
+            setStatusIfMounted("saved");
+            if (mountedRef.current) {
+              setHasUnsavedChanges(false);
+            }
+            return;
+          }
+          // A newer edit landed while this save was in flight — persist it too, staying in "saving".
+          begin();
+        },
+        () => {
+          savingRef.current = false;
+          // Keep the document pending (unless a newer edit already replaced it) so a retry can save it,
+          // and leave `hasUnsavedChanges` true so navigation warns.
+          if (pendingRef.current === undefined) {
+            pendingRef.current = document;
+          }
+          setStatusIfMounted("error");
+        }
+      );
+    };
+
+    begin();
   }, [setStatusIfMounted]);
 
-  // Keep the mutable refs pointing at the latest injected save and save loop, updated after render (never
-  // during it) so the async callbacks always read current values.
+  // Keep the injected save current, updated after render (never during it) so the async save loop always
+  // reads the latest `save` prop rather than a stale closure.
   useEffect(() => {
     saveRef.current = save;
-    runSaveRef.current = runSave;
-  }, [runSave, save]);
+  }, [save]);
 
   const notifyChange = useCallback(
     (document: DocumentNodeJSON): void => {

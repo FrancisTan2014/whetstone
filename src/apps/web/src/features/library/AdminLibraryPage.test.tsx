@@ -1022,4 +1022,17 @@ describe("AdminLibraryPage", () => {
       await screen.findByText("Could not create the document. Please try again.")
     ).toBeDefined();
   });
+
+  it("dismisses the New document sheet without creating anything (#576)", async () => {
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New document" }));
+    await screen.findByRole("heading", { name: "New document" });
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "New document" })).toBeNull();
+    });
+    expect(mockedCreateAuthoredWork).not.toHaveBeenCalled();
+  });
 });
