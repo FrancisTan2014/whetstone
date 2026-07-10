@@ -180,31 +180,25 @@ export function splitPassageRange(
   };
 }
 
-export type MergePassagesResult =
-  | Readonly<{ status: "merged"; range: PassageRange }>
-  | Readonly<{ status: "invalid"; reason: "not_adjacent" }>;
+export type MergePassagesResult = Readonly<{ range: PassageRange }>;
 
-// Merge two adjacent passages into one, without changing the Work text. `earlier` must end exactly where
-// `later` begins (same block and offset); otherwise the merge is rejected. The merged range spans from
-// the earlier start to the later end.
+// Merge two order-consecutive passages into one range spanning from the earlier passage's start to the
+// later passage's end, without changing the Work text. The two passages are assumed consecutive in
+// reciting order — the caller always merges a passage with the one immediately after it — so together
+// they describe one contiguous stretch of the Work, even across a block boundary where their offsets do
+// not meet (whole-block passages in adjacent blocks). Only the boundary between the two is removed; the
+// source text each covers is unchanged.
 export function mergePassageRanges(
   earlier: PassageRange,
   later: PassageRange
 ): MergePassagesResult {
-  const adjacent =
-    earlier.endBlockEntryId === later.startBlockEntryId &&
-    earlier.endOffset === later.startOffset;
-  if (!adjacent) {
-    return { reason: "not_adjacent", status: "invalid" };
-  }
   return {
     range: {
       endBlockEntryId: later.endBlockEntryId,
       endOffset: later.endOffset,
       startBlockEntryId: earlier.startBlockEntryId,
       startOffset: earlier.startOffset
-    },
-    status: "merged"
+    }
   };
 }
 

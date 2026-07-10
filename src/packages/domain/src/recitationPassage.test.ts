@@ -236,24 +236,24 @@ describe("splitPassageRange", () => {
 });
 
 describe("mergePassageRanges", () => {
-  it("merges two adjacent passages into one range", () => {
+  it("merges two order-consecutive passages that meet inside a block", () => {
     const result = mergePassageRanges(
       { endBlockEntryId: "b1", endOffset: 5, startBlockEntryId: "b1", startOffset: 0 },
       { endBlockEntryId: "b2", endOffset: 11, startBlockEntryId: "b1", startOffset: 5 }
     );
     expect(result).toEqual({
-      range: { endBlockEntryId: "b2", endOffset: 11, startBlockEntryId: "b1", startOffset: 0 },
-      status: "merged"
+      range: { endBlockEntryId: "b2", endOffset: 11, startBlockEntryId: "b1", startOffset: 0 }
     });
   });
 
-  it("rejects non-adjacent passages", () => {
-    expect(
-      mergePassageRanges(
-        { endBlockEntryId: "b1", endOffset: 5, startBlockEntryId: "b1", startOffset: 0 },
-        { endBlockEntryId: "b2", endOffset: 11, startBlockEntryId: "b1", startOffset: 6 }
-      )
-    ).toEqual({ reason: "not_adjacent", status: "invalid" });
+  it("merges whole-block passages across a block boundary (offsets need not meet)", () => {
+    const result = mergePassageRanges(
+      { endBlockEntryId: "b1", endOffset: 20, startBlockEntryId: "b1", startOffset: 0 },
+      { endBlockEntryId: "b3", endOffset: 24, startBlockEntryId: "b3", startOffset: 0 }
+    );
+    expect(result).toEqual({
+      range: { endBlockEntryId: "b3", endOffset: 24, startBlockEntryId: "b1", startOffset: 0 }
+    });
   });
 });
 
