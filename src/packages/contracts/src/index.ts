@@ -45,6 +45,27 @@ export type {
   TurnResultDto
 } from "./sessionContracts.js";
 export {
+  authoredWorkDtoSchema,
+  authoredWorkListDtoSchema,
+  authoredWorkSummaryDtoSchema,
+  continueWritingDtoSchema,
+  createAuthoredWorkRequestSchema,
+  parseAuthoredWorkDto,
+  parseAuthoredWorkListDto,
+  parseContinueWritingDto,
+  parseCreateAuthoredWorkRequest,
+  parseUpdateAuthoredWorkContentRequest,
+  updateAuthoredWorkContentRequestSchema
+} from "./authoredWorkContracts.js";
+export type {
+  AuthoredWorkDto,
+  AuthoredWorkListDto,
+  AuthoredWorkSummaryDto,
+  ContinueWritingDto,
+  CreateAuthoredWorkRequest,
+  UpdateAuthoredWorkContentRequest
+} from "./authoredWorkContracts.js";
+export {
   createDiaryEntryRequestSchema,
   diaryCalendarDtoSchema,
   diaryCalendarQuerySchema,
@@ -64,6 +85,7 @@ export {
   timelineEntryDtoSchema,
   timelineNoteEntryDtoSchema,
   timelineQuerySchema,
+  timelineWorkEntryDtoSchema,
   updateDiaryEntryRequestSchema
 } from "./diaryContracts.js";
 export type {
@@ -78,6 +100,7 @@ export type {
   TimelineEntryDto,
   TimelineNoteEntryDto,
   TimelineQuery,
+  TimelineWorkEntryDto,
   UpdateDiaryEntryRequest
 } from "./diaryContracts.js";
 export {

@@ -100,9 +100,26 @@ export const timelineNoteEntryDtoSchema = z
 
 export type TimelineNoteEntryDto = z.infer<typeof timelineNoteEntryDtoSchema>;
 
+// A user-owned authored Work in the logical Timeline (#576): the `work` row IS a real `work` Entry the
+// user created in the rich editor, carrying its title and the addressable work entry id (so the Timeline
+// can deep-link into the editor/reader). Its chronology comes from the shared personal-entry facet, like
+// every other Timeline row.
+export const timelineWorkEntryDtoSchema = z
+  .object({
+    entryId: z.string(),
+    kind: z.literal("work"),
+    occurredAt: z.string(),
+    title: z.string(),
+    workEntryId: z.string()
+  })
+  .strict();
+
+export type TimelineWorkEntryDto = z.infer<typeof timelineWorkEntryDtoSchema>;
+
 export const timelineEntryDtoSchema = z.discriminatedUnion("kind", [
   timelineDiaryEntryDtoSchema,
-  timelineNoteEntryDtoSchema
+  timelineNoteEntryDtoSchema,
+  timelineWorkEntryDtoSchema
 ]);
 
 export type TimelineEntryDto = z.infer<typeof timelineEntryDtoSchema>;

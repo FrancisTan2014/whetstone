@@ -9,7 +9,7 @@ import { toDayKey } from "./diaryTimeline.js";
 // The kinds a Timeline row can take. Each is a filter over the one derived result — the Diary is the
 // `diary` filter, and a future all-history view is the union. Ordered by nothing meaningful; membership,
 // not order, is what matters.
-export const timelineEntryKinds = ["diary", "note"] as const;
+export const timelineEntryKinds = ["diary", "note", "work"] as const;
 
 export type TimelineEntryKind = (typeof timelineEntryKinds)[number];
 
@@ -20,11 +20,13 @@ export function isTimelineEntryKind(value: unknown): value is TimelineEntryKind 
 }
 
 // Every Timeline kind resolves to a real, addressable Entry type — the guarantee that the Timeline is a
-// view, not a store: a `diary` row IS a `diary_entry` Entry, a `note` row IS a `note` Entry. There is no
-// mapping to a `timeline_entry`, because that type no longer exists (#571).
+// view, not a store: a `diary` row IS a `diary_entry` Entry, a `note` row IS a `note` Entry, and a `work`
+// row IS a user-owned authored `work` Entry (#576). There is no mapping to a `timeline_entry`, because
+// that type no longer exists (#571).
 const TIMELINE_KIND_ENTRY_TYPE: Readonly<Record<TimelineEntryKind, EntryType>> = {
   diary: "diary_entry",
-  note: "note"
+  note: "note",
+  work: "work"
 };
 
 export function entryTypeForTimelineKind(kind: TimelineEntryKind): EntryType {
