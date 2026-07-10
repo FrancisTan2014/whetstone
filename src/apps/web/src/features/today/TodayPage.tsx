@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import type { LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
+import type {
+  AuthoredWorkSummaryDto,
+  LatestReadingPositionDto,
+  NudgeDto,
+  RecallItemDto
+} from "@whetstone/contracts";
 
 import { buttonVariants } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
+import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi.js";
 import { fetchWorks } from "../library/libraryApi.js";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
@@ -33,6 +39,13 @@ type ContinueState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ position: LatestReadingPositionDto | undefined; status: "ready" }>;
 
+// The most recently edited unfinished authored Work, powering the "Continue writing" card. An explicit
+// server null (nothing authored yet) resolves to `undefined`; a failed load renders a quiet inline note.
+type WritingState =
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ status: "ready"; work: AuthoredWorkSummaryDto | undefined }>;
+
 // The nudge surfaces at most one proposed capture. `nudge: undefined` (cold start / all in cooldown)
 // and the loading/error arms all render nothing — the slot simply stays empty, never a placeholder.
 type NudgeState =
@@ -51,6 +64,7 @@ type LibraryState =
 export function TodayPage(): React.JSX.Element {
   const [recall, setRecall] = useState<RecallState>({ status: "loading" });
   const [reading, setReading] = useState<ContinueState>({ status: "loading" });
+  const [writing, setWriting] = useState<WritingState>({ status: "loading" });
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
@@ -70,6 +84,10 @@ export function TodayPage(): React.JSX.Element {
     fetchLatestReadingPosition().then(
       (position) => setReading({ position, status: "ready" }),
       () => setReading({ status: "error" })
+    );
+    fetchContinueWriting().then(
+      ({ work }) => setWriting({ status: "ready", work: work ?? undefined }),
+      () => setWriting({ status: "error" })
     );
     fetchNudge().then(
       (value) => setNudge({ nudge: value, status: "ready" }),
@@ -106,6 +124,7 @@ export function TodayPage(): React.JSX.Element {
         <CaptureCard />
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
+        <ContinueWritingCard state={writing} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
         <ClearedState library={library} reading={reading} recall={recall} nudge={nudge} />
       </div>
@@ -240,6 +259,48 @@ function renderReading(state: ContinueState): React.JSX.Element {
       <a
         className={buttonVariants({ variant: "secondary" })}
         href={`#/reader?work=${encodeURIComponent(state.position.workEntryId)}`}
+      >
+        Continue
+      </a>
+    </div>
+  );
+}
+
+// Continue writing composes the most recently edited unfinished authored Work (#576). Present -> a deep
+// link straight into the immersive editor (`#/write?work=…`). None -> a quiet line; a failure -> a quiet
+// inline note. Like the other arms it loads independently, so a failure here never blanks Today.
+function ContinueWritingCard({ state }: Readonly<{ state: WritingState }>): React.JSX.Element {
+  return (
+    <section aria-label="Continue writing" className="rounded border border-border bg-surface p-4">
+      <h2 className="text-lg font-medium text-text">Continue writing</h2>
+      <div className="mt-2">{renderWriting(state)}</div>
+    </section>
+  );
+}
+
+function renderWriting(state: WritingState): React.JSX.Element {
+  if (state.status === "loading") {
+    return <LoadingIndicator label="Finding your latest draft…" />;
+  }
+
+  if (state.status === "error") {
+    return (
+      <p className="text-text-muted" role="alert">
+        Couldn&rsquo;t load your writing right now.
+      </p>
+    );
+  }
+
+  if (state.work === undefined) {
+    return <p className="text-text-muted">No drafts yet — start one from your Library.</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-text">{state.work.title}</p>
+      <a
+        className={buttonVariants({ variant: "secondary" })}
+        href={`#/write?work=${encodeURIComponent(state.work.entryId)}`}
       >
         Continue
       </a>

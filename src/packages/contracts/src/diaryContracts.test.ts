@@ -165,6 +165,17 @@ describe("parseTimelineEntryDto", () => {
     expect(parseTimelineEntryDto(dto)).toEqual(dto);
   });
 
+  it("accepts an authored-work entry", () => {
+    const dto = {
+      entryId: "work-1",
+      kind: "work" as const,
+      occurredAt: "2026-06-28T10:00:00.000Z",
+      title: "My essay",
+      workEntryId: "work-1"
+    };
+    expect(parseTimelineEntryDto(dto)).toEqual(dto);
+  });
+
   it("rejects an unknown kind", () => {
     expect(() =>
       parseTimelineEntryDto({ entryId: "x", kind: "highlight", occurredAt: "x", text: "y" })
@@ -173,8 +184,8 @@ describe("parseTimelineEntryDto", () => {
 });
 
 describe("timelineEntryDtoKinds", () => {
-  it("matches the diary and note discriminants", () => {
-    expect(timelineEntryDtoKinds).toEqual(["diary", "note"]);
+  it("matches the diary, note, and work discriminants", () => {
+    expect(timelineEntryDtoKinds).toEqual(["diary", "note", "work"]);
   });
 });
 

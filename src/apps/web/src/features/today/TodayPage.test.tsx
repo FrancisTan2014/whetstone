@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ vi.mock("../recall/recallApi", () => ({ fetchDueRecall: vi.fn() }));
 vi.mock("./todayApi", () => ({ fetchLatestReadingPosition: vi.fn() }));
 vi.mock("../nudge/nudgeApi", () => ({ dismissNudge: vi.fn(), fetchNudge: vi.fn() }));
 vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
+vi.mock("../authoredWorks/authoredWorkApi", () => ({ fetchContinueWriting: vi.fn() }));
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
 }));
@@ -19,6 +20,7 @@ vi.mock("../capture/voiceCaptureApi", () => ({
 
 import type {
   AuthorDto,
+  AuthoredWorkSummaryDto,
   LatestReadingPositionDto,
   NudgeDto,
   RecallItemDto,
@@ -26,6 +28,7 @@ import type {
   WorkListDto
 } from "@whetstone/contracts";
 
+import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi";
 import { fetchWorks } from "../library/libraryApi";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
 import { fetchDueRecall } from "../recall/recallApi";
@@ -37,6 +40,7 @@ const mockedReading = vi.mocked(fetchLatestReadingPosition);
 const mockedNudge = vi.mocked(fetchNudge);
 const mockedDismiss = vi.mocked(dismissNudge);
 const mockedWorks = vi.mocked(fetchWorks);
+const mockedWriting = vi.mocked(fetchContinueWriting);
 
 const emptyWorks: WorkListDto = { works: [] };
 
@@ -125,6 +129,7 @@ beforeEach(() => {
   mockedReading.mockReturnValue(pending<LatestReadingPositionDto | undefined>());
   mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
   mockedWorks.mockReturnValue(pending<WorkListDto>());
+  mockedWriting.mockReturnValue(pending<{ work: AuthoredWorkSummaryDto | null }>());
 });
 
 afterEach(() => {
@@ -419,5 +424,48 @@ describe("TodayPage", () => {
 
     expect(await screen.findByText(/You’re done for today/)).toBeDefined();
     expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
+  });
+
+  it("shows a loading line for the Continue writing card while its draft resolves", () => {
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Continue writing" });
+    expect(within(card).getByText("Finding your latest draft…")).toBeDefined();
+  });
+
+  it("offers Continue writing from the latest draft, deep-linking into the editor", async () => {
+    const summary: AuthoredWorkSummaryDto = {
+      createdAt: "2026-07-01T00:00:00.000Z",
+      entryId: "work 9",
+      language: "en",
+      title: "My unfinished essay",
+      updatedAt: "2026-07-05T00:00:00.000Z",
+      workType: "book"
+    };
+    mockedWriting.mockResolvedValue({ work: summary });
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue writing" });
+    expect(await within(card).findByText("My unfinished essay")).toBeDefined();
+    expect(within(card).getByRole("link", { name: "Continue" }).getAttribute("href")).toBe(
+      "#/write?work=work%209"
+    );
+  });
+
+  it("shows a quiet line when the learner has no draft to continue", async () => {
+    mockedWriting.mockResolvedValue({ work: null });
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Continue writing" });
+    expect(await within(card).findByText(/No drafts yet/)).toBeDefined();
+  });
+
+  it("shows a quiet inline note when the Continue writing draft fails to load", async () => {
+    mockedWriting.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Continue writing" });
+    expect(await within(card).findByText(/Couldn’t load your writing/)).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
   });
 });

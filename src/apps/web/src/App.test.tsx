@@ -146,6 +146,21 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Every note you have saved");
   });
 
+  it("shows the empty write route when no work is selected", () => {
+    const markup = renderAt("/write");
+
+    expect(markup).toContain("No document selected");
+  });
+
+  it("opens the immersive authored-work editor at the write route with a work param", () => {
+    const markup = renderAt("/write?work=work-1");
+
+    // The editor mounts in its loading arm (effects do not run under static render), and the write
+    // route is immersive like the reader — the primary nav recedes.
+    expect(markup).toContain("Opening your document…");
+    expect(markup).not.toContain('aria-label="Primary"');
+  });
+
   it("resolves the search route to the library search page", () => {
     const markup = renderAt("/search");
 

@@ -166,6 +166,11 @@ const saveVoiceCaptureAudio = (audio: Buffer): Promise<string> => {
 };
 
 const server = createServer({
+  authoredWorks: {
+    createEntryId: () => randomUUID(),
+    db,
+    now: () => new Date()
+  },
   content: {
     createAuthorId: () => randomUUID(),
     createEntryId: () => randomUUID(),

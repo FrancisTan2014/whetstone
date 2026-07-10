@@ -32,7 +32,7 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
 export function AppShell(): React.JSX.Element {
   const location = useLocation();
 
-  if (location.pathname === "/reader") {
+  if (location.pathname === "/reader" || location.pathname === "/write") {
     return (
       <SafeArea>
         <main className="min-h-0 flex-1 overflow-y-auto bg-bg text-text">

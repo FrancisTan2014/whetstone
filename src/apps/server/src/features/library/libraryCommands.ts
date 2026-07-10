@@ -224,6 +224,10 @@ export async function deleteWork(
 
     await tx.delete(readingPositions).where(eq(readingPositions.workEntryId, workEntryId));
 
+    // An authored (owned) Work carries its own `personal_entries` chronology facet (#576); remove it with
+    // the Work so no ownership row dangles off the deleted Entry. A no-op for an imported Work (none exists).
+    await tx.delete(personalEntries).where(eq(personalEntries.entryId, workEntryId));
+
     const ownedEntryIds = [workEntryId, ...unitIds, ...blockIds, ...tocIds, ...noteIds];
     await tx
       .delete(entryLinks)
