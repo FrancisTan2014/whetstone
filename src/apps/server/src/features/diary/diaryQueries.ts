@@ -4,7 +4,7 @@ import { type DocumentNodeJSON } from "@whetstone/document";
 import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { diaryEntries, notes, personalEntries } from "../../db/schema.js";
+import { diaryEntries, notes, personalEntries, workMeta } from "../../db/schema.js";
 
 // The Diary reads the logical Timeline (#571): a chronological view derived by querying the current
 // user's personal Entries — never a stored Timeline object. A diary read scopes every join to
@@ -48,6 +48,18 @@ async function loadPersonalTimelineEntries(
     .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
     .where(eq(personalEntries.userId, userId));
 
+  // An authored (owned) Work is a personal Entry too (#576): it draws chronology from the same
+  // `personal_entries` facet, so it surfaces on the learner's Timeline alongside diary entries and notes.
+  const workRows = await db
+    .select({
+      entryId: workMeta.entryId,
+      occurredAt: personalEntries.occurredAt,
+      title: workMeta.title
+    })
+    .from(workMeta)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, workMeta.entryId))
+    .where(eq(personalEntries.userId, userId));
+
   const diaryTimeline: ReadonlyArray<TimelineEntryDto> = diaryRows.map((row) => ({
     bodyDoc: row.bodyDoc as DocumentNodeJSON,
     bodyText: row.bodyText,
@@ -62,8 +74,15 @@ async function loadPersonalTimelineEntries(
     occurredAt: row.occurredAt.toISOString(),
     text: row.text
   }));
+  const workTimeline: ReadonlyArray<TimelineEntryDto> = workRows.map((row) => ({
+    entryId: row.entryId,
+    kind: "work",
+    occurredAt: row.occurredAt.toISOString(),
+    title: row.title,
+    workEntryId: row.entryId
+  }));
 
-  return [...diaryTimeline, ...noteTimeline];
+  return [...diaryTimeline, ...noteTimeline, ...workTimeline];
 }
 
 // One lazy-loaded Timeline page: the `limitDays` most recent days (strictly before `before`, when given),

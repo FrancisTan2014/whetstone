@@ -34,6 +34,8 @@ import { registerSessionRoutes } from "../features/session/sessionRoutes.js";
 import type { SessionDependencies } from "../features/session/sessionEngine.js";
 import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
 import type { DiaryRouteDependencies } from "../features/diary/diaryRoutes.js";
+import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWorkRoutes.js";
+import type { AuthoredWorkRouteDependencies } from "../features/authoredWorks/authoredWorkRoutes.js";
 import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
 import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
@@ -53,6 +55,7 @@ declare module "fastify" {
 }
 
 export type CreateServerOptions = Readonly<{
+  authoredWorks?: AuthoredWorkRouteDependencies;
   content?: ContentDependencies;
   // The identity seam: the source of the current user id for user-owned reads/writes. Defaults to
   // the v0 DEFAULT_USER_ID provider; tests (and future auth) inject their own.
@@ -140,6 +143,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.diary !== undefined) {
     registerDiaryRoutes(server, options.diary);
+  }
+
+  if (options.authoredWorks !== undefined) {
+    registerAuthoredWorkRoutes(server, options.authoredWorks);
   }
 
   if (options.recall !== undefined) {
