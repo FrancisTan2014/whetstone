@@ -4,9 +4,9 @@ export {
   documentMarks,
   documentNodeNames,
   documentNodes,
-  isSafeDocumentLinkHref,
   uniqueIdExtension
 } from "./nodes.js";
+export { isSafeDocumentLinkHref } from "./linkSafety.js";
 export { documentSchema } from "./schema.js";
 export {
   assignNodeIds,

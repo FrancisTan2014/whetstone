@@ -1,6 +1,8 @@
 import { Extension, Mark, Node, type Extensions } from "@tiptap/core";
 import { UniqueID } from "@tiptap/extension-unique-id";
 
+import { isSafeDocumentLinkHref } from "./linkSafety.js";
+
 // The whetstone content bedrock: ProseMirror node specs, declared through Tiptap (MIT) so the same
 // document model serves ingestion, storage, reader, and the future editor (PRODUCT "Architecture: the
 // document-model bedrock"). This module defines the shared schema plus its browser editing DOM seam;
@@ -278,12 +280,6 @@ const inlineCode = Mark.create({
   parseHTML: () => [{ tag: "code" }],
   renderHTML: ({ HTMLAttributes }) => ["code", HTMLAttributes, 0]
 });
-
-const SAFE_DOCUMENT_LINK = /^(?:https?:|mailto:|#|\/(?!\/))/i;
-
-export function isSafeDocumentLinkHref(value: unknown): value is string {
-  return typeof value === "string" && SAFE_DOCUMENT_LINK.test(value);
-}
 
 function validateDocumentLinkHref(value: unknown): void {
   if (value !== null && !isSafeDocumentLinkHref(value)) {
