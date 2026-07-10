@@ -15,7 +15,14 @@ import type {
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, entryLinks, noteAnchors, noteTemplates, notes } from "../../db/schema.js";
+import {
+  entries,
+  entryLinks,
+  noteAnchors,
+  noteTemplates,
+  notes,
+  personalEntries
+} from "../../db/schema.js";
 import {
   findBlockInWork,
   getNoteForWork,
@@ -23,11 +30,13 @@ import {
   type BlockInWork
 } from "./noteQueries.js";
 
-// Real infrastructure boundaries (database client and id generation) are passed in so
-// commands stay deterministic and testable.
+// Real infrastructure boundaries (database client, id generation, the clock) are passed in so
+// commands stay deterministic and testable. `now` stamps the shared `personal_entries` chronology
+// facet a note owns (occurredAt = createdAt at capture), the source of the note's ownership + time.
 export type NotesDependencies = Readonly<{
   createEntryId: () => string;
   db: DbClient;
+  now: () => Date;
 }>;
 
 export type CreateNoteResult =
@@ -100,6 +109,7 @@ export async function createNote(
     anchor,
     markdown,
     noteEntryId,
+    now: dependencies.now(),
     templateId: template.id,
     userId
   });
@@ -119,7 +129,8 @@ export async function createNote(
 
 // Insert a note (templated or a mark) with its anchor and `annotates` link in one transaction.
 // `templateId` is null and `markdown`/`answers` empty for a mark (#255); a templated note passes its
-// rendered body and validated answers. Single owner of note row + anchor + link creation.
+// rendered body and validated answers. Single owner of note row + its `personal_entries` chronology
+// facet (owner + timestamps; occurredAt = createdAt at capture) + anchor + link creation.
 async function persistNoteWithAnchor(
   db: DbClient,
   params: Readonly<{
@@ -127,18 +138,25 @@ async function persistNoteWithAnchor(
     anchor: NoteAnchor;
     markdown: string;
     noteEntryId: EntryId;
+    now: Date;
     templateId: string | null;
     userId: string;
   }>
 ): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.insert(entries).values({ id: params.noteEntryId, type: "note" });
+    await tx.insert(personalEntries).values({
+      createdAt: params.now,
+      entryId: params.noteEntryId,
+      occurredAt: params.now,
+      updatedAt: params.now,
+      userId: params.userId
+    });
     await tx.insert(notes).values({
       answersJson: params.answers,
       entryId: params.noteEntryId,
       markdownBody: params.markdown,
-      templateId: params.templateId,
-      userId: params.userId
+      templateId: params.templateId
     });
     await tx.insert(noteAnchors).values({
       blockEntryId: params.anchor.blockEntryId,
@@ -180,6 +198,7 @@ export async function createMark(
     anchor,
     markdown: "",
     noteEntryId,
+    now: dependencies.now(),
     templateId: null,
     userId
   });
@@ -227,10 +246,18 @@ export async function updateNote(
 
   const markdown = renderNoteMarkdown(template, validation.answers);
 
-  await dependencies.db
-    .update(notes)
-    .set({ answersJson: validation.answers, markdownBody: markdown, templateId: template.id })
-    .where(eq(notes.entryId, noteEntryId));
+  await dependencies.db.transaction(async (tx) => {
+    await tx
+      .update(notes)
+      .set({ answersJson: validation.answers, markdownBody: markdown, templateId: template.id })
+      .where(eq(notes.entryId, noteEntryId));
+    // The note's owner/chronology lives in the shared `personal_entries` facet (#571); an edit is a
+    // change to this Timeline-backed personal Entry, so bump `updated_at` in the same write.
+    await tx
+      .update(personalEntries)
+      .set({ updatedAt: dependencies.now() })
+      .where(eq(personalEntries.entryId, noteEntryId));
+  });
 
   return {
     note: {
@@ -263,6 +290,7 @@ export async function deleteNote(
       .where(and(eq(entryLinks.fromEntryId, noteEntryId), eq(entryLinks.type, "annotates")));
     await tx.delete(noteAnchors).where(eq(noteAnchors.noteEntryId, noteEntryId));
     await tx.delete(notes).where(eq(notes.entryId, noteEntryId));
+    await tx.delete(personalEntries).where(eq(personalEntries.entryId, noteEntryId));
     await tx.delete(entries).where(eq(entries.id, noteEntryId));
   });
 

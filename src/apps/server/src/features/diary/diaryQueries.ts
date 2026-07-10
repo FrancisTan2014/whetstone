@@ -1,101 +1,91 @@
-import type { DiaryEntryDto, TimelineDayDto } from "@whetstone/contracts";
-import { groupByDayDesc } from "@whetstone/domain";
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
+import { groupTimelineEntriesByDay, toDayKey } from "@whetstone/domain";
+import { type DocumentNodeJSON } from "@whetstone/document";
+import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { timelineEntries } from "../../db/schema.js";
+import { diaryEntries, notes, personalEntries } from "../../db/schema.js";
 
-// The Diary reads the shared Timeline store filtered to diary-sourced captures (#559): every diary read
-// scopes to the current user AND `capture_source = "diary"`, so a Quick Capture never surfaces in the
-// Diary. The displayed text is the tidied form, falling back to the verbatim raw transcript when tidy has
-// not run (null), matching the create/edit projection.
-const diarySource = "diary" as const;
+// The Diary reads the logical Timeline (#571): a chronological view derived by querying the current
+// user's personal Entries — never a stored Timeline object. A diary read scopes every join to
+// `personal_entries.user_id`, so one user never sees another's entries.
 
-// A diary read only surfaces entries ready to display: a synchronous capture (status null — typed diary /
-// legacy) or a voice capture the worker has finished (`ready`). An in-flight or failed async voice capture
-// (#565) — queued/transcribing/tidying/failed — is NOT shown in the Timeline/calendar (its transcript is
-// empty or absent); the frontend polls the voice-capture status endpoint for those instead.
-function diaryScope(userId: string) {
-  return and(
-    eq(timelineEntries.userId, userId),
-    eq(timelineEntries.captureSource, diarySource),
-    or(isNull(timelineEntries.processingStatus), eq(timelineEntries.processingStatus, "ready"))
-  );
+// A diary row surfaces in the Timeline only when ready to display: a synchronous typed capture
+// (`processing_status` null) or a voice capture the worker finished (`ready`). An in-flight or failed
+// async voice capture (queued/transcribing/tidying/failed) is NOT shown — its body is an empty
+// placeholder; the frontend polls the voice-capture status endpoint for those instead.
+function readyDiary() {
+  return or(isNull(diaryEntries.processingStatus), eq(diaryEntries.processingStatus, "ready"));
 }
 
-// One timeline row enriched with its day key, ready for `groupByDayDesc`.
-type TimelineRow = Readonly<{
-  createdAt: string;
-  date: string;
-  id: string;
-  kind: "diary";
-  language: string | null;
-  text: string;
-}>;
+// The current user's personal Entries as discriminated Timeline rows (diary + note): a `diary` row
+// carries its rich body, a `note` row its markdown text. Both draw chronology from the shared
+// `personal_entries` facet. Combined here (unordered); the pure domain `groupTimelineEntriesByDay`
+// orders and buckets them deterministically, so no Timeline-only entity exists.
+async function loadPersonalTimelineEntries(
+  db: DbClient,
+  userId: string
+): Promise<ReadonlyArray<TimelineEntryDto>> {
+  const diaryRows = await db
+    .select({
+      bodyDoc: diaryEntries.bodyDoc,
+      bodyText: diaryEntries.bodyText,
+      entryId: diaryEntries.entryId,
+      language: diaryEntries.language,
+      occurredAt: personalEntries.occurredAt
+    })
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+    .where(and(eq(personalEntries.userId, userId), readyDiary()));
+
+  const noteRows = await db
+    .select({
+      entryId: notes.entryId,
+      occurredAt: personalEntries.occurredAt,
+      text: notes.markdownBody
+    })
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .where(eq(personalEntries.userId, userId));
+
+  const diaryTimeline: ReadonlyArray<TimelineEntryDto> = diaryRows.map((row) => ({
+    bodyDoc: row.bodyDoc as DocumentNodeJSON,
+    bodyText: row.bodyText,
+    entryId: row.entryId,
+    kind: "diary",
+    language: row.language,
+    occurredAt: row.occurredAt.toISOString()
+  }));
+  const noteTimeline: ReadonlyArray<TimelineEntryDto> = noteRows.map((row) => ({
+    entryId: row.entryId,
+    kind: "note",
+    occurredAt: row.occurredAt.toISOString(),
+    text: row.text
+  }));
+
+  return [...diaryTimeline, ...noteTimeline];
+}
 
 // One lazy-loaded Timeline page: the `limitDays` most recent days (strictly before `before`, when given),
-// newest day first, each with its entries (oldest-first within a day, by `groupByDayDesc`). Bounding by
-// DISTINCT days — not rows — keeps a chatty day from swallowing the page; an empty array means no more.
+// newest day first, each day's entries newest-first with a stable tie-break (the pure domain ordering).
+// Bounding by DISTINCT days — not rows — keeps a chatty day from swallowing the page; an empty array
+// means no more. Day keys are fixed-width `YYYY-MM-DD`, so a lexicographic `<` is an exact day compare.
 export async function listTimelinePage(
   db: DbClient,
   userId: string,
   before: string | undefined,
   limitDays: number
 ): Promise<ReadonlyArray<TimelineDayDto>> {
-  // `before` is an exclusive cursor: the next page is the days STRICTLY before it (the oldest day already
-  // shown), so a same-day row never repeats across pages. Day keys are fixed-width `YYYY-MM-DD`, so a
-  // lexicographic `<` is an exact day comparison.
-  const scope = diaryScope(userId);
-  const dayFilter =
-    before === undefined ? scope : and(scope, lt(timelineEntries.entryDate, before));
+  const all = await loadPersonalTimelineEntries(db, userId);
+  const days = groupTimelineEntriesByDay(all);
+  const filtered = before === undefined ? days : days.filter((day) => day.date < before);
 
-  const dayRows = await db
-    .selectDistinct({ entryDate: timelineEntries.entryDate })
-    .from(timelineEntries)
-    .where(dayFilter)
-    .orderBy(desc(timelineEntries.entryDate))
-    .limit(limitDays);
-  const dates = dayRows.map((row) => row.entryDate);
-
-  if (dates.length === 0) {
-    return [];
-  }
-
-  const rows = await db
-    .select({
-      createdAt: timelineEntries.createdAt,
-      entryDate: timelineEntries.entryDate,
-      id: timelineEntries.entryId,
-      language: timelineEntries.language,
-      rawInputText: timelineEntries.rawInputText,
-      tidiedText: timelineEntries.tidiedText
-    })
-    .from(timelineEntries)
-    .where(and(scope, inArray(timelineEntries.entryDate, dates)));
-
-  const timelineRows: ReadonlyArray<TimelineRow> = rows.map((row) => ({
-    createdAt: row.createdAt.toISOString(),
-    date: row.entryDate,
-    id: row.id,
-    kind: "diary",
-    language: row.language,
-    text: row.tidiedText ?? row.rawInputText
-  }));
-
-  return groupByDayDesc(timelineRows).map((group) => ({
-    date: group.date,
-    entries: group.entries.map(({ createdAt, id, kind, language, text }) => ({
-      createdAt,
-      id,
-      kind,
-      language,
-      text
-    }))
-  }));
+  return filtered.slice(0, limitDays).map((day) => ({ date: day.date, entries: [...day.entries] }));
 }
 
-// The dates in `[from, to]` that have ≥1 diary entry for the user — the date-jump calendar's marks.
-// Distinct, ascending.
+// The dates in `[from, to]` that have ≥1 ready diary entry for the user — the date-jump calendar's marks,
+// derived from each entry's `occurred_at` (UTC day) rather than a stored day column. Distinct, ascending.
+// Diary-scoped so the calendar marks land on the days the diary-filtered Timeline actually shows.
 export async function listCalendarDates(
   db: DbClient,
   userId: string,
@@ -103,44 +93,50 @@ export async function listCalendarDates(
   to: string
 ): Promise<ReadonlyArray<string>> {
   const rows = await db
-    .selectDistinct({ entryDate: timelineEntries.entryDate })
-    .from(timelineEntries)
-    .where(
-      and(
-        diaryScope(userId),
-        gte(timelineEntries.entryDate, from),
-        lte(timelineEntries.entryDate, to)
-      )
-    )
-    .orderBy(asc(timelineEntries.entryDate));
+    .select({ occurredAt: personalEntries.occurredAt })
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+    .where(and(eq(personalEntries.userId, userId), readyDiary()));
 
-  return rows.map((row) => row.entryDate);
+  const days = new Set(rows.map((row) => toDayKey(row.occurredAt)));
+  return [...days].filter((day) => day >= from && day <= to).sort();
 }
 
-// Every diary entry the user owns — the coach-readable learner-history facet for diary capture, queried
-// for the user (newest first). Scoped to diary-sourced captures so a Quick Capture never appears here.
+// Every diary Entry the user owns, newest first — the coach-readable learner-history facet, and the read
+// side commands project after a write. Includes in-flight/failed voice captures (unlike the Timeline) so
+// a caller can inspect the full diary state; scoped to the owner via `personal_entries`.
 export async function listDiaryEntriesForUser(
   db: DbClient,
   userId: string
 ): Promise<ReadonlyArray<DiaryEntryDto>> {
   const rows = await db
     .select({
-      createdAt: timelineEntries.createdAt,
-      entryDate: timelineEntries.entryDate,
-      id: timelineEntries.entryId,
-      language: timelineEntries.language,
-      rawInputText: timelineEntries.rawInputText,
-      tidiedText: timelineEntries.tidiedText
+      bodyDoc: diaryEntries.bodyDoc,
+      bodyText: diaryEntries.bodyText,
+      createdAt: personalEntries.createdAt,
+      entryId: diaryEntries.entryId,
+      failureReason: diaryEntries.failureReason,
+      inputMode: diaryEntries.inputMode,
+      language: diaryEntries.language,
+      occurredAt: personalEntries.occurredAt,
+      processingStatus: diaryEntries.processingStatus,
+      updatedAt: personalEntries.updatedAt
     })
-    .from(timelineEntries)
-    .where(diaryScope(userId))
-    .orderBy(desc(timelineEntries.createdAt));
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+    .where(eq(personalEntries.userId, userId))
+    .orderBy(desc(personalEntries.occurredAt), asc(diaryEntries.entryId));
 
   return rows.map((row) => ({
+    bodyDoc: row.bodyDoc as DocumentNodeJSON,
+    bodyText: row.bodyText,
     createdAt: row.createdAt.toISOString(),
-    entryDate: row.entryDate,
-    id: row.id,
+    failureReason: row.failureReason,
+    id: row.entryId,
+    inputMode: row.inputMode,
     language: row.language,
-    text: row.tidiedText ?? row.rawInputText
+    occurredAt: row.occurredAt.toISOString(),
+    processingStatus: row.processingStatus,
+    updatedAt: row.updatedAt.toISOString()
   }));
 }

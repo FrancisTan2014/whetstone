@@ -14,6 +14,7 @@ import {
   noteAnchors,
   noteTemplates,
   notes,
+  personalEntries,
   readingUnits,
   workMeta
 } from "../../db/schema.js";
@@ -162,8 +163,9 @@ export async function listNotesForWork(
     .select(noteColumns)
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
     .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
-    .where(and(eq(addressable.workEntryId, workEntryId), eq(notes.userId, userId)))
+    .where(and(eq(addressable.workEntryId, workEntryId), eq(personalEntries.userId, userId)))
     .orderBy(asc(notes.entryId));
 
   return rows.map(toNoteDto);
@@ -204,10 +206,11 @@ export async function listNotesForUser(
     })
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
     .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
     .innerJoin(workMeta, eq(workMeta.entryId, addressable.workEntryId))
     .innerJoin(authors, eq(authors.id, workMeta.authorId))
-    .where(eq(notes.userId, userId))
+    .where(eq(personalEntries.userId, userId))
     .orderBy(asc(workMeta.title), asc(notes.entryId));
 
   return rows.map(toNoteOverviewDto);
@@ -228,12 +231,13 @@ export async function getNoteForWork(
     .select(noteColumns)
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
     .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
     .where(
       and(
         eq(notes.entryId, noteEntryId),
         eq(addressable.workEntryId, workEntryId),
-        eq(notes.userId, userId)
+        eq(personalEntries.userId, userId)
       )
     )
     .limit(1);

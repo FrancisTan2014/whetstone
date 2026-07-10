@@ -10,6 +10,7 @@ export { isSafeDocumentLinkHref } from "./linkSafety.js";
 export { documentSchema } from "./schema.js";
 export {
   assignNodeIds,
+  createTextDocument,
   documentReadableText,
   documentText,
   DocumentValidationError,

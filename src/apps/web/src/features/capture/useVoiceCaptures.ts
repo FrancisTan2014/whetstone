@@ -34,10 +34,10 @@ export function isNonTerminalVoiceCapture(capture: VoiceCaptureStatusDto): boole
 }
 
 // Oldest-first, so pending rows render in the user's capture order (ISO timestamps sort chronologically).
-function byCreatedAt(
+function byOccurredAt(
   captures: ReadonlyArray<VoiceCaptureStatusDto>
 ): ReadonlyArray<VoiceCaptureStatusDto> {
-  return [...captures].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return [...captures].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
 }
 
 // Fold a poll's fetched statuses back into the list: a now-ready capture drops out (it moves to the
@@ -109,7 +109,7 @@ export function useVoiceCaptures(options: UseVoiceCapturesOptions = {}): UseVoic
   const refresh = useCallback(async () => {
     try {
       const active = await apiRef.current.fetchActive();
-      setCaptures(byCreatedAt(active));
+      setCaptures(byOccurredAt(active));
     } catch {
       // A failed refresh simply leaves the current list; the next submit/poll reconciles it.
     }
@@ -181,7 +181,7 @@ export function useVoiceCaptures(options: UseVoiceCapturesOptions = {}): UseVoic
     try {
       const requeued = await apiRef.current.retry(id);
       setCaptures((current) =>
-        byCreatedAt(current.map((capture) => (capture.id === id ? requeued : capture)))
+        byOccurredAt(current.map((capture) => (capture.id === id ? requeued : capture)))
       );
       return true;
     } catch {

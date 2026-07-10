@@ -16,6 +16,7 @@
   },
   "types": "./dist/index.d.ts",
   "dependencies": {
+    "@whetstone/document": "workspace:*",
     "@whetstone/domain": "workspace:*",
     "zod": "^4.4.3"
   }

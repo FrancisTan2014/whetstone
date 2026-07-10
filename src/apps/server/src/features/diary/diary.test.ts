@@ -1,109 +1,89 @@
 import { PGlite } from "@electric-sql/pglite";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type {
-  CaptureInputMode,
-  DiaryCaptureResultDto,
-  DiaryEntryDto,
-  ProposalPayload,
-  TimelineDto
-} from "@whetstone/contracts";
+import type { CaptureInputMode, DiaryEntryDto, TimelineDto } from "@whetstone/contracts";
+import {
+  createTextDocument,
+  documentReadableText,
+  documentText,
+  parseDocument,
+  serializeDocument,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, timelineEntries } from "../../db/schema.js";
+import { diaryEntries, entries, notes, personalEntries } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
-import {
-  getTimelineCaptureForUser,
-  listBackfillableCaptures
-} from "../makeDurable/timelineQueries.js";
-import type { ProposalAttempt, ProposalProvider } from "../makeDurable/proposalProvider.js";
-import { listProposalCandidatesForUser } from "../makeDurable/proposalQueries.js";
 import type { DiaryRouteDependencies } from "./diaryRoutes.js";
-import { createDiaryTidy } from "./diaryTidy.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
 
-// Seed a diary-sourced Timeline row directly (bypassing the tidy/create path) — used to plant another
-// user's entry or a specific capture_source. Registers the owning Entry, mirroring the create command.
-async function seedTimelineRow(
+// Seed a diary Entry (its three facets) directly, bypassing the capture command — used to plant another
+// user's entry or an in-flight/failed voice capture (a `processing_status` other than null/ready).
+async function seedDiaryEntry(
   db: DbClient,
   row: Readonly<{
-    captureSource: "quick_capture" | "diary";
-    createdAt: string;
-    entryDate: string;
+    bodyText: string;
     id: string;
-    language?: string | null;
-    rawInputText: string;
-    tidiedText?: string | null;
+    inputMode?: CaptureInputMode;
+    occurredAt: string;
+    processingStatus?: "queued" | "transcribing" | "tidying" | "ready" | "failed" | null;
     userId: string;
   }>
 ): Promise<void> {
+  const at = new Date(row.occurredAt);
+  const status = row.processingStatus ?? null;
+  const bodyDoc = createTextDocument(row.bodyText);
   await db.transaction(async (tx) => {
-    await tx.insert(entries).values({ id: row.id, type: "timeline_entry" });
-    await tx.insert(timelineEntries).values({
+    await tx.insert(entries).values({ id: row.id, type: "diary_entry" });
+    await tx.insert(personalEntries).values({
+      createdAt: at,
       entryId: row.id,
-      userId: row.userId,
-      createdAt: new Date(row.createdAt),
-      entryDate: row.entryDate,
-      inputMode: "voice",
-      captureSource: row.captureSource,
-      rawInputText: row.rawInputText,
-      tidiedText: row.tidiedText ?? null,
-      language: row.language ?? null,
-      rawAudioPath: null
+      occurredAt: at,
+      updatedAt: at,
+      userId: row.userId
+    });
+    await tx.insert(diaryEntries).values({
+      bodyDoc,
+      bodyText: row.bodyText,
+      entryId: row.id,
+      failureReason: null,
+      inputMode: row.inputMode ?? "typed",
+      language: null,
+      processingStatus: status,
+      rawAudioPath: status === null ? null : "voice-captures/seed.audio",
+      rawTranscript: row.bodyText,
+      tidiedText: null
     });
   });
 }
 
-// A deterministic stand-in for the LLM tidy pass: drop standalone fillers (um/uh/er) and collapse
-// immediately repeated words, while preserving every other word in order. It NEVER upgrades vocabulary,
-// rephrases, or translates — so non-English text passes through untouched — which is exactly the
-// tidy-not-polish invariant the real prompt instructs.
-function fakeTidy(transcript: string): string {
-  const fillers = new Set(["um", "uh", "er"]);
-  const tokens = transcript.split(/\s+/).filter((token) => token.length > 0);
-  const kept: string[] = [];
-  for (const token of tokens) {
-    if (fillers.has(token.toLowerCase())) {
-      continue;
-    }
-    if (kept.at(-1) === token) {
-      continue;
-    }
-    kept.push(token);
-  }
-  return kept.join(" ");
+// Seed a personal Note Entry (owner + chronology facet + note content), enough for the logical Timeline
+// to project it as a `kind === "note"` row. No anchor is needed: the Timeline reads notes by their
+// personal-entry chronology, not their block anchor.
+async function seedNote(
+  db: DbClient,
+  row: Readonly<{ id: string; markdown: string; occurredAt: string; userId: string }>
+): Promise<void> {
+  const at = new Date(row.occurredAt);
+  await db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: row.id, type: "note" });
+    await tx.insert(personalEntries).values({
+      createdAt: at,
+      entryId: row.id,
+      occurredAt: at,
+      updatedAt: at,
+      userId: row.userId
+    });
+    await tx.insert(notes).values({
+      answersJson: {},
+      entryId: row.id,
+      markdownBody: row.markdown,
+      templateId: null
+    });
+  });
 }
-
-const proposalPayload: ProposalPayload = {
-  target: "WorkInsight is back up now",
-  cue: "a service is back",
-  useContext: "reporting availability",
-  category: "work",
-  tags: ["service-status"]
-};
-
-function proposalAttempt(): ProposalAttempt {
-  return {
-    modelName: "fake-model",
-    generation: {
-      candidates: [
-        {
-          type: "phrase_chunk",
-          confidence: 0.9,
-          reason: "a reusable status phrase",
-          evidenceQuote: "WorkInsight is back up now",
-          payload: proposalPayload
-        }
-      ]
-    }
-  };
-}
-
-const proposeNothing: ProposalProvider = () => Promise.resolve(null);
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -124,9 +104,7 @@ async function buildContext(): Promise<TestContext> {
     createId: () => `diary-${(sequence += 1)}`,
     db,
     now: () => now,
-    propose: proposeNothing,
-    saveAudio: () => Promise.resolve("voice-captures/test.audio"),
-    tidy: (transcript) => Promise.resolve(fakeTidy(transcript))
+    saveAudio: () => Promise.resolve("voice-captures/test.audio")
   };
 
   return {
@@ -140,7 +118,7 @@ async function buildContext(): Promise<TestContext> {
 
 async function createEntry(
   transcript: string,
-  inputMode: CaptureInputMode = "voice",
+  inputMode: CaptureInputMode = "typed",
   language: "zh" | "en" = "en"
 ): Promise<DiaryEntryDto> {
   const response = await context.server.inject({
@@ -149,7 +127,7 @@ async function createEntry(
     url: "/api/diary/entries"
   });
   expect(response.statusCode).toBe(201);
-  return (response.json() as DiaryCaptureResultDto).entry;
+  return response.json() as DiaryEntryDto;
 }
 
 async function timeline(query = ""): Promise<TimelineDto> {
@@ -170,58 +148,36 @@ afterEach(async () => {
 });
 
 describe("POST /api/diary/entries", () => {
-  it("tidies the transcript, filing it as a dated block under today with a timestamp", async () => {
+  it("saves a typed capture first — ready immediately, with a rich body built from the text (#571)", async () => {
     context.setNow("2026-06-30T20:38:00.000Z");
 
-    const entry = await createEntry("um so today I, I went to to the park");
+    const entry = await createEntry("today I went to the park", "typed");
 
-    expect(entry).toEqual({
+    // Save-first: the entry is ready on write (no async status), stamped at `now`, its rich body carrying
+    // the captured text verbatim and its plaintext projection matching.
+    expect(entry).toMatchObject({
+      bodyText: "today I went to the park",
       createdAt: "2026-06-30T20:38:00.000Z",
-      entryDate: "2026-06-30",
+      failureReason: null,
       id: "diary-1",
+      inputMode: "typed",
       language: "en",
-      text: "so today I, I went to the park"
+      occurredAt: "2026-06-30T20:38:00.000Z",
+      processingStatus: null,
+      updatedAt: "2026-06-30T20:38:00.000Z"
     });
+    expect(documentText(entry.bodyDoc)).toBe("today I went to the park");
+
+    // Persisted: it reads back from the owner's diary store as the same DTO.
+    expect(await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID)).toEqual([entry]);
   });
 
-  it("drops fillers and repeats without changing the speaker's wording or meaning", async () => {
-    const entry = await createEntry("um um I really really enjoyed it uh today");
+  it("stores the chosen language and never translates the body", async () => {
+    const entry = await createEntry("今天 我 去 了 公园", "voice", "zh");
 
-    // Fillers gone, the doubled words collapsed once — but every meaningful word is preserved in order
-    // and none is upgraded or rephrased.
-    expect(entry.text).toBe("I really enjoyed it today");
-  });
-
-  it("still saves the entry with the raw transcript when the tidy model fails (capture is never lossy)", async () => {
-    // A server whose tidy wraps an unavailable model (Ollama down): createDiaryTidy must degrade to the
-    // raw transcript so POST /entries still files the entry rather than 500ing and losing the capture.
-    const pglite = new PGlite();
-    await runMigrations(pglite);
-    const db = createDbClient(pglite);
-    const failingServer = createServer({
-      diary: {
-        createId: () => "diary-fail-1",
-        db,
-        now: () => new Date("2026-06-30T20:38:00.000Z"),
-        propose: proposeNothing,
-        tidy: createDiaryTidy(() => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:11434")))
-      },
-      logger: false
-    });
-
-    const response = await failingServer.inject({
-      method: "POST",
-      payload: { inputMode: "voice", language: "en", transcript: "um today I went to the park" },
-      url: "/api/diary/entries"
-    });
-
-    expect(response.statusCode).toBe(201);
-    expect((response.json() as DiaryCaptureResultDto).entry.text).toBe(
-      "um today I went to the park"
-    );
-    expect(await listDiaryEntriesForUser(db, DEFAULT_USER_ID)).toHaveLength(1);
-
-    await failingServer.close();
+    expect(entry.bodyText).toBe("今天 我 去 了 公园");
+    expect(entry.language).toBe("zh");
+    expect(entry.inputMode).toBe("voice");
   });
 
   it("rejects a blank transcript", async () => {
@@ -235,14 +191,13 @@ describe("POST /api/diary/entries", () => {
     expect(response.json()).toEqual({ error: "invalid_request" });
   });
 
-  it("rejects a missing or invalid input mode", async () => {
+  it("rejects a missing or unsupported input mode", async () => {
     const missing = await context.server.inject({
       method: "POST",
       payload: { language: "en", transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
     expect(missing.statusCode).toBe(400);
-    expect(missing.json()).toEqual({ error: "invalid_request" });
 
     const invalid = await context.server.inject({
       method: "POST",
@@ -267,101 +222,71 @@ describe("POST /api/diary/entries", () => {
     });
     expect(unsupported.statusCode).toBe(400);
   });
-
-  it("persists the capture's input mode (typed stays typed, voice stays voice) (#560)", async () => {
-    context.setNow("2026-06-30T20:38:00.000Z");
-    const typed = await createEntry("typed at the keyboard", "typed");
-    const voice = await createEntry("spoken out loud", "voice");
-
-    const typedRow = await getTimelineCaptureForUser(context.db, typed.id, DEFAULT_USER_ID);
-    const voiceRow = await getTimelineCaptureForUser(context.db, voice.id, DEFAULT_USER_ID);
-    expect(typedRow?.inputMode).toBe("typed");
-    expect(voiceRow?.inputMode).toBe("voice");
-    expect(typedRow?.captureSource).toBe("diary");
-  });
-
-  it("stores the chosen language without translating the entry text", async () => {
-    const entry = await createEntry("今天 我 去 了 公园", "voice", "zh");
-
-    expect(entry.text).toBe("今天 我 去 了 公园");
-    expect(entry.language).toBe("zh");
-
-    const row = await getTimelineCaptureForUser(context.db, entry.id, DEFAULT_USER_ID);
-    expect(row?.language).toBe("zh");
-  });
-
-  it("writes the entry to the coach-readable learner-history store for the user", async () => {
-    const created = await createEntry("today I practised speaking");
-
-    const stored = await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID);
-
-    expect(stored).toContainEqual(created);
-  });
-
-  it("returns a Make Durable review card when the diary capture passes the proposal gate", async () => {
-    const pglite = new PGlite();
-    await runMigrations(pglite);
-    const db = createDbClient(pglite);
-    const server = createServer({
-      diary: {
-        createId: (() => {
-          let sequence = 0;
-          return () => `proposed-${(sequence += 1)}`;
-        })(),
-        db,
-        now: () => new Date("2026-07-06T09:30:00.000Z"),
-        propose: () => Promise.resolve(proposalAttempt()),
-        tidy: (transcript) => Promise.resolve(fakeTidy(transcript))
-      },
-      logger: false
-    });
-
-    const response = await server.inject({
-      method: "POST",
-      payload: {
-        inputMode: "typed",
-        language: "en",
-        transcript: "I wanted to say WorkInsight is back up now but I could not"
-      },
-      url: "/api/diary/entries"
-    });
-
-    expect(response.statusCode).toBe(201);
-    const result = response.json() as DiaryCaptureResultDto;
-    expect(result.entry).toMatchObject({
-      id: "proposed-1",
-      text: "I wanted to say WorkInsight is back up now but I could not"
-    });
-    expect(result.card).toMatchObject({
-      target: "WorkInsight is back up now",
-      timelineEntryId: "proposed-1",
-      type: "phrase_chunk"
-    });
-    expect(await listProposalCandidatesForUser(db, DEFAULT_USER_ID)).toHaveLength(1);
-
-    await server.close();
-  });
 });
 
-describe("GET /api/diary/timeline", () => {
-  it("stacks same-day entries under one day and groups other days separately, newest-first", async () => {
+describe("GET /api/diary/timeline (the logical Timeline)", () => {
+  it("groups days newest-first and orders same-day entries newest-first with a stable tie-break", async () => {
     context.setNow("2026-06-29T09:00:00.000Z");
     await createEntry("first on the 29th");
     context.setNow("2026-06-30T08:00:00.000Z");
-    await createEntry("first on the 30th");
+    await createEntry("earlier on the 30th");
     context.setNow("2026-06-30T10:00:00.000Z");
-    await createEntry("second on the 30th");
+    await createEntry("later on the 30th");
 
     const page = await timeline();
 
     expect(page.days.map((day) => day.date)).toEqual(["2026-06-30", "2026-06-29"]);
-    // Same-day entries stack under their day, oldest-first.
-    expect(page.days[0]?.entries.map((entry) => entry.text)).toEqual([
-      "first on the 30th",
-      "second on the 30th"
-    ]);
+    // Within a day: newest occurredAt first (deterministic order over personal entries).
+    expect(page.days[0]?.entries.map((entry) => entry.entryId)).toEqual(["diary-3", "diary-2"]);
     expect(page.days[0]?.entries.every((entry) => entry.kind === "diary")).toBe(true);
-    expect(page.days[1]?.entries.map((entry) => entry.text)).toEqual(["first on the 29th"]);
+    expect(page.days[1]?.entries.map((entry) => entry.entryId)).toEqual(["diary-1"]);
+  });
+
+  it("projects both diary and note personal Entries through the discriminated DTO, ordered by occurredAt", async () => {
+    context.setNow("2026-06-30T09:00:00.000Z");
+    await createEntry("a diary moment");
+    await seedNote(context.db, {
+      id: "note-1",
+      markdown: "a reading note",
+      occurredAt: "2026-06-30T11:00:00.000Z",
+      userId: DEFAULT_USER_ID
+    });
+
+    const page = await timeline();
+    const day = page.days[0];
+    expect(day?.date).toBe("2026-06-30");
+    // Note (11:00) sorts before the diary (09:00) — newest first — and each keeps its own shape.
+    const [first, second] = day?.entries ?? [];
+    expect(first).toMatchObject({ entryId: "note-1", kind: "note", text: "a reading note" });
+    expect(second).toMatchObject({ bodyText: "a diary moment", entryId: "diary-1", kind: "diary" });
+  });
+
+  it("hides an in-flight or failed voice capture until it is ready", async () => {
+    await seedDiaryEntry(context.db, {
+      bodyText: "",
+      id: "queued-1",
+      inputMode: "voice",
+      occurredAt: "2026-06-30T09:00:00.000Z",
+      processingStatus: "queued",
+      userId: DEFAULT_USER_ID
+    });
+    const ready = await createEntry("a ready entry");
+
+    const ids = (await timeline()).days.flatMap((day) => day.entries.map((entry) => entry.entryId));
+    expect(ids).toEqual([ready.id]);
+  });
+
+  it("scopes the Timeline to the current user", async () => {
+    await seedDiaryEntry(context.db, {
+      bodyText: "another user's entry",
+      id: "other-1",
+      occurredAt: "2026-06-30T09:00:00.000Z",
+      userId: "someone-else"
+    });
+    const mine = await createEntry("my entry");
+
+    const ids = (await timeline()).days.flatMap((day) => day.entries.map((entry) => entry.entryId));
+    expect(ids).toEqual([mine.id]);
   });
 
   it("lazy-loads older days via the bounded `before` cursor, ending in an empty page", async () => {
@@ -395,13 +320,22 @@ describe("GET /api/diary/timeline", () => {
 });
 
 describe("GET /api/diary/calendar", () => {
-  it("returns the days in range that have at least one entry", async () => {
+  it("marks the days in range that have at least one ready diary entry", async () => {
     context.setNow("2026-06-10T12:00:00.000Z");
     await createEntry("the 10th");
     context.setNow("2026-06-20T12:00:00.000Z");
     await createEntry("the 20th");
     context.setNow("2026-07-01T12:00:00.000Z");
     await createEntry("out of range");
+    // An in-flight voice capture on the 15th is not a mark (its body is not ready).
+    await seedDiaryEntry(context.db, {
+      bodyText: "",
+      id: "queued-cal",
+      inputMode: "voice",
+      occurredAt: "2026-06-15T12:00:00.000Z",
+      processingStatus: "queued",
+      userId: DEFAULT_USER_ID
+    });
 
     const response = await context.server.inject({
       method: "GET",
@@ -422,24 +356,87 @@ describe("GET /api/diary/calendar", () => {
   });
 });
 
-describe("PATCH /api/diary/entries/:id", () => {
-  it("edits the current user's entry text", async () => {
+describe("PATCH /api/diary/entries/:id (rich editing)", () => {
+  it("replaces the body through the shared editor and bumps updatedAt, keeping occurredAt/createdAt", async () => {
+    context.setNow("2026-06-30T20:38:00.000Z");
     const created = await createEntry("original text");
 
+    context.setNow("2026-07-01T08:00:00.000Z");
+    const nextDoc: DocumentNodeJSON = createTextDocument("edited body");
     const response = await context.server.inject({
       method: "PATCH",
-      payload: { text: "edited text" },
+      payload: { bodyDoc: nextDoc },
       url: `/api/diary/entries/${created.id}`
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ...created, text: "edited text" });
+    const updated = response.json() as DiaryEntryDto;
+    expect(updated.bodyText).toBe("edited body");
+    expect(documentText(updated.bodyDoc)).toBe("edited body");
+    expect(updated.occurredAt).toBe(created.occurredAt);
+    expect(updated.createdAt).toBe(created.createdAt);
+    expect(updated.updatedAt).toBe("2026-07-01T08:00:00.000Z");
+    expect(updated.language).toBe("en");
+  });
+
+  it("stores a readable body_text projection for a multi-block body (#571)", async () => {
+    const created = await createEntry("original text");
+
+    // A two-paragraph body: the durable doc holds two blocks, so the display projection must read them
+    // with a boundary rather than concatenating them into one run.
+    const twoBlockDoc = serializeDocument(
+      parseDocument({
+        content: [
+          ...(createTextDocument("First paragraph.").content ?? []),
+          ...(createTextDocument("Second paragraph.").content ?? [])
+        ],
+        type: "doc"
+      })
+    );
+
+    const response = await context.server.inject({
+      method: "PATCH",
+      payload: { bodyDoc: twoBlockDoc },
+      url: `/api/diary/entries/${created.id}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const updated = response.json() as DiaryEntryDto;
+    // body_text is the readable projection (a space between blocks), NOT the separator-free stream.
+    expect(updated.bodyText).toBe(documentReadableText(twoBlockDoc));
+    expect(updated.bodyText).toBe("First paragraph. Second paragraph.");
+    expect(documentText(twoBlockDoc)).toBe("First paragraph.Second paragraph.");
+  });
+
+  it("optionally updates the language alongside the body", async () => {
+    const created = await createEntry("original", "typed", "en");
+
+    const response = await context.server.inject({
+      method: "PATCH",
+      payload: { bodyDoc: createTextDocument("改过的正文"), language: "zh" },
+      url: `/api/diary/entries/${created.id}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as DiaryEntryDto).language).toBe("zh");
+  });
+
+  it("rejects a body that is not a valid document", async () => {
+    const created = await createEntry("original text");
+
+    const response = await context.server.inject({
+      method: "PATCH",
+      payload: { bodyDoc: { type: "paragraph" } },
+      url: `/api/diary/entries/${created.id}`
+    });
+
+    expect(response.statusCode).toBe(400);
   });
 
   it("returns 404 for a missing entry", async () => {
     const response = await context.server.inject({
       method: "PATCH",
-      payload: { text: "edited" },
+      payload: { bodyDoc: createTextDocument("edited") },
       url: "/api/diary/entries/does-not-exist"
     });
 
@@ -448,41 +445,42 @@ describe("PATCH /api/diary/entries/:id", () => {
   });
 
   it("returns 404 when editing another user's entry", async () => {
-    await seedTimelineRow(context.db, {
-      captureSource: "diary",
-      createdAt: "2026-06-30T00:00:00.000Z",
-      entryDate: "2026-06-30",
+    await seedDiaryEntry(context.db, {
+      bodyText: "not yours",
       id: "other-user-entry",
-      language: null,
-      rawInputText: "not yours",
-      tidiedText: "not yours",
+      occurredAt: "2026-06-30T00:00:00.000Z",
       userId: "someone-else"
     });
 
     const response = await context.server.inject({
       method: "PATCH",
-      payload: { text: "hijack" },
+      payload: { bodyDoc: createTextDocument("hijack") },
       url: "/api/diary/entries/other-user-entry"
     });
 
     expect(response.statusCode).toBe(404);
   });
 
-  it("rejects a blank edit", async () => {
-    const created = await createEntry("original text");
+  it("returns 404 when editing a note (a personal Entry that is not a diary)", async () => {
+    await seedNote(context.db, {
+      id: "note-not-diary",
+      markdown: "a note",
+      occurredAt: "2026-06-30T00:00:00.000Z",
+      userId: DEFAULT_USER_ID
+    });
 
     const response = await context.server.inject({
       method: "PATCH",
-      payload: { text: "  " },
-      url: `/api/diary/entries/${created.id}`
+      payload: { bodyDoc: createTextDocument("edit the note as a diary") },
+      url: "/api/diary/entries/note-not-diary"
     });
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(404);
   });
 });
 
 describe("DELETE /api/diary/entries/:id", () => {
-  it("deletes the current user's entry", async () => {
+  it("deletes the current user's entry and every facet", async () => {
     const created = await createEntry("to be deleted");
 
     const response = await context.server.inject({
@@ -492,6 +490,10 @@ describe("DELETE /api/diary/entries/:id", () => {
 
     expect(response.statusCode).toBe(204);
     expect((await timeline()).days).toEqual([]);
+    expect(await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID)).toEqual([]);
+    // The owning Entry and its personal-entry facet are gone too.
+    expect(await context.db.select().from(entries)).toEqual([]);
+    expect(await context.db.select().from(personalEntries)).toEqual([]);
   });
 
   it("returns 404 for a missing entry", async () => {
@@ -503,15 +505,11 @@ describe("DELETE /api/diary/entries/:id", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("returns 404 when deleting another user's entry", async () => {
-    await seedTimelineRow(context.db, {
-      captureSource: "diary",
-      createdAt: "2026-06-30T00:00:00.000Z",
-      entryDate: "2026-06-30",
+  it("returns 404 when deleting another user's entry, which survives", async () => {
+    await seedDiaryEntry(context.db, {
+      bodyText: "not yours",
       id: "other-user-delete",
-      language: null,
-      rawInputText: "not yours",
-      tidiedText: "not yours",
+      occurredAt: "2026-06-30T00:00:00.000Z",
       userId: "someone-else"
     });
 
@@ -521,138 +519,7 @@ describe("DELETE /api/diary/entries/:id", () => {
     });
 
     expect(response.statusCode).toBe(404);
-
-    // The other user's entry survives the rejected delete.
     const survivors = await listDiaryEntriesForUser(context.db, "someone-else");
     expect(survivors.map((entry) => entry.id)).toEqual(["other-user-delete"]);
-  });
-});
-
-describe("capture_source filtering between Diary and Make Durable (#559)", () => {
-  it("keeps a Quick Capture out of the Diary timeline and list", async () => {
-    // A non-diary Timeline capture (Quick Capture) for the same user must never surface in the Diary.
-    await seedTimelineRow(context.db, {
-      captureSource: "quick_capture",
-      createdAt: "2026-06-30T09:00:00.000Z",
-      entryDate: "2026-06-30",
-      id: "qc-1",
-      rawInputText: "a quick capture note",
-      tidiedText: null,
-      userId: DEFAULT_USER_ID
-    });
-    const diaryEntry = await createEntry("a real diary entry");
-
-    const page = await timeline();
-    const ids = page.days.flatMap((day) => day.entries.map((entry) => entry.id));
-    expect(ids).toEqual([diaryEntry.id]);
-
-    const listed = await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID);
-    expect(listed.map((entry) => entry.id)).toEqual([diaryEntry.id]);
-  });
-
-  it("mines diary entries, not legacy Quick Capture rows, in the Make Durable backfill scan", async () => {
-    const diaryEntry = await createEntry("a diary entry the model may mine");
-    await seedTimelineRow(context.db, {
-      captureSource: "quick_capture",
-      createdAt: "2026-06-30T10:00:00.000Z",
-      entryDate: "2026-06-30",
-      id: "qc-backfill",
-      rawInputText: "a quick capture worth mining",
-      tidiedText: null,
-      userId: DEFAULT_USER_ID
-    });
-
-    const backfillable = await listBackfillableCaptures(context.db, DEFAULT_USER_ID, 100);
-    expect(backfillable.map((capture) => capture.entryId)).toEqual([diaryEntry.id]);
-    expect(backfillable.every((capture) => capture.captureSource === "diary")).toBe(true);
-  });
-
-  it("falls back to the raw transcript when a diary entry has no tidied text (#559)", async () => {
-    // The read projection is `tidied_text`, falling back to `raw_input_text` when null. A diary-sourced
-    // Timeline row with no tidied text must display its verbatim raw transcript in both the timeline page
-    // and the coach-readable list.
-    await seedTimelineRow(context.db, {
-      captureSource: "diary",
-      createdAt: "2026-06-30T09:00:00.000Z",
-      entryDate: "2026-06-30",
-      id: "diary-raw-only",
-      language: null,
-      rawInputText: "raw only, not yet tidied",
-      tidiedText: null,
-      userId: DEFAULT_USER_ID
-    });
-
-    const page = await timeline();
-    expect(page.days[0]?.entries.map((entry) => entry.text)).toEqual(["raw only, not yet tidied"]);
-
-    const listed = await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID);
-    expect(listed.map((entry) => entry.text)).toEqual(["raw only, not yet tidied"]);
-  });
-});
-
-describe("diary_entries → timeline_entries migration (#559)", () => {
-  it("moves every diary row onto the Timeline as a diary capture and drops the old table", async () => {
-    // Reach the final schema (diary_entries already dropped, entries + timeline_entries present), then
-    // recreate the retired diary_entries table, seed it as the pre-#559 state, and run the real migration
-    // SQL — proving it moves each row verbatim (text copied into BOTH raw + tidied, source "diary") while
-    // preserving id/date/created_at/language, and drops the old table.
-    const pglite = new PGlite();
-    await runMigrations(pglite);
-    const db = createDbClient(pglite);
-
-    await pglite.exec(`
-      CREATE TABLE "diary_entries" (
-        "created_at" timestamp with time zone NOT NULL,
-        "entry_date" text NOT NULL,
-        "id" text PRIMARY KEY NOT NULL,
-        "language" text,
-        "text" text NOT NULL,
-        "user_id" text NOT NULL
-      );
-      INSERT INTO "diary_entries" ("id","user_id","created_at","entry_date","language","text") VALUES
-        ('mig-1','user-mig','2026-06-30T20:38:00.000Z','2026-06-30','en','first entry'),
-        ('mig-2','user-mig','2026-06-29T09:00:00.000Z','2026-06-29',NULL,'今天 我 去 了 公园');
-    `);
-
-    const migrationSql = readFileSync(
-      fileURLToPath(new URL("../../db/migrations/0033_stormy_mimic.sql", import.meta.url)),
-      "utf8"
-    );
-    await pglite.exec(migrationSql);
-
-    // The rows now read back as diary entries (newest-first), text preserved, language preserved.
-    const migrated = await listDiaryEntriesForUser(db, "user-mig");
-    expect(migrated).toEqual([
-      {
-        createdAt: "2026-06-30T20:38:00.000Z",
-        entryDate: "2026-06-30",
-        id: "mig-1",
-        language: "en",
-        text: "first entry"
-      },
-      {
-        createdAt: "2026-06-29T09:00:00.000Z",
-        entryDate: "2026-06-29",
-        id: "mig-2",
-        language: null,
-        text: "今天 我 去 了 公园"
-      }
-    ]);
-
-    // The underlying Timeline row carries the copied text in BOTH fields, as a diary voice capture.
-    const capture = await getTimelineCaptureForUser(db, "mig-1", "user-mig");
-    expect(capture).toMatchObject({
-      captureSource: "diary",
-      inputMode: "voice",
-      language: "en",
-      rawAudioPath: null,
-      rawInputText: "first entry",
-      tidiedText: "first entry"
-    });
-
-    // The retired table is gone.
-    await expect(pglite.query('SELECT 1 FROM "diary_entries"')).rejects.toThrow();
-
-    await db.$client.close();
   });
 });

@@ -12,11 +12,10 @@ import {
 
 function capture(overrides: Partial<VoiceCaptureStatusDto> = {}): VoiceCaptureStatusDto {
   return {
-    createdAt: "2026-07-09T10:00:00.000Z",
-    entryDate: "2026-07-09",
     failureReason: null,
     id: "cap-1",
     language: "en",
+    occurredAt: "2026-07-09T10:00:00.000Z",
     status: "queued",
     text: null,
     ...overrides
@@ -72,8 +71,8 @@ describe("useVoiceCaptures", () => {
   it("rebuilds the pending list from the server on mount, oldest first", async () => {
     const api = makeApi({
       fetchActive: vi.fn(async () => [
-        capture({ id: "b", createdAt: "2026-07-09T10:05:00.000Z", status: "transcribing" }),
-        capture({ id: "a", createdAt: "2026-07-09T10:00:00.000Z", status: "queued" })
+        capture({ id: "b", occurredAt: "2026-07-09T10:05:00.000Z", status: "transcribing" }),
+        capture({ id: "a", occurredAt: "2026-07-09T10:00:00.000Z", status: "queued" })
       ])
     });
     const { result } = renderHook(() => useVoiceCaptures({ api, pollIntervalMs: POLL_MS }));
@@ -204,8 +203,8 @@ describe("useVoiceCaptures", () => {
     });
     const api = makeApi({
       fetchActive: vi.fn(async () => [
-        capture({ id: "bad", createdAt: "2026-07-09T10:00:00.000Z", status: "transcribing" }),
-        capture({ id: "good", createdAt: "2026-07-09T10:01:00.000Z", status: "transcribing" })
+        capture({ id: "bad", occurredAt: "2026-07-09T10:00:00.000Z", status: "transcribing" }),
+        capture({ id: "good", occurredAt: "2026-07-09T10:01:00.000Z", status: "transcribing" })
       ]),
       fetchStatus
     });
@@ -273,8 +272,8 @@ describe("useVoiceCaptures", () => {
     const onReady = vi.fn();
     const api = makeApi({
       fetchActive: vi.fn(async () => [
-        capture({ id: "failed-1", createdAt: "2026-07-09T10:00:00.000Z", status: "failed" }),
-        capture({ id: "live-1", createdAt: "2026-07-09T10:01:00.000Z", status: "transcribing" })
+        capture({ id: "failed-1", occurredAt: "2026-07-09T10:00:00.000Z", status: "failed" }),
+        capture({ id: "live-1", occurredAt: "2026-07-09T10:01:00.000Z", status: "transcribing" })
       ]),
       fetchStatus: vi.fn(async () => capture({ id: "live-1", status: "ready", text: "done" }))
     });
@@ -354,8 +353,8 @@ describe("useVoiceCaptures", () => {
   it("retries one capture without disturbing its siblings", async () => {
     const api = makeApi({
       fetchActive: vi.fn(async () => [
-        capture({ id: "cap-1", createdAt: "2026-07-09T10:00:00.000Z", status: "failed" }),
-        capture({ id: "cap-2", createdAt: "2026-07-09T10:01:00.000Z", status: "failed" })
+        capture({ id: "cap-1", occurredAt: "2026-07-09T10:00:00.000Z", status: "failed" }),
+        capture({ id: "cap-2", occurredAt: "2026-07-09T10:01:00.000Z", status: "failed" })
       ]),
       retry: vi.fn(async (id: string) => capture({ id, status: "queued" }))
     });

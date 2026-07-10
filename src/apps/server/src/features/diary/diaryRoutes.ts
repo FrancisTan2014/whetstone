@@ -21,10 +21,6 @@ import {
   submitVoiceCapture,
   type VoiceCaptureDependencies
 } from "./voiceCaptureCommands.js";
-import {
-  proposeForCapture,
-  type CaptureProposalDependencies
-} from "../makeDurable/captureCommands.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
@@ -35,15 +31,14 @@ const DEFAULT_TIMELINE_DAYS = 7;
 
 type EntryParams = Readonly<{ id: string }>;
 
-export type DiaryRouteDependencies = DiaryDependencies &
-  CaptureProposalDependencies &
-  VoiceCaptureDependencies;
+export type DiaryRouteDependencies = DiaryDependencies & VoiceCaptureDependencies;
 
 export function registerDiaryRoutes(
   server: FastifyInstance,
   dependencies: DiaryRouteDependencies
 ): void {
-  // Capture: save a diary-sourced Timeline entry first, then run the shared Make Durable proposal gate.
+  // Capture: save a diary Entry immediately (save-first) and return it. A diary capture journals only —
+  // no proposal or Make Durable step blocks or slows it (#571).
   server.post("/api/diary/entries", async (request, reply) => {
     const parsed = createDiaryEntryRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -60,19 +55,9 @@ export function registerDiaryRoutes(
       userId,
       now
     );
-    const card = await proposeForCapture(
-      dependencies,
-      parsed.data.transcript,
-      userId,
-      entry.id,
-      now
-    );
-    request.log.info(
-      { diaryEntryId: entry.id, makeDurableCard: card !== null, route: "POST /api/diary/entries" },
-      "diary_created"
-    );
+    request.log.info({ diaryEntryId: entry.id, route: "POST /api/diary/entries" }, "diary_created");
 
-    return reply.code(201).send({ entry, card });
+    return reply.code(201).send(entry);
   });
 
   // Async Tap-and-Talk (#565): save the raw audio and create a pending, diary-sourced voice capture
@@ -198,7 +183,8 @@ export function registerDiaryRoutes(
     const result = await updateDiaryEntry(
       dependencies,
       request.params.id,
-      parsed.data.text,
+      parsed.data.bodyDoc,
+      parsed.data.language,
       request.server.currentUser.getCurrentUserId()
     );
     if (result.status === "not_found") {

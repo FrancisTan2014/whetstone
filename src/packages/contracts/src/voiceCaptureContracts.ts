@@ -1,4 +1,3 @@
-import { isDayKey } from "@whetstone/domain";
 import { z } from "zod";
 
 import { captureLanguageSchema } from "./captureContracts.js";
@@ -10,9 +9,9 @@ import { captureLanguageSchema } from "./captureContracts.js";
 // voice-capture API is described here; the server validates once at the boundary.
 
 // The lifecycle a queued voice capture walks: created `queued`, claimed by the worker as `transcribing`,
-// then `tidying`, then `ready` (its Timeline text is filled and the Make Durable gate has run) — or
-// `failed` when the worker gave up (the raw audio is kept so it can be retried). Ordered from first to
-// terminal so the frontend can render progress.
+// then `tidying`, then `ready` (its durable diary body is built from the tidied text) — or `failed` when
+// the worker gave up (the raw audio is kept so it can be retried). Ordered from first to terminal so the
+// frontend can render progress.
 export const voiceCaptureStatuses = [
   "queued",
   "transcribing",
@@ -42,18 +41,16 @@ export const voiceCaptureAcceptedDtoSchema = z
 
 export type VoiceCaptureAcceptedDto = z.infer<typeof voiceCaptureAcceptedDtoSchema>;
 
-const dayKeySchema = z.string().refine(isDayKey, { message: "must be a YYYY-MM-DD date." });
-
 // The pollable status of one voice capture. `text` is the tidied entry once ready (null while pending or
-// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language`/`entryDate`
-// /`createdAt` mirror the persisted capture so the client can render the pending row in place.
+// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language`/`occurredAt`
+// mirror the persisted capture so the client can render the pending row in place and, once ready, build
+// the Timeline entry from it (its day is derived from `occurredAt`).
 export const voiceCaptureStatusDtoSchema = z
   .object({
-    createdAt: z.string(),
-    entryDate: dayKeySchema,
     failureReason: z.string().nullable(),
     id: z.string(),
     language: captureLanguageSchema.nullable(),
+    occurredAt: z.string(),
     status: voiceCaptureStatusSchema,
     text: z.string().nullable()
   })

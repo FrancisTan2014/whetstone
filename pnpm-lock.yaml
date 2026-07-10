@@ -269,6 +269,9 @@ importers:
 
   src/packages/contracts:
     dependencies:
+      '@whetstone/document':
+        specifier: workspace:*
+        version: link:../document
       '@whetstone/domain':
         specifier: workspace:*
         version: link:../domain

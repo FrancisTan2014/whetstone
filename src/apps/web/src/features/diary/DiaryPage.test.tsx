@@ -11,11 +11,29 @@ vi.mock("./diaryApi", () => ({
   updateDiaryEntry: vi.fn()
 }));
 
-vi.mock("../makeDurable/makeDurableApi", () => ({
-  fetchMakeDurableCards: vi.fn(),
-  reviewMakeDurableCard: vi.fn(),
-  runMakeDurableBackfill: vi.fn()
-}));
+// The shared rich editor (#570) is exercised in its own suite; here it stands in as a plain textarea so
+// the diary's editing behaviour (which document is saved) is asserted without driving Tiptap in jsdom.
+vi.mock("../../shared/editor/index.js", async () => {
+  const { createTextDocument, documentText } = await import("@whetstone/document");
+  const React = await import("react");
+  return {
+    RichContentEditor: ({
+      ariaLabel,
+      document,
+      onChange
+    }: {
+      ariaLabel?: string;
+      document: unknown;
+      onChange: (document: unknown) => void;
+    }) =>
+      React.createElement("textarea", {
+        "aria-label": ariaLabel,
+        defaultValue: documentText(document as never),
+        onChange: (event: { target: { value: string } }) =>
+          onChange(createTextDocument(event.target.value))
+      })
+  };
+});
 
 vi.mock("../capture/voiceCaptureApi", () => ({
   submitVoiceCapture: vi.fn(),
@@ -24,16 +42,11 @@ vi.mock("../capture/voiceCaptureApi", () => ({
   retryVoiceCapture: vi.fn()
 }));
 
-import type {
-  DiaryCaptureResultDto,
-  DiaryEntryDto,
-  TimelineDayDto,
-  TimelineEntryDto
-} from "@whetstone/contracts";
+import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toDayKey } from "@whetstone/domain";
 
 import { submitVoiceCapture, fetchActiveVoiceCaptures } from "../capture/voiceCaptureApi";
-import { fetchMakeDurableCards } from "../makeDurable/makeDurableApi";
 import {
   submitDiaryCapture,
   deleteDiaryEntry,
@@ -47,7 +60,6 @@ import type { CaptureVoiceDependencies, VoiceRecording } from "../capture/Captur
 const mockedTimeline = vi.mocked(fetchTimeline);
 const mockedCalendar = vi.mocked(fetchDiaryCalendar);
 const mockedSubmit = vi.mocked(submitDiaryCapture);
-const mockedFetchCards = vi.mocked(fetchMakeDurableCards);
 const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
 const mockedVoiceSubmit = vi.mocked(submitVoiceCapture);
@@ -58,20 +70,41 @@ const mockedVoiceActive = vi.mocked(fetchActiveVoiceCaptures);
 const MONTH = toDayKey(new Date()).slice(0, 7);
 const d = (day: number): string => `${MONTH}-${String(day).padStart(2, "0")}`;
 
-function tEntry(id: string, createdAt: string, text: string): TimelineEntryDto {
-  return { createdAt, id, kind: "diary", language: null, text };
+// A diary timeline row (#571): a discriminated `kind: "diary"` DTO carrying the rich body + its plaintext.
+function tEntry(id: string, occurredAt: string, text: string): TimelineEntryDto {
+  return {
+    bodyDoc: createTextDocument(text),
+    bodyText: text,
+    entryId: id,
+    kind: "diary",
+    language: null,
+    occurredAt
+  };
+}
+
+// A note timeline row — the Timeline is a mixed logical view; the Diary filters these out.
+function tNote(id: string, occurredAt: string, text: string): TimelineEntryDto {
+  return { entryId: id, kind: "note", occurredAt, text };
 }
 
 function tDay(date: string, entries: TimelineEntryDto[]): TimelineDayDto {
   return { date, entries };
 }
 
-function entryDto(id: string, entryDate: string, text: string): DiaryEntryDto {
-  return { createdAt: `${entryDate}T12:00:00.000Z`, entryDate, id, language: null, text };
-}
-
-function captureResult(entry: DiaryEntryDto): DiaryCaptureResultDto {
-  return { entry, card: null };
+function entryDto(id: string, dayKey: string, text: string): DiaryEntryDto {
+  const occurredAt = `${dayKey}T12:00:00.000Z`;
+  return {
+    bodyDoc: createTextDocument(text),
+    bodyText: text,
+    createdAt: occurredAt,
+    failureReason: null,
+    id,
+    inputMode: "typed",
+    language: null,
+    occurredAt,
+    processingStatus: null,
+    updatedAt: occurredAt
+  };
 }
 
 type FakeIntersectionObserver = {
@@ -148,7 +181,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedTimeline.mockResolvedValue({ days: [] });
   mockedCalendar.mockResolvedValue({ dates: [] });
-  mockedFetchCards.mockResolvedValue([]);
   mockedVoiceActive.mockResolvedValue([]);
   vi.stubGlobal("IntersectionObserver", StubObserver);
   Element.prototype.scrollIntoView = vi.fn();
@@ -198,8 +230,27 @@ describe("DiaryPage timeline", () => {
       .filter((heading) => heading.textContent !== "Capture today");
     expect(headings[0]?.textContent).toContain("30");
     expect(headings[1]?.textContent).toContain("29");
-    expect(screen.getByText("first on the 30th")).toBeTruthy();
-    expect(screen.getByText("second on the 30th")).toBeTruthy();
+    // Within a day the Timeline is newest-first by occurredAt (#571): the 10:00 entry precedes the 08:00.
+    const sameDayBodies = screen.getAllByText(/on the 30th/).map((element) => element.textContent);
+    expect(sameDayBodies).toEqual(["second on the 30th", "first on the 30th"]);
+  });
+
+  it("filters the mixed timeline down to diary entries (#571)", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [
+        tDay(d(30), [
+          tEntry("diary-a", `${d(30)}T08:00:00.000Z`, "a diary moment"),
+          tNote("note-a", `${d(30)}T09:00:00.000Z`, "a study note")
+        ])
+      ]
+    });
+
+    await renderReady(makeCapture().capture);
+
+    // The diary body shows; the note (a different personal Entry kind) is filtered out of the Diary view.
+    expect(screen.getByText("a diary moment")).toBeTruthy();
+    expect(screen.queryByText("a study note")).toBeNull();
   });
 });
 
@@ -208,11 +259,10 @@ describe("DiaryPage capture", () => {
     mockedVoiceSubmit.mockResolvedValue({ id: "vc-1", status: "queued" });
     mockedVoiceActive.mockResolvedValueOnce([]).mockResolvedValue([
       {
-        createdAt: `${d(30)}T08:00:00.000Z`,
-        entryDate: d(30),
         failureReason: null,
         id: "vc-1",
         language: "en",
+        occurredAt: `${d(30)}T08:00:00.000Z`,
         status: "queued",
         text: null
       }
@@ -266,10 +316,10 @@ describe("DiaryPage capture", () => {
   });
 
   it("adds a typed entry via the fallback box and shows a saving state", async () => {
-    let resolveCreate: (result: DiaryCaptureResultDto) => void = () => {};
+    let resolveCreate: (result: DiaryEntryDto) => void = () => {};
     mockedSubmit.mockImplementation(
       () =>
-        new Promise<DiaryCaptureResultDto>((resolve) => {
+        new Promise<DiaryEntryDto>((resolve) => {
           resolveCreate = resolve;
         })
     );
@@ -280,14 +330,14 @@ describe("DiaryPage capture", () => {
     await userEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     expect(screen.getAllByText("Saving…").length).toBeGreaterThan(0);
-    act(() => resolveCreate(captureResult(entryDto("typed-1", d(30), "a typed thought"))));
+    act(() => resolveCreate(entryDto("typed-1", d(30), "a typed thought")));
 
     await screen.findByText("a typed thought");
     expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed", "en");
   });
 
   it("scrolls a newly added entry into view so its actions clear the bottom nav (#506)", async () => {
-    mockedSubmit.mockResolvedValue(captureResult(entryDto("typed-1", d(30), "a fresh thought")));
+    mockedSubmit.mockResolvedValue(entryDto("typed-1", d(30), "a fresh thought"));
     const { capture } = makeCapture();
 
     await renderReady(capture);
@@ -335,7 +385,7 @@ describe("DiaryPage capture", () => {
   });
 });
 
-describe("DiaryPage edit and delete", () => {
+describe("DiaryPage rich edit and delete (#571)", () => {
   beforeEach(() => {
     mockedTimeline.mockReset();
     mockedTimeline.mockResolvedValue({
@@ -343,7 +393,7 @@ describe("DiaryPage edit and delete", () => {
     });
   });
 
-  it("edits an entry's text, leaving its siblings untouched", async () => {
+  it("edits an entry's rich body via the shared editor, leaving siblings untouched", async () => {
     mockedTimeline.mockReset();
     mockedTimeline.mockResolvedValue({
       days: [
@@ -356,11 +406,15 @@ describe("DiaryPage edit and delete", () => {
     mockedUpdate.mockResolvedValue(entryDto("e1", d(30), "edited text"));
 
     await renderReady(makeCapture().capture);
-    const [firstEdit] = screen.getAllByRole("button", { name: "Edit" });
-    if (firstEdit === undefined) {
-      throw new Error("expected an Edit button");
+    // With the newest-first Timeline ordering (#571) the sibling may render first, so target the
+    // entry by its text rather than by DOM position.
+    const originalItem = screen.getByText("original text").closest("li");
+    if (originalItem === null) {
+      throw new Error("expected the original entry's list item");
     }
-    await userEvent.click(firstEdit);
+    await userEvent.click(
+      within(originalItem as HTMLElement).getByRole("button", { name: "Edit" })
+    );
     const editor = screen.getByLabelText("Edit entry");
     await userEvent.clear(editor);
     await userEvent.type(editor, "edited text");
@@ -368,7 +422,8 @@ describe("DiaryPage edit and delete", () => {
 
     await screen.findByText("edited text");
     expect(screen.getByText("sibling text")).toBeTruthy();
-    expect(mockedUpdate).toHaveBeenCalledWith("e1", "edited text");
+    // The rich body is what is persisted — the shared editor's document, not a bare string.
+    expect(mockedUpdate).toHaveBeenCalledWith("e1", createTextDocument("edited text"));
   });
 
   it("does not save a blank edit", async () => {
@@ -450,7 +505,14 @@ describe("DiaryPage edit and delete", () => {
     await renderReady(makeCapture().capture);
     await screen.findByRole("button", { name: `Go to ${d(30)}` });
 
-    await userEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
+    // Newest-first ordering (#571) may render the sibling first, so delete the original by its text.
+    const originalItem = screen.getByText("original text").closest("li");
+    if (originalItem === null) {
+      throw new Error("expected the original entry's list item");
+    }
+    await userEvent.click(
+      within(originalItem as HTMLElement).getByRole("button", { name: "Delete" })
+    );
 
     await waitFor(() => expect(screen.queryByText("original text")).toBeNull());
     // A sibling entry still falls on the day, so it stays marked.
@@ -461,12 +523,13 @@ describe("DiaryPage edit and delete", () => {
 
 describe("dayToUnmarkAfterDelete", () => {
   const entry = (id: string, date: string): FlatEntry => ({
-    createdAt: `${date}T08:00:00.000Z`,
+    bodyDoc: createTextDocument(id),
+    bodyText: id,
     date,
-    id,
+    entryId: id,
     kind: "diary",
     language: null,
-    text: id
+    occurredAt: `${date}T08:00:00.000Z`
   });
 
   it("returns undefined when the id is not among the loaded entries", () => {
@@ -591,7 +654,7 @@ describe("DiaryPage date-jump calendar", () => {
   });
 
   it("marks the new entry's day on the calendar immediately after saving (#471)", async () => {
-    mockedSubmit.mockResolvedValue(captureResult(entryDto("typed-1", d(6), "a fresh thought")));
+    mockedSubmit.mockResolvedValue(entryDto("typed-1", d(6), "a fresh thought"));
     await renderReady(makeCapture().capture);
 
     // No marks yet (the calendar fetch returns none).
@@ -609,7 +672,7 @@ describe("DiaryPage date-jump calendar", () => {
     // The day is already marked from the calendar fetch; saving another entry that day keeps the mark
     // (the marked-day set is left unchanged rather than needlessly rebuilt).
     mockedCalendar.mockResolvedValue({ dates: [d(6)] });
-    mockedSubmit.mockResolvedValue(captureResult(entryDto("typed-2", d(6), "another thought")));
+    mockedSubmit.mockResolvedValue(entryDto("typed-2", d(6), "another thought"));
     await renderReady(makeCapture().capture);
     await screen.findByRole("button", { name: `Go to ${d(6)}` });
 

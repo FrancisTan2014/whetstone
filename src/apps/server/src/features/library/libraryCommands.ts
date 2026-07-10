@@ -18,6 +18,7 @@ import {
   entryLinks,
   noteAnchors,
   notes,
+  personalEntries,
   readingPositions,
   readingUnits,
   recallItems,
@@ -216,6 +217,9 @@ export async function deleteWork(
     if (noteIds.length > 0) {
       await tx.delete(noteAnchors).where(inArray(noteAnchors.noteEntryId, noteIds));
       await tx.delete(notes).where(inArray(notes.entryId, noteIds));
+      // A note owns a `personal_entries` chronology facet (its owner + timestamps, #571); remove it before
+      // the owning `entries` row so no ownership facet dangles off a deleted note.
+      await tx.delete(personalEntries).where(inArray(personalEntries.entryId, noteIds));
     }
 
     await tx.delete(readingPositions).where(eq(readingPositions.workEntryId, workEntryId));

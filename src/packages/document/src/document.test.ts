@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assignNodeIds,
   type DocumentNodeJSON,
+  createTextDocument,
   documentMarkNames,
   documentNodeNames,
   documentReadableText,
@@ -514,5 +515,45 @@ describe("validation failures", () => {
     const fragment = { content: [{ text: "hi", type: "text" }], type: "paragraph" };
     expect(isValidDocument(fragment)).toBe(false);
     expect(() => parseDocument(fragment)).toThrow(DocumentValidationError);
+  });
+});
+
+describe("createTextDocument", () => {
+  it("wraps text in a single paragraph whose plaintext round-trips exactly", () => {
+    const doc = createTextDocument("I shipped the fix today.");
+
+    expect(doc.type).toBe("doc");
+    expect(doc.content).toHaveLength(1);
+    expect(doc.content?.[0]?.type).toBe("paragraph");
+    expect(doc.content?.[0]?.content?.[0]).toMatchObject({
+      text: "I shipped the fix today.",
+      type: "text"
+    });
+    expect(documentText(doc)).toBe("I shipped the fix today.");
+    expect(isValidDocument(doc)).toBe(true);
+  });
+
+  it("preserves newlines verbatim so the plaintext projection stays byte-identical", () => {
+    const source = "line one\nline two";
+    const doc = createTextDocument(source);
+
+    expect(documentText(doc)).toBe(source);
+  });
+
+  it("preserves CJK text verbatim", () => {
+    const doc = createTextDocument("今天我修好了部署。");
+
+    expect(documentText(doc)).toBe("今天我修好了部署。");
+  });
+
+  it("yields an empty paragraph for an empty string", () => {
+    const doc = createTextDocument("");
+
+    expect(doc.type).toBe("doc");
+    expect(doc.content).toHaveLength(1);
+    expect(doc.content?.[0]?.type).toBe("paragraph");
+    expect(doc.content?.[0]?.content ?? []).toHaveLength(0);
+    expect(documentText(doc)).toBe("");
+    expect(isValidDocument(doc)).toBe(true);
   });
 });

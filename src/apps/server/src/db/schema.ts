@@ -20,7 +20,7 @@ export const entries = pgTable("entries", {
   // a work/reading unit/block, so the authored nav tree persists as its own `toc_entries` rows keyed
   // by an `entries` id (mirroring how reading units register entries).
   type: text("type", {
-    enum: ["work", "reading_unit", "block", "note", "toc_entry", "timeline_entry"] as const
+    enum: ["work", "reading_unit", "block", "note", "toc_entry", "diary_entry"] as const
   }).notNull()
 });
 
@@ -231,22 +231,19 @@ export const noteTemplates = pgTable("note_templates", {
 });
 
 // A note is an Entry annotating a source block. `answers_json` holds the structured
-// answers keyed by template field id; `markdown_body` is the rendered note body.
+// answers keyed by template field id; `markdown_body` is the rendered note body. Ownership and
+// chronology (owner, occurredAt, createdAt, updatedAt) live in the shared `personal_entries` facet
+// (#571) — a note is a personal (owned) Entry, so it carries a `personal_entries` row and this table
+// stays a pure content facet.
 export const notes = pgTable("notes", {
   answersJson: jsonb("answers_json").notNull(),
-  // Creation time, so reading-capture recency is a durable signal (#243): note ids are uuids, not
-  // time-ordered, so the harvest must order by this, not by id.
-  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
   entryId: text("entry_id")
     .primaryKey()
     .references(() => entries.id),
   markdownBody: text("markdown_body").notNull(),
   // Null for a mark-only highlight (a "Gem", #255): a one-tap highlight with no template/body that
   // reuses the note anchor + overlap + delete model. A templated note references a seeded template.
-  templateId: text("template_id").references(() => noteTemplates.id),
-  // The owning user (the v0 default identity). Notes are user-owned personal data — stamped on
-  // create from the current-user provider and filtered by on read (PRODUCT.md "Identity & ownership").
-  userId: text("user_id").notNull()
+  templateId: text("template_id").references(() => noteTemplates.id)
 });
 
 // Per-user, per-work reading position: the reading unit the reader last had open and a
@@ -386,7 +383,7 @@ export const recallItems = pgTable(
     // `cue` is the retrieval prompt; `use_context` is when/where to use the target; `category` is the
     // one broad bucket; `tags_json` holds optional narrow tags; `source_proposal_candidate_id` links
     // back to the candidate this item was saved from (audit/evidence) WITHOUT replacing
-    // `provenance_entry_id`, which still points at the source timeline entry.
+    // `provenance_entry_id`, which still points at the source Entry.
     cue: text("cue"),
     useContext: text("use_context"),
     category: text("category", {
@@ -569,128 +566,49 @@ export const nudgeState = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.chunkId] })]
 );
 
-// The Make Durable Timeline (#451): one user-owned chronological capture per row, keyed by its owning
-// Entry (`entries.type = "timeline_entry"`), so a Recall item made durable from a capture points at it
-// via `recall_items.provenance_entry_id -> entries.id` and captures can join the typed link graph via
-// `entry_links`. `entry_date` is the local `YYYY-MM-DD` day; `created_at` is the capture instant.
-// `raw_input_text` is preserved verbatim; `tidied_text` is the noise-removed form (null until/unless
-// tidy runs — tidy is async and may fail, and capture never blocks on it). `capture_source` spans quick
-// capture, diary, speech, reader, and writing — the Diary IS the `capture_source = "diary"` filtered view
-// over this store (its former `diary_entries` table was retired into this one, #559), the coach-readable
-// learner-history facet for diary capture.
-export const timelineEntries = pgTable(
-  "timeline_entries",
+// The shared ownership + chronology facet for personal (owned) Entries (#571): owner and the three
+// timestamps a logical Timeline needs — `occurred_at` (when the entry happened, the Timeline sort key),
+// `created_at` (when it was captured), and `updated_at` (last edit). Every personal Entry carries exactly
+// one row here: BOTH `note` and `diary_entry` types. Shared library Entries (work/reading_unit/block/
+// toc_entry) have NO row (they have no owner). The Timeline is derived by querying this facet for the
+// current user ordered by `occurred_at` — there is no stored Timeline object. Keyed by the owning Entry.
+export const personalEntries = pgTable(
+  "personal_entries",
   {
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),
     userId: text("user_id").notNull(),
+    occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
-    entryDate: text("entry_date").notNull(),
-    inputMode: text("input_mode", { enum: ["typed", "voice"] as const }).notNull(),
-    captureSource: text("capture_source", {
-      enum: ["quick_capture", "diary", "speech", "reader", "writing"] as const
-    }).notNull(),
-    rawInputText: text("raw_input_text").notNull(),
-    tidiedText: text("tidied_text"),
-    language: text("language"),
-    rawAudioPath: text("raw_audio_path"),
-    // Async Tap-and-Talk (#565): a voice capture is durable BEFORE speech-to-text runs. The raw audio is
-    // saved and the row created immediately with `processing_status = "queued"`, then a single background
-    // worker walks it `queued -> transcribing -> tidying -> ready` (or `failed`) one capture at a time,
-    // oldest first, so the user never waits for STT or the local model before recording again. NULL means
-    // a synchronous capture that was ready on write (typed Quick Capture / typed diary / legacy rows) and
-    // never entered the queue; only the queued voice path carries an explicit status. `failure_reason`
-    // records why the worker gave up so a `failed` capture can be retried without losing the raw audio.
-    processingStatus: text("processing_status", {
-      enum: ["queued", "transcribing", "tidying", "ready", "failed"] as const
-    }),
-    failureReason: text("failure_reason")
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull()
   },
-  (table) => [index("timeline_entries_user_date_idx").on(table.userId, table.entryDate)]
+  (table) => [index("personal_entries_user_occurred_idx").on(table.userId, table.occurredAt)]
 );
 
-// A gated Make Durable suggestion (#451): what Whetstone noticed about a capture, NOT durable learning
-// material until reviewed and saved. User-owned workflow state (not an Entry). `payload_json` holds the
-// opaque proposed recall payload (target/cue/use context/category/tags); `evidence_quote` is a faithful
-// quote from the capture; `confidence`/`reason` back the visibility gate; `duplicate_status` records the
-// dedupe verdict; `model_name`/`prompt_version` stamp the generating prompt for auditing/eval.
-export const proposalCandidates = pgTable(
-  "proposal_candidates",
-  {
-    id: text("id").primaryKey(),
-    timelineEntryId: text("timeline_entry_id")
-      .notNull()
-      .references(() => timelineEntries.entryId),
-    userId: text("user_id").notNull(),
-    type: text("type", {
-      enum: ["phrase_chunk", "couldnt_say_gap", "recurring_pattern"] as const
-    }).notNull(),
-    status: text("status", {
-      enum: ["pending", "visible", "saved", "dismissed"] as const
-    }).notNull(),
-    confidence: doublePrecision("confidence").notNull(),
-    reason: text("reason").notNull(),
-    evidenceQuote: text("evidence_quote").notNull(),
-    payloadJson: jsonb("payload_json").notNull(),
-    duplicateStatus: text("duplicate_status", {
-      enum: [
-        "unique",
-        "exact_duplicate",
-        "same_target_same_context",
-        "same_target_new_context",
-        "same_gap_better_wording",
-        "related_but_distinct"
-      ] as const
-    }).notNull(),
-    relatedRecallItemId: text("related_recall_item_id").references(() => recallItems.id),
-    noveltyReason: text("novelty_reason"),
-    modelName: text("model_name").notNull(),
-    promptVersion: text("prompt_version").notNull(),
-    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
-  },
-  (table) => [
-    index("proposal_candidates_user_idx").on(table.userId, table.createdAt),
-    index("proposal_candidates_timeline_entry_idx").on(table.timelineEntryId)
-  ]
-);
-
-// The user's decision on a proposal (#451): the tuning signal and the trigger for making an item
-// durable. Only `saved`/`edited_saved` create a recall item; the negatives record signal and create
-// nothing. `feedback_tags_json` holds optional reason tags; `edited_payload_json` holds the user's
-// edited payload on `edited_saved`. User-owned via the parent candidate.
-export const proposalReviews = pgTable(
-  "proposal_reviews",
-  {
-    id: text("id").primaryKey(),
-    proposalCandidateId: text("proposal_candidate_id")
-      .notNull()
-      .references(() => proposalCandidates.id),
-    userId: text("user_id").notNull(),
-    outcome: text("outcome", {
-      enum: ["saved", "edited_saved", "not_useful_now", "wrong_hallucinated", "ignored"] as const
-    }).notNull(),
-    feedbackTagsJson: jsonb("feedback_tags_json").$type<string[]>(),
-    editedPayloadJson: jsonb("edited_payload_json"),
-    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
-  },
-  (table) => [index("proposal_reviews_candidate_idx").on(table.proposalCandidateId)]
-);
-
-// A durable marker that a Make Durable backfill run (#456) evaluated a Timeline entry and the model
-// returned NO proposal. It advances the bounded history scan past entries that yielded nothing, so a
-// high-value entry beyond a single run's `BACKFILL_SCAN_LIMIT` stays reachable across runs. (An entry
-// that DID produce a proposal is already excluded by its `proposal_candidates` row; this covers the
-// empty-generation case, which stores no candidate.) It is never written for a model-unavailable/null
-// attempt, so those leave history unchanged and the entry remains eligible for a later run.
-export const makeDurableBackfillScans = pgTable(
-  "make_durable_backfill_scans",
-  {
-    timelineEntryId: text("timeline_entry_id")
-      .primaryKey()
-      .references(() => timelineEntries.entryId),
-    userId: text("user_id").notNull(),
-    scannedAt: timestamp("scanned_at", { mode: "date", withTimezone: true }).notNull()
-  },
-  (table) => [index("make_durable_backfill_scans_user_idx").on(table.userId)]
-);
+// A diary artifact as a first-class personal Entry (#571): its durable body is a ProseMirror/Tiptap
+// document (`body_doc`, edited through the shared rich editor), with `body_text` the readable plaintext
+// projection (`documentReadableText(body_doc)`, block-boundary spaces) kept for preview/search. Ownership + chronology live in `personal_entries`;
+// this table holds the diary-specific facets. `input_mode` is how it was captured; `raw_audio_path`,
+// `raw_transcript` (verbatim STT/typed text before tidy), and `tidied_text` preserve the voice pipeline's
+// intermediate representations; `language` is the detected/selected language. `processing_status` is NULL
+// for a synchronous typed capture that is ready on write; only the queued voice path carries a status,
+// which a single background worker walks `queued -> transcribing -> tidying -> ready` (or `failed`), one
+// capture at a time, so the user never waits for STT before recording again (save-first). `failure_reason`
+// records why the worker gave up so a `failed` capture can be retried without losing the raw audio.
+export const diaryEntries = pgTable("diary_entries", {
+  entryId: text("entry_id")
+    .primaryKey()
+    .references(() => entries.id),
+  bodyDoc: jsonb("body_doc").notNull(),
+  bodyText: text("body_text").notNull(),
+  language: text("language"),
+  inputMode: text("input_mode", { enum: ["typed", "voice"] as const }).notNull(),
+  rawAudioPath: text("raw_audio_path"),
+  rawTranscript: text("raw_transcript"),
+  tidiedText: text("tidied_text"),
+  processingStatus: text("processing_status", {
+    enum: ["queued", "transcribing", "tidying", "ready", "failed"] as const
+  }),
+  failureReason: text("failure_reason")
+});

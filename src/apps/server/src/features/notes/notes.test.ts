@@ -17,7 +17,7 @@ import type {
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, entryLinks, noteAnchors, notes } from "../../db/schema.js";
+import { entries, entryLinks, noteAnchors, notes, personalEntries } from "../../db/schema.js";
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
@@ -30,6 +30,7 @@ import type { LibraryDependencies } from "../library/libraryCommands.js";
 type TestContext = Readonly<{
   db: DbClient;
   server: ReturnType<typeof createServer>;
+  setNow: (iso: string) => void;
   sourcesDir: string;
 }>;
 
@@ -58,14 +59,21 @@ async function buildContext(): Promise<TestContext> {
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
+  // A fixed clock a test can pin so it can assert the shared `personal_entries` chronology timestamps;
+  // unset it defaults to the real clock, preserving the timing of tests that don't care.
+  let currentNow: Date | null = null;
   const notesDeps: NotesDependencies = {
     createEntryId: () => `note-${(noteSequence += 1)}`,
-    db
+    db,
+    now: () => currentNow ?? new Date()
   };
 
   return {
     db,
     server: createServer({ content, library, logger: false, notes: notesDeps }),
+    setNow: (iso: string) => {
+      currentNow = new Date(iso);
+    },
     sourcesDir
   };
 }
@@ -777,9 +785,9 @@ describe("note user ownership", () => {
     const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
 
     const rows = await context.db
-      .select({ userId: notes.userId })
-      .from(notes)
-      .where(eq(notes.entryId, note.entryId));
+      .select({ userId: personalEntries.userId })
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, note.entryId));
 
     expect(rows[0]?.userId).toBe(DEFAULT_USER_ID);
   });
@@ -820,6 +828,34 @@ describe("update note route", () => {
 
     const listed = (await listNotes(workEntryId).then((r) => r.json())) as NoteListDto;
     expect(listed.notes[0]?.templateId).toBe("thought");
+  });
+
+  it("bumps the shared personal-entry updated_at on edit, leaving created/occurred at capture (#571)", async () => {
+    context.setNow("2026-06-01T00:00:00.000Z");
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const [before] = await context.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, note.entryId));
+    expect(before?.updatedAt.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+
+    context.setNow("2026-06-02T09:30:00.000Z");
+    const response = await patchNote(workEntryId, note.entryId, {
+      answers: { noticed: "Edited note." },
+      templateId: "thought"
+    });
+    expect(response.statusCode).toBe(200);
+
+    const [after] = await context.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, note.entryId));
+    // The edit touches the shared chronology facet's updated_at; created/occurred stay at capture time.
+    expect(after?.updatedAt.toISOString()).toBe("2026-06-02T09:30:00.000Z");
+    expect(after?.createdAt.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+    expect(after?.occurredAt.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 
   it("returns 404 when the note does not belong to the work", async () => {
@@ -1015,7 +1051,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
     return createServer({
       currentUser: { getCurrentUserId: () => "other-user" },
       logger: false,
-      notes: { createEntryId: () => "other-note", db: context.db }
+      notes: { createEntryId: () => "other-note", db: context.db, now: () => new Date() }
     });
   }
 
@@ -1032,7 +1068,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      // Removing `eq(notes.userId, userId)` from listNotesForWork would leak the owner's note here.
+      // Removing `eq(personalEntries.userId, userId)` from listNotesForWork would leak the owner's note here.
       expect((response.json() as NoteListDto).notes).toEqual([]);
     } finally {
       await other.close();
@@ -1075,7 +1111,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
     const db = createDbClient(pglite);
     const server = createServer({
       logger: false,
-      notes: { createEntryId: () => "x", db }
+      notes: { createEntryId: () => "x", db, now: () => new Date() }
     });
     await pglite.close();
 

@@ -96,7 +96,7 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
       content,
       library,
       logger: false,
-      notes: { createEntryId: () => `note-${(entrySequence += 1)}`, db },
+      notes: { createEntryId: () => `note-${(entrySequence += 1)}`, db, now: () => new Date() },
       readingPosition: { db }
     }),
     sourcesDir

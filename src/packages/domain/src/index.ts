@@ -63,30 +63,16 @@ export { rankReadingNudges, recencyBoost, topReadingNudge } from "./readingNudge
 export type { ReadingNudgeCandidate, RankedReadingNudge } from "./readingNudge.js";
 export { buildDiaryTidyPrompt, diaryTidyInstructions, isFaithfulTidy } from "./diaryTidy.js";
 export {
-  buildBackfillProposalPrompt,
-  backfillEmphasisInstructions,
-  buildProposalPrompt,
-  classifyProposalDuplicate,
-  DEFAULT_PROPOSAL_CONFIDENCE_THRESHOLD,
-  evaluateProposalGate,
-  isFaithfulQuote,
-  MAX_POLICY_EXAMPLES,
-  normalizeForMatch,
-  PROPOSAL_PROMPT_VERSION,
-  proposalPromptInstructions,
-  selectPolicyExamples
-} from "./makeDurable.js";
-export type {
-  ExistingRecallItem,
-  ProposalDuplicateVerdict,
-  ProposalGateVerdict,
-  ReviewedProposalExample,
-  ReviewedProposalKind,
-  ReviewedProposalOutcome
-} from "./makeDurable.js";
-export { reviewedProposalExampleFixtures } from "./makeDurablePolicyFixtures.js";
+  entryTypeForTimelineKind,
+  groupTimelineEntriesByDay,
+  isTimelineEntryKind,
+  orderTimelineEntries,
+  timelineDays,
+  timelineEntryKinds,
+  timelineKindsAreRealEntries
+} from "./timeline.js";
+export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timeline.js";
 export {
-  groupByDayDesc,
   isDayKey,
   monthBounds,
   monthGrid,
@@ -94,7 +80,6 @@ export {
   toDayKey,
   toMonthKey
 } from "./diaryTimeline.js";
-export type { DatedEntry, DayGroup } from "./diaryTimeline.js";
 export { caseLightLevel, caseLightLevels } from "./progressMap.js";
 export type { CaseLightLevel } from "./progressMap.js";
 export { mistakeCategoryFromIssues } from "./mistakeCategory.js";

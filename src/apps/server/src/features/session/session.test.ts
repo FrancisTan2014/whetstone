@@ -9,7 +9,7 @@ import { createLoggerOptions } from "../../config/serverConfig.js";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { errorPatterns, recallItems, sessionExchanges, turnOutcomes } from "../../db/schema.js";
-import { entries, noteAnchors, notes, noteTemplates } from "../../db/schema.js";
+import { entries, noteAnchors, notes, noteTemplates, personalEntries } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
 import type { SpeechAudio } from "../../speech/speechInput.js";
@@ -75,10 +75,15 @@ async function seedCapture(
     .onConflictDoNothing();
   await db.insert(notes).values({
     answersJson: {},
-    createdAt,
     entryId: noteId,
     markdownBody: "x",
-    templateId: "vocab",
+    templateId: "vocab"
+  });
+  await db.insert(personalEntries).values({
+    createdAt,
+    entryId: noteId,
+    occurredAt: createdAt,
+    updatedAt: createdAt,
     userId: userA
   });
   await db.insert(noteAnchors).values({

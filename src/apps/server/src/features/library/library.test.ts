@@ -15,6 +15,7 @@ import {
   entryLinks,
   noteAnchors,
   notes,
+  personalEntries,
   readingPositions,
   readingUnits,
   recallItems,
@@ -297,9 +298,14 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
     sha256: "hash",
     workEntryId: "work-1"
   });
-  await db
-    .insert(notes)
-    .values({ answersJson: {}, entryId: "note-1", markdownBody: "note", userId: "user-a" });
+  await db.insert(notes).values({ answersJson: {}, entryId: "note-1", markdownBody: "note" });
+  await db.insert(personalEntries).values({
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    entryId: "note-1",
+    occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    userId: "user-a"
+  });
   await db.insert(noteAnchors).values({
     blockEntryId: "block-1",
     contextSnapshot: "ctx",
@@ -381,6 +387,9 @@ async function rowsFor(db: DbClient): Promise<Record<string, number>> {
       db.select().from(noteAnchors).where(eq(noteAnchors.noteEntryId, "note-1"))
     ),
     notes: await count(db.select().from(notes).where(eq(notes.entryId, "note-1"))),
+    personalEntries: await count(
+      db.select().from(personalEntries).where(eq(personalEntries.entryId, "note-1"))
+    ),
     readingPositions: await count(
       db.select().from(readingPositions).where(eq(readingPositions.workEntryId, "work-1"))
     ),
@@ -412,6 +421,7 @@ describe("DELETE /api/works/:workEntryId", () => {
       docBlocks: 0,
       noteAnchors: 0,
       notes: 0,
+      personalEntries: 0,
       readingPositions: 0,
       readingUnits: 0,
       tocEntries: 0,
