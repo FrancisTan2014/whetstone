@@ -47,6 +47,7 @@ export type RecitationPassageDependencies = Readonly<{
 
 export type SeedPassagesResult =
   | Readonly<{ status: "seeded" | "already_seeded"; passages: ReadonlyArray<RecitationPassageDto> }>
+  | Readonly<{ status: "wrong_phase" }>
   | Readonly<{ status: "not_found" }>;
 
 export type SplitPassageResultOut =
@@ -93,7 +94,10 @@ async function dtosWithCounts(
 
 // Seed one passage per non-empty source text block of the plan's Work, in source order, each an
 // addressable Entry with its own FSRS card due immediately. Idempotent: a plan already divided returns
-// its current passages as `already_seeded` (never a second set). Owner-scoped (`not_found` otherwise).
+// its current passages as `already_seeded` (never a second set). Passage practice is the opt-in
+// Learning-phase engine, so a plan that is still `familiarizing` (or already on to `maintenance`) is
+// rejected as `wrong_phase` — the learner reaches Learning via Today's explicit "Start reciting" (#578).
+// Owner-scoped (`not_found` otherwise).
 export async function seedRecitationPassages(
   dependencies: RecitationPassageDependencies,
   planEntryId: EntryId,
@@ -102,6 +106,9 @@ export async function seedRecitationPassages(
   const owned = await loadOwnedPlanForPassages(dependencies.db, planEntryId, userId);
   if (owned === undefined) {
     return { status: "not_found" };
+  }
+  if (owned.phase !== "learning") {
+    return { status: "wrong_phase" };
   }
 
   const existing = await listPassageRowsForPlan(dependencies.db, planEntryId);

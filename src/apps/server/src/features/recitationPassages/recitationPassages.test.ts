@@ -6,6 +6,7 @@ import type {
   DueRecitationPassageResponse,
   RecitationPassageDto,
   RecitationPassageListDto,
+  RecitationPhaseDto,
   RecordRecitationReviewResponse
 } from "@whetstone/contracts";
 
@@ -114,15 +115,26 @@ async function seedWorkWithBlocks(
 }
 
 // Adopt an already-seeded Work as a recitation plan for the current user (its `personal_entries` facet
-// is what makes a passage owner-scoped).
-async function adopt(workEntryId: string): Promise<string> {
+// is what makes a passage owner-scoped). Defaults to `learning` — the phase in which passage practice is
+// available (#578); pass another phase to exercise the segmentation/due-queue phase gate.
+async function adopt(workEntryId: string, phase: RecitationPhaseDto = "learning"): Promise<string> {
   const response = await context.server.inject({
     method: "POST",
-    payload: { phase: "familiarizing", workEntryId },
+    payload: { phase, workEntryId },
     url: "/api/recitation/plans"
   });
   expect(response.statusCode).toBe(201);
   return (response.json() as { entryId: string }).entryId;
+}
+
+// Move an existing plan to another phase (the learner's explicit transition, e.g. "Start reciting").
+async function setPhase(planEntryId: string, phase: RecitationPhaseDto): Promise<void> {
+  const response = await context.server.inject({
+    method: "PUT",
+    payload: { phase },
+    url: `/api/recitation/plans/${planEntryId}/phase`
+  });
+  expect(response.statusCode).toBe(200);
 }
 
 async function seedPassages(
@@ -230,6 +242,24 @@ describe("POST /api/recitation/plans/:id/passages/seed", () => {
     });
 
     expect(response.statusCode).toBe(404);
+  });
+
+  it("rejects seeding a plan that is not in the learning phase (passage practice is Learning-only)", async () => {
+    for (const phase of ["familiarizing", "maintenance"] as const) {
+      const workEntryId = `work-${phase}`;
+      await seedWorkWithBlocks(workEntryId, [{ id: `${phase}-b1`, text: "One line." }]);
+      const planEntryId = await adopt(workEntryId, phase);
+
+      const response = await context.server.inject({
+        method: "POST",
+        url: `/api/recitation/plans/${planEntryId}/passages/seed`
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: "wrong_phase" });
+      // Nothing was divided — a non-learning plan never gains passages.
+      expect((await listPassages(planEntryId)).passages).toEqual([]);
+    }
   });
 });
 
@@ -520,6 +550,18 @@ describe("GET /api/recitation/passages/due", () => {
       .from(recitationPassages)
       .where(eq(recitationPassages.entryId, passages[0]!.entryId));
     expect(row?.startOffset).toBe("PREFIX. ".length);
+  });
+
+  it("drops a plan's due passages from Today once it leaves the learning phase", async () => {
+    const { planEntryId } = await seededTwoPassagePlan();
+    // While learning, the first passage is due immediately.
+    expect((await loadDue()).passage).not.toBeNull();
+
+    // Moving the plan on to maintenance retires it from active passage practice: same passages, same due
+    // dates, but Today's queue is Learning-only (#578).
+    await setPhase(planEntryId, "maintenance");
+
+    expect((await loadDue()).passage).toBeNull();
   });
 
   it("marks a passage needs_repair when its source can no longer be located", async () => {

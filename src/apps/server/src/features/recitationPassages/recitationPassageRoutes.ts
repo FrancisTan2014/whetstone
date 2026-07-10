@@ -28,7 +28,8 @@ export function registerRecitationPassageRoutes(
   dependencies: RecitationPassageRouteDependencies
 ): void {
   // Divide a plan's Work into passages seeded from its source text blocks (idempotent — a second call
-  // returns the existing passages). Owner-scoped (404 otherwise).
+  // returns the existing passages). Passage practice is the Learning-phase engine, so a plan not in
+  // `learning` is 409 `wrong_phase`. Owner-scoped (404 otherwise).
   server.post<{ Params: PlanParams }>(
     "/api/recitation/plans/:id/passages/seed",
     async (request, reply) => {
@@ -39,6 +40,9 @@ export function registerRecitationPassageRoutes(
       );
       if (result.status === "not_found") {
         return reply.code(404).send(notFound);
+      }
+      if (result.status === "wrong_phase") {
+        return reply.code(409).send({ error: "wrong_phase" });
       }
       const code = result.status === "seeded" ? 201 : 200;
       return reply.code(code).send({ passages: result.passages, planEntryId: request.params.id });

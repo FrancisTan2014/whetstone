@@ -92,16 +92,28 @@ export function toRecitationPassageDto(
   };
 }
 
-// The user's ownership of a plan (via its `personal_entries` facet) plus the source Work it links to;
-// undefined when the plan does not exist or belongs to another user. The scope every passage mutation
-// and read checks so a forged or cross-user plan id is a 404.
+// The user's ownership of a plan (via its `personal_entries` facet) plus the source Work it links to and
+// the plan's phase; undefined when the plan does not exist or belongs to another user. The scope every
+// passage mutation and read checks so a forged or cross-user plan id is a 404, and the phase the
+// segmentation gate reads so passage practice stays the opt-in Learning-phase engine (#578).
 export async function loadOwnedPlanForPassages(
   db: DbClient,
   planEntryId: EntryId,
   userId: string
-): Promise<Readonly<{ workEntryId: string; workTitle: string }> | undefined> {
+): Promise<
+  | Readonly<{
+      phase: typeof recitationPlans.$inferSelect.phase;
+      workEntryId: string;
+      workTitle: string;
+    }>
+  | undefined
+> {
   const [row] = await db
-    .select({ workEntryId: recitationPlans.workEntryId, workTitle: workMeta.title })
+    .select({
+      phase: recitationPlans.phase,
+      workEntryId: recitationPlans.workEntryId,
+      workTitle: workMeta.title
+    })
     .from(recitationPlans)
     .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
@@ -198,7 +210,9 @@ export async function loadBlockTextByIds(
 }
 
 // The user's single next-due passage across all their recitation plans (due_at <= now), soonest first,
-// with the Work it belongs to; undefined when nothing is due (Today then shows no overdue wall).
+// with the Work it belongs to; undefined when nothing is due (Today then shows no overdue wall). Only
+// `learning`-phase plans surface here: passage practice is the Learning-phase engine, so a plan moved on
+// to `maintenance` (or never started) never enters the due queue (#578).
 export async function loadNextDuePassage(
   db: DbClient,
   userId: string,
@@ -214,7 +228,13 @@ export async function loadNextDuePassage(
     .innerJoin(recitationPlans, eq(recitationPlans.entryId, recitationPassages.planEntryId))
     .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
-    .where(and(eq(personalEntries.userId, userId), lte(recitationPassages.dueAt, now)))
+    .where(
+      and(
+        eq(personalEntries.userId, userId),
+        eq(recitationPlans.phase, "learning"),
+        lte(recitationPassages.dueAt, now)
+      )
+    )
     .orderBy(
       asc(recitationPassages.dueAt),
       asc(recitationPassages.orderIndex),
