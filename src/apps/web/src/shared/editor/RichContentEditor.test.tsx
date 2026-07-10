@@ -435,6 +435,8 @@ describe("RichContentEditor links, paste, and save", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Remove link" }));
+    await user.click(textbox);
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
     await user.type(textbox, " plain");
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("Linked plain"));
     expect(lastDocument(onChange).content?.[0]?.content?.[1]?.marks).toBeUndefined();
