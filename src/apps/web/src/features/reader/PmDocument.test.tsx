@@ -222,6 +222,27 @@ describe("PmDocument node rendering", () => {
     expect(code?.getAttribute("data-language")).toBe("ts");
   });
 
+  it("renders the shared authored formatting marks semantically", () => {
+    const marked: DocumentNodeJSON = {
+      content: [
+        {
+          content: [
+            { marks: [{ type: "bold" }], text: "bold", type: "text" },
+            { marks: [{ type: "italic" }], text: "italic", type: "text" },
+            { marks: [{ type: "code" }], text: "code", type: "text" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    const container = renderDoc(marked);
+
+    expect(container.querySelector("strong")?.textContent).toBe("bold");
+    expect(container.querySelector("em")?.textContent).toBe("italic");
+    expect(container.querySelector("code")?.textContent).toBe("code");
+  });
+
   it("renders nested bullet lists and an ordered list with a start offset", () => {
     const container = renderDoc(richDocWithIds);
 
@@ -633,6 +654,17 @@ describe("PmDocument reference links (#368)", () => {
 
     fireEvent.click(span as HTMLElement);
     expect(onActivateAnchor).not.toHaveBeenCalled();
+  });
+
+  it("renders a safe authored href as a navigable link", () => {
+    const doc = linkedParagraph({ href: "https://example.com/reading" }, "the authored source");
+    const { container } = render(<PmDocument document={doc} />);
+
+    const link = container.querySelector("a.readerLink");
+    expect(link?.getAttribute("href")).toBe("https://example.com/reading");
+    expect(link?.textContent).toBe("the authored source");
+    expect(container.querySelector("span.readerLink")).toBeNull();
+    expect(container.querySelector("button.readerLink")).toBeNull();
   });
 
   it("renders a link with no anchor as inert text (an unresolvable target no-ops)", () => {

@@ -5,7 +5,7 @@ import {
   type NodeProps,
   renderJSONContentToReactElement
 } from "@tiptap/static-renderer/json/react";
-import type { DocumentNodeJSON } from "@whetstone/document";
+import { type DocumentNodeJSON, isSafeDocumentLinkHref } from "@whetstone/document";
 import { createContext, useContext, useMemo } from "react";
 
 import { calloutKindClass, headingTag } from "./PmDocument.tokens";
@@ -111,9 +111,10 @@ function FootnoteMarker({ node }: { node: PmNode }): React.ReactElement {
 // `anchor`, the reader's jump wired, AND a live target in the index (#550), it renders a focusable
 // inline control that scrolls+highlights its target via `onActivateAnchor` — the SAME work-scoped
 // resolution the footnote/endnote markers use (#366), threading the mark's `targetSourceFile` so a
-// cross-chapter reference lands in the right unit. An INERT link (external/cross-work), a link with no
-// anchor, a raw render with no jump wired, OR a same-work link whose target does not resolve stays
-// styled but non-navigating text: a `<span>`, never a live `<a href>` that could hijack the SPA route.
+// cross-chapter reference lands in the right unit. A safe authored `href` remains a normal link so
+// editor-produced documents preserve navigation outside the editor. Ingestion-produced external and
+// cross-work links carry `inert: true`, so they remain styled non-navigating text. A reference with no
+// anchor, no jump wiring, or no resolvable target also remains inert.
 function LinkMark({
   children,
   mark
@@ -122,12 +123,21 @@ function LinkMark({
   mark: PmMark;
 }): React.ReactElement {
   const anchor = markStringAttr(mark, "anchor");
+  const href = markStringAttr(mark, "href");
   const targetSourceFile = markStringAttr(mark, "targetSourceFile");
   const inert = mark.attrs?.["inert"] === true;
   const onActivateAnchor = useContext(ActivateAnchorContext);
   const canResolve = useContext(CanResolveContext);
   const resolvable =
     anchor !== undefined && (canResolve === undefined || canResolve(anchor, targetSourceFile));
+
+  if (!inert && isSafeDocumentLinkHref(href)) {
+    return (
+      <a className="readerLink" href={href}>
+        {children}
+      </a>
+    );
+  }
 
   if (inert || anchor === undefined || onActivateAnchor === undefined || !resolvable) {
     return <span className="readerLink readerLink--inert">{children}</span>;
@@ -330,6 +340,9 @@ function createNodeMapping(anchorByNodeId: AnchorByNodeId): Record<string, PmNod
 }
 
 const markMapping = {
+  bold: ({ children }: MarkProps<PmMark, React.ReactNode, PmNode>) => <strong>{children}</strong>,
+  code: ({ children }: MarkProps<PmMark, React.ReactNode, PmNode>) => <code>{children}</code>,
+  italic: ({ children }: MarkProps<PmMark, React.ReactNode, PmNode>) => <em>{children}</em>,
   link: ({ children, mark }: MarkProps<PmMark, React.ReactNode, PmNode>) => (
     <LinkMark mark={mark}>{children}</LinkMark>
   )

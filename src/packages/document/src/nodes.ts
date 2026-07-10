@@ -1,11 +1,13 @@
-import { Extension, Mark, Node } from "@tiptap/core";
+import { Extension, Mark, Node, type Extensions } from "@tiptap/core";
 import { UniqueID } from "@tiptap/extension-unique-id";
+
+import { isSafeDocumentLinkHref } from "./linkSafety.js";
 
 // The whetstone content bedrock: ProseMirror node specs, declared through Tiptap (MIT) so the same
 // document model serves ingestion, storage, reader, and the future editor (PRODUCT "Architecture: the
-// document-model bedrock"). This module defines the schema shape only — no DOM parsing/serialization
-// (that belongs to the ingestion and reader slices, where jsdom enters) and no editing UI. Each node
-// carries a stable id (Tiptap UniqueID, below) so notes and cross-references can address it durably.
+// document-model bedrock"). This module defines the shared schema plus its browser editing DOM seam;
+// server ingestion still owns fidelity parsing and the reader still owns presentation. Each node carries
+// a stable id (Tiptap UniqueID, below) so notes and cross-references can address it durably.
 
 // --- Structural roots -------------------------------------------------------------------------
 
@@ -15,7 +17,13 @@ const text = Node.create({ group: "inline", name: "text" });
 
 // --- Prose blocks -----------------------------------------------------------------------------
 
-const paragraph = Node.create({ content: "inline*", group: "block", name: "paragraph" });
+const paragraph = Node.create({
+  content: "inline*",
+  group: "block",
+  name: "paragraph",
+  parseHTML: () => [{ tag: "p" }],
+  renderHTML: ({ HTMLAttributes }) => ["p", HTMLAttributes, 0]
+});
 
 const heading = Node.create({
   addAttributes() {
@@ -23,10 +31,22 @@ const heading = Node.create({
   },
   content: "inline*",
   group: "block",
-  name: "heading"
+  name: "heading",
+  parseHTML: () =>
+    [1, 2, 3, 4, 5, 6].map((level) => ({
+      attrs: { level },
+      tag: `h${level}`
+    })),
+  renderHTML: ({ HTMLAttributes, node }) => [`h${String(node.attrs["level"])}`, HTMLAttributes, 0]
 });
 
-const blockquote = Node.create({ content: "block+", group: "block", name: "blockquote" });
+const blockquote = Node.create({
+  content: "block+",
+  group: "block",
+  name: "blockquote",
+  parseHTML: () => [{ tag: "blockquote" }],
+  renderHTML: ({ HTMLAttributes }) => ["blockquote", HTMLAttributes, 0]
+});
 
 // A code block holds plain text only (no inline marks) so source code survives verbatim.
 const codeBlock = Node.create({
@@ -38,24 +58,40 @@ const codeBlock = Node.create({
   defining: true,
   group: "block",
   marks: "",
-  name: "codeBlock"
+  name: "codeBlock",
+  parseHTML: () => [{ preserveWhitespace: "full", tag: "pre" }],
+  renderHTML: ({ HTMLAttributes }) => ["pre", HTMLAttributes, ["code", 0]]
 });
 
 // --- Lists (with nesting) ---------------------------------------------------------------------
 
 // A list item leads with a paragraph and may nest further blocks (including child lists), so ordered
 // and bullet lists nest to arbitrary depth.
-const listItem = Node.create({ content: "paragraph block*", defining: true, name: "listItem" });
+const listItem = Node.create({
+  content: "paragraph block*",
+  defining: true,
+  name: "listItem",
+  parseHTML: () => [{ tag: "li" }],
+  renderHTML: ({ HTMLAttributes }) => ["li", HTMLAttributes, 0]
+});
 
-const bulletList = Node.create({ content: "listItem+", group: "block", name: "bulletList" });
+const bulletList = Node.create({
+  content: "listItem+",
+  group: "block list",
+  name: "bulletList",
+  parseHTML: () => [{ tag: "ul" }],
+  renderHTML: ({ HTMLAttributes }) => ["ul", HTMLAttributes, 0]
+});
 
 const orderedList = Node.create({
   addAttributes() {
     return { start: { default: 1 } };
   },
   content: "listItem+",
-  group: "block",
-  name: "orderedList"
+  group: "block list",
+  name: "orderedList",
+  parseHTML: () => [{ tag: "ol" }],
+  renderHTML: ({ HTMLAttributes }) => ["ol", HTMLAttributes, 0]
 });
 
 // --- Tables -----------------------------------------------------------------------------------
@@ -65,7 +101,8 @@ const tableCell = Node.create({
     return { colspan: { default: 1 }, rowspan: { default: 1 } };
   },
   content: "block+",
-  name: "tableCell"
+  name: "tableCell",
+  renderHTML: ({ HTMLAttributes }) => ["td", HTMLAttributes, 0]
 });
 
 const tableHeader = Node.create({
@@ -73,12 +110,22 @@ const tableHeader = Node.create({
     return { colspan: { default: 1 }, rowspan: { default: 1 } };
   },
   content: "block+",
-  name: "tableHeader"
+  name: "tableHeader",
+  renderHTML: ({ HTMLAttributes }) => ["th", HTMLAttributes, 0]
 });
 
-const tableRow = Node.create({ content: "(tableCell | tableHeader)+", name: "tableRow" });
+const tableRow = Node.create({
+  content: "(tableCell | tableHeader)+",
+  name: "tableRow",
+  renderHTML: ({ HTMLAttributes }) => ["tr", HTMLAttributes, 0]
+});
 
-const table = Node.create({ content: "tableRow+", group: "block", name: "table" });
+const table = Node.create({
+  content: "tableRow+",
+  group: "block",
+  name: "table",
+  renderHTML: ({ HTMLAttributes }) => ["table", HTMLAttributes, ["tbody", 0]]
+});
 
 // --- Figures ----------------------------------------------------------------------------------
 
@@ -91,23 +138,58 @@ const image = Node.create({
     // so the read-only reader can serve it from the image store; `src` is the transient source href.
     return { alt: { default: null }, imageResourceId: { default: null }, src: { default: null } };
   },
-  name: "image"
+  name: "image",
+  renderHTML: ({ node }) => {
+    const alt = node.attrs["alt"];
+    const decorative = alt === "";
+    const label = typeof alt === "string" && alt !== "" ? alt : "Image";
+    const id = node.attrs["id"];
+
+    return [
+      "span",
+      {
+        ...(decorative ? { "aria-hidden": "true" } : { "aria-label": label }),
+        ...(typeof id === "string" ? { "data-id": id } : {}),
+        "data-pm-image": "",
+        role: decorative ? "presentation" : "img"
+      },
+      decorative ? "" : label
+    ];
+  }
 });
 
-const figureCaption = Node.create({ content: "inline*", name: "figureCaption" });
+const figureCaption = Node.create({
+  content: "inline*",
+  name: "figureCaption",
+  renderHTML: ({ HTMLAttributes }) => ["figcaption", HTMLAttributes, 0]
+});
 
-const figure = Node.create({ content: "image figureCaption?", group: "block", name: "figure" });
+const figure = Node.create({
+  content: "image figureCaption?",
+  group: "block",
+  name: "figure",
+  renderHTML: ({ HTMLAttributes }) => ["figure", HTMLAttributes, 0]
+});
 
 // --- Definition lists -------------------------------------------------------------------------
 
-const definitionTerm = Node.create({ content: "inline*", name: "definitionTerm" });
+const definitionTerm = Node.create({
+  content: "inline*",
+  name: "definitionTerm",
+  renderHTML: ({ HTMLAttributes }) => ["dt", HTMLAttributes, 0]
+});
 
-const definitionDescription = Node.create({ content: "block+", name: "definitionDescription" });
+const definitionDescription = Node.create({
+  content: "block+",
+  name: "definitionDescription",
+  renderHTML: ({ HTMLAttributes }) => ["dd", HTMLAttributes, 0]
+});
 
 const definitionList = Node.create({
   content: "(definitionTerm | definitionDescription)+",
   group: "block",
-  name: "definitionList"
+  name: "definitionList",
+  renderHTML: ({ HTMLAttributes }) => ["dl", HTMLAttributes, 0]
 });
 
 // --- Callout ----------------------------------------------------------------------------------
@@ -120,7 +202,8 @@ const callout = Node.create({
   },
   content: "block+",
   group: "block",
-  name: "callout"
+  name: "callout",
+  renderHTML: ({ HTMLAttributes }) => ["aside", HTMLAttributes, 0]
 });
 
 // --- Footnotes / endnotes ---------------------------------------------------------------------
@@ -145,7 +228,12 @@ const footnoteMarker = Node.create({
   atom: true,
   group: "inline",
   inline: true,
-  name: "footnoteMarker"
+  name: "footnoteMarker",
+  renderHTML: ({ HTMLAttributes, node }) => [
+    "sup",
+    HTMLAttributes,
+    typeof node.attrs["label"] === "string" ? node.attrs["label"] : ""
+  ]
 });
 
 const footnoteTarget = Node.create({
@@ -158,10 +246,55 @@ const footnoteTarget = Node.create({
   },
   content: "block+",
   group: "block",
-  name: "footnoteTarget"
+  name: "footnoteTarget",
+  renderHTML: ({ HTMLAttributes }) => ["aside", HTMLAttributes, 0]
 });
 
 // --- Inline marks -----------------------------------------------------------------------------
+
+const bold = Mark.create({
+  addKeyboardShortcuts() {
+    return { "Mod-b": () => this.editor.commands.toggleMark(this.name) };
+  },
+  name: "bold",
+  parseHTML: () => [{ tag: "strong" }, { tag: "b" }],
+  renderHTML: ({ HTMLAttributes }) => ["strong", HTMLAttributes, 0]
+});
+
+const italic = Mark.create({
+  addKeyboardShortcuts() {
+    return { "Mod-i": () => this.editor.commands.toggleMark(this.name) };
+  },
+  name: "italic",
+  parseHTML: () => [{ tag: "em" }, { tag: "i" }],
+  renderHTML: ({ HTMLAttributes }) => ["em", HTMLAttributes, 0]
+});
+
+const inlineCode = Mark.create({
+  addKeyboardShortcuts() {
+    return { "Mod-e": () => this.editor.commands.toggleMark(this.name) };
+  },
+  code: true,
+  excludes: "_",
+  name: "code",
+  parseHTML: () => [{ tag: "code" }],
+  renderHTML: ({ HTMLAttributes }) => ["code", HTMLAttributes, 0]
+});
+
+function validateDocumentLinkHref(value: unknown): void {
+  if (value !== null && !isSafeDocumentLinkHref(value)) {
+    throw new RangeError(
+      "Document link hrefs must use http, https, mailto, an anchor, or a root path."
+    );
+  }
+}
+
+function acceptSafeLinkElement(element: {
+  getAttribute(name: string): string | null;
+}): false | null {
+  const href = element.getAttribute("href");
+  return href === null || isSafeDocumentLinkHref(href) ? null : false;
+}
 
 // The document model's first content MARK: a same-work reference link kept inline on the text run
 // (PRODUCT "internal cross-reference links", #368). A mark — not an inline atom — because an atom
@@ -178,13 +311,20 @@ const link = Mark.create({
   addAttributes() {
     return {
       anchor: { default: null },
+      href: { default: null, validate: validateDocumentLinkHref },
       inert: { default: false },
       kind: { default: "href" },
       refFile: { default: null },
       targetSourceFile: { default: null }
     };
   },
-  name: "link"
+  name: "link",
+  parseHTML: () => [{ getAttrs: acceptSafeLinkElement, tag: "a" }],
+  renderHTML: ({ mark }) => [
+    "a",
+    isSafeDocumentLinkHref(mark.attrs["href"]) ? { href: mark.attrs["href"] } : {},
+    0
+  ]
 });
 
 // --- Unknown fallback -------------------------------------------------------------------------
@@ -198,7 +338,12 @@ const unknown = Node.create({
   },
   atom: true,
   group: "block",
-  name: "unknown"
+  name: "unknown",
+  renderHTML: ({ HTMLAttributes, node }) => [
+    "pre",
+    { ...HTMLAttributes, "data-pm-unknown": "" },
+    typeof node.attrs["html"] === "string" ? node.attrs["html"] : ""
+  ]
 });
 
 // The ordered node-spec extensions that define the document schema (everything except the id
@@ -233,9 +378,8 @@ export const documentNodes = [
 // the schema object.
 export const documentNodeNames = documentNodes.map((node) => node.name) as ReadonlyArray<string>;
 
-// The mark-spec extensions that define the document schema's content marks. The `link` mark is the
-// only one (#368); em/strong/other inline formatting stay descended-to-plain-text for now.
-export const documentMarks = [link] as const;
+// The mark-spec extensions that define the shared content schema for ingestion, editing, and reading.
+export const documentMarks = [bold, italic, inlineCode, link] as const;
 
 // Every mark name in the schema, mirroring `documentNodeNames` for consumers that branch on mark type.
 export const documentMarkNames = documentMarks.map((mark) => mark.name) as ReadonlyArray<string>;
@@ -280,7 +424,7 @@ export const uniqueIdExtension = UniqueID.configure({ types: "all" });
 // The full extension set (nodes + marks + the id attribute + the anchor-id addressing attribute)
 // passed to `getSchema` and to the server-side id generator. Kept as one boundary so the schema and
 // id assignment can never drift apart.
-export const documentExtensions = [
+export const documentExtensions: Extensions = [
   ...documentNodes,
   ...documentMarks,
   uniqueIdExtension,

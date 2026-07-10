@@ -184,6 +184,11 @@ slice. Validated against essays, comments, ebook ingest, social cards, and cross
 connections — each reuses the same primitives: **addressable blocks + an external personal relation +
 decorations**.
 
+**Durable-body invariant:** every durable content body uses this shared document model and the shared
+editor boundary; compact inputs and full documents differ only in presentation, never in schema or
+serialization. Metadata controls — titles, tags, languages, grades, and similar structured fields —
+remain plain structured inputs rather than document bodies.
+
 Four layers:
 
 1. **Ingestion (server + jsdom).** Source HTML (EPUB; later PDF→HTML via Docling) → PM doc via each

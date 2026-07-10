@@ -11,8 +11,14 @@ export interface DocumentNodeJSON {
   type: string;
   attrs?: Record<string, unknown>;
   content?: DocumentNodeJSON[];
-  marks?: Array<Record<string, unknown>>;
+  marks?: DocumentMarkJSON[];
   text?: string;
+}
+
+export interface DocumentMarkJSON {
+  [key: string]: unknown;
+  type: string;
+  attrs?: Record<string, unknown>;
 }
 
 // Raised when a JSON value is not a valid document for the whetstone schema — an unknown node type or
