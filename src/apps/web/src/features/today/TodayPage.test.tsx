@@ -160,6 +160,7 @@ function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRe
     passageEntryId: "passage-2",
     planEntryId: "plan-1",
     precedingText: "Earlier line here.",
+    supportLevel: "hidden",
     targetText: "The quick brown fox jumps.",
     workTitle: "Aesop's Fables",
     ...overrides

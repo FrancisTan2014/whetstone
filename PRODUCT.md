@@ -772,10 +772,16 @@ routine above; it never changes the canonical Work text.
   source range and its recitation plan. There is **no** automatic one-flashcard-per-sentence.
 - **Each passage schedules independently (FSRS).** A passage's prompt is an Entry carrying its own FSRS state,
   so passages come due on their own schedules. Editing a boundary (split/merge) resets that passage's schedule.
-- **A due review opens from a restrained cue.** It first shows the Work/section context plus **either** the
-  preceding passage's final line **or** the target passage's first few characters — never the whole target,
-  which stays hidden until **Reveal**. The learner may **switch cue strength before attempting**; the cue
-  choice alone never updates the schedule.
+- **A due review opens at a chosen support level, faded toward memory.** It shows the Work/section context
+  and the target at a learner-chosen **support level**: **Full** (the whole passage, as a reading scaffold),
+  **Reduced** (the first half of each clause), **First characters** (each clause's first character or word), or
+  **Hidden** (none of the target — only a restrained external cue: the preceding passage's final line, or the
+  target's first few characters). Fading is a **pure render-time projection over the canonical text** — clauses
+  fade per their script (by character for CJK, by whitespace token otherwise) and masked runs expose a length
+  only, never the hidden characters, so a screen reader hears explicit "hidden text" rather than a misleading
+  partial line. The stored Work is never changed, and **Reveal** always shows the exact source. The level is
+  **remembered per passage** and only ever lowered by the learner (Whetstone never auto-lowers it); choosing a
+  level is a **preference**, never a grade — it never updates the schedule.
 - **Attempt aloud, reveal, then self-assess.** After attempting from memory and revealing the exact source, the
   learner grades with domain copy mapped to FSRS: **Couldn't continue** (Again), **Needed cues** (Hard),
   **Complete, with effort** (Good), **Clean and natural** (Easy). **Only the final self-rating** updates FSRS —
@@ -788,8 +794,10 @@ routine above; it never changes the canonical Work text.
 - **Source edits never practise stale text.** When the Work text changes, a passage range is **re-anchored**
   safely where it can still be located, or marked **needs repair** and shown as a repair prompt instead of
   practising wrong text.
-- **Non-goals (#578).** No speech-to-text, automatic exactness scoring, LLM grading, audio requirement,
-  progressive fading, adjacent-passage chaining, or whole-work maintenance in this scope.
+- **Non-goals (#578, #579).** No speech-to-text, automatic exactness scoring, LLM grading, audio requirement,
+  cloze deletion of interior words, adjacent-passage chaining, or whole-work maintenance in this scope.
+  Progressive fading is delivered by #579 (above); auto-progression between support levels stays out of scope —
+  the learner lowers support themselves.
 
 ## Future direction protected by v0
 

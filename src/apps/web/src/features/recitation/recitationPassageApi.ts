@@ -3,12 +3,14 @@ import type {
   RecitationCueStrengthDto,
   RecitationPassageDto,
   RecitationPassageListDto,
-  RecitationReviewRating
+  RecitationReviewRating,
+  RecitationSupportLevelDto
 } from "@whetstone/contracts";
 import {
   parseDueRecitationPassageResponse,
   parseRecitationPassageListDto,
-  parseRecordRecitationReviewResponse
+  parseRecordRecitationReviewResponse,
+  parseSetRecitationSupportLevelResponse
 } from "@whetstone/contracts";
 
 import { apiUrl } from "../../shared/runtime";
@@ -77,6 +79,25 @@ export async function mergeNextPassage(passageEntryId: string): Promise<Recitati
       { method: "POST" }
     )
   );
+}
+
+// Remember a passage's visual support level (#579): the render-time fading preference, persisted so the
+// next attempt opens where the learner left off. This is a preference, not a recall — it never touches
+// the FSRS schedule. Resolves with the stored level echoed back.
+export async function setSupportLevel(
+  passageEntryId: string,
+  supportLevel: RecitationSupportLevelDto
+): Promise<RecitationSupportLevelDto> {
+  return parseSetRecitationSupportLevelResponse(
+    await requestJson(
+      apiUrl(`/recitation/passages/${encodeURIComponent(passageEntryId)}/support-level`),
+      {
+        body: JSON.stringify({ supportLevel }),
+        headers: jsonHeaders,
+        method: "PUT"
+      }
+    )
+  ).supportLevel;
 }
 
 // Record a self-assessment (the FSRS rating + the cue strength attempted from); resolves with the
