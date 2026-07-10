@@ -1,7 +1,7 @@
 import { expect, test } from "../fixtures";
 import type { APIRequestContext } from "@playwright/test";
 
-// Adopt the seeded Markdown work as a recitation routine in the given phase and return its plan id. v0
+// Adopt the given seeded work as a recitation routine in the given phase and return its plan id. v0
 // resolves a single DEFAULT_USER_ID, so a plan adopted over the API is owned by the same user the browser
 // acts as — the UI then drives the real passage-practice flow.
 async function adoptPlan(
@@ -23,7 +23,7 @@ test.describe("recitation passage practice (#578)", () => {
     page,
     setup
   }) => {
-    const planId = await adoptPlan(setup.baseURL, page.request, setup.epub.entryId, "familiarizing");
+    await adoptPlan(setup.baseURL, page.request, setup.epub.entryId, "familiarizing");
 
     // From Today, the explicit "Start reciting" transition moves the routine into active recitation.
     await page.goto(`${setup.baseURL}#/`);
@@ -31,8 +31,12 @@ test.describe("recitation passage practice (#578)", () => {
     await recitationCard.getByRole("button", { name: "Start reciting" }).click();
     await expect(recitationCard.getByRole("button", { name: "Start reciting" })).toHaveCount(0);
 
+    // Reach the segmentation surface through its real Library entry point — the adopted Work's card
+    // links "Divide into passages" into #/recite?plan=<id> — not a hand-built URL.
+    await page.goto(`${setup.baseURL}#/library`);
+    await page.getByRole("link", { name: "Divide into passages" }).click();
+
     // On the segmentation page, divide the Work into passages (boundaries only — the source is untouched).
-    await page.goto(`${setup.baseURL}#/recite?plan=${encodeURIComponent(planId)}`);
     await page.getByRole("button", { name: "Divide into passages" }).click();
     const firstPassage = page.getByRole("listitem").first();
     await expect(firstPassage).toBeVisible();
