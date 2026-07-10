@@ -1074,9 +1074,9 @@ describe("AdminLibraryPage", () => {
       recitationPlanFor("work-1", "Politics and the English Language")
     );
     // The reload after adopting reports the new plan so the card flips to the reciting status.
-    mockedListRecitationPlans
-      .mockResolvedValueOnce({ plans: [] })
-      .mockResolvedValue({ plans: [recitationPlanFor("work-1", "Politics and the English Language")] });
+    mockedListRecitationPlans.mockResolvedValueOnce({ plans: [] }).mockResolvedValue({
+      plans: [recitationPlanFor("work-1", "Politics and the English Language")]
+    });
     const user = await renderReady();
 
     await user.click(screen.getByRole("button", { name: "Practise recitation" }));
@@ -1091,7 +1091,9 @@ describe("AdminLibraryPage", () => {
       });
     });
     expect(
-      await screen.findByText("Added “Politics and the English Language” to your recitation routines.")
+      await screen.findByText(
+        "Added “Politics and the English Language” to your recitation routines."
+      )
     ).toBeDefined();
     // The card now shows the quiet reciting status instead of the adopt action.
     expect(await screen.findByText("Reciting · Familiarizing")).toBeDefined();
@@ -1101,7 +1103,9 @@ describe("AdminLibraryPage", () => {
   it("shows the reciting status (not an adopt button) for an already-adopted Work (#577)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     mockedListRecitationPlans.mockResolvedValue({
-      plans: [{ ...recitationPlanFor("work-1", "Politics and the English Language"), phase: "learning" }]
+      plans: [
+        { ...recitationPlanFor("work-1", "Politics and the English Language"), phase: "learning" }
+      ]
     });
     await renderReady();
 

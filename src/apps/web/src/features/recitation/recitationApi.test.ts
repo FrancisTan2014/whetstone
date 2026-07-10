@@ -80,7 +80,11 @@ describe("recitationApi", () => {
   });
 
   it("records a session with a POST, encoding the id", async () => {
-    const fetchMock = mockFetchOnce({ ...planDto, lastSessionAt: "2026-07-04T09:00:00.000Z", sessionCount: 1 });
+    const fetchMock = mockFetchOnce({
+      ...planDto,
+      lastSessionAt: "2026-07-04T09:00:00.000Z",
+      sessionCount: 1
+    });
 
     const result = await recordRecitationSession("plan-1");
 

@@ -1,7 +1,12 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { motion, type Variants } from "framer-motion";
 
-import type { AuthorDto, CreateWorkRequest, RecitationPlanDto, WorkListItemDto } from "@whetstone/contracts";
+import type {
+  AuthorDto,
+  CreateWorkRequest,
+  RecitationPlanDto,
+  WorkListItemDto
+} from "@whetstone/contracts";
 import {
   recitationPhases,
   toAuthorId,

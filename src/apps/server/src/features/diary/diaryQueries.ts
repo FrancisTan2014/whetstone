@@ -4,7 +4,13 @@ import { type DocumentNodeJSON } from "@whetstone/document";
 import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { diaryEntries, notes, personalEntries, recitationPlans, workMeta } from "../../db/schema.js";
+import {
+  diaryEntries,
+  notes,
+  personalEntries,
+  recitationPlans,
+  workMeta
+} from "../../db/schema.js";
 
 // The Diary reads the logical Timeline (#571): a chronological view derived by querying the current
 // user's personal Entries — never a stored Timeline object. A diary read scopes every join to

@@ -363,7 +363,10 @@ function ContinueRecitationCard({
   state: RecitationState;
 }>): React.JSX.Element {
   return (
-    <section aria-label="Continue recitation" className="rounded border border-border bg-surface p-4">
+    <section
+      aria-label="Continue recitation"
+      className="rounded border border-border bg-surface p-4"
+    >
       <h2 className="text-lg font-medium text-text">Continue recitation</h2>
       <div className="mt-2">{renderRecitation(state, onContinue, onStartReciting)}</div>
     </section>
@@ -389,9 +392,7 @@ function renderRecitation(
 
   if (state.plan === undefined) {
     return (
-      <p className="text-text-muted">
-        No recitation routine yet — adopt one from your Library.
-      </p>
+      <p className="text-text-muted">No recitation routine yet — adopt one from your Library.</p>
     );
   }
 
