@@ -656,6 +656,17 @@ describe("PmDocument reference links (#368)", () => {
     expect(onActivateAnchor).not.toHaveBeenCalled();
   });
 
+  it("renders a safe authored href as a navigable link", () => {
+    const doc = linkedParagraph({ href: "https://example.com/reading" }, "the authored source");
+    const { container } = render(<PmDocument document={doc} />);
+
+    const link = container.querySelector("a.readerLink");
+    expect(link?.getAttribute("href")).toBe("https://example.com/reading");
+    expect(link?.textContent).toBe("the authored source");
+    expect(container.querySelector("span.readerLink")).toBeNull();
+    expect(container.querySelector("button.readerLink")).toBeNull();
+  });
+
   it("renders a link with no anchor as inert text (an unresolvable target no-ops)", () => {
     const doc = linkedParagraph(
       {
