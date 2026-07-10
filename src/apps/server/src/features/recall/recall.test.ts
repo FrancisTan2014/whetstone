@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { EnrollRecallItemRequest } from "@whetstone/contracts";
+import { applyRating, newReviewState } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -49,7 +50,7 @@ afterEach(async () => {
 });
 
 describe("enrollRecallItem", () => {
-  it("seeds a fresh SM-2 review state, due immediately, with no provenance or gloss", async () => {
+  it("seeds a fresh FSRS review state, due immediately, with no provenance or gloss", async () => {
     const item = await enroll({ kind: "idiom", text: "spill the beans" }, userA, t0);
 
     expect(item).toEqual({
@@ -59,14 +60,7 @@ describe("enrollRecallItem", () => {
       id: "id-1",
       kind: "idiom",
       provenanceEntryId: null,
-      review: {
-        dueAt: t0.toISOString(),
-        easeFactor: 2.5,
-        intervalDays: 0,
-        lapses: 0,
-        lastReviewedAt: null,
-        repetitions: 0
-      },
+      review: newReviewState(t0),
       text: "spill the beans",
       cue: null,
       useContext: null,
@@ -74,6 +68,13 @@ describe("enrollRecallItem", () => {
       tags: null,
       sourceProposalCandidateId: null
     });
+
+    // A freshly enrolled card is New, due immediately, with no reviews yet.
+    expect(item.review.state).toBe("new");
+    expect(item.review.due).toBe(t0.toISOString());
+    expect(item.review.reps).toBe(0);
+    expect(item.review.lapses).toBe(0);
+    expect(item.review.lastReviewedAt).toBeNull();
   });
 
   it("keeps a gloss and a provenance link to a source entry", async () => {
@@ -181,43 +182,72 @@ describe("enrollRecallItem gloss autofill (#526)", () => {
 });
 
 describe("recordRecallReview", () => {
-  it("applies SM-2, persists the new state, and appends a history row", async () => {
+  it("applies FSRS, persists the new state losslessly, and appends a history row", async () => {
     const enrolled = await enroll({ kind: "word", text: "quick" }, userA, t0);
 
-    const first = await recordRecallReview(context.deps, enrolled.id, 4, userA, at(1));
-    expect(first).toMatchObject({
-      status: "recorded",
-      item: { review: { intervalDays: 1, repetitions: 1, lapses: 0 } }
-    });
+    // The recorded state must equal the pure domain scheduler's output for the same card + rating.
+    const expectedFirst = applyRating(newReviewState(t0), "good", at(1));
+    const first = await recordRecallReview(context.deps, enrolled.id, "good", userA, at(1));
     if (first.status !== "recorded") {
       throw new Error("expected recorded");
     }
+    expect(first.item.review).toEqual(expectedFirst);
+    // A "good" answer graduates a fresh card out of New, records the review, and advances due.
+    expect(first.item.review.state).toBe("learning");
+    expect(first.item.review.reps).toBe(1);
+    expect(first.item.review.lapses).toBe(0);
     expect(first.item.review.lastReviewedAt).toBe(at(1).toISOString());
-    expect(first.item.review.dueAt).toBe(at(2).toISOString());
+    expect(new Date(first.item.review.due).getTime()).toBeGreaterThan(at(1).getTime());
 
-    // A second review reads back a row whose lastReviewedAt is already set (non-null path).
-    const second = await recordRecallReview(context.deps, enrolled.id, 4, userA, at(2));
+    // The persisted row round-trips losslessly (row -> ReviewState equals what was returned).
+    const [afterFirst] = await listRecallItems(context.db, userA);
+    expect(afterFirst?.review).toEqual(expectedFirst);
+
+    // A second review reads back a row whose lastReviewedAt is already set (non-null path) and
+    // advances reps again.
+    const expectedSecond = applyRating(expectedFirst, "good", at(2));
+    const second = await recordRecallReview(context.deps, enrolled.id, "good", userA, at(2));
     if (second.status !== "recorded") {
       throw new Error("expected recorded");
     }
-    expect(second.item.review.repetitions).toBe(2);
-    expect(second.item.review.intervalDays).toBe(6);
+    expect(second.item.review).toEqual(expectedSecond);
+    expect(second.item.review.reps).toBe(2);
 
-    // The persisted item reflects the latest state.
+    // The persisted item reflects the latest state, losslessly.
     const [persisted] = await listRecallItems(context.db, userA);
-    expect(persisted?.review.repetitions).toBe(2);
+    expect(persisted?.review).toEqual(expectedSecond);
 
-    // Both reviews are logged in history.
+    // Both reviews are logged in history, carrying the rating (not a numeric grade).
     const history = await context.db
       .select()
       .from(recallReviews)
       .where(eq(recallReviews.recallItemId, enrolled.id));
     expect(history).toHaveLength(2);
-    expect(history.map((row) => row.grade).sort()).toEqual([4, 4]);
+    expect(history.map((row) => row.rating).sort()).toEqual(["good", "good"]);
+  });
+
+  it("counts a lapse when a graduated card is failed with Again", async () => {
+    const enrolled = await enroll({ kind: "word", text: "lapse" }, userA, t0);
+
+    // Easy graduates the new card to Review; a following Again lapses it into Relearning.
+    const reviewed = await recordRecallReview(context.deps, enrolled.id, "easy", userA, at(1));
+    if (reviewed.status !== "recorded") {
+      throw new Error("expected recorded");
+    }
+    expect(reviewed.item.review.state).toBe("review");
+    expect(reviewed.item.review.lapses).toBe(0);
+
+    const lapsed = await recordRecallReview(context.deps, enrolled.id, "again", userA, at(2));
+    if (lapsed.status !== "recorded") {
+      throw new Error("expected recorded");
+    }
+    expect(lapsed.item.review.state).toBe("relearning");
+    expect(lapsed.item.review.lapses).toBe(1);
+    expect(lapsed.item.review.reps).toBe(2);
   });
 
   it("returns not_found for a missing item", async () => {
-    expect(await recordRecallReview(context.deps, "nope", 4, userA, t0)).toEqual({
+    expect(await recordRecallReview(context.deps, "nope", "good", userA, t0)).toEqual({
       status: "not_found"
     });
   });
@@ -225,34 +255,31 @@ describe("recordRecallReview", () => {
   it("returns not_found for another user's item and leaves it unchanged", async () => {
     const enrolled = await enroll({ kind: "word", text: "quick" }, userA, t0);
 
-    expect(await recordRecallReview(context.deps, enrolled.id, 4, userB, t0)).toEqual({
+    expect(await recordRecallReview(context.deps, enrolled.id, "good", userB, t0)).toEqual({
       status: "not_found"
     });
 
     const [item] = await listRecallItems(context.db, userA);
-    expect(item?.review.repetitions).toBe(0);
+    expect(item?.review).toEqual(newReviewState(t0));
+    expect(item?.review.reps).toBe(0);
   });
 });
 
 describe("snoozeRecallItem", () => {
-  it("moves only the due date forward a day, leaving the SM-2 state untouched", async () => {
+  it("moves only the due date forward a day, leaving the FSRS state untouched", async () => {
     const enrolled = await enroll({ kind: "word", text: "later" }, userA, t0);
 
     const result = await snoozeRecallItem(context.db, userA, enrolled.id, at(3));
     if (result.status !== "snoozed") {
       throw new Error("expected snoozed");
     }
-    expect(result.item.review).toEqual({
-      dueAt: at(4).toISOString(),
-      easeFactor: 2.5,
-      intervalDays: 0,
-      lapses: 0,
-      lastReviewedAt: null,
-      repetitions: 0
-    });
+    // Every FSRS field is the freshly-seeded card's; only `due` moved to now + 1 day.
+    expect(result.item.review).toEqual({ ...newReviewState(t0), due: at(4).toISOString() });
 
     const [persisted] = await listRecallItems(context.db, userA);
-    expect(persisted?.review.dueAt).toBe(at(4).toISOString());
+    expect(persisted?.review.due).toBe(at(4).toISOString());
+    expect(persisted?.review.reps).toBe(0);
+    expect(persisted?.review.state).toBe("new");
   });
 
   it("returns not_found for a missing item", async () => {
@@ -267,7 +294,7 @@ describe("snoozeRecallItem", () => {
     });
 
     const [item] = await listRecallItems(context.db, userA);
-    expect(item?.review.dueAt).toBe(t0.toISOString());
+    expect(item?.review.due).toBe(t0.toISOString());
   });
 });
 
@@ -282,7 +309,7 @@ describe("listDueRecallItems", () => {
     expect(due.map((d) => d.id)).toEqual([early.id, mid.id, late.id]);
 
     // Reviewing `early` pushes its due date into the future, so it drops out of the due list.
-    await recordRecallReview(context.deps, early.id, 4, userA, at(0));
+    await recordRecallReview(context.deps, early.id, "good", userA, at(0));
     const afterReview = await listDueRecallItems(context.db, userA, at(0), 10);
     expect(afterReview.map((d) => d.id)).toEqual([mid.id, late.id]);
 

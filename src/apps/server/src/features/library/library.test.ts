@@ -2,6 +2,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 
+import { newReviewState } from "@whetstone/domain";
+
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
@@ -24,6 +26,7 @@ import {
   workSources
 } from "../../db/schema.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
+import { reviewStateColumns } from "../recall/recallQueries.js";
 import { createServer } from "../../http/createServer.js";
 
 type TestContext = Readonly<{
@@ -333,14 +336,7 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
     text: "chunk"
   });
 
-  const reviewState = {
-    dueAt: new Date("2026-01-01T00:00:00.000Z"),
-    easeFactor: 2.5,
-    intervalDays: 0,
-    lapses: 0,
-    lastReviewedAt: null,
-    repetitions: 0
-  };
+  const reviewState = reviewStateColumns(newReviewState(new Date("2026-01-01T00:00:00.000Z")));
   await db.insert(recallItems).values([
     {
       id: "recall-block",

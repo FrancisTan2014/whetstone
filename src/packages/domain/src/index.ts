@@ -8,7 +8,7 @@ export { caseCorpus, getCorpusDomain } from "./caseCorpus.js";
 export type { CorpusCase, CorpusChunk, CorpusDomain } from "./caseCorpus.js";
 export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "./caseMastery.js";
 export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
-export { judgementToGrade, productionCategories } from "./coachGrade.js";
+export { judgementToRating, productionCategories } from "./coachGrade.js";
 export type { ProductionCategory } from "./coachGrade.js";
 export { coachIntensities, coachPaces, coachRegisters, deriveCoachKnobs } from "./coachKnobs.js";
 export type {
@@ -124,8 +124,15 @@ export {
 export type { NoteFieldType, NoteTemplate, NoteTemplateField } from "./noteTemplate.js";
 export { formatProductHeading, productIdentity } from "./productIdentity.js";
 export type { ProductIdentity } from "./productIdentity.js";
-export { gradeFromRating, newReviewState, scheduleReview } from "./sm2.js";
-export type { ReviewGrade, ReviewRating, ReviewState } from "./sm2.js";
+export {
+  applyRating,
+  cardStates,
+  isDue,
+  newReviewState,
+  RECALL_REQUEST_RETENTION,
+  retrievability
+} from "./fsrs.js";
+export type { CardState, ReviewRating, ReviewState, SchedulerOptions } from "./fsrs.js";
 export { sanitizeSvg } from "./svgSanitizer.js";
 export { isWorkType, workTypes } from "./work.js";
 export {

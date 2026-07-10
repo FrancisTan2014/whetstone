@@ -28,18 +28,36 @@ async function buildContext(): Promise<TestContext> {
   return { db, recall: { createId: () => `id-${(sequence += 1)}`, db } };
 }
 
-// Enroll a recall item linked to a chunk and apply `reviewCount` passing reviews, so a chunk can be
-// driven into a learning or mastered state for the mastery assertions.
-async function practise(chunkId: string, userId: string, reviewCount: number): Promise<void> {
+// Enroll a recall item linked to a chunk and drive it to a target FSRS maturity, so a chunk can be
+// asserted as new/learning/due/mastered. "due" = just enrolled (due immediately); "learning" = one
+// passing review (not due); "mastered" = spaced "easy" reviews at each due date until it graduates to a
+// comfortably long interval (state "review", scheduledDays >= 21).
+async function practise(
+  chunkId: string,
+  userId: string,
+  maturity: "due" | "learning" | "mastered"
+): Promise<void> {
   const item = await enrollRecallItem(
     context.recall,
     { chunkId, kind: "chunk", text: chunkId },
     userId,
     t0
   );
-  for (let i = 0; i < reviewCount; i += 1) {
-    await recordRecallReview(context.recall, item.id, 4, userId, t0);
+  if (maturity === "due") {
+    return;
   }
+  if (maturity === "learning") {
+    await recordRecallReview(context.recall, item.id, "good", userId, t0);
+    return;
+  }
+  let now = t0;
+  for (let i = 0; i < 12; i += 1) {
+    const result = await recordRecallReview(context.recall, item.id, "easy", userId, now);
+    if (result.status !== "recorded") throw new Error("review failed");
+    if (result.item.review.state === "review" && result.item.review.scheduledDays >= 21) return;
+    now = new Date(result.item.review.due);
+  }
+  throw new Error(`chunk ${chunkId} did not reach mastered`);
 }
 
 beforeEach(async () => {
@@ -110,9 +128,9 @@ describe("getCaseDetail", () => {
   it("derives the mastery summary from the user's linked recall items", async () => {
     // mastered: graduated and pushed past its due date; learning: one pass, not due; due: just
     // enrolled (due immediately). The remaining chunks stay new.
-    await practise("kitchen.meal_planning.whats_for_dinner", userA, 3);
-    await practise("kitchen.meal_planning.feel_like", userA, 1);
-    await practise("kitchen.meal_planning.how_about", userA, 0);
+    await practise("kitchen.meal_planning.whats_for_dinner", userA, "mastered");
+    await practise("kitchen.meal_planning.feel_like", userA, "learning");
+    await practise("kitchen.meal_planning.how_about", userA, "due");
 
     const detail = await getCaseDetail(context.db, "kitchen.meal_planning", userA, t0);
     expect(detail?.mastery).toEqual({
@@ -126,7 +144,7 @@ describe("getCaseDetail", () => {
   });
 
   it("never leaks another user's mastery (content shared, mastery user-scoped)", async () => {
-    await practise("kitchen.meal_planning.how_about", userB, 3);
+    await practise("kitchen.meal_planning.how_about", userB, "mastered");
 
     const forA = await getCaseDetail(context.db, "kitchen.meal_planning", userA, t0);
     expect(forA?.mastery).toMatchObject({ masteredChunks: 0, newChunks: 7 });
@@ -136,9 +154,9 @@ describe("getCaseDetail", () => {
   });
 
   it("aggregates multiple recall items linked to the same chunk", async () => {
-    await practise("kitchen.meal_planning.whats_for_dinner", userA, 3);
+    await practise("kitchen.meal_planning.whats_for_dinner", userA, "mastered");
     // A second item linked to the same chunk, still due — the chunk stays "due" (due wins).
-    await practise("kitchen.meal_planning.whats_for_dinner", userA, 0);
+    await practise("kitchen.meal_planning.whats_for_dinner", userA, "due");
 
     const detail = await getCaseDetail(context.db, "kitchen.meal_planning", userA, t0);
     expect(detail?.mastery).toMatchObject({ dueChunks: 1, masteredChunks: 0, newChunks: 6 });

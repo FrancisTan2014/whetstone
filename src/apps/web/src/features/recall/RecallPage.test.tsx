@@ -27,12 +27,16 @@ function makeItem(overrides: Partial<RecallItemDto> = {}): RecallItemDto {
     kind: "word",
     provenanceEntryId: null,
     review: {
-      dueAt: "2026-01-01T00:00:00.000Z",
-      easeFactor: 2.5,
-      intervalDays: 0,
+      due: "2026-01-01T00:00:00.000Z",
+      stability: 0,
+      difficulty: 0,
+      elapsedDays: 0,
+      scheduledDays: 0,
+      learningSteps: 0,
+      reps: 0,
       lapses: 0,
-      lastReviewedAt: null,
-      repetitions: 0
+      state: "new",
+      lastReviewedAt: null
     },
     text: "spill the beans",
     cue: null,
@@ -95,7 +99,7 @@ describe("RecallPage", () => {
     const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
     await user.click(within(card).getByRole("button", { name: "Show answer" }));
 
-    // The back appears, and only now do the four SM-2 grades enter the tree.
+    // The back appears, and only now do the four FSRS rating buttons enter the tree.
     expect(within(card).getByText("to reveal a secret")).toBeDefined();
     for (const label of ["Again", "Hard", "Good", "Easy"]) {
       expect(within(card).getByRole("button", { name: label })).toBeDefined();

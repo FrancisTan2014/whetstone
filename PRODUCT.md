@@ -116,8 +116,8 @@ tracks slot in cleanly. The multi-track life arranger is the vision; one discipl
 _on-ramp_ that begins the learner model (read source materials, break them into addressable blocks, attach
 notes, connect ideas across works). v0 now also delivers the **assistant loop the North Star promises**: a
 proactive **Today home** that **captures** (a tap-and-talk voice diary), **proposes recall** (due items from
-the built SM-2 scheduler), and **surfaces practice** (the reading→practice nudge). The coach/recall _engine_
-(SM-2, recall store, the live coach, the learner model, the fog-of-war map) is **already built** — v0 adds the
+the built FSRS scheduler), and **surfaces practice** (the reading→practice nudge). The coach/recall _engine_
+(FSRS, recall store, the live coach, the learner model, the fog-of-war map) is **already built** — v0 adds the
 **proactive surfaces** that make it usable. The reading surface itself stays calm; the assistant lives in its
 own home (see "v0 assistant home (Today)"). The detailed scope and content model below remain the source of
 truth for what to build now.
@@ -134,8 +134,8 @@ truth for what to build now.
    save a rich diary **Entry first** (raw input preserved, then lightly **tidied**, never polished);
    transcription and tidying run asynchronously and never block or slow the save. A diary capture
    **journals only** — no proposal generation and no "Mine my history" action.
-6. **Recall** — surface **due** items (the built SM-2 scheduler) as **gentle, capped, snoozeable proposals**;
-   completing one feeds its grade back to the scheduler.
+6. **Recall** — surface **due** items (the built FSRS scheduler) as **gentle, capped, snoozeable proposals**;
+   completing one feeds its rating back to the scheduler.
 7. **A proactive Today home** — the assistant's front door, composing capture + recall + the
    reading→practice nudge; it is the app's landing. The reader stays calm (none of this lives in it).
 
@@ -600,9 +600,9 @@ calm **call surface** — who's-speaking, live captions, the situation as quiet 
 
 **End of round → the deposit.** The user ends, or the coach **lands the plane** (scenario resolved or the
 time-box near). Then **one analysis pass** over the whole round (transcript + STT word-timings + the
-case's target chunks + compiled context) returns a **structured debrief** — per-chunk grades, the 2–3
+case's target chunks + compiled context) returns a **structured debrief** — a per-chunk FSRS rating, the 2–3
 highest-value **pattern-tagged** mistakes, wins, one native upgrade — and that deposits
-**deterministically** into SM-2 recall, error-pattern counts, the rolling profile, and case mastery (the
+**deterministically** into FSRS recall, error-pattern counts, the rolling profile, and case mastery (the
 map). A compact **debrief screen** shows the few moments that matter and what is now due to recall. _Flow
 during, learning after:_ the conversation stays natural while every round still compounds.
 
@@ -617,7 +617,8 @@ self-tuning, eval-driven coach is deferred; the knobs are its seam.
 
 **Division of labour (smart, bounded, cheap).**
 
-- **Deterministic SM-2 schedules; the LLM grades** (judging production quality) and proposes next — the
+- **Deterministic FSRS schedules (v6, via `ts-fsrs`, requested retention 0.9); the LLM grades** (judging
+  production quality, mapped to one of the four ratings again/hard/good/easy) and proposes next — the
   scheduling math never costs a token.
 - **Content is bounded** to situations/domains the learner lacks, with chunk inventories **pre-cooked
   and reviewable** — the LLM authors into a stable corpus and judges against it; it never
@@ -681,10 +682,12 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
   are **the same capture**; **Diary is a filter over the Timeline** (the `kind === "diary"` slice of a
   logical query over your personal Entries), not a separate store. Every capture preserves the raw input
   and feeds the learner history.
-- **Coach — recall proposals.** Today's **due** items (the built **SM-2** scheduler + recall store) surfaced as
+- **Coach — recall proposals.** Today's **due** items (the built **FSRS** scheduler + recall store) surfaced as
   a **gentle, capped, snoozeable proposal** — _proposals, not an obligation_; a backlog never piles into a
-  wall. Completing an item feeds its grade back to SM-2. **FSRS is a future swap behind the same grade-driven
-  scheduler seam** — SM-2 is what ships.
+  wall. Completing an item feeds its rating (again/hard/good/easy) back to FSRS. **FSRS (v6, via `ts-fsrs`)
+  is the deterministic local scheduler that ships** — it superseded the earlier hand-rolled SM-2. The
+  deferred LLM "smart recall" is a separate, later layer that would _propose_ what to review; the day-to-day
+  schedule stays deterministic and tokenless.
 - **Practice — the reading nudge.** The reading→practice nudge (a recent capture → "practise it") renders as a
   Today card; its restraint model lives under "Language practice & recall → Settled vs open".
 

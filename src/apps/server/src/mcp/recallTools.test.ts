@@ -9,8 +9,9 @@ import { entries } from "../db/schema.js";
 import { createDefaultCurrentUserProvider } from "../identity/currentUser.js";
 import { callRecallTool, createRecallMcpServer, type RecallMcpContext } from "./recallTools.js";
 
+import { applyRating, newReviewState } from "@whetstone/domain";
+
 const t0 = new Date("2026-01-01T00:00:00.000Z");
-const day = 24 * 60 * 60 * 1000;
 
 type Ctx = Readonly<{ context: RecallMcpContext; db: DbClient }>;
 let ctx: Ctx;
@@ -53,20 +54,24 @@ describe("callRecallTool", () => {
       kind: "idiom",
       text: "spill the beans"
     })) as Awaited<ReturnType<typeof callRecallTool>>;
-    const item = dataOf(saved) as { id: string; review: { dueAt: string } };
+    const item = dataOf(saved) as { id: string; review: { due: string } };
     expect(item.id).toBe("id-1");
-    expect(item.review.dueAt).toBe(t0.toISOString());
+    expect(item.review.due).toBe(t0.toISOString());
 
     const due = dataOf(await callRecallTool(ctx.context, "list_due_items", {})) as {
       items: ReadonlyArray<{ id: string }>;
     };
     expect(due.items.map((i) => i.id)).toEqual(["id-1"]);
 
+    // record_review must reproduce the pure domain scheduler for the same card + rating.
+    const expected = applyRating(newReviewState(t0), "good", t0);
     const reviewed = dataOf(
-      await callRecallTool(ctx.context, "record_review", { grade: 4, itemId: "id-1" })
-    ) as { review: { dueAt: string; intervalDays: number; repetitions: number } };
-    expect(reviewed.review).toMatchObject({ intervalDays: 1, repetitions: 1 });
-    expect(reviewed.review.dueAt).toBe(new Date(t0.getTime() + day).toISOString());
+      await callRecallTool(ctx.context, "record_review", { itemId: "id-1", rating: "good" })
+    ) as { review: { due: string; reps: number; state: string } };
+    expect(reviewed.review).toEqual(expected);
+    expect(reviewed.review.state).toBe("learning");
+    expect(reviewed.review.reps).toBe(1);
+    expect(reviewed.review.due).toBe(expected.due);
 
     // Reviewing pushed the due date into the future, so it drops out of the due list.
     const dueAfter = dataOf(await callRecallTool(ctx.context, "list_due_items", {})) as {
@@ -132,7 +137,10 @@ describe("callRecallTool", () => {
   });
 
   it("returns a clean error when reviewing a missing item", async () => {
-    const result = await callRecallTool(ctx.context, "record_review", { grade: 4, itemId: "nope" });
+    const result = await callRecallTool(ctx.context, "record_review", {
+      itemId: "nope",
+      rating: "good"
+    });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("No recall item with id nope");
   });
@@ -155,7 +163,7 @@ describe("deposit_recall_item", () => {
     gloss: "use 'on' after 'depends'"
   } as const;
 
-  it("saves a production-style recall item with full metadata and SM-2 seeding, no proposal link", async () => {
+  it("saves a production-style recall item with full metadata and FSRS seeding, no proposal link", async () => {
     const saved = dataOf(await callRecallTool(ctx.context, "deposit_recall_item", validArgs)) as {
       id: string;
       text: string;
@@ -168,7 +176,7 @@ describe("deposit_recall_item", () => {
       provenanceEntryId: string | null;
       sourceProposalCandidateId: string | null;
       chunkId: string | null;
-      review: { dueAt: string; repetitions: number };
+      review: { due: string; reps: number; state: string };
     };
 
     expect(saved).toMatchObject({
@@ -185,8 +193,9 @@ describe("deposit_recall_item", () => {
       sourceProposalCandidateId: null,
       chunkId: null
     });
-    // SM-2 seeded due immediately, so it is reviewable normally right away.
-    expect(saved.review).toMatchObject({ dueAt: t0.toISOString(), repetitions: 0 });
+    // FSRS seeded due immediately, so it is reviewable normally right away.
+    expect(saved.review).toEqual(newReviewState(t0));
+    expect(saved.review).toMatchObject({ due: t0.toISOString(), reps: 0, state: "new" });
 
     // The deposited item is listable and fetchable through the existing recall tools.
     const due = dataOf(await callRecallTool(ctx.context, "list_due_items", {})) as {

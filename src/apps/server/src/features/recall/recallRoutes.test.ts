@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { EnrollRecallItemRequest, RecallItemDto } from "@whetstone/contracts";
+import { applyRating, newReviewState } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -105,32 +106,38 @@ describe("GET /api/recall/due", () => {
 });
 
 describe("POST /api/recall/items/:id/review", () => {
-  it("applies SM-2, persists the advanced state, writes a review row, and returns the updated item", async () => {
+  it("applies FSRS, persists the advanced state, writes a review row, and returns the updated item", async () => {
     const item = await seed({ kind: "word", text: "quick" }, DEFAULT_USER_ID, at(-1));
+
+    // The route must reproduce the pure domain scheduler for the same card + rating.
+    const expected = applyRating(newReviewState(at(-1)), "good", at(0));
 
     context.setNow(at(0));
     const response = await context.server.inject({
       method: "POST",
-      payload: { grade: 4 },
+      payload: { rating: "good" },
       url: `/api/recall/items/${item.id}/review`
     });
 
     expect(response.statusCode).toBe(200);
     const updated = response.json() as RecallItemDto;
-    expect(updated.review).toMatchObject({ intervalDays: 1, lapses: 0, repetitions: 1 });
-    expect(updated.review.dueAt).toBe(at(1).toISOString());
+    expect(updated.review).toEqual(expected);
+    expect(updated.review.state).toBe("learning");
+    expect(updated.review.reps).toBe(1);
+    expect(updated.review.lapses).toBe(0);
+    expect(updated.review.lastReviewedAt).toBe(at(0).toISOString());
 
     const [row] = await context.db.select().from(recallItems).where(eq(recallItems.id, item.id));
-    expect(row?.intervalDays).toBe(1);
-    expect(row?.repetitions).toBe(1);
-    expect(row?.dueAt.toISOString()).toBe(at(1).toISOString());
+    expect(row?.reps).toBe(1);
+    expect(row?.state).toBe("learning");
+    expect(row?.dueAt.toISOString()).toBe(expected.due);
 
     const reviews = await context.db
       .select()
       .from(recallReviews)
       .where(eq(recallReviews.recallItemId, item.id));
     expect(reviews).toHaveLength(1);
-    expect(reviews[0]?.grade).toBe(4);
+    expect(reviews[0]?.rating).toBe("good");
 
     // A reviewed item drops out of today's due batch.
     expect(await getDue()).toEqual([]);
@@ -141,7 +148,7 @@ describe("POST /api/recall/items/:id/review", () => {
 
     const response = await context.server.inject({
       method: "POST",
-      payload: { grade: 9 },
+      payload: { rating: "perfect" },
       url: `/api/recall/items/${item.id}/review`
     });
 
@@ -151,7 +158,7 @@ describe("POST /api/recall/items/:id/review", () => {
   it("returns 404 for a missing item", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { grade: 4 },
+      payload: { rating: "good" },
       url: "/api/recall/items/nope/review"
     });
 
@@ -163,18 +170,19 @@ describe("POST /api/recall/items/:id/review", () => {
 
     const response = await context.server.inject({
       method: "POST",
-      payload: { grade: 4 },
+      payload: { rating: "good" },
       url: `/api/recall/items/${item.id}/review`
     });
     expect(response.statusCode).toBe(404);
 
     const [row] = await context.db.select().from(recallItems).where(eq(recallItems.id, item.id));
-    expect(row?.repetitions).toBe(0);
+    expect(row?.reps).toBe(0);
+    expect(row?.state).toBe("new");
   });
 });
 
 describe("POST /api/recall/items/:id/snooze", () => {
-  it("defers the item out of today's batch by moving only its due date, leaving SM-2 state unchanged", async () => {
+  it("defers the item out of today's batch by moving only its due date, leaving FSRS state unchanged", async () => {
     const item = await seed({ kind: "word", text: "later" }, DEFAULT_USER_ID, at(-1));
 
     context.setNow(at(0));
@@ -185,15 +193,9 @@ describe("POST /api/recall/items/:id/snooze", () => {
 
     expect(response.statusCode).toBe(200);
     const updated = response.json() as RecallItemDto;
-    expect(updated.review.dueAt).toBe(at(1).toISOString());
-    // Snooze is not a grade: the schedule counters are untouched.
-    expect(updated.review).toMatchObject({
-      easeFactor: 2.5,
-      intervalDays: 0,
-      lapses: 0,
-      lastReviewedAt: null,
-      repetitions: 0
-    });
+    expect(updated.review.due).toBe(at(1).toISOString());
+    // Snooze is not a review: only the due instant moves; every FSRS field is untouched.
+    expect(updated.review).toEqual({ ...newReviewState(at(-1)), due: at(1).toISOString() });
 
     // No review row was written, and the item is no longer due today.
     const reviews = await context.db

@@ -10,7 +10,7 @@ import type {
   ProductionJudgement,
   ProposeNextResult
 } from "@whetstone/contracts";
-import type { ReviewGrade } from "@whetstone/domain";
+import type { ReviewRating } from "@whetstone/domain";
 
 import type { CoachProvider } from "./coachProvider.js";
 
@@ -41,7 +41,7 @@ export type RoutedCoachDependencies = Readonly<{
 }>;
 
 // Compose a single CoachProvider that dispatches each model call to the tier its routing selects.
-// `gradeForScheduler` is pure (tokenless), so it is not routed — it goes to the strong provider as the
+// `ratingForScheduler` is pure (tokenless), so it is not routed — it goes to the strong provider as the
 // authoritative grader.
 export function createRoutedCoach(dependencies: RoutedCoachDependencies): CoachProvider {
   function providerFor(callType: CoachCallType): CoachProvider {
@@ -58,14 +58,14 @@ export function createRoutedCoach(dependencies: RoutedCoachDependencies): CoachP
     converse(request: CoachConverseRequest): Promise<CoachConverseResult> {
       return providerFor("converse").converse(request);
     },
-    gradeForScheduler(judgement: ProductionJudgement): ReviewGrade {
-      return dependencies.strong.gradeForScheduler(judgement);
-    },
     judgeProduction(request: JudgeProductionRequest): Promise<ProductionJudgement> {
       return providerFor("judge").judgeProduction(request);
     },
     proposeNext(context: CompiledContext): Promise<ProposeNextResult> {
       return providerFor("propose").proposeNext(context);
+    },
+    ratingForScheduler(judgement: ProductionJudgement): ReviewRating {
+      return dependencies.strong.ratingForScheduler(judgement);
     }
   });
 }

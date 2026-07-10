@@ -61,16 +61,21 @@ export const enrollRecallItemRequestSchema = z
 
 export type EnrollRecallItemRequest = z.infer<typeof enrollRecallItemRequestSchema>;
 
-// The SM-2 review state carried by an item (ISO-8601 instants; `lastReviewedAt` null until the
-// first review). Structurally the domain `ReviewState`.
+// The FSRS card state carried by an item (#572). ISO-8601 `due`/`lastReviewedAt` (the latter null
+// until the first review); the remaining fields are the FSRS card fields the scheduler round-trips.
+// Structurally equal to the domain `ReviewState`.
 export const reviewStateDtoSchema = z
   .object({
-    dueAt: z.string(),
-    easeFactor: z.number(),
-    intervalDays: z.number().int(),
+    due: z.string().datetime(),
+    stability: z.number(),
+    difficulty: z.number(),
+    elapsedDays: z.number().int(),
+    scheduledDays: z.number().int(),
+    learningSteps: z.number().int(),
+    reps: z.number().int(),
     lapses: z.number().int(),
-    lastReviewedAt: z.string().nullable(),
-    repetitions: z.number().int()
+    state: z.enum(["new", "learning", "review", "relearning"]),
+    lastReviewedAt: z.string().datetime().nullable()
   })
   .strict();
 
@@ -97,11 +102,11 @@ export const recallItemDtoSchema = z
 
 export type RecallItemDto = z.infer<typeof recallItemDtoSchema>;
 
-// Record a review: the grade (SM-2 0..5, or an Again/Hard/Good/Easy mapped to it upstream). The
-// item, user, and time are not part of the body — the server resolves them.
+// Record a review: the learner's (or an LLM's) four-button FSRS rating. The item, user, and time are
+// not part of the body — the server resolves them.
 export const recordRecallReviewRequestSchema = z
   .object({
-    grade: z.number().int().min(0).max(5)
+    rating: z.enum(["again", "hard", "good", "easy"])
   })
   .strict();
 
@@ -122,7 +127,7 @@ export type ListDueItemsToolInput = z.infer<typeof listDueItemsToolInputSchema>;
 
 export const recordReviewToolInputSchema = z
   .object({
-    grade: z.number().int().min(0).max(5),
+    rating: z.enum(["again", "hard", "good", "easy"]),
     itemId: z.string().refine(isNonBlank, { message: "itemId must be non-empty." })
   })
   .strict();

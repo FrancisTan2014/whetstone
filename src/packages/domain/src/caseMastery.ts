@@ -3,7 +3,7 @@
 // review state(s) of the recall item(s) linked to it, and the case summary is the bucket counts.
 // No persistence, network, or UI — time enters only via a passed-in `now`.
 
-import type { ReviewState } from "./sm2.js";
+import type { ReviewState } from "./fsrs.js";
 
 // A chunk's mastery status for one learner:
 // - "new": the learner has no recall item linked to the chunk yet.
@@ -14,9 +14,10 @@ export const chunkMasteryStatuses = ["new", "learning", "due", "mastered"] as co
 
 export type ChunkMasteryStatus = (typeof chunkMasteryStatuses)[number];
 
-// A chunk is treated as graduated once it has been recalled successfully this many consecutive times
-// (SM-2 resets `repetitions` to 0 on a lapse, so this is a streak of clean reviews).
-const MASTERY_REPETITIONS = 3;
+// A chunk is treated as graduated once its FSRS card is in long-term "review" with a comfortably long
+// interval — a card the scheduler has pushed at least this many days out is one the learner reliably
+// recalls. Cards still in learning/relearning, or graduated but with a short interval, are not mastered.
+const MASTERY_INTERVAL_DAYS = 21;
 
 export type CaseMasterySummary = Readonly<{
   totalChunks: number;
@@ -27,11 +28,11 @@ export type CaseMasterySummary = Readonly<{
 }>;
 
 function isDue(state: ReviewState, now: Date): boolean {
-  return new Date(state.dueAt).getTime() <= now.getTime();
+  return new Date(state.due).getTime() <= now.getTime();
 }
 
 function isMastered(state: ReviewState): boolean {
-  return state.repetitions >= MASTERY_REPETITIONS;
+  return state.state === "review" && state.scheduledDays >= MASTERY_INTERVAL_DAYS;
 }
 
 // Classify a single chunk from the review states of the recall items linked to it. "due" wins over

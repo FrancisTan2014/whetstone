@@ -17,7 +17,7 @@ import type {
   ProposeNextResult,
   RoundChunk
 } from "@whetstone/contracts";
-import { judgementToGrade, type ReviewGrade } from "@whetstone/domain";
+import { judgementToRating, type ReviewRating } from "@whetstone/domain";
 
 import type { CoachProvider } from "./coachProvider.js";
 
@@ -203,26 +203,37 @@ function mistakeCategory(chunk: RoundChunk): AnalyzedMistake["category"] {
   return chunk.text.length > 12 ? "word_order" : "l1_calque";
 }
 
-// A deterministic one-pass analysis (#222): grade each target chunk by how much of it the learner
+// The verdict ladder, worst -> best, so a chunk's category can be classified as a mistake (below
+// "understandable") or a win ("good" or better) without going through a numeric grade.
+const categoryRank: Readonly<Record<ProductionCategory, number>> = {
+  off_target: 0,
+  incorrect: 1,
+  awkward: 2,
+  understandable: 3,
+  good: 4,
+  native_like: 5
+};
+
+// A deterministic one-pass analysis (#222): rate each target chunk by how much of it the learner
 // produced (reusing the same overlap judge), turn the weakest chunks into tagged mistakes, the strongest
 // into wins, and derive one native upgrade. No model, no network — assertable exactly.
 function analyze(request: AnalyzeRoundRequest): AnalyzeRoundResult {
   const transcript = roundTranscript(request.history);
   const said = transcript.length > 0 ? transcript : "what you tried";
 
-  const graded = request.targetChunks.map((chunk) => ({
-    chunk,
-    grade: judgementToGrade(judge(chunk.text, transcript).category)
-  }));
+  const graded = request.targetChunks.map((chunk) => {
+    const category = judge(chunk.text, transcript).category;
+    return { category, chunk, rating: judgementToRating(category) };
+  });
 
-  const chunkGrades: ChunkGrade[] = graded.map(({ chunk, grade }) => ({
+  const chunkGrades: ChunkGrade[] = graded.map(({ chunk, rating }) => ({
     chunkId: chunk.chunkId,
-    grade
+    rating
   }));
 
   const mistakes: AnalyzedMistake[] = graded
-    .filter(({ grade }) => grade < 3)
-    .sort((left, right) => left.grade - right.grade)
+    .filter(({ category }) => categoryRank[category] < categoryRank.understandable)
+    .sort((left, right) => categoryRank[left.category] - categoryRank[right.category])
     .slice(0, 3)
     .map(({ chunk }) => ({
       category: mistakeCategory(chunk),
@@ -232,7 +243,7 @@ function analyze(request: AnalyzeRoundRequest): AnalyzeRoundResult {
     }));
 
   const wins = graded
-    .filter(({ grade }) => grade >= 4)
+    .filter(({ category }) => categoryRank[category] >= categoryRank.good)
     .map(({ chunk }) => `Nailed "${chunk.text}".`);
 
   const upgradeNative = request.targetChunks[0]?.text ?? "Keep it natural and concrete.";
@@ -261,14 +272,14 @@ export function createFakeCoach(): CoachProvider {
     converse(request: CoachConverseRequest): Promise<CoachConverseResult> {
       return Promise.resolve(converse(request));
     },
-    gradeForScheduler(judgement: ProductionJudgement): ReviewGrade {
-      return judgementToGrade(judgement.category);
-    },
     judgeProduction(request: JudgeProductionRequest): Promise<ProductionJudgement> {
       return Promise.resolve(judge(request.target, request.transcript));
     },
     proposeNext(context: CompiledContext): Promise<ProposeNextResult> {
       return Promise.resolve(propose(context));
+    },
+    ratingForScheduler(judgement: ProductionJudgement): ReviewRating {
+      return judgementToRating(judgement.category);
     }
   });
 }

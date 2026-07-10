@@ -1,20 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import { chunkMasteryStatus, summarizeCaseMastery } from "./caseMastery.js";
-import type { ReviewState } from "./sm2.js";
+import type { CardState, ReviewState } from "./fsrs.js";
 
 const now = new Date("2026-01-10T00:00:00.000Z");
 const day = 24 * 60 * 60 * 1000;
 const offsetFromNow = (days: number): string => new Date(now.getTime() + days * day).toISOString();
 
+// Build an FSRS ReviewState directly (bypassing the scheduler) so each mastery predicate can be
+// exercised at its boundary. Defaults to a graduated "review" card, not due, with a short interval —
+// i.e. "learning" (enrolled, not due, not yet mastered).
 function state(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
-    dueAt: offsetFromNow(7),
-    easeFactor: 2.5,
-    intervalDays: 7,
+    due: offsetFromNow(7),
+    stability: 8,
+    difficulty: 5,
+    elapsedDays: 3,
+    scheduledDays: 7,
+    learningSteps: 0,
+    reps: 3,
     lapses: 0,
+    state: "review" as CardState,
     lastReviewedAt: offsetFromNow(-1),
-    repetitions: 1,
     ...overrides
   };
 }
@@ -25,27 +32,45 @@ describe("chunkMasteryStatus", () => {
   });
 
   it("is 'due' when an item is due now (boundary: due exactly at now)", () => {
-    expect(chunkMasteryStatus([state({ dueAt: now.toISOString() })], now)).toBe("due");
+    expect(chunkMasteryStatus([state({ due: now.toISOString() })], now)).toBe("due");
   });
 
-  it("is 'learning' when enrolled, not due, and not yet graduated", () => {
-    expect(chunkMasteryStatus([state({ repetitions: 2 })], now)).toBe("learning");
+  it("is 'learning' when a card is still in the learning state (not yet graduated)", () => {
+    expect(chunkMasteryStatus([state({ state: "learning", scheduledDays: 30 })], now)).toBe(
+      "learning"
+    );
   });
 
-  it("is 'mastered' when every item has graduated and none is due", () => {
-    expect(chunkMasteryStatus([state({ repetitions: 3 })], now)).toBe("mastered");
+  it("is 'mastered' at the 21-day interval boundary (review card, not due)", () => {
+    expect(chunkMasteryStatus([state({ scheduledDays: 21 })], now)).toBe("mastered");
+  });
+
+  it("is 'learning' just below the 21-day interval boundary", () => {
+    expect(chunkMasteryStatus([state({ scheduledDays: 20 })], now)).toBe("learning");
+  });
+
+  it("is not mastered when a long-interval card is in relearning, not review", () => {
+    expect(chunkMasteryStatus([state({ state: "relearning", scheduledDays: 40 })], now)).toBe(
+      "learning"
+    );
   });
 
   it("is 'learning' when only some linked items have graduated", () => {
-    expect(chunkMasteryStatus([state({ repetitions: 4 }), state({ repetitions: 1 })], now)).toBe(
-      "learning"
-    );
+    expect(
+      chunkMasteryStatus([state({ scheduledDays: 40 }), state({ scheduledDays: 5 })], now)
+    ).toBe("learning");
+  });
+
+  it("is 'mastered' when every item has graduated and none is due", () => {
+    expect(
+      chunkMasteryStatus([state({ scheduledDays: 30 }), state({ scheduledDays: 60 })], now)
+    ).toBe("mastered");
   });
 
   it("prefers 'due' over 'mastered' when a graduated item has come due again", () => {
     expect(
       chunkMasteryStatus(
-        [state({ repetitions: 5 }), state({ repetitions: 5, dueAt: offsetFromNow(-1) })],
+        [state({ scheduledDays: 60 }), state({ scheduledDays: 60, due: offsetFromNow(-1) })],
         now
       )
     ).toBe("due");
@@ -56,9 +81,9 @@ describe("summarizeCaseMastery", () => {
   it("classifies each chunk and counts the buckets (counts sum to total)", () => {
     const chunkIds = ["a", "b", "c", "d", "e"];
     const statesByChunkId = new Map<string, ReviewState[]>([
-      ["b", [state({ dueAt: offsetFromNow(-1) })]],
-      ["c", [state({ repetitions: 3 })]],
-      ["d", [state({ repetitions: 2 })]]
+      ["b", [state({ due: offsetFromNow(-1) })]],
+      ["c", [state({ scheduledDays: 30 })]],
+      ["d", [state({ scheduledDays: 5 })]]
       // "a" present with no entry and "e" absent both count as new.
     ]);
 

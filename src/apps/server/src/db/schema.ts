@@ -359,7 +359,7 @@ export const chunks = pgTable(
 );
 
 // A recall item: a pattern / idiom / proverb / chunk / word / phrase the learner wants to
-// remember, carrying its SM-2 review state inline (one state per item) and an optional link into
+// remember, carrying its FSRS card state inline (one state per item) and an optional link into
 // the content graph (`provenance_entry_id` -> a source note or block when it came from reading;
 // null when jotted or LLM-supplied). User-owned personal data, like notes and reading position —
 // stamped with `user_id` on enroll and filtered by it on read.
@@ -403,13 +403,20 @@ export const recallItems = pgTable(
     // only from a saved proposal, so it is enforced at the command boundary rather than by a DB constraint.
     sourceProposalCandidateId: text("source_proposal_candidate_id"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
-    // Inlined SM-2 ReviewState (@whetstone/domain): ease, interval (days), streak, lapses, and the
-    // last-reviewed (null until first review) / due timestamps. `due_at` is indexed with the user
-    // so `listDue` is a cheap range scan.
-    easeFactor: doublePrecision("ease_factor").notNull(),
-    intervalDays: integer("interval_days").notNull(),
-    repetitions: integer("repetitions").notNull(),
+    // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572): the full card the scheduler
+    // round-trips — stability/difficulty, elapsed/scheduled days, learning steps, reps, lapses, the
+    // lifecycle `state`, and the last-reviewed (null until first review) / due timestamps. `due_at` is
+    // indexed with the user so `listDue` is a cheap range scan.
+    stability: doublePrecision("stability").notNull(),
+    difficulty: doublePrecision("difficulty").notNull(),
+    elapsedDays: integer("elapsed_days").notNull(),
+    scheduledDays: integer("scheduled_days").notNull(),
+    learningSteps: integer("learning_steps").notNull(),
+    reps: integer("reps").notNull(),
     lapses: integer("lapses").notNull(),
+    state: text("state", {
+      enum: ["new", "learning", "review", "relearning"] as const
+    }).notNull(),
     lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
     dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
   },
@@ -419,8 +426,8 @@ export const recallItems = pgTable(
   ]
 );
 
-// The append-only review log: one row per recorded review (the grade and when), so a recall item's
-// history is auditable independently of its current (overwritten) review state.
+// The append-only review log: one row per recorded review (the FSRS rating and when), so a recall
+// item's history is auditable independently of its current (overwritten) review state.
 export const recallReviews = pgTable(
   "recall_reviews",
   {
@@ -428,7 +435,9 @@ export const recallReviews = pgTable(
     recallItemId: text("recall_item_id")
       .notNull()
       .references(() => recallItems.id),
-    grade: integer("grade").notNull(),
+    rating: text("rating", {
+      enum: ["again", "hard", "good", "easy"] as const
+    }).notNull(),
     reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
   },
   (table) => [index("recall_reviews_item_idx").on(table.recallItemId)]

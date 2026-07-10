@@ -1,5 +1,5 @@
 import type { EnrollRecallItemRequest, RecallItemDto, RecallKind } from "@whetstone/contracts";
-import { newReviewState, scheduleReview, type ReviewGrade } from "@whetstone/domain";
+import { applyRating, newReviewState, type ReviewRating } from "@whetstone/domain";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -13,7 +13,7 @@ import {
 
 // Real infrastructure boundaries (the database client and id generation) are injected so the
 // commands stay deterministic and testable; `now` is passed in for the same reason (and feeds the
-// pure SM-2 scheduler).
+// pure FSRS scheduler).
 export type RecallDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
@@ -61,7 +61,7 @@ async function resolveEnrollGloss(
   return dependencies.resolveOfflineGloss(request.text);
 }
 
-// Enroll a recall item for a user, seeding its SM-2 review state (due immediately). Provenance and
+// Enroll a recall item for a user, seeding its FSRS card state (due immediately). Provenance and
 // gloss are optional; absent means jotted / LLM-supplied. `sourceProposalCandidateId` is an INTERNAL
 // argument (never taken from the client request): it is set only by the Make Durable save boundary
 // (`saveProposalRecallItem`), which first validates the proposal's existence, ownership, and provenance
@@ -98,12 +98,12 @@ export async function enrollRecallItem(
   return toRecallItemDto(row);
 }
 
-// Record a review of one of the user's items: apply SM-2 (#188), overwrite the item's review state,
+// Record a review of one of the user's items: apply FSRS (#572), overwrite the item's review state,
 // and append a history row — atomically. Returns `not_found` for a missing item or another user's.
 export async function recordRecallReview(
   dependencies: RecallDependencies,
   itemId: string,
-  grade: ReviewGrade,
+  rating: ReviewRating,
   userId: string,
   now: Date
 ): Promise<RecordReviewResult> {
@@ -113,7 +113,7 @@ export async function recordRecallReview(
     return { status: "not_found" };
   }
 
-  const nextState = scheduleReview(rowToReviewState(existing), grade, now);
+  const nextState = applyRating(rowToReviewState(existing), rating, now);
   const columns = reviewStateColumns(nextState);
   const reviewId = dependencies.createId();
 
@@ -124,16 +124,16 @@ export async function recordRecallReview(
       .where(and(eq(recallItems.id, itemId), eq(recallItems.userId, userId)));
     await tx
       .insert(recallReviews)
-      .values({ grade, id: reviewId, recallItemId: itemId, reviewedAt: now });
+      .values({ rating, id: reviewId, recallItemId: itemId, reviewedAt: now });
   });
 
   return { item: toRecallItemDto({ ...existing, ...columns }), status: "recorded" };
 }
 
 // Snooze defers an item OUT of today's batch by moving ONLY its `due_at` forward one day. A snooze is
-// NOT a grade: ease/interval/repetitions/lapses/lastReviewedAt are left untouched, so the SM-2 schedule
-// is unchanged — the item simply drops out of today and reappears tomorrow. Returns `not_found` for a
-// missing item or another user's.
+// NOT a rating: the FSRS card state (stability/difficulty/interval/reps/lapses/lastReviewedAt) is left
+// untouched, so the schedule is unchanged — the item simply drops out of today and reappears tomorrow.
+// Returns `not_found` for a missing item or another user's.
 export async function snoozeRecallItem(
   db: DbClient,
   userId: string,

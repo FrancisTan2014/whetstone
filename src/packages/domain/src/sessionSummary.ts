@@ -21,7 +21,7 @@ export type SessionSummary = Readonly<{
   turnCount: number;
 }>;
 
-// A turn graded at least this is "strong" (SM-2 4 = a good recall).
+// A turn graded at least this is "strong" (an internal 0..5 debrief grade; 4 = a good recall).
 const STRONG_GRADE = 4;
 
 export function summarizeSessionTurns(turns: ReadonlyArray<SessionTurn>): SessionSummary {

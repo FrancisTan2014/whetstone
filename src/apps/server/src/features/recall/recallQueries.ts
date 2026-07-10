@@ -12,12 +12,16 @@ export type RecallItemRow = typeof recallItems.$inferSelect;
 // so a recorded review can be scheduled by `@whetstone/domain`.
 export function rowToReviewState(row: RecallItemRow): ReviewState {
   return {
-    dueAt: row.dueAt.toISOString(),
-    easeFactor: row.easeFactor,
-    intervalDays: row.intervalDays,
+    due: row.dueAt.toISOString(),
+    stability: row.stability,
+    difficulty: row.difficulty,
+    elapsedDays: row.elapsedDays,
+    scheduledDays: row.scheduledDays,
+    learningSteps: row.learningSteps,
+    reps: row.reps,
     lapses: row.lapses,
-    lastReviewedAt: row.lastReviewedAt === null ? null : row.lastReviewedAt.toISOString(),
-    repetitions: row.repetitions
+    state: row.state,
+    lastReviewedAt: row.lastReviewedAt === null ? null : row.lastReviewedAt.toISOString()
   };
 }
 
@@ -26,15 +30,28 @@ export function reviewStateColumns(
   state: ReviewState
 ): Pick<
   RecallItemRow,
-  "easeFactor" | "intervalDays" | "repetitions" | "lapses" | "lastReviewedAt" | "dueAt"
+  | "dueAt"
+  | "stability"
+  | "difficulty"
+  | "elapsedDays"
+  | "scheduledDays"
+  | "learningSteps"
+  | "reps"
+  | "lapses"
+  | "state"
+  | "lastReviewedAt"
 > {
   return {
-    dueAt: new Date(state.dueAt),
-    easeFactor: state.easeFactor,
-    intervalDays: state.intervalDays,
+    dueAt: new Date(state.due),
+    stability: state.stability,
+    difficulty: state.difficulty,
+    elapsedDays: state.elapsedDays,
+    scheduledDays: state.scheduledDays,
+    learningSteps: state.learningSteps,
+    reps: state.reps,
     lapses: state.lapses,
-    lastReviewedAt: state.lastReviewedAt === null ? null : new Date(state.lastReviewedAt),
-    repetitions: state.repetitions
+    state: state.state,
+    lastReviewedAt: state.lastReviewedAt === null ? null : new Date(state.lastReviewedAt)
   };
 }
 

@@ -10,7 +10,7 @@ import { fetchDueRecall, gradeRecall, snoozeRecall } from "./recallApi";
 
 type Phase = "error" | "loading" | "ready";
 
-// The four self-grade controls, in increasing-confidence order. Each maps to an SM-2 grade in the API.
+// The four self-grade controls, in increasing-confidence order. Each is an FSRS rating sent to the API.
 const ratingButtons: ReadonlyArray<Readonly<{ label: string; rating: ReviewRating }>> = [
   { label: "Again", rating: "again" },
   { label: "Hard", rating: "hard" },
@@ -118,7 +118,7 @@ function renderBody(
 
 // One due card as a two-phase flip (#525): a self-grade only means something after a retrieval
 // attempt, so grade buttons are gated behind a reveal. Phase 1 (prompt) shows the front and the
-// reveal affordance + Snooze; no grades. Phase 2 (reveal) shows the back and the four SM-2 grades.
+// reveal affordance + Snooze; no grades. Phase 2 (reveal) shows the back and the four FSRS ratings.
 // Reveal is a native <button> (so click/tap and Space/Enter all work); after reveal, focus moves to
 // the answer region for assistive tech and 1–4 optionally map to the grades. Snooze is always present.
 function RecallCard({

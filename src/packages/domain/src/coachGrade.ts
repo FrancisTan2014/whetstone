@@ -1,10 +1,10 @@
-// The pure bridge from the coach's production verdict to #188's SM-2 grade: the LLM (or the
-// deterministic fake) JUDGES production quality into a discrete category, and this maps that category
-// to the 0..5 grade the scheduler consumes. The mapping is deterministic and model-agnostic — it
-// never costs a token and never changes when a real model is wired in (the LLM grades; SM-2
-// schedules).
+// The pure bridge from the coach's production verdict to the FSRS rating the scheduler consumes
+// (#572): the LLM (or the deterministic fake) JUDGES production quality into a discrete category, and
+// this maps that category to one of the four ratings again/hard/good/easy. The mapping is
+// deterministic and model-agnostic — it never costs a token and never changes when a real model is
+// wired in (the LLM grades; FSRS schedules).
 
-import type { ReviewGrade } from "./sm2.js";
+import type { ReviewRating } from "./fsrs.js";
 
 // The discrete quality verdict for a spoken production attempt, from worst to best. Mirrored as a Zod
 // enum in `@whetstone/contracts` (`coachContracts.ts`); keep the two in sync.
@@ -19,19 +19,20 @@ export const productionCategories = [
 
 export type ProductionCategory = (typeof productionCategories)[number];
 
-// Each verdict maps to one SM-2 grade (0..5): a clean, deterministic 1:1 ladder rather than a
-// threshold on a float, so a planted change to the mapping fails a test. "off_target" (said something
-// unrelated) is a total miss (0); "native_like" is a perfect recall (5); below "understandable" (3)
-// is an SM-2 lapse.
-const categoryToGrade: Readonly<Record<ProductionCategory, ReviewGrade>> = Object.freeze({
-  off_target: 0,
-  incorrect: 1,
-  awkward: 2,
-  understandable: 3,
-  good: 4,
-  native_like: 5
+// Each verdict maps to one of the four FSRS ratings: a clean, deterministic ladder rather than a
+// threshold on a float, so a planted change to the mapping fails a test. The six-way verdict collapses
+// onto the four ratings — a total/near miss ("off_target"/"incorrect") is "again", a clumsy-but-present
+// attempt ("awkward"/"understandable") is "hard", a solid attempt ("good") is "good", and a
+// native-level one ("native_like") is "easy".
+const categoryToRating: Readonly<Record<ProductionCategory, ReviewRating>> = Object.freeze({
+  off_target: "again",
+  incorrect: "again",
+  awkward: "hard",
+  understandable: "hard",
+  good: "good",
+  native_like: "easy"
 });
 
-export function judgementToGrade(category: ProductionCategory): ReviewGrade {
-  return categoryToGrade[category];
+export function judgementToRating(category: ProductionCategory): ReviewRating {
+  return categoryToRating[category];
 }

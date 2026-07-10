@@ -183,7 +183,7 @@ describe("coachConverseRequestSchema", () => {
 
 describe("parseAnalyzeRoundResult", () => {
   const result = {
-    chunkGrades: [{ chunkId: "c1", grade: 4 }],
+    chunkGrades: [{ chunkId: "c1", rating: "good" }],
     encouragement: "Good round.",
     mistakes: [
       {
@@ -201,9 +201,9 @@ describe("parseAnalyzeRoundResult", () => {
     expect(parseAnalyzeRoundResult(result)).toEqual(result);
   });
 
-  it("rejects a chunk grade outside 0..5", () => {
+  it("rejects a chunk rating outside the four FSRS ratings", () => {
     expect(() =>
-      parseAnalyzeRoundResult({ ...result, chunkGrades: [{ chunkId: "c1", grade: 9 }] })
+      parseAnalyzeRoundResult({ ...result, chunkGrades: [{ chunkId: "c1", rating: "perfect" }] })
     ).toThrow();
   });
 

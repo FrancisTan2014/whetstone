@@ -28,16 +28,28 @@ async function buildDb(): Promise<DbClient> {
   return client;
 }
 
-async function enroll(chunkId: string, reviews: number): Promise<void> {
+// Drive a chunk to a target FSRS maturity via the real review path. "learning" = one passing review
+// (graded but far from graduated); "mastered" = spaced "easy" reviews AT each due date until the card
+// graduates to a comfortably long interval (state "review", scheduledDays >= MASTERY_INTERVAL_DAYS).
+async function enroll(chunkId: string, maturity: "learning" | "mastered"): Promise<void> {
   const item = await enrollRecallItem(
     { createId, db },
     { chunkId, kind: "chunk", text: chunkId },
     userA,
     t0
   );
-  for (let i = 0; i < reviews; i += 1) {
-    await recordRecallReview({ createId, db }, item.id, 4, userA, t0);
+  if (maturity === "learning") {
+    await recordRecallReview({ createId, db }, item.id, "good", userA, t0);
+    return;
   }
+  let now = t0;
+  for (let i = 0; i < 12; i += 1) {
+    const result = await recordRecallReview({ createId, db }, item.id, "easy", userA, now);
+    if (result.status !== "recorded") throw new Error("review failed");
+    if (result.item.review.state === "review" && result.item.review.scheduledDays >= 21) return;
+    now = new Date(result.item.review.due);
+  }
+  throw new Error(`chunk ${chunkId} did not reach mastered`);
 }
 
 beforeEach(async () => {
@@ -66,8 +78,8 @@ describe("compileProgressMap", () => {
   });
 
   it("lights a region as its chunks are practised and counts owned vs weak phrasings", async () => {
-    await enroll("kitchen.meal_planning.whats_for_dinner", 3); // mastered
-    await enroll("kitchen.meal_planning.feel_like", 1); // learning
+    await enroll("kitchen.meal_planning.whats_for_dinner", "mastered"); // mastered
+    await enroll("kitchen.meal_planning.feel_like", "learning"); // learning
 
     const map = await compileProgressMap(db, userA, t0);
     const kitchen = map.domains.find((domain) => domain.domain.id === "kitchen");
