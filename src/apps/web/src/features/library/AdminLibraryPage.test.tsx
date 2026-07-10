@@ -24,6 +24,11 @@ vi.mock("../content/contentApi", () => ({
   ingestPdf: vi.fn()
 }));
 
+vi.mock("../authoredWorks/authoredWorkApi", () => ({
+  createAuthoredWork: vi.fn(),
+  listAuthoredWorks: vi.fn()
+}));
+
 import {
   createWork,
   deleteWork,
@@ -33,10 +38,17 @@ import {
   ingestEpub
 } from "./libraryApi";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
+import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
-import type { AuthorDto, WorkListItemDto } from "@whetstone/contracts";
+import type {
+  AuthorDto,
+  AuthoredWorkDto,
+  AuthoredWorkSummaryDto,
+  WorkListItemDto
+} from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 // The library reports action results (work created, EPUB imported, and their failures)
@@ -63,6 +75,8 @@ const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
 const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
 const mockedIngestPdf = vi.mocked(ingestPdf);
+const mockedListAuthoredWorks = vi.mocked(listAuthoredWorks);
+const mockedCreateAuthoredWork = vi.mocked(createAuthoredWork);
 
 const orwell: AuthorDto = { id: toAuthorId("author-1"), name: "George Orwell" };
 const dickens: AuthorDto = { id: toAuthorId("author-2"), name: "Charles Dickens" };
@@ -127,6 +141,7 @@ beforeEach(() => {
   mockedFetchAuthors.mockResolvedValue({ authors: [] });
   mockedFetchWorks.mockResolvedValue({ works: [] });
   mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set());
+  mockedListAuthoredWorks.mockResolvedValue({ works: [] });
 });
 
 afterEach(() => {
@@ -914,5 +929,97 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Could not delete the work. Please try again.")).toBeDefined();
     // The confirm dialog stays open (the work was not removed).
     expect(screen.getByRole("dialog", { name: "Delete work" })).toBeDefined();
+  });
+
+  it("marks a Work authored with a badge, opens it in the editor, and hides Manage content (#576)", async () => {
+    const authoredSummary: AuthoredWorkSummaryDto = {
+      createdAt: "2026-07-01T00:00:00.000Z",
+      entryId: "work-1",
+      language: "en",
+      title: "Politics and the English Language",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      workType: "essay"
+    };
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
+    mockedListAuthoredWorks.mockResolvedValue({ works: [authoredSummary] });
+    await renderReady();
+
+    const group = await screen.findByRole("region", { name: "George Orwell" });
+    const authoredCard = within(group)
+      .getByRole("heading", { name: "Politics and the English Language" })
+      .closest("li");
+    expect(authoredCard).not.toBeNull();
+    const authored = within(authoredCard as HTMLElement);
+    // The authored badge and an editor deep link, with no reader/Manage-content actions.
+    expect(authored.getByText("Authored")).toBeDefined();
+    const openLink = authored.getByRole("link", { name: "Open" });
+    expect(openLink.getAttribute("href")).toBe("#/write?work=work-1");
+    expect(authored.queryByRole("button", { name: "Manage content" })).toBeNull();
+
+    // A non-authored Work keeps the reader flow.
+    const importedCard = within(group).getByRole("heading", { name: "Animal Farm" }).closest("li");
+    const imported = within(importedCard as HTMLElement);
+    expect(imported.queryByText("Authored")).toBeNull();
+    expect(imported.getByRole("link", { name: "Read" }).getAttribute("href")).toBe(
+      "#/reader?work=work-2"
+    );
+    expect(imported.getByRole("button", { name: "Manage content" })).toBeDefined();
+  });
+
+  it("creates a new authored document and jumps into the editor (#576)", async () => {
+    window.location.hash = "";
+    const created: AuthoredWorkDto = {
+      createdAt: "2026-07-01T00:00:00.000Z",
+      document: createTextDocument(""),
+      entryId: "doc 42",
+      language: "zh-CN",
+      title: "My new essay",
+      unitEntryId: "unit-1",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      workType: "essay"
+    };
+    mockedCreateAuthoredWork.mockResolvedValue(created);
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New document" }));
+    await screen.findByRole("heading", { name: "New document" });
+    await user.type(screen.getByLabelText("Title"), "My new essay");
+    await user.selectOptions(screen.getByLabelText("Type"), "essay");
+    await user.selectOptions(screen.getByLabelText("Language"), "zh-CN");
+    await user.click(screen.getByRole("button", { name: "Create and write" }));
+
+    await waitFor(() => {
+      expect(mockedCreateAuthoredWork).toHaveBeenCalledWith({
+        language: "zh-CN",
+        title: "My new essay",
+        workType: "essay"
+      });
+    });
+    expect(window.location.hash).toBe("#/write?work=doc%2042");
+  });
+
+  it("validates that a new document needs a title before creating (#576)", async () => {
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New document" }));
+    await screen.findByRole("heading", { name: "New document" });
+    await user.click(screen.getByRole("button", { name: "Create and write" }));
+
+    expect(await screen.findByText("Enter a document title.")).toBeDefined();
+    expect(mockedCreateAuthoredWork).not.toHaveBeenCalled();
+  });
+
+  it("shows an error toast when creating a new document fails (#576)", async () => {
+    mockedCreateAuthoredWork.mockRejectedValue(new Error("boom"));
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New document" }));
+    await screen.findByRole("heading", { name: "New document" });
+    await user.type(screen.getByLabelText("Title"), "Doomed doc");
+    await user.click(screen.getByRole("button", { name: "Create and write" }));
+
+    expect(
+      await screen.findByText("Could not create the document. Please try again.")
+    ).toBeDefined();
   });
 });

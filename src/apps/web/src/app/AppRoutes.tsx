@@ -1,6 +1,7 @@
 import { Route, Routes, useSearchParams } from "react-router-dom";
 
 import { createCaptureVoice } from "../features/capture/captureVoice.js";
+import { AuthoredWorkPage } from "../features/authoredWorks/AuthoredWorkPage.js";
 import { DiaryPage } from "../features/diary/DiaryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
@@ -28,6 +29,14 @@ function ReaderRoute(): React.JSX.Element {
   );
 }
 
+// The authoring route opens the immersive rich editor for an owned Work passed as `?work=<entryId>`.
+// Without a work param the page shows a calm prompt to open a document from the Library.
+function WriteRoute(): React.JSX.Element {
+  const [searchParams] = useSearchParams();
+
+  return <AuthoredWorkPage workEntryId={searchParams.get("work") ?? undefined} />;
+}
+
 // The Library's contextual "Notes" action routes to `#/notes?work=<entryId>`; the route reads that
 // param so the Notes list can narrow to a single work. Without it, Notes shows every saved note.
 function NotesRoute(): React.JSX.Element {
@@ -45,6 +54,7 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<TodayPage />} index />
         <Route element={<LibraryMode />} path="library" />
         <Route element={<ReaderRoute />} path="reader" />
+        <Route element={<WriteRoute />} path="write" />
         <Route
           element={
             <SessionPage

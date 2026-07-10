@@ -29,6 +29,7 @@ import {
   ingestEpub
 } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
+import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 
 const newAuthorOption = "new-author-or-source";
 
@@ -74,8 +75,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [authors, setAuthors] = useState<ReadonlyArray<AuthorDto>>([]);
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
   const [worksWithPosition, setWorksWithPosition] = useState<ReadonlySet<string>>(new Set());
+  // Which works are user-authored documents (vs imported sources), so the shelf can badge them and route
+  // them to the editor instead of the reader — one library, no separate silo (#576).
+  const [authoredWorkIds, setAuthoredWorkIds] = useState<ReadonlySet<string>>(new Set());
 
   const [addOpen, setAddOpen] = useState(false);
+  const [newDocOpen, setNewDocOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState<WorkLanguage>("en");
   const [workType, setWorkType] = useState<WorkType>("book");
@@ -100,14 +105,16 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const toast = useToast();
 
   async function reload(): Promise<void> {
-    const [authorList, workList, withPosition] = await Promise.all([
+    const [authorList, workList, withPosition, authored] = await Promise.all([
       fetchAuthors(),
       fetchWorks(),
-      fetchWorksWithReadingPosition()
+      fetchWorksWithReadingPosition(),
+      listAuthoredWorks()
     ]);
     setAuthors(authorList.authors);
     setWorks(workList.works);
     setWorksWithPosition(withPosition);
+    setAuthoredWorkIds(new Set(authored.works.map((work) => work.entryId)));
   }
 
   useEffect(() => {
@@ -148,6 +155,37 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setPendingUpload(undefined);
     resetWorkForm();
     setAddOpen(true);
+  }
+
+  // "New document" opens a minimal sheet (title, language, type only — the current user is the author) to
+  // create an owned Work, then jumps straight into the editor (#576).
+  function openNewDocument(): void {
+    resetWorkForm();
+    setNewDocOpen(true);
+  }
+
+  async function onSubmitNewDocument(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+
+    if (trimmedTitle.length === 0) {
+      setWorkError("Enter a document title.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const created = await createAuthoredWork({ language, title: trimmedTitle, workType });
+      resetWorkForm();
+      setNewDocOpen(false);
+      // Hash routing: open the immersive editor for the new document (mirrors the reader deep links).
+      window.location.hash = `#/write?work=${encodeURIComponent(created.entryId)}`;
+    } catch {
+      toast.error("Could not create the document. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   // The sheet is only rendered while open, and Radix only calls onOpenChange to request dismissal
@@ -362,7 +400,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
               type="file"
             />
           </label>
-          <Button onClick={openManualAddWork} type="button">
+          <Button onClick={openNewDocument} type="button">
+            New document
+          </Button>
+          <Button onClick={openManualAddWork} type="button" variant="secondary">
             Add work
           </Button>
         </div>
@@ -376,6 +417,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
       {loadState === "ready"
         ? renderLibrary(groups, {
+            authoredWorkIds,
             cardVariants,
             listVariants,
             onDelete: setPendingDelete,
@@ -470,6 +512,66 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         </Sheet>
       ) : null}
 
+      {newDocOpen ? (
+        <Sheet onOpenChange={() => setNewDocOpen(false)} open title="New document">
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => void onSubmitNewDocument(event)}
+          >
+            <label className="flex flex-col gap-1" htmlFor="new-doc-title">
+              Title
+              <input
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                id="new-doc-title"
+                onChange={(event) => setTitle(event.currentTarget.value)}
+                value={title}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1" htmlFor="new-doc-type">
+              Type
+              <select
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                id="new-doc-type"
+                onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
+                value={workType}
+              >
+                {workTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {formatWorkType(type)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1" htmlFor="new-doc-language">
+              Language
+              <select
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                id="new-doc-language"
+                onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
+                value={language}
+              >
+                {workLanguages.map((code) => (
+                  <option key={code} value={code}>
+                    {workLanguageLabels[code]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <Button pending={submitting} type="submit">
+              Create and write
+            </Button>
+            {workError !== undefined ? (
+              <p className="text-danger" role="alert">
+                {workError}
+              </p>
+            ) : null}
+          </form>
+        </Sheet>
+      ) : null}
+
       {pendingDelete !== undefined ? (
         <Sheet onOpenChange={() => setPendingDelete(undefined)} open title="Delete work">
           <div className="flex flex-col gap-4">
@@ -497,6 +599,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 }
 
 type RenderLibraryOptions = Readonly<{
+  authoredWorkIds: ReadonlySet<string>;
   cardVariants: Variants;
   listVariants: Variants;
   onDelete: (item: WorkListItemDto) => void;
@@ -550,6 +653,9 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
   const workEntryId = item.work.entryId;
   // "Continue" only when the reader has a saved position for this work; otherwise a truthful "Read".
   const resumes = options.worksWithPosition.has(workEntryId);
+  // Authored documents open in the editor (read + edit) rather than the reader, and carry a badge so the
+  // one shelf distinguishes them from imported sources without a separate silo (#576).
+  const authored = options.authoredWorkIds.has(workEntryId);
 
   return (
     <motion.li
@@ -558,23 +664,41 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
       variants={options.cardVariants}
     >
       <h3 className="font-serif text-lg text-text">{item.work.title}</h3>
-      <p className="text-sm text-text-muted">
-        {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
+      <p className="flex items-center gap-2 text-sm text-text-muted">
+        <span>
+          {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
+        </span>
+        {authored ? (
+          <span className="rounded bg-anno-thought-wash px-1.5 py-0.5 text-xs text-accent">
+            Authored
+          </span>
+        ) : null}
       </p>
       <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-        <a
-          className={`${cardActionClass} font-medium`}
-          href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
-        >
-          {resumes ? "Continue" : "Read"}
-        </a>
-        <button
-          className={cardActionClass}
-          onClick={() => options.onManageContent(workEntryId)}
-          type="button"
-        >
-          Manage content
-        </button>
+        {authored ? (
+          <a
+            className={`${cardActionClass} font-medium`}
+            href={`#/write?work=${encodeURIComponent(workEntryId)}`}
+          >
+            Open
+          </a>
+        ) : (
+          <a
+            className={`${cardActionClass} font-medium`}
+            href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
+          >
+            {resumes ? "Continue" : "Read"}
+          </a>
+        )}
+        {authored ? null : (
+          <button
+            className={cardActionClass}
+            onClick={() => options.onManageContent(workEntryId)}
+            type="button"
+          >
+            Manage content
+          </button>
+        )}
         <a className={cardActionClass} href={`#/notes?work=${encodeURIComponent(workEntryId)}`}>
           Notes
         </a>
