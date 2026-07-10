@@ -9,6 +9,11 @@ suggestions and fast feedback. Unlike stateless single-shot chat, the coach is c
 you have read, noted, gotten wrong, and connected — so it can advise in a way generic chat structurally
 cannot.
 
+**The immediate promise (what the product does today):** **write or collect material, mark what matters, and
+memorize it.** Capture your own writing (the diary) or collect what you read, flag the pieces worth keeping, and
+let the coach schedule them back to you until they stick. Everything below is how that promise compounds into a
+learning history.
+
 **The principle:** the coach **proposes and connects — it never does your understanding for you.** You stay
 the learner; the LLM is the always-available tutor a solo learner otherwise lacks. The moat is not "the LLM
 sees everything" (that hits the context wall) but the **learner model + retrieval** that assembles the right
@@ -34,11 +39,14 @@ If a feature is neither, it is out of scope.
 
 **The spine — one model, many views.** There is **one learner model**, with two planes around it: a **shared
 source library** (what you read — ingested works/blocks, no owner) and your **personal trace** (what you've
-done — notes, diary, speech-practice deposits, recall — all `user_id`-owned, all feeding the model). Capture
-types differ only by **anchoring**: a note → a source block, a speech deposit → a case, a diary entry →
-un-anchored. Every personal surface is a **view of the one model** — **Today** (what's next), the fog-of-war
-**Map** (mastery), **Recall** (what's due), a **Timeline** (history, newest-first) — so "history" is a _view of
-your trace_, never a per-feature page (the diary's history is the Timeline's first facet). **Reading is the
+done — notes, diary, speech-practice deposits, recall — all `user_id`-owned, all feeding the model). Owned
+capture types (notes and diary) share **one ownership + chronology facet** (owner, `occurredAt`, created/updated
+timestamps); shared library entries have no owner. Capture types differ only by **anchoring**: a note → a source
+block, a speech deposit → a case, a diary entry → un-anchored. Every personal surface is a **view of the one
+model** — **Today** (what's next), the fog-of-war **Map** (mastery), **Recall** (what's due), a **Timeline**
+(history, newest-first) — the Timeline is a **logical view derived by querying your personal Entries** ordered by
+when they occurred, never a stored object — so "history" is a _view of your trace_, never a per-feature page
+(**Diary is a filter over that Timeline**). **Reading is the
 on-ramp; the model is the destination.** The model compounds only as fast as it is fed, and the **feed
 (capture) side is deliberately thin in v0** — it is the growth frontier (see "Future direction → more feeders").
 
@@ -122,10 +130,10 @@ truth for what to build now.
 3. **Annotate** — select any text (a word, phrase, or longer passage) to create a note anchored to
    the exact source block.
 4. **Find** — search across the library at block granularity.
-5. **Capture** — one entry point for lived learning friction. Typed **Quick Capture** and tap-and-talk
-   voice diary both save a chronological Timeline entry first (raw input preserved, then lightly
-   **tidied**, never polished). From Quick Capture, Whetstone may propose one evidence-backed learning
-   deposit for review on Today; approved proposals become production-style Recall items.
+5. **Capture** — one entry point for a daily diary. Typed capture and **Tap-and-Talk** voice diary both
+   save a rich diary **Entry first** (raw input preserved, then lightly **tidied**, never polished);
+   transcription and tidying run asynchronously and never block or slow the save. A diary capture
+   **journals only** — no proposal generation and no "Mine my history" action.
 6. **Recall** — surface **due** items (the built SM-2 scheduler) as **gentle, capped, snoozeable proposals**;
    completing one feeds its grade back to the scheduler.
 7. **A proactive Today home** — the assistant's front door, composing capture + recall + the
@@ -252,7 +260,16 @@ tokens live in code (the Tailwind theme) once built; this section records the du
 
 ## v0 content model
 
-- The durable domain object is `Entry`. Materials, reading units, blocks, and notes are all entries.
+- The durable domain object is `Entry`. Materials, reading units, blocks, notes, and diary entries are all
+  entries. Durable Entries are **modality-neutral** — a diary body captured by typing or by voice is the same
+  kind of Entry, distinguished by facets, not by store.
+- Owned (personal) entry types — `note` and `diary_entry` — carry a shared **`personal_entries` facet** holding
+  ownership + chronology: `owner`, `occurred_at`, `created_at`, `updated_at`. Shared library entries
+  (`work`, `reading_unit`, `block`, `toc_entry`) have **no** `personal_entries` row and no owner. The Timeline
+  is a logical query over `personal_entries` by `occurred_at`; there is **no** physical `timeline_entry` store.
+- A diary artifact is a `diary_entry` whose durable body is a **ProseMirror/Tiptap document** edited through the
+  shared rich editor, with diary-specific facets: raw audio, verbatim transcript, tidied text, language, input
+  mode (typed/voice), and asynchronous processing status/retry state (saved-first; see Today capture).
 - Relationships between entries are typed links. v0 link types: `contains`, `annotates`,
   `references`, `related_to`. (`references`/`related_to` are reserved for future cross-work
   connections and are inert in v0.)
@@ -286,8 +303,10 @@ chapters/passages -> blocks.
 ## Identity & ownership (v0)
 
 - **Content is shared library; personal activity is user-owned.** Works, reading units, blocks, and
-  sources are global content (no owner). Notes, reading position, and future personal signals (highlights,
-  the learner model) are **user-owned** and carry a `user_id`.
+  sources are global content (no owner). Notes, diary entries, reading position, and future personal signals
+  (highlights, the learner model) are **user-owned**. Owned Entries (notes, diary) carry their ownership and
+  chronology in the shared **`personal_entries` facet** (`owner`, `occurred_at`, `created_at`, `updated_at`)
+  rather than duplicating a `user_id`/timestamp on each feature table.
 - **One default identity, no auth.** v0 has a single `DEFAULT_USER_ID` resolved by one **current-user
   provider**; every personal write is stamped and every personal read is filtered through it. There is no
   `users` table, login, or session in v0.
@@ -656,12 +675,12 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 
 - **Capture — one bilingual Tap-and-Talk.** A single capture entry point feeds the learner trace:
   **tap and talk — or type — in your chosen language** (**中文 / EN**, manually selected, remembered).
-  STT → an LLM **tidy pass (never a polish or rewrite)** → **one diary entry** under today's date, saved
-  first and never lost. That same entry may then **propose** one high-confidence, evidence-backed
-  **"Make this durable?"** card (capped on Today); reviewed and approved, it becomes a Recall item.
-  _Journaling is the always-on value; the durable proposal is opportunistic._ Diary and Quick Capture
-  are **the same capture** — **Diary is a filtered view over the Timeline** (its designed model), not a
-  separate store. Every capture preserves the raw input and feeds the learner history.
+  STT → an LLM **tidy pass (never a polish or rewrite)** → **one diary Entry** under today's date, saved
+  first and never lost, its durable body a rich ProseMirror/Tiptap document editable through the shared
+  rich editor. A diary capture **journals only** — Tap-and-Talk is **diary-only**. Diary and the typed box
+  are **the same capture**; **Diary is a filter over the Timeline** (the `kind === "diary"` slice of a
+  logical query over your personal Entries), not a separate store. Every capture preserves the raw input
+  and feeds the learner history.
 - **Coach — recall proposals.** Today's **due** items (the built **SM-2** scheduler + recall store) surfaced as
   a **gentle, capped, snoozeable proposal** — _proposals, not an obligation_; a backlog never piles into a
   wall. Completing an item feeds its grade back to SM-2. **FSRS is a future swap behind the same grade-driven
@@ -673,19 +692,12 @@ set you can actually finish. When it is cleared, a calm **"done for today"** inv
 readability while **preserving the speaker's wording, meaning, and voice** — never upgrade vocabulary, "fix"
 phrasing to native, or translate. Polishing would erase the raw production signal the coach needs.
 
-**Make Durable (the Quick Capture invariant).** Capture never blocks on the local model: the Timeline entry is
-saved first; proposal generation is asynchronous, timeout-safe, and allowed to produce nothing. A proposal is
-visible only when it is schema-valid, evidence-backed, deduped against existing Recall items, and high-confidence.
-The capture path is Recall-first: capture → Timeline entry → at most one Today review card →
-Save/Edit/Not useful/Wrong → production-style Recall item — the **same path the voice diary capture runs**,
-now that Diary and Quick Capture are one surface rather than two. Reader captures, external share,
-Practice/Connection artifacts, tag taxonomies, and a review inbox remain out of scope.
-
-**Recall deposits from Quick Capture.** Existing recall feeders remain intentional: reading harvest and
-speech end-of-round deposits may continue to write directly to Recall. Quick Capture is the gated path because
-its input is rough and user-directed. It extends `recall_items` rather than replacing it: `chunk_id` and
-`provenance_entry_id` stay load-bearing for the Map, case mastery, and source provenance; Make Durable adds
-production metadata such as cue, use context, broad category, optional narrow tag, and source Timeline entry.
+**Save-first capture (the diary invariant).** Capture never blocks on the local model: the diary Entry is
+persisted **before** any asynchronous work. Typed capture is ready immediately (its body built from the typed
+text). Voice capture saves the raw audio and a `queued` Entry with a placeholder body **before** transcription;
+a worker then runs transcribing → tidying → ready, building the durable body from the tidied text, with retry on
+failure. Smart proposals / "Make Durable" are **deferred** (see Deferred scope) and must never gate or slow a
+capture.
 
 **Every recall item carries a back (answer).** A recall card must hold something to retrieve _against_ — a
 `gloss`, `cue`, or `useContext`; a bare `text` prompt (e.g. "Mitigation (noun)") is not a real card, because
@@ -755,6 +767,21 @@ block)` for the _whole_ work, keyed by **real per-unit source file** (not an anc
     layer** — comments are already modeled (decorations + `user_id`), but _shared_ reading/commenting needs the
     deferred **multi-user** step, so **authoring lands single-user first** (it crosses no new non-goal). All of
     this sits **after the bedrock pivot** (the editor is its final slice).
+
+## Deferred scope (post current diary/Timeline slice)
+
+The current build makes Diary a rich personal Entry and the Timeline a logical view. The following capabilities
+are **explicitly deferred** — described elsewhere in this brief as direction, but **not** part of the shipped
+capture/diary path, and they must never gate or slow a capture:
+
+- **Smart proposals / "Make Durable."** Turning a capture into a proposed Recall deposit ("Make this durable?",
+  the "Mine my history" backfill, proposal review cards) is deferred. A diary capture journals only. When this
+  returns, it is opportunistic and asynchronous behind the save-first diary Entry, never a precondition for it.
+- **Voice coaching (the real-time spoken conversation coach).** The live call-with-the-coach loop, end-of-round
+  analysis/debrief, and voice-in/voice-out plumbing (see "Language practice & recall") are deferred; v0 uses
+  voice only for **Tap-and-Talk diary capture** (STT → tidy → diary Entry), not for a coaching conversation.
+- **Map-led personalization.** The fog-of-war, coach-navigated map that routes practice by `gap × frequency`
+  and tunes the coach by learner-model knobs is deferred; it does not drive the diary or Timeline.
 
 ## v0 non-goals
 

@@ -44,8 +44,11 @@ rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
 `diaryTimeline.ts` (#246 voice-diary pure date logic — `toDayKey`/`isDayKey`/`toMonthKey`, `groupByDayDesc`
-day-grouping newest-first, and `monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar) and
-`diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
+day-grouping newest-first, and `monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar),
+`timeline.ts` (#571 the logical Timeline: the `diary`/`note` discriminated-kind vocabulary, each kind
+mapped to a real Entry type — there is no `timeline_entry`; the deterministic order `occurredAt` DESC with a
+stable `entryId` ASC tie-break; and day-grouping/`timelineDays` so the Timeline is a derived view, never a
+store) and `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
@@ -54,9 +57,12 @@ Zod request/response contracts shared by client and server. Public surface is `s
 Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts.ts`,
 `noteContracts.ts`, `lookupContracts.ts` (the lookup route query validator + the shared
 `NormalizedEntry` shape and `LookupResponse` DTO rendered by the reader), `searchContracts.ts`
-(the `/api/search` query validator + the block-level `SearchResultsDto`), `diaryContracts.ts` (#246
-voice-diary create/edit/timeline-page/calendar DTOs + query validators; the timeline is a generic
-dated-trace shape with a `kind` discriminator so other deposits can join later),
+(the `/api/search` query validator + the block-level `SearchResultsDto`), `diaryContracts.ts` (#571
+diary create/update + logical-Timeline DTOs: `DiaryEntryDto` carries the rich `bodyDoc`
+(ProseMirror/Tiptap document, validated against `@whetstone/document`) + `bodyText`, `occurredAt`/
+`createdAt`/`updatedAt`, `language`, `inputMode`, nullable `processingStatus`/`failureReason`; the
+Timeline is a `kind`-discriminated union DTO (`diary` | `note`) grouped into day/page DTOs, and Diary is
+the `kind === "diary"` filter — update edits the rich `bodyDoc`),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
 `queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
@@ -82,8 +88,10 @@ can navigate them from another package.
   `CurrentUserProvider` (`getCurrentUserId()`). `createServer` decorates the instance with it
   (`request.server.currentUser`), defaulting to the v0 provider; tests/future auth inject their own.
   No users table, login, session, or content owner yet (PRODUCT.md "Identity & ownership (v0)").
-  `notes` is the first user-owned table: note routes resolve the current user via
-  `request.server.currentUser` and stamp `notes.user_id` on create / filter note reads by it
+  `notes` is a user-owned facet: note routes resolve the current user via
+  `request.server.currentUser` and source ownership + chronology from the shared `personal_entries` facet
+  (a `note` Entry gets a `personal_entries` row on create — `user_id`/`occurred_at`/`created_at`/`updated_at`;
+  reads filter by `personal_entries.user_id`) rather than a `user_id`/`created_at` on `notes` itself
   (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; `recall_items`
   - `recall_reviews` (the recall store, below) and `nudge_state` (the reading→practice nudge cooldown,
     below) are user-owned the same way; shared
@@ -98,72 +106,14 @@ can navigate them from another package.
   never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
   row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
   `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
-- Make Durable (#451 data foundation, #452 Quick Capture loop, #455 voice input, #456 history backfill):
-  `src/apps/server/src/features/makeDurable/`
-  turns a typed or voice capture into gated recall. **Data model:** `timelineCommands.ts`
-  `createTimelineCapture` registers a `timeline_entry` Entry + a `timeline_entries` capture row in one
-  transaction (server-owned id/`created_at`/`entry_date`; `raw_input_text` verbatim; `input_mode` typed|voice);
-  `proposalCommands.ts`/
-  `proposalQueries.ts` own `proposal_candidates` (type/status/confidence/evidence/`payload_json`/duplicate
-  status/model+prompt) and `proposal_reviews`. **Proposal after capture:** `captureCommands.ts`
-  `proposeForCapture` runs after a capture row already exists. The unified Diary capture endpoint
-  (`POST /api/diary/entries`) saves the diary-sourced Timeline entry first, then calls this shared proposal
-  path and returns `{ entry, card }`; the legacy `POST /api/makedurable/capture` route is retained for the
-  machinery/tests and delegates to the same proposal helper after its Timeline write. The
-  `proposalProvider.ts` seam (the shared `LlmModel` in JSON mode, faked in tests)
-  attempts one proposal — retrieve-before-generate: a small slice of the user's existing recall is loaded
-  first and passed into the prompt's "Already remembered" block (domain `buildProposalPrompt`) so the model
-  can prefer no candidate when already covered; any failure/timeout/invalid output yields no card. The prompt
-  also carries a **reviewed-example policy** (#457): `proposalQueries.ts` `listReviewedProposalExamples`
-  distills the user's recent proposal reviews (the kept payload — edited on Edit + Save) into policy
-  examples, the pure domain `selectPolicyExamples` narrows them to a bounded, type-diverse few-shot set
-  (`MAX_POLICY_EXAMPLES`), and `buildProposalPrompt`/`buildBackfillProposalPrompt` render a "Policy from your
-  past reviews" block instructing the model to follow past accept/skip/type decisions (omitted, i.e. the
-  fallback path, when there is no review history). A
-  generated candidate is gated
-  by the pure `@whetstone/domain` `makeDurable.ts` (`evaluateProposalGate` = confidence floor + faithful
-  evidence quote; `classifyProposalDuplicate` suppresses same-target+same-context) and stored `visible`
-  (a `MakeDurableCardDto` is returned) or `dismissed` — or held `pending` when a card is already up, so the
-  one-card Today cap is enforced on the capture path (not just the read). `GET /api/makedurable/cards`
-  (`cardQueries.ts`, capped = 1, calm — not an inbox) feeds Today; `POST /api/makedurable/proposals/:id/review`
-  (`reviewCommands.ts` `reviewProposalCard`) acts ONLY on a still-`visible` candidate (a forged/foreign id
-  or any repeat/stale POST on an already saved/dismissed candidate → `not_found`, so no duplicate reviews or
-  recall items), records the review and, on Save / Edit + Save, makes it durable
-  via `saveProposalRecallItem` — the single path that stamps `recall_items.source_proposal_candidate_id`:
-  it takes the owner-validated candidate (from `recordProposalReview`), derives every recall field + sets
-  `provenance_entry_id` from the candidate's own `timeline_entry_id`, and calls `enrollRecallItem` (source id
-  passed inward, never from a client request); after a review the oldest held `pending` candidate is
-  promoted to `visible` (`promoteOldestPendingCandidate`) so held proposals surface without an inbox. Ownership is enforced at the command boundary
-  (`createProposalCandidate`/`insertProposalCandidate` scope `timeline_entry_id` to the user;
-  `recordProposalReview` → `not_found` for a forged/foreign candidate). **Web:**
-  `src/apps/web/src/features/capture/` — `CaptureCard` is the single typed + tap-and-talk capture surface
-  used by both Today and Diary. It owns the remembered 中文/EN capture-language selector, posts through
-  `diaryApi.ts` `submitDiaryCapture(text, inputMode, language)` to `/api/diary/entries`, prepends an
-  optional returned review card, and keeps the Save/Edit/Not-useful/Wrong card behavior unchanged. Voice
-  is **saved-first** (#566): it records via the coverage-excluded browser boundary `captureVoice.ts` (wraps
-  the shared `liveCapture` seam into one-shot record/stop), then the reusable `useVoiceCaptures.ts` hook
-  submits the raw audio through `voiceCaptureApi.ts` (`submitVoiceCapture`/`fetchActiveVoiceCaptures`/
-  `fetchVoiceCaptureStatus`/`retryVoiceCapture` over `/api/diary/voice-captures*`), rebuilds the pending
-  list from the server on mount/submit, self-schedules polling of non-terminal captures until each is
-  `ready` (handed to `onCaptured` → Timeline in capture order) or `failed` (kept visible with a Retry),
-  and drives a `beforeunload` guard over the only-lossy record/save window. Empty audio is the calm
-  no-speech retry (never saved); status copy lives in the coverage-excluded `voiceCaptureLabels.tokens.ts`.
-  A missing mic falls back to the always-present typed box. `recall_items`
-  carries nullable production metadata (`cue`, `use_context`, `category`, `tags_json`,
-  `source_proposal_candidate_id`); the `timeline_entry` type is in `@whetstone/domain` (`entry.ts`),
-  DTOs/enums in `@whetstone/contracts` (`makeDurableContracts.ts`). **Backfill (#456):**
-  `POST /api/makedurable/backfill` runs `backfillCommands.ts` `backfillMakeDurable` — a bounded, user-
-  triggered scan (`BACKFILL_SCAN_LIMIT`) that mines the user's own un-mined diary-sourced Timeline entries
-  (`timelineQueries.ts` `listBackfillableCaptures` = `capture_source = "diary"` entries with no
-  `proposal_candidates` row **and** no
-  `make_durable_backfill_scans` marker, oldest first) through the SAME gate/dedup/one-card-cap/save path
-  with a high-value prompt
-  (`createBackfillProposalProvider` over domain `buildBackfillProposalPrompt`, biasing reusable patterns
-  over one-off spelling/product-name fixes). It stops at the first gated-in proposal, surfaces at most one
-  visible Today card per run (else held `pending`), records an empty-generation entry with a durable
-  `make_durable_backfill_scans` marker (`recordBackfillScan`) so the bounded scan advances past it across
-  runs, and leaves history unchanged when the model is unavailable (a null attempt writes nothing);
-  `CaptureCard`'s "Mine my history" action (`makeDurableApi.ts` `runMakeDurableBackfill`) triggers it.
+- Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
+  owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
+  `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
+  `makeDurable.ts`) is gone; a diary capture **journals only** and never gates or slows on a proposal. The
+  diary write path (`diaryCommands.ts`/`voiceCaptureCommands.ts`/`voiceCaptureWorker.ts`), the derived
+  Timeline query (`diaryQueries.ts` over `personal_entries` + `diary_entries` + `notes`), and the web
+  `CaptureCard`/`DiaryPage` are described in the "Diary" bullets below. `recall_items` keeps its nullable
+  `provenance_entry_id` and legacy proposal-era columns (unused now, left for a clean schema).
 - Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
   cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
   `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's
@@ -196,7 +146,7 @@ can navigate them from another package.
 - Recall MCP server: `src/apps/server/src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
   `recallTools.ts` (the recall-op tools + `deposit_recall_item` (#458): a deliberate production-style
   Recall deposit — target/cue/useContext/category + optional tags/gloss/provenance — that reuses
-  `enrollRecallItem`/SM-2 seeding without a Make Durable proposal card, and never accepts the
+  `enrollRecallItem`/SM-2 seeding directly (no proposal/review gate), and never accepts the
   integrity-bearing `sourceProposalCandidateId`/`chunkId`; all validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
@@ -298,48 +248,62 @@ can navigate them from another package.
   recall (each with its next-due date, so the debrief never contradicts the due-now Recall page — #478).
   After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
   nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
-- Voice diary: `src/features/diary/` (#246) — tap-and-talk capture that REUSES the session STT seam
-  (`transcribe`) and the shared `src/llm/` seam, then files a tidied, timestamped block under today's date,
-  including the chosen capture language, in the coach-readable learner history. `diaryTidy.ts`
-  `createDiaryTidy(chat: LlmModel)` wraps the injected
-  model with the `@whetstone/domain` tidy prompt (drop fillers/false starts/repeats + light reorder,
-  but preserve wording/meaning/voice — never upgrade vocabulary or translate; language-agnostic);
-  `diaryCommands.ts` (`createDiaryEntry` runs the tidy then persists the input mode + chosen language,
-  server-owned `entry_date`=today + `created_at`; `updateDiaryEntry`/`deleteDiaryEntry` are user-scoped → 404 otherwise),
-  `diaryQueries.ts` (`listTimelinePage` pages distinct days newest-first via the exclusive `before`
-  day-key cursor bounded by `limit` days; `listCalendarDates` returns days-with-entries in a range;
-  `listDiaryEntriesForUser` is the coach-readable facet). `diaryRoutes.ts`:
+- Diary (rich Entry + logical Timeline): `src/features/diary/` (#246 origin, #571 rich-Entry rework) — the
+  owned diary capture. A diary artifact is a `diary_entry` whose durable body is a **ProseMirror/Tiptap
+  document** (`body_doc` JSONB + `body_text` plaintext projection) built via `@whetstone/document`
+  (`createTextDocument`/`documentText`), with diary facets `input_mode` (typed|voice), `language`, raw
+  audio, verbatim transcript, tidied text, nullable `processing_status`/`failure_reason`. `diaryTidy.ts`
+  `createDiaryTidy(chat: LlmModel)` wraps the injected model with the `@whetstone/domain` tidy prompt (drop
+  fillers/false starts/repeats + light reorder, but preserve wording/meaning/voice — never upgrade
+  vocabulary or translate; language-agnostic). `diaryCommands.ts`: `createDiaryEntry` is **save-first** — in
+  one transaction it writes the `entries` (`diary_entry`) row, the shared `personal_entries` facet
+  (owner + `occurred_at`/`created_at`/`updated_at`), and the `diary_entries` row; **typed** capture is ready
+  immediately (`processing_status` null, body from the typed text), voice is the async path (below).
+  `updateDiaryEntry` edits the rich `body_doc` (+ `body_text`, optional `language`) and bumps `updated_at`;
+  `updateDiaryEntry`/`deleteDiaryEntry` are owner-scoped → 404 otherwise (delete removes `diary_entries` +
+  `personal_entries` + `entries`). `diaryQueries.ts` derives the **logical Timeline** from `personal_entries`
+  for the current user — joining `diary_entries` and `notes` into the `kind`-discriminated `TimelineEntryDto`
+  (diary carries `body_doc`/`body_text`, note its markdown) and ordering/day-grouping via the pure domain
+  `groupTimelineEntriesByDay` (`occurred_at` DESC, `entry_id` ASC tie-break) — never a stored Timeline
+  object; `listTimelinePage` pages days newest-first via the exclusive `before` day-key cursor,
+  `listCalendarDates` returns days-with-entries from `occurred_at`, `listDiaryEntriesForUser` is the
+  coach-readable facet. Diary is the `kind === "diary"` filter over that result. `diaryRoutes.ts`:
   `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`, `GET /api/diary/calendar?from&to`,
-  `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). Storage is the shared
-  `timeline_entries` store filtered to `capture_source = "diary"` (#559 — the Diary is a filtered view
-  over the Timeline; `diary_entries` was retired); the tidy seam is wired in `index.ts` via
-  `createDiaryTidy(createOllamaModel(...))`.
-  Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
+  `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). No proposal card is
+  returned. The tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`. Shapes in
+  `@whetstone/contracts` (`diaryContracts.ts`).
 - Async Tap-and-Talk voice capture: `src/features/diary/` (#565) — moves the durable boundary BEFORE
-  speech-to-text. `voiceCaptureCommands.ts` (`submitVoiceCapture` saves the raw audio via the server
-  file boundary then inserts a pending `timeline_entries` row — `capture_source="diary"`,
-  `input_mode="voice"`, server-owned owner/instant/day/language/audioPath, `processing_status="queued"`,
-  no fake transcript; `getVoiceCaptureStatus`/`retryVoiceCapture` are user-scoped → 404, retry only a
-  `failed` capture → 409 otherwise). `voiceCaptureWorker.ts` (`processNextVoiceCapture` atomically claims
-  the oldest `queued` row → `transcribing`, transcribes via the STT seam, tidies, commits `ready` BEFORE
-  running the shared Make Durable proposal gate deduped by `hasProposalForEntry`; a throw/empty transcript/
-  missing audio → `failed` + `failure_reason` with audio kept; `requeueStalledVoiceCaptures` resets
-  in-flight `transcribing`/`tidying` rows to `queued` at startup). `diaryRoutes.ts` adds
-  `POST /api/diary/voice-captures`, `GET /api/diary/voice-captures/:id`,
-  `POST /api/diary/voice-captures/:id/retry`, and `GET /api/diary/voice-captures`
-  (`listActiveVoiceCaptures` — the exact complement of `diaryScope`: the user's `capture_source="diary"`
-  captures with `processing_status IS NOT NULL AND != "ready"`, oldest-first — so the client can rebuild
-  its pending/failed rows, #566). `diaryQueries.ts` `diaryScope()` filters Timeline/calendar/
-  coach-history reads to `processing_status IS NULL OR = "ready"` (pending/failed captures stay hidden
-  until ready). Wired in `index.ts`: `saveVoiceCaptureAudio` durable boundary + a `setInterval` drain loop
-  over `processNextVoiceCapture`, `requeueStalledVoiceCaptures` at startup. Contracts in
-  `voiceCaptureContracts.ts`.
+  speech-to-text (**save-first**). `voiceCaptureCommands.ts` (`submitVoiceCapture` saves the raw audio via
+  the server file boundary, then in one transaction inserts the `entries` (`diary_entry`) + `personal_entries`
+  - `diary_entries` rows with `input_mode="voice"`, server-owned owner/instants, `processing_status="queued"`,
+    a placeholder empty body, and no fake transcript — persisted BEFORE any STT; `listActiveVoiceCaptures`/
+    `getVoiceCaptureStatus`/`retryVoiceCapture` are user-scoped → 404, retry only a `failed` capture → 409
+    otherwise, clearing `failure_reason`). `voiceCaptureWorker.ts` (`processNextVoiceCapture` atomically claims
+    the oldest `queued` row → `transcribing` → `tidying`, transcribes via the STT seam, tidies, then commits
+    `ready` — building `body_doc`/`body_text`/`tidied_text` from the tidied text via `@whetstone/document`;
+    **no proposal generation**; a throw/empty transcript/missing audio → `failed` + `failure_reason` with audio
+    kept; `requeueStalledVoiceCaptures` resets in-flight `transcribing`/`tidying` rows to `queued` at startup).
+    `diaryRoutes.ts` adds `POST /api/diary/voice-captures`, `GET /api/diary/voice-captures/:id`,
+    `POST /api/diary/voice-captures/:id/retry`, and `GET /api/diary/voice-captures` (`listActiveVoiceCaptures`
+    — the user's diary captures with `processing_status IS NOT NULL AND != "ready"`, oldest-first — so the
+    client can rebuild its pending/failed rows, #566). The Timeline query hides in-flight/failed captures
+    (only `processing_status IS NULL OR = "ready"` surface). Wired in `index.ts`: `saveVoiceCaptureAudio`
+    durable boundary + a `setInterval` drain loop over `processNextVoiceCapture`, `requeueStalledVoiceCaptures`
+    at startup. Contracts in `voiceCaptureContracts.ts`.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
-  `entries` (the addressable-id spine), works/authors, `reading_units`, mdast `blocks` + PM `doc_blocks`,
-  `notes`/links/templates, `reading_positions`, search indexes, and `toc_entries` (a work's authored
-  nav-derived TOC: `entry_id` PK + `work_entry_id` FK to `entries`, `parent_entry_id`, `order_index`,
-  `depth`, `label`, nullable `target_source_file`/`target_anchor`, indexed by work; #379).
+  `entries` (the addressable-id spine; `type` ∈ work/reading_unit/block/note/toc_entry/**diary_entry** —
+  `timeline_entry` retired, #571), works/authors, `reading_units`, mdast `blocks` + PM `doc_blocks`,
+  `notes` (a pure content facet now: `answers_json`/`markdown_body`/`template_id` — ownership + chronology
+  moved out), `personal_entries` (the shared owner+chronology facet for owned Entries — `entry_id` PK,
+  `user_id`, `occurred_at`/`created_at`/`updated_at`, indexed `(user_id, occurred_at)`; a row for each
+  `note` and `diary_entry`, none for shared-library entries), `diary_entries` (`entry_id` PK, `body_doc`
+  JSONB + `body_text`, `language`, `input_mode`, raw audio/transcript/tidied text, nullable
+  `processing_status`/`failure_reason`), links/templates, `reading_positions`, search indexes, and
+  `toc_entries` (a work's authored nav-derived TOC: `entry_id` PK + `work_entry_id` FK to `entries`,
+  `parent_entry_id`, `order_index`, `depth`, `label`, nullable `target_source_file`/`target_anchor`,
+  indexed by work; #379). The `timeline_entries`, `proposal_candidates`, and `proposal_reviews` tables were
+  dropped with Make Durable (#571).
 - Features (feature-first): `src/features/<feature>/` with `*Routes.ts`, `*Commands.ts`,
   `*Queries.ts` (current: `library/`, `content/`, `notes/`, `readingPosition/`, `search/`). Routes stay thin; logic lives in
   commands/queries. `content/` ingests Markdown, EPUB, and PDF uploads. Markdown re-ingestion REPLACES a
@@ -744,16 +708,21 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   job (#417); this panel edits an existing Work's content via `ingestMarkdown` — #418) reporting the ingestion result, and a units/blocks overview
   that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
   behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
-  `diary/` is the Diary mode (#246): `DiaryPage.tsx` renders the shared `capture/CaptureCard` at the top,
-  wiring `onCaptured` to prepend the newly saved diary entry into the browsable Timeline. The POST
-  `/api/diary/entries` response is now `{ entry, card }`: the entry is always the diary-sourced Timeline
-  capture, and `card` is the optional Make Durable review card from the shared proposal gate. Below capture,
-  the **Timeline** history groups entries by day newest-first (pure `groupByDayDesc`)
+  `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
+  `capture/CaptureCard` at the top, wiring `onCaptured` to prepend the newly saved diary Entry into the
+  browsable Timeline. `POST /api/diary/entries` returns a `DiaryEntryDto` (no proposal card — capture
+  journals only). The Timeline shows the `kind === "diary"` filter over the derived result; each entry's
+  durable body is a **ProseMirror/Tiptap document** displayed via its `bodyText` and **edited with the
+  shared `RichContentEditor`** (`src/apps/web/src/shared/editor`, #570) — titles/dates/language/processing
+  state stay structured metadata; `saveEdit` PATCHes the rich `bodyDoc` (guarding a blank body). Below
+  capture, the **Timeline** history groups entries by day newest-first (pure `groupByDayDesc`)
   with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
   → next `before` page), and a **date-jump mini-calendar** marks days-with-entries (from the calendar
   endpoint, pure `monthGrid`/`monthBounds`/`shiftMonth`) and scrolls to a chosen day (loading older pages
   until it is present); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
-  `/api/diary/*` endpoints and parses every response through `diaryContracts`.
+  `/api/diary/*` endpoints (`submitDiaryCapture` → `DiaryEntryDto`, `updateDiaryEntry(id, bodyDoc)`) and
+  parses every response through `diaryContracts`. The "Mine my history" action and all Make Durable /
+  proposal card UI are gone.
   `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** items (already capped
   server-side) as gentle, snoozeable proposals — each card is a **two-phase flip** (#525): phase 1
   shows a retrieval prompt (front) + **Show answer** + Snooze and **no** grades; after reveal it shows
