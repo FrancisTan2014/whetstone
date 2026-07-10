@@ -36,7 +36,6 @@ export function AuthoredWorkPage({
     }
 
     let active = true;
-    setLoad({ status: "loading" });
     fetchAuthoredWork(workEntryId).then(
       (work) => {
         if (active) {

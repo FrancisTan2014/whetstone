@@ -32,18 +32,23 @@ export type SaveDocument = (document: DocumentNodeJSON) => Promise<void>;
 // hook re-saves the latest document as soon as the current save settles, and only reports "saved" once
 // the most recent document is the one the server confirmed. A failed save keeps the document pending and
 // `hasUnsavedChanges` true so the caller can warn on navigation and a later edit (or `saveNow`) retries.
-export function useAutosave(save: SaveDocument, delayMs: number = autosaveDelayMs): AutosaveController {
+export function useAutosave(
+  save: SaveDocument,
+  delayMs: number = autosaveDelayMs
+): AutosaveController {
   const [status, setStatus] = useState<AutosaveStatus>("idle");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Refs hold the live values the timer/async callbacks read, so the debounce and save loop never close
   // over stale props or state.
   const saveRef = useRef(save);
-  saveRef.current = save;
   const pendingRef = useRef<DocumentNodeJSON | undefined>(undefined);
   const savingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mountedRef = useRef(true);
+  // Holds the latest `runSave` so the save loop can re-enter itself (a newer edit landed mid-save)
+  // without the callback closing over itself — a stable indirection the linter is happy with.
+  const runSaveRef = useRef<() => void>(() => {});
 
   const setStatusIfMounted = useCallback((next: AutosaveStatus): void => {
     if (mountedRef.current) {
@@ -76,7 +81,7 @@ export function useAutosave(save: SaveDocument, delayMs: number = autosaveDelayM
           return;
         }
         // A newer edit landed while this save was in flight — persist it too, staying in "saving".
-        runSave();
+        runSaveRef.current();
       },
       () => {
         savingRef.current = false;
@@ -89,6 +94,13 @@ export function useAutosave(save: SaveDocument, delayMs: number = autosaveDelayM
       }
     );
   }, [setStatusIfMounted]);
+
+  // Keep the mutable refs pointing at the latest injected save and save loop, updated after render (never
+  // during it) so the async callbacks always read current values.
+  useEffect(() => {
+    saveRef.current = save;
+    runSaveRef.current = runSave;
+  }, [runSave, save]);
 
   const notifyChange = useCallback(
     (document: DocumentNodeJSON): void => {

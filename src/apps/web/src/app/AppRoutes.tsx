@@ -33,8 +33,11 @@ function ReaderRoute(): React.JSX.Element {
 // Without a work param the page shows a calm prompt to open a document from the Library.
 function WriteRoute(): React.JSX.Element {
   const [searchParams] = useSearchParams();
+  const workEntryId = searchParams.get("work") ?? undefined;
 
-  return <AuthoredWorkPage workEntryId={searchParams.get("work") ?? undefined} />;
+  // Key by the work so switching documents remounts the editor to its initial loading state, letting the
+  // load effect set state only from its async callbacks (no synchronous setState in an effect).
+  return <AuthoredWorkPage key={workEntryId ?? "none"} workEntryId={workEntryId} />;
 }
 
 // The Library's contextual "Notes" action routes to `#/notes?work=<entryId>`; the route reads that

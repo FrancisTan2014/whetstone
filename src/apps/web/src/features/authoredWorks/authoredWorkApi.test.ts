@@ -1,5 +1,5 @@
 import { createTextDocument } from "@whetstone/document";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createAuthoredWork,
@@ -50,7 +50,11 @@ describe("authoredWorkApi", () => {
   it("creates an authored work, POSTing the request and parsing the returned work", async () => {
     const fetchMock = mockFetchOnce(workDto, true, 201);
 
-    const result = await createAuthoredWork({ language: "en", title: "My draft", workType: "book" });
+    const result = await createAuthoredWork({
+      language: "en",
+      title: "My draft",
+      workType: "book"
+    });
 
     expect(result.entryId).toBe("work-1");
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];

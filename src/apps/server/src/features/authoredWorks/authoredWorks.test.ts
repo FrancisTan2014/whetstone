@@ -219,7 +219,10 @@ describe("PUT /api/authored-works/:id/content", () => {
     const reloaded = await loadWork(created.entryId);
     expect(reloaded.document.content).toHaveLength(1);
     expect(blockId(reloaded.document, 0)).toBe(id0);
-    expect(reloaded.document.content?.[0]?.content?.[0]).toEqual({ text: "hello world", type: "text" });
+    expect(reloaded.document.content?.[0]?.content?.[0]).toEqual({
+      text: "hello world",
+      type: "text"
+    });
   });
 
   it("inserts a genuinely new block and persists both", async () => {
@@ -285,7 +288,10 @@ describe("PUT /api/authored-works/:id/content", () => {
 
     const notedEntry = await context.db.select().from(entries).where(eq(entries.id, notedId));
     expect(notedEntry).toHaveLength(1);
-    const gone = await context.db.select({ id: docBlocks.id }).from(docBlocks).where(eq(docBlocks.id, notedId));
+    const gone = await context.db
+      .select({ id: docBlocks.id })
+      .from(docBlocks)
+      .where(eq(docBlocks.id, notedId));
     expect(gone).toHaveLength(0);
   });
 
@@ -415,7 +421,11 @@ describe("deleting an authored Work", () => {
     const work = await createWork({ title: "to delete" });
 
     const result = await deleteWork(
-      { db: context.db, deleteSourceFile: () => Promise.resolve(), logSourceUnlinkFailure: () => {} },
+      {
+        db: context.db,
+        deleteSourceFile: () => Promise.resolve(),
+        logSourceUnlinkFailure: () => {}
+      },
       toEntryId(work.entryId)
     );
     expect(result).toBe("deleted");

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import type { AuthoredWorkSummaryDto, LatestReadingPositionDto, NudgeDto, RecallItemDto } from "@whetstone/contracts";
+import type {
+  AuthoredWorkSummaryDto,
+  LatestReadingPositionDto,
+  NudgeDto,
+  RecallItemDto
+} from "@whetstone/contracts";
 
 import { buttonVariants } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
