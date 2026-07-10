@@ -61,8 +61,11 @@ function documentToBlocks(document: DocumentNodeJSON): Readonly<{
   document: DocumentNodeJSON;
 }> {
   const withIds = assignNodeIds(document);
-  const blocks = (withIds.content ?? []).map((node, orderIndex) => ({
-    id: String((node.attrs as { id?: unknown } | undefined)?.id ?? ""),
+  // Both callers pass a boundary-validated document (a `doc` always has content) and `assignNodeIds`
+  // stamps every top-level node with a stable id, so content and each node id are present here — the
+  // casts assert those invariants rather than adding an unreachable defensive fallback.
+  const blocks = (withIds.content as ReadonlyArray<DocumentNodeJSON>).map((node, orderIndex) => ({
+    id: (node.attrs as { id: string }).id,
     node,
     orderIndex,
     plaintext: documentText(node),
