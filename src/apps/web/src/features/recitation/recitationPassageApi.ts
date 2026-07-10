@@ -32,9 +32,12 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
 // with the plan's passages in reciting order.
 export async function seedPassages(planEntryId: string): Promise<RecitationPassageListDto> {
   return parseRecitationPassageListDto(
-    await requestJson(apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/passages/seed`), {
-      method: "POST"
-    })
+    await requestJson(
+      apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/passages/seed`),
+      {
+        method: "POST"
+      }
+    )
   );
 }
 

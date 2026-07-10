@@ -46,17 +46,20 @@ export function registerRecitationPassageRoutes(
   );
 
   // A plan's passages in reciting order, with each one's review progress. Owner-scoped (404 otherwise).
-  server.get<{ Params: PlanParams }>("/api/recitation/plans/:id/passages", async (request, reply) => {
-    const result = await listRecitationPassages(
-      dependencies,
-      toEntryId(request.params.id),
-      request.server.currentUser.getCurrentUserId()
-    );
-    if (result.status === "not_found") {
-      return reply.code(404).send(notFound);
+  server.get<{ Params: PlanParams }>(
+    "/api/recitation/plans/:id/passages",
+    async (request, reply) => {
+      const result = await listRecitationPassages(
+        dependencies,
+        toEntryId(request.params.id),
+        request.server.currentUser.getCurrentUserId()
+      );
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      return reply.code(200).send({ passages: result.passages, planEntryId: request.params.id });
     }
-    return reply.code(200).send({ passages: result.passages, planEntryId: request.params.id });
-  });
+  );
 
   // Today's next due passage across the learner's plans, re-anchored before serving, or null when nothing
   // is due (no overdue wall). Registered before the parametric passage routes so the static path wins.
@@ -89,9 +92,7 @@ export function registerRecitationPassageRoutes(
       if (result.status === "invalid") {
         return reply.code(422).send({ error: "invalid_split", reason: result.reason });
       }
-      return reply
-        .code(200)
-        .send({ passages: result.passages, planEntryId: result.planEntryId });
+      return reply.code(200).send({ passages: result.passages, planEntryId: result.planEntryId });
     }
   );
 
@@ -111,9 +112,7 @@ export function registerRecitationPassageRoutes(
       if (result.status === "no_adjacent_passage") {
         return reply.code(422).send({ error: "no_adjacent_passage" });
       }
-      return reply
-        .code(200)
-        .send({ passages: result.passages, planEntryId: result.planEntryId });
+      return reply.code(200).send({ passages: result.passages, planEntryId: result.planEntryId });
     }
   );
 

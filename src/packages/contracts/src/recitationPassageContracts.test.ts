@@ -47,9 +47,10 @@ describe("recitationPassageDtoSchema", () => {
 
 describe("parseRecitationPassageListDto", () => {
   it("accepts a plan's passage list", () => {
-    expect(
-      parseRecitationPassageListDto({ passages: [passage], planEntryId: "plan-1" })
-    ).toEqual({ passages: [passage], planEntryId: "plan-1" });
+    expect(parseRecitationPassageListDto({ passages: [passage], planEntryId: "plan-1" })).toEqual({
+      passages: [passage],
+      planEntryId: "plan-1"
+    });
   });
 });
 
@@ -114,9 +115,10 @@ describe("dueRecitationPassageResponseSchema", () => {
 
 describe("parseRecordRecitationReviewRequest", () => {
   it("accepts a rating and cue strength", () => {
-    expect(
-      parseRecordRecitationReviewRequest({ cueStrength: "opening", rating: "good" })
-    ).toEqual({ cueStrength: "opening", rating: "good" });
+    expect(parseRecordRecitationReviewRequest({ cueStrength: "opening", rating: "good" })).toEqual({
+      cueStrength: "opening",
+      rating: "good"
+    });
   });
 
   it("rejects an unknown rating", () => {

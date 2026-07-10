@@ -125,7 +125,9 @@ async function adopt(workEntryId: string): Promise<string> {
   return (response.json() as { entryId: string }).entryId;
 }
 
-async function seedPassages(planEntryId: string): Promise<{ code: number; body: RecitationPassageListDto }> {
+async function seedPassages(
+  planEntryId: string
+): Promise<{ code: number; body: RecitationPassageListDto }> {
   const response = await context.server.inject({
     method: "POST",
     url: `/api/recitation/plans/${planEntryId}/passages/seed`
@@ -143,7 +145,10 @@ async function listPassages(planEntryId: string): Promise<RecitationPassageListD
 }
 
 async function loadDue(): Promise<DueRecitationPassageResponse> {
-  const response = await context.server.inject({ method: "GET", url: "/api/recitation/passages/due" });
+  const response = await context.server.inject({
+    method: "GET",
+    url: "/api/recitation/passages/due"
+  });
   expect(response.statusCode).toBe(200);
   return response.json() as DueRecitationPassageResponse;
 }
@@ -506,7 +511,10 @@ describe("GET /api/recitation/passages/due", () => {
 
     const due = await loadDue();
 
-    expect(due.passage).toMatchObject({ anchorStatus: "anchored", targetText: "The quick brown fox." });
+    expect(due.passage).toMatchObject({
+      anchorStatus: "anchored",
+      targetText: "The quick brown fox."
+    });
     const [row] = await context.db
       .select()
       .from(recitationPassages)

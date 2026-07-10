@@ -125,6 +125,8 @@ export function parseRecordRecitationReviewRequest(value: unknown): RecordRecita
   return recordRecitationReviewRequestSchema.parse(value);
 }
 
-export function parseRecordRecitationReviewResponse(value: unknown): RecordRecitationReviewResponse {
+export function parseRecordRecitationReviewResponse(
+  value: unknown
+): RecordRecitationReviewResponse {
   return recordRecitationReviewResponseSchema.parse(value);
 }

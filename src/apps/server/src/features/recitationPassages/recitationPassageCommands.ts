@@ -231,7 +231,9 @@ export async function splitRecitationPassage(
     await tx
       .update(recitationPassages)
       .set({ orderIndex: sql`${recitationPassages.orderIndex} + 1` })
-      .where(and(eq(recitationPassages.planEntryId, planEntryId), gt(recitationPassages.orderIndex, at0)));
+      .where(
+        and(eq(recitationPassages.planEntryId, planEntryId), gt(recitationPassages.orderIndex, at0))
+      );
     await tx.insert(entries).values({ id: first.entryId, type: "recitation_passage" });
     await tx.insert(recitationPassages).values(first);
     await tx.insert(entries).values({ id: second.entryId, type: "recitation_passage" });
@@ -256,11 +258,7 @@ export async function mergeNextRecitationPassage(
   }
 
   const planEntryId = owned.row.planEntryId;
-  const next = await loadPlanPassageAtOrder(
-    dependencies.db,
-    planEntryId,
-    owned.row.orderIndex + 1
-  );
+  const next = await loadPlanPassageAtOrder(dependencies.db, planEntryId, owned.row.orderIndex + 1);
   if (next === undefined) {
     return { status: "no_adjacent_passage" };
   }
@@ -295,7 +293,10 @@ export async function mergeNextRecitationPassage(
       .update(recitationPassages)
       .set({ orderIndex: sql`${recitationPassages.orderIndex} - 1` })
       .where(
-        and(eq(recitationPassages.planEntryId, planEntryId), gt(recitationPassages.orderIndex, next.orderIndex))
+        and(
+          eq(recitationPassages.planEntryId, planEntryId),
+          gt(recitationPassages.orderIndex, next.orderIndex)
+        )
       );
     await tx.insert(entries).values({ id: merged.entryId, type: "recitation_passage" });
     await tx.insert(recitationPassages).values(merged);
@@ -328,7 +329,7 @@ export async function loadDueRecitationPassage(
     blockText
   );
 
-  let anchorStatus = due.row.anchorStatus;
+  let anchorStatus: RecitationPassageRow["anchorStatus"];
   const updates: Partial<RecitationPassageRow> = {};
   if (outcome.status === "unchanged") {
     anchorStatus = "anchored";

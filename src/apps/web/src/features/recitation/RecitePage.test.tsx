@@ -102,9 +102,7 @@ describe("RecitePage", () => {
   });
 
   it("does not offer a split control for a multi-block passage", async () => {
-    mockedList.mockResolvedValue(
-      listOf(makePassage({ endBlockEntryId: "block-b" }))
-    );
+    mockedList.mockResolvedValue(listOf(makePassage({ endBlockEntryId: "block-b" })));
     render(<RecitePage planEntryId="plan-1" />);
 
     await screen.findByText("The quick brown fox.");

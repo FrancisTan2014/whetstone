@@ -1,11 +1,12 @@
 import { expect, test } from "../fixtures";
+import type { APIRequestContext } from "@playwright/test";
 
 // Adopt the seeded Markdown work as a recitation routine in the given phase and return its plan id. v0
 // resolves a single DEFAULT_USER_ID, so a plan adopted over the API is owned by the same user the browser
 // acts as — the UI then drives the real passage-practice flow.
 async function adoptPlan(
   baseURL: string,
-  request: import("@playwright/test").APIRequestContext,
+  request: APIRequestContext,
   workEntryId: string,
   phase: "familiarizing" | "learning"
 ): Promise<string> {
@@ -22,7 +23,7 @@ test.describe("recitation passage practice (#578)", () => {
     page,
     setup
   }) => {
-    const planId = await adoptPlan(setup.baseURL, page.request, setup.markdown.entryId, "familiarizing");
+    const planId = await adoptPlan(setup.baseURL, page.request, setup.epub.entryId, "familiarizing");
 
     // From Today, the explicit "Start reciting" transition moves the routine into active recitation.
     await page.goto(`${setup.baseURL}#/`);
@@ -33,8 +34,9 @@ test.describe("recitation passage practice (#578)", () => {
     // On the segmentation page, divide the Work into passages (boundaries only — the source is untouched).
     await page.goto(`${setup.baseURL}#/recite?plan=${encodeURIComponent(planId)}`);
     await page.getByRole("button", { name: "Divide into passages" }).click();
-    await expect(page.getByRole("listitem").first()).toBeVisible();
-    await expect(page.getByText(/Passage 1/)).toBeVisible();
+    const firstPassage = page.getByRole("listitem").first();
+    await expect(firstPassage).toBeVisible();
+    await expect(firstPassage.getByText(/Passage 1 ·/)).toBeVisible();
 
     // Back on Today, the next due passage surfaces as one bounded attempt: a cue with the target hidden
     // until Reveal.

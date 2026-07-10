@@ -152,9 +152,7 @@ function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
-function makeDuePassage(
-  overrides: Partial<DueRecitationPassageDto> = {}
-): DueRecitationPassageDto {
+function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecitationPassageDto {
   return {
     anchorStatus: "anchored",
     context: "Aesop's Fables · The Fox and the Grapes",
@@ -650,9 +648,7 @@ describe("TodayPage", () => {
 
   it("fetches the next due passage after one is reviewed, stopping when caught up", async () => {
     mockedReviewPassage.mockResolvedValue({} as never);
-    mockedDuePassage
-      .mockResolvedValueOnce(makeDuePassage())
-      .mockResolvedValueOnce(null);
+    mockedDuePassage.mockResolvedValueOnce(makeDuePassage()).mockResolvedValueOnce(null);
     renderToday();
 
     const card = screen.getByRole("region", { name: "Recite" });
@@ -661,5 +657,24 @@ describe("TodayPage", () => {
 
     expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
     expect(mockedDuePassage).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets to the cue phase for the next passage after a review, hiding its target until Reveal", async () => {
+    mockedReviewPassage.mockResolvedValue({} as never);
+    mockedDuePassage
+      .mockResolvedValueOnce(makeDuePassage())
+      .mockResolvedValueOnce(
+        makeDuePassage({ passageEntryId: "passage-3", targetText: "A second hidden line." })
+      );
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    fireEvent.click(await within(card).findByRole("button", { name: "Reveal" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Clean and natural" }));
+
+    // The next passage re-enters the cue phase: Reveal returns and the new target stays hidden until
+    // the learner reveals it (a stale revealed state would leak the answer without a retrieval attempt).
+    expect(await within(card).findByRole("button", { name: "Reveal" })).toBeDefined();
+    expect(within(card).queryByText("A second hidden line.")).toBeNull();
   });
 });

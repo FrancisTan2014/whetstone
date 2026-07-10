@@ -487,7 +487,13 @@ function renderRecite(state: ReciteState, onReviewed: () => void): React.JSX.Ele
     return <p className="text-text-muted">Nothing to recite — you&rsquo;re caught up.</p>;
   }
 
-  return <RecitationReviewCard onReviewed={onReviewed} passage={state.passage} />;
+  return (
+    <RecitationReviewCard
+      key={state.passage.passageEntryId}
+      onReviewed={onReviewed}
+      passage={state.passage}
+    />
+  );
 }
 
 // The reading→practice nudge (#245): a quiet, dismissible card proposing the single highest-value,

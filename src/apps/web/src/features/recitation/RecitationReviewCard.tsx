@@ -65,7 +65,11 @@ export function RecitationReviewCard({
       <div>
         <p className="text-sm text-text-muted">{passage.context}</p>
         {revealed ? (
-          <p className="mt-1 text-lg text-text focus-visible:outline-none" ref={targetRef} tabIndex={-1}>
+          <p
+            className="mt-1 text-lg text-text focus-visible:outline-none"
+            ref={targetRef}
+            tabIndex={-1}
+          >
             {passage.targetText}
           </p>
         ) : (

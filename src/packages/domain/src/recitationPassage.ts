@@ -157,7 +157,8 @@ export function splitPassageRange(
 
   // Reject a split that lands outside the passage's covered span, or exactly on either endpoint (which
   // would produce an empty half).
-  const beforeStart = atIndex < startIndex || (atIndex === startIndex && at.offset <= passage.startOffset);
+  const beforeStart =
+    atIndex < startIndex || (atIndex === startIndex && at.offset <= passage.startOffset);
   const afterEnd = atIndex > endIndex || (atIndex === endIndex && at.offset >= passage.endOffset);
   if (beforeStart || afterEnd) {
     return { reason: "at_boundary", status: "invalid" };

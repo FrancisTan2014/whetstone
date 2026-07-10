@@ -62,7 +62,8 @@ export function RecitePage({
         {renderBody(
           state,
           () => runAction(seedPassages(planEntryId).then((list) => list.passages)),
-          (id, offset) => runAction(splitPassage(id, offset.blockEntryId, offset.offset).then((l) => l.passages)),
+          (id, offset) =>
+            runAction(splitPassage(id, offset.blockEntryId, offset.offset).then((l) => l.passages)),
           (id) => runAction(mergeNextPassage(id).then((list) => list.passages))
         )}
       </div>

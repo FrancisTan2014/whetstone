@@ -97,9 +97,7 @@ describe("RecitationReviewCard", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Preceding line" }));
     await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
-    await userEvent.click(
-      screen.getByRole("button", { name: recitationRatingChoices[0].label })
-    );
+    await userEvent.click(screen.getByRole("button", { name: recitationRatingChoices[0].label }));
 
     expect(mockedReview).toHaveBeenCalledWith("passage-2", "again", "preceding_line");
   });
@@ -110,9 +108,7 @@ describe("RecitationReviewCard", () => {
     render(<RecitationReviewCard onReviewed={onReviewed} passage={makePassage()} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
-    await userEvent.click(
-      screen.getByRole("button", { name: recitationRatingChoices[0].label })
-    );
+    await userEvent.click(screen.getByRole("button", { name: recitationRatingChoices[0].label }));
 
     expect(await screen.findByRole("alert")).toBeDefined();
     expect(onReviewed).not.toHaveBeenCalled();

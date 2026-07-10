@@ -266,9 +266,9 @@ describe("reanchorPassageRange", () => {
   };
 
   it("is unchanged when the source text still matches", () => {
-    expect(
-      reanchorPassageRange({ range: single, sourceText: "Alpha" }, textMap(blocks))
-    ).toEqual({ status: "unchanged" });
+    expect(reanchorPassageRange({ range: single, sourceText: "Alpha" }, textMap(blocks))).toEqual({
+      status: "unchanged"
+    });
   });
 
   it("relocates a single-block passage when the text moved", () => {
@@ -287,9 +287,9 @@ describe("reanchorPassageRange", () => {
   });
 
   it("needs repair when the block was deleted", () => {
-    expect(
-      reanchorPassageRange({ range: single, sourceText: "Alpha" }, new Map())
-    ).toEqual({ status: "needs_repair" });
+    expect(reanchorPassageRange({ range: single, sourceText: "Alpha" }, new Map())).toEqual({
+      status: "needs_repair"
+    });
   });
 
   it("needs repair when a multi-block passage drifts", () => {
@@ -303,9 +303,9 @@ describe("reanchorPassageRange", () => {
       ["b1", "Alpha changed"],
       ["b2", "Gamma delta"]
     ]);
-    expect(
-      reanchorPassageRange({ range: multi, sourceText: "beta\nGamma" }, edited)
-    ).toEqual({ status: "needs_repair" });
+    expect(reanchorPassageRange({ range: multi, sourceText: "beta\nGamma" }, edited)).toEqual({
+      status: "needs_repair"
+    });
   });
 
   it("needs repair for an empty captured source", () => {
