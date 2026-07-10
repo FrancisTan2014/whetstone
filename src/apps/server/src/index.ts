@@ -243,6 +243,12 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  recitationPassages: {
+    createEntryId: () => randomUUID(),
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date()
+  },
   nudge: {
     db,
     now: () => new Date()
