@@ -21,6 +21,7 @@ import {
   readingPositions,
   readingUnits,
   recallItems,
+  recitationPlans,
   tocEntries,
   workMeta,
   workSources
@@ -434,6 +435,38 @@ describe("DELETE /api/works/:workEntryId", () => {
 
     // The retained source file was unlinked.
     expect(context.deletedPaths).toEqual(["work-1.epub"]);
+  });
+
+  it("deletes a work a learner has adopted as a recitation routine, tearing the plan down (#577)", async () => {
+    await seedWorkWithContent(context.db);
+
+    // Adopt work-1 as a recitation routine: an owned plan Entry + its personal_entries chronology facet
+    // + the recitation_plans facet whose work_entry_id FK points at work-1.
+    await context.db.insert(entries).values({ id: "recite-1", type: "recitation_plan" });
+    await context.db.insert(personalEntries).values({
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      entryId: "recite-1",
+      occurredAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      userId: "user-a"
+    });
+    await context.db.insert(recitationPlans).values({
+      entryId: "recite-1",
+      phase: "familiarizing",
+      workEntryId: "work-1"
+    });
+
+    // Without the cascade this FK violates and the delete fails, stranding the Work in the Library.
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+    expect(response.statusCode).toBe(204);
+
+    // The plan and both its facets are gone; the Work entry is gone; the untouched work-2 remains.
+    expect(await context.db.select().from(recitationPlans)).toHaveLength(0);
+    expect(
+      await context.db.select().from(personalEntries).where(eq(personalEntries.entryId, "recite-1"))
+    ).toHaveLength(0);
+    const remainingEntries = (await context.db.select().from(entries)).map((row) => row.id).sort();
+    expect(remainingEntries).toEqual(["work-2"]);
   });
 
   it("preserves recall items and harvested chunks, nulling their references to deleted content", async () => {

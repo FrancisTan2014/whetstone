@@ -238,6 +238,11 @@ const server = createServer({
     now: () => new Date(),
     resolveOfflineGloss
   },
+  recitation: {
+    createEntryId: () => randomUUID(),
+    db,
+    now: () => new Date()
+  },
   nudge: {
     db,
     now: () => new Date()

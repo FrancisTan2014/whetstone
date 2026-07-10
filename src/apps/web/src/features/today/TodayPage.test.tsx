@@ -8,6 +8,11 @@ vi.mock("./todayApi", () => ({ fetchLatestReadingPosition: vi.fn() }));
 vi.mock("../nudge/nudgeApi", () => ({ dismissNudge: vi.fn(), fetchNudge: vi.fn() }));
 vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
 vi.mock("../authoredWorks/authoredWorkApi", () => ({ fetchContinueWriting: vi.fn() }));
+vi.mock("../recitation/recitationApi", () => ({
+  fetchContinueRecitation: vi.fn(),
+  recordRecitationSession: vi.fn(),
+  setRecitationPhase: vi.fn()
+}));
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
 }));
@@ -21,14 +26,21 @@ vi.mock("../capture/voiceCaptureApi", () => ({
 import type {
   AuthorDto,
   AuthoredWorkSummaryDto,
+  ContinueRecitationDto,
   LatestReadingPositionDto,
   NudgeDto,
   RecallItemDto,
+  RecitationPlanDto,
   WorkDto,
   WorkListDto
 } from "@whetstone/contracts";
 
 import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi";
+import {
+  fetchContinueRecitation,
+  recordRecitationSession,
+  setRecitationPhase
+} from "../recitation/recitationApi";
 import { fetchWorks } from "../library/libraryApi";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
 import { fetchDueRecall } from "../recall/recallApi";
@@ -41,6 +53,9 @@ const mockedNudge = vi.mocked(fetchNudge);
 const mockedDismiss = vi.mocked(dismissNudge);
 const mockedWorks = vi.mocked(fetchWorks);
 const mockedWriting = vi.mocked(fetchContinueWriting);
+const mockedRecitation = vi.mocked(fetchContinueRecitation);
+const mockedStartReciting = vi.mocked(setRecitationPhase);
+const mockedRecitationSession = vi.mocked(recordRecitationSession);
 
 const emptyWorks: WorkListDto = { works: [] };
 
@@ -99,6 +114,20 @@ function makePosition(overrides: Partial<LatestReadingPositionDto> = {}): Latest
   };
 }
 
+function makeRecitationPlan(overrides: Partial<RecitationPlanDto> = {}): RecitationPlanDto {
+  return {
+    createdAt: "2026-07-01T09:00:00.000Z",
+    entryId: "plan-1",
+    lastSessionAt: null,
+    phase: "familiarizing",
+    sessionCount: 0,
+    updatedAt: "2026-07-01T09:00:00.000Z",
+    workEntryId: "work-1",
+    workTitle: "腾王阁序",
+    ...overrides
+  };
+}
+
 function makeNudge(overrides: Partial<NudgeDto> = {}): NudgeDto {
   return {
     blockEntryId: "blk-1",
@@ -130,6 +159,7 @@ beforeEach(() => {
   mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
   mockedWorks.mockReturnValue(pending<WorkListDto>());
   mockedWriting.mockReturnValue(pending<{ work: AuthoredWorkSummaryDto | null }>());
+  mockedRecitation.mockReturnValue(pending<ContinueRecitationDto>());
 });
 
 afterEach(() => {
@@ -466,6 +496,104 @@ describe("TodayPage", () => {
 
     const card = screen.getByRole("region", { name: "Continue writing" });
     expect(await within(card).findByText(/Couldn’t load your writing/)).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
+  });
+
+  it("shows a loading line for the Continue recitation card while its routine resolves", () => {
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Continue recitation" });
+    expect(within(card).getByText("Finding your recitation routine…")).toBeDefined();
+  });
+
+  it("offers Continue recitation from the latest routine, recording a session and deep-linking to the reader", async () => {
+    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
+    mockedRecitationSession.mockResolvedValue(makeRecitationPlan());
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue recitation" });
+    expect(await within(card).findByText("腾王阁序")).toBeDefined();
+    expect(within(card).getByText("Familiarizing")).toBeDefined();
+
+    const link = within(card).getByRole("link", { name: "Continue" });
+    expect(link.getAttribute("href")).toBe("#/reader?work=work-1");
+    fireEvent.click(link);
+    expect(mockedRecitationSession).toHaveBeenCalledWith("plan-1");
+  });
+
+  it("still opens the reader when recording the recitation session fails, best-effort", async () => {
+    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
+    mockedRecitationSession.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue recitation" });
+    const link = within(card).getByRole("link", { name: "Continue" });
+    fireEvent.click(link);
+
+    await waitFor(() => {
+      expect(mockedRecitationSession).toHaveBeenCalledWith("plan-1");
+    });
+    // The failed record never blanks the card or blocks the reader deep-link.
+    expect(link.getAttribute("href")).toBe("#/reader?work=work-1");
+    expect(within(card).getByText("腾王阁序")).toBeDefined();
+  });
+
+  it("offers Start reciting only while familiarizing, transitioning the plan into learning", async () => {
+    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
+    mockedStartReciting.mockResolvedValue(makeRecitationPlan({ phase: "learning" }));
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue recitation" });
+    const start = await within(card).findByRole("button", { name: "Start reciting" });
+    fireEvent.click(start);
+
+    expect(mockedStartReciting).toHaveBeenCalledWith("plan-1", "learning");
+    // Once learning, the card drops the Start-reciting affordance (only familiarizing offers it).
+    await waitFor(() => {
+      expect(within(card).queryByRole("button", { name: "Start reciting" })).toBeNull();
+    });
+    expect(within(card).getByText("Learning")).toBeDefined();
+  });
+
+  it("keeps the card even when Start reciting fails, never blanking Today", async () => {
+    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
+    mockedStartReciting.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue recitation" });
+    fireEvent.click(await within(card).findByRole("button", { name: "Start reciting" }));
+
+    await waitFor(() => {
+      expect(mockedStartReciting).toHaveBeenCalled();
+    });
+    // The routine is still shown; the failed transition left it familiarizing.
+    expect(within(card).getByText("腾王阁序")).toBeDefined();
+    expect(screen.getByText("Capture today")).toBeDefined();
+  });
+
+  it("hides Start reciting for a routine already past familiarizing", async () => {
+    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan({ phase: "maintenance" }) });
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue recitation" });
+    expect(await within(card).findByText("Maintenance")).toBeDefined();
+    expect(within(card).queryByRole("button", { name: "Start reciting" })).toBeNull();
+  });
+
+  it("shows a quiet line when the learner has no recitation routine", async () => {
+    mockedRecitation.mockResolvedValue({ plan: null });
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Continue recitation" });
+    expect(await within(card).findByText(/No recitation routine yet/)).toBeDefined();
+  });
+
+  it("shows a quiet inline note when the recitation routine fails to load", async () => {
+    mockedRecitation.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Continue recitation" });
+    expect(await within(card).findByText(/Couldn’t load your recitation/)).toBeDefined();
     expect(screen.getByText("Capture today")).toBeDefined();
   });
 });

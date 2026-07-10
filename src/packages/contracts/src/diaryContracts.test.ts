@@ -184,8 +184,8 @@ describe("parseTimelineEntryDto", () => {
 });
 
 describe("timelineEntryDtoKinds", () => {
-  it("matches the diary, note, and work discriminants", () => {
-    expect(timelineEntryDtoKinds).toEqual(["diary", "note", "work"]);
+  it("matches the diary, note, work, and recitation discriminants", () => {
+    expect(timelineEntryDtoKinds).toEqual(["diary", "note", "work", "recitation"]);
   });
 });
 

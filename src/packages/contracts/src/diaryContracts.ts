@@ -3,6 +3,7 @@ import { isDayKey, timelineEntryKinds } from "@whetstone/domain";
 import { z } from "zod";
 
 import { captureInputModeSchema, captureLanguageSchema } from "./captureContracts.js";
+import { recitationPhaseDtoSchema } from "./recitationContracts.js";
 
 // Shared, Zod-validated shapes for the rich Diary Entry and the logical Timeline (#571). A diary artifact
 // is a personal Entry whose durable body is a ProseMirror/Tiptap document edited through the shared rich
@@ -116,10 +117,28 @@ export const timelineWorkEntryDtoSchema = z
 
 export type TimelineWorkEntryDto = z.infer<typeof timelineWorkEntryDtoSchema>;
 
+// A recitation plan in the logical Timeline (#577): the `recitation` row IS a real `recitation_plan`
+// Entry the learner adopted, carrying the source Work's title and id (so the Timeline can deep-link into
+// the reader) and the current phase. Its chronology comes from the shared personal-entry facet; its
+// per-session routine state is deliberately absent here, because a reading session is not a Timeline row.
+export const timelineRecitationEntryDtoSchema = z
+  .object({
+    entryId: z.string(),
+    kind: z.literal("recitation"),
+    occurredAt: z.string(),
+    phase: recitationPhaseDtoSchema,
+    title: z.string(),
+    workEntryId: z.string()
+  })
+  .strict();
+
+export type TimelineRecitationEntryDto = z.infer<typeof timelineRecitationEntryDtoSchema>;
+
 export const timelineEntryDtoSchema = z.discriminatedUnion("kind", [
   timelineDiaryEntryDtoSchema,
   timelineNoteEntryDtoSchema,
-  timelineWorkEntryDtoSchema
+  timelineWorkEntryDtoSchema,
+  timelineRecitationEntryDtoSchema
 ]);
 
 export type TimelineEntryDto = z.infer<typeof timelineEntryDtoSchema>;

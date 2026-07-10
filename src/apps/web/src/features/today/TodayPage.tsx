@@ -5,7 +5,8 @@ import type {
   AuthoredWorkSummaryDto,
   LatestReadingPositionDto,
   NudgeDto,
-  RecallItemDto
+  RecallItemDto,
+  RecitationPlanDto
 } from "@whetstone/contracts";
 
 import { buttonVariants } from "../../shared/ui/Button.js";
@@ -14,6 +15,12 @@ import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi.js";
 import { fetchWorks } from "../library/libraryApi.js";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
+import {
+  fetchContinueRecitation,
+  recordRecitationSession,
+  setRecitationPhase
+} from "../recitation/recitationApi.js";
+import { recitationPhaseLabels } from "../recitation/recitationLabels.js";
 import { CaptureCard } from "../capture/CaptureCard.js";
 import { fetchLatestReadingPosition } from "./todayApi.js";
 
@@ -46,6 +53,13 @@ type WritingState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "ready"; work: AuthoredWorkSummaryDto | undefined }>;
 
+// The learner's most recently touched recitation plan (#577), powering the "Continue recitation" card. An
+// explicit server null (no routine adopted) resolves to `undefined`; a failed load renders a quiet note.
+type RecitationState =
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ plan: RecitationPlanDto | undefined; status: "ready" }>;
+
 // The nudge surfaces at most one proposed capture. `nudge: undefined` (cold start / all in cooldown)
 // and the loading/error arms all render nothing — the slot simply stays empty, never a placeholder.
 type NudgeState =
@@ -65,6 +79,7 @@ export function TodayPage(): React.JSX.Element {
   const [recall, setRecall] = useState<RecallState>({ status: "loading" });
   const [reading, setReading] = useState<ContinueState>({ status: "loading" });
   const [writing, setWriting] = useState<WritingState>({ status: "loading" });
+  const [recitation, setRecitation] = useState<RecitationState>({ status: "loading" });
   const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
@@ -89,6 +104,10 @@ export function TodayPage(): React.JSX.Element {
       ({ work }) => setWriting({ status: "ready", work: work ?? undefined }),
       () => setWriting({ status: "error" })
     );
+    fetchContinueRecitation().then(
+      ({ plan }) => setRecitation({ plan: plan ?? undefined, status: "ready" }),
+      () => setRecitation({ status: "error" })
+    );
     fetchNudge().then(
       (value) => setNudge({ nudge: value, status: "ready" }),
       () => setNudge({ status: "error" })
@@ -104,6 +123,22 @@ export function TodayPage(): React.JSX.Element {
   function handleDismiss(chunkId: string): void {
     setNudge({ nudge: undefined, status: "ready" });
     void dismissNudge(chunkId).catch(() => undefined);
+  }
+
+  // The explicit, learner-driven transition out of familiarization (#577): move the plan to "learning" and
+  // reflect it at once. A failed transition leaves the card as it was — Today never blanks on it.
+  function handleStartReciting(planEntryId: string): void {
+    setRecitationPhase(planEntryId, "learning").then(
+      (plan) => setRecitation({ plan, status: "ready" }),
+      () => undefined
+    );
+  }
+
+  // Opening a recitation session records lightweight routine state (session count + time) in the
+  // background; the reader deep-link (the anchor's href) resumes the saved position. Best-effort — a failed
+  // record never blocks opening the reader.
+  function handleRecitationSession(planEntryId: string): void {
+    void recordRecitationSession(planEntryId).catch(() => undefined);
   }
 
   const firstRun = isFirstRun({ library, nudge, reading, recall });
@@ -125,6 +160,11 @@ export function TodayPage(): React.JSX.Element {
         <RecallCard state={recall} />
         <ContinueReadingCard state={reading} />
         <ContinueWritingCard state={writing} />
+        <ContinueRecitationCard
+          onContinue={handleRecitationSession}
+          onStartReciting={handleStartReciting}
+          state={recitation}
+        />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
         <ClearedState library={library} reading={reading} recall={recall} nudge={nudge} />
       </div>
@@ -304,6 +344,83 @@ function renderWriting(state: WritingState): React.JSX.Element {
       >
         Continue
       </a>
+    </div>
+  );
+}
+
+// Continue recitation composes the learner's most recently touched recitation plan (#577). Present -> the
+// Work title, its current phase, a Continue that resumes the saved reading position (`#/reader?work=…`,
+// recording a lightweight session), and — only while familiarizing — an explicit "Start reciting" that
+// moves into active recitation. None -> a quiet line; a failure -> a quiet inline note. There is NO
+// streak, timer, backlog, or warning: a missed day costs nothing (the arranger's compassion clause).
+function ContinueRecitationCard({
+  onContinue,
+  onStartReciting,
+  state
+}: Readonly<{
+  onContinue: (planEntryId: string) => void;
+  onStartReciting: (planEntryId: string) => void;
+  state: RecitationState;
+}>): React.JSX.Element {
+  return (
+    <section
+      aria-label="Continue recitation"
+      className="rounded border border-border bg-surface p-4"
+    >
+      <h2 className="text-lg font-medium text-text">Continue recitation</h2>
+      <div className="mt-2">{renderRecitation(state, onContinue, onStartReciting)}</div>
+    </section>
+  );
+}
+
+function renderRecitation(
+  state: RecitationState,
+  onContinue: (planEntryId: string) => void,
+  onStartReciting: (planEntryId: string) => void
+): React.JSX.Element {
+  if (state.status === "loading") {
+    return <LoadingIndicator label="Finding your recitation routine…" />;
+  }
+
+  if (state.status === "error") {
+    return (
+      <p className="text-text-muted" role="alert">
+        Couldn&rsquo;t load your recitation right now.
+      </p>
+    );
+  }
+
+  if (state.plan === undefined) {
+    return (
+      <p className="text-text-muted">No recitation routine yet — adopt one from your Library.</p>
+    );
+  }
+
+  const plan = state.plan;
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <p className="text-text">{plan.workTitle}</p>
+        <p className="text-sm text-text-muted">{recitationPhaseLabels[plan.phase]}</p>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <a
+          className={buttonVariants({ variant: "secondary" })}
+          href={`#/reader?work=${encodeURIComponent(plan.workEntryId)}`}
+          onClick={() => onContinue(plan.entryId)}
+        >
+          Continue
+        </a>
+        {plan.phase === "familiarizing" ? (
+          <button
+            className={buttonVariants({ variant: "primary" })}
+            onClick={() => onStartReciting(plan.entryId)}
+            type="button"
+          >
+            Start reciting
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

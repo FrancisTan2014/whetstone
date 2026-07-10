@@ -36,6 +36,8 @@ import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
 import type { DiaryRouteDependencies } from "../features/diary/diaryRoutes.js";
 import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWorkRoutes.js";
 import type { AuthoredWorkRouteDependencies } from "../features/authoredWorks/authoredWorkRoutes.js";
+import { registerRecitationRoutes } from "../features/recitation/recitationRoutes.js";
+import type { RecitationRouteDependencies } from "../features/recitation/recitationRoutes.js";
 import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
 import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
@@ -70,6 +72,7 @@ export type CreateServerOptions = Readonly<{
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
   recall?: RecallRouteDependencies;
+  recitation?: RecitationRouteDependencies;
   nudge?: NudgeRouteDependencies;
   search?: SearchDependencies;
   session?: SessionDependencies;
@@ -147,6 +150,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.authoredWorks !== undefined) {
     registerAuthoredWorkRoutes(server, options.authoredWorks);
+  }
+
+  if (options.recitation !== undefined) {
+    registerRecitationRoutes(server, options.recitation);
   }
 
   if (options.recall !== undefined) {

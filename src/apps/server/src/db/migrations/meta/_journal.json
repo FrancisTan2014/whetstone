@@ -267,6 +267,13 @@
       "when": 1783674238624,
       "tag": "0037_fsrs_review_state",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1783698292143,
+      "tag": "0038_loud_rumiko_fujikawa",
+      "breakpoints": true
     }
   ]
 }

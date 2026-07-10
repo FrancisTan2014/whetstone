@@ -45,10 +45,12 @@ size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdo
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
 `diaryTimeline.ts` (#246 voice-diary pure date logic — `toDayKey`/`isDayKey`/`toMonthKey`, and
 `monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar; day-grouping now lives in `timeline.ts`),
-`timeline.ts` (#571 the logical Timeline: the `diary`/`note` discriminated-kind vocabulary, each kind
+`timeline.ts` (#571 the logical Timeline: the `diary`/`note`/`work`/`recitation` discriminated-kind
+vocabulary, each kind
 mapped to a real Entry type — there is no `timeline_entry`; the deterministic order `occurredAt` DESC with a
 stable `entryId` ASC tie-break; and day-grouping/`timelineDays`/`groupTimelineEntriesByDay` so the Timeline
-is a derived view, never a store) and `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
+is a derived view, never a store), `recitation.ts` (#577 the learner-controlled recitation-plan phase
+vocabulary `familiarizing`/`learning`/`maintenance` + `isRecitationPhase`) and `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
@@ -61,8 +63,11 @@ Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts
 diary create/update + logical-Timeline DTOs: `DiaryEntryDto` carries the rich `bodyDoc`
 (ProseMirror/Tiptap document, validated against `@whetstone/document`) + `bodyText`, `occurredAt`/
 `createdAt`/`updatedAt`, `language`, `inputMode`, nullable `processingStatus`/`failureReason`; the
-Timeline is a `kind`-discriminated union DTO (`diary` | `note`) grouped into day/page DTOs, and Diary is
+Timeline is a `kind`-discriminated union DTO (`diary` | `note` | `work` | `recitation`) grouped into day/page DTOs, and Diary is
 the `kind === "diary"` filter — update edits the rich `bodyDoc`),
+`recitationContracts.ts` (#577 recitation routines: `recitationPhaseDtoSchema`, the adopt/set-phase
+request schemas, `RecitationPlanDto`/list/continue DTOs; the Timeline union gains a `recitation` member
+carrying the Work title + phase),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
 `queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
@@ -130,6 +135,19 @@ can navigate them from another package.
   (`nudgeRoutes.ts`, current-user scoped, Zod-validated, `now` injected): `GET /api/nudge` →
   `{ nudge: NudgeDto | null }`, `POST /api/nudge/:chunkId/dismiss` → 204; wired in `createServer.ts` /
   `index.ts`. DTO in `@whetstone/contracts` (`nudgeContracts.ts`).
+- Recitation routines (owned) (#577): `src/apps/server/src/features/recitation/` — adopt any Work
+  (imported or authored) as a recitation plan. `recitationCommands.ts` (`createRecitationPlan` writes a
+  `recitation_plan` `entries` row + shared `personal_entries` facet + `recitation_plans` row in one
+  transaction; guards one-plan-per-(user,work) via `findRecitationPlanForWork` → `already_exists`; source
+  Work is never copied. `setRecitationPhase`/`recordRecitationSession` are owner-scoped → `not_found`; a
+  session bumps `session_count`/`last_session_at` only and never touches `personal_entries`, so it feeds
+  no Timeline row or FSRS). `recitationQueries.ts` (`listRecitationPlans`, `getContinueRecitation` orders
+  by `coalesce(last_session_at, created_at)` DESC). `recitationRoutes.ts` (current-user scoped,
+  Zod-validated, `now`/`createEntryId` injected): `POST /api/recitation/plans` (201/400 work_not_found/409
+  already_exists), `GET /api/recitation/plans`, `GET /api/recitation/continue`,
+  `PUT /api/recitation/plans/:id/phase`, `POST /api/recitation/plans/:id/session`; wired in
+  `createServer.ts`/`index.ts`. `diaryQueries.ts` joins `recitation_plans` into the Timeline as the
+  `recitation` kind. DTOs in `@whetstone/contracts` (`recitationContracts.ts`).
 - Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
   `caseQueries.ts` `listDomains`/`listCasesInDomain`/`getCaseDetail`) over shared `domains` -> `cases`
   -> `chunks`. The case detail returns the chunk inventory plus a per-user mastery summary COMPUTED
@@ -292,14 +310,15 @@ can navigate them from another package.
     at startup. Contracts in `voiceCaptureContracts.ts`.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
-  `entries` (the addressable-id spine; `type` ∈ work/reading_unit/block/note/toc_entry/**diary_entry** —
+  `entries` (the addressable-id spine; `type` ∈ work/reading_unit/block/note/toc_entry/**diary_entry**/**recitation_plan** —
   `timeline_entry` retired, #571), works/authors, `reading_units`, mdast `blocks` + PM `doc_blocks`,
   `notes` (a pure content facet now: `answers_json`/`markdown_body`/`template_id` — ownership + chronology
   moved out), `personal_entries` (the shared owner+chronology facet for owned Entries — `entry_id` PK,
   `user_id`, `occurred_at`/`created_at`/`updated_at`, indexed `(user_id, occurred_at)`; a row for each
-  `note` and `diary_entry`, none for shared-library entries), `diary_entries` (`entry_id` PK, `body_doc`
+  `note`, `diary_entry`, and `recitation_plan`, none for shared-library entries), `diary_entries` (`entry_id` PK, `body_doc`
   JSONB + `body_text`, `language`, `input_mode`, raw audio/transcript/tidied text, nullable
-  `processing_status`/`failure_reason`), links/templates, `reading_positions`, search indexes, and
+  `processing_status`/`failure_reason`), `recitation_plans` (#577 `entry_id` PK/FK, `work_entry_id` FK +
+  index, `phase` enum, `session_count`, nullable `last_session_at`), links/templates, `reading_positions`, search indexes, and
   `toc_entries` (a work's authored nav-derived TOC: `entry_id` PK + `work_entry_id` FK to `entries`,
   `parent_entry_id`, `order_index`, `depth`, `label`, nullable `target_source_file`/`target_anchor`,
   indexed by work; #379). The `timeline_entries`, `proposal_candidates`, and `proposal_reviews` tables were
@@ -746,7 +765,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), a
   Continue-writing card (#576, `authoredWorks/authoredWorkApi.fetchContinueWriting` →
   `GET /api/authored-works/continue`, the most recently edited authored Work, deep-linking
-  `#/write?work=`, else a quiet "no drafts yet" line), and the
+  `#/write?work=`, else a quiet "no drafts yet" line), a Continue-recitation card (#577,
+  `recitation/recitationApi.fetchContinueRecitation` → `GET /api/recitation/continue`, the most recently
+  touched recitation plan with its Work title + phase; **Continue** records a session and deep-links
+  `#/reader?work=`, and only while `familiarizing` an explicit **Start reciting** transitions to
+  `learning`; else a quiet line), and the
   reading→practice nudge card (#245) in its `nudge/` slice: `nudgeApi.ts` `fetchNudge` (`GET /api/nudge`,
   null → undefined) renders ONE quiet, dismissible card — "Practise _‹snippet›_ from _‹work›_" with an
   accept link to `/practice` (where `startSession` leads with the same proposed case) and a ✕ that calls
@@ -762,6 +785,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   latest-write-safe autosave hook (5-state `idle|unsaved|saving|saved|error`; `saveAuthoredWorkContent`
   → `PUT /api/authored-works/:id/content`); `useUnsavedChangesWarning.ts` guards navigation while a save
   is pending. `authoredWork.tokens.ts` holds the pure status→label/class maps (coverage-excluded).
+- Recitation routines (#577): `src/apps/web/src/features/recitation/` — `recitationApi.ts` (client for
+  `/api/recitation/*`, every response parsed through `recitationContracts`) and `recitationLabels.ts`
+  (learner-facing phase label + hint copy, exercised by the component tests). Adoption lives on the
+  Library page: `library/AdminLibraryPage.tsx` shows a **Practise recitation** action per Work that opens
+  an initial-phase picker Sheet (`createRecitationPlan`), and marks an already-adopted Work with a quiet
+  "Reciting · ‹phase›" status instead; the Today Continue-recitation card is described above.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

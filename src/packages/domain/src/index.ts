@@ -135,6 +135,8 @@ export {
 export type { CardState, ReviewRating, ReviewState, SchedulerOptions } from "./fsrs.js";
 export { sanitizeSvg } from "./svgSanitizer.js";
 export { isWorkType, workTypes } from "./work.js";
+export { isRecitationPhase, recitationPhases } from "./recitation.js";
+export type { RecitationPhase } from "./recitation.js";
 export {
   isWorkLanguage,
   normalizeWorkLanguage,
