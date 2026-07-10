@@ -30,6 +30,7 @@ import type { LibraryDependencies } from "../library/libraryCommands.js";
 type TestContext = Readonly<{
   db: DbClient;
   server: ReturnType<typeof createServer>;
+  setNow: (iso: string) => void;
   sourcesDir: string;
 }>;
 
@@ -58,15 +59,21 @@ async function buildContext(): Promise<TestContext> {
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
+  // A fixed clock a test can pin so it can assert the shared `personal_entries` chronology timestamps;
+  // unset it defaults to the real clock, preserving the timing of tests that don't care.
+  let currentNow: Date | null = null;
   const notesDeps: NotesDependencies = {
     createEntryId: () => `note-${(noteSequence += 1)}`,
     db,
-    now: () => new Date()
+    now: () => currentNow ?? new Date()
   };
 
   return {
     db,
     server: createServer({ content, library, logger: false, notes: notesDeps }),
+    setNow: (iso: string) => {
+      currentNow = new Date(iso);
+    },
     sourcesDir
   };
 }
@@ -821,6 +828,34 @@ describe("update note route", () => {
 
     const listed = (await listNotes(workEntryId).then((r) => r.json())) as NoteListDto;
     expect(listed.notes[0]?.templateId).toBe("thought");
+  });
+
+  it("bumps the shared personal-entry updated_at on edit, leaving created/occurred at capture (#571)", async () => {
+    context.setNow("2026-06-01T00:00:00.000Z");
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
+
+    const [before] = await context.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, note.entryId));
+    expect(before?.updatedAt.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+
+    context.setNow("2026-06-02T09:30:00.000Z");
+    const response = await patchNote(workEntryId, note.entryId, {
+      answers: { noticed: "Edited note." },
+      templateId: "thought"
+    });
+    expect(response.statusCode).toBe(200);
+
+    const [after] = await context.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, note.entryId));
+    // The edit touches the shared chronology facet's updated_at; created/occurred stay at capture time.
+    expect(after?.updatedAt.toISOString()).toBe("2026-06-02T09:30:00.000Z");
+    expect(after?.createdAt.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+    expect(after?.occurredAt.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 
   it("returns 404 when the note does not belong to the work", async () => {

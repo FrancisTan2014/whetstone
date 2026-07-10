@@ -73,7 +73,6 @@ export {
 } from "./timeline.js";
 export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timeline.js";
 export {
-  groupByDayDesc,
   isDayKey,
   monthBounds,
   monthGrid,
@@ -81,7 +80,6 @@ export {
   toDayKey,
   toMonthKey
 } from "./diaryTimeline.js";
-export type { DatedEntry, DayGroup } from "./diaryTimeline.js";
 export { caseLightLevel, caseLightLevels } from "./progressMap.js";
 export type { CaseLightLevel } from "./progressMap.js";
 export { mistakeCategoryFromIssues } from "./mistakeCategory.js";

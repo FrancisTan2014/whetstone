@@ -1,4 +1,4 @@
-import { createTextDocument, documentText } from "@whetstone/document";
+import { createTextDocument, documentReadableText } from "@whetstone/document";
 import { asc, eq, inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -140,7 +140,7 @@ export async function processNextVoiceCapture(
   // unavailable or its reply is not a faithful tidy (see `createDiaryTidy`).
   const tidied = await dependencies.tidy(transcript);
   const bodyDoc = createTextDocument(tidied);
-  const bodyText = documentText(bodyDoc);
+  const bodyText = documentReadableText(bodyDoc);
 
   await dependencies.db
     .update(diaryEntries)

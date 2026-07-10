@@ -1,5 +1,9 @@
 import type { CaptureInputMode, CaptureLanguage, DiaryEntryDto } from "@whetstone/contracts";
-import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
+import {
+  createTextDocument,
+  documentReadableText,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -40,7 +44,7 @@ export async function createDiaryEntry(
 ): Promise<DiaryEntryDto> {
   const entryId = dependencies.createId();
   const bodyDoc = createTextDocument(transcript);
-  const bodyText = documentText(bodyDoc);
+  const bodyText = documentReadableText(bodyDoc);
 
   await dependencies.db.transaction(async (tx) => {
     await tx.insert(entries).values({ id: entryId, type: "diary_entry" });
@@ -109,7 +113,7 @@ export async function updateDiaryEntry(
       return { status: "not_found" };
     }
 
-    const bodyText = documentText(bodyDoc);
+    const bodyText = documentReadableText(bodyDoc);
     const nextLanguage = language === undefined ? owned.language : language;
     await tx
       .update(diaryEntries)

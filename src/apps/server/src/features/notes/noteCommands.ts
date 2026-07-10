@@ -246,10 +246,18 @@ export async function updateNote(
 
   const markdown = renderNoteMarkdown(template, validation.answers);
 
-  await dependencies.db
-    .update(notes)
-    .set({ answersJson: validation.answers, markdownBody: markdown, templateId: template.id })
-    .where(eq(notes.entryId, noteEntryId));
+  await dependencies.db.transaction(async (tx) => {
+    await tx
+      .update(notes)
+      .set({ answersJson: validation.answers, markdownBody: markdown, templateId: template.id })
+      .where(eq(notes.entryId, noteEntryId));
+    // The note's owner/chronology lives in the shared `personal_entries` facet (#571); an edit is a
+    // change to this Timeline-backed personal Entry, so bump `updated_at` in the same write.
+    await tx
+      .update(personalEntries)
+      .set({ updatedAt: dependencies.now() })
+      .where(eq(personalEntries.entryId, noteEntryId));
+  });
 
   return {
     note: {

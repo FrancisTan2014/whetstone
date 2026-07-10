@@ -1,7 +1,8 @@
 // Pure date/grouping helpers for the voice diary (#246). The diary's storage and timeline are dated
 // traces (one entry → one block under a day), so the only product logic worth isolating is the date-key
-// derivation, the day-grouping (newest-first, stable within a day), and the date-jump calendar's month
-// grid. No persistence, React, or I/O — the server and client feed in values and render the result.
+// derivation and the date-jump calendar's month grid. Day-grouping now lives in the shared Timeline
+// helper (`groupTimelineEntriesByDay`, #571). No persistence, React, or I/O — the server and client feed
+// in values and render the result.
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_KEY_PATTERN = /^\d{4}-\d{2}$/;
@@ -29,41 +30,6 @@ export function isDayKey(value: string): boolean {
 // The `YYYY-MM` month key a day key belongs to (its first seven characters).
 export function toMonthKey(dayKey: string): string {
   return dayKey.slice(0, 7);
-}
-
-// A dated entry: just enough for grouping. Generic over the carried payload so the diary's entries and
-// any future dated trace (notes, practice deposits) group the same way.
-export type DatedEntry = Readonly<{ createdAt: string; date: string }>;
-
-export type DayGroup<TEntry extends DatedEntry> = Readonly<{
-  date: string;
-  entries: ReadonlyArray<TEntry>;
-}>;
-
-// Group dated entries into days, newest day first, with each day's entries oldest-first by `createdAt`
-// (then by a stable original-order tiebreak so equal timestamps never reorder). This is the timeline
-// shape: day-grouped, newest-first, an entry stacking under its day in capture order.
-export function groupByDayDesc<TEntry extends DatedEntry>(
-  entries: ReadonlyArray<TEntry>
-): ReadonlyArray<DayGroup<TEntry>> {
-  const byDay = new Map<string, TEntry[]>();
-  entries.forEach((entry) => {
-    const bucket = byDay.get(entry.date);
-    if (bucket === undefined) {
-      byDay.set(entry.date, [entry]);
-    } else {
-      bucket.push(entry);
-    }
-  });
-
-  return [...byDay.entries()]
-    .sort(([leftDate], [rightDate]) => (leftDate < rightDate ? 1 : -1))
-    .map(([date, dayEntries]) => ({
-      date,
-      entries: [...dayEntries].sort((left, right) =>
-        left.createdAt < right.createdAt ? -1 : left.createdAt > right.createdAt ? 1 : 0
-      )
-    }));
 }
 
 // The inclusive first and last day keys of a `YYYY-MM` month — the range the calendar asks the server to

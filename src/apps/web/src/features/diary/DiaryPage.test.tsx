@@ -230,8 +230,9 @@ describe("DiaryPage timeline", () => {
       .filter((heading) => heading.textContent !== "Capture today");
     expect(headings[0]?.textContent).toContain("30");
     expect(headings[1]?.textContent).toContain("29");
-    expect(screen.getByText("first on the 30th")).toBeTruthy();
-    expect(screen.getByText("second on the 30th")).toBeTruthy();
+    // Within a day the Timeline is newest-first by occurredAt (#571): the 10:00 entry precedes the 08:00.
+    const sameDayBodies = screen.getAllByText(/on the 30th/).map((element) => element.textContent);
+    expect(sameDayBodies).toEqual(["second on the 30th", "first on the 30th"]);
   });
 
   it("filters the mixed timeline down to diary entries (#571)", async () => {
@@ -405,11 +406,15 @@ describe("DiaryPage rich edit and delete (#571)", () => {
     mockedUpdate.mockResolvedValue(entryDto("e1", d(30), "edited text"));
 
     await renderReady(makeCapture().capture);
-    const [firstEdit] = screen.getAllByRole("button", { name: "Edit" });
-    if (firstEdit === undefined) {
-      throw new Error("expected an Edit button");
+    // With the newest-first Timeline ordering (#571) the sibling may render first, so target the
+    // entry by its text rather than by DOM position.
+    const originalItem = screen.getByText("original text").closest("li");
+    if (originalItem === null) {
+      throw new Error("expected the original entry's list item");
     }
-    await userEvent.click(firstEdit);
+    await userEvent.click(
+      within(originalItem as HTMLElement).getByRole("button", { name: "Edit" })
+    );
     const editor = screen.getByLabelText("Edit entry");
     await userEvent.clear(editor);
     await userEvent.type(editor, "edited text");
@@ -500,7 +505,14 @@ describe("DiaryPage rich edit and delete (#571)", () => {
     await renderReady(makeCapture().capture);
     await screen.findByRole("button", { name: `Go to ${d(30)}` });
 
-    await userEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
+    // Newest-first ordering (#571) may render the sibling first, so delete the original by its text.
+    const originalItem = screen.getByText("original text").closest("li");
+    if (originalItem === null) {
+      throw new Error("expected the original entry's list item");
+    }
+    await userEvent.click(
+      within(originalItem as HTMLElement).getByRole("button", { name: "Delete" })
+    );
 
     await waitFor(() => expect(screen.queryByText("original text")).toBeNull());
     // A sibling entry still falls on the day, so it stays marked.
@@ -513,11 +525,11 @@ describe("dayToUnmarkAfterDelete", () => {
   const entry = (id: string, date: string): FlatEntry => ({
     bodyDoc: createTextDocument(id),
     bodyText: id,
-    createdAt: `${date}T08:00:00.000Z`,
     date,
-    id,
+    entryId: id,
     kind: "diary",
-    language: null
+    language: null,
+    occurredAt: `${date}T08:00:00.000Z`
   });
 
   it("returns undefined when the id is not among the loaded entries", () => {

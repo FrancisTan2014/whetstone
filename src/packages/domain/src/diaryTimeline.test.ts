@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  groupByDayDesc,
   isDayKey,
   monthBounds,
   monthGrid,
@@ -34,33 +33,6 @@ describe("isDayKey", () => {
 describe("toMonthKey", () => {
   it("takes the YYYY-MM prefix of a day key", () => {
     expect(toMonthKey("2026-06-30")).toBe("2026-06");
-  });
-});
-
-describe("groupByDayDesc", () => {
-  it("groups entries by day, newest day first, oldest-first within a day", () => {
-    const groups = groupByDayDesc([
-      { createdAt: "2026-06-29T09:00:00.000Z", date: "2026-06-29", id: "a" },
-      { createdAt: "2026-06-30T10:00:00.000Z", date: "2026-06-30", id: "b" },
-      { createdAt: "2026-06-30T08:00:00.000Z", date: "2026-06-30", id: "c" }
-    ]);
-
-    expect(groups.map((group) => group.date)).toEqual(["2026-06-30", "2026-06-29"]);
-    expect(groups[0]?.entries.map((entry) => entry.id)).toEqual(["c", "b"]);
-    expect(groups[1]?.entries.map((entry) => entry.id)).toEqual(["a"]);
-  });
-
-  it("keeps a stable order for entries sharing a timestamp", () => {
-    const groups = groupByDayDesc([
-      { createdAt: "2026-06-30T08:00:00.000Z", date: "2026-06-30", id: "first" },
-      { createdAt: "2026-06-30T08:00:00.000Z", date: "2026-06-30", id: "second" }
-    ]);
-
-    expect(groups[0]?.entries.map((entry) => entry.id)).toEqual(["first", "second"]);
-  });
-
-  it("returns no groups for an empty input", () => {
-    expect(groupByDayDesc([])).toEqual([]);
   });
 });
 

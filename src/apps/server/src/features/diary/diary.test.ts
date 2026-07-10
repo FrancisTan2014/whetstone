@@ -2,7 +2,14 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CaptureInputMode, DiaryEntryDto, TimelineDto } from "@whetstone/contracts";
-import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
+import {
+  createTextDocument,
+  documentReadableText,
+  documentText,
+  parseDocument,
+  serializeDocument,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -370,6 +377,35 @@ describe("PATCH /api/diary/entries/:id (rich editing)", () => {
     expect(updated.createdAt).toBe(created.createdAt);
     expect(updated.updatedAt).toBe("2026-07-01T08:00:00.000Z");
     expect(updated.language).toBe("en");
+  });
+
+  it("stores a readable body_text projection for a multi-block body (#571)", async () => {
+    const created = await createEntry("original text");
+
+    // A two-paragraph body: the durable doc holds two blocks, so the display projection must read them
+    // with a boundary rather than concatenating them into one run.
+    const twoBlockDoc = serializeDocument(
+      parseDocument({
+        content: [
+          ...(createTextDocument("First paragraph.").content ?? []),
+          ...(createTextDocument("Second paragraph.").content ?? [])
+        ],
+        type: "doc"
+      })
+    );
+
+    const response = await context.server.inject({
+      method: "PATCH",
+      payload: { bodyDoc: twoBlockDoc },
+      url: `/api/diary/entries/${created.id}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const updated = response.json() as DiaryEntryDto;
+    // body_text is the readable projection (a space between blocks), NOT the separator-free stream.
+    expect(updated.bodyText).toBe(documentReadableText(twoBlockDoc));
+    expect(updated.bodyText).toBe("First paragraph. Second paragraph.");
+    expect(documentText(twoBlockDoc)).toBe("First paragraph.Second paragraph.");
   });
 
   it("optionally updates the language alongside the body", async () => {

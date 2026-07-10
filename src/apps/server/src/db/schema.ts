@@ -587,8 +587,8 @@ export const personalEntries = pgTable(
 );
 
 // A diary artifact as a first-class personal Entry (#571): its durable body is a ProseMirror/Tiptap
-// document (`body_doc`, edited through the shared rich editor), with `body_text` the plaintext projection
-// (`documentText(body_doc)`) kept for preview/search. Ownership + chronology live in `personal_entries`;
+// document (`body_doc`, edited through the shared rich editor), with `body_text` the readable plaintext
+// projection (`documentReadableText(body_doc)`, block-boundary spaces) kept for preview/search. Ownership + chronology live in `personal_entries`;
 // this table holds the diary-specific facets. `input_mode` is how it was captured; `raw_audio_path`,
 // `raw_transcript` (verbatim STT/typed text before tidy), and `tidied_text` preserve the voice pipeline's
 // intermediate representations; `language` is the detected/selected language. `processing_status` is NULL

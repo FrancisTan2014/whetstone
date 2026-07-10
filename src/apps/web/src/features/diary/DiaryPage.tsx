@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DiaryEntryDto, TimelineDayDto } from "@whetstone/contracts";
 import { documentText, type DocumentNodeJSON } from "@whetstone/document";
 import {
-  groupByDayDesc,
+  groupTimelineEntriesByDay,
   monthBounds,
   monthGrid,
   shiftMonth,
@@ -25,18 +25,19 @@ import {
 // How many days the Timeline loads per page (matches the server's default page size).
 const PAGE_SIZE = 7;
 
-// A diary timeline entry flattened with the day it falls under, so the pure `groupByDayDesc` can regroup
-// the loaded entries (capture prepends, lazy-load appends older) into day sections without another fetch.
-// The durable body is the rich ProseMirror/Tiptap document; `bodyText` is its plaintext projection used
-// for the read view and for the collapsed timeline preview.
+// A diary timeline entry flattened with the day it falls under, so `groupTimelineEntriesByDay` can
+// regroup the loaded entries (capture prepends, lazy-load appends older) into day sections without
+// another fetch, preserving the server Timeline order (newest-first by `occurredAt`, `entryId` ascending
+// as a stable tie-break) within each day. The durable body is the rich ProseMirror/Tiptap document;
+// `bodyText` is its readable projection used for the read view and the collapsed timeline preview.
 export type FlatEntry = Readonly<{
   bodyDoc: DocumentNodeJSON;
   bodyText: string;
-  createdAt: string;
   date: string;
-  id: string;
+  entryId: string;
   kind: "diary";
   language: string | null;
+  occurredAt: string;
 }>;
 
 type LoadState = "loading" | "ready" | "error";
@@ -51,11 +52,11 @@ function flatten(days: ReadonlyArray<TimelineDayDto>): ReadonlyArray<FlatEntry> 
             {
               bodyDoc: entry.bodyDoc,
               bodyText: entry.bodyText,
-              createdAt: entry.occurredAt,
               date: day.date,
-              id: entry.entryId,
+              entryId: entry.entryId,
               kind: "diary" as const,
-              language: entry.language
+              language: entry.language,
+              occurredAt: entry.occurredAt
             }
           ]
         : []
@@ -67,11 +68,11 @@ function toFlat(entry: DiaryEntryDto): FlatEntry {
   return {
     bodyDoc: entry.bodyDoc,
     bodyText: entry.bodyText,
-    createdAt: entry.occurredAt,
     date: toDayKey(new Date(entry.occurredAt)),
-    id: entry.id,
+    entryId: entry.id,
     kind: "diary",
-    language: entry.language
+    language: entry.language,
+    occurredAt: entry.occurredAt
   };
 }
 
@@ -83,11 +84,13 @@ export function dayToUnmarkAfterDelete(
   entries: ReadonlyArray<FlatEntry>,
   id: string
 ): string | undefined {
-  const removed = entries.find((entry) => entry.id === id);
+  const removed = entries.find((entry) => entry.entryId === id);
   if (removed === undefined) {
     return undefined;
   }
-  const dayStillHasEntry = entries.some((entry) => entry.id !== id && entry.date === removed.date);
+  const dayStillHasEntry = entries.some(
+    (entry) => entry.entryId !== id && entry.date === removed.date
+  );
   return dayStillHasEntry ? undefined : removed.date;
 }
 
@@ -149,7 +152,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
 
-  const grouped = useMemo(() => groupByDayDesc(entries), [entries]);
+  const grouped = useMemo(() => groupTimelineEntriesByDay(entries), [entries]);
 
   // Load the first (newest) page on mount and on retry. The async work awaits before any setState so the
   // effect never updates state synchronously in its body.
@@ -273,7 +276,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       const updated = await updateDiaryEntry(id, bodyDoc);
       setEntries((previous) =>
         previous.map((entry) =>
-          entry.id === id
+          entry.entryId === id
             ? { ...entry, bodyDoc: updated.bodyDoc, bodyText: updated.bodyText }
             : entry
         )
@@ -289,7 +292,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     try {
       await deleteDiaryEntry(id);
       const dayToUnmark = dayToUnmarkAfterDelete(entriesRef.current, id);
-      setEntries((previous) => previous.filter((entry) => entry.id !== id));
+      setEntries((previous) => previous.filter((entry) => entry.entryId !== id));
       // Drop the calendar mark when the deleted entry was the last one on its day (#498).
       if (dayToUnmark !== undefined) {
         unmarkEntryDay(dayToUnmark);
@@ -390,40 +393,40 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                   {group.entries.map((entry) => (
                     <li
                       className="rounded border border-border bg-surface p-3"
-                      key={entry.id}
+                      key={entry.entryId}
                       ref={(element) => {
                         // Scroll a freshly saved entry into view when it mounts. On mobile the compose
                         // form and date-jump calendar sit above the timeline, so a new entry lands under
                         // the fold with its Edit/Delete actions clipped behind the bottom navigation
                         // (#506); `block: "nearest"` lifts the whole entry the minimal amount above the nav.
-                        if (element !== null && pendingEntryScrollRef.current === entry.id) {
+                        if (element !== null && pendingEntryScrollRef.current === entry.entryId) {
                           element.scrollIntoView({ block: "nearest" });
                           pendingEntryScrollRef.current = null;
                         }
                       }}
                     >
-                      {editingId === entry.id ? (
+                      {editingId === entry.entryId ? (
                         <EditForm
                           initial={entry.bodyDoc}
                           onCancel={() => setEditingId(null)}
-                          onSave={(bodyDoc) => void saveEdit(entry.id, bodyDoc)}
+                          onSave={(bodyDoc) => void saveEdit(entry.entryId, bodyDoc)}
                         />
                       ) : (
                         <div className="flex flex-col gap-2">
                           <p className="whitespace-pre-wrap text-text">{entry.bodyText}</p>
                           <div className="flex items-center gap-3">
                             <span className="text-xs text-text-muted">
-                              {timeLabel(entry.createdAt)}
+                              {timeLabel(entry.occurredAt)}
                             </span>
                             <Button
-                              onClick={() => setEditingId(entry.id)}
+                              onClick={() => setEditingId(entry.entryId)}
                               size="sm"
                               variant="ghost"
                             >
                               Edit
                             </Button>
                             <Button
-                              onClick={() => void removeEntry(entry.id)}
+                              onClick={() => void removeEntry(entry.entryId)}
                               size="sm"
                               variant="ghost"
                             >
