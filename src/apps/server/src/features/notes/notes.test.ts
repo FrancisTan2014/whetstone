@@ -17,7 +17,7 @@ import type {
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, entryLinks, noteAnchors, notes } from "../../db/schema.js";
+import { entries, entryLinks, noteAnchors, notes, personalEntries } from "../../db/schema.js";
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
@@ -60,7 +60,8 @@ async function buildContext(): Promise<TestContext> {
   };
   const notesDeps: NotesDependencies = {
     createEntryId: () => `note-${(noteSequence += 1)}`,
-    db
+    db,
+    now: () => new Date()
   };
 
   return {
@@ -777,9 +778,9 @@ describe("note user ownership", () => {
     const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
 
     const rows = await context.db
-      .select({ userId: notes.userId })
-      .from(notes)
-      .where(eq(notes.entryId, note.entryId));
+      .select({ userId: personalEntries.userId })
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, note.entryId));
 
     expect(rows[0]?.userId).toBe(DEFAULT_USER_ID);
   });
@@ -1015,7 +1016,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
     return createServer({
       currentUser: { getCurrentUserId: () => "other-user" },
       logger: false,
-      notes: { createEntryId: () => "other-note", db: context.db }
+      notes: { createEntryId: () => "other-note", db: context.db, now: () => new Date() }
     });
   }
 
@@ -1032,7 +1033,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      // Removing `eq(notes.userId, userId)` from listNotesForWork would leak the owner's note here.
+      // Removing `eq(personalEntries.userId, userId)` from listNotesForWork would leak the owner's note here.
       expect((response.json() as NoteListDto).notes).toEqual([]);
     } finally {
       await other.close();
@@ -1075,7 +1076,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
     const db = createDbClient(pglite);
     const server = createServer({
       logger: false,
-      notes: { createEntryId: () => "x", db }
+      notes: { createEntryId: () => "x", db, now: () => new Date() }
     });
     await pglite.close();
 

@@ -200,7 +200,7 @@ describe("deposit_recall_item", () => {
   });
 
   it("preserves the provenance link when a valid source entry is supplied", async () => {
-    await ctx.db.insert(entries).values({ id: "prov-1", type: "timeline_entry" });
+    await ctx.db.insert(entries).values({ id: "prov-1", type: "diary_entry" });
 
     const saved = dataOf(
       await callRecallTool(ctx.context, "deposit_recall_item", {

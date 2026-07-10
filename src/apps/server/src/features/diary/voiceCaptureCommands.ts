@@ -4,11 +4,11 @@ import type {
   VoiceCaptureStatus,
   VoiceCaptureStatusDto
 } from "@whetstone/contracts";
-import { toDayKey } from "@whetstone/domain";
+import { createTextDocument } from "@whetstone/document";
 import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, timelineEntries } from "../../db/schema.js";
+import { diaryEntries, entries, personalEntries } from "../../db/schema.js";
 
 // Real infrastructure boundaries (db, id generation, the durable audio store) are injected so the voice
 // capture commands stay deterministic and testable; `now` is passed in for the same reason.
@@ -30,51 +30,46 @@ export type RetryVoiceCaptureResult =
   | Readonly<{ status: "not_found" }>;
 
 // The persisted async-voice-capture row, narrowed to what the status DTO needs. `processingStatus` is
-// non-null here because every read scopes to `IS NOT NULL` (the queued voice path); a synchronous
-// capture (typed / legacy, status null) is not an async voice capture and is never addressed here.
+// non-null here because every read scopes to `IS NOT NULL` (the queued voice path); a synchronous typed
+// capture (status null) is not an async voice capture and is never addressed here. Chronology comes from
+// the shared `personal_entries` facet.
 type VoiceCaptureRow = Readonly<{
-  createdAt: Date;
-  entryDate: string;
-  failureReason: string | null;
+  bodyText: string;
   entryId: string;
+  failureReason: string | null;
   language: string | null;
+  occurredAt: Date;
   processingStatus: VoiceCaptureStatus;
-  rawInputText: string;
-  tidiedText: string | null;
 }>;
 
 const statusColumns = {
-  createdAt: timelineEntries.createdAt,
-  entryDate: timelineEntries.entryDate,
-  failureReason: timelineEntries.failureReason,
-  entryId: timelineEntries.entryId,
-  language: timelineEntries.language,
-  processingStatus: timelineEntries.processingStatus,
-  rawInputText: timelineEntries.rawInputText,
-  tidiedText: timelineEntries.tidiedText
+  bodyText: diaryEntries.bodyText,
+  entryId: diaryEntries.entryId,
+  failureReason: diaryEntries.failureReason,
+  language: diaryEntries.language,
+  occurredAt: personalEntries.occurredAt,
+  processingStatus: diaryEntries.processingStatus
 } as const;
 
-// Project a persisted capture into its pollable status. `text` is the tidied entry only once `ready`;
-// while pending or on failure it is null — never a fake placeholder that looks ready (#565).
+// Project a persisted capture into its pollable status. `text` is the ready entry's plaintext body only
+// once `ready`; while pending or on failure it is null — never a fake placeholder that looks ready (#565).
 function toVoiceCaptureStatusDto(row: VoiceCaptureRow): VoiceCaptureStatusDto {
   return {
-    createdAt: row.createdAt.toISOString(),
-    entryDate: row.entryDate,
     failureReason: row.failureReason,
     id: row.entryId,
     language: row.language as CaptureLanguage | null,
+    occurredAt: row.occurredAt.toISOString(),
     status: row.processingStatus,
-    text: row.processingStatus === "ready" ? (row.tidiedText ?? row.rawInputText) : null
+    text: row.processingStatus === "ready" ? row.bodyText : null
   };
 }
 
-// Submit a Tap-and-Talk clip: save the raw audio under a server-owned path and create a pending,
-// diary-sourced Timeline capture immediately (`processing_status = "queued"`), then return promptly with
-// the capture id + status so the user can record again without waiting for STT. The transcript is empty
-// until the background worker transcribes it — an honest pending row, not a fabricated transcript. The
-// server owns the id, `created_at`, and `entry_date` so the client cannot forge or backdate a capture.
-// Registering the owning Entry and the capture row in one transaction keeps a capture from ever existing
-// without its Entry.
+// Submit a Tap-and-Talk clip, save-first (#571): store the raw audio under a server-owned path and create
+// a pending diary Entry immediately (`processing_status = "queued"`) with an empty placeholder body,
+// BEFORE any transcription — then return promptly with the capture id + status so the user can record
+// again without waiting for STT. Three rows are written in one transaction (owning Entry + the shared
+// `personal_entries` chronology facet + the `diary_entries` facet) so a capture never exists without its
+// identity; the server owns the id and the timestamps so the client cannot forge or backdate a capture.
 export async function submitVoiceCapture(
   dependencies: VoiceCaptureDependencies,
   audio: Buffer,
@@ -84,22 +79,24 @@ export async function submitVoiceCapture(
 ): Promise<VoiceCaptureAcceptedDto> {
   const rawAudioPath = await dependencies.saveAudio(audio);
   const entryId = dependencies.createId();
+  const bodyDoc = createTextDocument("");
 
   await dependencies.db.transaction(async (tx) => {
-    await tx.insert(entries).values({ id: entryId, type: "timeline_entry" });
-    await tx.insert(timelineEntries).values({
+    await tx.insert(entries).values({ id: entryId, type: "diary_entry" });
+    await tx
+      .insert(personalEntries)
+      .values({ createdAt: now, entryId, occurredAt: now, updatedAt: now, userId });
+    await tx.insert(diaryEntries).values({
+      bodyDoc,
+      bodyText: "",
       entryId,
-      userId,
-      createdAt: now,
-      entryDate: toDayKey(now),
+      failureReason: null,
       inputMode: "voice",
-      captureSource: "diary",
-      rawInputText: "",
-      tidiedText: null,
       language,
-      rawAudioPath,
       processingStatus: "queued",
-      failureReason: null
+      rawAudioPath,
+      rawTranscript: null,
+      tidiedText: null
     });
   });
 
@@ -108,8 +105,8 @@ export async function submitVoiceCapture(
 
 // List the user's active voice captures for the frontend to rebuild its pending UI on load/refresh
 // (#566): every capture still in flight (`queued`/`transcribing`/`tidying`) or `failed`. Ready captures
-// are excluded — they already appear in the Timeline as ordinary entries, so returning them here would
-// double them. Scoped to the current user AND diary-sourced voice captures (a status is set), ordered by
+// are excluded — they already appear in the Timeline as ordinary diary entries, so returning them here
+// would double them. Scoped to the owner AND to async voice captures (a status is set), ordered by
 // capture time (oldest first) so pending rows render in the user's capture order.
 export async function listActiveVoiceCaptures(
   db: DbClient,
@@ -117,16 +114,16 @@ export async function listActiveVoiceCaptures(
 ): Promise<ReadonlyArray<VoiceCaptureStatusDto>> {
   const rows = await db
     .select(statusColumns)
-    .from(timelineEntries)
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
     .where(
       and(
-        eq(timelineEntries.userId, userId),
-        eq(timelineEntries.captureSource, "diary"),
-        isNotNull(timelineEntries.processingStatus),
-        ne(timelineEntries.processingStatus, "ready")
+        eq(personalEntries.userId, userId),
+        isNotNull(diaryEntries.processingStatus),
+        ne(diaryEntries.processingStatus, "ready")
       )
     )
-    .orderBy(asc(timelineEntries.createdAt));
+    .orderBy(asc(personalEntries.createdAt), asc(diaryEntries.entryId));
   return (rows as ReadonlyArray<VoiceCaptureRow>).map(toVoiceCaptureStatusDto);
 }
 
@@ -137,20 +134,21 @@ async function loadVoiceCaptureRow(
 ): Promise<VoiceCaptureRow | undefined> {
   const [row] = await db
     .select(statusColumns)
-    .from(timelineEntries)
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
     .where(
       and(
-        eq(timelineEntries.entryId, id),
-        eq(timelineEntries.userId, userId),
-        isNotNull(timelineEntries.processingStatus)
+        eq(diaryEntries.entryId, id),
+        eq(personalEntries.userId, userId),
+        isNotNull(diaryEntries.processingStatus)
       )
     )
     .limit(1);
   return row as VoiceCaptureRow | undefined;
 }
 
-// Poll one voice capture's status. Scoped to the current user AND to async voice captures (a status is
-// set), so a forged id, another user's capture, or a synchronous Timeline entry returns not_found (404).
+// Poll one voice capture's status. Scoped to the owner AND to async voice captures (a status is set), so
+// a forged id, another user's capture, or a synchronous typed entry returns not_found (404).
 export async function getVoiceCaptureStatus(
   db: DbClient,
   id: string,
@@ -160,13 +158,13 @@ export async function getVoiceCaptureStatus(
   if (row === undefined) {
     return { status: "not_found" };
   }
-  return { status: "found", capture: toVoiceCaptureStatusDto(row) };
+  return { capture: toVoiceCaptureStatusDto(row), status: "found" };
 }
 
-// Retry a failed voice capture: reset it to `queued` (clearing the failure reason) so the worker picks
-// it up again. The raw audio was never lost, so this re-transcribes from the same clip. Only a `failed`
+// Retry a failed voice capture: reset it to `queued` (clearing the failure reason) so the worker picks it
+// up again. The raw audio was never lost, so this re-transcribes from the same clip. Only a `failed`
 // capture is retryable — a still-running or already-`ready` one returns `not_failed` (409) rather than
-// re-queueing and risking a duplicate. Scoped to the current user; an unknown id returns not_found (404).
+// re-queueing and risking a duplicate. Scoped to the owner; an unknown id returns not_found (404).
 export async function retryVoiceCapture(
   db: DbClient,
   id: string,
@@ -180,11 +178,18 @@ export async function retryVoiceCapture(
     return { status: "not_failed" };
   }
 
-  const [row] = await db
-    .update(timelineEntries)
-    .set({ processingStatus: "queued", failureReason: null })
-    .where(and(eq(timelineEntries.entryId, id), eq(timelineEntries.userId, userId)))
-    .returning(statusColumns);
+  await db
+    .update(diaryEntries)
+    .set({ failureReason: null, processingStatus: "queued" })
+    .where(eq(diaryEntries.entryId, id));
 
-  return { status: "retried", capture: toVoiceCaptureStatusDto(row as VoiceCaptureRow) };
+  return {
+    capture: {
+      ...toVoiceCaptureStatusDto(existing),
+      failureReason: null,
+      status: "queued",
+      text: null
+    },
+    status: "retried"
+  };
 }

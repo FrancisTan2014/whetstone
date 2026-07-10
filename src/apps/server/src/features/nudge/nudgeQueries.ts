@@ -2,7 +2,7 @@ import { desc, eq } from "drizzle-orm";
 
 import { addressableBlocks } from "../../db/addressableBlocks.js";
 import type { DbClient } from "../../db/dbClient.js";
-import { noteAnchors, notes, workMeta } from "../../db/schema.js";
+import { noteAnchors, notes, personalEntries, workMeta } from "../../db/schema.js";
 
 // One recent reading capture, shaped as a launchable harvest case (#243): the note that produced it,
 // the prospective harvest case/chunk ids (the SAME ids `harvestReadingCase` creates, so a nudge and a
@@ -31,7 +31,8 @@ function harvestChunkId(noteEntryId: string): string {
 // The user's most recent reading captures (a note + its selected-text anchor), newest first, capped at
 // `limit`. Joined to the source block's work for the display title; the work join is LEFT so a capture
 // whose block has no resolvable work still ranks (its title falls back to empty — real captures always
-// resolve to a work). Note ids are uuids, so recency comes from `notes.created_at`, not id order.
+// resolve to a work). Note ids are uuids, so recency comes from the note's `personal_entries.created_at`
+// (its ownership + chronology facet), not id order.
 export async function listRecentReadingCaptures(
   db: DbClient,
   userId: string,
@@ -41,17 +42,18 @@ export async function listRecentReadingCaptures(
   const rows = await db
     .select({
       blockEntryId: noteAnchors.blockEntryId,
-      capturedAt: notes.createdAt,
+      capturedAt: personalEntries.createdAt,
       noteEntryId: notes.entryId,
       text: noteAnchors.selectedText,
       workTitle: workMeta.title
     })
     .from(notes)
     .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
     .leftJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
     .leftJoin(workMeta, eq(workMeta.entryId, addressable.workEntryId))
-    .where(eq(notes.userId, userId))
-    .orderBy(desc(notes.createdAt), desc(notes.entryId))
+    .where(eq(personalEntries.userId, userId))
+    .orderBy(desc(personalEntries.createdAt), desc(notes.entryId))
     .limit(limit);
 
   return rows.map((row) => ({

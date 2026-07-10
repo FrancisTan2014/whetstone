@@ -42,10 +42,6 @@ import {
   requeueStalledVoiceCaptures,
   type VoiceCaptureWorkerDependencies
 } from "./features/diary/voiceCaptureWorker.js";
-import {
-  createBackfillProposalProvider,
-  createProposalProvider
-} from "./features/makeDurable/proposalProvider.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -199,17 +195,13 @@ const server = createServer({
     sourceFileStore
   },
   currentUser: createDefaultCurrentUserProvider(),
-  // The diary "tidy" seam (#246): reuse the cheap-tier local model behind the shared `LlmModel` seam
-  // (#385) — the same time-boxed Ollama adapter the coach uses — wrapped with the tidy-not-polish
-  // prompt. Local + private, like the rest of v0.
+  // A diary capture journals only (#571): it saves the Entry immediately with no tidy or proposal step in
+  // the path. The async Tap-and-Talk voice worker (below) owns the tidy pass. Local + private, like v0.
   diary: {
     createId: () => randomUUID(),
     db,
     now: () => new Date(),
-    propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
-    resolveOfflineGloss,
-    saveAudio: saveVoiceCaptureAudio,
-    tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
+    saveAudio: saveVoiceCaptureAudio
   },
   images: { imageResourceStore },
   library: {
@@ -230,7 +222,8 @@ const server = createServer({
   map: { db, now: () => new Date() },
   notes: {
     createEntryId: () => randomUUID(),
-    db
+    db,
+    now: () => new Date()
   },
   readingPosition: { db },
   preferences: { db },
@@ -243,20 +236,6 @@ const server = createServer({
   nudge: {
     db,
     now: () => new Date()
-  },
-  // The Make Durable Quick Capture loop (#452): the proposal seam reuses the cheap-tier local model
-  // behind the shared `LlmModel` seam (#385) in JSON mode — a proposal attempt that never blocks or
-  // fails capture (an unreachable/slow daemon simply yields no card).
-  makeDurable: {
-    createId: () => randomUUID(),
-    db,
-    now: () => new Date(),
-    propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
-    proposeBackfill: createBackfillProposalProvider(
-      createOllamaModel(defaultCheapModel),
-      defaultCheapModel
-    ),
-    resolveOfflineGloss
   },
   search: { db },
   session: {
@@ -278,14 +257,10 @@ const server = createServer({
 });
 
 // The async Tap-and-Talk worker (#565): one in-process background loop that drains queued voice captures
-// one at a time (transcribe → tidy → ready → Make Durable gate). It reuses the same local model seams as
-// diary tidy and the proposal provider. No cloud queue or external runtime — an in-process worker suits
-// the local-first app.
+// one at a time (transcribe → tidy → ready). It reuses the same local model seam as diary tidy. No cloud
+// queue or external runtime — an in-process worker suits the local-first app.
 const voiceCaptureWorker: VoiceCaptureWorkerDependencies = {
-  createId: () => randomUUID(),
   db,
-  propose: createProposalProvider(createOllamaModel(defaultCheapModel), defaultCheapModel),
-  resolveOfflineGloss,
   speech,
   tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
 };
@@ -299,9 +274,9 @@ const drainVoiceCaptureQueue = async (): Promise<void> => {
   }
   voiceCaptureDraining = true;
   try {
-    let result = await processNextVoiceCapture(voiceCaptureWorker, new Date());
+    let result = await processNextVoiceCapture(voiceCaptureWorker);
     while (result.status !== "idle") {
-      result = await processNextVoiceCapture(voiceCaptureWorker, new Date());
+      result = await processNextVoiceCapture(voiceCaptureWorker);
     }
   } catch (error) {
     server.log.error({ err: error }, "voice_capture_worker_failed");

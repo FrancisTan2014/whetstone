@@ -1,18 +1,17 @@
 import type { CaptureInputMode, CaptureLanguage, DiaryEntryDto } from "@whetstone/contracts";
-import { toDayKey } from "@whetstone/domain";
+import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, timelineEntries } from "../../db/schema.js";
-import type { DiaryTidy } from "./diaryTidy.js";
+import { diaryEntries, entries, personalEntries } from "../../db/schema.js";
 
-// Real infrastructure boundaries (db, id generation, the tidy seam) are injected so the diary commands
-// stay deterministic and testable; the LLM call is faked in tests via `tidy`.
+// Real infrastructure boundaries (db, id generation, the clock) are injected so the diary commands stay
+// deterministic and testable. A diary capture journals only (#571): there is no tidy or proposal seam on
+// this synchronous path — the durable body is built from the captured text and saved immediately.
 export type DiaryDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
   now: () => Date;
-  tidy: DiaryTidy;
 }>;
 
 export type UpdateDiaryEntryResult =
@@ -23,13 +22,14 @@ export type DeleteDiaryEntryResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "not_found" }>;
 
-// Capture an entry: tidy the transcript (the LLM seam), then persist it onto the Timeline as a
-// diary-sourced capture filed under today for the current user. `inputMode` records how the entry was
-// made — the typed box or tap-and-talk voice (#560) — so a typed capture is not misrecorded as voice.
-// The raw transcript is preserved verbatim in `raw_input_text` and the tidy-pass result in `tidied_text`.
-// Registering the owning Entry (`type = "timeline_entry"`) and the capture row in one transaction keeps a
-// capture from ever existing without its Entry. The server owns `entry_date` (today, from `now`) and
-// `created_at` (`now`) so the client cannot backdate or forge a day.
+// Capture a diary Entry, save-first (#571): the durable ProseMirror/Tiptap body is built from the typed
+// text and persisted BEFORE returning — a typed capture is ready immediately (`processing_status` null),
+// with no asynchronous tidy or transcription in the path. Three rows are written in one transaction so a
+// capture never exists without its identity: the owning `entries` row (`type = "diary_entry"`), the
+// shared `personal_entries` ownership+chronology facet (owner + occurredAt/createdAt/updatedAt, all
+// `now`, server-owned so the client cannot backdate a day), and the diary-specific `diary_entries` facet
+// (the body doc + its plaintext projection, the input mode, and the verbatim transcript). `raw_transcript`
+// preserves the captured text; `tidied_text` is null on the synchronous path (tidy is a voice-only step).
 export async function createDiaryEntry(
   dependencies: DiaryDependencies,
   transcript: string,
@@ -38,106 +38,125 @@ export async function createDiaryEntry(
   userId: string,
   now: Date
 ): Promise<DiaryEntryDto> {
-  const tidied = await dependencies.tidy(transcript);
   const entryId = dependencies.createId();
-  const row = {
-    entryId,
-    userId,
-    createdAt: now,
-    entryDate: toDayKey(now),
-    inputMode,
-    captureSource: "diary" as const,
-    rawInputText: transcript,
-    tidiedText: tidied,
-    language,
-    rawAudioPath: null
-  } as const;
+  const bodyDoc = createTextDocument(transcript);
+  const bodyText = documentText(bodyDoc);
 
   await dependencies.db.transaction(async (tx) => {
-    await tx.insert(entries).values({ id: entryId, type: "timeline_entry" });
-    await tx.insert(timelineEntries).values(row);
+    await tx.insert(entries).values({ id: entryId, type: "diary_entry" });
+    await tx
+      .insert(personalEntries)
+      .values({ createdAt: now, entryId, occurredAt: now, updatedAt: now, userId });
+    await tx.insert(diaryEntries).values({
+      bodyDoc,
+      bodyText,
+      entryId,
+      failureReason: null,
+      inputMode,
+      language,
+      processingStatus: null,
+      rawAudioPath: null,
+      rawTranscript: transcript,
+      tidiedText: null
+    });
   });
 
-  // Create always sets `tidied_text` (the tidy result — or the raw transcript when tidy degraded), so
-  // the returned text is that value directly; there is no null-fallback path on this write.
+  const iso = now.toISOString();
   return {
-    createdAt: now.toISOString(),
-    entryDate: row.entryDate,
+    bodyDoc,
+    bodyText,
+    createdAt: iso,
+    failureReason: null,
     id: entryId,
-    language: row.language,
-    text: tidied
+    inputMode,
+    language,
+    occurredAt: iso,
+    processingStatus: null,
+    updatedAt: iso
   };
 }
 
-// Edit an entry's tidied text. Scoped to the current user AND to diary-sourced captures, so a forged id,
-// another user's entry, or a non-diary Timeline capture (a Quick Capture) is rejected (404); the entry's
-// date/timestamp are fixed at capture (not editable here).
+// Edit a diary Entry's rich body through the shared editor: replace `body_doc` (and its plaintext
+// projection `body_text`), optionally the language, and bump `updated_at` to `now`; occurredAt/createdAt
+// are fixed at capture. Scoped to the owner: a forged id, another user's entry, or a non-diary personal
+// Entry (a note shares `personal_entries` but has no `diary_entries` row) is rejected (404). The
+// ownership check and the writes run in one transaction so an edit never lands on an unowned row.
 export async function updateDiaryEntry(
   dependencies: DiaryDependencies,
   id: string,
-  text: string,
+  bodyDoc: DocumentNodeJSON,
+  language: CaptureLanguage | null | undefined,
   userId: string
 ): Promise<UpdateDiaryEntryResult> {
-  const updated = await dependencies.db
-    .update(timelineEntries)
-    .set({ tidiedText: text })
-    .where(
-      and(
-        eq(timelineEntries.entryId, id),
-        eq(timelineEntries.userId, userId),
-        eq(timelineEntries.captureSource, "diary")
-      )
-    )
-    .returning({
-      createdAt: timelineEntries.createdAt,
-      entryDate: timelineEntries.entryDate,
-      id: timelineEntries.entryId,
-      language: timelineEntries.language
-    });
-  const row = updated[0];
+  const now = dependencies.now();
 
-  if (row === undefined) {
-    return { status: "not_found" };
-  }
+  return dependencies.db.transaction(async (tx) => {
+    const [owned] = await tx
+      .select({
+        createdAt: personalEntries.createdAt,
+        failureReason: diaryEntries.failureReason,
+        inputMode: diaryEntries.inputMode,
+        language: diaryEntries.language,
+        occurredAt: personalEntries.occurredAt,
+        processingStatus: diaryEntries.processingStatus
+      })
+      .from(diaryEntries)
+      .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+      .where(and(eq(diaryEntries.entryId, id), eq(personalEntries.userId, userId)))
+      .limit(1);
 
-  // The update just set `tidied_text = text`, so the entry's displayed text is `text` directly.
-  return {
-    entry: {
-      createdAt: row.createdAt.toISOString(),
-      entryDate: row.entryDate,
-      id: row.id,
-      language: row.language,
-      text
-    },
-    status: "updated"
-  };
+    if (owned === undefined) {
+      return { status: "not_found" };
+    }
+
+    const bodyText = documentText(bodyDoc);
+    const nextLanguage = language === undefined ? owned.language : language;
+    await tx
+      .update(diaryEntries)
+      .set(language === undefined ? { bodyDoc, bodyText } : { bodyDoc, bodyText, language })
+      .where(eq(diaryEntries.entryId, id));
+    await tx.update(personalEntries).set({ updatedAt: now }).where(eq(personalEntries.entryId, id));
+
+    return {
+      entry: {
+        bodyDoc,
+        bodyText,
+        createdAt: owned.createdAt.toISOString(),
+        failureReason: owned.failureReason,
+        id,
+        inputMode: owned.inputMode,
+        language: nextLanguage,
+        occurredAt: owned.occurredAt.toISOString(),
+        processingStatus: owned.processingStatus,
+        updatedAt: now.toISOString()
+      },
+      status: "updated"
+    };
+  });
 }
 
-// Delete an entry: remove the diary-sourced Timeline row and its owning Entry (the timeline row
-// references the Entry, so it is removed first). Scoped to the current user AND diary source, so a forged
-// id, another user's entry, or a non-diary capture deletes nothing (404). Run in one transaction so the
-// capture and its Entry are removed together.
+// Delete a diary Entry: remove its diary facet, its personal-entry facet, and the owning Entry in one
+// transaction. Scoped to the owner via `personal_entries`, so a forged id, another user's entry, or a
+// non-diary personal Entry deletes nothing (404).
 export async function deleteDiaryEntry(
   dependencies: DiaryDependencies,
   id: string,
   userId: string
 ): Promise<DeleteDiaryEntryResult> {
   return dependencies.db.transaction(async (tx) => {
-    const deleted = await tx
-      .delete(timelineEntries)
-      .where(
-        and(
-          eq(timelineEntries.entryId, id),
-          eq(timelineEntries.userId, userId),
-          eq(timelineEntries.captureSource, "diary")
-        )
-      )
-      .returning({ id: timelineEntries.entryId });
+    const [owned] = await tx
+      .select({ entryId: diaryEntries.entryId })
+      .from(diaryEntries)
+      .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+      .where(and(eq(diaryEntries.entryId, id), eq(personalEntries.userId, userId)))
+      .limit(1);
 
-    if (deleted.length === 0) {
+    if (owned === undefined) {
       return { status: "not_found" };
     }
 
+    await tx.delete(diaryEntries).where(eq(diaryEntries.entryId, id));
+    await tx.delete(personalEntries).where(eq(personalEntries.entryId, id));
     await tx.delete(entries).where(eq(entries.id, id));
 
     return { status: "deleted" };

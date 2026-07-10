@@ -14,6 +14,7 @@ import {
   noteAnchors,
   notes,
   nudgeState,
+  personalEntries,
   readingUnits,
   workMeta
 } from "../../db/schema.js";
@@ -106,10 +107,15 @@ async function seedCapture(
   });
   await context.db.insert(notes).values({
     answersJson: {},
-    createdAt: capturedAt,
     entryId: noteId,
     markdownBody: "x",
-    templateId: null,
+    templateId: null
+  });
+  await context.db.insert(personalEntries).values({
+    createdAt: capturedAt,
+    entryId: noteId,
+    occurredAt: capturedAt,
+    updatedAt: capturedAt,
     userId: DEFAULT_USER_ID
   });
   await context.db.insert(noteAnchors).values({
