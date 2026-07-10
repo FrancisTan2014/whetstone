@@ -139,6 +139,14 @@ describe("projectRecitationSupport — structure and edge cases", () => {
     expect(render(projectRecitationSupport("", "first"))).toEqual("");
   });
 
+  it("fades a final clause that has no trailing delimiter", () => {
+    // A line ending mid-clause (no period/comma) still fades: the trailing clause is projected too.
+    expect(render(projectRecitationSupport("白日依山盡", "first"))).toBe("白‹4›");
+    expect(render(projectRecitationSupport("The quick brown fox", "reduced"))).toBe(
+      "The quick ‹5› ‹3›"
+    );
+  });
+
   it("never splits an emoji, masking whole code points", () => {
     const projection = projectRecitationSupport("😀😀😀 fox.", "reduced");
     // Two words: the emoji run stays, "fox" is masked as 3 code points (not UTF-16 units).

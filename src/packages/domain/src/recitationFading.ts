@@ -92,13 +92,14 @@ function splitIntoClauses(line: string): string[] {
   return clauses;
 }
 
+// The two levels that actually reduce a clause (everything `projectLine` handles beyond the whole-line
+// `full` scaffold). Narrowing to these keeps the reducers total — there is no unreachable `full` arm.
+type ReducingSupportLevel = Exclude<RecitationVisibleSupportLevel, "full">;
+
 // How many leading units (characters or words) stay visible for a clause of `unitCount` units at a
-// visible level. `reduced` keeps the first half (rounded up, so an odd clause keeps its middle unit);
-// `first` keeps one; `full` keeps them all.
-function shownUnitCount(unitCount: number, level: RecitationVisibleSupportLevel): number {
-  if (level === "full") {
-    return unitCount;
-  }
+// reducing level. `reduced` keeps the first half (rounded up, so an odd clause keeps its middle unit);
+// `first` keeps one.
+function shownUnitCount(unitCount: number, level: ReducingSupportLevel): number {
   if (level === "first") {
     return Math.min(1, unitCount);
   }
@@ -107,10 +108,7 @@ function shownUnitCount(unitCount: number, level: RecitationVisibleSupportLevel)
 
 // Project a Chinese (Han-containing) clause by character: each content character beyond the shown count
 // is masked; delimiters, other punctuation, and whitespace are always shown in place.
-function projectCjkClause(
-  chars: readonly string[],
-  level: RecitationVisibleSupportLevel
-): SupportSegment[] {
+function projectCjkClause(chars: readonly string[], level: ReducingSupportLevel): SupportSegment[] {
   const contentCount = chars.filter((char) => classifyChar(char) === "content").length;
   const shown = shownUnitCount(contentCount, level);
   const segments: SupportSegment[] = [];
@@ -169,7 +167,7 @@ function atomizeClause(chars: readonly string[]): Atom[] {
 // are masked whole; whitespace and punctuation are always shown, preserving spacing and punctuation.
 function projectTokenClause(
   chars: readonly string[],
-  level: RecitationVisibleSupportLevel
+  level: ReducingSupportLevel
 ): SupportSegment[] {
   const atoms = atomizeClause(chars);
   const wordCount = atoms.filter((atom) => atom.kind === "word").length;
@@ -212,7 +210,7 @@ function pushMasked(segments: SupportSegment[], length: number): void {
 // Choose per clause how to reduce it — by character when the clause contains Han script, otherwise by
 // whitespace token — so a mixed-script passage fades each clause in its own idiom rather than corrupting
 // characters (e.g. cutting an English word mid-letter or a Chinese line by spaces it does not have).
-function projectClause(clause: string, level: RecitationVisibleSupportLevel): SupportSegment[] {
+function projectClause(clause: string, level: ReducingSupportLevel): SupportSegment[] {
   const chars = [...clause];
   return HAN.test(clause) ? projectCjkClause(chars, level) : projectTokenClause(chars, level);
 }

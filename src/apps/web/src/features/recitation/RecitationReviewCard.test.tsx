@@ -104,6 +104,20 @@ describe("RecitationReviewCard", () => {
     expect(screen.getAllByText("hidden text")).toHaveLength(1);
   });
 
+  it("preserves blank lines in the passage shape when fading", () => {
+    const { container } = render(
+      <RecitationReviewCard
+        onReviewed={vi.fn()}
+        passage={makePassage({ supportLevel: "reduced", targetText: "Line one.\n\nLine two." })}
+      />
+    );
+
+    // The blank middle line is kept (as a non-breaking space) so a reduced passage holds its shape.
+    expect(container.textContent).toContain("\u00a0");
+    expect(container.textContent).toContain("Line");
+    expect(screen.getAllByText("hidden text").length).toBeGreaterThan(0);
+  });
+
   it("shows the external cue and none of the target at the hidden level", async () => {
     render(<RecitationReviewCard onReviewed={vi.fn()} passage={makePassage()} />);
 

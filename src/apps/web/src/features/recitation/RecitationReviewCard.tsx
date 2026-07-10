@@ -13,6 +13,7 @@ import {
 
 import { Button } from "../../shared/ui/Button";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
+import { supportFadeInitialOpacity, supportFadeTransition } from "./recitationFade.tokens";
 import { reviewPassage, setSupportLevel } from "./recitationPassageApi";
 import { recitationSupportLevelLabels } from "./recitationLabels";
 
@@ -137,9 +138,9 @@ export function RecitationReviewCard({
           <motion.div
             animate={{ opacity: 1 }}
             className="mt-1 text-lg text-text"
-            initial={{ opacity: prefersReducedMotion ? 1 : 0 }}
+            initial={{ opacity: supportFadeInitialOpacity(prefersReducedMotion) }}
             key={supportLevel}
-            transition={{ duration: prefersReducedMotion ? 0 : 0.25 }}
+            transition={supportFadeTransition(prefersReducedMotion)}
           >
             <SupportText projection={projectRecitationSupport(passage.targetText, supportLevel)} />
           </motion.div>
