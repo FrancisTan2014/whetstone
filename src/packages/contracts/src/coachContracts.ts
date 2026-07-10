@@ -18,7 +18,7 @@ function isNonBlank(value: string): boolean {
 }
 
 // The discrete production verdict, worst -> best. Mirrors `productionCategories` in
-// `@whetstone/domain` (`coachGrade.ts`), which owns the verdict -> SM-2 grade mapping; keep in sync.
+// `@whetstone/domain` (`coachGrade.ts`), which owns the verdict -> FSRS rating mapping; keep in sync.
 export const productionCategories = [
   "off_target",
   "incorrect",
@@ -199,11 +199,12 @@ export const analyzeRoundRequestSchema = z
 
 export type AnalyzeRoundRequest = z.infer<typeof analyzeRoundRequestSchema>;
 
-// A grade (0..5, SM-2) for one target chunk — how well the learner produced it across the round.
+// The FSRS rating (again/hard/good/easy) for one target chunk — how well the learner produced it
+// across the round. Fed straight to the scheduler; mirrors the domain `ReviewRating`.
 export const chunkGradeSchema = z
   .object({
     chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }),
-    grade: z.number().int().min(0).max(5)
+    rating: z.enum(["again", "hard", "good", "easy"])
   })
   .strict();
 
@@ -232,8 +233,9 @@ export const nativeUpgradeSchema = z
 
 export type NativeUpgrade = z.infer<typeof nativeUpgradeSchema>;
 
-// The structured end-of-round result: a grade per target chunk, the 2-3 highest-value tagged mistakes,
-// wins, one native upgrade, and a line of encouragement. The deterministic deposit reads only this.
+// The structured end-of-round result: a rating per target chunk, the 2-3 highest-value tagged
+// mistakes, wins, one native upgrade, and a line of encouragement. The deterministic deposit reads
+// only this.
 export const analyzeRoundResultSchema = z
   .object({
     chunkGrades: z.array(chunkGradeSchema),

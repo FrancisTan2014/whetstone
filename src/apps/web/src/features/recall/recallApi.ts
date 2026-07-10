@@ -3,7 +3,7 @@ import {
   parseRecallItemListDto,
   type RecallItemDto
 } from "@whetstone/contracts";
-import { gradeFromRating, type ReviewRating } from "@whetstone/domain";
+import { type ReviewRating } from "@whetstone/domain";
 
 import { apiUrl } from "../../shared/runtime";
 
@@ -27,11 +27,12 @@ export async function fetchDueRecall(): Promise<ReadonlyArray<RecallItemDto>> {
   return parseRecallItemListDto(await requestJson(apiUrl("/recall/due"))).items;
 }
 
-// Self-grade one item: the four-button rating is mapped to an SM-2 grade before it crosses the wire.
+// Self-grade one item: the learner's Again/Hard/Good/Easy rating crosses the wire directly and the FSRS
+// scheduler applies it server-side.
 export async function gradeRecall(id: string, rating: ReviewRating): Promise<RecallItemDto> {
   return parseRecallItemDto(
     await requestJson(apiUrl(`/recall/items/${encodeURIComponent(id)}/review`), {
-      body: JSON.stringify({ grade: gradeFromRating(rating) }),
+      body: JSON.stringify({ rating }),
       headers: jsonHeaders,
       method: "POST"
     })

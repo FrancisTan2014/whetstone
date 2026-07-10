@@ -42,7 +42,8 @@ async function buildContext(seed = true): Promise<TestContext> {
   return { db, deps: { createId: () => `id-${(sequence += 1)}`, db } };
 }
 
-// Drive a chunk into "mastered" (enroll + three passing reviews) so it counts toward a domain strength.
+// Drive a chunk into "mastered" (spaced "easy" reviews at each due date until it graduates to a
+// comfortably long interval) so it counts toward a domain strength.
 async function master(chunkId: string, userId: string): Promise<void> {
   const item = await enrollRecallItem(
     context.deps,
@@ -50,9 +51,14 @@ async function master(chunkId: string, userId: string): Promise<void> {
     userId,
     t0
   );
-  for (let i = 0; i < 3; i += 1) {
-    await recordRecallReview(context.deps, item.id, 4, userId, t0);
+  let now = t0;
+  for (let i = 0; i < 12; i += 1) {
+    const result = await recordRecallReview(context.deps, item.id, "easy", userId, now);
+    if (result.status !== "recorded") throw new Error("review failed");
+    if (result.item.review.state === "review" && result.item.review.scheduledDays >= 21) return;
+    now = new Date(result.item.review.due);
   }
+  throw new Error(`chunk ${chunkId} did not reach mastered`);
 }
 
 beforeEach(async () => {

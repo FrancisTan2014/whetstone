@@ -608,7 +608,7 @@ describe("endSession", () => {
         ...createFakeCoach(),
         analyze: () =>
           Promise.resolve({
-            chunkGrades: [{ chunkId: "ghost-chunk", grade: 5 }],
+            chunkGrades: [{ chunkId: "ghost-chunk", rating: "easy" }],
             encouragement: "Solid.",
             mistakes: [],
             upgrade: { native: "n", said: "s" },

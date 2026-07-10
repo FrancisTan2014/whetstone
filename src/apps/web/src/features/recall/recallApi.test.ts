@@ -13,12 +13,16 @@ function makeItem(overrides: Partial<RecallItemDto> = {}): RecallItemDto {
     kind: "word",
     provenanceEntryId: null,
     review: {
-      dueAt: "2026-01-01T00:00:00.000Z",
-      easeFactor: 2.5,
-      intervalDays: 0,
+      due: "2026-01-01T00:00:00.000Z",
+      stability: 0,
+      difficulty: 0,
+      elapsedDays: 0,
+      scheduledDays: 0,
+      learningSteps: 0,
+      reps: 0,
       lapses: 0,
-      lastReviewedAt: null,
-      repetitions: 0
+      state: "new",
+      lastReviewedAt: null
     },
     text: "quick",
     cue: null,
@@ -65,13 +69,13 @@ describe("fetchDueRecall", () => {
 });
 
 describe("gradeRecall", () => {
-  it("maps the rating to an SM-2 grade, posts it, and returns the parsed item", async () => {
+  it("posts the rating and returns the parsed item", async () => {
     const item = makeItem();
     const fetchMock = stubFetch({ body: item, ok: true });
 
     await expect(gradeRecall("r1", "good")).resolves.toEqual(item);
     expect(fetchMock).toHaveBeenCalledWith("/api/recall/items/r1/review", {
-      body: JSON.stringify({ grade: 4 }),
+      body: JSON.stringify({ rating: "good" }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });

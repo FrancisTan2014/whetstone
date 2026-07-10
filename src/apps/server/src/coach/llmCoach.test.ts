@@ -37,7 +37,7 @@ const converseRequest = {
 };
 
 const judgeJson =
-  '{"chunkGrades":[{"chunkId":"c1","grade":5}],"mistakes":[],"wins":["Clear and natural"],' +
+  '{"chunkGrades":[{"chunkId":"c1","rating":"easy"}],"mistakes":[],"wins":["Clear and natural"],' +
   '"upgrade":{"said":"help yourself","native":"Help yourself."},"encouragement":"Understood you."}';
 
 // Build a coach over the deterministic fake with a named model and a spy fallback logger, so tests can
@@ -49,12 +49,12 @@ function makeCoach(chat: LlmModel, model = "llama3.1:8b") {
 }
 
 describe("createLlmCoach analyze", () => {
-  it("grades an intelligible-but-accented attempt high, parsing the model's JSON", async () => {
+  it("rates an intelligible-but-accented attempt high, parsing the model's JSON", async () => {
     const chat = vi.fn().mockResolvedValue(`Here you go: ${judgeJson} done.`);
     const { coach, onFallback } = makeCoach(chat);
 
     const result = await coach.analyze(request);
-    expect(result.chunkGrades).toEqual([{ chunkId: "c1", grade: 5 }]);
+    expect(result.chunkGrades).toEqual([{ chunkId: "c1", rating: "easy" }]);
     expect(result.encouragement).toBe("Understood you.");
     // The prompt is intelligibility-first and never penalizes accent.
     expect((chat.mock.calls[0]?.[0] as string).toLowerCase()).toContain("intelligibility");
@@ -77,9 +77,7 @@ describe("createLlmCoach analyze", () => {
     expect(
       (await coach.proposeNext({ focus: "x", recentTargets: [] })).target.length
     ).toBeGreaterThan(0);
-    expect(coach.gradeForScheduler({ category: "good", issues: [], natural: 1 })).toBeGreaterThan(
-      0
-    );
+    expect(coach.ratingForScheduler({ category: "good", issues: [], natural: 1 })).toBe("good");
     expect((await coach.authorCase({ communicativeFunction: "f", situation: "s" })).situation).toBe(
       "s"
     );

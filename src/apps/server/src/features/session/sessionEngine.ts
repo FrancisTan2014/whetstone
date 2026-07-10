@@ -5,18 +5,18 @@ import type {
   CompiledLearnerContextDto,
   DebriefDto,
   DebriefDueDto,
+  ProductionCategory,
   SessionPlanDto,
   SubmitTurnRequest,
   TurnResultDto,
   EndSessionRequest
 } from "@whetstone/contracts";
 import {
+  applyRating,
   deriveCoachKnobs,
   englishShare,
   mistakeCategoryFromIssues,
-  scheduleReview,
-  type LearnerSnapshot,
-  type ReviewGrade
+  type LearnerSnapshot
 } from "@whetstone/domain";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
@@ -98,7 +98,24 @@ export type EndRoundOutcome =
 
 // The outcome grade logged for a tagged mistake (a deposited turn outcome feeds the error-pattern store
 // and recent-outcomes context). Mistakes are weak production, so a low grade.
-const MISTAKE_OUTCOME_GRADE: ReviewGrade = 2;
+const MISTAKE_OUTCOME_GRADE = 2;
+
+// The learner-model quality grade (0..5) a judged category represents. This is DISTINCT from the FSRS
+// scheduler rating (#572): the recall scheduler consumes again/hard/good/easy, while the learner model
+// (turn outcomes, recent-outcomes context, average grade) keeps its numeric 0..5 quality signal. This
+// private map bridges the coach's category to that numeric grade — it never leaks into the DTO scheduler.
+const outcomeGradeByCategory: Readonly<Record<ProductionCategory, number>> = {
+  off_target: 0,
+  incorrect: 1,
+  awkward: 2,
+  understandable: 3,
+  good: 4,
+  native_like: 5
+};
+
+function outcomeGradeForCategory(category: ProductionCategory): number {
+  return outcomeGradeByCategory[category];
+}
 
 // Plan a session: the navigation step. The top gap x frequency chunks (#208 — error-weighted, mixing
 // new and due) become the cues, each carrying its English situation (never L1) and the native target
@@ -176,7 +193,8 @@ export async function submitTurn(
     target: row.target,
     transcript
   });
-  const grade = dependencies.coach.gradeForScheduler(judgement);
+  const rating = dependencies.coach.ratingForScheduler(judgement);
+  const outcomeGrade = outcomeGradeForCategory(judgement.category);
   const errorCategory = mistakeCategoryFromIssues(judgement.issues);
 
   // This deposit only ever enrolls `chunk` items, which are never dictionary-glossable, so it needs no
@@ -197,17 +215,27 @@ export async function submitTurn(
       now
     ));
 
-  const nextDueAt = scheduleReview(item.review, grade, now).dueAt;
-  await recordRecallReview(recallDeps, item.id, grade, userId, now);
+  // The recall item's next-due date is the pure FSRS advance for this rating (deterministic even under
+  // seeded fuzz, so it matches what recordRecallReview persists). recordRecallReview does the durable
+  // write + history row (#572).
+  const nextDueAt = applyRating(item.review, rating, now).due;
+  await recordRecallReview(recallDeps, item.id, rating, userId, now);
   await depositTurnOutcome(
     recallDeps,
-    { chunkId: request.chunkId, errorCategory, grade },
+    { chunkId: request.chunkId, errorCategory, grade: outcomeGrade },
     userId,
     now
   );
 
   return {
-    result: { errorCategory, grade, judgement, nextDueAt, target: row.target, transcript },
+    result: {
+      errorCategory,
+      grade: outcomeGrade,
+      judgement,
+      nextDueAt,
+      target: row.target,
+      transcript
+    },
     status: "ok"
   };
 }
@@ -284,7 +312,7 @@ export async function converseTurn(
 // End the round (#222): run ONE analysis pass over the whole round (transcript rebuilt from the
 // persisted exchange + STT word-timings + the case's target chunks + compiled context), then DEPOSIT the
 // durable trace deterministically — four moves, no extra model calls — and return the compact debrief:
-//   1. chunk grades -> SM-2 schedules in the recall store (#188/#189), which also advances case mastery
+//   1. chunk ratings -> FSRS schedules in the recall store (#572), which also advances case mastery
 //      and so the fog-of-war map (#210);
 //   2. tagged mistakes -> error-pattern counts in the learner model (#208);
 //   3. the rolling profile (#208) recomputed.
@@ -344,20 +372,19 @@ export async function endSession(
     targetChunks.map((chunk) => [chunk.chunkId, chunk.sourceBlockEntryId])
   );
 
-  // Deposit 1: each chunk grade schedules its recall item (enrolling on first practice), which advances
+  // Deposit 1: each chunk rating schedules its recall item (enrolling on first practice), which advances
   // case mastery and the map.
   const due: DebriefDueDto[] = [];
   for (const chunkGrade of analysis.chunkGrades) {
     const { chunkId } = chunkGrade;
-    // Only chunks that were part of this round can be deposited (their text + FK exist); a grade for any
+    // Only chunks that were part of this round can be deposited (their text + FK exist); a rating for any
     // other chunk is ignored rather than enrolling a dangling recall item.
     const text = textByChunkId.get(chunkId);
     if (text === undefined) {
       continue;
     }
     const sourceBlock = blockByChunkId.get(chunkId);
-    // The schema bounds grade to an integer 0..5, the SM-2 ReviewGrade range.
-    const grade = chunkGrade.grade as ReviewGrade;
+    const rating = chunkGrade.rating;
     const existing = await getRecallItemByChunkForUser(dependencies.db, userId, chunkId);
     const item =
       existing ??
@@ -372,8 +399,10 @@ export async function endSession(
         userId,
         now
       ));
-    const dueAt = scheduleReview(item.review, grade, now).dueAt;
-    await recordRecallReview(learnerDeps, item.id, grade, userId, now);
+    // Pure FSRS advance for the due (deterministic under seeded fuzz, matches the persisted state);
+    // recordRecallReview does the durable write + history row.
+    const dueAt = applyRating(item.review, rating, now).due;
+    await recordRecallReview(learnerDeps, item.id, rating, userId, now);
     due.push({ dueAt, text });
   }
 
@@ -403,7 +432,7 @@ export async function endSession(
       userId,
       now
     );
-    due.push({ dueAt: item.review.dueAt, text: target });
+    due.push({ dueAt: item.review.due, text: target });
   }
 
   // Deposit 2: each tagged mistake increments its error-pattern count and logs an outcome.

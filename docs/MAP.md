@@ -97,15 +97,15 @@ can navigate them from another package.
     below) are user-owned the same way; shared
     content tables stay unowned.
 - Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
-  listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (SM-2 review state inline +
+  listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (FSRS review state inline +
   optional `provenance_entry_id` into the content graph, and an optional `chunk_id` link to a practice
   chunk (#205)) and `recall_reviews` (append-only history).
-  Pure scheduling is `@whetstone/domain` SM-2; DTOs/validation in `@whetstone/contracts`
+  Pure scheduling is `@whetstone/domain` FSRS (v6, via `ts-fsrs`, in `fsrs.ts`); DTOs/validation in `@whetstone/contracts`
   (`recallContracts.ts`). The web Recall surface is served by `recallRoutes.ts` (current-user scoped,
   Zod-validated): `GET /api/recall/due` (today's due batch, capped at `DAILY_RECALL_CAP` = 20 so a backlog
-  never becomes a wall), `POST /api/recall/items/:id/review` (`{ grade }` → SM-2 advance + a `recall_reviews`
+  never becomes a wall), `POST /api/recall/items/:id/review` (`{ rating }` → FSRS advance + a `recall_reviews`
   row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
-  `due_at` one day — not a grade; 404 otherwise); wired in `index.ts`.
+  `due_at` one day — not a rating; 404 otherwise); wired in `index.ts`.
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -146,7 +146,7 @@ can navigate them from another package.
 - Recall MCP server: `src/apps/server/src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
   `recallTools.ts` (the recall-op tools + `deposit_recall_item` (#458): a deliberate production-style
   Recall deposit — target/cue/useContext/category + optional tags/gloss/provenance — that reuses
-  `enrollRecallItem`/SM-2 seeding directly (no proposal/review gate), and never accepts the
+  `enrollRecallItem`/FSRS seeding directly (no proposal/review gate), and never accepts the
   integrity-bearing `sourceProposalCandidateId`/`chunkId`; all validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
@@ -157,7 +157,7 @@ can navigate them from another package.
   boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
   base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
 - Coach LLM boundary: `src/coach/` — the coaching contract the language loop calls, composed over the
-  shared `src/llm/` seam. `coachProvider.ts` (the `CoachProvider` interface: judge / gradeForScheduler /
+  shared `src/llm/` seam. `coachProvider.ts` (the `CoachProvider` interface: judge / ratingForScheduler /
   propose / author / converse / analyze), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds
   and runs with no API key), `coachRouter.ts` (cost-routing — judge/converse/analyze=strong,
   propose/author=cheap, configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe
@@ -166,7 +166,7 @@ can navigate them from another package.
   falls back to the plain fake only when no factory is wired). `converse` (#220) is the
   conversational next-turn call the live loop makes per user turn (no per-turn grading); `analyze` (#222)
   is the end-of-round one-pass call: the whole round (transcript + word-timings + the case's target chunks
-  - compiled context) -> a grade per chunk, the top tagged mistakes, wins, and one native upgrade (the
+  - compiled context) -> a rating per chunk, the top tagged mistakes, wins, and one native upgrade (the
     only place a round is graded). Both `converse` and `analyze` carry the adaptive **`CoachKnobs`** (#223)
     — difficulty/focus/probe-patterns derived deterministically from the learner model by `deriveCoachKnobs`
     (`@whetstone/domain` `coachKnobs.ts`), briefing the FIXED coach skill (no self-tuning yet). The knobs also
@@ -174,8 +174,8 @@ can navigate them from another package.
     `languageMix.ts`) lets the cheap-tier `converse` reply in the learner's EN/L1 mix while always pushing one
     English target; `englishShare(userTurn)` is recorded per turn on `session_exchanges` as the level signal.
     The verdict
-    -> SM-2 grade map is pure in `@whetstone/domain`
-    (`coachGrade.ts`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`).
+    -> FSRS rating map is pure in `@whetstone/domain`
+    (`coachGrade.ts` `judgementToRating`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`).
     `coachAdapters.ts` composes the real tiers over the shared `src/llm/` seam — **cheap = local Ollama**
     (`llama3.1:8b` via `createOllamaModel`), **strong = cloud** — each wrapped over the fake so any
     model/parse failure
@@ -222,7 +222,7 @@ can navigate them from another package.
   `converse`, persists the learner line + coach reply, and returns the reply (no per-turn grading).
   `endSession` (#222) is the end-of-round one pass: it rebuilds the round (transcript from
   `session_exchanges` + the request's word-timings + the case's target chunks + compiled context), calls
-  the coach's `analyze`, and DEPOSITS the durable trace deterministically — chunk grades -> SM-2 recall
+  the coach's `analyze`, and DEPOSITS the durable trace deterministically — chunk ratings -> FSRS recall
   (#188/#189, which also advances case mastery and so the map #210), tagged mistakes -> error-pattern
   counts (#208), and the rolling profile (#208) — then returns the compact debrief. The
   spoken path posts recorded audio bytes to `POST /api/session/transcribe` (optionally
@@ -726,7 +726,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** items (already capped
   server-side) as gentle, snoozeable proposals — each card is a **two-phase flip** (#525): phase 1
   shows a retrieval prompt (front) + **Show answer** + Snooze and **no** grades; after reveal it shows
-  the back and the four self-grade controls (Again/Hard/Good/Easy → `gradeFromRating` → an SM-2 grade).
+  the back and the four self-rating controls (Again/Hard/Good/Easy → the FSRS `rating` posted to the review route).
   Front/back precedence is derived deterministically in `recallCardFaces.ts` (cue → front=cue,
   back=text+gloss+useContext; else front=text, back=gloss+useContext; answerless items reveal a
   self-check hint, still gradeable). Grading or snoozing advances past the item, with explicit

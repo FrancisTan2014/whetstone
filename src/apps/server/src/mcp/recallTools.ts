@@ -16,8 +16,6 @@ import {
   recordReviewToolInputSchema,
   searchRecallItemsToolInputSchema
 } from "@whetstone/contracts";
-import type { ReviewGrade } from "@whetstone/domain";
-
 import {
   enrollRecallItem,
   recordRecallReview,
@@ -104,7 +102,7 @@ const tools: ReadonlyArray<RecallTool> = [
     description:
       "Deliberately save ONE production-style recall item for the current user — e.g. from an observed " +
       "English-learning mistake. Requires target/cue/useContext/category; tags, gloss, and provenanceEntryId " +
-      "are optional. Uses the standard recall enrollment and SM-2 seeding; it does NOT create a Make Durable " +
+      "are optional. Uses the standard recall enrollment and FSRS seeding; it does NOT create a Make Durable " +
       "proposal/Today card, scan files, or import a corpus. Returns the created item, including its id.",
     inputSchema: {
       additionalProperties: false,
@@ -176,19 +174,18 @@ const tools: ReadonlyArray<RecallTool> = [
   },
   {
     description:
-      "Record a review of a recall item with an SM-2 grade (0-5). Applies the scheduler and returns the updated item, including its next due date.",
+      "Record a review of a recall item with an FSRS rating (again/hard/good/easy). Applies the scheduler and returns the updated item, including its next due date.",
     inputSchema: {
       additionalProperties: false,
       properties: {
-        grade: {
-          description: "SM-2 grade, 0 (blackout) to 5 (perfect).",
-          maximum: 5,
-          minimum: 0,
-          type: "integer"
+        rating: {
+          description: "The FSRS rating: again (forgot), hard, good, or easy.",
+          enum: ["again", "hard", "good", "easy"],
+          type: "string"
         },
         itemId: { description: "The recall item's id.", type: "string" }
       },
-      required: ["itemId", "grade"],
+      required: ["itemId", "rating"],
       type: "object"
     },
     name: "record_review",
@@ -197,7 +194,7 @@ const tools: ReadonlyArray<RecallTool> = [
       const result = await recordRecallReview(
         context.recall,
         input.itemId,
-        input.grade as ReviewGrade,
+        input.rating,
         userId(context),
         context.now()
       );

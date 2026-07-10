@@ -1,5 +1,4 @@
 import { recordRecallReviewRequestSchema } from "@whetstone/contracts";
-import type { ReviewGrade } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
 import { recordRecallReview, snoozeRecallItem, type RecallDependencies } from "./recallCommands.js";
@@ -34,8 +33,8 @@ export function registerRecallRoutes(
     )
   }));
 
-  // Self-grade: the learner's Again/Hard/Good/Easy is mapped to an SM-2 grade upstream and applied here,
-  // advancing the item's interval/ease/due and logging a review row.
+  // Self-grade: the learner's Again/Hard/Good/Easy rating is applied here, advancing the item's FSRS
+  // card state / due and logging a review row.
   server.post<{ Params: ItemParams }>("/api/recall/items/:id/review", async (request, reply) => {
     const parsed = recordRecallReviewRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -45,7 +44,7 @@ export function registerRecallRoutes(
     const result = await recordRecallReview(
       dependencies,
       request.params.id,
-      parsed.data.grade as ReviewGrade,
+      parsed.data.rating,
       request.server.currentUser.getCurrentUserId(),
       dependencies.now()
     );
@@ -61,7 +60,7 @@ export function registerRecallRoutes(
     return reply.code(200).send(result.item);
   });
 
-  // Snooze: defer the item out of today's batch (moves only `due_at`, not the SM-2 state).
+  // Snooze: defer the item out of today's batch (moves only `due_at`, not the FSRS card state).
   server.post<{ Params: ItemParams }>("/api/recall/items/:id/snooze", async (request, reply) => {
     const result = await snoozeRecallItem(
       dependencies.db,

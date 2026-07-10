@@ -10,7 +10,7 @@ import type {
   ProposeNextResult,
   CompiledContext
 } from "@whetstone/contracts";
-import type { ReviewGrade } from "@whetstone/domain";
+import type { ReviewRating } from "@whetstone/domain";
 
 // The model-agnostic coach seam (#206): a server boundary, like the dictionary-provider seam, that
 // the language loop calls without coupling to any model. Every consumer goes through this interface —
@@ -21,9 +21,9 @@ export interface CoachProvider {
   // the learner's transcript, and the compiled context.
   judgeProduction(request: JudgeProductionRequest): Promise<ProductionJudgement>;
 
-  // Map a judgement to the SM-2 grade the scheduler consumes (#188). Pure and tokenless — the LLM
-  // grades into the judgement; this just bridges to the scheduler.
-  gradeForScheduler(judgement: ProductionJudgement): ReviewGrade;
+  // Map a judgement to the FSRS rating the scheduler consumes (#572). Pure and tokenless — the LLM
+  // grades into the judgement category; this just bridges it to one of again/hard/good/easy.
+  ratingForScheduler(judgement: ProductionJudgement): ReviewRating;
 
   // The navigation step: propose the next cue/target from the compiled learner context.
   proposeNext(context: CompiledContext): Promise<ProposeNextResult>;

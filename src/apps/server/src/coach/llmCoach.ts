@@ -12,7 +12,7 @@ import {
   type ProductionJudgement,
   type ProposeNextResult
 } from "@whetstone/contracts";
-import type { ReviewGrade } from "@whetstone/domain";
+import type { ReviewRating } from "@whetstone/domain";
 
 import type { LlmModel } from "../llm/llmModel.js";
 import type { CoachProvider } from "./coachProvider.js";
@@ -22,7 +22,7 @@ import type { CoachProvider } from "./coachProvider.js";
 // logic is exercised with no I/O.
 export type LlmCoachDependencies = Readonly<{
   chat: LlmModel;
-  // Everything except analyze (and gradeForScheduler) delegates here: in v0 only the end-of-round
+  // Everything except analyze (and ratingForScheduler) delegates here: in v0 only the end-of-round
   // judge is real; converse/judge/propose/author stay on the deterministic fallback (#241).
   fallback: CoachProvider;
   // The model name this tier calls (e.g. "llama3.1:8b"), named in the fallback log — never a secret.
@@ -61,10 +61,10 @@ function analyzePrompt(request: AnalyzeRoundRequest): string {
   return [
     "You are an English speaking coach. Judge one round, intelligibility first (was it understood?),",
     "then chunk use; never penalize accent or non-nativeness. Reply with ONLY a JSON object with:",
-    '"chunkGrades" (array of {"chunkId": string, "grade": integer 0-5}), "mistakes" (array of',
-    '{"category","said","native","why"} strings), "wins" (array of strings), "upgrade"',
-    '({"said","native"} strings), and "encouragement" (string). Example:',
-    '{"chunkGrades":[{"chunkId":"c1","grade":4}],"mistakes":[],"wins":["Clear"],' +
+    '"chunkGrades" (array of {"chunkId": string, "rating": one of "again"|"hard"|"good"|"easy"}),',
+    '"mistakes" (array of {"category","said","native","why"} strings), "wins" (array of strings),',
+    '"upgrade" ({"said","native"} strings), and "encouragement" (string). Example:',
+    '{"chunkGrades":[{"chunkId":"c1","rating":"good"}],"mistakes":[],"wins":["Clear"],' +
       '"upgrade":{"said":"","native":""},"encouragement":"Well understood."}',
     `Situation: ${request.situation}. Function: ${request.communicativeFunction}.`,
     `Target chunks:\n${chunks}`,
@@ -162,11 +162,11 @@ export function createLlmCoach(dependencies: LlmCoachDependencies): CoachProvide
         return dependencies.fallback.converse(request);
       }
     },
-    gradeForScheduler: (judgement: ProductionJudgement): ReviewGrade =>
-      dependencies.fallback.gradeForScheduler(judgement),
     judgeProduction: (request: JudgeProductionRequest): Promise<ProductionJudgement> =>
       dependencies.fallback.judgeProduction(request),
     proposeNext: (context: CompiledContext): Promise<ProposeNextResult> =>
-      dependencies.fallback.proposeNext(context)
+      dependencies.fallback.proposeNext(context),
+    ratingForScheduler: (judgement: ProductionJudgement): ReviewRating =>
+      dependencies.fallback.ratingForScheduler(judgement)
   });
 }

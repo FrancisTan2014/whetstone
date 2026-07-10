@@ -4,21 +4,21 @@ whetstone exposes an **MCP server** (#190) whose tools let any MCP client — a 
 "coach" — drive the save-and-recall loop over the recall store (#189). It is a **thin adapter**: every
 tool validates its input with the shared `@whetstone/contracts` schemas and calls the same store
 operations the rest of the app uses. No coaching logic, model calls, or scheduling math live here —
-SM-2 scheduling is `@whetstone/domain` (#188), persistence is the recall store (#189).
+FSRS scheduling (v6, via `ts-fsrs`) is `@whetstone/domain` (#188), persistence is the recall store (#189).
 
 ## Tools
 
 Each tool maps 1:1 to a recall-store operation and is scoped to the current user (the v0
 default-identity seam).
 
-| Tool | Input | Does |
-| --- | --- | --- |
-| `save_recall_item` | `{ text, kind, gloss? }` | Enrolls a recall item (kind ∈ pattern \| idiom \| proverb \| chunk \| word \| phrase), seeding its SM-2 schedule. Returns the created item (incl. `id`). |
-| `deposit_recall_item` | `{ kind, target, cue, useContext, category, tags?, provenanceEntryId?, gloss? }` | Deliberately saves ONE production-style recall item (e.g. from an observed learning mistake) via the same enrollment + SM-2 seeding, with no Make Durable proposal card. `target`/`cue`/`useContext` must be non-blank; the integrity-bearing `sourceProposalCandidateId`/`chunkId` are not accepted. Returns the created item (incl. `id`). |
-| `list_due_items` | `{ limit? }` | Lists the user's items due now, soonest first (default cap 20). |
-| `record_review` | `{ itemId, grade }` | Applies SM-2 to the item for the grade (0–5), persists the new state, appends a history row. Returns the updated item incl. its next `review.dueAt`. |
-| `search_recall_items` | `{ query }` | Searches the user's set by text or gloss (case-insensitive). |
-| `get_recall_item` | `{ id }` | Fetches one of the user's items by id. |
+| Tool                  | Input                                                                            | Does                                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `save_recall_item`    | `{ text, kind, gloss? }`                                                         | Enrolls a recall item (kind ∈ pattern \| idiom \| proverb \| chunk \| word \| phrase), seeding its FSRS schedule. Returns the created item (incl. `id`).                                                                                                                                                                                     |
+| `deposit_recall_item` | `{ kind, target, cue, useContext, category, tags?, provenanceEntryId?, gloss? }` | Deliberately saves ONE production-style recall item (e.g. from an observed learning mistake) via the same enrollment + FSRS seeding, with no Make Durable proposal card. `target`/`cue`/`useContext` must be non-blank; the integrity-bearing `sourceProposalCandidateId`/`chunkId` are not accepted. Returns the created item (incl. `id`). |
+| `list_due_items`      | `{ limit? }`                                                                     | Lists the user's items due now, soonest first (default cap 20).                                                                                                                                                                                                                                                                              |
+| `record_review`       | `{ itemId, rating }`                                                             | Applies FSRS to the item for the rating (`again` \| `hard` \| `good` \| `easy`), persists the new state, appends a history row. Returns the updated item incl. its next `review.due`.                                                                                                                                                        |
+| `search_recall_items` | `{ query }`                                                                      | Searches the user's set by text or gloss (case-insensitive).                                                                                                                                                                                                                                                                                 |
+| `get_recall_item`     | `{ id }`                                                                         | Fetches one of the user's items by id.                                                                                                                                                                                                                                                                                                       |
 
 Invalid input, an unknown tool, or a missing item return a clean MCP **error result** (`isError`),
 never a crash.

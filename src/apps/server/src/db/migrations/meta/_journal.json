@@ -260,6 +260,13 @@
       "when": 1783658322263,
       "tag": "0036_skinny_payback",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1783674238624,
+      "tag": "0037_fsrs_review_state",
+      "breakpoints": true
     }
   ]
 }

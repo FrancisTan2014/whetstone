@@ -17,14 +17,14 @@ function stub(tag: string): CoachProvider {
       }),
     authorCase: () => Promise.resolve({ chunks: [], communicativeFunction: tag, situation: tag }),
     converse: () => Promise.resolve({ say: tag }),
-    gradeForScheduler: () => 0,
     judgeProduction: () =>
       Promise.resolve({
         category: "good",
         issues: [{ kind: "other", note: tag, severity: "minor" }],
         natural: 1
       }),
-    proposeNext: () => Promise.resolve({ chunkId: null, cue: tag, target: tag })
+    proposeNext: () => Promise.resolve({ chunkId: null, cue: tag, target: tag }),
+    ratingForScheduler: () => "again"
   };
 }
 

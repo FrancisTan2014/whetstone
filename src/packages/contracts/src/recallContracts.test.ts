@@ -147,23 +147,31 @@ describe("depositRecallItemToolInput (#458)", () => {
 });
 
 describe("recordRecallReviewRequest", () => {
-  it("accepts a grade in range", () => {
-    expect(parseRecordRecallReviewRequest({ grade: 4 })).toEqual({ grade: 4 });
+  it.each(["again", "hard", "good", "easy"] as const)("accepts the %s rating", (rating) => {
+    expect(parseRecordRecallReviewRequest({ rating })).toEqual({ rating });
   });
 
-  it.each([-1, 6, 2.5])("rejects an out-of-range or non-integer grade %s", (grade) => {
-    expect(() => parseRecordRecallReviewRequest({ grade })).toThrow();
+  it.each([0, "perfect", 2.5, null])("rejects a non-rating value %s", (rating) => {
+    expect(() => parseRecordRecallReviewRequest({ rating })).toThrow();
+  });
+
+  it("rejects a request missing the rating", () => {
+    expect(() => parseRecordRecallReviewRequest({})).toThrow();
   });
 });
 
 describe("recall DTOs", () => {
   const review = {
-    dueAt: "2026-01-02T00:00:00.000Z",
-    easeFactor: 2.5,
-    intervalDays: 1,
+    due: "2026-01-02T00:00:00.000Z",
+    stability: 2.3,
+    difficulty: 5.1,
+    elapsedDays: 0,
+    scheduledDays: 1,
+    learningSteps: 1,
+    reps: 1,
     lapses: 0,
-    lastReviewedAt: "2026-01-01T00:00:00.000Z",
-    repetitions: 1
+    state: "review" as const,
+    lastReviewedAt: "2026-01-01T00:00:00.000Z"
   };
   const item = {
     chunkId: null,

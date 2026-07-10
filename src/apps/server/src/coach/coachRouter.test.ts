@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProductionJudgement } from "@whetstone/contracts";
+import type { ReviewRating } from "@whetstone/domain";
 
 import type { CoachProvider } from "./coachProvider.js";
 import { createRoutedCoach, defaultCostRouting } from "./coachRouter.js";
 
 // A coach whose every result is tagged with its name, so a routed call reveals which tier served it.
-function tagged(tag: string, grade: 0 | 1 | 2 | 3 | 4 | 5): CoachProvider {
+function tagged(tag: string, rating: ReviewRating): CoachProvider {
   return {
     analyze: () =>
       Promise.resolve({
@@ -18,19 +19,19 @@ function tagged(tag: string, grade: 0 | 1 | 2 | 3 | 4 | 5): CoachProvider {
       }),
     authorCase: () => Promise.resolve({ chunks: [], communicativeFunction: tag, situation: tag }),
     converse: () => Promise.resolve({ say: tag }),
-    gradeForScheduler: () => grade,
     judgeProduction: () =>
       Promise.resolve({
         category: "good",
         issues: [{ kind: "other", note: tag, severity: "minor" }],
         natural: 1
       }),
-    proposeNext: () => Promise.resolve({ chunkId: null, cue: tag, target: tag })
+    proposeNext: () => Promise.resolve({ chunkId: null, cue: tag, target: tag }),
+    ratingForScheduler: () => rating
   };
 }
 
-const strong = tagged("strong", 5);
-const cheap = tagged("cheap", 1);
+const strong = tagged("strong", "easy");
+const cheap = tagged("cheap", "again");
 
 const judgement: ProductionJudgement = { category: "good", issues: [], natural: 1 };
 const knobs = {
@@ -76,8 +77,8 @@ describe("createRoutedCoach (default routing)", () => {
     );
   });
 
-  it("grades through the strong tier without routing (tokenless)", () => {
-    expect(coach.gradeForScheduler(judgement)).toBe(5);
+  it("rates through the strong tier without routing (tokenless)", () => {
+    expect(coach.ratingForScheduler(judgement)).toBe("easy");
   });
 });
 

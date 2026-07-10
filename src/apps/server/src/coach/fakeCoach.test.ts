@@ -94,15 +94,15 @@ describe("FakeCoach judgeProduction", () => {
   });
 });
 
-describe("FakeCoach gradeForScheduler", () => {
-  it("grades a native-like judgement as a perfect SM-2 5", async () => {
+describe("FakeCoach ratingForScheduler", () => {
+  it("rates a native-like judgement as easy", async () => {
     const judgement = await judge("How's it going", "how's it going");
-    expect(coach.gradeForScheduler(judgement)).toBe(5);
+    expect(coach.ratingForScheduler(judgement)).toBe("easy");
   });
 
-  it("grades an off-target judgement as 0", async () => {
+  it("rates an off-target judgement as again", async () => {
     const judgement = await judge("spill the beans", "   ");
-    expect(coach.gradeForScheduler(judgement)).toBe(0);
+    expect(coach.ratingForScheduler(judgement)).toBe("again");
   });
 });
 
@@ -278,14 +278,14 @@ describe("FakeCoach analyze", () => {
     ]
   };
 
-  it("grades each target chunk, wins the produced one, and flags the missing one as a tagged mistake", async () => {
+  it("rates each target chunk, wins the produced one, and flags the missing one as a tagged mistake", async () => {
     const result = await coach.analyze(request);
 
     expect(result.chunkGrades).toHaveLength(2);
     const produced = result.chunkGrades.find((grade) => grade.chunkId === "c1");
     const missing = result.chunkGrades.find((grade) => grade.chunkId === "c2");
-    expect(produced?.grade).toBeGreaterThanOrEqual(4);
-    expect(missing?.grade).toBeLessThan(3);
+    expect(produced?.rating).toBe("good");
+    expect(missing?.rating).toBe("again");
 
     expect(result.wins).toContain('Nailed "Help yourself.".');
     expect(result.mistakes).toHaveLength(1);
