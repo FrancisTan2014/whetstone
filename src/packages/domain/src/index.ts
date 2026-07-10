@@ -163,6 +163,20 @@ export type {
   SplitPassageResult
 } from "./recitationPassage.js";
 export {
+  DEFAULT_RECITATION_SUPPORT_LEVEL,
+  isRecitationSupportLevel,
+  projectRecitationSupport,
+  recitationSupportLevels,
+  supportLevelShowsTarget
+} from "./recitationFading.js";
+export type {
+  RecitationSupportLevel,
+  RecitationVisibleSupportLevel,
+  SupportLine,
+  SupportProjection,
+  SupportSegment
+} from "./recitationFading.js";
+export {
   isWorkLanguage,
   normalizeWorkLanguage,
   workLanguageLabels,
