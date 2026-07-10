@@ -267,6 +267,126 @@
 }
 
 /*
+ * Shared rich-content editor (#570). Compact and full presentations share one ProseMirror surface;
+ * only the toolbar density and minimum writing height change. All color, type, and focus treatment
+ * comes from semantic tokens, so the same boundary works in Day and Night without theme branches.
+ */
+.richContentEditor {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.richContentEditor:focus-within {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--color-ring);
+}
+
+.richContentEditorToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  max-inline-size: 100%;
+  padding: 0.5rem;
+  border-block-end: 1px solid var(--color-border);
+  background-color: var(--color-bg);
+  font-family: var(--font-sans);
+}
+
+.richContentEditorToolbar :where(select, input) {
+  min-block-size: 2.75rem;
+  max-inline-size: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.richContentEditorToolbar :where(select, input):focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.richContentEditorBlockStyle {
+  padding-inline: 0.625rem 2rem;
+}
+
+.richContentEditorLinkField {
+  flex: 1 1 12rem;
+  min-inline-size: min(12rem, 100%);
+}
+
+.richContentEditorLinkInput {
+  inline-size: 100%;
+  padding-inline: 0.625rem;
+}
+
+.richContentEditorError {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  color: var(--color-danger);
+  font-family: var(--font-sans);
+  font-size: var(--text-scale-sm);
+}
+
+.richContentEditorContent {
+  min-block-size: 16rem;
+  padding: 1rem;
+  outline: none;
+  overflow-wrap: anywhere;
+  caret-color: var(--color-accent);
+  font-family: var(--font-reading);
+  font-size: var(--text-scale-base);
+  line-height: 1.7;
+}
+
+.richContentEditor[data-presentation="compact"] .richContentEditorContent {
+  min-block-size: 6rem;
+}
+
+.richContentEditorContent:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: -2px;
+}
+
+.richContentEditorContent > :first-child {
+  margin-block-start: 0;
+}
+
+.richContentEditorContent > :last-child {
+  margin-block-end: 0;
+}
+
+.richContentEditorContent :where(ul, ol) {
+  padding-inline-start: 1.5rem;
+}
+
+.richContentEditorContent blockquote {
+  padding-inline-start: 1rem;
+  border-inline-start: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.richContentEditorContent pre {
+  padding: 0.75rem;
+  overflow-x: auto;
+  border-radius: 0.25rem;
+  background-color: var(--color-bg);
+  font-family: var(--font-mono);
+}
+
+.richContentEditorContent a {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+
+/*
  * App shell + primitives layout. The SafeArea primitive uses dynamic/small viewport
  * units (never 100vh) and the safe-area insets so the shell fits notched and
  * keyboard-aware WebViews. The Sheet docks right on desktop and bottom on mobile.

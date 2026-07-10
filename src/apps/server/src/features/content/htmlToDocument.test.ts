@@ -1154,6 +1154,7 @@ describe("htmlToDocument reference links (#368)", () => {
 
     expect(findLinkMark(paragraph.node)).toEqual({
       anchor: "ch_introduction",
+      href: null,
       inert: false,
       kind: "xref",
       refFile: "ch01.html",
@@ -1174,6 +1175,7 @@ describe("htmlToDocument reference links (#368)", () => {
 
     expect(link).toEqual({
       anchor: "part_distributed_data",
+      href: null,
       inert: false,
       kind: "xref",
       refFile: "/OEBPS/part02.html",
@@ -1191,6 +1193,7 @@ describe("htmlToDocument reference links (#368)", () => {
 
     expect(findLinkMark(paragraph.node)).toEqual({
       anchor: "sec_two",
+      href: null,
       inert: false,
       kind: "href",
       refFile: null,
@@ -1204,6 +1207,7 @@ describe("htmlToDocument reference links (#368)", () => {
 
     expect(findLinkMark(paragraph.node)).toEqual({
       anchor: null,
+      href: null,
       inert: false,
       kind: "href",
       refFile: "ch02.html",
@@ -1217,6 +1221,7 @@ describe("htmlToDocument reference links (#368)", () => {
 
     expect(findLinkMark(paragraph.node)).toEqual({
       anchor: null,
+      href: null,
       inert: false,
       kind: "href",
       refFile: "ch02.html",
@@ -1234,6 +1239,7 @@ describe("htmlToDocument reference links (#368)", () => {
 
     expect(findLinkMark(paragraph.node)).toEqual({
       anchor: null,
+      href: null,
       inert: true,
       kind: "href",
       refFile: null,

@@ -13,12 +13,14 @@ entry to a pointer.
 ### `src/packages/document/` — content document model (bedrock)
 
 The Tiptap/ProseMirror schema for whetstone content (PRODUCT "Architecture: the document-model
-bedrock"). Pure and Node-runnable (no DOM; HTML parsing/rendering belong to the ingestion/reader
-slices). Public surface is `src/index.ts`. Units: `nodes.ts` (Tiptap `Node.create` specs for doc,
+bedrock"). Pure and Node-runnable (the browser editing DOM specs are declarative; fidelity HTML
+ingestion and read-only presentation remain in their feature slices). Public surface is `src/index.ts`.
+Units: `nodes.ts` (Tiptap `Node.create` specs for doc,
 text, prose blocks, nesting lists, tables, figures, definition lists, callout, footnote marker/target,
-and a raw-HTML `unknown` fallback, plus the `link` **mark** — the schema's only content mark (#368),
-carrying a same-work cross-reference's `kind`/`anchor`/`refFile`/`targetSourceFile`/`inert` inline on
-the text run; the `image` node carries an `imageResourceId` attr (default null)
+and a raw-HTML `unknown` fallback, plus shared `bold`/`italic`/inline-`code`/`link` marks; `link`
+carries a validated authored `href` or a same-work cross-reference's
+`kind`/`anchor`/`refFile`/`targetSourceFile`/`inert` inline on the text run; the `image` node carries an
+`imageResourceId` attr (default null)
 so a resolved EPUB image can be referenced by the reader; `documentExtensions` couples the node + mark
 specs with the UniqueID id attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
 (`parseDocument`/`serializeDocument`/`isValidDocument`/`assignNodeIds` JSON round-trip + validation,
@@ -562,6 +564,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button placed as app-shell chrome in a
   slim top bar — not a nav tab (#390)); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
   the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
+- Shared editing: `src/shared/editor/` is the cross-feature rich-content boundary (#570).
+  `RichContentEditor.tsx` mounts the single `@whetstone/document` extension set through Tiptap React,
+  exposes compact/full presentations over one live document, and emits validated detached JSON on
+  change/save; `editorDocument.ts` owns empty-document creation, validation/cloning, equality, and safe
+  authored-link normalization. Persistence and autosave policy stay with consuming features.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
   field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each

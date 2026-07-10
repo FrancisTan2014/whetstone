@@ -9,6 +9,7 @@ import {
   documentSchema,
   documentText,
   DocumentValidationError,
+  isSafeDocumentLinkHref,
   isValidDocument,
   parseDocument,
   serializeDocument
@@ -175,9 +176,11 @@ describe("document schema", () => {
     }
   });
 
-  it("registers the `link` content mark (the only inline mark, #368)", () => {
-    expect([...documentMarkNames]).toEqual(["link"]);
-    expect(documentSchema.marks["link"]).toBeDefined();
+  it("registers the shared inline formatting marks", () => {
+    expect([...documentMarkNames]).toEqual(["bold", "italic", "code", "link"]);
+    for (const name of documentMarkNames) {
+      expect(documentSchema.marks[name]).toBeDefined();
+    }
   });
 });
 
@@ -194,6 +197,7 @@ describe("link mark round-trip (#368)", () => {
               {
                 attrs: {
                   anchor: "ch_introduction",
+                  href: null,
                   inert: false,
                   kind: "xref",
                   refFile: "ch01.html",
@@ -211,6 +215,7 @@ describe("link mark round-trip (#368)", () => {
               {
                 attrs: {
                   anchor: "sec",
+                  href: null,
                   inert: false,
                   kind: "href",
                   refFile: null,
@@ -228,6 +233,7 @@ describe("link mark round-trip (#368)", () => {
               {
                 attrs: {
                   anchor: null,
+                  href: "https://example.com",
                   inert: true,
                   kind: "href",
                   refFile: null,
@@ -276,6 +282,51 @@ describe("link mark round-trip (#368)", () => {
 
     expect(documentText(cjk)).toBe("见周髀之术");
     expect(isValidDocument(cjk)).toBe(true);
+  });
+
+  it("accepts safe authored hrefs and rejects unsafe or non-string hrefs", () => {
+    expect(isSafeDocumentLinkHref("https://example.com")).toBe(true);
+    expect(isSafeDocumentLinkHref("http://example.com")).toBe(true);
+    expect(isSafeDocumentLinkHref("mailto:reader@example.com")).toBe(true);
+    expect(isSafeDocumentLinkHref("#section")).toBe(true);
+    expect(isSafeDocumentLinkHref("/library/work")).toBe(true);
+    expect(isSafeDocumentLinkHref("//example.com")).toBe(false);
+    expect(isSafeDocumentLinkHref("javascript:alert(1)")).toBe(false);
+    expect(isSafeDocumentLinkHref(42)).toBe(false);
+
+    const unsafe: DocumentNodeJSON = {
+      content: [
+        {
+          content: [
+            {
+              marks: [{ attrs: { href: "javascript:alert(1)" }, type: "link" }],
+              text: "unsafe",
+              type: "text"
+            }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    expect(() => parseDocument(unsafe)).toThrow(DocumentValidationError);
+
+    const wrongType: DocumentNodeJSON = {
+      content: [
+        {
+          content: [
+            {
+              marks: [{ attrs: { href: 42 }, type: "link" }],
+              text: "unsafe",
+              type: "text"
+            }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    expect(() => parseDocument(wrongType)).toThrow(DocumentValidationError);
   });
 });
 

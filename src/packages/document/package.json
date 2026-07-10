@@ -16,8 +16,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@tiptap/core": "^3.27.1",
-    "@tiptap/extension-unique-id": "^3.27.1",
+    "@tiptap/core": "^3.27.3",
+    "@tiptap/extension-unique-id": "^3.27.3",
     "prosemirror-model": "^1.25.9"
   }
 }

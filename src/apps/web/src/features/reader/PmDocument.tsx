@@ -330,6 +330,9 @@ function createNodeMapping(anchorByNodeId: AnchorByNodeId): Record<string, PmNod
 }
 
 const markMapping = {
+  bold: ({ children }: MarkProps<PmMark, React.ReactNode, PmNode>) => <strong>{children}</strong>,
+  code: ({ children }: MarkProps<PmMark, React.ReactNode, PmNode>) => <code>{children}</code>,
+  italic: ({ children }: MarkProps<PmMark, React.ReactNode, PmNode>) => <em>{children}</em>,
   link: ({ children, mark }: MarkProps<PmMark, React.ReactNode, PmNode>) => (
     <LinkMark mark={mark}>{children}</LinkMark>
   )
