@@ -1,0 +1,1 @@
+ALTER TABLE "recitation_passages" ADD COLUMN "support_level" text DEFAULT 'full' NOT NULL;

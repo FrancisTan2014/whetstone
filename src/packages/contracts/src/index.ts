@@ -93,14 +93,19 @@ export {
   parseRecitationPassageListDto,
   parseRecordRecitationReviewRequest,
   parseRecordRecitationReviewResponse,
+  parseSetRecitationSupportLevelRequest,
+  parseSetRecitationSupportLevelResponse,
   parseSplitRecitationPassageRequest,
   recitationAnchorStatusDtoSchema,
   recitationCueStrengthDtoSchema,
   recitationPassageDtoSchema,
   recitationPassageListDtoSchema,
   recitationReviewRatingSchema,
+  recitationSupportLevelDtoSchema,
   recordRecitationReviewRequestSchema,
   recordRecitationReviewResponseSchema,
+  setRecitationSupportLevelRequestSchema,
+  setRecitationSupportLevelResponseSchema,
   splitRecitationPassageRequestSchema
 } from "./recitationPassageContracts.js";
 export type {
@@ -111,8 +116,11 @@ export type {
   RecitationPassageDto,
   RecitationPassageListDto,
   RecitationReviewRating,
+  RecitationSupportLevelDto,
   RecordRecitationReviewRequest,
   RecordRecitationReviewResponse,
+  SetRecitationSupportLevelRequest,
+  SetRecitationSupportLevelResponse,
   SplitRecitationPassageRequest
 } from "./recitationPassageContracts.js";
 export {

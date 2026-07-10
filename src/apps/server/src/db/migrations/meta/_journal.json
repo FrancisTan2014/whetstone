@@ -281,6 +281,13 @@
       "when": 1783706547180,
       "tag": "0039_recitation_passages",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1783721257464,
+      "tag": "0040_steep_ben_urich",
+      "breakpoints": true
     }
   ]
 }

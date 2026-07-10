@@ -1,4 +1,8 @@
-import { passageAnchorStatuses, recitationCueStrengths } from "@whetstone/domain";
+import {
+  passageAnchorStatuses,
+  recitationCueStrengths,
+  recitationSupportLevels
+} from "@whetstone/domain";
 import { z } from "zod";
 
 // Shared, Zod-validated shapes for recitation passage practice (#578): a learner divides a recitation
@@ -25,6 +29,12 @@ export type RecitationCueStrengthDto = z.infer<typeof recitationCueStrengthDtoSc
 export const recitationAnchorStatusDtoSchema = z.enum(passageAnchorStatuses);
 
 export type RecitationAnchorStatusDto = z.infer<typeof recitationAnchorStatusDtoSchema>;
+
+// The learner-chosen visual support level a due passage opens at (#579): how much of the target is
+// shown before an attempt. Reused from the domain vocabulary so DTO and projection never drift.
+export const recitationSupportLevelDtoSchema = z.enum(recitationSupportLevels);
+
+export type RecitationSupportLevelDto = z.infer<typeof recitationSupportLevelDtoSchema>;
 
 // A persisted passage with its source range and its scheduling progress, for the segmentation view and
 // the plan's progress list. Offsets index a block's plaintext; equal block ids mean a single-block
@@ -78,6 +88,7 @@ export const dueRecitationPassageDtoSchema = z
     passageEntryId: z.string(),
     planEntryId: z.string(),
     precedingText: z.string().nullable(),
+    supportLevel: recitationSupportLevelDtoSchema,
     targetText: z.string(),
     workTitle: z.string()
   })
@@ -90,6 +101,24 @@ export const dueRecitationPassageResponseSchema = z
   .strict();
 
 export type DueRecitationPassageResponse = z.infer<typeof dueRecitationPassageResponseSchema>;
+
+// Set the remembered visual support level for a passage (#579). This is a preference, not a recall: it
+// never touches the FSRS schedule and never counts as a review. The passage is named in the route path.
+export const setRecitationSupportLevelRequestSchema = z
+  .object({ supportLevel: recitationSupportLevelDtoSchema })
+  .strict();
+
+export type SetRecitationSupportLevelRequest = z.infer<
+  typeof setRecitationSupportLevelRequestSchema
+>;
+
+export const setRecitationSupportLevelResponseSchema = z
+  .object({ supportLevel: recitationSupportLevelDtoSchema })
+  .strict();
+
+export type SetRecitationSupportLevelResponse = z.infer<
+  typeof setRecitationSupportLevelResponseSchema
+>;
 
 // Record a self-assessment: the rating that updates the FSRS schedule and the cue strength the learner
 // attempted from (metadata only). Revealing without rating never sends this, so the schedule is
@@ -129,4 +158,16 @@ export function parseRecordRecitationReviewResponse(
   value: unknown
 ): RecordRecitationReviewResponse {
   return recordRecitationReviewResponseSchema.parse(value);
+}
+
+export function parseSetRecitationSupportLevelRequest(
+  value: unknown
+): SetRecitationSupportLevelRequest {
+  return setRecitationSupportLevelRequestSchema.parse(value);
+}
+
+export function parseSetRecitationSupportLevelResponse(
+  value: unknown
+): SetRecitationSupportLevelResponse {
+  return setRecitationSupportLevelResponseSchema.parse(value);
 }

@@ -335,6 +335,14 @@ export const recitationPassages = pgTable(
     anchorStatus: text("anchor_status", {
       enum: ["anchored", "needs_repair"] as const
     }).notNull(),
+    // The learner's remembered visual support level for progressive fading (#579): how much of the
+    // target is shown before an attempt. Learner-controlled only — never auto-lowered by elapsed days or
+    // AI judgement — and independent of the FSRS schedule (changing it is not a review).
+    supportLevel: text("support_level", {
+      enum: ["full", "reduced", "first", "hidden"] as const
+    })
+      .notNull()
+      .default("full"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572), mirroring `recall_items`.
     stability: doublePrecision("stability").notNull(),

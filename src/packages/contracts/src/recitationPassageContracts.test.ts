@@ -6,9 +6,12 @@ import {
   parseRecitationPassageListDto,
   parseRecordRecitationReviewRequest,
   parseRecordRecitationReviewResponse,
+  parseSetRecitationSupportLevelRequest,
+  parseSetRecitationSupportLevelResponse,
   parseSplitRecitationPassageRequest,
   recitationPassageDtoSchema,
   recordRecitationReviewRequestSchema,
+  setRecitationSupportLevelRequestSchema,
   splitRecitationPassageRequestSchema
 } from "./recitationPassageContracts.js";
 
@@ -85,6 +88,7 @@ describe("dueRecitationPassageResponseSchema", () => {
         passageEntryId: "passage-1",
         planEntryId: "plan-1",
         precedingText: "the line before",
+        supportLevel: "full" as const,
         targetText: "Alpha beta",
         workTitle: "Aesop’s Fables"
       }
@@ -105,6 +109,7 @@ describe("dueRecitationPassageResponseSchema", () => {
         passageEntryId: "p",
         planEntryId: "plan",
         precedingText: null,
+        supportLevel: "hidden" as const,
         targetText: "t",
         workTitle: "w"
       }
@@ -138,5 +143,33 @@ describe("parseRecordRecitationReviewRequest", () => {
 describe("parseRecordRecitationReviewResponse", () => {
   it("accepts an updated passage", () => {
     expect(parseRecordRecitationReviewResponse({ passage })).toEqual({ passage });
+  });
+});
+
+describe("parseSetRecitationSupportLevelRequest", () => {
+  it("accepts each known support level", () => {
+    for (const supportLevel of ["full", "reduced", "first", "hidden"] as const) {
+      expect(parseSetRecitationSupportLevelRequest({ supportLevel })).toEqual({ supportLevel });
+    }
+  });
+
+  it("rejects an unknown support level", () => {
+    expect(setRecitationSupportLevelRequestSchema.safeParse({ supportLevel: "peek" }).success).toBe(
+      false
+    );
+  });
+
+  it("rejects unknown keys", () => {
+    expect(
+      setRecitationSupportLevelRequestSchema.safeParse({ supportLevel: "full", extra: 1 }).success
+    ).toBe(false);
+  });
+});
+
+describe("parseSetRecitationSupportLevelResponse", () => {
+  it("echoes the persisted support level", () => {
+    expect(parseSetRecitationSupportLevelResponse({ supportLevel: "reduced" })).toEqual({
+      supportLevel: "reduced"
+    });
   });
 });
