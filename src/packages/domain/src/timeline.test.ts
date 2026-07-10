@@ -20,8 +20,8 @@ function row(entryId: string, kind: TimelineEntryKind, occurredAt: string, label
 }
 
 describe("timeline vocabulary", () => {
-  it("names exactly the diary, note, and work kinds", () => {
-    expect(timelineEntryKinds).toEqual(["diary", "note", "work"]);
+  it("names exactly the diary, note, work, and recitation kinds", () => {
+    expect(timelineEntryKinds).toEqual(["diary", "note", "work", "recitation"]);
   });
 
   it("recognizes real kinds and rejects the retired timeline-only identity", () => {
@@ -36,6 +36,7 @@ describe("timeline vocabulary", () => {
     expect(entryTypeForTimelineKind("diary")).toBe("diary_entry");
     expect(entryTypeForTimelineKind("note")).toBe("note");
     expect(entryTypeForTimelineKind("work")).toBe("work");
+    expect(entryTypeForTimelineKind("recitation")).toBe("recitation_plan");
   });
 
   it("proves the Timeline holds no entity that exists only because it appears there", () => {

@@ -23,7 +23,8 @@ describe("entry/link vocabulary", () => {
       "block",
       "note",
       "toc_entry",
-      "diary_entry"
+      "diary_entry",
+      "recitation_plan"
     ]);
     expect(linkTypes).toEqual(["contains", "annotates", "references", "related_to"]);
     expect(workTypes).toEqual(["book", "essay", "blog_post", "classical_text"]);

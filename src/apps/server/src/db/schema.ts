@@ -20,7 +20,15 @@ export const entries = pgTable("entries", {
   // a work/reading unit/block, so the authored nav tree persists as its own `toc_entries` rows keyed
   // by an `entries` id (mirroring how reading units register entries).
   type: text("type", {
-    enum: ["work", "reading_unit", "block", "note", "toc_entry", "diary_entry"] as const
+    enum: [
+      "work",
+      "reading_unit",
+      "block",
+      "note",
+      "toc_entry",
+      "diary_entry",
+      "recitation_plan"
+    ] as const
   }).notNull()
 });
 
@@ -265,6 +273,33 @@ export const readingPositions = pgTable(
       .references(() => entries.id)
   },
   (table) => [primaryKey({ columns: [table.userId, table.workEntryId] })]
+);
+
+// A learner's recitation routine adopted from a source Work (#577): a first-class owned Entry whose
+// ownership + chronology live in the shared `personal_entries` facet (so it appears on the logical
+// Timeline and is owner-scoped). `work_entry_id` references the source Work — its content stays canonical
+// and is never copied into a second store. `phase` is the learner-controlled routine stage
+// (familiarizing → learning → maintenance), only ever changed by an explicit learner action (whetstone
+// never infers readiness or auto-advances). `last_session_at` and `session_count` are the lightweight
+// per-session routine state: they are updated in place on each reading session and are NOT Entries and do
+// NOT feed FSRS, so a familiarizing session never creates a Timeline row or a review card. The reader's
+// resume position is delegated to `reading_positions` (per user, per work), so it is not duplicated here.
+export const recitationPlans = pgTable(
+  "recitation_plans",
+  {
+    entryId: text("entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    lastSessionAt: timestamp("last_session_at", { mode: "date", withTimezone: true }),
+    phase: text("phase", {
+      enum: ["familiarizing", "learning", "maintenance"] as const
+    }).notNull(),
+    sessionCount: integer("session_count").notNull().default(0),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id)
+  },
+  (table) => [index("recitation_plans_work_idx").on(table.workEntryId)]
 );
 
 // Per-user reader preferences (work-independent): text size and Day/Night theme, server-owned so they

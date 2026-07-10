@@ -14,7 +14,12 @@ export const entryTypes = [
   // created from it can point at it via `recall_items.provenance_entry_id` and it can join the typed link
   // graph via `entry_links`. Its ownership + chronology live in the shared `personal_entries` facet, and
   // the Timeline is a logical view over those personal entries — never a stored `timeline_entry` object.
-  "diary_entry"
+  "diary_entry",
+  // `recitation_plan` (#577): a learner's recitation routine adopted from a source Work is a first-class
+  // owned Entry — it carries a `personal_entries` facet (so it appears on the logical Timeline and is
+  // owner-scoped) and references the source Work, whose content stays canonical (never copied). Its
+  // lightweight per-session routine state lives on the `recitation_plans` facet, NOT as Entries.
+  "recitation_plan"
 ] as const;
 
 export type EntryType = (typeof entryTypes)[number];

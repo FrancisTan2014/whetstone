@@ -29,6 +29,11 @@ vi.mock("../authoredWorks/authoredWorkApi", () => ({
   listAuthoredWorks: vi.fn()
 }));
 
+vi.mock("../recitation/recitationApi", () => ({
+  createRecitationPlan: vi.fn(),
+  listRecitationPlans: vi.fn()
+}));
+
 import {
   createWork,
   deleteWork,
@@ -39,6 +44,7 @@ import {
 } from "./libraryApi";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
+import { createRecitationPlan, listRecitationPlans } from "../recitation/recitationApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
@@ -46,6 +52,7 @@ import type {
   AuthorDto,
   AuthoredWorkDto,
   AuthoredWorkSummaryDto,
+  RecitationPlanDto,
   WorkListItemDto
 } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
@@ -77,6 +84,8 @@ const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
 const mockedIngestPdf = vi.mocked(ingestPdf);
 const mockedListAuthoredWorks = vi.mocked(listAuthoredWorks);
 const mockedCreateAuthoredWork = vi.mocked(createAuthoredWork);
+const mockedListRecitationPlans = vi.mocked(listRecitationPlans);
+const mockedCreateRecitationPlan = vi.mocked(createRecitationPlan);
 
 const orwell: AuthorDto = { id: toAuthorId("author-1"), name: "George Orwell" };
 const dickens: AuthorDto = { id: toAuthorId("author-2"), name: "Charles Dickens" };
@@ -142,6 +151,7 @@ beforeEach(() => {
   mockedFetchWorks.mockResolvedValue({ works: [] });
   mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set());
   mockedListAuthoredWorks.mockResolvedValue({ works: [] });
+  mockedListRecitationPlans.mockResolvedValue({ plans: [] });
 });
 
 afterEach(() => {
@@ -1045,5 +1055,85 @@ describe("AdminLibraryPage", () => {
       expect(screen.queryByRole("heading", { name: "New document" })).toBeNull();
     });
     expect(mockedCreateAuthoredWork).not.toHaveBeenCalled();
+  });
+
+  const recitationPlanFor = (workEntryId: string, title: string): RecitationPlanDto => ({
+    createdAt: "2026-07-01T09:00:00.000Z",
+    entryId: `plan-${workEntryId}`,
+    lastSessionAt: null,
+    phase: "familiarizing",
+    sessionCount: 0,
+    updatedAt: "2026-07-01T09:00:00.000Z",
+    workEntryId,
+    workTitle: title
+  });
+
+  it("adopts a Work for recitation in the chosen phase, then marks it on the card (#577)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    mockedCreateRecitationPlan.mockResolvedValue(
+      recitationPlanFor("work-1", "Politics and the English Language")
+    );
+    // The reload after adopting reports the new plan so the card flips to the reciting status.
+    mockedListRecitationPlans
+      .mockResolvedValueOnce({ plans: [] })
+      .mockResolvedValue({ plans: [recitationPlanFor("work-1", "Politics and the English Language")] });
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Practise recitation" }));
+    await screen.findByRole("heading", { name: "Practise recitation" });
+    await user.selectOptions(screen.getByLabelText("Starting phase"), "maintenance");
+    await user.click(screen.getByRole("button", { name: "Add to routines" }));
+
+    await waitFor(() => {
+      expect(mockedCreateRecitationPlan).toHaveBeenCalledWith({
+        phase: "maintenance",
+        workEntryId: "work-1"
+      });
+    });
+    expect(
+      await screen.findByText("Added “Politics and the English Language” to your recitation routines.")
+    ).toBeDefined();
+    // The card now shows the quiet reciting status instead of the adopt action.
+    expect(await screen.findByText("Reciting · Familiarizing")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
+  });
+
+  it("shows the reciting status (not an adopt button) for an already-adopted Work (#577)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    mockedListRecitationPlans.mockResolvedValue({
+      plans: [{ ...recitationPlanFor("work-1", "Politics and the English Language"), phase: "learning" }]
+    });
+    await renderReady();
+
+    expect(await screen.findByText("Reciting · Learning")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
+  });
+
+  it("surfaces an error when adopting a recitation routine fails, keeping the sheet open (#577)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    mockedCreateRecitationPlan.mockRejectedValue(new Error("boom"));
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Practise recitation" }));
+    await screen.findByRole("heading", { name: "Practise recitation" });
+    await user.click(screen.getByRole("button", { name: "Add to routines" }));
+
+    expect(
+      await screen.findByText("Could not start this recitation routine. Please try again.")
+    ).toBeDefined();
+  });
+
+  it("dismisses the Practise recitation sheet without adopting anything (#577)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Practise recitation" }));
+    await screen.findByRole("heading", { name: "Practise recitation" });
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Practise recitation" })).toBeNull();
+    });
+    expect(mockedCreateRecitationPlan).not.toHaveBeenCalled();
   });
 });

@@ -263,8 +263,9 @@ tokens live in code (the Tailwind theme) once built; this section records the du
 - The durable domain object is `Entry`. Materials, reading units, blocks, notes, and diary entries are all
   entries. Durable Entries are **modality-neutral** — a diary body captured by typing or by voice is the same
   kind of Entry, distinguished by facets, not by store.
-- Owned (personal) entry types — `note` and `diary_entry` — carry a shared **`personal_entries` facet** holding
-  ownership + chronology: `owner`, `occurred_at`, `created_at`, `updated_at`. Shared library entries
+- Owned (personal) entry types — `note`, `diary_entry`, and `recitation_plan` — carry a shared
+  **`personal_entries` facet** holding ownership + chronology: `owner`, `occurred_at`, `created_at`,
+  `updated_at`. Shared library entries
   (`work`, `reading_unit`, `block`, `toc_entry`) have **no** `personal_entries` row and no owner. The Timeline
   is a logical query over `personal_entries` by `occurred_at`; there is **no** physical `timeline_entry` store.
 - A diary artifact is a `diary_entry` whose durable body is a **ProseMirror/Tiptap document** edited through the
@@ -721,6 +722,41 @@ null and falls to the floor, never erroring the enroll.
 engine only speaks when you walk into Practice and recall has no surface at all. The Today home **supersedes**
 the earlier "quiet Library-landing pointer" — that pointer becomes a Today card. Each arm stays capped and
 calm: one restrained front door, never a metrics dashboard, streaks, or gamification.
+
+**Continue recitation (a fourth, optional card).** When the learner has adopted at least one Work as a
+recitation routine (see "v0 recitation routines"), Today shows a single **Continue recitation** card with the
+Work title and current phase; opening it resumes the saved reading position in the calm reader. Only while
+_familiarizing_ does the card also offer an explicit **Start reciting**. With no adopted routine the slot is a
+quiet line, and a failure is a quiet inline note — it never blanks Today.
+
+## v0 recitation routines
+
+Some Works are meant to be **recited**, not just read once — a poem, a classical essay, a passage held for its
+rhythm and beauty. A learner can **adopt** any Work in their Library (imported or authored) as a **recitation
+routine** and return to it daily, moving from calm familiarization into active recitation **on their own
+schedule**.
+
+- **Adopt = a personal Entry, not a copy.** `Practise recitation` on an eligible Work creates a
+  `recitation_plan` Entry linked to the source Work via a work reference. The source content stays
+  **canonical** — nothing is copied into a second store, and the recitation surface never edits the Work's
+  text (editing stays in the Work editor). A Work is adopted **at most once per learner**.
+- **Three learner-controlled phases.** `familiarizing` is calm daily reading for rhythm and beauty with no
+  pressure to memorize; `learning` is active recitation the learner explicitly starts; `maintenance` is upkeep
+  of a work already recited. The learner **chooses the initial phase** at adoption, so an already-recited work
+  such as 《洛神赋》 can begin in maintenance while a new work such as 《出师表》 begins in familiarization.
+- **Explicit transitions only.** Moving between phases (e.g. **Start reciting**, familiarizing → learning) is
+  always a deliberate learner action. Whetstone **never** infers readiness, requires a test, or auto-advances
+  after N days.
+- **Lightweight routine state, off the learning engine.** A reading session records only `last_session_at` and
+  a `session_count` on the plan row. These are **not Entries**, do **not** feed FSRS, and create **no** Timeline
+  rows. The saved **reading position** (resume point) is reused from the existing reader position store, not
+  duplicated on the plan.
+- **On the Timeline as a durable Entry.** The adopted plan itself is a personal Entry, so it appears in the
+  logical Timeline (with the Work title and phase) like any other owned Entry; the per-session state does not.
+- **Calm by construction.** A missed day carries **no** streak loss, backlog, warning, or moralized copy.
+  10–15 minutes is guidance, not a timer or enforcement. Non-goals: passage segmentation, hiding/fading, FSRS
+  grading, speech recognition, pronunciation scoring, LLM judgement, a recording requirement, or a whole-work
+  test.
 
 ## Future direction protected by v0
 

@@ -1,12 +1,14 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { motion, type Variants } from "framer-motion";
 
-import type { AuthorDto, CreateWorkRequest, WorkListItemDto } from "@whetstone/contracts";
+import type { AuthorDto, CreateWorkRequest, RecitationPlanDto, WorkListItemDto } from "@whetstone/contracts";
 import {
+  recitationPhases,
   toAuthorId,
   workLanguageLabels,
   workLanguages,
   workTypes,
+  type RecitationPhase,
   type WorkLanguage,
   type WorkType
 } from "@whetstone/domain";
@@ -30,6 +32,8 @@ import {
 } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
+import { createRecitationPlan, listRecitationPlans } from "../recitation/recitationApi";
+import { recitationPhaseHints, recitationPhaseLabels } from "../recitation/recitationLabels";
 
 const newAuthorOption = "new-author-or-source";
 
@@ -78,6 +82,17 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // Which works are user-authored documents (vs imported sources), so the shelf can badge them and route
   // them to the editor instead of the reader — one library, no separate silo (#576).
   const [authoredWorkIds, setAuthoredWorkIds] = useState<ReadonlySet<string>>(new Set());
+  // The learner's recitation plans keyed by source Work, so a card shows "Reciting · <phase>" for a Work
+  // already adopted and offers "Practise recitation" otherwise (#577) — a Work is never adopted twice.
+  const [recitationByWork, setRecitationByWork] = useState<ReadonlyMap<string, RecitationPlanDto>>(
+    new Map()
+  );
+  // The Work being adopted as a recitation routine (opens the initial-phase picker), the chosen phase, and
+  // the in-flight/error state of the adopt submission.
+  const [reciteTarget, setReciteTarget] = useState<WorkListItemDto | undefined>(undefined);
+  const [recitePhase, setRecitePhase] = useState<RecitationPhase>("familiarizing");
+  const [reciteSubmitting, setReciteSubmitting] = useState(false);
+  const [reciteError, setReciteError] = useState<string | undefined>(undefined);
 
   const [addOpen, setAddOpen] = useState(false);
   const [newDocOpen, setNewDocOpen] = useState(false);
@@ -105,16 +120,18 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const toast = useToast();
 
   async function reload(): Promise<void> {
-    const [authorList, workList, withPosition, authored] = await Promise.all([
+    const [authorList, workList, withPosition, authored, recitation] = await Promise.all([
       fetchAuthors(),
       fetchWorks(),
       fetchWorksWithReadingPosition(),
-      listAuthoredWorks()
+      listAuthoredWorks(),
+      listRecitationPlans()
     ]);
     setAuthors(authorList.authors);
     setWorks(workList.works);
     setWorksWithPosition(withPosition);
     setAuthoredWorkIds(new Set(authored.works.map((work) => work.entryId)));
+    setRecitationByWork(new Map(recitation.plans.map((plan) => [plan.workEntryId, plan])));
   }
 
   useEffect(() => {
@@ -194,6 +211,34 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   function onSheetDismiss(): void {
     setPendingUpload(undefined);
     setAddOpen(false);
+  }
+
+  // "Practise recitation" opens the initial-phase picker for a Work (#577): the learner chooses where to
+  // begin — familiarizing for a new work, or maintenance for one they already recite — before adopting.
+  function openRecitePicker(item: WorkListItemDto): void {
+    setReciteTarget(item);
+    setRecitePhase("familiarizing");
+    setReciteError(undefined);
+  }
+
+  async function onSubmitRecite(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (reciteTarget === undefined) {
+      return;
+    }
+
+    setReciteSubmitting(true);
+    try {
+      await createRecitationPlan({ phase: recitePhase, workEntryId: reciteTarget.work.entryId });
+      const adoptedTitle = reciteTarget.work.title;
+      setReciteTarget(undefined);
+      await reload();
+      toast.success(`Added “${adoptedTitle}” to your recitation routines.`);
+    } catch {
+      setReciteError("Could not start this recitation routine. Please try again.");
+    } finally {
+      setReciteSubmitting(false);
+    }
   }
 
   async function onSubmitWork(event: FormEvent): Promise<void> {
@@ -422,6 +467,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             listVariants,
             onDelete: setPendingDelete,
             onManageContent,
+            onPractiseRecitation: openRecitePicker,
+            recitationByWork,
             worksWithPosition
           })
         : null}
@@ -594,6 +641,43 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
           </div>
         </Sheet>
       ) : null}
+
+      {reciteTarget !== undefined ? (
+        <Sheet onOpenChange={() => setReciteTarget(undefined)} open title="Practise recitation">
+          <form className="flex flex-col gap-3" onSubmit={(event) => void onSubmitRecite(event)}>
+            <p className="text-sm text-text-muted">
+              Add <span className="font-semibold text-text">“{reciteTarget.work.title}”</span> to
+              your recitation routines.
+            </p>
+
+            <label className="flex flex-col gap-1" htmlFor="recite-phase">
+              Starting phase
+              <select
+                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                id="recite-phase"
+                onChange={(event) => setRecitePhase(event.currentTarget.value as RecitationPhase)}
+                value={recitePhase}
+              >
+                {recitationPhases.map((phase) => (
+                  <option key={phase} value={phase}>
+                    {recitationPhaseLabels[phase]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="text-sm text-text-muted">{recitationPhaseHints[recitePhase]}</p>
+
+            <Button pending={reciteSubmitting} type="submit">
+              Add to routines
+            </Button>
+            {reciteError !== undefined ? (
+              <p className="text-danger" role="alert">
+                {reciteError}
+              </p>
+            ) : null}
+          </form>
+        </Sheet>
+      ) : null}
     </main>
   );
 }
@@ -604,6 +688,8 @@ type RenderLibraryOptions = Readonly<{
   listVariants: Variants;
   onDelete: (item: WorkListItemDto) => void;
   onManageContent: (workEntryId: string) => void;
+  onPractiseRecitation: (item: WorkListItemDto) => void;
+  recitationByWork: ReadonlyMap<string, RecitationPlanDto>;
   worksWithPosition: ReadonlySet<string>;
 }>;
 
@@ -648,6 +734,32 @@ function renderLibrary(
 // ~20px tall. inline-flex centers the label in the padded, min-sized box; the accent styling is unchanged.
 const cardActionClass =
   "inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-accent hover:text-accent-hover";
+
+// A Work already adopted for recitation shows a quiet, non-actionable status ("Reciting · <phase>"); an
+// un-adopted Work offers "Practise recitation" to open the initial-phase picker (#577).
+function renderRecitationAction(
+  item: WorkListItemDto,
+  options: RenderLibraryOptions
+): React.JSX.Element {
+  const plan = options.recitationByWork.get(item.work.entryId);
+  if (plan !== undefined) {
+    return (
+      <span className="inline-flex min-h-11 items-center px-2 text-sm text-text-muted">
+        Reciting · {recitationPhaseLabels[plan.phase]}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      className={cardActionClass}
+      onClick={() => options.onPractiseRecitation(item)}
+      type="button"
+    >
+      Practise recitation
+    </button>
+  );
+}
 
 function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): React.JSX.Element {
   const workEntryId = item.work.entryId;
@@ -700,6 +812,7 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
         <a className={cardActionClass} href={`#/notes?work=${encodeURIComponent(workEntryId)}`}>
           Notes
         </a>
+        {renderRecitationAction(item, options)}
         {authored ? null : (
           <a
             className={cardActionClass}

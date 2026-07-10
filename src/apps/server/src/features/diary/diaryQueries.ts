@@ -4,7 +4,7 @@ import { type DocumentNodeJSON } from "@whetstone/document";
 import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { diaryEntries, notes, personalEntries, workMeta } from "../../db/schema.js";
+import { diaryEntries, notes, personalEntries, recitationPlans, workMeta } from "../../db/schema.js";
 
 // The Diary reads the logical Timeline (#571): a chronological view derived by querying the current
 // user's personal Entries — never a stored Timeline object. A diary read scopes every join to
@@ -60,6 +60,22 @@ async function loadPersonalTimelineEntries(
     .innerJoin(personalEntries, eq(personalEntries.entryId, workMeta.entryId))
     .where(eq(personalEntries.userId, userId));
 
+  // A recitation plan is a personal Entry too (#577): it draws chronology from the same `personal_entries`
+  // facet and carries the source Work's title, so the learner's adopted routine surfaces on the Timeline.
+  // Its per-session routine state is deliberately NOT joined — a reading session is not a Timeline row.
+  const recitationRows = await db
+    .select({
+      entryId: recitationPlans.entryId,
+      occurredAt: personalEntries.occurredAt,
+      phase: recitationPlans.phase,
+      title: workMeta.title,
+      workEntryId: recitationPlans.workEntryId
+    })
+    .from(recitationPlans)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
+    .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
+    .where(eq(personalEntries.userId, userId));
+
   const diaryTimeline: ReadonlyArray<TimelineEntryDto> = diaryRows.map((row) => ({
     bodyDoc: row.bodyDoc as DocumentNodeJSON,
     bodyText: row.bodyText,
@@ -81,8 +97,16 @@ async function loadPersonalTimelineEntries(
     title: row.title,
     workEntryId: row.entryId
   }));
+  const recitationTimeline: ReadonlyArray<TimelineEntryDto> = recitationRows.map((row) => ({
+    entryId: row.entryId,
+    kind: "recitation",
+    occurredAt: row.occurredAt.toISOString(),
+    phase: row.phase,
+    title: row.title,
+    workEntryId: row.workEntryId
+  }));
 
-  return [...diaryTimeline, ...noteTimeline, ...workTimeline];
+  return [...diaryTimeline, ...noteTimeline, ...workTimeline, ...recitationTimeline];
 }
 
 // One lazy-loaded Timeline page: the `limitDays` most recent days (strictly before `before`, when given),
