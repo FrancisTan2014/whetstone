@@ -1,3 +1,7 @@
+DELETE FROM "recall_reviews";
+--> statement-breakpoint
+DELETE FROM "recall_items";
+--> statement-breakpoint
 ALTER TABLE "recall_items" ADD COLUMN "stability" double precision NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "recall_items" ADD COLUMN "difficulty" double precision NOT NULL;
