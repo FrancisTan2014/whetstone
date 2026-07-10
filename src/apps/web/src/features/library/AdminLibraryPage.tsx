@@ -226,16 +226,13 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setReciteError(undefined);
   }
 
-  async function onSubmitRecite(event: FormEvent): Promise<void> {
+  async function onSubmitRecite(event: FormEvent, target: WorkListItemDto): Promise<void> {
     event.preventDefault();
-    if (reciteTarget === undefined) {
-      return;
-    }
 
     setReciteSubmitting(true);
     try {
-      await createRecitationPlan({ phase: recitePhase, workEntryId: reciteTarget.work.entryId });
-      const adoptedTitle = reciteTarget.work.title;
+      await createRecitationPlan({ phase: recitePhase, workEntryId: target.work.entryId });
+      const adoptedTitle = target.work.title;
       setReciteTarget(undefined);
       await reload();
       toast.success(`Added “${adoptedTitle}” to your recitation routines.`);
@@ -649,7 +646,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
       {reciteTarget !== undefined ? (
         <Sheet onOpenChange={() => setReciteTarget(undefined)} open title="Practise recitation">
-          <form className="flex flex-col gap-3" onSubmit={(event) => void onSubmitRecite(event)}>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => void onSubmitRecite(event, reciteTarget)}
+          >
             <p className="text-sm text-text-muted">
               Add <span className="font-semibold text-text">“{reciteTarget.work.title}”</span> to
               your recitation routines.

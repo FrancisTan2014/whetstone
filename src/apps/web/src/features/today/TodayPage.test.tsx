@@ -521,6 +521,23 @@ describe("TodayPage", () => {
     expect(mockedRecitationSession).toHaveBeenCalledWith("plan-1");
   });
 
+  it("still opens the reader when recording the recitation session fails, best-effort", async () => {
+    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
+    mockedRecitationSession.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Continue recitation" });
+    const link = within(card).getByRole("link", { name: "Continue" });
+    fireEvent.click(link);
+
+    await waitFor(() => {
+      expect(mockedRecitationSession).toHaveBeenCalledWith("plan-1");
+    });
+    // The failed record never blanks the card or blocks the reader deep-link.
+    expect(link.getAttribute("href")).toBe("#/reader?work=work-1");
+    expect(within(card).getByText("腾王阁序")).toBeDefined();
+  });
+
   it("offers Start reciting only while familiarizing, transitioning the plan into learning", async () => {
     mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
     mockedStartReciting.mockResolvedValue(makeRecitationPlan({ phase: "learning" }));
