@@ -122,6 +122,14 @@ export type {
   PromptEditReviewAction,
   PromptLifecycle
 } from "./memory.js";
+export {
+  mergeNotebookDrafts,
+  notebookSeparators,
+  parseNotebookList,
+  splitNotebookDraftContext,
+  undoNotebookSplit
+} from "./notebookImport.js";
+export type { NotebookSeparator, ParsedNotebookDraft } from "./notebookImport.js";
 export { blockFromMdastNode, decomposeMarkdown, mdastReadableText } from "./markdownBlocks.js";
 export type {
   DecomposedBlock,
