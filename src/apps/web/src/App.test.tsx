@@ -37,21 +37,21 @@ afterEach(() => {
 });
 
 describe("App shell and routes", () => {
-  it("shows exactly the five primary destinations in the nav (#390)", () => {
+  it("shows exactly the four primary destinations in the nav (#573)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
     const labels = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(labels).toEqual(["Today", "Library", "Practice", "Map", "Search"]);
+    expect(labels).toEqual(["Today", "Library", "Memory", "Search"]);
   });
 
-  it("keeps Reader, Recall, Notes, Diary, and Progress out of the primary nav (#390)", () => {
+  it("keeps Reader, Recall, Notes, Diary, Progress, and Practice out of the primary nav (#573)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
-    for (const secondary of ["Reader", "Recall", "Notes", "Diary", "Progress"]) {
+    for (const secondary of ["Reader", "Recall", "Notes", "Diary", "Progress", "Practice", "Map"]) {
       expect(within(nav).queryByRole("link", { name: secondary })).toBeNull();
     }
   });
@@ -112,6 +112,13 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain("Practise now");
     expect(markup).not.toContain('id="today-heading"');
     expect(markup).not.toContain("Capture today");
+  });
+
+  it("resolves the memory route to the Memory surface", () => {
+    const markup = renderAt("/memory");
+
+    expect(markup).toContain('aria-label="Primary"');
+    expect(markup).toContain('id="memory-heading"');
   });
 
   it("resolves the recall route to the due-recall page (still reachable off-nav)", () => {
