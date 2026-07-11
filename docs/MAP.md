@@ -117,28 +117,33 @@ can navigate them from another package.
   `request.server.currentUser` and source ownership + chronology from the shared `personal_entries` facet
   (a `note` Entry gets a `personal_entries` row on create — `user_id`/`occurred_at`/`created_at`/`updated_at`;
   reads filter by `personal_entries.user_id`) rather than a `user_id`/`created_at` on `notes` itself
-  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; `recall_items`
-  - `recall_reviews` (the recall store, below) and `nudge_state` (the reading→practice nudge cooldown,
-    below) are user-owned the same way; shared
+  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; the Memory notes
+  - (via the shared `personal_entries` facet, below) and `nudge_state` (the reading→practice nudge
+    cooldown, below) are user-owned the same way; shared
     content tables stay unowned.
-- Recall store: `src/features/recall/` (`recallCommands.ts` enroll/recordReview, `recallQueries.ts`
-  listDue/list/search/get + ReviewState<->row mapping) over `recall_items` (FSRS review state inline +
-  optional `provenance_entry_id` into the content graph, and an optional `chunk_id` link to a practice
-  chunk (#205)) and `recall_reviews` (append-only history).
-  Pure scheduling is `@whetstone/domain` FSRS (v6, via `ts-fsrs`, in `fsrs.ts`); DTOs/validation in `@whetstone/contracts`
-  (`recallContracts.ts`). The web Recall surface is served by `recallRoutes.ts` (current-user scoped,
-  Zod-validated): `GET /api/recall/due` (today's due batch, capped at `DAILY_RECALL_CAP` = 20 so a backlog
-  never becomes a wall), `POST /api/recall/items/:id/review` (`{ rating }` → FSRS advance + a `recall_reviews`
-  row; 404 otherwise), `POST /api/recall/items/:id/snooze` (the `snoozeRecallItem` command defers only
-  `due_at` one day — not a rating; 404 otherwise); wired in `index.ts`.
+- Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
+  recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
+  <->row mapping) over Entry-backed rows: a `memory_notes` note (a first-class owned Entry — ownership +
+  chronology in the shared `personal_entries` facet; provenance to its source is a `derived_from`
+  `entry_links` row, not a column) and one-or-more `memory_prompts` (each a child Entry linked by
+  `contains`; `cue`/`answer` docs + text, a `lifecycle` of `draft` — captured but no revealable answer, so
+  no card — or `scheduled` with inline FSRS columns + an optional `chunk_id` link to a practice chunk
+  (#205)), with `memory_prompt_reviews` as the append-only history. A prompt is `scheduled` (and appears in
+  the due queue) iff it has BOTH a non-blank cue AND answer; the offline dictionary may SUGGEST an answer
+  but never blocks the write. Pure scheduling is `@whetstone/domain` FSRS (v6, via `ts-fsrs`, in `fsrs.ts`);
+  DTOs/validation in `@whetstone/contracts` (`memoryContracts.ts`). The web Recall surface is served by
+  `memoryRoutes.ts` (`registerMemoryReviewRoutes`, current-user scoped, Zod-validated): `GET /api/recall/due`
+  (today's due scheduled prompts, capped at `DAILY_RECALL_CAP` = 20 so a backlog never becomes a wall),
+  `POST /api/recall/prompts/:id/review` (`{ rating }` → FSRS advance + a `memory_prompt_reviews` row; 404
+  otherwise), `POST /api/recall/prompts/:id/snooze` (the `snoozePrompt` command defers only `due_at` one day
+  — not a rating; 404 otherwise); wired in `http/createServer.ts` (the `recall` dependency option).
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
   `makeDurable.ts`) is gone; a diary capture **journals only** and never gates or slows on a proposal. The
   diary write path (`diaryCommands.ts`/`voiceCaptureCommands.ts`/`voiceCaptureWorker.ts`), the derived
   Timeline query (`diaryQueries.ts` over `personal_entries` + `diary_entries` + `notes`), and the web
-  `CaptureCard`/`DiaryPage` are described in the "Diary" bullets below. `recall_items` keeps its nullable
-  `provenance_entry_id` and legacy proposal-era columns (unused now, left for a clean schema).
+  `CaptureCard`/`DiaryPage` are described in the "Diary" bullets below.
 - Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
   cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
   `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's
@@ -201,7 +206,7 @@ can navigate them from another package.
 - Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
   `caseQueries.ts` `listDomains`/`listCasesInDomain`/`getCaseDetail`) over shared `domains` -> `cases`
   -> `chunks`. The case detail returns the chunk inventory plus a per-user mastery summary COMPUTED
-  (never stored) from the user's `recall_items.chunk_id` links via `@whetstone/domain`
+  (never stored) from the user's `memory_prompts.chunk_id` links via `@whetstone/domain`
   `summarizeCaseMastery`. Corpus + mastery logic are pure in `@whetstone/domain`
   (`caseCorpus.ts`/`caseMastery.ts`); DTOs in `@whetstone/contracts` (`caseContracts.ts`).
 - Case authoring (#209): `src/features/authoring/` — `authoringCommands.ts` (`authorCase` calls the coach
@@ -211,11 +216,12 @@ can navigate them from another package.
   (`active` default; authored start `needs_review`) and a unique `brief_key`; the practice ranking in
   `features/learner` only loads `active` cases, so unreviewed authored content is never practised.
   Shapes in `@whetstone/contracts` (`caseContracts.ts`).
-- Recall MCP server: `src/apps/server/src/mcp/` exposes the recall store to any MCP client (a local/cloud LLM coach) —
-  `recallTools.ts` (the recall-op tools + `deposit_recall_item` (#458): a deliberate production-style
-  Recall deposit — target/cue/useContext/category + optional tags/gloss/provenance — that reuses
-  `enrollRecallItem`/FSRS seeding directly (no proposal/review gate), and never accepts the
-  integrity-bearing `sourceProposalCandidateId`/`chunkId`; all validate via contracts; `createRecallMcpServer`)
+- Memory MCP server: `src/apps/server/src/mcp/` exposes the Memory store to any MCP client (a local/cloud LLM coach) —
+  `recallTools.ts` (the Memory-op tools: `deposit_memory` (#458/#595): a production-style deposit of a
+  memory note + one-or-more prompts — captureSource/noteText/prompts (each cue + optional answer/gloss/
+  provenance) — that reuses the `depositMemory` command directly (no proposal/review gate) and never
+  accepts an integrity-bearing chunk link; plus `list_due_prompts`/`record_review`/`search_memory`/
+  `get_memory_prompt`; all validate via contracts; `createRecallMcpServer`)
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
 - Shared LLM seam: `src/llm/` — the one model-agnostic prompt→text boundary every server LLM caller
@@ -824,15 +830,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `/api/diary/*` endpoints (`submitDiaryCapture` → `DiaryEntryDto`, `updateDiaryEntry(id, bodyDoc)`) and
   parses every response through `diaryContracts`. The "Mine my history" action and all Make Durable /
   proposal card UI are gone.
-  `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** items (already capped
+  `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** prompts (already capped
   server-side) as gentle, snoozeable proposals — each card is a **two-phase flip** (#525): phase 1
-  shows a retrieval prompt (front) + **Show answer** + Snooze and **no** grades; after reveal it shows
-  the back and the four self-rating controls (Again/Hard/Good/Easy → the FSRS `rating` posted to the review route).
-  Front/back precedence is derived deterministically in `recallCardFaces.ts` (cue → front=cue,
-  back=text+gloss+useContext; else front=text, back=gloss+useContext; answerless items reveal a
-  self-check hint, still gradeable). Grading or snoozing advances past the item, with explicit
-  loading/error/empty ("all caught up") states. The reader stays calm — recall lives only here.
-  `recallApi.ts` calls `/api/recall/*` and parses via `recallContracts`.
+  shows the prompt's `cueText` (front) + **Show answer** + Snooze and **no** grades; after reveal it shows
+  the `answerText` (back) and the four self-rating controls (Again/Hard/Good/Easy → the FSRS `rating` posted
+  to the review route). A due prompt always carries a real answer (a scheduled Memory prompt requires both
+  cue and answer, #595), so there is no answerless self-check face. Grading or snoozing advances past the
+  prompt, with explicit loading/error/empty ("all caught up") states. The reader stays calm — recall lives
+  only here. `recallApi.ts` calls `/api/recall/*` (`MemoryPromptCardDto`) and parses via `memoryContracts`.
   `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
   finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
   already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,
