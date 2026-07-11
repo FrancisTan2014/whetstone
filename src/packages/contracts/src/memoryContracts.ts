@@ -114,6 +114,14 @@ export const memoryDepositDtoSchema = z
 
 export type MemoryDepositDto = z.infer<typeof memoryDepositDtoSchema>;
 
+// The result of importing a batch (#574): every note that was created, in the pasted order, each with its
+// prompts. The learner's review UI can confirm exactly what landed in Memory.
+export const importMemoryResultDtoSchema = z
+  .object({ imported: z.array(memoryDepositDtoSchema) })
+  .strict();
+
+export type ImportMemoryResultDto = z.infer<typeof importMemoryResultDtoSchema>;
+
 // The full detail of one Memory note (#573): the note plus every prompt hanging off it (draft or
 // scheduled), for the Memory detail/edit surface. Structurally the same as a deposit result, but named
 // for its read semantics.
@@ -201,6 +209,19 @@ export const depositMemoryRequestSchema = z
 
 export type DepositMemoryRequest = z.infer<typeof depositMemoryRequestSchema>;
 
+// Import a batch of pasted notebook drafts (#574) as Memory notes in one atomic write. Each item is a
+// full deposit request, so an answerless term arrives as a note with a single cue-only prompt (an
+// unscheduled draft) and a term with an answer arrives with a cue/answer prompt. The server writes the
+// whole batch in one transaction: either every item is saved or none is, so a failed import never leaves
+// a partial or duplicated batch behind.
+export const importMemoryRequestSchema = z
+  .object({
+    items: z.array(depositMemoryRequestSchema).min(1, { message: "at least one item is required." })
+  })
+  .strict();
+
+export type ImportMemoryRequest = z.infer<typeof importMemoryRequestSchema>;
+
 // Record a review: the learner's (or an LLM's) four-button FSRS rating. The prompt, user, and time are
 // resolved by the server, not part of the body.
 export const recordMemoryReviewRequestSchema = z.object({ rating: ratingSchema }).strict();
@@ -235,6 +256,14 @@ export type GetMemoryPromptToolInput = z.infer<typeof getMemoryPromptToolInputSc
 
 export function parseDepositMemoryRequest(value: unknown): DepositMemoryRequest {
   return depositMemoryRequestSchema.parse(value);
+}
+
+export function parseImportMemoryRequest(value: unknown): ImportMemoryRequest {
+  return importMemoryRequestSchema.parse(value);
+}
+
+export function parseImportMemoryResultDto(value: unknown): ImportMemoryResultDto {
+  return importMemoryResultDtoSchema.parse(value);
 }
 
 export function parseRecordMemoryReviewRequest(value: unknown): RecordMemoryReviewRequest {
