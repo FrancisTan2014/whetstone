@@ -1,11 +1,13 @@
 import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
 import { groupTimelineEntriesByDay, toDayKey } from "@whetstone/domain";
 import { type DocumentNodeJSON } from "@whetstone/document";
-import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
   diaryEntries,
+  memoryNotes,
+  memoryPrompts,
   notes,
   personalEntries,
   recitationPlans,
@@ -82,6 +84,32 @@ async function loadPersonalTimelineEntries(
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
     .where(eq(personalEntries.userId, userId));
 
+  // A Memory note is a personal Entry too (#573): it draws chronology from the same `personal_entries`
+  // facet, so it appears ONCE on the Timeline. Its prompts, autosaves, and reviews are deliberately NOT
+  // joined — they are not Timeline rows; only the note is, carrying its fragment and a prompt count.
+  const memoryNoteRows = await db
+    .select({
+      bodyText: memoryNotes.bodyText,
+      captureSource: memoryNotes.captureSource,
+      entryId: memoryNotes.entryId,
+      occurredAt: personalEntries.occurredAt
+    })
+    .from(memoryNotes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
+    .where(eq(personalEntries.userId, userId));
+  const memoryNoteIds = memoryNoteRows.map((row) => row.entryId);
+  const promptCounts =
+    memoryNoteIds.length === 0
+      ? []
+      : await db
+          .select({ noteEntryId: memoryPrompts.noteEntryId, total: count() })
+          .from(memoryPrompts)
+          .where(inArray(memoryPrompts.noteEntryId, memoryNoteIds))
+          .groupBy(memoryPrompts.noteEntryId);
+  const promptCountByNote = new Map(
+    promptCounts.map((row) => [row.noteEntryId, Number(row.total)])
+  );
+
   const diaryTimeline: ReadonlyArray<TimelineEntryDto> = diaryRows.map((row) => ({
     bodyDoc: row.bodyDoc as DocumentNodeJSON,
     bodyText: row.bodyText,
@@ -111,8 +139,22 @@ async function loadPersonalTimelineEntries(
     title: row.title,
     workEntryId: row.workEntryId
   }));
+  const memoryTimeline: ReadonlyArray<TimelineEntryDto> = memoryNoteRows.map((row) => ({
+    bodyText: row.bodyText,
+    captureSource: row.captureSource,
+    entryId: row.entryId,
+    kind: "memory_note",
+    occurredAt: row.occurredAt.toISOString(),
+    promptCount: promptCountByNote.get(row.entryId) ?? 0
+  }));
 
-  return [...diaryTimeline, ...noteTimeline, ...workTimeline, ...recitationTimeline];
+  return [
+    ...diaryTimeline,
+    ...noteTimeline,
+    ...workTimeline,
+    ...recitationTimeline,
+    ...memoryTimeline
+  ];
 }
 
 // One lazy-loaded Timeline page: the `limitDays` most recent days (strictly before `before`, when given),

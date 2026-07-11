@@ -1,8 +1,16 @@
-import type { DepositMemoryRequest, MemoryDepositDto, MemoryPromptDto } from "@whetstone/contracts";
+import type {
+  AddMemoryPromptRequest,
+  DepositMemoryRequest,
+  EditMemoryPromptRequest,
+  MemoryDepositDto,
+  MemoryNoteDetailDto,
+  MemoryPromptDto
+} from "@whetstone/contracts";
 import {
   applyRating,
   buildMemoryPrompt,
   newReviewState,
+  reconcilePromptEdit,
   toEntryId,
   type CaptureSource,
   type EntryId,
@@ -10,7 +18,7 @@ import {
   type ReviewState
 } from "@whetstone/domain";
 import { createTextDocument } from "@whetstone/document";
-import { eq } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -22,6 +30,8 @@ import {
   personalEntries
 } from "../../db/schema.js";
 import {
+  getMemoryNoteDetail,
+  getMemoryNoteRowForUser,
   getPromptRowForUser,
   getScheduledPromptByChunkForUser,
   promptReviewColumns,
@@ -55,6 +65,22 @@ export type SnoozePromptResult =
   | Readonly<{ prompt: MemoryPromptDto; status: "snoozed" }>
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "not_scheduled" }>;
+
+// Editing a note's body or adding a direction returns the refreshed detail; a missing/non-owned note is
+// `not_found`. Editing a single prompt returns the updated prompt DTO.
+export type EditMemoryNoteResult =
+  | Readonly<{ detail: MemoryNoteDetailDto; status: "updated" }>
+  | Readonly<{ status: "not_found" }>;
+
+export type EditMemoryPromptResult =
+  | Readonly<{ prompt: MemoryPromptDto; status: "updated" }>
+  | Readonly<{ status: "not_found" }>;
+
+export type AddMemoryPromptResult =
+  | Readonly<{ detail: MemoryNoteDetailDto; status: "added" }>
+  | Readonly<{ status: "not_found" }>;
+
+export type DeleteMemoryNoteResult = Readonly<{ status: "deleted" }> | Readonly<{ status: "not_found" }>;
 
 // How far a snooze defers a prompt: one day, so it leaves today's batch and reappears tomorrow.
 const SNOOZE_DEFER_DAYS = 1;
@@ -398,4 +424,178 @@ export async function snoozePrompt(
   await db.update(memoryPrompts).set({ dueAt }).where(eq(memoryPrompts.entryId, promptId));
 
   return { prompt: toMemoryPromptDto({ ...existing, dueAt }), status: "snoozed" };
+}
+
+// The FSRS card columns nulled out — a draft carries no card. Used when an edit reverts a prompt to a
+// draft (`clear`): the card state is dropped, but the append-only review LOG is deliberately untouched.
+const nullReviewColumns = {
+  stability: null,
+  difficulty: null,
+  elapsedDays: null,
+  scheduledDays: null,
+  learningSteps: null,
+  reps: null,
+  lapses: null,
+  state: null,
+  lastReviewedAt: null,
+  dueAt: null
+} as const;
+
+// Edit a memory note's durable body (#573): rewrite its rich doc + readable projection and bump the
+// shared personal-entry `updatedAt`, atomically. The capture source (structured provenance) is never
+// rewritten. A missing or non-owned note is `not_found`. Prompts are untouched, so no review history is
+// affected.
+export async function editMemoryNote(
+  dependencies: MemoryDependencies,
+  noteId: string,
+  userId: string,
+  noteText: string,
+  now: Date
+): Promise<EditMemoryNoteResult> {
+  const existing = await getMemoryNoteRowForUser(dependencies.db, userId, noteId);
+  if (existing === undefined) {
+    return { status: "not_found" };
+  }
+  await dependencies.db.transaction(async (tx) => {
+    await tx
+      .update(memoryNotes)
+      .set({ bodyDoc: createTextDocument(noteText), bodyText: noteText })
+      .where(eq(memoryNotes.entryId, noteId));
+    await tx
+      .update(personalEntries)
+      .set({ updatedAt: now })
+      .where(eq(personalEntries.entryId, noteId));
+  });
+  const detail = await getMemoryNoteDetail(dependencies.db, userId, noteId);
+  // The note exists and is owned (just re-read under the same user scope), so detail is always present.
+  return { detail: detail as MemoryNoteDetailDto, status: "updated" };
+}
+
+// Edit one prompt's cue/answer (#573), reconciling the edit with its schedule via the pure domain rule so
+// editing content never silently resets review history: a prompt that stays schedulable keeps its card
+// (FSRS columns untouched); a draft that becomes schedulable seeds a fresh card; a prompt that loses its
+// revealable answer reverts to a draft and drops its card. The append-only review LOG is never deleted.
+export async function editMemoryPrompt(
+  dependencies: MemoryDependencies,
+  promptId: string,
+  userId: string,
+  request: EditMemoryPromptRequest,
+  now: Date
+): Promise<EditMemoryPromptResult> {
+  const existing = await getPromptRowForUser(dependencies.db, promptId, userId);
+  if (existing === undefined) {
+    return { status: "not_found" };
+  }
+  const answerText = request.answerText ?? null;
+  const outcome = reconcilePromptEdit(existing.lifecycle, request.cueText, answerText);
+  const base = {
+    cueDoc: createTextDocument(request.cueText),
+    cueText: request.cueText,
+    answerDoc: answerText === null ? null : createTextDocument(answerText),
+    answerText,
+    lifecycle: outcome.lifecycle
+  };
+  const columns =
+    outcome.reviewAction === "keep"
+      ? base
+      : outcome.reviewAction === "seed"
+        ? { ...base, ...promptReviewColumns(newReviewState(now)) }
+        : { ...base, ...nullReviewColumns };
+
+  await dependencies.db
+    .update(memoryPrompts)
+    .set(columns)
+    .where(eq(memoryPrompts.entryId, promptId));
+
+  const updated = await getPromptRowForUser(dependencies.db, promptId, userId);
+  return { prompt: toMemoryPromptDto(updated as MemoryPromptRow), status: "updated" };
+}
+
+// Add one additional retrieval direction to an existing note (#573): resolve its answer (an offline gloss
+// suggestion when only a bare term is given), persist the prompt Entry + row + `contains` link, and bump
+// the note's `updatedAt` — atomically. A missing or non-owned note is `not_found`. The new prompt is
+// scheduled iff it has a meaningful cue and a revealable answer, else saved as a draft.
+export async function addPromptToNote(
+  dependencies: MemoryDependencies,
+  noteId: string,
+  userId: string,
+  request: AddMemoryPromptRequest,
+  now: Date
+): Promise<AddMemoryPromptResult> {
+  const note = await getMemoryNoteRowForUser(dependencies.db, userId, noteId);
+  if (note === undefined) {
+    return { status: "not_found" };
+  }
+  const answerText = await resolveAnswer(dependencies, request);
+  const promptRow = buildPromptRow(
+    {
+      id: toEntryId(dependencies.createId()),
+      cueText: request.cueText,
+      answerText,
+      chunkId: request.chunkId ?? null
+    },
+    toEntryId(noteId),
+    now
+  );
+  await dependencies.db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: promptRow.entryId, type: "memory_prompt" });
+    await tx.insert(memoryPrompts).values(promptRow);
+    await tx.insert(entryLinks).values({
+      fromEntryId: noteId,
+      toEntryId: promptRow.entryId,
+      type: "contains"
+    });
+    await tx
+      .update(personalEntries)
+      .set({ updatedAt: now })
+      .where(eq(personalEntries.entryId, noteId));
+  });
+  const detail = await getMemoryNoteDetail(dependencies.db, userId, noteId);
+  return { detail: detail as MemoryNoteDetailDto, status: "added" };
+}
+
+// Delete a memory note and everything under it (#573), atomically and FK-safe (children first): every
+// prompt's review-log rows, then the note/prompt `entry_links`, then the prompt rows, then the prompt
+// Entries, then the note row, its personal-entry facet, and finally the note Entry. A missing or
+// non-owned note is `not_found` — one user can never delete another's note.
+export async function deleteMemoryNote(
+  dependencies: MemoryDependencies,
+  noteId: string,
+  userId: string
+): Promise<DeleteMemoryNoteResult> {
+  const note = await getMemoryNoteRowForUser(dependencies.db, userId, noteId);
+  if (note === undefined) {
+    return { status: "not_found" };
+  }
+  const promptRows = await dependencies.db
+    .select({ entryId: memoryPrompts.entryId })
+    .from(memoryPrompts)
+    .where(eq(memoryPrompts.noteEntryId, noteId));
+  const promptIds = promptRows.map((row) => row.entryId);
+  const linkEntryIds = [noteId, ...promptIds];
+
+  await dependencies.db.transaction(async (tx) => {
+    if (promptIds.length > 0) {
+      await tx
+        .delete(memoryPromptReviews)
+        .where(inArray(memoryPromptReviews.promptEntryId, promptIds));
+    }
+    await tx
+      .delete(entryLinks)
+      .where(
+        or(
+          inArray(entryLinks.fromEntryId, linkEntryIds),
+          inArray(entryLinks.toEntryId, linkEntryIds)
+        )
+      );
+    await tx.delete(memoryPrompts).where(eq(memoryPrompts.noteEntryId, noteId));
+    if (promptIds.length > 0) {
+      await tx.delete(entries).where(inArray(entries.id, promptIds));
+    }
+    await tx.delete(memoryNotes).where(eq(memoryNotes.entryId, noteId));
+    await tx.delete(personalEntries).where(eq(personalEntries.entryId, noteId));
+    await tx.delete(entries).where(eq(entries.id, noteId));
+  });
+
+  return { status: "deleted" };
 }
