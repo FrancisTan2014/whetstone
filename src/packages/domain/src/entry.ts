@@ -19,7 +19,17 @@ export const entryTypes = [
   // owned Entry — it carries a `personal_entries` facet (so it appears on the logical Timeline and is
   // owner-scoped) and references the source Work, whose content stays canonical (never copied). Its
   // lightweight per-session routine state lives on the `recitation_plans` facet, NOT as Entries.
-  "recitation_plan"
+  "recitation_plan",
+  // `memory_note` (#595): a Memory note is a first-class owned Entry — the durable retention target. It
+  // carries a `personal_entries` facet (so it appears once on the logical Timeline and is owner-scoped),
+  // a canonical rich document body, and a structured capture source. Provenance is a `derived_from`
+  // Entry link to the source it came from.
+  "memory_note",
+  // `memory_prompt` (#595): a Memory prompt is a child Entry owning one independently scheduled retrieval
+  // direction (rich cue + answer, lifecycle, and the FSRS card only when scheduled). It is linked from
+  // its note with `contains`, inherits ownership transitively through that note, and NEVER carries a
+  // `personal_entries` row — so it never surfaces a second Timeline row.
+  "memory_prompt"
 ] as const;
 
 export type EntryType = (typeof entryTypes)[number];
