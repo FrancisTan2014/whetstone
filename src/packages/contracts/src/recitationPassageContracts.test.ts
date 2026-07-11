@@ -119,11 +119,22 @@ describe("dueRecitationPassageResponseSchema", () => {
 });
 
 describe("parseRecordRecitationReviewRequest", () => {
-  it("accepts a rating and cue strength", () => {
+  it("accepts a rating and cue strength, defaulting the lead-in to ungraded", () => {
     expect(parseRecordRecitationReviewRequest({ cueStrength: "opening", rating: "good" })).toEqual({
       cueStrength: "opening",
+      leadInFailed: false,
       rating: "good"
     });
+  });
+
+  it("accepts an explicit failed lead-in", () => {
+    expect(
+      parseRecordRecitationReviewRequest({
+        cueStrength: "opening",
+        leadInFailed: true,
+        rating: "good"
+      })
+    ).toEqual({ cueStrength: "opening", leadInFailed: true, rating: "good" });
   });
 
   it("rejects an unknown rating", () => {

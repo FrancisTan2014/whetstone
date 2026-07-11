@@ -122,10 +122,14 @@ export type SetRecitationSupportLevelResponse = z.infer<
 
 // Record a self-assessment: the rating that updates the FSRS schedule and the cue strength the learner
 // attempted from (metadata only). Revealing without rating never sends this, so the schedule is
-// unchanged. The passage is named in the route path; the user and time are server-resolved.
+// unchanged. `leadInFailed` marks that the optional ungraded predecessor lead-in (#580) broke down, so
+// the immediately preceding passage also receives an Again; it defaults false, leaving the lead-in
+// ungraded and only the due target rated. The passage is named in the route path; user and time are
+// server-resolved.
 export const recordRecitationReviewRequestSchema = z
   .object({
     cueStrength: recitationCueStrengthDtoSchema,
+    leadInFailed: z.boolean().default(false),
     rating: recitationReviewRatingSchema
   })
   .strict();
