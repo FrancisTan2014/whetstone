@@ -111,3 +111,33 @@ export function memoryPromptFaces(prompt: MemoryPrompt): MemoryPromptFaces | nul
   }
   return Object.freeze({ front: prompt.cueText, back: prompt.answerText });
 }
+
+// What an edit does to a prompt's FSRS card, kept separate from the card data so the pure decision stays
+// clock-free and the caller applies it: `keep` preserves the existing card (content changed but the
+// prompt stays scheduled — its review history and schedule must NOT reset), `seed` starts a fresh card
+// (a draft became schedulable for the first time), `clear` drops the card (the prompt reverted to a
+// draft). The append-only review LOG is never implicated — only the prompt's current card state is.
+export type PromptEditReviewAction = "keep" | "seed" | "clear";
+
+export type PromptEditOutcome = Readonly<{
+  lifecycle: PromptLifecycle;
+  reviewAction: PromptEditReviewAction;
+}>;
+
+// Reconcile an edit to a prompt's cue/answer with its schedule, enforcing "editing content never
+// silently resets review history": a prompt that stays schedulable keeps its card (`keep`); a draft that
+// becomes schedulable seeds one (`seed`); a prompt that is no longer schedulable becomes a draft and
+// drops its card (`clear`). The decision depends only on the current lifecycle and the new cue/answer.
+export function reconcilePromptEdit(
+  currentLifecycle: PromptLifecycle,
+  newCueText: string,
+  newAnswerText: string | null
+): PromptEditOutcome {
+  if (isSchedulablePrompt(newCueText, newAnswerText)) {
+    return {
+      lifecycle: "scheduled",
+      reviewAction: currentLifecycle === "scheduled" ? "keep" : "seed"
+    };
+  }
+  return { lifecycle: "draft", reviewAction: "clear" };
+}
