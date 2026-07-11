@@ -12,7 +12,6 @@ import type {
   EndSessionRequest
 } from "@whetstone/contracts";
 import {
-  applyRating,
   deriveCoachKnobs,
   englishShare,
   mistakeCategoryFromIssues,
@@ -26,11 +25,12 @@ import { cases, chunks, sessionExchanges } from "../../db/schema.js";
 import { depositTurnOutcome, updateLearnerProfile } from "../learner/learnerCommands.js";
 import { compileContext } from "../learner/learnerQueries.js";
 import { harvestReadingCase } from "./harvestCommands.js";
-import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
 import {
-  getRecallItemByChunkForUser,
-  getRecallItemByTextForUser
-} from "../recall/recallQueries.js";
+  depositPushedPhrase,
+  reviewChunkMemory,
+  type MemoryDependencies
+} from "../memory/memoryCommands.js";
+import { getPromptByCueTextForUser } from "../memory/memoryQueries.js";
 import type { SpeechInput } from "../../speech/speechInput.js";
 
 // How many cues a session proposes, and the soft per-cue timer (mild time pressure).
@@ -78,9 +78,9 @@ export type SessionDependencies = Readonly<{
   // Persist a recorded audio upload and return a path the speech seam can read.
   saveAudio: (audio: Buffer) => Promise<string>;
   speech: SpeechInput;
-  // Offline gloss autofill (#526): threaded into the recall enroll deps below so a coach-pushed English
-  // target (enrolled as a bare `phrase`) still gets a back from the bundled dictionaries. Optional;
-  // absent means no autofill.
+  // Offline gloss autofill (#526): threaded into the memory deposit deps below so a coach-pushed English
+  // target (a pushed phrase cued by itself) still gets a suggested answer from the bundled dictionaries.
+  // Optional; absent (or no gloss found) means the pushed phrase is saved as an unscheduled draft.
   resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
 
@@ -163,7 +163,7 @@ export async function startSession(
 }
 
 // Run one turn: transcribe the production (STT seam, or the typed fallback), judge + grade it (#206),
-// and DEPOSIT the attempt — schedule the chunk's recall item (#188/#189, enrolling it on first
+// and DEPOSIT the attempt — schedule the chunk's Memory prompt (#188/#189/#595, depositing it on first
 // practice) and record the turn outcome with its mistake category (#208). Returns the compact feedback.
 export async function submitTurn(
   dependencies: SessionDependencies,
@@ -197,31 +197,25 @@ export async function submitTurn(
   const outcomeGrade = outcomeGradeForCategory(judgement.category);
   const errorCategory = mistakeCategoryFromIssues(judgement.issues);
 
-  // This deposit only ever enrolls `chunk` items, which are never dictionary-glossable, so it needs no
-  // offline glosser (unlike the pushed-target phrase enroll below, #526).
-  const recallDeps = { createId: dependencies.createId, db: dependencies.db };
-  const existing = await getRecallItemByChunkForUser(dependencies.db, userId, request.chunkId);
-  const item =
-    existing ??
-    (await enrollRecallItem(
-      recallDeps,
-      {
-        chunkId: request.chunkId,
-        kind: "chunk",
-        ...(row.sourceBlockEntryId === null ? {} : { provenanceEntryId: row.sourceBlockEntryId }),
-        text: row.target
-      },
+  // Deposit the attempt as a Memory: the situation cues the target chunk (always schedulable), deduped by
+  // chunk so repeated practice keeps one prompt. Chunk prompts are never dictionary-glossable, so no
+  // offline glosser is wired here (unlike the pushed-phrase deposit below, #526). The returned due is the
+  // pure FSRS advance for this rating, matching the persisted card (#572).
+  const memoryDeps: MemoryDependencies = { createId: dependencies.createId, db: dependencies.db };
+  const { nextDueAt } = await reviewChunkMemory(
+    memoryDeps,
+    {
       userId,
-      now
-    ));
-
-  // The recall item's next-due date is the pure FSRS advance for this rating (deterministic even under
-  // seeded fuzz, so it matches what recordRecallReview persists). recordRecallReview does the durable
-  // write + history row (#572).
-  const nextDueAt = applyRating(item.review, rating, now).due;
-  await recordRecallReview(recallDeps, item.id, rating, userId, now);
+      chunkId: request.chunkId,
+      situation: row.situation,
+      target: row.target,
+      sourceBlockEntryId: row.sourceBlockEntryId
+    },
+    rating,
+    now
+  );
   await depositTurnOutcome(
-    recallDeps,
+    memoryDeps,
     { chunkId: request.chunkId, errorCategory, grade: outcomeGrade },
     userId,
     now
@@ -232,7 +226,7 @@ export async function submitTurn(
       errorCategory,
       grade: outcomeGrade,
       judgement,
-      nextDueAt,
+      nextDueAt: nextDueAt.toISOString(),
       target: row.target,
       transcript
     },
@@ -372,44 +366,36 @@ export async function endSession(
     targetChunks.map((chunk) => [chunk.chunkId, chunk.sourceBlockEntryId])
   );
 
-  // Deposit 1: each chunk rating schedules its recall item (enrolling on first practice), which advances
-  // case mastery and the map.
+  // Deposit 1: each chunk rating deposits (on first practice) and reviews its Memory prompt — the case
+  // situation cues the target (always schedulable) — which advances case mastery and the map.
   const due: DebriefDueDto[] = [];
   for (const chunkGrade of analysis.chunkGrades) {
     const { chunkId } = chunkGrade;
     // Only chunks that were part of this round can be deposited (their text + FK exist); a rating for any
-    // other chunk is ignored rather than enrolling a dangling recall item.
+    // other chunk is ignored rather than depositing a dangling prompt.
     const text = textByChunkId.get(chunkId);
     if (text === undefined) {
       continue;
     }
-    const sourceBlock = blockByChunkId.get(chunkId);
-    const rating = chunkGrade.rating;
-    const existing = await getRecallItemByChunkForUser(dependencies.db, userId, chunkId);
-    const item =
-      existing ??
-      (await enrollRecallItem(
-        learnerDeps,
-        {
-          chunkId,
-          kind: "chunk",
-          ...(sourceBlock ? { provenanceEntryId: sourceBlock } : {}),
-          text
-        },
+    const { nextDueAt } = await reviewChunkMemory(
+      learnerDeps,
+      {
         userId,
-        now
-      ));
-    // Pure FSRS advance for the due (deterministic under seeded fuzz, matches the persisted state);
-    // recordRecallReview does the durable write + history row.
-    const dueAt = applyRating(item.review, rating, now).due;
-    await recordRecallReview(learnerDeps, item.id, rating, userId, now);
-    due.push({ dueAt, text });
+        chunkId,
+        situation: caseRow.situation,
+        target: text,
+        sourceBlockEntryId: blockByChunkId.get(chunkId) ?? null
+      },
+      chunkGrade.rating,
+      now
+    );
+    due.push({ dueAt: nextDueAt.toISOString(), text });
   }
 
-  // Deposit 1b: the bilingual coach's pushed English targets (#270). A mostly-L1 turn earns one
-  // English chunk to retry; deposit it as recall practice so it is scheduled, not just shown/spoken.
-  // It has no case-chunk FK (the coach generated it), so enroll it as an LLM-supplied phrase, deduped
-  // by text within the round and across rounds so repeated pushes keep one item.
+  // Deposit 1b: the bilingual coach's pushed English targets (#270/#595). A mostly-L1 turn earns one
+  // English phrase to retry; deposit it as a Memory prompt cued by itself, with an offline-gloss answer
+  // suggestion. Deduped by cue text within the round and across rounds so repeated pushes keep one
+  // prompt. With no gloss the prompt is an unscheduled draft, so it is not surfaced as due.
   const pushedTargets = await dependencies.db
     .select({ englishTarget: sessionExchanges.englishTarget })
     .from(sessionExchanges)
@@ -422,17 +408,14 @@ export async function endSession(
       continue;
     }
     seenTargets.add(target);
-    const existing = await getRecallItemByTextForUser(dependencies.db, userId, target);
+    const existing = await getPromptByCueTextForUser(dependencies.db, userId, target);
     if (existing !== undefined) {
       continue;
     }
-    const item = await enrollRecallItem(
-      learnerDeps,
-      { chunkId: null, kind: "phrase", text: target },
-      userId,
-      now
-    );
-    due.push({ dueAt: item.review.due, text: target });
+    const prompt = await depositPushedPhrase(learnerDeps, { userId, target }, now);
+    if (prompt.review !== null) {
+      due.push({ dueAt: prompt.review.due, text: target });
+    }
   }
 
   // Deposit 2: each tagged mistake increments its error-pattern count and logs an outcome.

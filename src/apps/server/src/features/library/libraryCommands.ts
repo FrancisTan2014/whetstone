@@ -21,7 +21,6 @@ import {
   personalEntries,
   readingPositions,
   readingUnits,
-  recallItems,
   recitationPassages,
   recitationPlans,
   recitationReviews,
@@ -201,15 +200,10 @@ export async function deleteWork(
               .where(inArray(noteAnchors.blockEntryId, blockIds))
           ).map((row) => row.id);
 
-    // Preserve recall/learner data: null the provenance link instead of deleting the item; keep any
-    // harvested chunk but detach its source block. Both columns are nullable by design.
-    const provenanceIds = [...blockIds, ...noteIds];
-    if (provenanceIds.length > 0) {
-      await tx
-        .update(recallItems)
-        .set({ provenanceEntryId: null })
-        .where(inArray(recallItems.provenanceEntryId, provenanceIds));
-    }
+    // A Memory note derived from one of the work's blocks/notes keeps its `derived_from` provenance link;
+    // that link's target is among `ownedEntryIds`, so the bulk `entry_links` delete below detaches it,
+    // preserving the owned Memory while dropping the dangling provenance. Only chunks need explicit
+    // detaching (their FK column is nullable by design).
     if (blockIds.length > 0) {
       await tx
         .update(chunks)

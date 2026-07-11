@@ -6,7 +6,7 @@ import {
   documentText,
   type DocumentNodeJSON
 } from "@whetstone/document";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -18,7 +18,6 @@ import {
   noteAnchors,
   personalEntries,
   readingUnits,
-  recallItems,
   workMeta
 } from "../../db/schema.js";
 
@@ -252,10 +251,17 @@ export async function updateAuthoredWorkContent(
       const deletableIds = removedIds.filter((id) => !notedIds.has(id));
 
       if (deletableIds.length > 0) {
+        // A Memory note derived from a now-removed block keeps its `derived_from` provenance link pointing
+        // at that block Entry; delete those links so the block Entry can be removed while the owned Memory
+        // survives (detached). Chunks harvested from the block are detached, not deleted.
         await tx
-          .update(recallItems)
-          .set({ provenanceEntryId: null })
-          .where(inArray(recallItems.provenanceEntryId, deletableIds));
+          .delete(entryLinks)
+          .where(
+            or(
+              inArray(entryLinks.fromEntryId, deletableIds),
+              inArray(entryLinks.toEntryId, deletableIds)
+            )
+          );
         await tx
           .update(chunks)
           .set({ sourceBlockEntryId: null })

@@ -5,34 +5,13 @@ import type {
   ProgressMapDto,
   ProgressSignalsDto
 } from "@whetstone/contracts";
-import { caseLightLevel, summarizeCaseMastery, type ReviewState } from "@whetstone/domain";
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { caseLightLevel, summarizeCaseMastery } from "@whetstone/domain";
+import { asc, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { cases, chunks, domains, recallItems } from "../../db/schema.js";
-import { rowToReviewState } from "../recall/recallQueries.js";
+import { cases, chunks, domains } from "../../db/schema.js";
+import { allChunkReviewStates } from "../memory/memoryQueries.js";
 import { compileContext } from "../learner/learnerQueries.js";
-
-// Group the user's recall review states by the chunk each item is linked to (their own items only).
-async function reviewStatesByChunkId(
-  db: DbClient,
-  userId: string
-): Promise<Map<string, ReviewState[]>> {
-  const rows = await db
-    .select()
-    .from(recallItems)
-    .where(and(eq(recallItems.userId, userId), isNotNull(recallItems.chunkId)));
-
-  const byChunk = new Map<string, ReviewState[]>();
-  for (const row of rows) {
-    const chunkId = row.chunkId as string;
-    const states = byChunk.get(chunkId) ?? [];
-    states.push(rowToReviewState(row));
-    byChunk.set(chunkId, states);
-  }
-
-  return byChunk;
-}
 
 function describeProgress(owned: number, weak: number, total: number): string {
   if (total === 0) {
@@ -68,7 +47,7 @@ export async function compileProgressMap(
     .where(eq(cases.status, "active"))
     .orderBy(asc(chunks.orderIndex), asc(chunks.id));
 
-  const statesByChunkId = await reviewStatesByChunkId(db, userId);
+  const statesByChunkId = await allChunkReviewStates(db, userId);
 
   const chunkIdsByCase = new Map<string, string[]>();
   for (const row of chunkRows) {

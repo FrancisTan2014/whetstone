@@ -1,10 +1,10 @@
 import type { CaseDetailDto, CaseDto, ChunkDto, DomainDto } from "@whetstone/contracts";
-import { summarizeCaseMastery, type ReviewState } from "@whetstone/domain";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { summarizeCaseMastery } from "@whetstone/domain";
+import { asc, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { cases, chunks, domains, recallItems } from "../../db/schema.js";
-import { rowToReviewState } from "../recall/recallQueries.js";
+import { cases, chunks, domains } from "../../db/schema.js";
+import { reviewStatesByChunkIds } from "../memory/memoryQueries.js";
 
 type DomainRow = typeof domains.$inferSelect;
 type CaseRow = typeof cases.$inferSelect;
@@ -54,38 +54,9 @@ export async function listCasesInDomain(
   return rows.map(toCaseDto);
 }
 
-// Group a user's review states by the chunk each item is linked to, so mastery can be derived per
-// chunk. Only the user's own items are loaded, so one user's progress never leaks into another's.
-async function reviewStatesByChunkId(
-  db: DbClient,
-  userId: string,
-  chunkIds: ReadonlyArray<string>
-): Promise<Map<string, ReviewState[]>> {
-  const byChunk = new Map<string, ReviewState[]>();
-  if (chunkIds.length === 0) {
-    return byChunk;
-  }
-
-  const rows = await db
-    .select()
-    .from(recallItems)
-    .where(and(eq(recallItems.userId, userId), inArray(recallItems.chunkId, chunkIds)));
-
-  for (const row of rows) {
-    // `chunkId` is non-null here: the `inArray` filter only matches rows whose chunk_id is one of
-    // the requested ids.
-    const chunkId = row.chunkId as string;
-    const states = byChunk.get(chunkId) ?? [];
-    states.push(rowToReviewState(row));
-    byChunk.set(chunkId, states);
-  }
-
-  return byChunk;
-}
-
 // A case's full chunk inventory plus the current user's per-case mastery summary, computed (never
-// stored) from the user's recall items linked to the case's chunks. Returns undefined for an unknown
-// case so the caller can answer 404.
+// stored) from the user's scheduled Memory prompts linked to the case's chunks. Returns undefined for
+// an unknown case so the caller can answer 404.
 export async function getCaseDetail(
   db: DbClient,
   caseId: string,
@@ -105,7 +76,7 @@ export async function getCaseDetail(
     .orderBy(asc(chunks.orderIndex), asc(chunks.id));
 
   const chunkIds = chunkRows.map((row) => row.id);
-  const statesByChunkId = await reviewStatesByChunkId(db, userId, chunkIds);
+  const statesByChunkId = await reviewStatesByChunkIds(db, userId, chunkIds);
   const summary = summarizeCaseMastery(chunkIds, statesByChunkId, now);
 
   return {

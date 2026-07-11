@@ -16,19 +16,19 @@ import { createOfflineGloss } from "../lookup/offlineGloss.js";
 import { createWordNetProvider, type WordPosLike } from "../lookup/wordnetProvider.js";
 import { createRecallMcpServer } from "./recallTools.js";
 
-// Stdio entry point for the whetstone recall MCP server (#190). An MCP client (any local or cloud
+// Stdio entry point for the whetstone memory MCP server (#190/#595). An MCP client (any local or cloud
 // LLM coach) spawns this over stdio. It shares the same PGlite store as the HTTP server — point
-// DATABASE_DIR at the same folder so the coach and the reader see the same recall set. Wiring only;
+// DATABASE_DIR at the same folder so the coach and the reader see the same Memory set. Wiring only;
 // all tool behavior lives in (and is tested through) recallTools.ts.
 const config = readServerConfig();
 const pglite = new PGlite(config.databaseDir);
 await runMigrations(pglite);
 const db = createDbClient(pglite);
 
-// Offline gloss autofill (#526): this process enrolls word/phrase items via save_recall_item /
-// deposit_recall_item, so it must guarantee a back too. Compose the same offline glosser the HTTP
+// Offline gloss autofill (#526): this process deposits Memory prompts via deposit_memory, so a
+// pushed English target can still get a suggested answer. Compose the same offline glosser the HTTP
 // server uses — WordNet (English) + CC-CEDICT (Chinese), chosen by script — from the bundled data
-// (the build copies src/lookup/data into dist/lookup/data). Offline-only: no network at enroll.
+// (the build copies src/lookup/data into dist/lookup/data). Offline-only: no network at deposit.
 const wordNetLookup = createWordNetEntryLookup(
   createWordNetProvider(new WordPOS() as unknown as WordPosLike)
 );
@@ -45,7 +45,7 @@ const server = createRecallMcpServer({
   currentUser: createDefaultCurrentUserProvider(),
   dueLimit: 20,
   now: () => new Date(),
-  recall: { createId: () => randomUUID(), db, resolveOfflineGloss }
+  memory: { createId: () => randomUUID(), db, resolveOfflineGloss }
 });
 
 await server.connect(new StdioServerTransport());
