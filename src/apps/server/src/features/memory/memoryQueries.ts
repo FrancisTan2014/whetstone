@@ -14,10 +14,12 @@ import { entryLinks, memoryNotes, memoryPrompts, personalEntries } from "../../d
 export type MemoryNoteRow = typeof memoryNotes.$inferSelect;
 export type MemoryPromptRow = typeof memoryPrompts.$inferSelect;
 
-// A scheduled prompt carries a full inlined FSRS card (all columns non-null); a draft carries none.
-// This narrows the row to the scheduled shape so the review-state reconstruction is a total function.
+// A scheduled prompt carries a full inlined FSRS card (all columns non-null) and a revealable answer; a
+// draft carries neither. This narrows the row to the scheduled shape so the review-state reconstruction
+// and the card projection are total functions.
 type ScheduledPromptRow = MemoryPromptRow &
   Readonly<{
+    answerText: string;
     stability: number;
     difficulty: number;
     elapsedDays: number;
@@ -29,21 +31,13 @@ type ScheduledPromptRow = MemoryPromptRow &
     dueAt: Date;
   }>;
 
-// True when every FSRS column a scheduled prompt requires is present. A `scheduled` lifecycle always
-// implies this by construction (the store never writes a scheduled prompt without a card).
+// True for a card-bearing (scheduled) prompt. The store writes a full FSRS card together with the
+// `scheduled` lifecycle and never one without the other, so the lifecycle discriminant alone identifies
+// the card-bearing shape — the same construction invariant `scheduledPromptReviewState` relies on. This
+// keeps the guard a single, always-meaningful check (no structurally-unreachable null probes on columns
+// that a scheduled row can never actually be missing).
 function isScheduledRow(row: MemoryPromptRow): row is ScheduledPromptRow {
-  return (
-    row.lifecycle === "scheduled" &&
-    row.stability !== null &&
-    row.difficulty !== null &&
-    row.elapsedDays !== null &&
-    row.scheduledDays !== null &&
-    row.learningSteps !== null &&
-    row.reps !== null &&
-    row.lapses !== null &&
-    row.state !== null &&
-    row.dueAt !== null
-  );
+  return row.lifecycle === "scheduled";
 }
 
 // Reconstruct the domain ReviewState from a scheduled prompt row (timestamps -> ISO; null last-reviewed
@@ -124,8 +118,9 @@ export function toMemoryPromptCardDto(row: ScheduledPromptRow): MemoryPromptCard
     promptId: row.entryId,
     noteId: row.noteEntryId,
     cueText: row.cueText,
-    // A scheduled prompt always has a non-null answer (the store enforces it), so the projection is safe.
-    answerText: row.answerText ?? "",
+    // A scheduled prompt always carries a non-null answer (the scheduled invariant), reflected in the
+    // narrowed row type, so the projection needs no fallback.
+    answerText: row.answerText,
     chunkId: row.chunkId,
     review: promptReviewState(row)
   };
@@ -290,12 +285,12 @@ async function chunkReviewStates(
 
   const byChunk = new Map<string, ReviewState[]>();
   for (const { prompt } of rows) {
-    if (!isScheduledRow(prompt) || prompt.chunkId === null) {
-      continue;
-    }
-    const states = byChunk.get(prompt.chunkId) ?? [];
-    states.push(promptReviewState(prompt));
-    byChunk.set(prompt.chunkId, states);
+    // The query restricts to scheduled prompts with a non-null chunk, so both are guaranteed here (the
+    // same invariant `scheduledPromptReviewState` trusts); group each chunk's review states together.
+    const chunkId = prompt.chunkId as string;
+    const states = byChunk.get(chunkId) ?? [];
+    states.push(scheduledPromptReviewState(prompt));
+    byChunk.set(chunkId, states);
   }
   return byChunk;
 }
