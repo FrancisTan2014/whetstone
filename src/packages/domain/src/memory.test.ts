@@ -10,6 +10,7 @@ import {
   memoryPromptFaces,
   memoryPromptOwner,
   promptLifecycles,
+  reconcilePromptEdit,
   resolvePromptLifecycle,
   type MemoryNote,
   type MemoryPrompt
@@ -183,5 +184,46 @@ describe("memoryPromptFaces", () => {
       review: seed()
     };
     expect(memoryPromptFaces(manual)).toBeNull();
+  });
+});
+
+describe("reconcilePromptEdit", () => {
+  it("keeps the existing card when a scheduled prompt stays schedulable (never resets history)", () => {
+    expect(reconcilePromptEdit("scheduled", "new cue", "new answer")).toEqual({
+      lifecycle: "scheduled",
+      reviewAction: "keep"
+    });
+  });
+
+  it("seeds a fresh card when a draft becomes schedulable for the first time", () => {
+    expect(reconcilePromptEdit("draft", "cue", "an answer")).toEqual({
+      lifecycle: "scheduled",
+      reviewAction: "seed"
+    });
+  });
+
+  it("clears the card when a scheduled prompt loses its revealable answer (reverts to draft)", () => {
+    expect(reconcilePromptEdit("scheduled", "cue", null)).toEqual({
+      lifecycle: "draft",
+      reviewAction: "clear"
+    });
+    expect(reconcilePromptEdit("scheduled", "cue", "   ")).toEqual({
+      lifecycle: "draft",
+      reviewAction: "clear"
+    });
+  });
+
+  it("leaves an unschedulable draft a draft", () => {
+    expect(reconcilePromptEdit("draft", "cue", null)).toEqual({
+      lifecycle: "draft",
+      reviewAction: "clear"
+    });
+  });
+
+  it("treats a blanked cue as unschedulable even with an answer", () => {
+    expect(reconcilePromptEdit("scheduled", "   ", "answer")).toEqual({
+      lifecycle: "draft",
+      reviewAction: "clear"
+    });
   });
 });

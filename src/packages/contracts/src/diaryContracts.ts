@@ -3,6 +3,7 @@ import { isDayKey, timelineEntryKinds } from "@whetstone/domain";
 import { z } from "zod";
 
 import { captureInputModeSchema, captureLanguageSchema } from "./captureContracts.js";
+import { captureSourceSchema } from "./memoryContracts.js";
 import { recitationPhaseDtoSchema } from "./recitationContracts.js";
 
 // Shared, Zod-validated shapes for the rich Diary Entry and the logical Timeline (#571). A diary artifact
@@ -134,11 +135,29 @@ export const timelineRecitationEntryDtoSchema = z
 
 export type TimelineRecitationEntryDto = z.infer<typeof timelineRecitationEntryDtoSchema>;
 
+// A Memory note in the logical Timeline (#573): the `memory_note` row IS a real `memory_note` Entry the
+// learner captured, carrying its readable body fragment, capture source, and how many retrieval prompts
+// hang off it — so it appears ONCE via the shared personal-entry chronology. Its prompts, autosaves, and
+// reviews are deliberately absent here; only the note is a Timeline row.
+export const timelineMemoryNoteEntryDtoSchema = z
+  .object({
+    bodyText: z.string(),
+    captureSource: captureSourceSchema,
+    entryId: z.string(),
+    kind: z.literal("memory_note"),
+    occurredAt: z.string(),
+    promptCount: z.number().int().nonnegative()
+  })
+  .strict();
+
+export type TimelineMemoryNoteEntryDto = z.infer<typeof timelineMemoryNoteEntryDtoSchema>;
+
 export const timelineEntryDtoSchema = z.discriminatedUnion("kind", [
   timelineDiaryEntryDtoSchema,
   timelineNoteEntryDtoSchema,
   timelineWorkEntryDtoSchema,
-  timelineRecitationEntryDtoSchema
+  timelineRecitationEntryDtoSchema,
+  timelineMemoryNoteEntryDtoSchema
 ]);
 
 export type TimelineEntryDto = z.infer<typeof timelineEntryDtoSchema>;

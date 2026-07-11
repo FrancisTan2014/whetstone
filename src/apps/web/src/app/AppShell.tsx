@@ -16,7 +16,7 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
     : `${base} text-text-muted hover:text-text`;
 }
 
-// The responsive app shell: one primary navigation (exactly five destinations, #390) rendered as a
+// The responsive app shell: one primary navigation (exactly four destinations, #573) rendered as a
 // left sidebar on desktop/tablet and a single-row bottom tab bar on mobile (a single nav landmark,
 // repositioned with utilities), plus the routed content region. Wrapped in SafeArea so it respects
 // dynamic viewport height and device safe-area insets.

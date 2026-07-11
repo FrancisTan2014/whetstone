@@ -5,8 +5,15 @@ import {
   getMemoryPromptToolInputSchema,
   listDuePromptsToolInputSchema,
   memoryPromptCardDtoSchema,
+  parseAddMemoryPromptRequest,
   parseDepositMemoryRequest,
+  parseEditMemoryNoteRequest,
+  parseEditMemoryPromptRequest,
   parseMemoryDepositDto,
+  parseMemoryGlossSuggestionDto,
+  parseMemoryNoteDetailDto,
+  parseMemoryNoteListDto,
+  parseMemoryNoteSummaryDto,
   parseMemoryPromptCardDto,
   parseMemoryPromptCardListDto,
   parseRecordMemoryReviewRequest,
@@ -180,5 +187,93 @@ describe("MCP tool inputs", () => {
     expect(searchMemoryToolInputSchema.parse({ query: "" }).query).toBe("");
     expect(getMemoryPromptToolInputSchema.parse({ promptId: "p1" }).promptId).toBe("p1");
     expect(() => getMemoryPromptToolInputSchema.parse({ promptId: "" })).toThrow();
+  });
+});
+
+describe("Memory note list/detail DTOs (#573)", () => {
+  const summary = {
+    noteId: "note-1",
+    captureSource: "manual",
+    bodyText: "遠慮 — to hold back",
+    promptCount: 3,
+    draftCount: 1,
+    scheduledCount: 2,
+    dueCount: 1,
+    nextDueAt: "2026-07-11T00:00:00.000Z"
+  } as const;
+
+  it("parses a note summary and rejects a negative count", () => {
+    expect(parseMemoryNoteSummaryDto(summary)).toEqual(summary);
+    expect(() => parseMemoryNoteSummaryDto({ ...summary, promptCount: -1 })).toThrow();
+  });
+
+  it("parses a summary with no scheduled prompt (nextDueAt null)", () => {
+    const draftOnly = {
+      ...summary,
+      scheduledCount: 0,
+      dueCount: 0,
+      draftCount: 3,
+      nextDueAt: null
+    };
+    expect(parseMemoryNoteSummaryDto(draftOnly).nextDueAt).toBeNull();
+  });
+
+  it("parses a note list", () => {
+    expect(parseMemoryNoteListDto({ items: [summary] }).items).toHaveLength(1);
+  });
+
+  it("parses a note detail (note + prompts)", () => {
+    const detail = parseMemoryNoteDetailDto({
+      note: {
+        noteId: "note-1",
+        captureSource: "manual",
+        bodyText: "body",
+        derivedFromEntryId: null
+      },
+      prompts: [
+        {
+          promptId: "p1",
+          noteId: "note-1",
+          lifecycle: "draft",
+          cueText: "cue",
+          answerText: null,
+          chunkId: null,
+          review: null
+        }
+      ]
+    });
+    expect(detail.prompts[0]?.lifecycle).toBe("draft");
+  });
+});
+
+describe("Memory CRUD requests + gloss suggestion (#573)", () => {
+  it("parses an edit-note request and rejects a blank body", () => {
+    expect(parseEditMemoryNoteRequest({ noteText: "new body" }).noteText).toBe("new body");
+    expect(() => parseEditMemoryNoteRequest({ noteText: "   " })).toThrow();
+  });
+
+  it("parses an edit-prompt request, allowing a null answer", () => {
+    expect(parseEditMemoryPromptRequest({ cueText: "cue", answerText: "ans" }).answerText).toBe(
+      "ans"
+    );
+    expect(
+      parseEditMemoryPromptRequest({ cueText: "cue", answerText: null }).answerText
+    ).toBeNull();
+    expect(() => parseEditMemoryPromptRequest({ cueText: " ", answerText: "ans" })).toThrow();
+  });
+
+  it("parses an add-prompt request (same shape as a deposit prompt)", () => {
+    const added = parseAddMemoryPromptRequest({ cueText: "cue", glossTerm: "遠慮" });
+    expect(added.cueText).toBe("cue");
+    expect(added.glossTerm).toBe("遠慮");
+  });
+
+  it("parses a gloss suggestion DTO with and without a suggestion", () => {
+    expect(
+      parseMemoryGlossSuggestionDto({ term: "遠慮", suggestion: "to hold back" }).suggestion
+    ).toBe("to hold back");
+    expect(
+      parseMemoryGlossSuggestionDto({ term: "xyzzy", suggestion: null }).suggestion
+    ).toBeNull();
   });
 });

@@ -1,6 +1,8 @@
 import type {
   MemoryDepositDto,
+  MemoryNoteDetailDto,
   MemoryNoteDto,
+  MemoryNoteSummaryDto,
   MemoryPromptCardDto,
   MemoryPromptDto
 } from "@whetstone/contracts";
@@ -8,7 +10,7 @@ import type { ReviewState } from "@whetstone/domain";
 import { and, asc, desc, eq, inArray, isNotNull, lte, or, ilike } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entryLinks, type memoryNotes, memoryPrompts, personalEntries } from "../../db/schema.js";
+import { entryLinks, memoryNotes, memoryPrompts, personalEntries } from "../../db/schema.js";
 
 // One persisted memory-note / memory-prompt row, as selected from its table.
 export type MemoryNoteRow = typeof memoryNotes.$inferSelect;
@@ -331,6 +333,168 @@ export async function noteProvenanceEntryId(
   return rows[0]?.toEntryId ?? null;
 }
 
+// One memory note scoped to its owner (the note's `personal_entries` user), used to authorize an
+// edit/detail/delete. Returns the raw note row, or undefined when it does not exist or is not owned.
+export async function getMemoryNoteRowForUser(
+  db: DbClient,
+  userId: string,
+  noteId: string
+): Promise<MemoryNoteRow | undefined> {
+  const rows = await db
+    .select({ note: memoryNotes })
+    .from(memoryNotes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
+    .where(and(eq(memoryNotes.entryId, noteId), eq(personalEntries.userId, userId)))
+    .limit(1);
+  return rows[0]?.note;
+}
+
+// Roll a note's prompts up into the jargon-free summary the Memory list/search row shows: total prompts,
+// how many are drafts vs scheduled, how many are due now, and the soonest next-due (null when the note
+// has no scheduled prompt). The counts read as "N prompts · draft/due state" without any storage jargon.
+function summarizeNote(
+  note: MemoryNoteRow,
+  prompts: ReadonlyArray<MemoryPromptRow>,
+  now: Date
+): MemoryNoteSummaryDto {
+  let draftCount = 0;
+  let scheduledCount = 0;
+  let dueCount = 0;
+  let nextDueAt: Date | null = null;
+  for (const prompt of prompts) {
+    if (prompt.lifecycle !== "scheduled" || prompt.dueAt === null) {
+      draftCount += 1;
+      continue;
+    }
+    scheduledCount += 1;
+    if (prompt.dueAt <= now) {
+      dueCount += 1;
+    }
+    if (nextDueAt === null || prompt.dueAt < nextDueAt) {
+      nextDueAt = prompt.dueAt;
+    }
+  }
+  return {
+    noteId: note.entryId,
+    captureSource: note.captureSource,
+    bodyText: note.bodyText,
+    promptCount: prompts.length,
+    draftCount,
+    scheduledCount,
+    dueCount,
+    nextDueAt: nextDueAt === null ? null : nextDueAt.toISOString()
+  };
+}
+
+// The owner's memory notes as summaries, newest first, restricted to `restrictNoteIds` when given (an
+// empty restriction yields no rows without a query). Notes and their prompts are loaded once each and
+// aggregated in memory, so the summary counts derive from a single consistent read.
+async function loadNoteSummaries(
+  db: DbClient,
+  userId: string,
+  restrictNoteIds: ReadonlyArray<string> | null,
+  now: Date
+): Promise<ReadonlyArray<MemoryNoteSummaryDto>> {
+  if (restrictNoteIds !== null && restrictNoteIds.length === 0) {
+    return [];
+  }
+  const ownerFilter = eq(personalEntries.userId, userId);
+  const where =
+    restrictNoteIds === null
+      ? ownerFilter
+      : and(ownerFilter, inArray(memoryNotes.entryId, [...restrictNoteIds]));
+  const noteRows = await db
+    .select({ note: memoryNotes, occurredAt: personalEntries.occurredAt })
+    .from(memoryNotes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
+    .where(where)
+    .orderBy(desc(personalEntries.occurredAt), asc(memoryNotes.entryId));
+  if (noteRows.length === 0) {
+    return [];
+  }
+  const noteIds = noteRows.map((row) => row.note.entryId);
+  const promptRows = await db
+    .select({ prompt: memoryPrompts })
+    .from(memoryPrompts)
+    .where(inArray(memoryPrompts.noteEntryId, noteIds));
+  const byNote = new Map<string, MemoryPromptRow[]>();
+  for (const { prompt } of promptRows) {
+    const bucket = byNote.get(prompt.noteEntryId) ?? [];
+    bucket.push(prompt);
+    byNote.set(prompt.noteEntryId, bucket);
+  }
+  return noteRows.map((row) => summarizeNote(row.note, byNote.get(row.note.entryId) ?? [], now));
+}
+
+// Every memory note the user owns, as list-row summaries (newest first) — learner-created notes AND
+// deposits from practice/tools alike, since all are the same first-class note Entry.
+export async function listMemoryNotes(
+  db: DbClient,
+  userId: string,
+  now: Date
+): Promise<ReadonlyArray<MemoryNoteSummaryDto>> {
+  return loadNoteSummaries(db, userId, null, now);
+}
+
+// The user's memory notes whose body OR any of whose prompt cue/answer text contains `query`
+// (case-insensitive), as summaries. Matching a prompt surfaces its owning note once — the search is
+// note-centric, so a note never appears twice because two of its prompts matched.
+export async function searchMemoryNotes(
+  db: DbClient,
+  userId: string,
+  query: string,
+  now: Date
+): Promise<ReadonlyArray<MemoryNoteSummaryDto>> {
+  const pattern = `%${escapeLike(query)}%`;
+  const bodyMatches = await db
+    .select({ entryId: memoryNotes.entryId })
+    .from(memoryNotes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
+    .where(and(eq(personalEntries.userId, userId), ilike(memoryNotes.bodyText, pattern)));
+  const promptMatches = await db
+    .select({ noteEntryId: memoryPrompts.noteEntryId })
+    .from(memoryPrompts)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryPrompts.noteEntryId))
+    .where(
+      and(
+        eq(personalEntries.userId, userId),
+        or(ilike(memoryPrompts.cueText, pattern), ilike(memoryPrompts.answerText, pattern))
+      )
+    );
+  const matchedIds = new Set<string>();
+  for (const row of bodyMatches) {
+    matchedIds.add(row.entryId);
+  }
+  for (const row of promptMatches) {
+    matchedIds.add(row.noteEntryId);
+  }
+  return loadNoteSummaries(db, userId, [...matchedIds], now);
+}
+
+// The full detail of one memory note the user owns: the note (with its provenance target) and every
+// prompt under it (draft or scheduled), oldest first. Undefined when the note does not exist or is not
+// owned by the user.
+export async function getMemoryNoteDetail(
+  db: DbClient,
+  userId: string,
+  noteId: string
+): Promise<MemoryNoteDetailDto | undefined> {
+  const noteRow = await getMemoryNoteRowForUser(db, userId, noteId);
+  if (noteRow === undefined) {
+    return undefined;
+  }
+  const derivedFromEntryId = await noteProvenanceEntryId(db, noteId);
+  const promptRows = await db
+    .select({ prompt: memoryPrompts })
+    .from(memoryPrompts)
+    .where(eq(memoryPrompts.noteEntryId, noteId))
+    .orderBy(asc(memoryPrompts.createdAt), asc(memoryPrompts.entryId));
+  return {
+    note: toMemoryNoteDto(noteRow, derivedFromEntryId),
+    prompts: promptRows.map((row) => toMemoryPromptDto(row.prompt))
+  };
+}
+
 // Assemble a full deposit DTO (the note plus every prompt under it) from persisted rows.
 export function toMemoryDepositDto(
   note: MemoryNoteRow,
@@ -343,4 +507,11 @@ export function toMemoryDepositDto(
   };
 }
 
-export type { MemoryDepositDto, MemoryNoteDto, MemoryPromptCardDto, MemoryPromptDto };
+export type {
+  MemoryDepositDto,
+  MemoryNoteDetailDto,
+  MemoryNoteDto,
+  MemoryNoteSummaryDto,
+  MemoryPromptCardDto,
+  MemoryPromptDto
+};

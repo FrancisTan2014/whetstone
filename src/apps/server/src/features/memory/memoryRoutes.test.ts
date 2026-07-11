@@ -2,7 +2,13 @@ import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { MemoryPromptCardDto, MemoryPromptDto } from "@whetstone/contracts";
+import type {
+  MemoryDepositDto,
+  MemoryNoteDetailDto,
+  MemoryNoteListDto,
+  MemoryPromptCardDto,
+  MemoryPromptDto
+} from "@whetstone/contracts";
 import { applyRating, newReviewState } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -197,5 +203,251 @@ describe("POST /api/recall/prompts/:id/snooze", () => {
     });
 
     expect(response.statusCode).toBe(404);
+  });
+});
+
+// Create a Memory over HTTP (owned by the injected DEFAULT_USER_ID) and return the deposit.
+async function createNote(body: unknown): Promise<MemoryDepositDto> {
+  const response = await context.server.inject({
+    method: "POST",
+    url: "/api/memory/notes",
+    payload: body
+  });
+  expect(response.statusCode).toBe(201);
+  return response.json() as MemoryDepositDto;
+}
+
+describe("POST /api/memory/notes", () => {
+  it("creates a Memory and rejects an invalid body", async () => {
+    const deposit = await createNote({
+      captureSource: "manual",
+      noteText: "遠慮 — to hold back",
+      prompts: [{ cueText: "when holding back", answerText: "遠慮" }, { cueText: "answerless" }]
+    });
+    expect(deposit.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(deposit.prompts[1]?.lifecycle).toBe("draft");
+
+    const invalid = await context.server.inject({
+      method: "POST",
+      url: "/api/memory/notes",
+      payload: { captureSource: "manual", noteText: "", prompts: [] }
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+});
+
+describe("GET /api/memory/notes", () => {
+  it("lists the user's notes as summaries and searches by body or prompt text", async () => {
+    const first = await createNote({
+      captureSource: "manual",
+      noteText: "photosynthesis note",
+      prompts: [{ cueText: "a plant process", answerText: "growth" }]
+    });
+    await createNote({
+      captureSource: "manual",
+      noteText: "unrelated apples",
+      prompts: [{ cueText: "fruit", answerText: "apple" }]
+    });
+
+    const listResponse = await context.server.inject({ method: "GET", url: "/api/memory/notes" });
+    expect(listResponse.statusCode).toBe(200);
+    expect((listResponse.json() as MemoryNoteListDto).items).toHaveLength(2);
+
+    const searchResponse = await context.server.inject({
+      method: "GET",
+      url: "/api/memory/notes?q=photosynthesis"
+    });
+    const searched = (searchResponse.json() as MemoryNoteListDto).items;
+    expect(searched).toHaveLength(1);
+    expect(searched[0]?.noteId).toBe(first.note.noteId);
+  });
+});
+
+describe("GET /api/memory/notes/:id", () => {
+  it("returns a note's detail and 404 for a missing note", async () => {
+    const deposit = await createNote({
+      captureSource: "manual",
+      noteText: "body",
+      prompts: [{ cueText: "c", answerText: "a" }]
+    });
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/memory/notes/${deposit.note.noteId}`
+    });
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as MemoryNoteDetailDto).prompts).toHaveLength(1);
+
+    const missing = await context.server.inject({
+      method: "GET",
+      url: "/api/memory/notes/nope"
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("PATCH /api/memory/notes/:id", () => {
+  it("edits a note body, rejects an invalid body, and 404s a missing note", async () => {
+    const deposit = await createNote({
+      captureSource: "manual",
+      noteText: "old",
+      prompts: [{ cueText: "c", answerText: "a" }]
+    });
+    const ok = await context.server.inject({
+      method: "PATCH",
+      url: `/api/memory/notes/${deposit.note.noteId}`,
+      payload: { noteText: "new" }
+    });
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as MemoryNoteDetailDto).note.bodyText).toBe("new");
+
+    const invalid = await context.server.inject({
+      method: "PATCH",
+      url: `/api/memory/notes/${deposit.note.noteId}`,
+      payload: { noteText: "" }
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const missing = await context.server.inject({
+      method: "PATCH",
+      url: "/api/memory/notes/nope",
+      payload: { noteText: "x" }
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("POST /api/memory/notes/:id/prompts", () => {
+  it("adds a direction, rejects an invalid body, and 404s a missing note", async () => {
+    const deposit = await createNote({
+      captureSource: "manual",
+      noteText: "body",
+      prompts: [{ cueText: "c", answerText: "a" }]
+    });
+    const ok = await context.server.inject({
+      method: "POST",
+      url: `/api/memory/notes/${deposit.note.noteId}/prompts`,
+      payload: { cueText: "second", answerText: "second answer" }
+    });
+    expect(ok.statusCode).toBe(201);
+    expect((ok.json() as MemoryNoteDetailDto).prompts).toHaveLength(2);
+
+    const invalid = await context.server.inject({
+      method: "POST",
+      url: `/api/memory/notes/${deposit.note.noteId}/prompts`,
+      payload: { cueText: "" }
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const missing = await context.server.inject({
+      method: "POST",
+      url: "/api/memory/notes/nope/prompts",
+      payload: { cueText: "c", answerText: "a" }
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("PATCH /api/memory/prompts/:id", () => {
+  it("edits a prompt, rejects an invalid body, and 404s a missing prompt", async () => {
+    const deposit = await createNote({
+      captureSource: "manual",
+      noteText: "body",
+      prompts: [{ cueText: "cue", answerText: "answer" }]
+    });
+    const promptId = deposit.prompts[0]!.promptId;
+    const ok = await context.server.inject({
+      method: "PATCH",
+      url: `/api/memory/prompts/${promptId}`,
+      payload: { cueText: "reworded", answerText: "reworded answer" }
+    });
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as MemoryPromptDto).cueText).toBe("reworded");
+
+    const invalid = await context.server.inject({
+      method: "PATCH",
+      url: `/api/memory/prompts/${promptId}`,
+      payload: { cueText: "" }
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const missing = await context.server.inject({
+      method: "PATCH",
+      url: "/api/memory/prompts/nope",
+      payload: { cueText: "c", answerText: "a" }
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("DELETE /api/memory/notes/:id", () => {
+  it("deletes an owned note (204) and 404s a missing note", async () => {
+    const deposit = await createNote({
+      captureSource: "manual",
+      noteText: "delete me",
+      prompts: [{ cueText: "c", answerText: "a" }]
+    });
+    const ok = await context.server.inject({
+      method: "DELETE",
+      url: `/api/memory/notes/${deposit.note.noteId}`
+    });
+    expect(ok.statusCode).toBe(204);
+
+    const gone = await context.server.inject({
+      method: "GET",
+      url: `/api/memory/notes/${deposit.note.noteId}`
+    });
+    expect(gone.statusCode).toBe(404);
+
+    const missing = await context.server.inject({
+      method: "DELETE",
+      url: "/api/memory/notes/nope"
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("GET /api/memory/suggest", () => {
+  it("returns a null suggestion when no glosser is wired and 400 for a blank term", async () => {
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/memory/suggest?term=%E9%81%A0%E6%85%AE"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ term: "遠慮", suggestion: null });
+
+    const blank = await context.server.inject({
+      method: "GET",
+      url: "/api/memory/suggest?term=%20"
+    });
+    expect(blank.statusCode).toBe(400);
+
+    const absent = await context.server.inject({ method: "GET", url: "/api/memory/suggest" });
+    expect(absent.statusCode).toBe(400);
+  });
+
+  it("returns a suggestion from the offline glosser when wired", async () => {
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    const db = createDbClient(pglite);
+    const memory: MemoryRouteDependencies = {
+      createId: () => "id",
+      db,
+      now: () => t0,
+      resolveOfflineGloss: async (term) =>
+        term === "遠慮" ? "to hold back out of consideration" : null
+    };
+    const server = createServer({ logger: false, recall: memory });
+    try {
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/memory/suggest?term=%E9%81%A0%E6%85%AE"
+      });
+      expect(response.json()).toEqual({
+        term: "遠慮",
+        suggestion: "to hold back out of consideration"
+      });
+    } finally {
+      await db.$client.close();
+    }
   });
 });

@@ -136,7 +136,15 @@ can navigate them from another package.
   (today's due scheduled prompts, capped at `DAILY_RECALL_CAP` = 20 so a backlog never becomes a wall),
   `POST /api/recall/prompts/:id/review` (`{ rating }` → FSRS advance + a `memory_prompt_reviews` row; 404
   otherwise), `POST /api/recall/prompts/:id/snooze` (the `snoozePrompt` command defers only `due_at` one day
-  — not a rating; 404 otherwise); wired in `http/createServer.ts` (the `recall` dependency option).
+  — not a rating; 404 otherwise); wired in `http/createServer.ts` (the `recall` dependency option). The
+  learner-facing Memory surface (#573) adds `registerMemoryRoutes` (same file, same `recall` deps):
+  `GET/POST /api/memory/notes`, `GET/PATCH/DELETE /api/memory/notes/:id`, `POST /api/memory/notes/:id/prompts`,
+  `PATCH /api/memory/prompts/:id`, and `GET /api/memory/suggest` (offline gloss). List/search/detail queries
+  and the `editMemoryNote`/`editMemoryPrompt`/`addPromptToNote`/`deleteMemoryNote` commands live alongside
+  the deposit path; a note appears once in the Timeline via `diaryQueries.ts` (a `memory_note` row with its
+  prompt count), never its prompts/reviews. Editing a prompt reconciles its schedule via the pure
+  `reconcilePromptEdit` (`@whetstone/domain`) — keep the card, seed a new one, or revert to a draft — so it
+  never silently resets review history.
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -578,16 +586,16 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
   `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"
   `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Practice =
-  `SessionPage`, Progress = `ProgressMapPage`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
+  `SessionPage`, Progress = `ProgressMapPage`, Memory = `MemoryPage` at `/memory`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
   `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`, Write =
   `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
-  `ToastViewport` live region). `navigation.ts` holds the **five** primary destinations — Today,
-  Library, Practice, **Map** (the user-facing label for the `/progress` route), Search — rendered as a
-  **single non-wrapping row of ≥44px targets** on mobile (#390). Reader, Recall, Notes, and Diary keep
-  their routes but are NOT primary: Reader is an immersive destination opened from context, and the
-  others are reached from where they belong (Today links to Recall/Diary; Library links to the
-  all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
+  `ToastViewport` live region). `navigation.ts` holds the **four** primary destinations — Today,
+  Library, **Memory**, Search — rendered as a **single non-wrapping row of ≥44px targets** on mobile
+  (#390, #573). Reader, Recall, Notes, Diary, **Practice**, and **Map** (`/progress`) keep their routes
+  but are NOT primary: Reader is an immersive destination opened from context, and the others are
+  reached from where they belong (Today links to Recall/Diary; Memory links to Recall when something is
+  due; Library links to the all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
   wrap the mobile row). On the `/reader` and `/write` routes the nav (and the toggle bar) recede so the
   reading/writing column owns the viewport (immersive room); each provides its own back-to-Library control.
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
@@ -838,6 +846,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   cue and answer, #595), so there is no answerless self-check face. Grading or snoozing advances past the
   prompt, with explicit loading/error/empty ("all caught up") states. The reader stays calm — recall lives
   only here. `recallApi.ts` calls `/api/recall/*` (`MemoryPromptCardDto`) and parses via `memoryContracts`.
+  `memory/` is the Memory mode (#573) at `/memory`: `MemoryPage.tsx` is the browse/capture/manage surface
+  over the same Entry-backed store — a `MemoryList` of kept fragments (each row reads jargon-free: fragment,
+  capture-source badge, prompt count, one draft/scheduled/due chip via pure `memoryLabels.ts` +
+  `memory.tokens.ts`), a `role="search"` filter, and `MemoryQuickAdd` (progressive disclosure: a bare term
+  requests an offline gloss then confirm-or-save-as-draft; expanded, a multi-direction cue/answer/context
+  form). Opening a row shows `MemoryNoteDetail` (edit the fragment, `MemoryPromptRow` per prompt,
+  `MemoryAddDirection`, delete). The review flow itself stays at `/recall`; Memory links there when a note is
+  due. `memoryApi.ts` calls `/api/memory/*` and parses every response through `memoryContracts`.
   `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
   finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
   already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,

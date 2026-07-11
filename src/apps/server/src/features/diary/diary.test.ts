@@ -13,7 +13,14 @@ import {
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { diaryEntries, entries, notes, personalEntries } from "../../db/schema.js";
+import {
+  diaryEntries,
+  entries,
+  memoryNotes,
+  memoryPrompts,
+  notes,
+  personalEntries
+} from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { DiaryRouteDependencies } from "./diaryRoutes.js";
@@ -82,6 +89,48 @@ async function seedNote(
       markdownBody: row.markdown,
       templateId: null
     });
+  });
+}
+
+// Seed a Memory note (its facets) directly, optionally with one prompt, so the Timeline projection of a
+// memory_note (fragment, capture source, and prompt count) can be asserted without the capture command.
+async function seedMemoryNote(
+  db: DbClient,
+  row: Readonly<{
+    id: string;
+    bodyText: string;
+    captureSource: "manual" | "reader" | "import" | "practice" | "tool";
+    occurredAt: string;
+    userId: string;
+    withPrompt?: boolean;
+  }>
+): Promise<void> {
+  const at = new Date(row.occurredAt);
+  await db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: row.id, type: "note" });
+    await tx.insert(personalEntries).values({
+      createdAt: at,
+      entryId: row.id,
+      occurredAt: at,
+      updatedAt: at,
+      userId: row.userId
+    });
+    await tx.insert(memoryNotes).values({
+      bodyDoc: createTextDocument(row.bodyText),
+      bodyText: row.bodyText,
+      captureSource: row.captureSource,
+      entryId: row.id
+    });
+    if (row.withPrompt === true) {
+      await tx.insert(entries).values({ id: `${row.id}-prompt`, type: "note" });
+      await tx.insert(memoryPrompts).values({
+        cueDoc: createTextDocument("cue"),
+        cueText: "cue",
+        entryId: `${row.id}-prompt`,
+        lifecycle: "draft",
+        noteEntryId: row.id
+      });
+    }
   });
 }
 
@@ -259,6 +308,39 @@ describe("GET /api/diary/timeline (the logical Timeline)", () => {
     const [first, second] = day?.entries ?? [];
     expect(first).toMatchObject({ entryId: "note-1", kind: "note", text: "a reading note" });
     expect(second).toMatchObject({ bodyText: "a diary moment", entryId: "diary-1", kind: "diary" });
+  });
+
+  it("projects a Memory note once, carrying its fragment, capture source, and prompt count", async () => {
+    await seedMemoryNote(context.db, {
+      id: "mem-1",
+      bodyText: "kanmusu",
+      captureSource: "reader",
+      occurredAt: "2026-06-30T12:00:00.000Z",
+      userId: DEFAULT_USER_ID,
+      withPrompt: true
+    });
+
+    const entry = (await timeline()).days[0]?.entries[0];
+    expect(entry).toMatchObject({
+      bodyText: "kanmusu",
+      captureSource: "reader",
+      entryId: "mem-1",
+      kind: "memory_note",
+      promptCount: 1
+    });
+  });
+
+  it("counts a Memory note with no prompts as zero on the Timeline", async () => {
+    await seedMemoryNote(context.db, {
+      id: "mem-2",
+      bodyText: "bare",
+      captureSource: "manual",
+      occurredAt: "2026-06-30T12:00:00.000Z",
+      userId: DEFAULT_USER_ID
+    });
+
+    const entry = (await timeline()).days[0]?.entries[0];
+    expect(entry).toMatchObject({ entryId: "mem-2", kind: "memory_note", promptCount: 0 });
   });
 
   it("hides an in-flight or failed voice capture until it is ready", async () => {

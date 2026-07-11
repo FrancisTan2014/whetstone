@@ -109,6 +109,7 @@ export {
   memoryPromptFaces,
   memoryPromptOwner,
   promptLifecycles,
+  reconcilePromptEdit,
   resolvePromptLifecycle
 } from "./memory.js";
 export type {
@@ -117,6 +118,8 @@ export type {
   MemoryNote,
   MemoryPrompt,
   MemoryPromptFaces,
+  PromptEditOutcome,
+  PromptEditReviewAction,
   PromptLifecycle
 } from "./memory.js";
 export { blockFromMdastNode, decomposeMarkdown, mdastReadableText } from "./markdownBlocks.js";

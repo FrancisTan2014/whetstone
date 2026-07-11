@@ -42,7 +42,10 @@ import { registerRecitationPassageRoutes } from "../features/recitationPassages/
 import type { RecitationPassageRouteDependencies } from "../features/recitationPassages/recitationPassageRoutes.js";
 import { registerRecitationChainingRoutes } from "../features/recitationPassages/recitationChainingRoutes.js";
 import type { RecitationChainingRouteDependencies } from "../features/recitationPassages/recitationChainingRoutes.js";
-import { registerMemoryReviewRoutes } from "../features/memory/memoryRoutes.js";
+import {
+  registerMemoryReviewRoutes,
+  registerMemoryRoutes
+} from "../features/memory/memoryRoutes.js";
 import type { MemoryRouteDependencies } from "../features/memory/memoryRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
 import type { NudgeRouteDependencies } from "../features/nudge/nudgeRoutes.js";
@@ -172,6 +175,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.recall !== undefined) {
     registerMemoryReviewRoutes(server, options.recall);
+    registerMemoryRoutes(server, options.recall);
   }
 
   if (options.nudge !== undefined) {
