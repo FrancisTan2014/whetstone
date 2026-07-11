@@ -50,6 +50,13 @@ export default defineConfig({
         // live-capture seam into a one-shot record/stop, not exercisable in jsdom; CaptureCard's own
         // logic is covered.
         "**/features/capture/captureVoice.ts",
+        // The pointer contextual gutter (#590): Tiptap's official drag handle renders into its own
+        // hidden, detached portal and only becomes interactive under a real fine pointer (hover reveal
+        // via onNodeChange, native drag-to-reorder, grip-triggered menu) — none of which jsdom can
+        // synthesize. Its drag/reveal/drop-indicator/grip-menu behavior is covered by the Playwright
+        // gutter e2e; every block action it renders is unit-tested through the always-available "More
+        // block actions" trigger and Shift+F10 (RichContentEditor.test.tsx).
+        "**/shared/editor/BlockGutterHandle.tsx",
         "**/src/**/*.type.ts",
         "**/src/**/*.types.ts",
         // Pure presentational design-token modules: static enum->class/style/motion maps, no logic.

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import userEvent from "@testing-library/user-event";
 import { type DocumentNodeJSON, DocumentValidationError, documentText } from "@whetstone/document";
 import type { Mock } from "vitest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEmptyDocument } from "./editorDocument";
 import { RichContentEditor } from "./RichContentEditor";
@@ -26,6 +26,30 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   configurable: true,
   value: () => {}
 });
+for (const method of ["hasPointerCapture", "setPointerCapture", "releasePointerCapture"] as const) {
+  Object.defineProperty(HTMLElement.prototype, method, {
+    configurable: true,
+    value: () => (method === "hasPointerCapture" ? false : undefined)
+  });
+}
+
+// The editor gates its pointer gutter on `(hover: hover) and (pointer: fine)`. Default every test to a
+// coarse pointer (no gutter) so these cases exercise the always-available compact/keyboard path; the
+// gutter-specific test overrides this to a fine pointer.
+function mockMatchMedia(matches = false): void {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    addEventListener: vi.fn(),
+    addListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+    matches,
+    media: query,
+    onchange: null,
+    removeEventListener: vi.fn(),
+    removeListener: vi.fn()
+  })) as unknown as typeof window.matchMedia;
+}
+
+mockMatchMedia(false);
 
 const textDocument = (text: string): DocumentNodeJSON => {
   const paragraph: DocumentNodeJSON =
@@ -184,6 +208,11 @@ function selectParagraph(textbox: HTMLElement, start: number, end: number): void
   selection?.addRange(range);
   window.document.dispatchEvent(new Event("selectionchange"));
 }
+
+beforeEach(() => {
+  // Default every case to a coarse pointer (no gutter); the gutter-reveal test opts into a fine one.
+  mockMatchMedia(false);
+});
 
 afterEach(() => {
   cleanup();
@@ -469,5 +498,151 @@ describe("RichContentEditor paste and save", () => {
     textbox.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
     expect(screen.queryByRole("button", { name: "Save document" })).toBeNull();
+  });
+});
+
+// Build a document of top-level paragraphs, each carrying a stable id so a reorder can be checked to
+// preserve identity rather than re-create blocks.
+function idParagraphs(...items: ReadonlyArray<{ id: string; text: string }>): DocumentNodeJSON {
+  return {
+    content: items.map(({ id, text }) => ({
+      attrs: { id },
+      content: [{ text, type: "text" }],
+      type: "paragraph"
+    })),
+    type: "doc"
+  };
+}
+
+const blockIds = (document: DocumentNodeJSON): Array<unknown> =>
+  (document.content ?? []).map((node) => node.attrs?.["id"]);
+
+const blockTexts = (document: DocumentNodeJSON): Array<string | undefined> =>
+  (document.content ?? []).map((node) => node.content?.[0]?.text);
+
+// Move the caret into a specific top-level block by collapsing the DOM selection inside its text and
+// letting ProseMirror's selection observer sync — the same mechanism the contextual toolbar relies on.
+async function placeCaretInBlock(textbox: HTMLElement, blockIndex: number): Promise<void> {
+  const block = textbox.children.item(blockIndex);
+  const textNode = block?.firstChild as Text | null | undefined;
+
+  if (textNode === null || textNode === undefined) {
+    throw new Error("Expected a top-level block text node to place the caret in.");
+  }
+
+  textbox.focus();
+  const selection = window.getSelection();
+  const range = window.document.createRange();
+  range.setStart(textNode, 1);
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  window.document.dispatchEvent(new Event("selectionchange"));
+  // Let ProseMirror's selection observer flush the DOM selection into editor state.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function openMoreMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByRole("button", { name: "More block actions" }));
+  return screen.findByRole("menu", { name: "More block actions" });
+}
+
+describe("RichContentEditor contextual block gutter", () => {
+  it("opens the block-actions menu for the caret's block from the always-available compact trigger", async () => {
+    const { user } = await renderReady({
+      document: idParagraphs({ id: "a", text: "One" }, { id: "b", text: "Two" })
+    });
+
+    const menu = await openMoreMenu(user);
+
+    for (const label of [
+      "Turn into",
+      "Insert above",
+      "Insert below",
+      "Duplicate",
+      "Move up",
+      "Move down",
+      "Delete"
+    ]) {
+      expect(within(menu).getByRole("menuitem", { name: new RegExp(label) })).toBeTruthy();
+    }
+
+    // The caret starts in the first block, so Move up is at a boundary and Move down is not.
+    expect(
+      within(menu).getByRole("menuitem", { name: "Move up" }).getAttribute("aria-disabled")
+    ).toBe("true");
+    expect(
+      within(menu).getByRole("menuitem", { name: "Move down" }).getAttribute("aria-disabled")
+    ).not.toBe("true");
+  });
+
+  it("reorders the caret's block through the compact menu as one undo step, preserving its id", async () => {
+    const { onChange, textbox, user } = await renderReady({
+      document: idParagraphs({ id: "a", text: "One" }, { id: "b", text: "Two" })
+    });
+
+    const menu = await openMoreMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Move down" }));
+
+    await waitFor(() => expect(blockTexts(lastDocument(onChange))).toEqual(["Two", "One"]));
+    expect(blockIds(lastDocument(onChange))).toEqual(["b", "a"]);
+
+    // The whole action is a single undoable edit.
+    onChange.mockClear();
+    textbox.focus();
+    fireEvent.keyDown(textbox, { ctrlKey: true, key: "z" });
+    await waitFor(() => expect(blockTexts(lastDocument(onChange))).toEqual(["One", "Two"]));
+  });
+
+  it("opens the menu for the caret's block with Shift+F10 and applies the action to that block", async () => {
+    const { onChange, textbox } = await renderReady({
+      document: idParagraphs(
+        { id: "a", text: "One" },
+        { id: "b", text: "Two" },
+        { id: "c", text: "Three" }
+      )
+    });
+    const user = userEvent.setup();
+
+    await placeCaretInBlock(textbox, 1);
+    fireEvent.keyDown(textbox, { key: "F10", shiftKey: true });
+
+    const menu = await screen.findByRole("menu", { name: "More block actions" });
+    // The caret is in the second block, so Move up is available (it is disabled on the first block).
+    const moveUp = within(menu).getByRole("menuitem", { name: "Move up" });
+    expect(moveUp.getAttribute("aria-disabled")).not.toBe("true");
+    await user.click(moveUp);
+
+    // Move up acts on the caret's block (the second), not the first, and keeps every id.
+    await waitFor(() => expect(blockIds(lastDocument(onChange))).toEqual(["b", "a", "c"]));
+    expect(blockTexts(lastDocument(onChange))).toEqual(["Two", "One", "Three"]);
+  });
+
+  it("washes the active block while its menu is open and clears the wash when dismissed", async () => {
+    const { textbox, user } = await renderReady({
+      document: idParagraphs({ id: "a", text: "One" }, { id: "b", text: "Two" })
+    });
+
+    expect(textbox.querySelector(".is-block-gutter-active")).toBeNull();
+
+    await openMoreMenu(user);
+    await waitFor(() =>
+      expect(textbox.querySelector(".is-block-gutter-active")?.textContent).toBe("One")
+    );
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(textbox.querySelector(".is-block-gutter-active")).toBeNull());
+  });
+
+  it("reveals the pointer drag-gutter grip only under a fine, hovering pointer", async () => {
+    mockMatchMedia(true);
+    await renderReady({ document: textDocument("One") });
+
+    // The drag handle mounts its own gutter container (className) and renders the grip into it; the
+    // grip is only positioned/interactive under a real pointer, so that reveal and its menu are
+    // covered by the e2e. Here we assert the pointer gutter is wired up under a fine pointer.
+    const gutter = window.document.querySelector(".richContentEditorGutter");
+    expect(gutter).not.toBeNull();
+    expect(within(gutter as HTMLElement).getByLabelText("Block actions")).toBeTruthy();
   });
 });
