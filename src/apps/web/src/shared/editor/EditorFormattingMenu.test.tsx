@@ -121,6 +121,17 @@ describe("EditorFormattingMenu marks", () => {
     expect(
       (within(toolbar).getByRole("button", { name: "Bold" }) as HTMLButtonElement).disabled
     ).toBe(true);
+    expect(
+      (within(toolbar).getByRole("button", { name: "Link" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it("does not open the link form for a selection that cannot accept a link", async () => {
+    const { toolbar, user } = await renderMenu(codeBlockDocument);
+
+    await user.click(within(toolbar).getByRole("button", { name: "Link" }));
+
+    expect(screen.queryByRole("dialog", { name: "Link URL" })).toBeNull();
   });
 
   it("applies a mark and preserves the selection so another command can follow", async () => {

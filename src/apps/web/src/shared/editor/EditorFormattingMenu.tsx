@@ -141,6 +141,7 @@ function LinkControl({
   const [error, setError] = useState<string>();
   const errorId = useId();
   const active = editor.isActive("link");
+  const canLink = editor.can().toggleMark("link");
 
   const handleOpenChange = (next: boolean): void => {
     if (next) {
@@ -183,6 +184,7 @@ function LinkControl({
           aria-label="Link"
           aria-pressed={active}
           className={formattingMenuClassNames.action}
+          disabled={!canLink}
           onFocus={onFocus}
           size="sm"
           tabIndex={tabIndex}
