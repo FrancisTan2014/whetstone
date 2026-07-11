@@ -139,12 +139,16 @@ can navigate them from another package.
   — not a rating; 404 otherwise); wired in `http/createServer.ts` (the `recall` dependency option). The
   learner-facing Memory surface (#573) adds `registerMemoryRoutes` (same file, same `recall` deps):
   `GET/POST /api/memory/notes`, `GET/PATCH/DELETE /api/memory/notes/:id`, `POST /api/memory/notes/:id/prompts`,
-  `PATCH /api/memory/prompts/:id`, and `GET /api/memory/suggest` (offline gloss). List/search/detail queries
+  `PATCH /api/memory/prompts/:id`, `GET /api/memory/suggest` (offline gloss), and `POST /api/memory/import`
+  (#574: `importMemoryBatch` deposits a pasted notebook list as many notes in ONE transaction — all-or-nothing,
+  reusing the shared `writeMemory` atomic write; answers resolve up front, gloss stays outside the tx).
+  List/search/detail queries
   and the `editMemoryNote`/`editMemoryPrompt`/`addPromptToNote`/`deleteMemoryNote` commands live alongside
   the deposit path; a note appears once in the Timeline via `diaryQueries.ts` (a `memory_note` row with its
   prompt count), never its prompts/reviews. Editing a prompt reconciles its schedule via the pure
   `reconcilePromptEdit` (`@whetstone/domain`) — keep the card, seed a new one, or revert to a draft — so it
-  never silently resets review history.
+  never silently resets review history. The parsing/edit logic for a pasted list is pure `@whetstone/domain`
+  (`notebookImport.ts`: `parseNotebookList` + undo-split/merge/split-context ops, #574).
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -852,7 +856,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `memory.tokens.ts`), a `role="search"` filter, and `MemoryQuickAdd` (progressive disclosure: a bare term
   requests an offline gloss then confirm-or-save-as-draft; expanded, a multi-direction cue/answer/context
   form). Opening a row shows `MemoryNoteDetail` (edit the fragment, `MemoryPromptRow` per prompt,
-  `MemoryAddDirection`, delete). The review flow itself stays at `/recall`; Memory links there when a note is
+  `MemoryAddDirection`, delete). A "Paste a list" toggle opens `MemoryImport.tsx` (#574): paste multiline
+  plain text, preview the deterministic split into editable drafts (edit/undo-split/merge/split-context/
+  remove/suggest-answer), then import the whole batch atomically. Its pure list-edit logic lives in
+  `memoryImportDrafts.ts` (over `@whetstone/domain` `notebookImport`); the component only wires it to inputs
+  and the `importMemory` call. The review flow itself stays at `/recall`; Memory links there when a note is
   due. `memoryApi.ts` calls `/api/memory/*` and parses every response through `memoryContracts`.
   `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
   finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
