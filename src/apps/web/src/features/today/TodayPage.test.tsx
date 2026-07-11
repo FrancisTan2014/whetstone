@@ -17,6 +17,9 @@ vi.mock("../recitation/recitationPassageApi", () => ({
   fetchDuePassage: vi.fn(),
   reviewPassage: vi.fn()
 }));
+vi.mock("../recitation/recitationChainingApi", () => ({
+  fetchToday: vi.fn()
+}));
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
 }));
@@ -36,6 +39,7 @@ import type {
   NudgeDto,
   RecallItemDto,
   RecitationPlanDto,
+  RecitationTodayDto,
   WorkDto,
   WorkListDto
 } from "@whetstone/contracts";
@@ -46,6 +50,7 @@ import {
   recordRecitationSession,
   setRecitationPhase
 } from "../recitation/recitationApi";
+import { fetchToday } from "../recitation/recitationChainingApi";
 import { fetchDuePassage, reviewPassage } from "../recitation/recitationPassageApi";
 import { fetchWorks } from "../library/libraryApi";
 import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
@@ -63,6 +68,7 @@ const mockedRecitation = vi.mocked(fetchContinueRecitation);
 const mockedStartReciting = vi.mocked(setRecitationPhase);
 const mockedRecitationSession = vi.mocked(recordRecitationSession);
 const mockedDuePassage = vi.mocked(fetchDuePassage);
+const mockedToday = vi.mocked(fetchToday);
 const mockedReviewPassage = vi.mocked(reviewPassage);
 
 const emptyWorks: WorkListDto = { works: [] };
@@ -167,6 +173,16 @@ function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRe
   };
 }
 
+function makeToday(overrides: Partial<RecitationTodayDto> = {}): RecitationTodayDto {
+  return {
+    action: "due_passage",
+    activeChain: null,
+    planEntryId: "plan-1",
+    workTitle: "Aesop's Fables",
+    ...overrides
+  };
+}
+
 function renderToday(): void {
   render(
     <MemoryRouter>
@@ -183,6 +199,7 @@ beforeEach(() => {
   mockedWorks.mockReturnValue(pending<WorkListDto>());
   mockedWriting.mockReturnValue(pending<{ work: AuthoredWorkSummaryDto | null }>());
   mockedRecitation.mockReturnValue(pending<ContinueRecitationDto>());
+  mockedToday.mockReturnValue(pending<RecitationTodayDto>());
   mockedDuePassage.mockReturnValue(pending<DueRecitationPassageDto | null>());
 });
 
@@ -622,6 +639,7 @@ describe("TodayPage", () => {
   });
 
   it("surfaces the next due recitation passage as a bounded practice attempt", async () => {
+    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
     mockedDuePassage.mockResolvedValue(makeDuePassage());
     renderToday();
 
@@ -631,7 +649,55 @@ describe("TodayPage", () => {
     expect(within(card).queryByText("The quick brown fox jumps.")).toBeNull();
   });
 
-  it("shows a caught-up line when no recitation passage is due", async () => {
+  it("surfaces an active chain as the one Today action, linking to the plan's practice", async () => {
+    mockedToday.mockResolvedValue(
+      makeToday({ action: "chain", planEntryId: "plan-7", workTitle: "Aesop's Fables" })
+    );
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(
+      await within(card).findByText(/A recitation chain is ready in “Aesop's Fables”\./)
+    ).toBeDefined();
+    const link = within(card).getByRole("link", { name: "Practise the chain" });
+    expect(link.getAttribute("href")).toBe("/recite?plan=plan-7");
+    // A chain action is decided without pulling any due-passage payload (priority is server-side).
+    expect(mockedDuePassage).not.toHaveBeenCalled();
+  });
+
+  it("surfaces whole-work maintenance as the one Today action, even without a work title", async () => {
+    mockedToday.mockResolvedValue(
+      makeToday({ action: "whole_work", planEntryId: "plan-9", workTitle: null })
+    );
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByText("Whole-work maintenance is due.")).toBeDefined();
+    const link = within(card).getByRole("link", { name: "Maintain the whole work" });
+    expect(link.getAttribute("href")).toBe("/recite?plan=plan-9");
+  });
+
+  it("degrades a maintenance action with no plan to the caught-up line (never a dead link)", async () => {
+    mockedToday.mockResolvedValue(makeToday({ action: "chain", planEntryId: null }));
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
+    expect(within(card).queryByRole("link", { name: "Practise the chain" })).toBeNull();
+  });
+
+  it("shows a caught-up line when there is no recitation action", async () => {
+    mockedToday.mockResolvedValue(
+      makeToday({ action: "none", planEntryId: null, workTitle: null })
+    );
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
+  });
+
+  it("shows a caught-up line when the decision named a due passage but none remains", async () => {
+    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
     mockedDuePassage.mockResolvedValue(null);
     renderToday();
 
@@ -639,7 +705,16 @@ describe("TodayPage", () => {
     expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
   });
 
+  it("shows a quiet inline note when the recitation decision fails to load", async () => {
+    mockedToday.mockRejectedValue(new Error("boom"));
+    renderToday();
+
+    const card = screen.getByRole("region", { name: "Recite" });
+    expect(await within(card).findByText(/Couldn’t load your recitation passage/)).toBeDefined();
+  });
+
   it("shows a quiet inline note when the due passage fails to load", async () => {
+    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
     mockedDuePassage.mockRejectedValue(new Error("boom"));
     renderToday();
 
@@ -647,9 +722,12 @@ describe("TodayPage", () => {
     expect(await within(card).findByText(/Couldn’t load your recitation passage/)).toBeDefined();
   });
 
-  it("fetches the next due passage after one is reviewed, stopping when caught up", async () => {
+  it("re-decides the next recitation action after a review, stopping when caught up", async () => {
     mockedReviewPassage.mockResolvedValue({} as never);
-    mockedDuePassage.mockResolvedValueOnce(makeDuePassage()).mockResolvedValueOnce(null);
+    mockedToday
+      .mockResolvedValueOnce(makeToday({ action: "due_passage" }))
+      .mockResolvedValueOnce(makeToday({ action: "none", planEntryId: null, workTitle: null }));
+    mockedDuePassage.mockResolvedValueOnce(makeDuePassage());
     renderToday();
 
     const card = screen.getByRole("region", { name: "Recite" });
@@ -657,11 +735,13 @@ describe("TodayPage", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Couldn't continue" }));
 
     expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
-    expect(mockedDuePassage).toHaveBeenCalledTimes(2);
+    expect(mockedToday).toHaveBeenCalledTimes(2);
+    expect(mockedDuePassage).toHaveBeenCalledTimes(1);
   });
 
   it("resets to the cue phase for the next passage after a review, hiding its target until Reveal", async () => {
     mockedReviewPassage.mockResolvedValue({} as never);
+    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
     mockedDuePassage
       .mockResolvedValueOnce(makeDuePassage())
       .mockResolvedValueOnce(

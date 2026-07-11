@@ -827,10 +827,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `recitation/recitationApi.fetchContinueRecitation` → `GET /api/recitation/continue`, the most recently
   touched recitation plan with its Work title + phase; **Continue** records a session and deep-links
   `#/reader?work=`, and only while `familiarizing` an explicit **Start reciting** transitions to
-  `learning`; else a quiet line), a **Recite** card (#578,
-  `recitation/recitationPassageApi.fetchDuePassage` → `GET /api/recitation/passages/due`) that surfaces the
-  next due passage as one bounded `RecitationReviewCard` attempt and refetches the next only after it is
-  reviewed (no overdue wall; caught-up/quiet-note otherwise), and the
+  `learning`; else a quiet line), a **Recite** card (#578/#580, the single bounded recitation action
+  decided server-side via `recitation/recitationChainingApi.fetchToday` → `GET /api/recitation/today`,
+  in fixed priority due passage > active chain > whole-work > none) that either runs the next due passage
+  inline as one `RecitationReviewCard` attempt (payload from `recitationPassageApi.fetchDuePassage`,
+  `GET /api/recitation/passages/due`) — re-deciding the next action only after it is reviewed (no overdue
+  wall) — or surfaces a chain / whole-work invitation linking to `#/recite?plan=<id>` (caught-up/quiet-note
+  otherwise), and the
   reading→practice nudge card (#245) in its `nudge/` slice: `nudgeApi.ts` `fetchNudge` (`GET /api/nudge`,
   null → undefined) renders ONE quiet, dismissible card — "Practise _‹snippet›_ from _‹work›_" with an
   accept link to `/practice` (where `startSession` leads with the same proposed case) and a ✕ that calls
