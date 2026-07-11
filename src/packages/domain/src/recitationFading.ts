@@ -130,9 +130,19 @@ function projectCjkClause(chars: readonly string[], level: ReducingSupportLevel)
 
 type Atom = Readonly<{ kind: "word"; text: string }> | Readonly<{ kind: "fixed"; text: string }>;
 
-// Break a whitespace-delimited clause into atoms: word tokens (maximal runs of content characters) and
-// fixed runs (whitespace and punctuation, which are always shown). Splitting words on punctuation keeps
-// every delimiter, quote, and space visible, so reduction only ever hides real words.
+// A whitespace-delimited token keeps its authored punctuation: an apostrophe or hyphen inside a word
+// (Don't, well-known) belongs to that word, so reduction never splits an English token internally.
+// Only whitespace and clause delimiters break tokens; both stay visible as fixed runs, so spacing and
+// sentence structure are preserved exactly like the Chinese-by-character path preserves its punctuation.
+function isWordChar(char: string): boolean {
+  const cls = classifyChar(char);
+  return cls === "content" || cls === "punctuation";
+}
+
+// Break a whitespace-delimited clause into atoms: word tokens (maximal runs between whitespace and
+// clause delimiters, punctuation attached as authored) and fixed runs (whitespace and clause
+// delimiters, always shown). Reduction only ever hides whole whitespace tokens, never their spaces,
+// delimiters, or a token's interior.
 function atomizeClause(chars: readonly string[]): Atom[] {
   const atoms: Atom[] = [];
   let word = "";
@@ -150,7 +160,7 @@ function atomizeClause(chars: readonly string[]): Atom[] {
     }
   };
   for (const char of chars) {
-    if (classifyChar(char) === "content") {
+    if (isWordChar(char)) {
       flushFixed();
       word += char;
     } else {
@@ -163,8 +173,9 @@ function atomizeClause(chars: readonly string[]): Atom[] {
   return atoms;
 }
 
-// Project a whitespace-delimited (non-Han) clause by word: the first N words stay visible, later words
-// are masked whole; whitespace and punctuation are always shown, preserving spacing and punctuation.
+// Project a whitespace-delimited (non-Han) clause by word: the first N whitespace tokens stay visible,
+// later tokens are masked whole (interior punctuation included); whitespace and clause delimiters are
+// always shown, preserving spacing and sentence structure.
 function projectTokenClause(
   chars: readonly string[],
   level: ReducingSupportLevel

@@ -119,6 +119,24 @@ describe("projectRecitationSupport — whitespace-delimited, by word", () => {
     expect(render(projectRecitationSupport("Alone.", "reduced"))).toBe("Alone.");
     expect(render(projectRecitationSupport("Alone.", "first"))).toBe("Alone.");
   });
+
+  it("keeps a contraction as one whitespace token, never splitting on the apostrophe", () => {
+    // "Don't" is a single token; only "stop" masks. The trailing period stays visible (a delimiter).
+    expect(render(projectRecitationSupport("Don't stop.", "first"))).toBe("Don't ‹4›.");
+    expect(render(projectRecitationSupport("Don't stop now.", "reduced"))).toBe("Don't stop ‹3›.");
+  });
+
+  it("keeps a hyphenated word as one whitespace token, never splitting on the hyphen", () => {
+    // "well-known" is one token (10 code points); it is shown whole or masked whole, not split.
+    expect(render(projectRecitationSupport("well-known phrase.", "first"))).toBe("well-known ‹6›.");
+    const masked = projectRecitationSupport("state a well-known phrase.", "first");
+    expect(render(masked)).toBe("state ‹1› ‹10› ‹6›.");
+  });
+
+  it("attaches leading and trailing quotes to the token they wrap", () => {
+    // A quoted word is a single whitespace token, masked with its quotes rather than leaking them.
+    expect(render(projectRecitationSupport('say "hello" now.', "first"))).toBe("say ‹7› ‹3›.");
+  });
 });
 
 describe("projectRecitationSupport — structure and edge cases", () => {
