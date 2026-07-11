@@ -411,12 +411,16 @@ export async function setRecitationPassageSupportLevel(
 
 // Record a self-assessment of a passage: apply FSRS (#572), overwrite the passage's card, and append a
 // review-history row (rating + the cue strength attempted from) — atomically. Owner-scoped (`not_found`).
-// Revealing without rating never calls this, so an un-rated reveal leaves the schedule unchanged.
+// Revealing without rating never calls this, so an un-rated reveal leaves the schedule unchanged. When
+// the learner practised with the predecessor as a lead-in and marks it failed (`leadInFailed`), the
+// immediately-preceding passage also receives an Again — the only passage other than the target ever
+// touched, and never on a clean lead-in (#580: lead-in grading stays isolated to what the learner marks).
 export async function recordRecitationPassageReview(
   dependencies: RecitationPassageDependencies,
   passageEntryId: EntryId,
   rating: RecitationReviewRating,
   cueStrength: RecitationCueStrengthDto,
+  leadInFailed: boolean,
   userId: string
 ): Promise<RecordPassageReviewResult> {
   const owned = await loadOwnedPassage(dependencies.db, passageEntryId, userId);
@@ -428,6 +432,9 @@ export async function recordRecitationPassageReview(
   const nextState = applyRating(passageRowToReviewState(owned.row), rating, now);
   const columns = passageReviewStateColumns(nextState);
   const reviewId = dependencies.createId();
+  const preceding = leadInFailed
+    ? await loadPrecedingPassage(dependencies.db, owned.row.planEntryId, owned.row.orderIndex)
+    : undefined;
 
   await dependencies.db.transaction(async (tx) => {
     await tx
@@ -441,6 +448,22 @@ export async function recordRecitationPassageReview(
       rating,
       reviewedAt: now
     });
+    // A failed lead-in fails only the immediate predecessor, and only when one exists (never the target
+    // twice, never an unmarked passage). The target's own rating above is unaffected.
+    if (preceding !== undefined) {
+      const precedingState = applyRating(passageRowToReviewState(preceding), "again", now);
+      await tx
+        .update(recitationPassages)
+        .set(passageReviewStateColumns(precedingState))
+        .where(eq(recitationPassages.entryId, preceding.entryId));
+      await tx.insert(recitationReviews).values({
+        cueStrength: "preceding_line",
+        id: dependencies.createId(),
+        passageEntryId: preceding.entryId,
+        rating: "again",
+        reviewedAt: now
+      });
+    }
   });
 
   const counts = await countReviewsByPassage(dependencies.db, [passageEntryId]);

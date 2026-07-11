@@ -249,6 +249,11 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  recitationChaining: {
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date()
+  },
   nudge: {
     db,
     now: () => new Date()

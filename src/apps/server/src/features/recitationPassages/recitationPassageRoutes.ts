@@ -136,6 +136,7 @@ export function registerRecitationPassageRoutes(
         toEntryId(request.params.id),
         parsed.data.rating,
         parsed.data.cueStrength,
+        parsed.data.leadInFailed,
         request.server.currentUser.getCurrentUserId()
       );
       if (result.status === "not_found") {

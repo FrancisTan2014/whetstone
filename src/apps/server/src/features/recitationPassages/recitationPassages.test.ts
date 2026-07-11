@@ -500,6 +500,56 @@ describe("POST /api/recitation/passages/:id/review", () => {
 
     expect(response.statusCode).toBe(404);
   });
+
+  it("leaves the predecessor untouched when the lead-in is not marked failed", async () => {
+    const { planEntryId, passages } = await seededTwoPassagePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { cueStrength: "preceding_line", rating: "good" },
+      url: `/api/recitation/passages/${passages[1]!.entryId}/review`
+    });
+    expect(response.statusCode).toBe(200);
+
+    const listed = await listPassages(planEntryId);
+    // Only the target (index 1) is graded; the predecessor (index 0) keeps its untouched card.
+    expect(listed.passages.map((passage) => passage.reviewCount)).toEqual([0, 1]);
+    expect(listed.passages[0]!.reps).toBe(0);
+    expect(listed.passages[0]!.lastReviewedAt).toBeNull();
+  });
+
+  it("applies an Again to the immediate predecessor when the lead-in is marked failed", async () => {
+    const { planEntryId, passages } = await seededTwoPassagePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { cueStrength: "preceding_line", leadInFailed: true, rating: "good" },
+      url: `/api/recitation/passages/${passages[1]!.entryId}/review`
+    });
+    expect(response.statusCode).toBe(200);
+
+    const listed = await listPassages(planEntryId);
+    // The target is graded good; the predecessor also gets a review row (the failed lead-in Again).
+    expect(listed.passages.map((passage) => passage.reviewCount)).toEqual([1, 1]);
+    expect(listed.passages[0]!.reps).toBe(1);
+    expect(listed.passages[0]!.lapses).toBe(0);
+    expect(listed.passages[0]!.lastReviewedAt).not.toBeNull();
+  });
+
+  it("ignores a failed lead-in on the first passage (no predecessor to fail)", async () => {
+    const { planEntryId, passages } = await seededTwoPassagePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { cueStrength: "opening", leadInFailed: true, rating: "good" },
+      url: `/api/recitation/passages/${passages[0]!.entryId}/review`
+    });
+    expect(response.statusCode).toBe(200);
+
+    const listed = await listPassages(planEntryId);
+    // The first passage has no predecessor, so only the target is graded and nothing else is touched.
+    expect(listed.passages.map((passage) => passage.reviewCount)).toEqual([1, 0]);
+  });
 });
 
 describe("GET /api/recitation/passages/due", () => {
