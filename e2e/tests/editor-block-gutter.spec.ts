@@ -101,7 +101,45 @@ test.describe("editor contextual block gutter (#590)", () => {
     await expect(content.locator("p").first()).toHaveText("Bravo the second block");
   });
 
-  test("the grip menu turns a block into a heading and deletes a block", async ({ page, setup }) => {
+  test("the grip menu stays locked to the block it opened on when the hover target changes", async ({
+    page,
+    setup
+  }) => {
+    const entryId = await seedAuthoredWork(setup.baseURL, page.request);
+    await page.goto(`${setup.baseURL}#/write?work=${encodeURIComponent(entryId)}`);
+
+    const content = page.locator(".richContentEditorContent");
+    await expect(content.locator("p").first()).toHaveText("Alpha the first block");
+
+    // Open the menu on the SECOND block, not the first — a moved/cleared hover must not silently
+    // retarget the action to block 0 or to whatever block is hovered next.
+    const second = content.locator("p").nth(1);
+    await expect(second).toHaveText("Bravo the second block");
+    await second.hover();
+    await page.getByRole("button", { exact: true, name: "Block actions" }).click();
+    const menu = page.getByRole("menu", { exact: true, name: "Block actions" });
+    await expect(menu).toBeVisible();
+    await expect(content.locator(".is-block-gutter-active")).toHaveText("Bravo the second block");
+
+    // Change the hover target while the menu is open: the grip's live hover now points at the first
+    // block. The wash — and the command target — must stay locked to Bravo, the block the menu opened
+    // for, not follow the hover to Alpha.
+    await content.locator("p").first().hover();
+    await expect(content.locator(".is-block-gutter-active")).toHaveText("Bravo the second block");
+
+    await menu.getByRole("menuitem", { name: "Delete" }).click();
+
+    // Bravo (the locked block) is gone; Alpha (the drifted hover target) and Charlie remain untouched.
+    await expect(content.getByText("Bravo the second block")).toHaveCount(0);
+    await expect(content.locator("p")).toHaveCount(2);
+    await expect(content.locator("p").first()).toHaveText("Alpha the first block");
+    await expect(content.locator("p").nth(1)).toHaveText("Charlie the third block");
+  });
+
+  test("the grip menu turns a block into a heading and deletes a block", async ({
+    page,
+    setup
+  }) => {
     const entryId = await seedAuthoredWork(setup.baseURL, page.request);
     await page.goto(`${setup.baseURL}#/write?work=${encodeURIComponent(entryId)}`);
 

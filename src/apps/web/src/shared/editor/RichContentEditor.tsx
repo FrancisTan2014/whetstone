@@ -215,7 +215,7 @@ export function RichContentEditor({
           gutterPos={gutterPos}
           onGutterPosChange={setGutterPos}
           onMenuChange={setOpenMenu}
-          open={openMenu?.source === "gutter"}
+          openMenu={openMenu}
         />
       ) : null}
 
