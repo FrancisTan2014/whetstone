@@ -387,6 +387,66 @@
 }
 
 /*
+ * Slash command affordances (#588). The empty-paragraph hint is a decoration-only placeholder
+ * (`@tiptap/extensions/placeholder`) shown ONLY while the editor is focused, so it never distracts a
+ * settled page and is never part of the stored document. The caret-anchored command menu is mounted
+ * to the document body and positioned by the maintained suggestion utility; it reads the same Day/Night
+ * tokens as the rest of the surface, stays usable at 390px, and caps its height so long lists scroll.
+ */
+.richContentEditorContent:focus p.is-empty::before,
+.richContentEditorContent:focus-visible p.is-empty::before {
+  content: attr(data-placeholder);
+  float: inline-start;
+  block-size: 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  pointer-events: none;
+}
+
+.richContentSlashMenu {
+  z-index: 60;
+  inline-size: max-content;
+  min-inline-size: 12rem;
+  max-inline-size: min(20rem, calc(100vw - 1rem));
+  max-block-size: min(18rem, 60vh);
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background-color: var(--color-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+.richContentSlashMenuList {
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+}
+
+.richContentSlashMenuOption {
+  display: flex;
+  align-items: center;
+  min-block-size: 2.5rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: var(--text-scale-sm);
+}
+
+.richContentSlashMenuOption--active {
+  background-color: var(--color-bg);
+  color: var(--color-accent);
+}
+
+.richContentSlashMenuEmpty {
+  margin: 0;
+  padding: 0.625rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-scale-sm);
+}
+
+/*
  * App shell + primitives layout. The SafeArea primitive uses dynamic/small viewport
  * units (never 100vh) and the safe-area insets so the shell fits notched and
  * keyboard-aware WebViews. The Sheet docks right on desktop and bottom on mobile.

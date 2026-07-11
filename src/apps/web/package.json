@@ -20,6 +20,7 @@
     "@tiptap/pm": "^3.27.3",
     "@tiptap/react": "^3.27.3",
     "@tiptap/static-renderer": "^3.27.3",
+    "@tiptap/suggestion": "^3.27.1",
     "@whetstone/contracts": "workspace:*",
     "@whetstone/document": "workspace:*",
     "@whetstone/domain": "workspace:*",
