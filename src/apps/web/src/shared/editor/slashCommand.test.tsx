@@ -113,6 +113,26 @@ describe("slash command menu integration", () => {
     expect(textbox.textContent).toBe("");
   });
 
+  it("preserves the top-level block id when a wrapping command changes the block type", async () => {
+    const { onChange, textbox, user } = await mountEditor();
+    const idBefore = textbox.querySelector("p")?.getAttribute("data-id");
+    expect(idBefore).toBeTruthy();
+
+    const listbox = await openMenu(textbox, user);
+    const quote = within(listbox)
+      .getAllByRole("option")
+      .find((option) => option.textContent === "Quote");
+    await user.pointer({ keys: "[MouseLeft]", target: quote as HTMLElement });
+
+    await waitFor(() => expect(firstBlock(lastDoc(onChange)).type).toBe("blockquote"));
+    const blockquote = firstBlock(lastDoc(onChange));
+    // The wrapping command builds a new top-level blockquote; it must inherit the block's stable id
+    // so note anchors and the autosaved stable-id path keep addressing the same block (#588)...
+    expect(blockquote.attrs?.["id"]).toBe(idBefore);
+    // ...and the now-nested paragraph must not keep the same id, so the id addresses exactly one node.
+    expect(blockquote.content?.[0]?.attrs?.["id"]).not.toBe(idBefore);
+  });
+
   it("selects a command by pointer without losing the editor caret", async () => {
     const { onChange, textbox, user } = await mountEditor();
 

@@ -1,4 +1,6 @@
 import type { ChainedCommands, Editor } from "@tiptap/core";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Transaction } from "@tiptap/pm/state";
 
 // The single shared block-command catalog. Every editor interaction surface — the slash menu now,
 // a future block/drag menu later (#588) — turns the current block into another block type through
@@ -37,8 +39,63 @@ function isBlockTransformContext(editor: Editor): boolean {
   return parent.isTextblock && parent.type.name !== "codeBlock";
 }
 
+// The addressable top-level block containing the selection (depth 1): its position, node, and stable
+// id. Positions and ids are read from the running transaction so this is correct both before and
+// after a transform composed earlier in the same chain. These commands only run on a textblock
+// selection (see `isBlockTransformContext`), so the selection always sits at depth >= 1 and the
+// depth-1 ancestor is the top-level block — for a nested selection (e.g. inside a list) that ancestor
+// is the wrapping list, exactly the addressable block we must keep stable.
+function topLevelBlock(tr: Transaction): { pos: number; node: ProseMirrorNode; id: string | null } {
+  const $from = tr.selection.$from;
+  const node = $from.node(1);
+  const id = node.attrs["id"];
+  return { id: typeof id === "string" ? id : null, node, pos: $from.before(1) };
+}
+
+// Keep a block's stable id on the addressable top-level block across any transform (#588). A wrapping
+// command (Bulleted list, Numbered list, Quote) builds a NEW top-level node around the block, so the
+// original id would otherwise stay only on the now-nested paragraph and the addressable top-level id
+// would change — breaking note anchors and the autosaved stable-id path. Capture the top-level id
+// before the transform; afterwards stamp it back onto the resulting top-level node and clear it from
+// any nested node that still carries it, so UniqueID reassigns that nested node a fresh id and the
+// preserved id addresses exactly one block. For non-wrapping commands (Text, headings, Code block)
+// the top-level node is unchanged, so the restamp is a no-op and no nested node holds the id.
+function withPreservedBlockId(
+  applyTransform: (chain: ChainedCommands) => ChainedCommands
+): (chain: ChainedCommands) => ChainedCommands {
+  return (chain) => {
+    const preserved: { id: string | null } = { id: null };
+
+    return applyTransform(
+      chain.command(({ tr }) => {
+        preserved.id = topLevelBlock(tr).id;
+        return true;
+      })
+    ).command(({ dispatch, tr }) => {
+      const preservedId = preserved.id;
+
+      if (dispatch && preservedId !== null) {
+        const target = topLevelBlock(tr);
+        tr.setNodeAttribute(target.pos, "id", preservedId);
+        target.node.descendants((node, offset) => {
+          if (node.attrs["id"] === preservedId) {
+            tr.setNodeAttribute(target.pos + 1 + offset, "id", null);
+          }
+          return undefined;
+        });
+      }
+
+      return true;
+    });
+  };
+}
+
 function defineCommand(definition: BlockCommandDefinition): BlockCommand {
-  return { ...definition, isAvailable: isBlockTransformContext };
+  return {
+    ...definition,
+    appendTo: withPreservedBlockId(definition.appendTo),
+    isAvailable: isBlockTransformContext
+  };
 }
 
 export const blockCommands: readonly BlockCommand[] = [

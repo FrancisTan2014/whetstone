@@ -117,6 +117,37 @@ describe("block command catalog", () => {
     expect(runBlockCommand(editor, text!)).toBe(true);
     expect(topNode(editor).type).toBe("paragraph");
   });
+
+  it("preserves the addressable top-level block id across every v0 transform", () => {
+    const collectIds = (node: DocumentNodeJSON): string[] => {
+      const id = node.attrs?.["id"];
+      const own = typeof id === "string" ? [id] : [];
+      const children = (node.content ?? []).flatMap((child) => collectIds(child));
+      return [...own, ...children];
+    };
+    const seeded = (id: string): DocumentNodeJSON => ({
+      content: [{ attrs: { id }, content: [{ text: "body", type: "text" }], type: "paragraph" }],
+      type: "doc"
+    });
+
+    for (const command of blockCommands) {
+      const editor = makeEditor(seeded("p-original"));
+      editor.commands.setTextSelection(3);
+
+      expect(runBlockCommand(editor, command)).toBe(true);
+
+      const doc = editor.getJSON() as DocumentNodeJSON;
+      const topLevel = doc.content?.[0];
+      // The resulting addressable top-level block keeps the original block's stable id, whether the
+      // command replaces the node in place (Text, headings, Code block) or wraps it (lists, Quote).
+      expect(topLevel?.attrs?.["id"]).toBe("p-original");
+
+      // A wrapping command must not leave the same id on a nested node too: ids stay unique so the
+      // note-anchor and autosaved stable-id paths address exactly one block.
+      const ids = collectIds(doc);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
 });
 
 describe("filterBlockCommands", () => {
