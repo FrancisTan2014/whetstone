@@ -92,9 +92,7 @@ export function BlockActionsMenu({
         >
           {canTurn ? (
             <DropdownMenu.Sub>
-              <DropdownMenu.SubTrigger className={cx.subTrigger}>
-                Turn into
-              </DropdownMenu.SubTrigger>
+              <DropdownMenu.SubTrigger className={cx.subTrigger}>Turn into</DropdownMenu.SubTrigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.SubContent
                   aria-label="Turn into"

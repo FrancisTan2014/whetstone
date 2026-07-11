@@ -259,7 +259,11 @@ describe("moving a block preserves every id", () => {
             {
               attrs: { id: "li" },
               content: [
-                { attrs: { id: "lp" }, content: [{ text: "item", type: "text" }], type: "paragraph" }
+                {
+                  attrs: { id: "lp" },
+                  content: [{ text: "item", type: "text" }],
+                  type: "paragraph"
+                }
               ],
               type: "listItem"
             }

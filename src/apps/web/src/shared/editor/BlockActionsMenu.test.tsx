@@ -160,7 +160,15 @@ describe("BlockActionsMenu structure", () => {
   it("opens a menu exposing every block action", async () => {
     const { menu } = await openMenu(paragraphs({ id: "a", text: "One" }, { id: "b", text: "Two" }));
 
-    for (const label of ["Turn into", "Insert above", "Insert below", "Duplicate", "Move up", "Move down", "Delete"]) {
+    for (const label of [
+      "Turn into",
+      "Insert above",
+      "Insert below",
+      "Duplicate",
+      "Move up",
+      "Move down",
+      "Delete"
+    ]) {
       expect(within(menu).getByRole("menuitem", { name: new RegExp(label) })).toBeTruthy();
     }
   });
@@ -171,9 +179,9 @@ describe("BlockActionsMenu structure", () => {
       0
     );
 
-    expect(within(menu).getByRole("menuitem", { name: "Move up" }).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
+    expect(
+      within(menu).getByRole("menuitem", { name: "Move up" }).getAttribute("aria-disabled")
+    ).toBe("true");
     expect(
       within(menu).getByRole("menuitem", { name: "Move down" }).getAttribute("aria-disabled")
     ).not.toBe("true");

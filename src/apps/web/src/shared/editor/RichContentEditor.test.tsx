@@ -542,9 +542,7 @@ async function placeCaretInBlock(textbox: HTMLElement, blockIndex: number): Prom
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function openMoreMenu(
-  user: ReturnType<typeof userEvent.setup>
-): Promise<HTMLElement> {
+async function openMoreMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   await user.click(screen.getByRole("button", { name: "More block actions" }));
   return screen.findByRole("menu", { name: "More block actions" });
 }
@@ -570,9 +568,9 @@ describe("RichContentEditor contextual block gutter", () => {
     }
 
     // The caret starts in the first block, so Move up is at a boundary and Move down is not.
-    expect(within(menu).getByRole("menuitem", { name: "Move up" }).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
+    expect(
+      within(menu).getByRole("menuitem", { name: "Move up" }).getAttribute("aria-disabled")
+    ).toBe("true");
     expect(
       within(menu).getByRole("menuitem", { name: "Move down" }).getAttribute("aria-disabled")
     ).not.toBe("true");
@@ -648,4 +646,3 @@ describe("RichContentEditor contextual block gutter", () => {
     expect(within(gutter as HTMLElement).getByLabelText("Block actions")).toBeTruthy();
   });
 });
-

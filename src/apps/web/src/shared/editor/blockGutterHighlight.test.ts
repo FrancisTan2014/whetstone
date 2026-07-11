@@ -3,7 +3,11 @@ import { Editor, type Extensions } from "@tiptap/core";
 import { type DocumentNodeJSON, documentExtensions } from "@whetstone/document";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { BlockGutterHighlight, blockGutterHighlightKey, setBlockGutterTarget } from "./blockGutterHighlight";
+import {
+  BlockGutterHighlight,
+  blockGutterHighlightKey,
+  setBlockGutterTarget
+} from "./blockGutterHighlight";
 import { blockGutterHighlightClass } from "./blockGutterHighlight.tokens";
 
 beforeAll(() => {
