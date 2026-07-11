@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { createElement, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type {
   AuthoredWorkSummaryDto,
   DueRecitationPassageDto,
   LatestReadingPositionDto,
+  MemoryPromptCardDto,
   NudgeDto,
-  RecallItemDto,
   RecitationPlanDto,
   RecitationTodayDto
 } from "@whetstone/contracts";
@@ -44,7 +44,7 @@ import { fetchLatestReadingPosition } from "./todayApi.js";
 type RecallState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
-  | Readonly<{ items: ReadonlyArray<RecallItemDto>; status: "ready" }>;
+  | Readonly<{ items: ReadonlyArray<MemoryPromptCardDto>; status: "ready" }>;
 
 type ContinueState =
   | Readonly<{ status: "error" }>
@@ -184,34 +184,43 @@ export function TodayPage(): React.JSX.Element {
 
   const firstRun = isFirstRun({ library, nudge, reading, recall });
 
-  return (
-    <section aria-labelledby="today-heading" className="mx-auto max-w-2xl p-6">
-      <header>
-        <h1 className="text-2xl font-semibold text-text" id="today-heading">
-          Today
-        </h1>
-        <p className="mt-1 text-text-muted">
-          A small, finishable set. Clear it, then rest and play freely.
-        </p>
-      </header>
-
-      <div className="mt-6 flex flex-col gap-4">
-        {firstRun ? <FirstRunCard /> : null}
-        <CaptureCard />
-        <RecallCard state={recall} />
-        <ContinueReadingCard state={reading} />
-        <ContinueWritingCard state={writing} />
-        <ContinueRecitationCard
-          onContinue={handleRecitationSession}
-          onStartReciting={handleStartReciting}
-          state={recitation}
-        />
-        <ReciteCard onReviewed={loadRecite} state={recite} />
-        <NudgeCard state={nudge} onDismiss={handleDismiss} />
-        <ClearedState library={library} reading={reading} recall={recall} nudge={nudge} />
-      </div>
-    </section>
+  const body = createElement(
+    "section",
+    { "aria-labelledby": "today-heading", className: "mx-auto max-w-2xl p-6" },
+    createElement(
+      "header",
+      null,
+      createElement(
+        "h1",
+        { className: "text-2xl font-semibold text-text", id: "today-heading" },
+        "Today"
+      ),
+      createElement(
+        "p",
+        { className: "mt-1 text-text-muted" },
+        "A small, finishable set. Clear it, then rest and play freely."
+      )
+    ),
+    createElement(
+      "div",
+      { className: "mt-6 flex flex-col gap-4" },
+      firstRun ? createElement(FirstRunCard) : null,
+      createElement(CaptureCard),
+      createElement(RecallCard, { state: recall }),
+      createElement(ContinueReadingCard, { state: reading }),
+      createElement(ContinueWritingCard, { state: writing }),
+      createElement(ContinueRecitationCard, {
+        onContinue: handleRecitationSession,
+        onStartReciting: handleStartReciting,
+        state: recitation
+      }),
+      createElement(ReciteCard, { onReviewed: loadRecite, state: recite }),
+      createElement(NudgeCard, { onDismiss: handleDismiss, state: nudge }),
+      createElement(ClearedState, { library, nudge, reading, recall })
+    )
   );
+
+  return body;
 }
 
 // A truthful cold start: every actionable arm is loaded AND empty and the library holds no work.
@@ -243,17 +252,23 @@ function isFirstRun({
 // The first-run on-ramp: shown only on a confirmed cold start. It points at the single next step —
 // add or import one work — and routes to Library (never duplicating Library's add/upload forms).
 function FirstRunCard(): React.JSX.Element {
-  return (
-    <section
-      aria-label="Start with one source"
-      className="rounded border border-border bg-surface p-4"
-    >
-      <h2 className="text-lg font-medium text-text">Start with one source</h2>
-      <p className="mt-1 text-text-muted">Add or import a reading — one work is enough to begin.</p>
-      <Link className={`${buttonVariants({ variant: "primary" })} mt-3`} to="/library">
-        Open Library
-      </Link>
-    </section>
+  return createElement(
+    "section",
+    {
+      "aria-label": "Start with one source",
+      className: "rounded border border-border bg-surface p-4"
+    },
+    createElement("h2", { className: "text-lg font-medium text-text" }, "Start with one source"),
+    createElement(
+      "p",
+      { className: "mt-1 text-text-muted" },
+      "Add or import a reading — one work is enough to begin."
+    ),
+    createElement(
+      Link,
+      { className: `${buttonVariants({ variant: "primary" })} mt-3`, to: "/library" },
+      "Open Library"
+    )
   );
 }
 
@@ -261,11 +276,11 @@ function FirstRunCard(): React.JSX.Element {
 // shown here at a glance, with a Review link to the full Recall surface for the rest. Zero due is a
 // quiet, explicit empty line; a load failure is a quiet inline note, never a page-blanking error.
 function RecallCard({ state }: Readonly<{ state: RecallState }>): React.JSX.Element {
-  return (
-    <section aria-label="Recall" className="rounded border border-border bg-surface p-4">
-      <h2 className="text-lg font-medium text-text">Recall</h2>
-      <div className="mt-2">{renderRecall(state)}</div>
-    </section>
+  return createElement(
+    "section",
+    { "aria-label": "Recall", className: "rounded border border-border bg-surface p-4" },
+    createElement("h2", { className: "text-lg font-medium text-text" }, "Recall"),
+    createElement("div", { className: "mt-2" }, renderRecall(state))
   );
 }
 
@@ -294,10 +309,7 @@ function renderRecall(state: RecallState): React.JSX.Element {
         Recall {state.items.length === 1 ? "this 1 item" : `these ${state.items.length} items`}.
       </p>
       <div>
-        <p className="text-lg text-text">{first.text}</p>
-        {first.gloss === null ? null : (
-          <p className="mt-1 text-sm text-text-muted">{first.gloss}</p>
-        )}
+        <p className="text-lg text-text">{first.cueText}</p>
       </div>
       <Link className={buttonVariants({ variant: "secondary" })} to="/recall">
         Review
@@ -310,11 +322,11 @@ function renderRecall(state: RecallState): React.JSX.Element {
 // back into the reader (`#/reader?work=…`, the same convention Search uses). None -> a quiet line; a
 // failure -> a quiet inline note. The reader stays calm — opening it here changes nothing about it.
 function ContinueReadingCard({ state }: Readonly<{ state: ContinueState }>): React.JSX.Element {
-  return (
-    <section aria-label="Continue reading" className="rounded border border-border bg-surface p-4">
-      <h2 className="text-lg font-medium text-text">Continue reading</h2>
-      <div className="mt-2">{renderReading(state)}</div>
-    </section>
+  return createElement(
+    "section",
+    { "aria-label": "Continue reading", className: "rounded border border-border bg-surface p-4" },
+    createElement("h2", { className: "text-lg font-medium text-text" }, "Continue reading"),
+    createElement("div", { className: "mt-2" }, renderReading(state))
   );
 }
 
@@ -352,11 +364,11 @@ function renderReading(state: ContinueState): React.JSX.Element {
 // link straight into the immersive editor (`#/write?work=…`). None -> a quiet line; a failure -> a quiet
 // inline note. Like the other arms it loads independently, so a failure here never blanks Today.
 function ContinueWritingCard({ state }: Readonly<{ state: WritingState }>): React.JSX.Element {
-  return (
-    <section aria-label="Continue writing" className="rounded border border-border bg-surface p-4">
-      <h2 className="text-lg font-medium text-text">Continue writing</h2>
-      <div className="mt-2">{renderWriting(state)}</div>
-    </section>
+  return createElement(
+    "section",
+    { "aria-label": "Continue writing", className: "rounded border border-border bg-surface p-4" },
+    createElement("h2", { className: "text-lg font-medium text-text" }, "Continue writing"),
+    createElement("div", { className: "mt-2" }, renderWriting(state))
   );
 }
 
@@ -404,14 +416,18 @@ function ContinueRecitationCard({
   onStartReciting: (planEntryId: string) => void;
   state: RecitationState;
 }>): React.JSX.Element {
-  return (
-    <section
-      aria-label="Continue recitation"
-      className="rounded border border-border bg-surface p-4"
-    >
-      <h2 className="text-lg font-medium text-text">Continue recitation</h2>
-      <div className="mt-2">{renderRecitation(state, onContinue, onStartReciting)}</div>
-    </section>
+  return createElement(
+    "section",
+    {
+      "aria-label": "Continue recitation",
+      className: "rounded border border-border bg-surface p-4"
+    },
+    createElement("h2", { className: "text-lg font-medium text-text" }, "Continue recitation"),
+    createElement(
+      "div",
+      { className: "mt-2" },
+      renderRecitation(state, onContinue, onStartReciting)
+    )
   );
 }
 
@@ -481,11 +497,11 @@ function ReciteCard({
   onReviewed: () => void;
   state: ReciteState;
 }>): React.JSX.Element {
-  return (
-    <section aria-label="Recite" className="rounded border border-border bg-surface p-4">
-      <h2 className="text-lg font-medium text-text">Recite</h2>
-      <div className="mt-2">{renderRecite(state, onReviewed)}</div>
-    </section>
+  return createElement(
+    "section",
+    { "aria-label": "Recite", className: "rounded border border-border bg-surface p-4" },
+    createElement("h2", { className: "text-lg font-medium text-text" }, "Recite"),
+    createElement("div", { className: "mt-2" }, renderRecite(state, onReviewed))
   );
 }
 
@@ -595,26 +611,39 @@ function NudgeCard({
     return null;
   }
 
-  return (
-    <section aria-label="Practice nudge" className="rounded border border-border bg-surface p-4">
-      <div className="flex items-start justify-between gap-3">
-        <h2 className="text-lg font-medium text-text">Practice</h2>
-        <button
-          aria-label="Dismiss this practice nudge"
-          className="inline-flex min-h-11 min-w-11 items-center justify-center text-text-muted hover:text-text"
-          onClick={() => onDismiss(nudge.chunkId)}
-          type="button"
-        >
-          ✕
-        </button>
-      </div>
-      <p className="mt-1 text-text">
-        Practise <em>{shortSnippet(nudge.text)}</em> from <em>{nudge.workTitle}</em>.
-      </p>
-      <Link className={`${buttonVariants({ variant: "primary" })} mt-3`} to="/practice">
-        Practise now
-      </Link>
-    </section>
+  return createElement(
+    "section",
+    { "aria-label": "Practice nudge", className: "rounded border border-border bg-surface p-4" },
+    createElement(
+      "div",
+      { className: "flex items-start justify-between gap-3" },
+      createElement("h2", { className: "text-lg font-medium text-text" }, "Practice"),
+      createElement(
+        "button",
+        {
+          "aria-label": "Dismiss this practice nudge",
+          className:
+            "inline-flex min-h-11 min-w-11 items-center justify-center text-text-muted hover:text-text",
+          onClick: () => onDismiss(nudge.chunkId),
+          type: "button"
+        },
+        "✕"
+      )
+    ),
+    createElement(
+      "p",
+      { className: "mt-1 text-text" },
+      "Practise ",
+      createElement("em", null, shortSnippet(nudge.text)),
+      " from ",
+      createElement("em", null, nudge.workTitle),
+      "."
+    ),
+    createElement(
+      Link,
+      { className: `${buttonVariants({ variant: "primary" })} mt-3`, to: "/practice" },
+      "Practise now"
+    )
   );
 }
 
@@ -651,9 +680,9 @@ function ClearedState({
     return null;
   }
 
-  return (
-    <p className="rounded border border-border bg-surface p-4 text-text-muted">
-      You&rsquo;re done for today. Rest and play freely.
-    </p>
+  return createElement(
+    "p",
+    { className: "rounded border border-border bg-surface p-4 text-text-muted" },
+    "You’re done for today. Rest and play freely."
   );
 }

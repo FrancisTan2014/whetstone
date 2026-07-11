@@ -28,7 +28,13 @@ describe("entry/link vocabulary", () => {
       "memory_note",
       "memory_prompt"
     ]);
-    expect(linkTypes).toEqual(["contains", "annotates", "references", "related_to", "derived_from"]);
+    expect(linkTypes).toEqual([
+      "contains",
+      "annotates",
+      "references",
+      "related_to",
+      "derived_from"
+    ]);
     expect(workTypes).toEqual(["book", "essay", "blog_post", "classical_text"]);
     expect(isEntryType("reading_unit")).toBe(true);
     expect(isEntryType("toc_entry")).toBe(true);

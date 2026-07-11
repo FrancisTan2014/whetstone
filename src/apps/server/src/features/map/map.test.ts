@@ -10,7 +10,8 @@ import { createServer } from "../../http/createServer.js";
 import { authorCase } from "../authoring/authoringCommands.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
 import { depositTurnOutcome } from "../learner/learnerCommands.js";
-import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
+import { reviewChunkMemory } from "../memory/memoryCommands.js";
+import { reviewStatesByChunkIds } from "../memory/memoryQueries.js";
 import { compileProgressMap } from "./mapQueries.js";
 
 const userA = "user-a";
@@ -28,26 +29,29 @@ async function buildDb(): Promise<DbClient> {
   return client;
 }
 
-// Drive a chunk to a target FSRS maturity via the real review path. "learning" = one passing review
+// Drive a chunk to a target FSRS maturity via the real Memory review path. "learning" = one passing review
 // (graded but far from graduated); "mastered" = spaced "easy" reviews AT each due date until the card
 // graduates to a comfortably long interval (state "review", scheduledDays >= MASTERY_INTERVAL_DAYS).
 async function enroll(chunkId: string, maturity: "learning" | "mastered"): Promise<void> {
-  const item = await enrollRecallItem(
-    { createId, db },
-    { chunkId, kind: "chunk", text: chunkId },
-    userA,
-    t0
-  );
+  const reviewChunk = (rating: "good" | "easy", now: Date) =>
+    reviewChunkMemory(
+      { createId, db },
+      { chunkId, situation: chunkId, target: chunkId, sourceBlockEntryId: null, userId: userA },
+      rating,
+      now
+    );
   if (maturity === "learning") {
-    await recordRecallReview({ createId, db }, item.id, "good", userA, t0);
+    await reviewChunk("good", t0);
     return;
   }
   let now = t0;
   for (let i = 0; i < 12; i += 1) {
-    const result = await recordRecallReview({ createId, db }, item.id, "easy", userA, now);
-    if (result.status !== "recorded") throw new Error("review failed");
-    if (result.item.review.state === "review" && result.item.review.scheduledDays >= 21) return;
-    now = new Date(result.item.review.due);
+    await reviewChunk("easy", now);
+    const states = await reviewStatesByChunkIds(db, userA, [chunkId]);
+    const state = states.get(chunkId)?.[0];
+    if (state === undefined) throw new Error("review failed");
+    if (state.state === "review" && state.scheduledDays >= 21) return;
+    now = new Date(state.due);
   }
   throw new Error(`chunk ${chunkId} did not reach mastered`);
 }

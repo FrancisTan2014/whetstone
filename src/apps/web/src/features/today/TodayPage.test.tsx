@@ -36,10 +36,11 @@ import type {
   ContinueRecitationDto,
   DueRecitationPassageDto,
   LatestReadingPositionDto,
+  MemoryPromptCardDto,
   NudgeDto,
-  RecallItemDto,
   RecitationPlanDto,
   RecitationTodayDto,
+  ReviewStateDto,
   WorkDto,
   WorkListDto
 } from "@whetstone/contracts";
@@ -88,32 +89,27 @@ function makeWorkList(count: number): WorkListDto {
   return { works };
 }
 
-function makeItem(overrides: Partial<RecallItemDto> = {}): RecallItemDto {
+const review: ReviewStateDto = {
+  due: "2026-01-01T00:00:00.000Z",
+  stability: 0,
+  difficulty: 0,
+  elapsedDays: 0,
+  scheduledDays: 0,
+  learningSteps: 0,
+  reps: 0,
+  lapses: 0,
+  state: "new",
+  lastReviewedAt: null
+};
+
+function makeItem(overrides: Partial<MemoryPromptCardDto> = {}): MemoryPromptCardDto {
   return {
+    answerText: "to reveal a secret",
     chunkId: null,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    gloss: null,
-    id: "r1",
-    kind: "word",
-    provenanceEntryId: null,
-    review: {
-      due: "2026-01-01T00:00:00.000Z",
-      stability: 0,
-      difficulty: 0,
-      elapsedDays: 0,
-      scheduledDays: 0,
-      learningSteps: 0,
-      reps: 0,
-      lapses: 0,
-      state: "new",
-      lastReviewedAt: null
-    },
-    text: "spill the beans",
-    cue: null,
-    useContext: null,
-    category: null,
-    tags: null,
-    sourceProposalCandidateId: null,
+    cueText: "spill the beans",
+    noteId: "note-1",
+    promptId: "prompt-1",
+    review,
     ...overrides
   };
 }
@@ -183,17 +179,34 @@ function makeToday(overrides: Partial<RecitationTodayDto> = {}): RecitationToday
   };
 }
 
-function renderToday(): void {
-  render(
+function todayElement(): React.JSX.Element {
+  return (
     <MemoryRouter>
       <TodayPage />
     </MemoryRouter>
   );
 }
 
+function renderToday(): ReturnType<typeof render> {
+  return render(todayElement());
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedRecall.mockReturnValue(pending<ReadonlyArray<RecallItemDto>>());
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((query: string) => ({
+      addEventListener: vi.fn(),
+      addListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+      removeListener: vi.fn()
+    }))
+  );
+  mockedRecall.mockReturnValue(pending<ReadonlyArray<MemoryPromptCardDto>>());
   mockedReading.mockReturnValue(pending<LatestReadingPositionDto | undefined>());
   mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
   mockedWorks.mockReturnValue(pending<WorkListDto>());
@@ -205,6 +218,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 describe("TodayPage", () => {
@@ -239,25 +253,26 @@ describe("TodayPage", () => {
 
   it("surfaces the first due item at a glance with a Review link, holding back the rest", async () => {
     mockedRecall.mockResolvedValue([
-      makeItem({ gloss: "to reveal a secret" }),
-      makeItem({ id: "r2", text: "by and large" })
+      makeItem(),
+      makeItem({ cueText: "by and large", promptId: "prompt-2" })
     ]);
     renderToday();
 
     expect(await screen.findByText("Recall these 2 items.")).toBeDefined();
     expect(screen.getByText("spill the beans")).toBeDefined();
-    expect(screen.getByText("to reveal a secret")).toBeDefined();
+    expect(screen.queryByText("to reveal a secret")).toBeNull();
     // Restraint: only the first item is shown here; the rest live behind the Review link.
     expect(screen.queryByText("by and large")).toBeNull();
     expect(screen.getByRole("link", { name: "Review" }).getAttribute("href")).toBe("/recall");
   });
 
-  it("phrases a single due item in the singular and omits an absent gloss", async () => {
-    mockedRecall.mockResolvedValue([makeItem({ gloss: null })]);
+  it("phrases a single due prompt in the singular", async () => {
+    mockedRecall.mockResolvedValue([makeItem()]);
     renderToday();
 
     expect(await screen.findByText("Recall this 1 item.")).toBeDefined();
     expect(screen.getByText("spill the beans")).toBeDefined();
+    expect(screen.queryByText("to reveal a secret")).toBeNull();
   });
 
   it("shows a quiet recall empty line when nothing is due", async () => {
@@ -417,6 +432,20 @@ describe("TodayPage", () => {
     );
     // The done-for-today message is untruthful here, so it stays hidden.
     expect(screen.queryByText(/You’re done for today/)).toBeNull();
+  });
+
+  it("keeps the first-run on-ramp stable across a parent rerender", async () => {
+    mockedWorks.mockResolvedValue(emptyWorks);
+    mockedRecall.mockResolvedValue([]);
+    mockedReading.mockResolvedValue(undefined);
+    mockedNudge.mockResolvedValue(undefined);
+    const view = renderToday();
+
+    expect(await screen.findByText("Start with one source")).toBeDefined();
+    view.rerender(todayElement());
+
+    expect(screen.getByRole("link", { name: "Open Library" })).toBeDefined();
+    expect(mockedRecall).toHaveBeenCalledTimes(1);
   });
 
   it("returns to the normal cleared board once the learner has at least one work", async () => {

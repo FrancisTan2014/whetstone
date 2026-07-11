@@ -8,7 +8,8 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { errorPatterns, turnOutcomes } from "../../db/schema.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
-import { enrollRecallItem, recordRecallReview } from "../recall/recallCommands.js";
+import { depositMemory, reviewChunkMemory } from "../memory/memoryCommands.js";
+import { reviewStatesByChunkIds } from "../memory/memoryQueries.js";
 import {
   defaultProfileSummary,
   depositTurnOutcome,
@@ -42,23 +43,37 @@ async function buildContext(seed = true): Promise<TestContext> {
   return { db, deps: { createId: () => `id-${(sequence += 1)}`, db } };
 }
 
-// Drive a chunk into "mastered" (spaced "easy" reviews at each due date until it graduates to a
+// Drive a chunk into "mastered" (spaced "easy" Memory reviews at each due date until it graduates to a
 // comfortably long interval) so it counts toward a domain strength.
 async function master(chunkId: string, userId: string): Promise<void> {
-  const item = await enrollRecallItem(
+  let now = t0;
+  for (let i = 0; i < 12; i += 1) {
+    await reviewChunkMemory(
+      context.deps,
+      { chunkId, situation: chunkId, target: chunkId, sourceBlockEntryId: null, userId },
+      "easy",
+      now
+    );
+    const states = await reviewStatesByChunkIds(context.db, userId, [chunkId]);
+    const state = states.get(chunkId)?.[0];
+    if (state === undefined) throw new Error("review failed");
+    if (state.state === "review" && state.scheduledDays >= 21) return;
+    now = new Date(state.due);
+  }
+  throw new Error(`chunk ${chunkId} did not reach mastered`);
+}
+
+async function depositDuePrompt(chunkId: string, text: string, userId: string): Promise<void> {
+  await depositMemory(
     context.deps,
-    { chunkId, kind: "chunk", text: chunkId },
+    {
+      captureSource: "practice",
+      noteText: text,
+      prompts: [{ answerText: text, chunkId, cueText: text }]
+    },
     userId,
     t0
   );
-  let now = t0;
-  for (let i = 0; i < 12; i += 1) {
-    const result = await recordRecallReview(context.deps, item.id, "easy", userId, now);
-    if (result.status !== "recorded") throw new Error("review failed");
-    if (result.item.review.state === "review" && result.item.review.scheduledDays >= 21) return;
-    now = new Date(result.item.review.due);
-  }
-  throw new Error(`chunk ${chunkId} did not reach mastered`);
 }
 
 beforeEach(async () => {
@@ -194,19 +209,9 @@ describe("compileContext", () => {
     expect(compiled.profile).toBeNull();
   });
 
-  it("aggregates multiple recall items linked to one chunk", async () => {
-    await enrollRecallItem(
-      context.deps,
-      { chunkId: "kitchen.meal_planning.whats_for_dinner", kind: "chunk", text: "a" },
-      userA,
-      t0
-    );
-    await enrollRecallItem(
-      context.deps,
-      { chunkId: "kitchen.meal_planning.whats_for_dinner", kind: "chunk", text: "b" },
-      userA,
-      t0
-    );
+  it("aggregates multiple Memory prompts linked to one chunk", async () => {
+    await depositDuePrompt("kitchen.meal_planning.whats_for_dinner", "a", userA);
+    await depositDuePrompt("kitchen.meal_planning.whats_for_dinner", "b", userA);
 
     const compiled = await compileContext(context.db, userA, t0, { chunkLimit: 100 });
     const entry = compiled.rankedChunks.find(

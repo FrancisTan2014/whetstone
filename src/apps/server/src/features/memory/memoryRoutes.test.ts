@@ -51,14 +51,14 @@ async function buildContext(): Promise<TestContext> {
 }
 
 // Seed one scheduled prompt (cue + answer) whose card is due at `depositedAt`, for the given user.
-async function seedScheduled(
-  cueText: string,
-  userId: string,
-  depositedAt: Date
-): Promise<string> {
+async function seedScheduled(cueText: string, userId: string, depositedAt: Date): Promise<string> {
   const deposit = await depositMemory(
     context.memory,
-    { captureSource: "practice", noteText: cueText, prompts: [{ cueText, answerText: `answer:${cueText}` }] },
+    {
+      captureSource: "practice",
+      noteText: cueText,
+      prompts: [{ cueText, answerText: `answer:${cueText}` }]
+    },
     userId,
     depositedAt
   );

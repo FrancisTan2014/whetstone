@@ -1,7 +1,8 @@
 import {
-  parseRecallItemDto,
-  parseRecallItemListDto,
-  type RecallItemDto
+  parseMemoryPromptCardListDto,
+  parseMemoryPromptDto,
+  type MemoryPromptCardDto,
+  type MemoryPromptDto
 } from "@whetstone/contracts";
 import { type ReviewRating } from "@whetstone/domain";
 
@@ -23,15 +24,18 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
 }
 
 // Today's due batch (already capped server-side). The reader stays calm — this is the only recall surface.
-export async function fetchDueRecall(): Promise<ReadonlyArray<RecallItemDto>> {
-  return parseRecallItemListDto(await requestJson(apiUrl("/recall/due"))).items;
+export async function fetchDueRecall(): Promise<ReadonlyArray<MemoryPromptCardDto>> {
+  return parseMemoryPromptCardListDto(await requestJson(apiUrl("/recall/due"))).items;
 }
 
-// Self-grade one item: the learner's Again/Hard/Good/Easy rating crosses the wire directly and the FSRS
-// scheduler applies it server-side.
-export async function gradeRecall(id: string, rating: ReviewRating): Promise<RecallItemDto> {
-  return parseRecallItemDto(
-    await requestJson(apiUrl(`/recall/items/${encodeURIComponent(id)}/review`), {
+// Self-grade one prompt: the learner's Again/Hard/Good/Easy rating crosses the wire directly and the
+// FSRS scheduler applies it server-side.
+export async function gradeRecall(
+  promptId: string,
+  rating: ReviewRating
+): Promise<MemoryPromptDto> {
+  return parseMemoryPromptDto(
+    await requestJson(apiUrl(`/recall/prompts/${encodeURIComponent(promptId)}/review`), {
       body: JSON.stringify({ rating }),
       headers: jsonHeaders,
       method: "POST"
@@ -39,9 +43,11 @@ export async function gradeRecall(id: string, rating: ReviewRating): Promise<Rec
   );
 }
 
-// Snooze one item: defer it out of today's batch (no grade, no body).
-export async function snoozeRecall(id: string): Promise<RecallItemDto> {
-  return parseRecallItemDto(
-    await requestJson(apiUrl(`/recall/items/${encodeURIComponent(id)}/snooze`), { method: "POST" })
+// Snooze one prompt: defer it out of today's batch (no grade, no body).
+export async function snoozeRecall(promptId: string): Promise<MemoryPromptDto> {
+  return parseMemoryPromptDto(
+    await requestJson(apiUrl(`/recall/prompts/${encodeURIComponent(promptId)}/snooze`), {
+      method: "POST"
+    })
   );
 }

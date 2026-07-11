@@ -96,7 +96,10 @@ export type MemoryDepositDto = z.infer<typeof memoryDepositDtoSchema>;
 export const memoryPromptInputSchema = z
   .object({
     cueText: z.string().refine(isNonBlank, { message: "cueText must be non-empty." }),
-    answerText: z.string().refine(isNonBlank, { message: "answerText must be non-empty." }).nullish(),
+    answerText: z
+      .string()
+      .refine(isNonBlank, { message: "answerText must be non-empty." })
+      .nullish(),
     chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }).nullish(),
     glossTerm: z.string().refine(isNonBlank, { message: "glossTerm must be non-empty." }).nullish()
   })
@@ -114,7 +117,9 @@ export const depositMemoryRequestSchema = z
       .string()
       .refine(isNonBlank, { message: "derivedFromEntryId must be non-empty." })
       .nullish(),
-    prompts: z.array(memoryPromptInputSchema).min(1, { message: "at least one prompt is required." })
+    prompts: z
+      .array(memoryPromptInputSchema)
+      .min(1, { message: "at least one prompt is required." })
   })
   .strict();
 

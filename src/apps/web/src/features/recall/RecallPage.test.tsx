@@ -9,7 +9,7 @@ vi.mock("./recallApi", () => ({
   snoozeRecall: vi.fn()
 }));
 
-import type { RecallItemDto } from "@whetstone/contracts";
+import type { MemoryPromptCardDto, MemoryPromptDto, ReviewStateDto } from "@whetstone/contracts";
 
 import { fetchDueRecall, gradeRecall, snoozeRecall } from "./recallApi";
 import { RecallPage } from "./RecallPage";
@@ -18,32 +18,40 @@ const mockedFetch = vi.mocked(fetchDueRecall);
 const mockedGrade = vi.mocked(gradeRecall);
 const mockedSnooze = vi.mocked(snoozeRecall);
 
-function makeItem(overrides: Partial<RecallItemDto> = {}): RecallItemDto {
+const review: ReviewStateDto = {
+  due: "2026-01-01T00:00:00.000Z",
+  stability: 0,
+  difficulty: 0,
+  elapsedDays: 0,
+  scheduledDays: 0,
+  learningSteps: 0,
+  reps: 0,
+  lapses: 0,
+  state: "new",
+  lastReviewedAt: null
+};
+
+function makeCard(overrides: Partial<MemoryPromptCardDto> = {}): MemoryPromptCardDto {
   return {
+    answerText: "to reveal a secret",
     chunkId: null,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    gloss: null,
-    id: "r1",
-    kind: "word",
-    provenanceEntryId: null,
-    review: {
-      due: "2026-01-01T00:00:00.000Z",
-      stability: 0,
-      difficulty: 0,
-      elapsedDays: 0,
-      scheduledDays: 0,
-      learningSteps: 0,
-      reps: 0,
-      lapses: 0,
-      state: "new",
-      lastReviewedAt: null
-    },
-    text: "spill the beans",
-    cue: null,
-    useContext: null,
-    category: null,
-    tags: null,
-    sourceProposalCandidateId: null,
+    cueText: "spill the beans",
+    noteId: "note-1",
+    promptId: "prompt-1",
+    review,
+    ...overrides
+  };
+}
+
+function makePrompt(overrides: Partial<MemoryPromptDto> = {}): MemoryPromptDto {
+  return {
+    answerText: "to reveal a secret",
+    chunkId: null,
+    cueText: "spill the beans",
+    lifecycle: "scheduled",
+    noteId: "note-1",
+    promptId: "prompt-1",
+    review,
     ...overrides
   };
 }
@@ -57,13 +65,13 @@ afterEach(() => {
 });
 
 describe("RecallPage", () => {
-  it("shows a loading state while due items load", () => {
-    mockedFetch.mockReturnValue(new Promise<ReadonlyArray<RecallItemDto>>(() => {}));
+  it("shows a loading state while due prompts load", () => {
+    mockedFetch.mockReturnValue(new Promise<ReadonlyArray<MemoryPromptCardDto>>(() => {}));
     render(<RecallPage />);
     expect(screen.getByText("Gathering what's due…")).toBeDefined();
   });
 
-  it("shows an error state when due items cannot load", async () => {
+  it("shows an error state when due prompts cannot load", async () => {
     mockedFetch.mockRejectedValue(new Error("boom"));
     render(<RecallPage />);
     expect(await screen.findByText(/Could not load your recall items/)).toBeDefined();
@@ -78,7 +86,7 @@ describe("RecallPage", () => {
 
   it("shows the prompt with Show answer and Snooze but no grade buttons before reveal (#525)", async () => {
     // A self-grade is meaningless without a retrieval attempt: grades are gated behind the reveal.
-    mockedFetch.mockResolvedValue([makeItem({ gloss: "to reveal a secret" })]);
+    mockedFetch.mockResolvedValue([makeCard()]);
     render(<RecallPage />);
 
     const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
@@ -87,64 +95,76 @@ describe("RecallPage", () => {
     for (const label of ["Again", "Hard", "Good", "Easy"]) {
       expect(within(card).queryByRole("button", { name: label })).toBeNull();
     }
-    // The back (gloss) is not revealed yet.
     expect(within(card).queryByText("to reveal a secret")).toBeNull();
   });
 
-  it("reveals the answer and shows the four grade buttons after Show answer (#525)", async () => {
-    mockedFetch.mockResolvedValue([makeItem({ gloss: "to reveal a secret" })]);
+  it("keeps the loaded prompt stable across a parent rerender", async () => {
+    mockedFetch.mockResolvedValue([makeCard()]);
+    const view = render(<RecallPage />);
+
+    expect(await screen.findByText("spill the beans")).toBeDefined();
+    view.rerender(<RecallPage />);
+
+    expect(screen.getByText("spill the beans")).toBeDefined();
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("reveals the answer, focuses it, and shows the four grade buttons after Show answer (#525)", async () => {
+    mockedFetch.mockResolvedValue([makeCard()]);
     const user = userEvent.setup();
     render(<RecallPage />);
 
     const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
     await user.click(within(card).getByRole("button", { name: "Show answer" }));
 
-    // The back appears, and only now do the four FSRS rating buttons enter the tree.
-    expect(within(card).getByText("to reveal a secret")).toBeDefined();
+    const answer = within(card).getByLabelText("Answer");
+    expect(within(answer).getByText("to reveal a secret")).toBeDefined();
+    expect(document.activeElement).toBe(answer);
     for (const label of ["Again", "Hard", "Good", "Easy"]) {
       expect(within(card).getByRole("button", { name: label })).toBeDefined();
     }
-    // The reveal control is gone; Snooze stays.
     expect(within(card).queryByRole("button", { name: "Show answer" })).toBeNull();
     expect(within(card).getByRole("button", { name: "Snooze" })).toBeDefined();
   });
 
-  it("production card (cue present): front is the cue; the target is on the revealed back (#525)", async () => {
+  it("uses the card cue as the front and the answer text as the revealed back (#595)", async () => {
     mockedFetch.mockResolvedValue([
-      makeItem({ cue: "Say you kept a secret in.", text: "spill the beans", gloss: "reveal it" })
+      makeCard({ answerText: "spill the beans", cueText: "Say you kept a secret in." })
     ]);
     const user = userEvent.setup();
     render(<RecallPage />);
 
-    // Front is the cue; the target text is NOT shown before reveal.
     const front = await screen.findByText("Say you kept a secret in.");
     const card = front.closest("li") as HTMLElement;
     expect(within(card).queryByText("spill the beans")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: "Show answer" }));
     expect(within(card).getByText("spill the beans")).toBeDefined();
-    expect(within(card).getByText("reveal it")).toBeDefined();
   });
 
-  it("answerless card: the reveal shows a self-check hint and is still gradeable (#525)", async () => {
+  it("reveals the required answer and remains gradeable (#595)", async () => {
     mockedFetch.mockResolvedValue([
-      makeItem({ cue: null, gloss: null, useContext: null, text: "Mitigation (noun)" })
+      makeCard({ answerText: "a way to reduce risk", cueText: "Mitigation (noun)" })
     ]);
-    mockedGrade.mockResolvedValue(makeItem());
+    mockedGrade.mockResolvedValue(makePrompt());
     const user = userEvent.setup();
     render(<RecallPage />);
 
     const card = (await screen.findByText("Mitigation (noun)")).closest("li") as HTMLElement;
     await user.click(within(card).getByRole("button", { name: "Show answer" }));
 
-    expect(within(card).getByText(/No saved answer/)).toBeDefined();
+    expect(within(card).getByText("a way to reduce risk")).toBeDefined();
+    expect(within(card).queryByText(/No saved answer/)).toBeNull();
     await user.click(within(card).getByRole("button", { name: "Good" }));
-    expect(mockedGrade).toHaveBeenCalledWith("r1", "good");
+    expect(mockedGrade).toHaveBeenCalledWith("prompt-1", "good");
   });
 
-  it("grades an item after revealing it and removes it from today's list", async () => {
-    mockedFetch.mockResolvedValue([makeItem(), makeItem({ id: "r2", text: "by and large" })]);
-    mockedGrade.mockResolvedValue(makeItem());
+  it("grades a prompt after revealing it and removes it from today's list", async () => {
+    mockedFetch.mockResolvedValue([
+      makeCard(),
+      makeCard({ cueText: "by and large", promptId: "prompt-2" })
+    ]);
+    mockedGrade.mockResolvedValue(makePrompt());
     const user = userEvent.setup();
     render(<RecallPage />);
 
@@ -152,13 +172,13 @@ describe("RecallPage", () => {
     await user.click(within(firstCard).getByRole("button", { name: "Show answer" }));
     await user.click(within(firstCard).getByRole("button", { name: "Good" }));
 
-    expect(mockedGrade).toHaveBeenCalledWith("r1", "good");
+    expect(mockedGrade).toHaveBeenCalledWith("prompt-1", "good");
     expect(screen.queryByText("spill the beans")).toBeNull();
     expect(screen.getByText("by and large")).toBeDefined();
   });
 
   it("reveals with the keyboard (Enter on the Show answer control) (#525)", async () => {
-    mockedFetch.mockResolvedValue([makeItem({ gloss: "to reveal a secret" })]);
+    mockedFetch.mockResolvedValue([makeCard()]);
     const user = userEvent.setup();
     render(<RecallPage />);
 
@@ -170,21 +190,20 @@ describe("RecallPage", () => {
   });
 
   it("maps the number keys 1–4 to the four grades after reveal", async () => {
-    mockedFetch.mockResolvedValue([makeItem()]);
-    mockedGrade.mockResolvedValue(makeItem());
+    mockedFetch.mockResolvedValue([makeCard()]);
+    mockedGrade.mockResolvedValue(makePrompt());
     const user = userEvent.setup();
     render(<RecallPage />);
 
     const card = (await screen.findByText("spill the beans")).closest("li") as HTMLElement;
     await user.click(within(card).getByRole("button", { name: "Show answer" }));
-    // "3" is Good (Again/Hard/Good/Easy).
     await user.keyboard("3");
 
-    expect(mockedGrade).toHaveBeenCalledWith("r1", "good");
+    expect(mockedGrade).toHaveBeenCalledWith("prompt-1", "good");
   });
 
   it("ignores non-grade keys after reveal", async () => {
-    mockedFetch.mockResolvedValue([makeItem()]);
+    mockedFetch.mockResolvedValue([makeCard()]);
     const user = userEvent.setup();
     render(<RecallPage />);
 
@@ -196,9 +215,9 @@ describe("RecallPage", () => {
     expect(screen.getByText("spill the beans")).toBeDefined();
   });
 
-  it("snoozes from the revealed phase and removes the item", async () => {
-    mockedFetch.mockResolvedValue([makeItem()]);
-    mockedSnooze.mockResolvedValue(makeItem());
+  it("snoozes from the revealed phase and removes the prompt", async () => {
+    mockedFetch.mockResolvedValue([makeCard()]);
+    mockedSnooze.mockResolvedValue(makePrompt());
     const user = userEvent.setup();
     render(<RecallPage />);
 
@@ -206,26 +225,26 @@ describe("RecallPage", () => {
     await user.click(within(card).getByRole("button", { name: "Show answer" }));
     await user.click(within(card).getByRole("button", { name: "Snooze" }));
 
-    expect(mockedSnooze).toHaveBeenCalledWith("r1");
+    expect(mockedSnooze).toHaveBeenCalledWith("prompt-1");
     expect(screen.queryByText("spill the beans")).toBeNull();
   });
 
-  it("snoozes an item and removes it from today's list", async () => {
-    mockedFetch.mockResolvedValue([makeItem()]);
-    mockedSnooze.mockResolvedValue(makeItem());
+  it("snoozes a prompt and removes it from today's list", async () => {
+    mockedFetch.mockResolvedValue([makeCard()]);
+    mockedSnooze.mockResolvedValue(makePrompt());
     const user = userEvent.setup();
     render(<RecallPage />);
 
     await screen.findByText("spill the beans");
     await user.click(screen.getByRole("button", { name: "Snooze" }));
 
-    expect(mockedSnooze).toHaveBeenCalledWith("r1");
+    expect(mockedSnooze).toHaveBeenCalledWith("prompt-1");
     expect(screen.queryByText("spill the beans")).toBeNull();
     expect(await screen.findByText(/Nothing due/)).toBeDefined();
   });
 
-  it("surfaces an action error and keeps the item when grading fails", async () => {
-    mockedFetch.mockResolvedValue([makeItem()]);
+  it("surfaces an action error and keeps the prompt when grading fails", async () => {
+    mockedFetch.mockResolvedValue([makeCard()]);
     mockedGrade.mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
     render(<RecallPage />);
@@ -238,8 +257,8 @@ describe("RecallPage", () => {
     expect(screen.getByText("spill the beans")).toBeDefined();
   });
 
-  it("surfaces an action error and keeps the item when snoozing fails", async () => {
-    mockedFetch.mockResolvedValue([makeItem()]);
+  it("surfaces an action error and keeps the prompt when snoozing fails", async () => {
+    mockedFetch.mockResolvedValue([makeCard()]);
     mockedSnooze.mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
     render(<RecallPage />);

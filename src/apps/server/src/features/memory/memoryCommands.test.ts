@@ -62,7 +62,13 @@ async function seedChunk(id: string): Promise<void> {
     .onConflictDoNothing();
   await context.db
     .insert(cases)
-    .values({ id: "case", domainId: "dom", communicativeFunction: "f", situation: "s", orderIndex: 0 })
+    .values({
+      id: "case",
+      domainId: "dom",
+      communicativeFunction: "f",
+      situation: "s",
+      orderIndex: 0
+    })
     .onConflictDoNothing();
   await context.db
     .insert(chunks)
@@ -151,7 +157,11 @@ describe("depositMemory", () => {
   it("writes no provenance link when no source entry is given", async () => {
     const deposit = await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "standalone", prompts: [{ cueText: "q", answerText: "a" }] },
+      {
+        captureSource: "manual",
+        noteText: "standalone",
+        prompts: [{ cueText: "q", answerText: "a" }]
+      },
       userA,
       t0
     );
@@ -175,7 +185,11 @@ describe("depositMemory answer resolution (#526/#595)", () => {
 
     const deposit = await depositMemory(
       deps,
-      { captureSource: "reader", noteText: "spill it", prompts: [{ cueText: "spill it", glossTerm: "spill it" }] },
+      {
+        captureSource: "reader",
+        noteText: "spill it",
+        prompts: [{ cueText: "spill it", glossTerm: "spill it" }]
+      },
       userA,
       t0
     );
@@ -190,7 +204,11 @@ describe("depositMemory answer resolution (#526/#595)", () => {
 
     const deposit = await depositMemory(
       deps,
-      { captureSource: "reader", noteText: "x", prompts: [{ cueText: "unknownium", glossTerm: "unknownium" }] },
+      {
+        captureSource: "reader",
+        noteText: "x",
+        prompts: [{ cueText: "unknownium", glossTerm: "unknownium" }]
+      },
       userA,
       t0
     );
@@ -275,7 +293,13 @@ describe("reviewChunkMemory", () => {
     await seedChunk("chunk-1");
     const first = await reviewChunkMemory(
       context.deps,
-      { userId: userA, chunkId: "chunk-1", situation: "greet a stranger", target: "how do you do", sourceBlockEntryId: null },
+      {
+        userId: userA,
+        chunkId: "chunk-1",
+        situation: "greet a stranger",
+        target: "how do you do",
+        sourceBlockEntryId: null
+      },
       "good",
       t0
     );
@@ -285,7 +309,13 @@ describe("reviewChunkMemory", () => {
 
     const second = await reviewChunkMemory(
       context.deps,
-      { userId: userA, chunkId: "chunk-1", situation: "greet a stranger", target: "how do you do", sourceBlockEntryId: null },
+      {
+        userId: userA,
+        chunkId: "chunk-1",
+        situation: "greet a stranger",
+        target: "how do you do",
+        sourceBlockEntryId: null
+      },
       "good",
       at(1)
     );
@@ -313,21 +343,30 @@ describe("reviewChunkMemory", () => {
 
     const result = await reviewChunkMemory(
       context.deps,
-      { userId: userA, chunkId: "chunk-9", situation: "s", target: "t", sourceBlockEntryId: "block-1" },
+      {
+        userId: userA,
+        chunkId: "chunk-9",
+        situation: "s",
+        target: "t",
+        sourceBlockEntryId: "block-1"
+      },
       "good",
       t0
     );
 
     const promptRow = (
-      await context.db.select().from(memoryPrompts).where(eq(memoryPrompts.entryId, result.promptId))
+      await context.db
+        .select()
+        .from(memoryPrompts)
+        .where(eq(memoryPrompts.entryId, result.promptId))
     )[0];
     const provenance = await context.db
       .select()
       .from(entryLinks)
       .where(eq(entryLinks.fromEntryId, promptRow!.noteEntryId));
-    expect(provenance.some((row) => row.type === "derived_from" && row.toEntryId === "block-1")).toBe(
-      true
-    );
+    expect(
+      provenance.some((row) => row.type === "derived_from" && row.toEntryId === "block-1")
+    ).toBe(true);
   });
 });
 
@@ -344,7 +383,11 @@ describe("depositPushedPhrase", () => {
   });
 
   it("saves an unscheduled draft when no answer is found", async () => {
-    const prompt = await depositPushedPhrase(context.deps, { userId: userA, target: "ephemeral" }, t0);
+    const prompt = await depositPushedPhrase(
+      context.deps,
+      { userId: userA, target: "ephemeral" },
+      t0
+    );
 
     expect(prompt.lifecycle).toBe("draft");
     expect(prompt.answerText).toBeNull();
@@ -356,7 +399,11 @@ describe("recordPromptReview", () => {
   async function seedScheduled(): Promise<string> {
     const deposit = await depositMemory(
       context.deps,
-      { captureSource: "practice", noteText: "n", prompts: [{ cueText: "cue", answerText: "answer" }] },
+      {
+        captureSource: "practice",
+        noteText: "n",
+        prompts: [{ cueText: "cue", answerText: "answer" }]
+      },
       userA,
       t0
     );
@@ -419,7 +466,11 @@ describe("snoozePrompt", () => {
   async function seedScheduled(): Promise<string> {
     const deposit = await depositMemory(
       context.deps,
-      { captureSource: "practice", noteText: "n", prompts: [{ cueText: "cue", answerText: "answer" }] },
+      {
+        captureSource: "practice",
+        noteText: "n",
+        prompts: [{ cueText: "cue", answerText: "answer" }]
+      },
       userA,
       t0
     );

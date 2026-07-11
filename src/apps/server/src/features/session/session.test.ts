@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CoachKnobs, Transcription } from "@whetstone/contracts";
@@ -8,7 +8,7 @@ import { createFakeCoach } from "../../coach/fakeCoach.js";
 import { createLoggerOptions } from "../../config/serverConfig.js";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { errorPatterns, recallItems, sessionExchanges, turnOutcomes } from "../../db/schema.js";
+import { errorPatterns, memoryPrompts, sessionExchanges, turnOutcomes } from "../../db/schema.js";
 import { entries, noteAnchors, notes, noteTemplates, personalEntries } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { createFakeSpeechInput } from "../../speech/fakeSpeechInput.js";
@@ -18,9 +18,10 @@ import { getLearnerProfile } from "../learner/learnerQueries.js";
 import { compileProgressMap } from "../map/mapQueries.js";
 import { seedCaseCorpus } from "../cases/caseSeed.js";
 import {
-  getRecallItemByChunkForUser,
-  getRecallItemByTextForUser
-} from "../recall/recallQueries.js";
+  getPromptByCueTextForUser,
+  getScheduledPromptByChunkForUser,
+  noteProvenanceEntryId
+} from "../memory/memoryQueries.js";
 import {
   converseTurn,
   endSession,
@@ -188,8 +189,9 @@ describe("submitTurn", () => {
     );
     expect(outcome.status).toBe("ok");
 
-    const items = await db.select().from(recallItems).where(eq(recallItems.chunkId, cue.chunkId));
-    expect(items[0]?.provenanceEntryId).toBe("blk-1");
+    const prompt = await getScheduledPromptByChunkForUser(db, userA, cue.chunkId);
+    expect(prompt).toBeDefined();
+    expect(await noteProvenanceEntryId(db, prompt?.noteEntryId ?? "")).toBe("blk-1");
   });
 
   it("grades a perfect typed production, enrolls + schedules the chunk, and deposits the outcome", async () => {
@@ -207,8 +209,8 @@ describe("submitTurn", () => {
     expect(outcome.result.transcript).toBe(target);
     expect(new Date(outcome.result.nextDueAt).getTime()).toBeGreaterThan(t0.getTime());
 
-    const item = await getRecallItemByChunkForUser(db, userA, chunkId);
-    expect(item).toBeDefined();
+    const prompt = await getScheduledPromptByChunkForUser(db, userA, chunkId);
+    expect(prompt).toBeDefined();
     expect(await db.select().from(turnOutcomes).where(eq(turnOutcomes.userId, userA))).toHaveLength(
       1
     );
@@ -230,7 +232,7 @@ describe("submitTurn", () => {
     expect(outcome.result.errorCategory).toBe("other");
   });
 
-  it("reuses the existing recall item on a repeat turn", async () => {
+  it("reuses the existing Memory prompt on a repeat turn", async () => {
     const { chunkId, target } = await firstCue();
     const deps = makeDeps();
     const turn = { chunkId, transcript: target } as const;
@@ -238,7 +240,7 @@ describe("submitTurn", () => {
     await submitTurn(deps, turn, userA, t0);
     await submitTurn(deps, turn, userA, t0);
 
-    const rows = await db.select().from(recallItems).where(eq(recallItems.chunkId, chunkId));
+    const rows = await db.select().from(memoryPrompts).where(eq(memoryPrompts.chunkId, chunkId));
     expect(rows).toHaveLength(1);
   });
 
@@ -422,8 +424,9 @@ describe("endSession", () => {
       "ok"
     );
 
-    const items = await db.select().from(recallItems).where(eq(recallItems.chunkId, cue.chunkId));
-    expect(items[0]?.provenanceEntryId).toBe("blk-1");
+    const prompt = await getScheduledPromptByChunkForUser(db, userA, cue.chunkId);
+    expect(prompt).toBeDefined();
+    expect(await noteProvenanceEntryId(db, prompt?.noteEntryId ?? "")).toBe("blk-1");
   });
 
   it("runs one analysis pass and moves all four deposits, returning the debrief", async () => {
@@ -452,11 +455,9 @@ describe("endSession", () => {
     expect(outcome.debrief.due.length).toBeGreaterThan(0);
     expect(outcome.debrief.upgrade.native.length).toBeGreaterThan(0);
 
-    // Deposit 1: the produced chunk has a recall item scheduled.
-    expect(await getRecallItemByChunkForUser(db, userA, cue.chunkId)).toBeDefined();
-    expect(
-      (await db.select().from(recallItems).where(eq(recallItems.userId, userA))).length
-    ).toBeGreaterThan(0);
+    // Deposit 1: the produced chunk has a Memory prompt scheduled.
+    expect(await getScheduledPromptByChunkForUser(db, userA, cue.chunkId)).toBeDefined();
+    expect((await db.select().from(memoryPrompts)).length).toBeGreaterThan(0);
 
     // Deposit 2: tagged mistakes incremented the error-pattern store.
     expect(
@@ -474,7 +475,7 @@ describe("endSession", () => {
     expect(afterCase?.mastery.newChunks).toBeLessThan(beforeCase?.mastery.newChunks ?? 0);
   });
 
-  it("deposits the bilingual coach's pushed English target as recall practice, deduped (#270)", async () => {
+  it("deposits the bilingual coach's pushed English target as a deduped Memory draft (#270)", async () => {
     const deps = makeDeps();
     const plan = await startSession(deps, userA, t0);
     const caseId = plan.cues[0]?.caseId;
@@ -483,7 +484,7 @@ describe("endSession", () => {
     }
 
     // Two mostly-Chinese turns each earn the same pushed English target ("Let's try that in
-    // English." from the fake coach), so the round-end deposit must dedupe to a single recall item.
+    // English." from the fake coach), so the round-end deposit must dedupe to a single Memory prompt.
     await converseTurn(deps, { caseId, transcript: "我想点菜 please" }, userA, t0);
     await converseTurn(
       deps,
@@ -502,25 +503,24 @@ describe("endSession", () => {
       throw new Error("expected ok");
     }
 
-    // The pushed target is now durable recall material: an LLM-supplied phrase with no chunk FK,
-    // surfaced as due practice in the debrief.
-    const item = await getRecallItemByTextForUser(db, userA, "Let's try that in English.");
-    expect(item?.kind).toBe("phrase");
-    expect(item?.chunkId).toBeNull();
+    // The pushed target is now durable Memory material. With no offline gloss answer it is a draft,
+    // so it is not surfaced as due practice in the debrief.
+    const prompt = await getPromptByCueTextForUser(db, userA, "Let's try that in English.");
+    expect(prompt?.lifecycle).toBe("draft");
+    expect(prompt?.chunkId).toBeNull();
+    expect(prompt?.answerText).toBeNull();
     expect(outcome.debrief.due.some((entry) => entry.text === "Let's try that in English.")).toBe(
-      true
+      false
     );
     // Deduped within the round despite two pushes.
     const phrases = await db
       .select()
-      .from(recallItems)
-      .where(
-        and(eq(recallItems.userId, userA), eq(recallItems.text, "Let's try that in English."))
-      );
+      .from(memoryPrompts)
+      .where(eq(memoryPrompts.cueText, "Let's try that in English."));
     expect(phrases).toHaveLength(1);
   });
 
-  it("auto-fills a back for the coach-pushed English target's phrase recall item (#526)", async () => {
+  it("auto-fills a back for the coach-pushed English target's Memory prompt (#526)", async () => {
     const deps: SessionDependencies = {
       ...makeDeps(),
       resolveOfflineGloss: async (text) => `back for ${text}`
@@ -542,11 +542,11 @@ describe("endSession", () => {
       throw new Error("expected ok");
     }
 
-    // The pushed target enrolls as a phrase with a back auto-filled from the offline glosser, so it is
-    // never an answerless recall card (#526).
-    const item = await getRecallItemByTextForUser(db, userA, "Let's try that in English.");
-    expect(item?.kind).toBe("phrase");
-    expect(item?.gloss).toBe("back for Let's try that in English.");
+    // The pushed target enrolls with a back auto-filled from the offline glosser, so it is scheduled
+    // rather than saved as an answerless draft (#526).
+    const prompt = await getPromptByCueTextForUser(db, userA, "Let's try that in English.");
+    expect(prompt?.lifecycle).toBe("scheduled");
+    expect(prompt?.answerText).toBe("back for Let's try that in English.");
   });
 
   it("does not re-deposit a pushed English target already enrolled from an earlier round (#270)", async () => {
@@ -577,13 +577,11 @@ describe("endSession", () => {
       throw new Error("expected ok");
     }
 
-    // ...so the existing recall item is reused, not duplicated, and the debrief does not re-surface it.
+    // ...so the existing Memory prompt is reused, not duplicated, and the debrief does not re-surface it.
     const phrases = await db
       .select()
-      .from(recallItems)
-      .where(
-        and(eq(recallItems.userId, userA), eq(recallItems.text, "Let's try that in English."))
-      );
+      .from(memoryPrompts)
+      .where(eq(memoryPrompts.cueText, "Let's try that in English."));
     expect(phrases).toHaveLength(1);
     expect(second.debrief.due.some((entry) => entry.text === "Let's try that in English.")).toBe(
       false
@@ -622,9 +620,7 @@ describe("endSession", () => {
       throw new Error("expected ok");
     }
     expect(outcome.debrief.due).toEqual([]);
-    expect(await db.select().from(recallItems).where(eq(recallItems.userId, userA))).toHaveLength(
-      0
-    );
+    expect(await db.select().from(memoryPrompts)).toHaveLength(0);
   });
 });
 

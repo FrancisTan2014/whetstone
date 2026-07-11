@@ -207,7 +207,12 @@ async function depositSinglePromptMemory(
     captureSource: input.captureSource
   };
   const promptRow = buildPromptRow(
-    { id: toEntryId(dependencies.createId()), cueText: input.cueText, answerText, chunkId: input.chunkId },
+    {
+      id: toEntryId(dependencies.createId()),
+      cueText: input.cueText,
+      answerText,
+      chunkId: input.chunkId
+    },
     noteId,
     now
   );

@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 
-import type { RecallItemDto } from "@whetstone/contracts";
+import type { MemoryPromptCardDto } from "@whetstone/contracts";
 import type { ReviewRating } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { recallCardFaces } from "./recallCardFaces";
 import { fetchDueRecall, gradeRecall, snoozeRecall } from "./recallApi";
 
 type Phase = "error" | "loading" | "ready";
@@ -21,9 +20,9 @@ const ratingButtons: ReadonlyArray<Readonly<{ label: string; rating: ReviewRatin
 // The Recall surface: today's DUE items (already capped server-side) as gentle, snoozeable proposals.
 // Self-grading an item or snoozing it advances past it; an empty list is a calm "all caught up" — never
 // a forced or unbounded wall. The reader stays calm: recall lives only here.
-export function RecallPage(): React.JSX.Element {
+function RecallPageComponent(): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [items, setItems] = useState<ReadonlyArray<RecallItemDto>>([]);
+  const [items, setItems] = useState<ReadonlyArray<MemoryPromptCardDto>>([]);
   const [actionFailed, setActionFailed] = useState(false);
 
   useEffect(() => {
@@ -39,55 +38,62 @@ export function RecallPage(): React.JSX.Element {
     void load();
   }, []);
 
-  function dropItem(id: string): void {
-    setItems((current) => current.filter((item) => item.id !== id));
+  function dropItem(promptId: string): void {
+    setItems((current) => current.filter((item) => item.promptId !== promptId));
   }
 
-  async function grade(id: string, rating: ReviewRating): Promise<void> {
-    try {
-      await gradeRecall(id, rating);
-      dropItem(id);
-    } catch {
-      setActionFailed(true);
-    }
+  function grade(promptId: string, rating: ReviewRating): void {
+    void gradeRecall(promptId, rating).then(
+      () => dropItem(promptId),
+      () => setActionFailed(true)
+    );
   }
 
-  async function snooze(id: string): Promise<void> {
-    try {
-      await snoozeRecall(id);
-      dropItem(id);
-    } catch {
-      setActionFailed(true);
-    }
+  function snooze(promptId: string): void {
+    void snoozeRecall(promptId).then(
+      () => dropItem(promptId),
+      () => setActionFailed(true)
+    );
   }
 
-  return (
-    <section aria-labelledby="recall-heading" className="mx-auto max-w-2xl p-6">
-      <h1 className="text-2xl font-semibold text-text" id="recall-heading">
-        Due to recall
-      </h1>
+  const body = createElement("section", {
+    "aria-labelledby": "recall-heading",
+    children: [
+      createElement(
+        "h1",
+        { className: "text-2xl font-semibold text-text", id: "recall-heading", key: "heading" },
+        "Due to recall"
+      ),
+      createElement(ActionFailureAlert, { failed: actionFailed, key: "action-failure" }),
+      createElement(
+        "div",
+        { className: "mt-6", key: "body" },
+        renderBody(phase, items, grade, snooze)
+      )
+    ],
+    className: "mx-auto max-w-2xl p-6"
+  });
 
-      {actionFailed ? (
-        <p className="mt-4 text-danger" role="alert">
-          Could not update that item. Please try again.
-        </p>
-      ) : null}
+  return body;
+}
 
-      <div className="mt-6">
-        {renderBody(
-          phase,
-          items,
-          (id, rating) => void grade(id, rating),
-          (id) => void snooze(id)
-        )}
-      </div>
-    </section>
+export const RecallPage = RecallPageComponent;
+
+function ActionFailureAlert({ failed }: Readonly<{ failed: boolean }>): React.JSX.Element | null {
+  if (!failed) {
+    return null;
+  }
+
+  return createElement(
+    "p",
+    { className: "mt-4 text-danger", role: "alert" },
+    "Could not update that item. Please try again."
   );
 }
 
 function renderBody(
   phase: Phase,
-  items: ReadonlyArray<RecallItemDto>,
+  items: ReadonlyArray<MemoryPromptCardDto>,
   grade: (id: string, rating: ReviewRating) => void,
   snooze: (id: string) => void
 ): React.JSX.Element {
@@ -110,7 +116,7 @@ function renderBody(
   return (
     <ul aria-label="Items due to recall" className="flex flex-col gap-4">
       {items.map((item) => (
-        <RecallCard grade={grade} item={item} key={item.id} snooze={snooze} />
+        <RecallCard grade={grade} item={item} key={item.promptId} snooze={snooze} />
       ))}
     </ul>
   );
@@ -127,12 +133,11 @@ function RecallCard({
   snooze
 }: Readonly<{
   grade: (id: string, rating: ReviewRating) => void;
-  item: RecallItemDto;
+  item: MemoryPromptCardDto;
   snooze: (id: string) => void;
 }>): React.JSX.Element {
   const [revealed, setRevealed] = useState(false);
   const answerRef = useRef<HTMLDivElement>(null);
-  const faces = recallCardFaces(item);
 
   // On reveal, move focus to the answer so a screen reader announces it (the grade buttons only enter
   // the a11y tree now, since they render solely in this phase).
@@ -148,7 +153,7 @@ function RecallCard({
     const index = ["1", "2", "3", "4"].indexOf(event.key);
     if (index !== -1) {
       event.preventDefault();
-      grade(item.id, ratingButtons[index]!.rating);
+      grade(item.promptId, ratingButtons[index]!.rating);
     }
   }
 
@@ -159,52 +164,41 @@ function RecallCard({
     >
       {revealed ? (
         <>
-          <p className="text-lg text-text">{faces.front}</p>
+          <p className="text-lg text-text">{item.cueText}</p>
           <div
             aria-label="Answer"
             className="mt-2 border-t border-border pt-2 focus-visible:outline-none"
             ref={answerRef}
             tabIndex={-1}
           >
-            {faces.answerless ? (
-              <p className="text-sm text-text-muted">No saved answer — self-check from memory.</p>
-            ) : (
-              faces.back.map((line, index) => (
-                <p
-                  className={index === 0 ? "text-text" : "mt-1 text-sm text-text-muted"}
-                  key={line}
-                >
-                  {line}
-                </p>
-              ))
-            )}
+            <p className="text-text">{item.answerText}</p>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {ratingButtons.map((control) => (
               <Button
                 key={control.rating}
-                onClick={() => grade(item.id, control.rating)}
+                onClick={() => grade(item.promptId, control.rating)}
                 size="sm"
                 variant="secondary"
               >
                 {control.label}
               </Button>
             ))}
-            <Button onClick={() => snooze(item.id)} size="sm" variant="ghost">
+            <Button onClick={() => snooze(item.promptId)} size="sm" variant="ghost">
               Snooze
             </Button>
           </div>
         </>
       ) : (
         <>
-          <p className="text-lg text-text">{faces.front}</p>
+          <p className="text-lg text-text">{item.cueText}</p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button onClick={() => setRevealed(true)} size="sm" variant="primary">
               Show answer
             </Button>
-            <Button onClick={() => snooze(item.id)} size="sm" variant="ghost">
+            <Button onClick={() => snooze(item.promptId)} size="sm" variant="ghost">
               Snooze
             </Button>
           </div>

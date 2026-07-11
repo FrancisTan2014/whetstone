@@ -43,7 +43,13 @@ async function seedChunk(id: string): Promise<void> {
     .onConflictDoNothing();
   await context.db
     .insert(cases)
-    .values({ id: "case", domainId: "dom", communicativeFunction: "f", situation: "s", orderIndex: 0 })
+    .values({
+      id: "case",
+      domainId: "dom",
+      communicativeFunction: "f",
+      situation: "s",
+      orderIndex: 0
+    })
     .onConflictDoNothing();
   await context.db
     .insert(chunks)
@@ -97,7 +103,12 @@ afterEach(async () => {
 
 describe("getMemoryPromptForUser", () => {
   it("returns the owner's prompt as a DTO and nothing for a miss or another user", async () => {
-    const { promptId } = await seedPrompt({ userId: userA, cueText: "cue", answerText: "answer", now: t0 });
+    const { promptId } = await seedPrompt({
+      userId: userA,
+      cueText: "cue",
+      answerText: "answer",
+      now: t0
+    });
 
     const dto = await getMemoryPromptForUser(context.db, promptId, userA);
     expect(dto?.promptId).toBe(promptId);
@@ -110,7 +121,13 @@ describe("getMemoryPromptForUser", () => {
 
 describe("getScheduledPromptByChunkForUser", () => {
   it("returns the newest scheduled prompt for the chunk, excluding drafts and other users", async () => {
-    await seedPrompt({ userId: userA, cueText: "older", answerText: "a", chunkId: "chunk-1", now: t0 });
+    await seedPrompt({
+      userId: userA,
+      cueText: "older",
+      answerText: "a",
+      chunkId: "chunk-1",
+      now: t0
+    });
     const newer = await seedPrompt({
       userId: userA,
       cueText: "newer",
@@ -133,7 +150,12 @@ describe("getScheduledPromptByChunkForUser", () => {
 describe("getPromptByCueTextForUser", () => {
   it("returns the newest prompt with the exact cue, or nothing", async () => {
     await seedPrompt({ userId: userA, cueText: "same cue", answerText: "a", now: t0 });
-    const newer = await seedPrompt({ userId: userA, cueText: "same cue", answerText: "b", now: at(1) });
+    const newer = await seedPrompt({
+      userId: userA,
+      cueText: "same cue",
+      answerText: "b",
+      now: at(1)
+    });
 
     const row = await getPromptByCueTextForUser(context.db, userA, "same cue");
     expect(row?.entryId).toBe(newer.promptId);
@@ -144,7 +166,12 @@ describe("getPromptByCueTextForUser", () => {
 
 describe("listDuePromptCards", () => {
   it("returns the user's due scheduled cards soonest-first, capped, excluding drafts", async () => {
-    const early = await seedPrompt({ userId: userA, cueText: "early", answerText: "a", now: at(-2) });
+    const early = await seedPrompt({
+      userId: userA,
+      cueText: "early",
+      answerText: "a",
+      now: at(-2)
+    });
     const mid = await seedPrompt({ userId: userA, cueText: "mid", answerText: "a", now: at(-1) });
     const late = await seedPrompt({ userId: userA, cueText: "late", answerText: "a", now: at(0) });
     await seedPrompt({ userId: userA, cueText: "draft", now: at(-2) });
@@ -162,10 +189,20 @@ describe("listDuePromptCards", () => {
 
 describe("searchMemoryPrompts", () => {
   beforeEach(async () => {
-    await seedPrompt({ userId: userA, cueText: "reveal a secret", answerText: "spill the beans", now: t0 });
+    await seedPrompt({
+      userId: userA,
+      cueText: "reveal a secret",
+      answerText: "spill the beans",
+      now: t0
+    });
     await seedPrompt({ userId: userA, cueText: "100% sure", answerText: "certain", now: t0 });
     await seedPrompt({ userId: userA, cueText: "a_b pattern", answerText: "x", now: t0 });
-    await seedPrompt({ userId: userB, cueText: "reveal a secret", answerText: "spill the beans", now: t0 });
+    await seedPrompt({
+      userId: userB,
+      cueText: "reveal a secret",
+      answerText: "spill the beans",
+      now: t0
+    });
   });
 
   it("matches the cue case-insensitively", async () => {
@@ -194,12 +231,36 @@ describe("searchMemoryPrompts", () => {
 
 describe("chunk review-state grouping", () => {
   it("groups the user's scheduled prompt states by chunk, excluding drafts, null chunks, and other users", async () => {
-    await seedPrompt({ userId: userA, cueText: "c1-a", answerText: "a", chunkId: "chunk-1", now: t0 });
-    await seedPrompt({ userId: userA, cueText: "c1-b", answerText: "a", chunkId: "chunk-1", now: at(1) });
-    await seedPrompt({ userId: userA, cueText: "c2", answerText: "a", chunkId: "chunk-2", now: t0 });
+    await seedPrompt({
+      userId: userA,
+      cueText: "c1-a",
+      answerText: "a",
+      chunkId: "chunk-1",
+      now: t0
+    });
+    await seedPrompt({
+      userId: userA,
+      cueText: "c1-b",
+      answerText: "a",
+      chunkId: "chunk-1",
+      now: at(1)
+    });
+    await seedPrompt({
+      userId: userA,
+      cueText: "c2",
+      answerText: "a",
+      chunkId: "chunk-2",
+      now: t0
+    });
     await seedPrompt({ userId: userA, cueText: "draft", chunkId: "chunk-3", now: t0 });
     await seedPrompt({ userId: userA, cueText: "no-chunk", answerText: "a", now: t0 });
-    await seedPrompt({ userId: userB, cueText: "other", answerText: "a", chunkId: "chunk-1", now: t0 });
+    await seedPrompt({
+      userId: userB,
+      cueText: "other",
+      answerText: "a",
+      chunkId: "chunk-1",
+      now: t0
+    });
 
     const all = await allChunkReviewStates(context.db, userA);
     expect([...all.keys()].sort()).toEqual(["chunk-1", "chunk-2"]);
@@ -227,7 +288,12 @@ describe("noteProvenanceEntryId", () => {
     });
     expect(await noteProvenanceEntryId(context.db, derived.noteId)).toBe("source-1");
 
-    const standalone = await seedPrompt({ userId: userA, cueText: "cue2", answerText: "a", now: t0 });
+    const standalone = await seedPrompt({
+      userId: userA,
+      cueText: "cue2",
+      answerText: "a",
+      now: t0
+    });
     expect(await noteProvenanceEntryId(context.db, standalone.noteId)).toBeNull();
   });
 });

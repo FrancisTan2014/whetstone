@@ -134,7 +134,8 @@ const tools: ReadonlyArray<RecallTool> = [
     }
   },
   {
-    description: "List the current user's Memory prompts that are due for review now, soonest first.",
+    description:
+      "List the current user's Memory prompts that are due for review now, soonest first.",
     inputSchema: {
       additionalProperties: false,
       properties: { limit: { description: "Max prompts to return.", minimum: 1, type: "integer" } },
@@ -211,7 +212,11 @@ const tools: ReadonlyArray<RecallTool> = [
     name: "get_memory_prompt",
     run: async (context, args) => {
       const input = parseArguments(getMemoryPromptToolInputSchema, args);
-      const prompt = await getMemoryPromptForUser(context.memory.db, input.promptId, userId(context));
+      const prompt = await getMemoryPromptForUser(
+        context.memory.db,
+        input.promptId,
+        userId(context)
+      );
       if (prompt === undefined) {
         throw new Error(`No memory prompt with id ${input.promptId}.`);
       }

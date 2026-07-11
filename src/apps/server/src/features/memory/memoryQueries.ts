@@ -8,7 +8,7 @@ import type { ReviewState } from "@whetstone/domain";
 import { and, asc, desc, eq, inArray, isNotNull, lte, or, ilike } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entryLinks, memoryNotes, memoryPrompts, personalEntries } from "../../db/schema.js";
+import { entryLinks, type memoryNotes, memoryPrompts, personalEntries } from "../../db/schema.js";
 
 // One persisted memory-note / memory-prompt row, as selected from its table.
 export type MemoryNoteRow = typeof memoryNotes.$inferSelect;
@@ -59,7 +59,9 @@ export function promptReviewState(row: ScheduledPromptRow): ReviewState {
 
 // Map a ReviewState onto the prompt's FSRS columns (ISO -> Date) for insert/update. A scheduled prompt
 // always writes these together with `lifecycle: "scheduled"`.
-export function promptReviewColumns(state: ReviewState): Pick<
+export function promptReviewColumns(
+  state: ReviewState
+): Pick<
   MemoryPromptRow,
   | "dueAt"
   | "stability"
