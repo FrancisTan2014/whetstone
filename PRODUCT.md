@@ -795,9 +795,39 @@ routine above; it never changes the canonical Work text.
   safely where it can still be located, or marked **needs repair** and shown as a repair prompt instead of
   practising wrong text.
 - **Non-goals (#578, #579).** No speech-to-text, automatic exactness scoring, LLM grading, audio requirement,
-  cloze deletion of interior words, adjacent-passage chaining, or whole-work maintenance in this scope.
-  Progressive fading is delivered by #579 (above); auto-progression between support levels stays out of scope —
-  the learner lowers support themselves.
+  or cloze deletion of interior words in this scope. Progressive fading is delivered by #579 (above);
+  contiguous chaining and whole-work maintenance are delivered by #580 (below); auto-progression between
+  support levels stays out of scope — the learner lowers support themselves.
+
+## Contiguous chaining and whole-work maintenance
+
+Passage practice memorizes each passage in isolation, but reciting a whole work needs the **transitions
+between** passages and, eventually, the **whole thing** held together. #580 adds both on top of passage
+practice, still boundary-only and still never a Timeline Entry — all progress is computed live from the plan's
+passage schedules and a single whole-work card.
+
+- **A passage is "owned" by demonstrated durability, not a raw count.** A passage counts as owned once it has
+  **at least two successful reviews** (Good or Easy) **and** its current FSRS retrievability is at or above the
+  retention target — so a passage that has lapsed back below the target is no longer owned until it is
+  re-earned. Ownership is derived, never stored.
+- **The owned prefix is the contiguous run from the start.** Chaining always begins at the first passage and
+  cannot skip, so what matters is the **longest contiguous span of owned passages from passage 0**. That
+  bounded prefix is what the learner may recite as a chain.
+- **A chain rehearses the transitions, graded by the learner alone.** Once the first two passages are owned the
+  learner can start a **chain** ending at any passage inside the owned prefix (minimum two passages, in fixed
+  order). After reciting the span from memory they report the outcome: recall **held throughout**, or **broke
+  at one identified passage** — and **only that identified passage** receives an Again. Whetstone never infers a
+  break or grades a passage implicitly.
+- **Whole-work maintenance is a single aggregate prompt on its own schedule.** When **every** passage is owned,
+  the plan offers one **whole-work** recall — recite the entire work from memory — carried by a **separate FSRS
+  card** created lazily on first review. Rating it reschedules only that whole-work card; a passage is reset
+  only if the learner identifies it as the break point. This keeps a fully-learned work alive without re-drilling
+  every passage daily.
+- **Today stays bounded across all of it.** Today's single recitation action follows a fixed priority — a due
+  passage first, then an active chain, then a due whole-work prompt, then nothing — so recitation never becomes
+  an overdue wall no matter how many plans or how much is owned.
+- **Non-goals (#580).** No automatic advancement into chaining or maintenance (the learner starts each), no
+  multi-work or cross-work chaining, and still no speech-to-text, exactness scoring, or LLM grading.
 
 ## Future direction protected by v0
 
