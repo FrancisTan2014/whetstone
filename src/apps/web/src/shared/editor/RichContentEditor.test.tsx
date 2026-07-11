@@ -22,6 +22,10 @@ Object.defineProperty(Range.prototype, "getClientRects", {
   configurable: true,
   value: () => [] as unknown as DOMRectList
 });
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: () => {}
+});
 
 const textDocument = (text: string): DocumentNodeJSON => {
   const paragraph: DocumentNodeJSON =
@@ -163,6 +167,24 @@ async function renderReady({
   return { ...view, onChange, onSave, textbox, user };
 }
 
+// Drive the contextual toolbar the way a reader does: place a real, non-empty selection over the
+// paragraph text and let ProseMirror sync it, which flips the BubbleMenu's shouldShow gate.
+function selectParagraph(textbox: HTMLElement, start: number, end: number): void {
+  const textNode = textbox.querySelector("p")?.firstChild as Text | null | undefined;
+
+  if (textNode === null || textNode === undefined) {
+    throw new Error("Expected a paragraph text node to select.");
+  }
+
+  const selection = window.getSelection();
+  const range = window.document.createRange();
+  range.setStart(textNode, start);
+  range.setEnd(textNode, end);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  window.document.dispatchEvent(new Event("selectionchange"));
+}
+
 afterEach(() => {
   cleanup();
 });
@@ -267,64 +289,69 @@ describe("RichContentEditor boundary", () => {
   });
 });
 
-describe("RichContentEditor presentations and accessibility", () => {
-  it("keeps compact content intact while expanding the same editor to the full toolbar", async () => {
-    const { container, onChange, textbox, user } = await renderReady({
-      document: textDocument("Draft"),
+describe("RichContentEditor presentation", () => {
+  it("renders a document-first surface with no permanent formatting chrome", async () => {
+    const { container, textbox } = await renderReady({ document: textDocument("Draft") });
+
+    expect(container.querySelector("[data-presentation='full']")).not.toBeNull();
+    expect(textbox.textContent).toBe("Draft");
+    // The contextual toolbar only exists beside a selection — the surface itself is chrome-free.
+    expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Block style" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save document" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Expand editor" })).toBeNull();
+  });
+
+  it("marks the compact presentation on the root without altering the content", async () => {
+    const { container, textbox } = await renderReady({
+      document: textDocument("Note"),
       presentation: "compact"
     });
 
     expect(container.querySelector("[data-presentation='compact']")).not.toBeNull();
-    expect(screen.queryByRole("combobox", { name: "Block style" })).toBeNull();
-    expect(textbox.textContent).toBe("Draft");
-    await user.click(screen.getByRole("button", { name: "Expand editor" }));
-
-    expect(container.querySelector("[data-presentation='full']")).not.toBeNull();
-    expect(screen.getByRole("combobox", { name: "Block style" })).toBeDefined();
-    expect(textbox.textContent).toBe("Draft");
-    expect(onChange).not.toHaveBeenCalled();
-  });
-
-  it("starts full without an expand action and exposes labelled keyboard controls", async () => {
-    const { textbox, user } = await renderReady();
-    const toolbar = screen.getByRole("toolbar", { name: "Text formatting" });
-    const bold = within(toolbar).getByRole("button", { name: "Bold" });
-
-    expect(screen.queryByRole("button", { name: "Expand editor" })).toBeNull();
-    expect(bold.getAttribute("aria-pressed")).toBe("false");
-    expect(bold.className).toContain("min-h-11");
-    expect(bold.className).toContain("min-w-11");
-    for (const button of within(toolbar).getAllByRole("button")) {
-      expect(button.className).toContain("min-h-11");
-    }
-    expect(screen.getByRole("combobox", { name: "Block style" }).className).toContain("min-h-11");
-    expect(screen.getByRole("textbox", { name: "Link URL" }).className).toContain("min-h-11");
-
-    bold.focus();
-    await user.keyboard("{Enter}");
-    expect(bold.getAttribute("aria-pressed")).toBe("true");
-    expect(textbox.getAttribute("aria-label")).toBe("Entry body");
-  });
-
-  it("keeps the same usable controls under the Night theme", async () => {
-    render(
-      <div className="dark">
-        <RichContentEditor document={createEmptyDocument()} onChange={vi.fn()} />
-      </div>
-    );
-
-    expect(await screen.findByRole("textbox", { name: "Rich content editor" })).toBeDefined();
-    expect(screen.getByRole("toolbar", { name: "Text formatting" })).toBeDefined();
-    expect(screen.getByRole("button", { name: "Bold" })).toBeDefined();
+    expect(textbox.textContent).toBe("Note");
+    expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull();
   });
 });
 
-describe("RichContentEditor formatting", () => {
+describe("RichContentEditor contextual formatting", () => {
+  it("reveals the contextual toolbar beside a real selection and applies a mark", async () => {
+    const { onChange, textbox, user } = await renderReady({ document: textDocument("Format me") });
+
+    textbox.focus();
+    selectParagraph(textbox, 0, 6);
+    const toolbar = await screen.findByRole("toolbar", { name: "Text formatting" });
+
+    await user.click(within(toolbar).getByRole("button", { name: "Bold" }));
+    await waitFor(() =>
+      expect(lastDocument(onChange).content?.[0]?.content?.[0]?.marks?.[0]?.type).toBe("bold")
+    );
+  });
+
+  it("dismisses on Escape and returns for a different selection", async () => {
+    const { textbox, user } = await renderReady({ document: textDocument("Format me") });
+
+    textbox.focus();
+    selectParagraph(textbox, 0, 6);
+    const toolbar = await screen.findByRole("toolbar", { name: "Text formatting" });
+    within(toolbar).getByRole("button", { name: "Bold" }).focus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull()
+    );
+
+    selectParagraph(textbox, 2, 9);
+    expect(await screen.findByRole("toolbar", { name: "Text formatting" })).toBeDefined();
+  });
+});
+
+describe("RichContentEditor keyboard", () => {
   it.each([
     ["b", "bold", "Bold"],
     ["i", "italic", "Italic"],
     ["e", "code", "Code"]
-  ])("supports the Ctrl+%s keyboard shortcut for %s", async (key, mark, text) => {
+  ])("applies the Ctrl+%s mark shortcut", async (key, mark, text) => {
     const { onChange, textbox, user } = await renderReady();
 
     await user.click(textbox);
@@ -334,103 +361,13 @@ describe("RichContentEditor formatting", () => {
     expect(lastDocument(onChange).content?.[0]?.content?.[0]?.marks?.[0]?.type).toBe(mark);
   });
 
-  it.each([
-    ["Heading 1", 1],
-    ["Heading 2", 2],
-    ["Heading 3", 3]
-  ])("sets %s and can return it to a paragraph", async (option, level) => {
-    const { onChange, textbox, user } = await renderReady();
-    const select = screen.getByRole("combobox", { name: "Block style" });
-
-    await user.selectOptions(select, option);
-    await user.click(textbox);
-    await user.type(textbox, "Title");
-    await waitFor(() => expect(lastDocument(onChange).content?.[0]?.type).toBe("heading"));
-    expect(lastDocument(onChange).content?.[0]?.attrs?.["level"]).toBe(level);
-    expect((select as HTMLSelectElement).value).toBe(`heading-${level}`);
-
-    await user.selectOptions(select, "Paragraph");
-    await waitFor(() => expect(lastDocument(onChange).content?.[0]?.type).toBe("paragraph"));
-  });
-
-  it.each([
-    ["Bullet list", "bulletList"],
-    ["Ordered list", "orderedList"],
-    ["Blockquote", "blockquote"],
-    ["Code block", "codeBlock"]
-  ])("toggles the %s block command", async (label, nodeType) => {
-    const { onChange, textbox, user } = await renderReady();
-    const button = screen.getByRole("button", { name: label });
-
-    await user.click(button);
-    expect(button.getAttribute("aria-pressed")).toBe("true");
-    await user.click(textbox);
-    await user.type(textbox, "Block");
-    await waitFor(() => expect(lastDocument(onChange).content?.[0]?.type).toBe(nodeType));
-
-    await user.click(button);
-    await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("false"));
-  });
-
-  it.each([
-    ["Blockquote", "blockquote"],
-    ["Bullet list", "bulletList"]
-  ])(
-    "preserves the top-level block id when the %s toolbar button wraps the block (#588)",
-    async (label) => {
-      const { onChange, textbox, user } = await renderReady();
-
-      await user.click(textbox);
-      await user.type(textbox, "Body");
-      const idBefore = textbox.querySelector("p")?.getAttribute("data-id");
-      expect(idBefore).toBeTruthy();
-
-      await user.click(screen.getByRole("button", { name: label }));
-
-      await waitFor(() => expect(lastDocument(onChange).content?.[0]?.type).not.toBe("paragraph"));
-      const wrapper = lastDocument(onChange).content?.[0];
-      // Routing the toolbar wrapping buttons through the shared catalog keeps the block's stable id
-      // on the NEW addressable top-level block (list/quote), not just for the slash menu (#588)...
-      expect(wrapper?.attrs?.["id"]).toBe(idBefore);
-      // ...and clears it from the now-nested paragraph so the id addresses exactly one block.
-      const nested = wrapper?.content?.[0];
-      const nestedParagraph = nested?.type === "listItem" ? nested.content?.[0] : nested;
-      expect(nestedParagraph?.attrs?.["id"]).not.toBe(idBefore);
-    }
-  );
-
-  it.each([
-    ["Bold", "bold"],
-    ["Italic", "italic"],
-    ["Inline code", "code"]
-  ])("toggles the %s toolbar mark", async (label, mark) => {
-    const { onChange, textbox, user } = await renderReady();
-    const button = screen.getByRole("button", { name: label });
-
-    await user.click(button);
-    expect(button.getAttribute("aria-pressed")).toBe("true");
-    await user.click(textbox);
-    await user.type(textbox, "Marked");
-    await waitFor(() => expect(onChange).toHaveBeenCalled());
-    expect(lastDocument(onChange).content?.[0]?.content?.[0]?.marks?.[0]?.type).toBe(mark);
-  });
-
-  it("undoes and redoes from both toolbar buttons and keyboard shortcuts", async () => {
+  it("undoes and redoes from the keyboard", async () => {
     const { onChange, textbox, user } = await renderReady();
 
     await user.click(textbox);
     await user.type(textbox, "A");
-    await waitFor(() =>
-      expect((screen.getByRole("button", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(
-        false
-      )
-    );
-    await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(documentText(lastDocument(onChange))).toBe(""));
-    await user.click(screen.getByRole("button", { name: "Redo" }));
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("A"));
 
-    await user.click(textbox);
     await user.keyboard("{Control>}z{/Control}");
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe(""));
     await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
@@ -438,77 +375,7 @@ describe("RichContentEditor formatting", () => {
   });
 });
 
-describe("RichContentEditor links, paste, and save", () => {
-  it("validates link input, applies normalized links, and removes them", async () => {
-    const { onChange, textbox, user } = await renderReady();
-    const input = screen.getByRole("textbox", { name: "Link URL" });
-
-    expect((input as HTMLInputElement).inputMode).toBe("url");
-    await user.type(input, "javascript:alert(1)");
-    await user.click(screen.getByRole("button", { name: "Apply link" }));
-    expect(screen.getByRole("alert").textContent).toContain("http");
-    expect(input.getAttribute("aria-invalid")).toBe("true");
-
-    await user.clear(input);
-    await user.type(input, "example.com");
-    expect((input as HTMLInputElement).validity.valid).toBe(true);
-    await user.click(screen.getByRole("button", { name: "Apply link" }));
-    expect(screen.queryByRole("alert")).toBeNull();
-    await user.click(textbox);
-    await user.type(textbox, "Linked");
-    await waitFor(() => expect(onChange).toHaveBeenCalled());
-    expect(lastDocument(onChange).content?.[0]?.content?.[0]?.marks?.[0]?.attrs?.["href"]).toBe(
-      "https://example.com"
-    );
-
-    await user.click(screen.getByRole("button", { name: "Remove link" }));
-    // Re-focus via the DOM so ProseMirror restores its retained end-of-doc selection. A synthetic
-    // pointer click maps to a jsdom hit position (which has no layout) and can collapse the caret to
-    // the document start under load, prepending " plain" -> " plainLinked"; focus() is deterministic.
-    textbox.focus();
-    await waitFor(() => expect(document.activeElement).toBe(textbox));
-    await user.type(textbox, " plain");
-    await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("Linked plain"));
-    expect(lastDocument(onChange).content?.[0]?.content?.[1]?.marks).toBeUndefined();
-
-    await user.clear(input);
-    await user.click(screen.getByRole("button", { name: "Apply link" }));
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("removes the whole link mark when the caret is collapsed inside linked text", async () => {
-    const linked: DocumentNodeJSON = {
-      content: [
-        {
-          content: [
-            {
-              marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
-              text: "Linked text",
-              type: "text"
-            }
-          ],
-          type: "paragraph"
-        }
-      ],
-      type: "doc"
-    };
-    const { onChange, textbox, user } = await renderReady({ document: linked });
-    const linkedText = textbox.querySelector("a")?.firstChild;
-
-    expect(linkedText).toBeInstanceOf(Text);
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.setStart(linkedText as Text, 3);
-    range.collapse(true);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
-
-    await user.click(screen.getByRole("button", { name: "Remove link" }));
-    await waitFor(() => expect(textbox.querySelector("a")).toBeNull());
-    expect(lastDocument(onChange).content?.[0]?.content?.[0]?.marks).toBeUndefined();
-  });
-
+describe("RichContentEditor paste and save", () => {
   it("preserves supported rich marks and nested blocks when pasted", async () => {
     const { onChange, textbox } = await renderReady();
 
@@ -578,21 +445,21 @@ describe("RichContentEditor links, paste, and save", () => {
     expect(textbox.querySelector("a")).toBeNull();
   });
 
-  it("emits detached validated JSON from the Save button and Ctrl/Meta+S", async () => {
+  it("emits detached validated JSON from Ctrl/Meta+S without a Save button", async () => {
     const { onSave, textbox, user } = await renderReady();
 
     await user.click(textbox);
     await user.type(textbox, "Saved");
-    await user.click(screen.getByRole("button", { name: "Save document" }));
+    textbox.focus();
+    fireEvent.keyDown(textbox, { ctrlKey: true, key: "s" });
     const first = lastDocument(onSave);
     expect(documentText(first)).toBe("Saved");
     first.content?.[0]?.content?.splice(0);
 
-    textbox.focus();
-    fireEvent.keyDown(textbox, { ctrlKey: true, key: "s" });
-    expect(documentText(lastDocument(onSave))).toBe("Saved");
     fireEvent.keyDown(textbox, { key: "S", metaKey: true });
-    expect(onSave).toHaveBeenCalledTimes(3);
+    expect(documentText(lastDocument(onSave))).toBe("Saved");
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "Save document" })).toBeNull();
   });
 
   it("does not claim the save shortcut or show a Save action without a consumer policy", async () => {

@@ -2,21 +2,18 @@ import type { Editor, Extensions } from "@tiptap/core";
 import { Placeholder } from "@tiptap/extensions/placeholder";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { BubbleMenu, type BubbleMenuProps } from "@tiptap/react/menus";
 import {
   type DocumentNodeJSON,
   documentExtensions,
   parseDocument,
   serializeDocument
 } from "@whetstone/document";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
-import { Button } from "../ui/Button.js";
-import { runBlockCommandById } from "./blockCommands.js";
-import {
-  editorDocumentsEqual,
-  normalizeEditorLinkHref,
-  validateEditorDocument
-} from "./editorDocument.js";
+import { createFormattingMenuVisibility, type FormattingMenuSelection } from "./bubbleFormatting.js";
+import { EditorFormattingMenu } from "./EditorFormattingMenu.js";
+import { editorDocumentsEqual, validateEditorDocument } from "./editorDocument.js";
 import { editorClassNames } from "./RichContentEditor.tokens.js";
 import { SlashCommand } from "./slashCommand.js";
 
@@ -45,46 +42,18 @@ export interface RichContentEditorProps {
   readonly presentation?: RichContentEditorPresentation;
 }
 
-interface FormatButtonProps {
-  readonly active: boolean;
-  readonly children: React.ReactNode;
-  readonly label: string;
-  readonly onClick: () => void;
-}
-
-function FormatButton({ active, children, label, onClick }: FormatButtonProps): React.JSX.Element {
-  return (
-    <Button
-      aria-label={label}
-      aria-pressed={active}
-      className={editorClassNames.action}
-      onClick={onClick}
-      size="sm"
-      variant={active ? "secondary" : "ghost"}
-    >
-      {children}
-    </Button>
-  );
-}
-
 function snapshot(editor: Editor): DocumentNodeJSON {
   return serializeDocument(parseDocument(editor.getJSON()));
-}
-
-function currentBlockStyle(editor: Editor): string {
-  for (const level of [1, 2, 3]) {
-    if (editor.isActive("heading", { level })) {
-      return `heading-${level}`;
-    }
-  }
-
-  return "paragraph";
 }
 
 function isSaveShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s";
 }
 
+// The shared editing surface: a document-first writing area with no permanent chrome. Inline
+// formatting lives in a contextual toolbar (Tiptap's BubbleMenu) that appears beside a real text
+// selection, block transforms live on the slash menu (#588), and save state belongs to the consuming
+// page. Mark, undo/redo, and save keyboard shortcuts keep working without any visible buttons.
 export function RichContentEditor({
   ariaLabel = "Rich content editor",
   document,
@@ -93,10 +62,18 @@ export function RichContentEditor({
   presentation = "full"
 }: RichContentEditorProps): React.JSX.Element {
   const initialDocument = useMemo(() => validateEditorDocument(document), [document]);
-  const [expanded, setExpanded] = useState(false);
-  const [linkInput, setLinkInput] = useState("");
-  const [linkError, setLinkError] = useState<string>();
-  const linkErrorId = useId();
+  const visibility = useMemo(() => createFormattingMenuVisibility(), []);
+  // The BubbleMenu re-dispatches an `updateOptions` transaction whenever these props change identity;
+  // with `shouldRerenderOnTransaction` that would loop, so keep them referentially stable.
+  const bubbleAppendTo = useCallback(() => window.document.body, []);
+  const bubbleOptions = useMemo<NonNullable<BubbleMenuProps["options"]>>(
+    () => ({ flip: {}, offset: 8, placement: "top", shift: { padding: 8 } }),
+    []
+  );
+  const bubbleShouldShow = useCallback<NonNullable<BubbleMenuProps["shouldShow"]>>(
+    (props) => visibility.shouldShow(props as unknown as FormattingMenuSelection),
+    [visibility]
+  );
   const editor = useEditor({
     content: initialDocument,
     editorProps: {
@@ -136,176 +113,28 @@ export function RichContentEditor({
   }, [editor, initialDocument]);
 
   if (editor === null) {
-    return <div aria-busy="true" className={editorClassNames.root} />;
+    return (
+      <div aria-busy="true" className={editorClassNames.root} data-presentation={presentation} />
+    );
   }
 
-  const showFullToolbar = presentation === "full" || expanded;
-  const applyLink = (): void => {
-    const trimmed = linkInput.trim();
-
-    if (trimmed === "") {
-      editor.chain().focus().unsetMark("link", { extendEmptyMarkRange: true }).run();
-      setLinkError(undefined);
-      return;
-    }
-
-    const href = normalizeEditorLinkHref(trimmed);
-    if (href === undefined) {
-      setLinkError("Use an http, https, mailto, anchor, or root-relative link.");
-      return;
-    }
-
-    editor.chain().focus().setMark("link", { href }).run();
-    setLinkError(undefined);
-  };
-  const removeLink = (): void => {
-    editor.chain().focus().unsetMark("link", { extendEmptyMarkRange: true }).run();
-    setLinkError(undefined);
+  const dismissFormattingMenu = (): void => {
+    const { from, to } = editor.state.selection;
+    visibility.dismiss(from, to);
+    editor.chain().focus().run();
   };
 
   return (
-    <div className={editorClassNames.root} data-presentation={showFullToolbar ? "full" : "compact"}>
-      <div aria-label="Text formatting" className={editorClassNames.toolbar} role="toolbar">
-        {showFullToolbar ? (
-          <>
-            <label>
-              <span className="sr-only">Block style</span>
-              <select
-                aria-label="Block style"
-                className={editorClassNames.blockStyle}
-                onChange={(event) => {
-                  runBlockCommandById(editor, event.currentTarget.value);
-                }}
-                value={currentBlockStyle(editor)}
-              >
-                <option value="paragraph">Paragraph</option>
-                <option value="heading-1">Heading 1</option>
-                <option value="heading-2">Heading 2</option>
-                <option value="heading-3">Heading 3</option>
-              </select>
-            </label>
-            <FormatButton
-              active={editor.isActive("bulletList")}
-              label="Bullet list"
-              onClick={() => runBlockCommandById(editor, "bullet-list")}
-            >
-              Bullets
-            </FormatButton>
-            <FormatButton
-              active={editor.isActive("orderedList")}
-              label="Ordered list"
-              onClick={() => runBlockCommandById(editor, "ordered-list")}
-            >
-              Numbered
-            </FormatButton>
-            <FormatButton
-              active={editor.isActive("blockquote")}
-              label="Blockquote"
-              onClick={() => runBlockCommandById(editor, "blockquote")}
-            >
-              Quote
-            </FormatButton>
-            <FormatButton
-              active={editor.isActive("codeBlock")}
-              label="Code block"
-              onClick={() => runBlockCommandById(editor, "code-block")}
-            >
-              Code block
-            </FormatButton>
-          </>
-        ) : null}
-        <FormatButton
-          active={editor.isActive("bold")}
-          label="Bold"
-          onClick={() => editor.chain().focus().toggleMark("bold").run()}
-        >
-          Bold
-        </FormatButton>
-        <FormatButton
-          active={editor.isActive("italic")}
-          label="Italic"
-          onClick={() => editor.chain().focus().toggleMark("italic").run()}
-        >
-          Italic
-        </FormatButton>
-        <FormatButton
-          active={editor.isActive("code")}
-          label="Inline code"
-          onClick={() => editor.chain().focus().toggleMark("code").run()}
-        >
-          Inline code
-        </FormatButton>
-        <Button
-          aria-label="Undo"
-          className={editorClassNames.action}
-          disabled={!editor.can().undo()}
-          onClick={() => editor.chain().focus().undo().run()}
-          size="sm"
-          variant="ghost"
-        >
-          Undo
-        </Button>
-        <Button
-          aria-label="Redo"
-          className={editorClassNames.action}
-          disabled={!editor.can().redo()}
-          onClick={() => editor.chain().focus().redo().run()}
-          size="sm"
-          variant="ghost"
-        >
-          Redo
-        </Button>
-        {!showFullToolbar ? (
-          <Button
-            aria-label="Expand editor"
-            className={editorClassNames.action}
-            onClick={() => setExpanded(true)}
-            size="sm"
-            variant="secondary"
-          >
-            More
-          </Button>
-        ) : null}
-        {onSave === undefined ? null : (
-          <Button
-            aria-label="Save document"
-            className={editorClassNames.action}
-            onClick={() => onSave(snapshot(editor))}
-            size="sm"
-          >
-            Save
-          </Button>
-        )}
-        {showFullToolbar ? (
-          <>
-            <label className={editorClassNames.linkField}>
-              <span className="sr-only">Link URL</span>
-              <input
-                aria-describedby={linkError === undefined ? undefined : linkErrorId}
-                aria-invalid={linkError === undefined ? undefined : true}
-                aria-label="Link URL"
-                className={editorClassNames.linkInput}
-                onChange={(event) => setLinkInput(event.currentTarget.value)}
-                placeholder="https://example.com"
-                inputMode="url"
-                type="text"
-                value={linkInput}
-              />
-            </label>
-            <Button onClick={applyLink} size="sm" variant="secondary">
-              Apply link
-            </Button>
-            <Button onClick={removeLink} size="sm" variant="ghost">
-              Remove link
-            </Button>
-          </>
-        ) : null}
-      </div>
-      {linkError === undefined ? null : (
-        <p className={editorClassNames.error} id={linkErrorId} role="alert">
-          {linkError}
-        </p>
-      )}
+    <div className={editorClassNames.root} data-presentation={presentation}>
+      <BubbleMenu
+        appendTo={bubbleAppendTo}
+        editor={editor}
+        options={bubbleOptions}
+        shouldShow={bubbleShouldShow}
+        updateDelay={0}
+      >
+        <EditorFormattingMenu editor={editor} onEscape={dismissFormattingMenu} />
+      </BubbleMenu>
       <EditorContent editor={editor} />
     </div>
   );
