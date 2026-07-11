@@ -9,7 +9,7 @@ import { toDayKey } from "./diaryTimeline.js";
 // The kinds a Timeline row can take. Each is a filter over the one derived result — the Diary is the
 // `diary` filter, and a future all-history view is the union. Ordered by nothing meaningful; membership,
 // not order, is what matters.
-export const timelineEntryKinds = ["diary", "note", "work", "recitation"] as const;
+export const timelineEntryKinds = ["diary", "note", "work", "recitation", "memory_note"] as const;
 
 export type TimelineEntryKind = (typeof timelineEntryKinds)[number];
 
@@ -29,7 +29,11 @@ const TIMELINE_KIND_ENTRY_TYPE: Readonly<Record<TimelineEntryKind, EntryType>> =
   work: "work",
   // A `recitation` row IS a real `recitation_plan` Entry (#577) — the learner's adopted recitation
   // routine, owner-scoped and dated through the shared personal-entry facet like every other row.
-  recitation: "recitation_plan"
+  recitation: "recitation_plan",
+  // A `memory_note` row IS a real `memory_note` Entry (#573) — the durable retention target the learner
+  // captured. It appears once on the Timeline via the shared personal-entry chronology; its prompts,
+  // autosaves, and reviews are deliberately NOT Timeline rows.
+  memory_note: "memory_note"
 };
 
 export function entryTypeForTimelineKind(kind: TimelineEntryKind): EntryType {
