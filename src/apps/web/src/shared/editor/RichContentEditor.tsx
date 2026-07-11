@@ -1,4 +1,5 @@
 import type { Editor, Extensions } from "@tiptap/core";
+import type { EditorState } from "@tiptap/pm/state";
 import { Placeholder } from "@tiptap/extensions/placeholder";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -9,8 +10,15 @@ import {
   parseDocument,
   serializeDocument
 } from "@whetstone/document";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Button } from "../ui/Button.js";
+import { useMediaQuery } from "../ui/useMediaQuery.js";
+import { BlockActionsMenu } from "./BlockActionsMenu.js";
+import { blockActionsMenuClassNames } from "./BlockActionsMenu.tokens.js";
+import { resolveTopLevelBlock } from "./blockGutterCommands.js";
+import { BlockGutterHandle } from "./BlockGutterHandle.js";
+import { BlockGutterHighlight, setBlockGutterTarget } from "./blockGutterHighlight.js";
 import {
   createFormattingMenuVisibility,
   type FormattingMenuSelection
@@ -27,6 +35,8 @@ const editorExtensions: Extensions = [
   ...(documentExtensions as unknown as Extensions),
   UndoRedo,
   SlashCommand,
+  // The transient gutter wash — an editing-only decoration the static reader never mounts (#590).
+  BlockGutterHighlight as unknown as Extensions[number],
   // A restrained, decoration-only hint on a focused empty paragraph — never stored, copied, or read
   // by the static reader (which mounts `documentExtensions` without this editing-only extension).
   Placeholder.configure({
@@ -34,6 +44,14 @@ const editorExtensions: Extensions = [
     showOnlyCurrent: true
   })
 ];
+
+// The gutter is a pointer affordance: it only makes sense with a fine, hovering pointer. On touch or a
+// coarse pointer the compact `More block actions` trigger carries the same menu instead (#590).
+const POINTER_GUTTER_QUERY = "(hover: hover) and (pointer: fine)";
+
+// Which surface owns the open menu, so the two anchored instances (the hover gutter grip and the
+// compact/keyboard trigger) never open at once.
+type OpenMenu = { readonly pos: number; readonly source: "gutter" | "more" };
 
 export type RichContentEditorPresentation = "compact" | "full";
 
@@ -53,10 +71,38 @@ function isSaveShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s";
 }
 
+// The document position just before the top-level block the selection sits in — the same value the
+// drag handle reports on hover, so keyboard (`Shift+F10`) and compact access target the exact block a
+// pointer would. Falls back to the document start for an empty selection at the very top.
+// The document position just before the top-level block the selection sits in — the exact value the
+// drag handle reports on hover, so keyboard (`Shift+F10`) and compact access target the same block a
+// pointer would. Takes an `EditorState` so both the live editor and the ProseMirror view handed to
+// `handleKeyDown` resolve it identically.
+function activeBlockStart(state: EditorState): number {
+  const block = resolveTopLevelBlock(state.doc, state.selection.from);
+  /* v8 ignore next -- a focused selection always resolves to a top-level block; the 0 fallback only
+     guards a document-end gap cursor, unreachable from the menu surfaces and covered by
+     resolveTopLevelBlock's own unit tests. Its result is still asserted through the reorder tests. */
+  return block?.start ?? 0;
+}
+
+// The horizontal ellipsis for the compact/touch `More block actions` trigger.
+function MoreIcon(): React.JSX.Element {
+  return (
+    <svg aria-hidden="true" fill="currentColor" height="16" viewBox="0 0 16 16" width="16">
+      <circle cx="3" cy="8" r="1.4" />
+      <circle cx="8" cy="8" r="1.4" />
+      <circle cx="13" cy="8" r="1.4" />
+    </svg>
+  );
+}
+
 // The shared editing surface: a document-first writing area with no permanent chrome. Inline
-// formatting lives in a contextual toolbar (Tiptap's BubbleMenu) that appears beside a real text
-// selection, block transforms live on the slash menu (#588), and save state belongs to the consuming
-// page. Mark, undo/redo, and save keyboard shortcuts keep working without any visible buttons.
+// formatting lives in a contextual toolbar (Tiptap's BubbleMenu) beside a real text selection, block
+// transforms live on the slash menu (#588), and the block structure surfaces only on interaction
+// through the contextual gutter (#590): hovering a top-level block reveals one grip that opens the
+// block-actions menu and drags to reorder, while touch/keyboard reach the same menu through a compact
+// trigger and `Shift+F10`. Save state belongs to the consuming page.
 export function RichContentEditor({
   ariaLabel = "Rich content editor",
   document,
@@ -66,6 +112,10 @@ export function RichContentEditor({
 }: RichContentEditorProps): React.JSX.Element {
   const initialDocument = useMemo(() => validateEditorDocument(document), [document]);
   const visibility = useMemo(() => createFormattingMenuVisibility(), []);
+  const showPointerGutter = useMediaQuery(POINTER_GUTTER_QUERY);
+  // The block whose grip is currently hovered/focused (pointer gutter), and the open menu, if any.
+  const [gutterPos, setGutterPos] = useState<number | null>(null);
+  const [openMenu, setOpenMenu] = useState<OpenMenu | null>(null);
   // The BubbleMenu re-dispatches an `updateOptions` transaction whenever these props change identity;
   // with `shouldRerenderOnTransaction` that would loop, so keep them referentially stable.
   const bubbleAppendTo = useCallback(() => window.document.body, []);
@@ -87,6 +137,15 @@ export function RichContentEditor({
         role: "textbox"
       },
       handleKeyDown: (view, event) => {
+        // Shift+F10 is the keyboard equivalent of hovering the gutter: open the block-actions menu for
+        // the block the caret sits in. Routed through the compact ("more") surface so touch/keyboard
+        // and pointer share one menu instance and open state.
+        if (event.shiftKey && event.key === "F10") {
+          event.preventDefault();
+          setOpenMenu({ pos: activeBlockStart(view.state), source: "more" });
+          return true;
+        }
+
         if (onSave === undefined || !isSaveShortcut(event)) {
           return false;
         }
@@ -115,6 +174,17 @@ export function RichContentEditor({
     }
   }, [editor, initialDocument]);
 
+  // Paint the transient wash on the block that owns the interaction: the open menu's block when a menu
+  // is open, otherwise the hovered gutter block. Clears (null) at rest. The decoration is a no-op
+  // transaction, so it never edits the document, enters undo, or emits onChange.
+  useEffect(() => {
+    if (editor === null) {
+      return;
+    }
+
+    setBlockGutterTarget(editor, openMenu !== null ? openMenu.pos : gutterPos);
+  }, [editor, openMenu, gutterPos]);
+
   if (editor === null) {
     return (
       <div aria-busy="true" className={editorClassNames.root} data-presentation={presentation} />
@@ -138,6 +208,38 @@ export function RichContentEditor({
       >
         <EditorFormattingMenu editor={editor} onEscape={dismissFormattingMenu} />
       </BubbleMenu>
+
+      {showPointerGutter ? (
+        <BlockGutterHandle
+          editor={editor}
+          gutterPos={gutterPos}
+          onGutterPosChange={setGutterPos}
+          onMenuChange={setOpenMenu}
+          open={openMenu?.source === "gutter"}
+        />
+      ) : null}
+
+      <div className={editorClassNames.moreActions}>
+        <BlockActionsMenu
+          editor={editor}
+          onOpenChange={(open) =>
+            setOpenMenu(open ? { pos: activeBlockStart(editor.state), source: "more" } : null)
+          }
+          open={openMenu?.source === "more"}
+          pos={openMenu?.source === "more" ? openMenu.pos : activeBlockStart(editor.state)}
+          trigger={
+            <Button
+              aria-label="More block actions"
+              className={blockActionsMenuClassNames.moreTrigger}
+              size="sm"
+              variant="ghost"
+            >
+              <MoreIcon />
+            </Button>
+          }
+        />
+      </div>
+
       <EditorContent editor={editor} />
     </div>
   );

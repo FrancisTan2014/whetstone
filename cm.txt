@@ -1,0 +1,27 @@
+feat(editor): add contextual block gutter commands, menu, and wash (#590)
+
+Integrate Tiptap's official React drag-handle to reveal a contextual block
+gutter with a block-actions menu, plus keyboard (Shift+F10) and touch-first
+(compact "More block actions" trigger) access, and a transient block wash.
+
+- blockGutterCommands: pure block command/query module (turn into, insert
+  above/below, duplicate, move up/down, delete) that preserves node ids.
+- BlockActionsMenu: Radix dropdown wiring the commands with disabled states.
+- blockGutterHighlight: ProseMirror plugin painting a transient wash on the
+  active block.
+- BlockGutterHandle: pointer-only official DragHandle + grip menu (browser-only
+  seam, coverage-excluded like other detached-portal/browser code).
+- RichContentEditor: integrate the gutter, Shift+F10 handler, wash lifecycle,
+  and the always-rendered compact More trigger.
+
+Deps: the official @tiptap/extension-drag-handle-react stack. drag-handle
+declares y-tiptap, extension-collaboration, and extension-node-range as
+peerDependencies, so they are installed to satisfy the peer graph only --
+collaboration/Yjs is NOT enabled (no Collaboration extension or Y.Doc is
+constructed).
+
+100% coverage on all new logic modules; the browser-only DragHandle seam is
+narrowly excluded with justification.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+Copilot-Session: 0c06664d-14d5-4859-b339-4314a7559b2f
