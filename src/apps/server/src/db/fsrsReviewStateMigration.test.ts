@@ -77,27 +77,27 @@ describe("0037 FSRS review-state migration", () => {
     ).resolves.toBeDefined();
   });
 
-  // The only other FK to recall_items was proposal_candidates.related_recall_item_id (migration
-  // 0030), but migration 0035 drops proposal_candidates (CASCADE) — removing that FK — well before
-  // 0037 runs. So at 0037 the sole live referrer of recall_items is recall_reviews, which the leading
-  // DELETEs already clear in FK order. This guards that fact so the forward chain stays runnable.
-  it("has no proposal_candidates table by the time 0037 runs, so no other FK can block the clear", async () => {
+  // The full forward chain must stay runnable end to end, and its end state must match the #595
+  // Memory model: the legacy `recall_items`/`recall_reviews` tables are dropped (migrations 0042/0043)
+  // and replaced by the Entry-backed `memory_notes` / `memory_prompts` / `memory_prompt_reviews`
+  // tables. (proposal_candidates was already dropped by 0035.) This guards that the whole chain —
+  // including the recall→memory migration — applies cleanly against a fresh database.
+  it("applies the whole chain and lands the #595 memory end-state (recall tables gone)", async () => {
     const pglite = new PGlite();
     await expect(runMigrations(pglite)).resolves.toBeUndefined();
 
-    const proposalTable = await pglite.query<{ exists: boolean }>(
-      "SELECT to_regclass('public.proposal_candidates') IS NOT NULL AS exists"
-    );
-    expect(proposalTable.rows[0]?.exists).toBe(false);
+    const tableExists = async (name: string): Promise<boolean> => {
+      const result = await pglite.query<{ exists: boolean }>(
+        `SELECT to_regclass('public.${name}') IS NOT NULL AS exists`
+      );
+      return result.rows[0]?.exists ?? false;
+    };
 
-    const referrers = await pglite.query<{ table_name: string }>(`
-      SELECT tc.table_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.constraint_column_usage ccu
-        ON tc.constraint_name = ccu.constraint_name
-      WHERE tc.constraint_type = 'FOREIGN KEY' AND ccu.table_name = 'recall_items'
-      ORDER BY tc.table_name
-    `);
-    expect(referrers.rows.map((row) => row.table_name)).toEqual(["recall_reviews"]);
+    expect(await tableExists("proposal_candidates")).toBe(false);
+    expect(await tableExists("recall_items")).toBe(false);
+    expect(await tableExists("recall_reviews")).toBe(false);
+    expect(await tableExists("memory_notes")).toBe(true);
+    expect(await tableExists("memory_prompts")).toBe(true);
+    expect(await tableExists("memory_prompt_reviews")).toBe(true);
   });
 });
