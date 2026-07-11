@@ -138,6 +138,10 @@ describe("listMemoryNotes", () => {
     expect(summary?.dueCount).toBe(0);
     expect(summary?.nextDueAt).toBe(at(10).toISOString());
   });
+
+  it("returns an empty list when the user owns no notes", async () => {
+    expect(await listMemoryNotes(context.db, userA, at(5))).toEqual([]);
+  });
 });
 
 describe("searchMemoryNotes", () => {
@@ -579,5 +583,33 @@ describe("deleteMemoryNote", () => {
     const result = await deleteMemoryNote(context.deps, deposit.note.noteId, userB);
     expect(result.status).toBe("not_found");
     expect(await getMemoryNoteDetail(context.db, userA, deposit.note.noteId)).toBeDefined();
+  });
+
+  it("removes a note that has no prompts", async () => {
+    // A note with zero prompts (e.g. after every direction was pruned) still deletes cleanly: the
+    // prompt/review branches are skipped and only the note's own facets are removed.
+    await context.db.insert(entries).values({ id: "bare-note", type: "note" });
+    await context.db.insert(personalEntries).values({
+      createdAt: at(1),
+      entryId: "bare-note",
+      occurredAt: at(1),
+      updatedAt: at(1),
+      userId: userA
+    });
+    await context.db.insert(memoryNotes).values({
+      bodyDoc: { type: "doc", content: [] },
+      bodyText: "no prompts",
+      captureSource: "manual",
+      entryId: "bare-note"
+    });
+
+    const result = await deleteMemoryNote(context.deps, "bare-note", userA);
+    expect(result.status).toBe("deleted");
+    expect(
+      await context.db.select().from(memoryNotes).where(eq(memoryNotes.entryId, "bare-note"))
+    ).toHaveLength(0);
+    expect(await context.db.select().from(entries).where(eq(entries.id, "bare-note"))).toHaveLength(
+      0
+    );
   });
 });
