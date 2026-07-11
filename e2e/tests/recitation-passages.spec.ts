@@ -23,7 +23,12 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
     page,
     setup
   }) => {
-    await adoptPlan(setup.baseURL, page.request, setup.epub.entryId, "familiarizing");
+    const planEntryId = await adoptPlan(
+      setup.baseURL,
+      page.request,
+      setup.epub.entryId,
+      "familiarizing"
+    );
 
     // From Today, the explicit "Start reciting" transition moves the routine into active recitation.
     await page.goto(`${setup.baseURL}#/`);
@@ -31,10 +36,14 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
     await recitationCard.getByRole("button", { name: "Start reciting" }).click();
     await expect(recitationCard.getByRole("button", { name: "Start reciting" })).toHaveCount(0);
 
-    // Reach the segmentation surface through its real Library entry point — the adopted Work's card
-    // links "Divide into passages" into #/recite?plan=<id> — not a hand-built URL.
+    // Reach the segmentation surface through its real Library entry point — this Work's card links
+    // "Divide into passages" into #/recite?plan=<id> — not a hand-built URL. Scope by this plan's href
+    // so the click is unambiguous even when other routines exist in the shared library.
     await page.goto(`${setup.baseURL}#/library`);
-    await page.getByRole("link", { name: "Divide into passages" }).click();
+    await page
+      .getByRole("link", { name: "Divide into passages" })
+      .and(page.locator(`[href="#/recite?plan=${planEntryId}"]`))
+      .click();
 
     // On the segmentation page, divide the Work into passages (boundaries only — the source is untouched).
     await page.getByRole("button", { name: "Divide into passages" }).click();
