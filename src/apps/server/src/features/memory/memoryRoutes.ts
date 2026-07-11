@@ -3,6 +3,7 @@ import {
   depositMemoryRequestSchema,
   editMemoryNoteRequestSchema,
   editMemoryPromptRequestSchema,
+  importMemoryRequestSchema,
   recordMemoryReviewRequestSchema
 } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
@@ -13,6 +14,7 @@ import {
   depositMemory,
   editMemoryNote,
   editMemoryPrompt,
+  importMemoryBatch,
   recordPromptReview,
   snoozePrompt,
   type MemoryDependencies
@@ -165,6 +167,26 @@ export function registerMemoryRoutes(
       "memory_note_created"
     );
     return reply.code(201).send(deposit);
+  });
+
+  // Import a pasted notebook list (#574): a batch of drafts saved atomically. Either every note lands or
+  // none does, so a failed import never leaves a partial batch — the client keeps the untouched paste.
+  server.post("/api/memory/import", async (request, reply) => {
+    const parsed = importMemoryRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+    const imported = await importMemoryBatch(
+      dependencies,
+      parsed.data.items,
+      request.server.currentUser.getCurrentUserId(),
+      dependencies.now()
+    );
+    request.log.info(
+      { count: imported.length, route: "POST /api/memory/import" },
+      "memory_notes_imported"
+    );
+    return reply.code(201).send({ imported });
   });
 
   // Edit a note's durable body. Editing content never resets any prompt's review history.

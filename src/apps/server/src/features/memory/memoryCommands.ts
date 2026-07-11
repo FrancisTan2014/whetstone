@@ -171,6 +171,27 @@ export async function depositMemory(
   userId: string,
   now: Date
 ): Promise<MemoryDepositDto> {
+  const prepared = await prepareDeposit(dependencies, request, now);
+
+  await dependencies.db.transaction((tx) => writeMemory(tx, { ...prepared, userId, now }));
+
+  return toMemoryDepositDto(prepared.noteRow, prepared.derivedFromEntryId, prepared.promptRows);
+}
+
+// A single deposit resolved into the exact rows to persist, with all async answer resolution already done.
+// Separating preparation from the write lets the batch importer resolve every item's answers (which may
+// call the offline glosser) up front and then commit the whole batch inside one transaction.
+type PreparedDeposit = Readonly<{
+  noteRow: MemoryNoteRow;
+  derivedFromEntryId: string | null;
+  promptRows: ReadonlyArray<MemoryPromptRow>;
+}>;
+
+async function prepareDeposit(
+  dependencies: MemoryDependencies,
+  request: DepositMemoryRequest,
+  now: Date
+): Promise<PreparedDeposit> {
   const noteId = toEntryId(dependencies.createId());
   const derivedFromEntryId = request.derivedFromEntryId ?? null;
 
@@ -192,12 +213,34 @@ export async function depositMemory(
   };
 
   const promptRows = resolvedPrompts.map((prompt) => buildPromptRow(prompt, noteId, now));
+  return { noteRow, derivedFromEntryId, promptRows };
+}
 
-  await dependencies.db.transaction((tx) =>
-    writeMemory(tx, { noteRow, derivedFromEntryId, promptRows, userId, now })
+// Import a batch of pasted notebook drafts (#574) as Memory notes in one atomic write. Every item's
+// answers are resolved first (the offline glosser may run per prompt), then the whole batch is committed
+// inside a single transaction: either every note lands or none does, so a failed import never leaves a
+// partial or duplicated batch behind and the client can safely keep the untouched paste. The imported
+// notes flow into Memory and Timeline through their Entries — there is no batch-specific history row.
+export async function importMemoryBatch(
+  dependencies: MemoryDependencies,
+  items: ReadonlyArray<DepositMemoryRequest>,
+  userId: string,
+  now: Date
+): Promise<ReadonlyArray<MemoryDepositDto>> {
+  const prepared: PreparedDeposit[] = [];
+  for (const item of items) {
+    prepared.push(await prepareDeposit(dependencies, item, now));
+  }
+
+  await dependencies.db.transaction(async (tx) => {
+    for (const deposit of prepared) {
+      await writeMemory(tx, { ...deposit, userId, now });
+    }
+  });
+
+  return prepared.map((deposit) =>
+    toMemoryDepositDto(deposit.noteRow, deposit.derivedFromEntryId, deposit.promptRows)
   );
-
-  return toMemoryDepositDto(noteRow, derivedFromEntryId, promptRows);
 }
 
 // One prompt to deposit under a fresh single-prompt memory, before its answer is resolved.

@@ -20,6 +20,7 @@ import {
 import {
   depositMemory,
   depositPushedPhrase,
+  importMemoryBatch,
   recordPromptReview,
   reviewChunkMemory,
   snoozePrompt,
@@ -285,6 +286,108 @@ describe("depositMemory answer resolution (#526/#595)", () => {
 
     expect(deposit.prompts[0]?.lifecycle).toBe("draft");
     expect(deposit.prompts[0]?.answerText).toBeNull();
+  });
+});
+
+describe("importMemoryBatch (#574)", () => {
+  it("atomically imports every draft as a Memory note, in pasted order, owned by the user", async () => {
+    const imported = await importMemoryBatch(
+      context.deps,
+      [
+        { captureSource: "import", noteText: "per", prompts: [{ cueText: "per" }] },
+        {
+          captureSource: "import",
+          noteText: "push back\n\npushback",
+          prompts: [{ cueText: "push back", answerText: "pushback" }]
+        },
+        { captureSource: "import", noteText: "diem", prompts: [{ cueText: "diem" }] }
+      ],
+      userA,
+      t0
+    );
+
+    expect(imported.map((deposit) => deposit.note.bodyText)).toEqual([
+      "per",
+      "push back\n\npushback",
+      "diem"
+    ]);
+    // Answerless terms save as unscheduled drafts; the one with an answer is scheduled.
+    expect(imported[0]?.prompts[0]?.lifecycle).toBe("draft");
+    expect(imported[1]?.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(imported[1]?.prompts[0]?.answerText).toBe("pushback");
+    expect(imported[2]?.prompts[0]?.lifecycle).toBe("draft");
+
+    // Every note is a first-class owned Entry with a personal_entries facet under this user.
+    const noteRows = await context.db.select().from(memoryNotes);
+    expect(noteRows).toHaveLength(3);
+    const ownership = await context.db.select().from(personalEntries);
+    expect(ownership).toHaveLength(3);
+    expect(ownership.every((row) => row.userId === userA)).toBe(true);
+    expect(ownership.every((row) => row.occurredAt.getTime() === t0.getTime())).toBe(true);
+
+    const noteEntries = (await context.db.select().from(entries)).filter(
+      (row) => row.type === "memory_note"
+    );
+    expect(noteEntries).toHaveLength(3);
+  });
+
+  it("resolves each item's answer through the offline glosser", async () => {
+    const seen: string[] = [];
+    const deps = buildDeps(context.db, async (text) => {
+      seen.push(text);
+      return `gloss:${text}`;
+    });
+
+    const imported = await importMemoryBatch(
+      deps,
+      [
+        {
+          captureSource: "import",
+          noteText: "alpha",
+          prompts: [{ cueText: "alpha", glossTerm: "alpha" }]
+        },
+        {
+          captureSource: "import",
+          noteText: "beta",
+          prompts: [{ cueText: "beta", glossTerm: "beta" }]
+        }
+      ],
+      userA,
+      t0
+    );
+
+    expect(seen).toEqual(["alpha", "beta"]);
+    expect(imported[0]?.prompts[0]?.answerText).toBe("gloss:alpha");
+    expect(imported[0]?.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(imported[1]?.prompts[0]?.answerText).toBe("gloss:beta");
+  });
+
+  it("rolls back the whole batch when any item fails, saving nothing", async () => {
+    await expect(
+      importMemoryBatch(
+        context.deps,
+        [
+          { captureSource: "import", noteText: "saved?", prompts: [{ cueText: "saved?" }] },
+          {
+            captureSource: "import",
+            noteText: "bad",
+            // A chunkId with no matching chunk row violates the FK, failing the write mid-batch.
+            prompts: [{ cueText: "bad", answerText: "x", chunkId: "missing-chunk" }]
+          }
+        ],
+        userA,
+        t0
+      )
+    ).rejects.toThrow();
+
+    // Atomic: the first item must not have leaked — nothing is saved, so the client keeps the whole paste.
+    expect(await context.db.select().from(memoryNotes)).toHaveLength(0);
+    expect(await context.db.select().from(personalEntries)).toHaveLength(0);
+    expect(await context.db.select().from(memoryPrompts)).toHaveLength(0);
+    const noteEntries = (await context.db.select().from(entries)).filter(
+      (row) => row.type === "memory_note"
+    );
+    expect(noteEntries).toHaveLength(0);
   });
 });
 
