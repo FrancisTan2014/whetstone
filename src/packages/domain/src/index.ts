@@ -177,6 +177,29 @@ export type {
   SupportSegment
 } from "./recitationFading.js";
 export {
+  chainEligibility,
+  computeOwnedPrefix,
+  isOutcomePassageInSession,
+  isPassageOwned,
+  isWholeWorkOwned,
+  MIN_CHAIN_LENGTH,
+  OWNERSHIP_MIN_SUCCESSFUL_REVIEWS,
+  OWNERSHIP_RETENTION_TARGET,
+  passagesToFailFromOutcome,
+  recitationTodayActions,
+  resolveChainBoundary,
+  selectRecitationTodayAction
+} from "./recitationChaining.js";
+export type {
+  ChainBoundaryInvalidReason,
+  ChainBoundaryResult,
+  ChainEligibility,
+  OwnedPrefix,
+  PassageMastery,
+  RecitationTodayAction,
+  SessionRecallOutcome
+} from "./recitationChaining.js";
+export {
   isWorkLanguage,
   normalizeWorkLanguage,
   workLanguageLabels,
