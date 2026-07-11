@@ -10,8 +10,8 @@ export const entryTypes = [
   "block",
   "note",
   "toc_entry",
-  // `diary_entry` (#571): a personal diary artifact is a first-class addressable Entry, so a Recall item
-  // created from it can point at it via `recall_items.provenance_entry_id` and it can join the typed link
+  // `diary_entry` (#571): a personal diary artifact is a first-class addressable Entry, so a Memory note
+  // created from it can point at it via a `derived_from` Entry link and it can join the typed link
   // graph via `entry_links`. Its ownership + chronology live in the shared `personal_entries` facet, and
   // the Timeline is a logical view over those personal entries — never a stored `timeline_entry` object.
   "diary_entry",
