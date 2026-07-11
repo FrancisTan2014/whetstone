@@ -5,7 +5,12 @@ import { type DocumentNodeJSON, documentExtensions } from "@whetstone/document";
 import type { Extensions } from "@tiptap/core";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { blockCommands, filterBlockCommands, runBlockCommand } from "./blockCommands";
+import {
+  blockCommands,
+  filterBlockCommands,
+  runBlockCommand,
+  runBlockCommandById
+} from "./blockCommands";
 
 const extensions: Extensions = [...(documentExtensions as unknown as Extensions), UndoRedo];
 
@@ -147,6 +152,14 @@ describe("block command catalog", () => {
       const ids = collectIds(doc);
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+
+  it("runs a catalog command by id and reports an unknown id as not run", () => {
+    const editor = makeEditor(paragraph("body"));
+
+    expect(runBlockCommandById(editor, "blockquote")).toBe(true);
+    expect(topNode(editor).type).toBe("blockquote");
+    expect(runBlockCommandById(editor, "does-not-exist")).toBe(false);
   });
 });
 

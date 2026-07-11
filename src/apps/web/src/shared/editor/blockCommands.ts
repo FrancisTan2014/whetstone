@@ -176,3 +176,18 @@ export function filterBlockCommands(
 export function runBlockCommand(editor: Editor, command: BlockCommand): boolean {
   return command.appendTo(editor.chain().focus()).run();
 }
+
+// Runs the catalog command with the given id, or returns false when no command matches. This is the
+// by-identity seam every non-slash editor surface uses — the full toolbar's Block style select and
+// its Bulleted list / Numbered list / Quote / Code block buttons — so stable-id preservation applies
+// uniformly no matter which surface triggers the transform (#588), rather than each surface issuing
+// its own raw Tiptap chain.
+export function runBlockCommandById(editor: Editor, id: string): boolean {
+  const command = blockCommands.find((candidate) => candidate.id === id);
+
+  if (command === undefined) {
+    return false;
+  }
+
+  return runBlockCommand(editor, command);
+}

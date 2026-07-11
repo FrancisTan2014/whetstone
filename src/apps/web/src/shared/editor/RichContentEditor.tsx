@@ -11,6 +11,7 @@ import {
 import { useEffect, useId, useMemo, useState } from "react";
 
 import { Button } from "../ui/Button.js";
+import { runBlockCommandById } from "./blockCommands.js";
 import {
   editorDocumentsEqual,
   normalizeEditorLinkHref,
@@ -173,18 +174,7 @@ export function RichContentEditor({
                 aria-label="Block style"
                 className={editorClassNames.blockStyle}
                 onChange={(event) => {
-                  const value = event.currentTarget.value;
-
-                  if (value === "paragraph") {
-                    editor.chain().focus().setNode("paragraph").run();
-                    return;
-                  }
-
-                  editor
-                    .chain()
-                    .focus()
-                    .setNode("heading", { level: Number(value.replace("heading-", "")) })
-                    .run();
+                  runBlockCommandById(editor, event.currentTarget.value);
                 }}
                 value={currentBlockStyle(editor)}
               >
@@ -197,28 +187,28 @@ export function RichContentEditor({
             <FormatButton
               active={editor.isActive("bulletList")}
               label="Bullet list"
-              onClick={() => editor.chain().focus().toggleList("bulletList", "listItem").run()}
+              onClick={() => runBlockCommandById(editor, "bullet-list")}
             >
               Bullets
             </FormatButton>
             <FormatButton
               active={editor.isActive("orderedList")}
               label="Ordered list"
-              onClick={() => editor.chain().focus().toggleList("orderedList", "listItem").run()}
+              onClick={() => runBlockCommandById(editor, "ordered-list")}
             >
               Numbered
             </FormatButton>
             <FormatButton
               active={editor.isActive("blockquote")}
               label="Blockquote"
-              onClick={() => editor.chain().focus().toggleWrap("blockquote").run()}
+              onClick={() => runBlockCommandById(editor, "blockquote")}
             >
               Quote
             </FormatButton>
             <FormatButton
               active={editor.isActive("codeBlock")}
               label="Code block"
-              onClick={() => editor.chain().focus().toggleNode("codeBlock", "paragraph").run()}
+              onClick={() => runBlockCommandById(editor, "code-block")}
             >
               Code block
             </FormatButton>
