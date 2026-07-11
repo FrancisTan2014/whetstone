@@ -10,11 +10,20 @@ vi.mock("./recitationPassageApi", () => ({
   splitPassage: vi.fn()
 }));
 
+vi.mock("./recitationChainingApi", () => ({
+  completeChain: vi.fn(),
+  fetchChaining: vi.fn(),
+  reviewWholeWork: vi.fn(),
+  startChain: vi.fn()
+}));
+
 import type { RecitationPassageDto, RecitationPassageListDto } from "@whetstone/contracts";
 
 import { RecitePage } from "./RecitePage";
+import { fetchChaining } from "./recitationChainingApi";
 import { listPassages, mergeNextPassage, seedPassages, splitPassage } from "./recitationPassageApi";
 
+const mockedChaining = vi.mocked(fetchChaining);
 const mockedList = vi.mocked(listPassages);
 const mockedMerge = vi.mocked(mergeNextPassage);
 const mockedSeed = vi.mocked(seedPassages);
@@ -46,6 +55,14 @@ function listOf(...passages: ReadonlyArray<RecitationPassageDto>): RecitationPas
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedChaining.mockResolvedValue({
+    activeChain: null,
+    chainEligibility: { status: "not_eligible" },
+    ownedPrefix: { ownedCount: 0, total: 2 },
+    planEntryId: "plan-1",
+    wholeWork: { due: false, dueAt: null, exists: false },
+    wholeWorkOwned: false
+  });
 });
 
 afterEach(() => {

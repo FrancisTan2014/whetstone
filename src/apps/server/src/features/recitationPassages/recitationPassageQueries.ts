@@ -16,6 +16,23 @@ import {
 // One persisted passage row.
 export type RecitationPassageRow = typeof recitationPassages.$inferSelect;
 
+// The inlined FSRS card columns shared by every table that schedules with `@whetstone/domain`
+// (`recitation_passages`, `recitation_whole_work`): a structural subset so one pair of mappers converts
+// any such row to/from a domain `ReviewState`.
+export type InlineFsrsCard = Pick<
+  RecitationPassageRow,
+  | "difficulty"
+  | "dueAt"
+  | "elapsedDays"
+  | "lapses"
+  | "lastReviewedAt"
+  | "learningSteps"
+  | "reps"
+  | "scheduledDays"
+  | "stability"
+  | "state"
+>;
+
 // A passage (or plan) resolved together with the source Work it belongs to, for the review context.
 export type OwnedPassage = Readonly<{
   row: RecitationPassageRow;
@@ -23,9 +40,9 @@ export type OwnedPassage = Readonly<{
   workTitle: string;
 }>;
 
-// Reconstruct the domain ReviewState from a passage row (timestamps -> ISO; null last-reviewed
+// Reconstruct the domain ReviewState from an inlined FSRS card (timestamps -> ISO; null last-reviewed
 // preserved), so a recorded review is scheduled by `@whetstone/domain` exactly as recall items are.
-export function passageRowToReviewState(row: RecitationPassageRow): ReviewState {
+export function passageRowToReviewState(row: InlineFsrsCard): ReviewState {
   return {
     due: row.dueAt.toISOString(),
     difficulty: row.difficulty,
@@ -40,22 +57,8 @@ export function passageRowToReviewState(row: RecitationPassageRow): ReviewState 
   };
 }
 
-// Map a ReviewState onto the passage table's inlined FSRS columns (ISO -> Date) for insert/update.
-export function passageReviewStateColumns(
-  state: ReviewState
-): Pick<
-  RecitationPassageRow,
-  | "dueAt"
-  | "difficulty"
-  | "elapsedDays"
-  | "lapses"
-  | "lastReviewedAt"
-  | "learningSteps"
-  | "reps"
-  | "scheduledDays"
-  | "stability"
-  | "state"
-> {
+// Map a ReviewState onto the inlined FSRS columns (ISO -> Date) for insert/update.
+export function passageReviewStateColumns(state: ReviewState): InlineFsrsCard {
   return {
     difficulty: state.difficulty,
     dueAt: new Date(state.due),

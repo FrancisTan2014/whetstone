@@ -34,6 +34,16 @@ function makePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecit
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    addEventListener: vi.fn(),
+    addListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+    matches: false,
+    media: query,
+    onchange: null,
+    removeEventListener: vi.fn(),
+    removeListener: vi.fn()
+  })) as unknown as typeof window.matchMedia;
   mockedReview.mockResolvedValue({} as never);
   mockedSetSupport.mockResolvedValue("full");
 });
@@ -181,11 +191,39 @@ describe("RecitationReviewCard", () => {
       await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
       await userEvent.click(screen.getByRole("button", { name: choice.label }));
 
-      expect(mockedReview).toHaveBeenCalledWith("passage-2", choice.rating, "opening");
+      expect(mockedReview).toHaveBeenCalledWith("passage-2", choice.rating, "opening", false);
       expect(onReviewed).toHaveBeenCalledTimes(1);
       cleanup();
       mockedReview.mockClear();
     }
+  });
+
+  it("marks the lead-in failed when the transition broke, applying an Again to the predecessor", async () => {
+    const onReviewed = vi.fn();
+    render(<RecitationReviewCard onReviewed={onReviewed} passage={makePassage()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
+    await userEvent.click(
+      screen.getByLabelText("The lead-in from the previous passage broke down")
+    );
+    await userEvent.click(screen.getByRole("button", { name: recitationRatingChoices[0].label }));
+
+    expect(mockedReview).toHaveBeenCalledWith(
+      "passage-2",
+      recitationRatingChoices[0].rating,
+      "opening",
+      true
+    );
+  });
+
+  it("offers no lead-in control for the first passage, which has no predecessor", async () => {
+    render(
+      <RecitationReviewCard onReviewed={vi.fn()} passage={makePassage({ precedingText: null })} />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
+
+    expect(screen.queryByLabelText("The lead-in from the previous passage broke down")).toBeNull();
   });
 
   it("surfaces an error and does not advance when the review fails", async () => {

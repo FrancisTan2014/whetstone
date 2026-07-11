@@ -40,6 +40,8 @@ import { registerRecitationRoutes } from "../features/recitation/recitationRoute
 import type { RecitationRouteDependencies } from "../features/recitation/recitationRoutes.js";
 import { registerRecitationPassageRoutes } from "../features/recitationPassages/recitationPassageRoutes.js";
 import type { RecitationPassageRouteDependencies } from "../features/recitationPassages/recitationPassageRoutes.js";
+import { registerRecitationChainingRoutes } from "../features/recitationPassages/recitationChainingRoutes.js";
+import type { RecitationChainingRouteDependencies } from "../features/recitationPassages/recitationChainingRoutes.js";
 import { registerRecallRoutes } from "../features/recall/recallRoutes.js";
 import type { RecallRouteDependencies } from "../features/recall/recallRoutes.js";
 import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
@@ -76,6 +78,7 @@ export type CreateServerOptions = Readonly<{
   recall?: RecallRouteDependencies;
   recitation?: RecitationRouteDependencies;
   recitationPassages?: RecitationPassageRouteDependencies;
+  recitationChaining?: RecitationChainingRouteDependencies;
   nudge?: NudgeRouteDependencies;
   search?: SearchDependencies;
   session?: SessionDependencies;
@@ -161,6 +164,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.recitationPassages !== undefined) {
     registerRecitationPassageRoutes(server, options.recitationPassages);
+  }
+
+  if (options.recitationChaining !== undefined) {
+    registerRecitationChainingRoutes(server, options.recitationChaining);
   }
 
   if (options.recall !== undefined) {

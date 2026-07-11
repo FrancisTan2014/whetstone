@@ -7,7 +7,8 @@ import type {
   LatestReadingPositionDto,
   NudgeDto,
   RecallItemDto,
-  RecitationPlanDto
+  RecitationPlanDto,
+  RecitationTodayDto
 } from "@whetstone/contracts";
 
 import { buttonVariants } from "../../shared/ui/Button.js";
@@ -21,6 +22,7 @@ import {
   recordRecitationSession,
   setRecitationPhase
 } from "../recitation/recitationApi.js";
+import { fetchToday } from "../recitation/recitationChainingApi.js";
 import { fetchDuePassage } from "../recitation/recitationPassageApi.js";
 import { RecitationReviewCard } from "../recitation/RecitationReviewCard.js";
 import { recitationPhaseLabels } from "../recitation/recitationLabels.js";
@@ -78,14 +80,21 @@ type LibraryState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ hasWorks: boolean; status: "ready" }>;
 
-// The next due recitation passage (#578), if any. A due passage is a single bounded practice attempt;
-// `passage: undefined` (nothing scheduled) is a quiet caught-up line, and a failed load is a quiet note.
+// The single recitation action Today surfaces (#580), decided server-side across every plan and
+// bounded to at most one: due passage > active chain > whole-work maintenance > none, so Today is
+// never an overdue wall. For a due passage the bounded practice runs inline (its payload is fetched
+// alongside the decision); a chain or whole-work action surfaces a calm invitation that routes to the
+// plan's practice surface. `action: "none"` is a quiet caught-up line, and a failed load a quiet note.
 // Kept independent of the first-run/cleared logic — like Continue reading, it is an invitation, not a
 // gate — so it never contributes to an "overdue wall".
 type ReciteState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
-  | Readonly<{ passage: DueRecitationPassageDto | undefined; status: "ready" }>;
+  | Readonly<{
+      passage: DueRecitationPassageDto | undefined;
+      status: "ready";
+      today: RecitationTodayDto;
+    }>;
 
 export function TodayPage(): React.JSX.Element {
   const [recall, setRecall] = useState<RecallState>({ status: "loading" });
@@ -107,19 +116,27 @@ export function TodayPage(): React.JSX.Element {
     );
   }, []);
 
-  // Load the next due passage. Stable so the mount effect stays one-shot and so a completed review can
-  // refetch the next due passage (one at a time — never an overdue wall). Set only after the fetch
-  // settles (no synchronous setState in the effect).
-  const loadDuePassage = useCallback(() => {
-    fetchDuePassage().then(
-      (passage) => setRecite({ passage: passage ?? undefined, status: "ready" }),
-      () => setRecite({ status: "error" })
-    );
+  // Load the single bounded recitation action Today surfaces (#580): the server decides across every
+  // plan in fixed priority (due passage > chain > whole-work > none). Only a due-passage decision pulls
+  // the passage payload for inline practice; chain/whole-work/none need no extra fetch. Stable so the
+  // mount effect stays one-shot and so a completed review can re-decide the next action (one at a time —
+  // never an overdue wall). Set only after the fetch settles (no synchronous setState in the effect).
+  const loadRecite = useCallback(() => {
+    fetchToday()
+      .then((today) =>
+        today.action === "due_passage"
+          ? fetchDuePassage().then((passage) => ({ passage: passage ?? undefined, today }))
+          : { passage: undefined, today }
+      )
+      .then(
+        ({ passage, today }) => setRecite({ passage, status: "ready", today }),
+        () => setRecite({ status: "error" })
+      );
   }, []);
 
   useEffect(() => {
     loadRecall();
-    loadDuePassage();
+    loadRecite();
     fetchLatestReadingPosition().then(
       (position) => setReading({ position, status: "ready" }),
       () => setReading({ status: "error" })
@@ -140,7 +157,7 @@ export function TodayPage(): React.JSX.Element {
       (list) => setLibrary({ hasWorks: list.works.length > 0, status: "ready" }),
       () => setLibrary({ status: "error" })
     );
-  }, [loadDuePassage, loadRecall]);
+  }, [loadRecall, loadRecite]);
 
   // Dismiss = cooldown: remove the card at once (a "not now" is honoured immediately) and tell the
   // server in the background. A failed dismiss never blanks Today — the card is already gone.
@@ -189,7 +206,7 @@ export function TodayPage(): React.JSX.Element {
           onStartReciting={handleStartReciting}
           state={recitation}
         />
-        <ReciteCard onReviewed={loadDuePassage} state={recite} />
+        <ReciteCard onReviewed={loadRecite} state={recite} />
         <NudgeCard state={nudge} onDismiss={handleDismiss} />
         <ClearedState library={library} reading={reading} recall={recall} nudge={nudge} />
       </div>
@@ -450,11 +467,13 @@ function renderRecitation(
   );
 }
 
-// Recite (#578): the next due recitation passage as one bounded practice attempt, composed from the
-// shared RecitationReviewCard (cue → reveal → self-assess). Present -> the card; a completed review
-// refetches the next due passage (one at a time, never an overdue wall). None -> a quiet caught-up
-// line; a failure -> a quiet inline note. Independent of the first-run/cleared logic — an invitation,
-// never a gate.
+// Recite (#578, #580): the single bounded recitation action Today surfaces, decided server-side across
+// every plan in fixed priority (due passage > active chain > whole-work > none). A due passage runs
+// inline as one practice attempt via the shared RecitationReviewCard (cue → reveal → self-assess), and
+// a completed review re-decides the next action (one at a time, never an overdue wall). A chain or
+// whole-work action surfaces a calm invitation that routes to the plan's practice surface. None -> a
+// quiet caught-up line; a failure -> a quiet inline note. Independent of the first-run/cleared logic —
+// an invitation, never a gate.
 function ReciteCard({
   onReviewed,
   state
@@ -470,6 +489,10 @@ function ReciteCard({
   );
 }
 
+const caughtUpRecite = (
+  <p className="text-text-muted">Nothing to recite — you&rsquo;re caught up.</p>
+);
+
 function renderRecite(state: ReciteState, onReviewed: () => void): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Finding your next passage…" />;
@@ -483,16 +506,61 @@ function renderRecite(state: ReciteState, onReviewed: () => void): React.JSX.Ele
     );
   }
 
-  if (state.passage === undefined) {
-    return <p className="text-text-muted">Nothing to recite — you&rsquo;re caught up.</p>;
+  if (state.today.action === "due_passage") {
+    // The decision named a due passage; its payload rides alongside. A rare race (scheduled then
+    // cleared before the payload arrived) resolves to the same quiet caught-up line, never a broken card.
+    return state.passage === undefined ? (
+      caughtUpRecite
+    ) : (
+      <RecitationReviewCard
+        key={state.passage.passageEntryId}
+        onReviewed={onReviewed}
+        passage={state.passage}
+      />
+    );
   }
 
+  if (state.today.action === "chain" || state.today.action === "whole_work") {
+    return renderMaintenanceAction(
+      state.today.action,
+      state.today.planEntryId,
+      state.today.workTitle
+    );
+  }
+
+  return caughtUpRecite;
+}
+
+// A chain or whole-work maintenance action: a calm one-line invitation plus a primary link into the
+// plan's practice surface (#/recite?plan=<entryId>), where the chaining panel runs the reveal. The
+// server pairs these actions with a plan; a null plan (malformed decision) degrades to the caught-up
+// line rather than a dead link.
+function renderMaintenanceAction(
+  action: "chain" | "whole_work",
+  planEntryId: string | null,
+  workTitle: string | null
+): React.JSX.Element {
+  if (planEntryId === null) {
+    return caughtUpRecite;
+  }
+
+  const inWork = workTitle === null ? "" : ` in \u201C${workTitle}\u201D`;
+  const lead =
+    action === "chain"
+      ? `A recitation chain is ready${inWork}.`
+      : `Whole-work maintenance is due${inWork}.`;
+  const linkLabel = action === "chain" ? "Practise the chain" : "Maintain the whole work";
+
   return (
-    <RecitationReviewCard
-      key={state.passage.passageEntryId}
-      onReviewed={onReviewed}
-      passage={state.passage}
-    />
+    <div className="flex flex-col gap-3">
+      <p className="text-text">{lead}</p>
+      <Link
+        className={buttonVariants({ variant: "primary" })}
+        to={`/recite?plan=${encodeURIComponent(planEntryId)}`}
+      >
+        {linkLabel}
+      </Link>
+    </div>
   );
 }
 

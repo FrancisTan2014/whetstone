@@ -122,7 +122,24 @@ describe("recitationPassageApi", () => {
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(path).toBe("/api/recitation/passages/passage-1/review");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ cueStrength: "opening", rating: "good" });
+    expect(JSON.parse(init.body as string)).toEqual({
+      cueStrength: "opening",
+      leadInFailed: false,
+      rating: "good"
+    });
+  });
+
+  it("marks the lead-in as failed when the transition broke", async () => {
+    const fetchMock = mockFetchOnce({ passage: { ...passageDto, reps: 1, reviewCount: 1 } });
+
+    await reviewPassage("passage-1", "good", "preceding_line", true);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      cueStrength: "preceding_line",
+      leadInFailed: true,
+      rating: "good"
+    });
   });
 
   it("remembers a passage's support level with a PUT, echoing the stored level", async () => {

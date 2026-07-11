@@ -75,8 +75,13 @@ export function RecitationReviewCard({
   const [revealed, setRevealed] = useState(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [leadInFailed, setLeadInFailed] = useState(false);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const targetRef = useRef<HTMLParagraphElement>(null);
+
+  // The immediate predecessor exists to be practised as an ungraded lead-in (#580): the transition into
+  // this passage. It is offered only when the server supplies the preceding text.
+  const hasLeadIn = passage.precedingText !== null && passage.precedingText !== "";
 
   // On reveal, move focus to the revealed target so a screen reader announces it (the rating buttons
   // only enter the a11y tree in this phase).
@@ -107,7 +112,7 @@ export function RecitationReviewCard({
   function rate(rating: (typeof recitationRatingChoices)[number]["rating"]): void {
     setPending(true);
     setFailed(false);
-    reviewPassage(passage.passageEntryId, rating, passage.defaultCueStrength).then(
+    reviewPassage(passage.passageEntryId, rating, passage.defaultCueStrength, leadInFailed).then(
       () => onReviewed(),
       () => {
         setPending(false);
@@ -156,18 +161,30 @@ export function RecitationReviewCard({
       </div>
 
       {revealed ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {recitationRatingChoices.map((choice) => (
-            <Button
-              key={choice.rating}
-              onClick={() => rate(choice.rating)}
-              pending={pending}
-              size="sm"
-              variant="secondary"
-            >
-              {choice.label}
-            </Button>
-          ))}
+        <div className="flex flex-col gap-2">
+          {hasLeadIn ? (
+            <label className="flex items-center gap-2 text-sm text-text-muted">
+              <input
+                checked={leadInFailed}
+                onChange={(event) => setLeadInFailed(event.target.checked)}
+                type="checkbox"
+              />
+              The lead-in from the previous passage broke down
+            </label>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {recitationRatingChoices.map((choice) => (
+              <Button
+                key={choice.rating}
+                onClick={() => rate(choice.rating)}
+                pending={pending}
+                size="sm"
+                variant="secondary"
+              >
+                {choice.label}
+              </Button>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2">

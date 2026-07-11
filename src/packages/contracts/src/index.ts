@@ -124,6 +124,49 @@ export type {
   SplitRecitationPassageRequest
 } from "./recitationPassageContracts.js";
 export {
+  chainEligibilityDtoSchema,
+  chainPassageDtoSchema,
+  completeRecitationChainRequestSchema,
+  ownedPrefixDtoSchema,
+  parseCompleteRecitationChainRequest,
+  parseRecitationChainResponse,
+  parseRecitationChainingResponse,
+  parseRecitationTodayResponse,
+  parseReviewWholeWorkRequest,
+  parseStartRecitationChainRequest,
+  parseWholeWorkResponse,
+  recitationChainDtoSchema,
+  recitationChainingDtoSchema,
+  recitationChainingResponseSchema,
+  recitationChainResponseSchema,
+  recitationTodayActionDtoSchema,
+  recitationTodayDtoSchema,
+  recitationTodayResponseSchema,
+  reviewWholeWorkRequestSchema,
+  sessionRecallOutcomeSchema,
+  startRecitationChainRequestSchema,
+  wholeWorkResponseSchema,
+  wholeWorkStateDtoSchema
+} from "./recitationChainingContracts.js";
+export type {
+  ChainEligibilityDto,
+  ChainPassageDto,
+  CompleteRecitationChainRequest,
+  OwnedPrefixDto,
+  RecitationChainDto,
+  RecitationChainingDto,
+  RecitationChainingResponse,
+  RecitationChainResponse,
+  RecitationTodayActionDto,
+  RecitationTodayDto,
+  RecitationTodayResponse,
+  ReviewWholeWorkRequest,
+  SessionRecallOutcomeDto,
+  StartRecitationChainRequest,
+  WholeWorkResponse,
+  WholeWorkStateDto
+} from "./recitationChainingContracts.js";
+export {
   createDiaryEntryRequestSchema,
   diaryCalendarDtoSchema,
   diaryCalendarQuerySchema,

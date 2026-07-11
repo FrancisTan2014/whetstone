@@ -5,6 +5,7 @@ import type { RecitationPassageDto } from "@whetstone/contracts";
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { listPassages, mergeNextPassage, seedPassages, splitPassage } from "./recitationPassageApi";
+import { RecitationChainingPanel } from "./RecitationChainingPanel";
 
 type PassagesState =
   | Readonly<{ status: "error" }>
@@ -67,6 +68,11 @@ export function RecitePage({
           (id) => runAction(mergeNextPassage(id).then((list) => list.passages))
         )}
       </div>
+      {state.status === "ready" && state.passages.length > 0 ? (
+        <div className="mt-8 border-t border-border pt-6">
+          <RecitationChainingPanel planEntryId={planEntryId} />
+        </div>
+      ) : null}
     </PageFrame>
   );
 }
