@@ -101,15 +101,18 @@ export async function setSupportLevel(
 }
 
 // Record a self-assessment (the FSRS rating + the cue strength attempted from); resolves with the
-// passage's updated schedule.
+// passage's updated schedule. When the optional predecessor lead-in (#580) broke down, pass
+// `leadInFailed` so the immediately preceding passage also receives an Again — otherwise only the due
+// target is rated and the lead-in stays ungraded.
 export async function reviewPassage(
   passageEntryId: string,
   rating: RecitationReviewRating,
-  cueStrength: RecitationCueStrengthDto
+  cueStrength: RecitationCueStrengthDto,
+  leadInFailed = false
 ): Promise<RecitationPassageDto> {
   return parseRecordRecitationReviewResponse(
     await requestJson(apiUrl(`/recitation/passages/${encodeURIComponent(passageEntryId)}/review`), {
-      body: JSON.stringify({ cueStrength, rating }),
+      body: JSON.stringify({ cueStrength, leadInFailed, rating }),
       headers: jsonHeaders,
       method: "POST"
     })
