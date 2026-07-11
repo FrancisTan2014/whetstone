@@ -23,29 +23,32 @@ export function MemoryPage(): React.JSX.Element {
   const [activeQuery, setActiveQuery] = useState("");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
 
-  const loadList = useCallback(async (term: string): Promise<void> => {
-    try {
-      setNotes(await listMemoryNotes(term));
-      setActiveQuery(term.trim());
-      setPhase("ready");
-    } catch {
-      setPhase("error");
-    }
+  // Defer state through the promise's callbacks (never a synchronous set in the effect body) so the
+  // React Compiler's rules-of-hooks lint stays satisfied — the same loader shape Today uses.
+  const loadList = useCallback((term: string): void => {
+    listMemoryNotes(term).then(
+      (items) => {
+        setNotes(items);
+        setActiveQuery(term.trim());
+        setPhase("ready");
+      },
+      () => setPhase("error")
+    );
   }, []);
 
   useEffect(() => {
-    void loadList("");
+    loadList("");
   }, [loadList]);
 
   function returnToList(): void {
     setSelectedNoteId(null);
     setQuery("");
-    void loadList("");
+    loadList("");
   }
 
   function handleSearch(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    void loadList(query);
+    loadList(query);
   }
 
   return (

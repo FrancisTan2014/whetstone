@@ -28,22 +28,24 @@ export function MemoryNoteDetail({ noteId, onClose }: MemoryNoteDetailProps): Re
   const [bodyPending, setBodyPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
 
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      const result = await getMemoryNote(noteId);
-      setState({ detail: result, status: "ready" });
-      setBodyDraft(result.note.bodyText);
-    } catch {
-      setState({ status: "error" });
-    }
+  // Defer state through the promise's callbacks (never a synchronous set in the effect body) so the
+  // React Compiler's rules-of-hooks lint stays satisfied — the same loader shape Today uses.
+  const load = useCallback((): void => {
+    getMemoryNote(noteId).then(
+      (result) => {
+        setState({ detail: result, status: "ready" });
+        setBodyDraft(result.note.bodyText);
+      },
+      () => setState({ status: "error" })
+    );
   }, [noteId]);
 
   useEffect(() => {
-    void load();
+    load();
   }, [load]);
 
   function reload(): void {
-    void load();
+    load();
   }
 
   function saveBody(): void {
