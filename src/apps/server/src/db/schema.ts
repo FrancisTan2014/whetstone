@@ -385,6 +385,50 @@ export const recitationReviews = pgTable(
   (table) => [index("recitation_reviews_passage_idx").on(table.passageEntryId)]
 );
 
+// A contiguous chain session (#580): a rehearsal of the transitions across the owned prefix's passages
+// [0..end_order_index], in fixed source order with none skipped. It is NOT an Entry — it has no
+// `personal_entries` row and never surfaces on the Timeline; it is owned transitively through its plan.
+// At most one chain per plan is `active` at a time (enforced in the command layer); completing it stamps
+// `completed_at`. A clean run rates nothing; only a passage the learner identifies as broken is failed.
+export const recitationChains = pgTable(
+  "recitation_chains",
+  {
+    id: text("id").primaryKey(),
+    planEntryId: text("plan_entry_id")
+      .notNull()
+      .references(() => recitationPlans.entryId),
+    endOrderIndex: integer("end_order_index").notNull(),
+    status: text("status", { enum: ["active", "completed"] as const }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { mode: "date", withTimezone: true })
+  },
+  (table) => [index("recitation_chains_plan_idx").on(table.planEntryId, table.status)]
+);
+
+// The whole-work maintenance prompt for a plan (#580): a single aggregate FSRS card measuring the
+// learner's upkeep of the entire Work, kept SEPARATE from every passage card (they measure different
+// retrieval tasks). At most one row per plan (plan id is the key). A whole-work lapse reschedules only
+// this aggregate; it never resets the passages. NOT an Entry — owned transitively through its plan, so
+// it never surfaces on the Timeline. FSRS columns mirror `recitation_passages` / `recall_items`.
+export const recitationWholeWork = pgTable("recitation_whole_work", {
+  planEntryId: text("plan_entry_id")
+    .primaryKey()
+    .references(() => recitationPlans.entryId),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+  stability: doublePrecision("stability").notNull(),
+  difficulty: doublePrecision("difficulty").notNull(),
+  elapsedDays: integer("elapsed_days").notNull(),
+  scheduledDays: integer("scheduled_days").notNull(),
+  learningSteps: integer("learning_steps").notNull(),
+  reps: integer("reps").notNull(),
+  lapses: integer("lapses").notNull(),
+  state: text("state", {
+    enum: ["new", "learning", "review", "relearning"] as const
+  }).notNull(),
+  lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
+  dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
+});
+
 // Per-user reader preferences (work-independent): text size and Day/Night theme, server-owned so they
 // restore on any device. One row per user (current user = DEFAULT_USER_ID in v0). Designed to grow —
 // new settings join as columns, no new endpoint. `updated_at` records the last change.
