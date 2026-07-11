@@ -6,6 +6,8 @@ import {
   listDuePromptsToolInputSchema,
   memoryPromptCardDtoSchema,
   parseDepositMemoryRequest,
+  parseMemoryDepositDto,
+  parseMemoryPromptCardDto,
   parseMemoryPromptCardListDto,
   parseRecordMemoryReviewRequest,
   recordReviewToolInputSchema,
@@ -121,6 +123,46 @@ describe("memoryPromptCardDtoSchema", () => {
       ]
     });
     expect(list.items).toHaveLength(1);
+  });
+
+  it("parses a single card via parseMemoryPromptCardDto", () => {
+    const card = parseMemoryPromptCardDto({
+      promptId: "prompt-1",
+      noteId: "note-1",
+      cueText: "when holding back",
+      answerText: "遠慮",
+      chunkId: null,
+      review
+    });
+    expect(card.promptId).toBe("prompt-1");
+    expect(card.answerText).toBe("遠慮");
+  });
+});
+
+describe("memoryDepositDtoSchema", () => {
+  it("parses a deposit of a note plus its prompts via parseMemoryDepositDto", () => {
+    const deposit = parseMemoryDepositDto({
+      note: {
+        noteId: "note-1",
+        captureSource: "practice",
+        bodyText: "遠慮",
+        derivedFromEntryId: "block-9"
+      },
+      prompts: [
+        {
+          promptId: "prompt-1",
+          noteId: "note-1",
+          lifecycle: "scheduled",
+          cueText: "when holding back",
+          answerText: "遠慮",
+          chunkId: "chunk-1",
+          review
+        }
+      ]
+    });
+    expect(deposit.note.noteId).toBe("note-1");
+    expect(deposit.prompts).toHaveLength(1);
+    expect(deposit.prompts[0]?.lifecycle).toBe("scheduled");
   });
 });
 
