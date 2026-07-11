@@ -618,7 +618,16 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   that later block menus reuse, `slashCommandContext.ts` gates where `/` may open, `SlashCommandMenu.tsx`
   is the ARIA listbox, and `slashCommand.ts` wires `@tiptap/suggestion` (trigger, positioning, dismissal)
   to them; a focused empty paragraph shows a decoration-only `Type / for commands` hint the reader never
-  mounts. Block transforms and undo/redo live on the slash menu and keyboard, not a toolbar. Persistence
+  mounts. The contextual block gutter (#590) reuses that same catalog: `blockGutterCommands.ts` is the
+  pure block command/query module (turn into, insert above/below, duplicate, move up/down, delete) that
+  preserves node ids, `BlockActionsMenu.tsx` is its Radix dropdown (with disabled states), and
+  `blockGutterHighlight.ts` is the transient block-wash plugin. `BlockGutterHandle.tsx` wraps Tiptap's
+  official `@tiptap/extension-drag-handle-react` grip (reveal-on-hover, drag-to-reorder) — a browser-only
+  detached-portal seam, coverage-excluded and covered by `e2e/tests/editor-block-gutter.spec.ts`;
+  keyboard (Shift+F10) and a touch/coarse-pointer "More block actions" trigger reach the same menu. The
+  drag-handle peer graph pulls in `@tiptap/y-tiptap`/`extension-collaboration`, but collaboration/Yjs is
+  not enabled (no `Collaboration` extension or `Y.Doc` is constructed). Block transforms and undo/redo
+  live on the slash menu, gutter, and keyboard, not a toolbar. Persistence
   and autosave policy stay with consuming features.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
