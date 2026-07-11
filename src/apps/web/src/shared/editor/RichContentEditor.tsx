@@ -11,7 +11,10 @@ import {
 } from "@whetstone/document";
 import { useCallback, useEffect, useMemo } from "react";
 
-import { createFormattingMenuVisibility, type FormattingMenuSelection } from "./bubbleFormatting.js";
+import {
+  createFormattingMenuVisibility,
+  type FormattingMenuSelection
+} from "./bubbleFormatting.js";
 import { EditorFormattingMenu } from "./EditorFormattingMenu.js";
 import { editorDocumentsEqual, validateEditorDocument } from "./editorDocument.js";
 import { editorClassNames } from "./RichContentEditor.tokens.js";

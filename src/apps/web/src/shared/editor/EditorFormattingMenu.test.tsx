@@ -201,9 +201,7 @@ describe("EditorFormattingMenu link form", () => {
     await user.type(input, "example.org");
     await user.click(screen.getByRole("button", { name: "Apply link" }));
 
-    await waitFor(() =>
-      expect(editor.getAttributes("link")["href"]).toBe("https://example.org")
-    );
+    await waitFor(() => expect(editor.getAttributes("link")["href"]).toBe("https://example.org"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Link URL" })).toBeNull());
   });
 

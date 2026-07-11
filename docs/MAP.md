@@ -608,13 +608,17 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
 - Shared editing: `src/shared/editor/` is the cross-feature rich-content boundary (#570).
   `RichContentEditor.tsx` mounts the single `@whetstone/document` extension set through Tiptap React,
-  exposes compact/full presentations over one live document, and emits validated detached JSON on
-  change/save; `editorDocument.ts` owns empty-document creation, validation/cloning, equality, and safe
-  authored-link normalization. The keyboard-first slash menu (#588) is one shared seam: `blockCommands.ts`
-  is the single block-command catalog (id/label/aliases/`isAvailable`/`appendTo`) that later block menus
-  reuse, `slashCommandContext.ts` gates where `/` may open, `SlashCommandMenu.tsx` is the ARIA listbox,
-  and `slashCommand.ts` wires `@tiptap/suggestion` (trigger, positioning, dismissal) to them; a focused
-  empty paragraph shows a decoration-only `Type / for commands` hint the reader never mounts. Persistence
+  exposes compact/full presentations over one live document (a chrome-free surface — no permanent
+  toolbar), and emits validated detached JSON on change/save; `editorDocument.ts` owns empty-document
+  creation, validation/cloning, equality, and safe authored-link normalization. Inline formatting is
+  contextual (#589): a Tiptap `BubbleMenu` shows `EditorFormattingMenu.tsx` (Bold/Italic/inline-code +
+  a Radix link form, toolbar roving focus, Escape-to-dismiss) beside a live text selection; its
+  visibility gate is the pure `bubbleFormatting.ts`. The keyboard-first slash menu (#588) is one shared
+  seam: `blockCommands.ts` is the single block-command catalog (id/label/aliases/`isAvailable`/`appendTo`)
+  that later block menus reuse, `slashCommandContext.ts` gates where `/` may open, `SlashCommandMenu.tsx`
+  is the ARIA listbox, and `slashCommand.ts` wires `@tiptap/suggestion` (trigger, positioning, dismissal)
+  to them; a focused empty paragraph shows a decoration-only `Type / for commands` hint the reader never
+  mounts. Block transforms and undo/redo live on the slash menu and keyboard, not a toolbar. Persistence
   and autosave policy stay with consuming features.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query

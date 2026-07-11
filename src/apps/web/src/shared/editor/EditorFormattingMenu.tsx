@@ -38,13 +38,15 @@ export function EditorFormattingMenu({
 }: EditorFormattingMenuProps): React.JSX.Element {
   const [activeIndex, setActiveIndex] = useState(0);
   const [linkOpen, setLinkOpen] = useState(false);
-  const controlRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const controlCount = MARKS.length + 1;
 
   const focusControl = (index: number): void => {
     const next = (index + controlCount) % controlCount;
     setActiveIndex(next);
-    controlRefs.current[next]?.focus();
+    // The roving tab stops are exactly the toolbar's direct-child buttons (marks + link trigger); the
+    // link form's own buttons are nested inside the popover content, so they are never included here.
+    toolbarRef.current?.querySelectorAll<HTMLButtonElement>(":scope > button")[next]?.focus();
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -76,18 +78,13 @@ export function EditorFormattingMenu({
     }
   };
 
-  const registerControl =
-    (index: number) =>
-    (element: HTMLButtonElement | null): void => {
-      controlRefs.current[index] = element;
-    };
-
   return (
     <div
       aria-label="Text formatting"
       aria-orientation="horizontal"
       className={formattingMenuClassNames.toolbar}
       onKeyDown={handleKeyDown}
+      ref={toolbarRef}
       role="toolbar"
     >
       {MARKS.map((mark, index) => {
@@ -102,7 +99,6 @@ export function EditorFormattingMenu({
             key={mark.name}
             onClick={() => editor.chain().focus().toggleMark(mark.name).run()}
             onFocus={() => setActiveIndex(index)}
-            ref={registerControl(index)}
             size="sm"
             tabIndex={activeIndex === index ? 0 : -1}
             variant={active ? "secondary" : "ghost"}
@@ -116,7 +112,6 @@ export function EditorFormattingMenu({
         onFocus={() => setActiveIndex(MARKS.length)}
         onOpenChange={setLinkOpen}
         open={linkOpen}
-        ref={registerControl(MARKS.length)}
         tabIndex={activeIndex === MARKS.length ? 0 : -1}
       />
     </div>
@@ -128,7 +123,6 @@ interface LinkControlProps {
   readonly onFocus: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
-  readonly ref: (element: HTMLButtonElement | null) => void;
   readonly tabIndex: number;
 }
 
@@ -141,7 +135,6 @@ function LinkControl({
   onFocus,
   onOpenChange,
   open,
-  ref,
   tabIndex
 }: LinkControlProps): React.JSX.Element {
   const [value, setValue] = useState("");
@@ -191,7 +184,6 @@ function LinkControl({
           aria-pressed={active}
           className={formattingMenuClassNames.action}
           onFocus={onFocus}
-          ref={ref}
           size="sm"
           tabIndex={tabIndex}
           variant={active ? "secondary" : "ghost"}

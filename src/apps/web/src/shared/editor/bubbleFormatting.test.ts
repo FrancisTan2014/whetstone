@@ -7,16 +7,15 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { documentExtensions } from "@whetstone/document";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  createFormattingMenuVisibility,
-  type FormattingMenuSelection
-} from "./bubbleFormatting";
+import { createFormattingMenuVisibility, type FormattingMenuSelection } from "./bubbleFormatting";
 
 const schema = getSchema(documentExtensions as unknown as Extensions);
 
 function paragraphState(text: string): EditorState {
   const doc = schema.nodeFromJSON({
-    content: [text === "" ? { type: "paragraph" } : { content: [{ text, type: "text" }], type: "paragraph" }],
+    content: [
+      text === "" ? { type: "paragraph" } : { content: [{ text, type: "text" }], type: "paragraph" }
+    ],
     type: "doc"
   });
 
