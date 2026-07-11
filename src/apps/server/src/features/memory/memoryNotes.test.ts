@@ -142,6 +142,36 @@ describe("listMemoryNotes", () => {
   it("returns an empty list when the user owns no notes", async () => {
     expect(await listMemoryNotes(context.db, userA, at(5))).toEqual([]);
   });
+
+  it("summarizes a note that has no prompts with zero counts", async () => {
+    // A promptless note (every direction pruned) still lists, exercising the empty-bucket fallback.
+    await context.db.insert(entries).values({ id: "bare-list", type: "note" });
+    await context.db.insert(personalEntries).values({
+      createdAt: at(1),
+      entryId: "bare-list",
+      occurredAt: at(1),
+      updatedAt: at(1),
+      userId: userA
+    });
+    await context.db.insert(memoryNotes).values({
+      bodyDoc: { type: "doc", content: [] },
+      bodyText: "lonely fragment",
+      captureSource: "manual",
+      entryId: "bare-list"
+    });
+
+    const items = await listMemoryNotes(context.db, userA, at(5));
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      noteId: "bare-list",
+      bodyText: "lonely fragment",
+      promptCount: 0,
+      draftCount: 0,
+      scheduledCount: 0,
+      dueCount: 0,
+      nextDueAt: null
+    });
+  });
 });
 
 describe("searchMemoryNotes", () => {
