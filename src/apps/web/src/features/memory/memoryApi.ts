@@ -1,4 +1,5 @@
 import {
+  parseImportMemoryResultDto,
   parseMemoryDepositDto,
   parseMemoryGlossSuggestionDto,
   parseMemoryNoteDetailDto,
@@ -8,6 +9,7 @@ import {
   type DepositMemoryRequest,
   type EditMemoryNoteRequest,
   type EditMemoryPromptRequest,
+  type ImportMemoryRequest,
   type MemoryDepositDto,
   type MemoryGlossSuggestionDto,
   type MemoryNoteDetailDto,
@@ -63,6 +65,20 @@ export async function createMemory(request: DepositMemoryRequest): Promise<Memor
       method: "POST"
     })
   );
+}
+
+// Import a batch of pasted notebook drafts as Memory notes in one atomic write. Either every note lands
+// or none does, so a failed import lets the caller keep the untouched paste. Returns the created notes.
+export async function importMemory(
+  request: ImportMemoryRequest
+): Promise<ReadonlyArray<MemoryDepositDto>> {
+  return parseImportMemoryResultDto(
+    await requestJson(apiUrl("/memory/import"), {
+      body: JSON.stringify(request),
+      headers: jsonHeaders,
+      method: "POST"
+    })
+  ).imported;
 }
 
 // Edit a note's durable body. Editing content never resets any prompt's review history (server rule).

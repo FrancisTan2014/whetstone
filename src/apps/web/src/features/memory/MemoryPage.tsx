@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 
 import type { MemoryNoteSummaryDto } from "@whetstone/contracts";
 
-import { buttonVariants } from "../../shared/ui/Button";
+import { Button, buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { listMemoryNotes } from "./memoryApi";
+import { MemoryImport } from "./MemoryImport";
 import { MemoryList } from "./MemoryList";
 import { MemoryNoteDetail } from "./MemoryNoteDetail";
 import { MemoryQuickAdd } from "./MemoryQuickAdd";
@@ -22,6 +23,7 @@ export function MemoryPage(): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [importMode, setImportMode] = useState(false);
 
   // Defer state through the promise's callbacks (never a synchronous set in the effect body) so the
   // React Compiler's rules-of-hooks lint stays satisfied — the same loader shape Today uses.
@@ -42,6 +44,7 @@ export function MemoryPage(): React.JSX.Element {
 
   function returnToList(): void {
     setSelectedNoteId(null);
+    setImportMode(false);
     setQuery("");
     loadList("");
   }
@@ -68,7 +71,9 @@ export function MemoryPage(): React.JSX.Element {
           setQuery,
           handleSearch,
           setSelectedNoteId,
-          returnToList
+          returnToList,
+          importMode,
+          setImportMode
         )}
       </div>
     </section>
@@ -84,7 +89,9 @@ function renderBody(
   setQuery: (value: string) => void,
   handleSearch: (event: React.FormEvent<HTMLFormElement>) => void,
   onSelect: (noteId: string) => void,
-  returnToList: () => void
+  returnToList: () => void,
+  importMode: boolean,
+  setImportMode: (value: boolean) => void
 ): React.JSX.Element {
   if (phase === "loading") {
     return <LoadingIndicator label="Gathering your memory…" />;
@@ -102,6 +109,10 @@ function renderBody(
     return <MemoryNoteDetail noteId={selectedNoteId} onClose={returnToList} />;
   }
 
+  if (importMode) {
+    return <MemoryImport onCancel={() => setImportMode(false)} onImported={returnToList} />;
+  }
+
   const emptyMessage =
     activeQuery.length === 0 ? "Nothing kept yet — add your first memory above." : "No matches.";
 
@@ -109,6 +120,9 @@ function renderBody(
     <div className="flex flex-col gap-6">
       <ReviewBanner notes={notes} />
       <MemoryQuickAdd onCreated={returnToList} />
+      <Button onClick={() => setImportMode(true)} type="button" variant="secondary">
+        Paste a list
+      </Button>
       <form className="flex flex-col gap-1" onSubmit={handleSearch} role="search">
         <label className="text-sm text-text" htmlFor="memory-search">
           Search your memory
