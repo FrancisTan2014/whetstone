@@ -435,7 +435,10 @@ describe("RichContentEditor links, paste, and save", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Remove link" }));
-    await user.click(textbox);
+    // Re-focus via the DOM so ProseMirror restores its retained end-of-doc selection. A synthetic
+    // pointer click maps to a jsdom hit position (which has no layout) and can collapse the caret to
+    // the document start under load, prepending " plain" -> " plainLinked"; focus() is deterministic.
+    textbox.focus();
     await waitFor(() => expect(document.activeElement).toBe(textbox));
     await user.type(textbox, " plain");
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("Linked plain"));
