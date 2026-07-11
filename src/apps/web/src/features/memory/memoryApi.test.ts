@@ -253,7 +253,10 @@ describe("suggestGloss", () => {
     const fetchMock = stubFetch({ body: suggestion, ok: true });
 
     await expect(suggestGloss("spill the beans")).resolves.toEqual(suggestion);
-    expect(fetchMock).toHaveBeenCalledWith("/api/memory/suggest?term=spill%20the%20beans", undefined);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/memory/suggest?term=spill%20the%20beans",
+      undefined
+    );
   });
 
   it("returns a null suggestion for an unknown term", async () => {

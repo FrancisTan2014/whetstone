@@ -8,7 +8,10 @@ type MemoryAddDirectionProps = Readonly<{ noteId: string; onAdded: () => void }>
 // The "add a direction" form on a note's detail: one more retrieval prompt for an existing memory. A
 // cue is required; an answerless direction saves as a draft, an answered one schedules. On success it
 // clears itself and asks the detail to reload.
-export function MemoryAddDirection({ noteId, onAdded }: MemoryAddDirectionProps): React.JSX.Element {
+export function MemoryAddDirection({
+  noteId,
+  onAdded
+}: MemoryAddDirectionProps): React.JSX.Element {
   const [cue, setCue] = useState("");
   const [answer, setAnswer] = useState("");
   const [pending, setPending] = useState(false);
@@ -41,7 +44,10 @@ export function MemoryAddDirection({ noteId, onAdded }: MemoryAddDirectionProps)
   }
 
   return (
-    <form className="flex flex-col gap-2 rounded border border-dashed border-border p-3" onSubmit={submit}>
+    <form
+      className="flex flex-col gap-2 rounded border border-dashed border-border p-3"
+      onSubmit={submit}
+    >
       <p className="text-sm font-medium text-text">Add a direction</p>
       <label className="flex flex-col gap-1 text-sm text-text">
         Cue

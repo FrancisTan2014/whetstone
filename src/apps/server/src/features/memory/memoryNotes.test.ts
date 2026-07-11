@@ -21,11 +21,7 @@ import {
   recordPromptReview,
   type MemoryDependencies
 } from "./memoryCommands.js";
-import {
-  getMemoryNoteDetail,
-  listMemoryNotes,
-  searchMemoryNotes
-} from "./memoryQueries.js";
+import { getMemoryNoteDetail, listMemoryNotes, searchMemoryNotes } from "./memoryQueries.js";
 
 const userA = "user-a";
 const userB = "user-b";
@@ -91,7 +87,11 @@ describe("listMemoryNotes", () => {
     // Another user's note must never appear.
     await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "not yours", prompts: [{ cueText: "x", answerText: "y" }] },
+      {
+        captureSource: "manual",
+        noteText: "not yours",
+        prompts: [{ cueText: "x", answerText: "y" }]
+      },
       userB,
       at(2)
     );
@@ -123,7 +123,11 @@ describe("listMemoryNotes", () => {
   it("does not count a scheduled prompt as due before its due date", async () => {
     const note = await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "body", prompts: [{ cueText: "cue", answerText: "ans" }] },
+      {
+        captureSource: "manual",
+        noteText: "body",
+        prompts: [{ cueText: "cue", answerText: "ans" }]
+      },
       userA,
       at(10)
     );
@@ -182,7 +186,11 @@ describe("searchMemoryNotes", () => {
   it("returns nothing when nothing matches", async () => {
     await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "apples", prompts: [{ cueText: "fruit", answerText: "apple" }] },
+      {
+        captureSource: "manual",
+        noteText: "apples",
+        prompts: [{ cueText: "fruit", answerText: "apple" }]
+      },
       userA,
       at(1)
     );
@@ -199,10 +207,7 @@ describe("getMemoryNoteDetail", () => {
         captureSource: "reader",
         noteText: "idiom note",
         derivedFromEntryId: "source-1",
-        prompts: [
-          { cueText: "scheduled cue", answerText: "answer" },
-          { cueText: "draft cue" }
-        ]
+        prompts: [{ cueText: "scheduled cue", answerText: "answer" }, { cueText: "draft cue" }]
       },
       userA,
       at(1)
@@ -231,7 +236,11 @@ describe("editMemoryNote", () => {
   it("rewrites the body and bumps updatedAt without touching prompts", async () => {
     const deposit = await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "old body", prompts: [{ cueText: "c", answerText: "a" }] },
+      {
+        captureSource: "manual",
+        noteText: "old body",
+        prompts: [{ cueText: "c", answerText: "a" }]
+      },
       userA,
       at(1)
     );
@@ -275,7 +284,11 @@ describe("editMemoryPrompt", () => {
   it("keeps the existing card and review history when a scheduled prompt stays scheduled", async () => {
     const deposit = await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "body", prompts: [{ cueText: "cue", answerText: "answer" }] },
+      {
+        captureSource: "manual",
+        noteText: "body",
+        prompts: [{ cueText: "cue", answerText: "answer" }]
+      },
       userA,
       at(1)
     );
@@ -340,7 +353,11 @@ describe("editMemoryPrompt", () => {
   it("reverts to a draft and drops the card, keeping the review log, when the answer is removed", async () => {
     const deposit = await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "body", prompts: [{ cueText: "cue", answerText: "answer" }] },
+      {
+        captureSource: "manual",
+        noteText: "body",
+        prompts: [{ cueText: "cue", answerText: "answer" }]
+      },
       userA,
       at(1)
     );
@@ -502,17 +519,18 @@ describe("deleteMemoryNote", () => {
         captureSource: "reader",
         noteText: "delete me",
         derivedFromEntryId: "source-1",
-        prompts: [
-          { cueText: "scheduled", answerText: "answer" },
-          { cueText: "draft" }
-        ]
+        prompts: [{ cueText: "scheduled", answerText: "answer" }, { cueText: "draft" }]
       },
       userA,
       at(1)
     );
     const keep = await depositMemory(
       context.deps,
-      { captureSource: "manual", noteText: "keep me", prompts: [{ cueText: "c", answerText: "a" }] },
+      {
+        captureSource: "manual",
+        noteText: "keep me",
+        prompts: [{ cueText: "c", answerText: "a" }]
+      },
       userA,
       at(2)
     );

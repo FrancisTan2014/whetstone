@@ -80,7 +80,9 @@ export type AddMemoryPromptResult =
   | Readonly<{ detail: MemoryNoteDetailDto; status: "added" }>
   | Readonly<{ status: "not_found" }>;
 
-export type DeleteMemoryNoteResult = Readonly<{ status: "deleted" }> | Readonly<{ status: "not_found" }>;
+export type DeleteMemoryNoteResult =
+  | Readonly<{ status: "deleted" }>
+  | Readonly<{ status: "not_found" }>;
 
 // How far a snooze defers a prompt: one day, so it leaves today's batch and reappears tomorrow.
 const SNOOZE_DEFER_DAYS = 1;

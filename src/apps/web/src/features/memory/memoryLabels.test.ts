@@ -35,7 +35,10 @@ describe("promptCountLabel", () => {
 
 describe("memoryState", () => {
   it("shows the due count when anything is due (due wins over scheduled)", () => {
-    expect(memoryState({ dueCount: 2, scheduledCount: 5 })).toEqual({ label: "2 due", tone: "due" });
+    expect(memoryState({ dueCount: 2, scheduledCount: 5 })).toEqual({
+      label: "2 due",
+      tone: "due"
+    });
   });
 
   it("shows Scheduled when nothing is due but a prompt is scheduled", () => {

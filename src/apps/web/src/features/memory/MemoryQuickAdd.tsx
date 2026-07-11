@@ -140,7 +140,10 @@ export function MemoryQuickAdd({ onCreated }: MemoryQuickAddProps): React.JSX.El
   }
 
   return (
-    <section aria-label="Quick add to memory" className="rounded border border-border bg-surface p-4">
+    <section
+      aria-label="Quick add to memory"
+      className="rounded border border-border bg-surface p-4"
+    >
       <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
         {detailsOpen ? (
           <div className="flex flex-col gap-3">

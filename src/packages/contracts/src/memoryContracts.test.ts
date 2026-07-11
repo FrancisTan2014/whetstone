@@ -256,7 +256,9 @@ describe("Memory CRUD requests + gloss suggestion (#573)", () => {
     expect(parseEditMemoryPromptRequest({ cueText: "cue", answerText: "ans" }).answerText).toBe(
       "ans"
     );
-    expect(parseEditMemoryPromptRequest({ cueText: "cue", answerText: null }).answerText).toBeNull();
+    expect(
+      parseEditMemoryPromptRequest({ cueText: "cue", answerText: null }).answerText
+    ).toBeNull();
     expect(() => parseEditMemoryPromptRequest({ cueText: " ", answerText: "ans" })).toThrow();
   });
 
@@ -267,9 +269,11 @@ describe("Memory CRUD requests + gloss suggestion (#573)", () => {
   });
 
   it("parses a gloss suggestion DTO with and without a suggestion", () => {
-    expect(parseMemoryGlossSuggestionDto({ term: "遠慮", suggestion: "to hold back" }).suggestion).toBe(
-      "to hold back"
-    );
-    expect(parseMemoryGlossSuggestionDto({ term: "xyzzy", suggestion: null }).suggestion).toBeNull();
+    expect(
+      parseMemoryGlossSuggestionDto({ term: "遠慮", suggestion: "to hold back" }).suggestion
+    ).toBe("to hold back");
+    expect(
+      parseMemoryGlossSuggestionDto({ term: "xyzzy", suggestion: null }).suggestion
+    ).toBeNull();
   });
 });

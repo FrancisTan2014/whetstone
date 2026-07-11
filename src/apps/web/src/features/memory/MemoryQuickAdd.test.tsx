@@ -260,10 +260,7 @@ describe("MemoryQuickAdd detailed capture", () => {
       expect(mockedCreate).toHaveBeenCalledWith({
         captureSource: "manual",
         noteText: "cue one",
-        prompts: [
-          { answerText: "answer one", cueText: "cue one" },
-          { cueText: "cue two" }
-        ]
+        prompts: [{ answerText: "answer one", cueText: "cue one" }, { cueText: "cue two" }]
       })
     );
   });
