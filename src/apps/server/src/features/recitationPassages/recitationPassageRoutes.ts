@@ -1,5 +1,6 @@
 import {
   recordRecitationReviewRequestSchema,
+  setRecitationSupportLevelRequestSchema,
   splitRecitationPassageRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
@@ -11,6 +12,7 @@ import {
   mergeNextRecitationPassage,
   recordRecitationPassageReview,
   seedRecitationPassages,
+  setRecitationPassageSupportLevel,
   splitRecitationPassage,
   type RecitationPassageDependencies
 } from "./recitationPassageCommands.js";
@@ -140,6 +142,28 @@ export function registerRecitationPassageRoutes(
         return reply.code(404).send(notFound);
       }
       return reply.code(200).send({ passage: result.passage });
+    }
+  );
+
+  // Remember a passage's visual support level for progressive fading (#579). A malformed body is 400;
+  // owner-scoped (404 otherwise). This is a preference, not a review — it never updates the schedule.
+  server.put<{ Params: PassageParams }>(
+    "/api/recitation/passages/:id/support-level",
+    async (request, reply) => {
+      const parsed = setRecitationSupportLevelRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequest);
+      }
+      const result = await setRecitationPassageSupportLevel(
+        dependencies,
+        toEntryId(request.params.id),
+        parsed.data.supportLevel,
+        request.server.currentUser.getCurrentUserId()
+      );
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      return reply.code(200).send({ supportLevel: result.supportLevel });
     }
   );
 }

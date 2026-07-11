@@ -18,8 +18,8 @@ async function adoptPlan(
   return plan.entryId;
 }
 
-test.describe("recitation passage practice (#578)", () => {
-  test("start reciting, divide into passages, and complete one scheduled review", async ({
+test.describe("recitation passage practice (#578, faded by #579)", () => {
+  test("start reciting, divide into passages, fade support, and complete one scheduled review", async ({
     page,
     setup
   }) => {
@@ -42,18 +42,43 @@ test.describe("recitation passage practice (#578)", () => {
     await expect(firstPassage).toBeVisible();
     await expect(firstPassage.getByText(/Passage 1 ·/)).toBeVisible();
 
-    // Back on Today, the next due passage surfaces as one bounded attempt: a cue with the target hidden
-    // until Reveal.
+    // Back on Today, the next due passage surfaces as one bounded attempt. It opens at full visual
+    // support (the whole passage as a scaffold); the learner fades support down the ladder before
+    // reciting from memory.
     await page.goto(`${setup.baseURL}#/`);
     const reciteCard = page.getByRole("region", { name: "Recite" });
-    const reveal = reciteCard.getByRole("button", { name: "Reveal" });
+    const supportGroup = reciteCard.getByRole("group", { name: "Support level" });
+    await expect(supportGroup.getByRole("button", { name: "Full text" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+
+    // Fading down to "First characters" persists the remembered preference through the support-level
+    // endpoint; wait for that write so the reload below reads the saved level.
+    await Promise.all([
+      page.waitForResponse(
+        (response) => response.url().includes("/support-level") && response.ok()
+      ),
+      supportGroup.getByRole("button", { name: "First characters" }).click()
+    ]);
+
+    // Reloading Today re-fetches the passage; the chosen support level is remembered per passage.
+    await page.goto(`${setup.baseURL}#/`);
+    const reloadedCard = page.getByRole("region", { name: "Recite" });
+    await expect(
+      reloadedCard.getByRole("group", { name: "Support level" }).getByRole("button", {
+        name: "First characters"
+      })
+    ).toHaveAttribute("aria-pressed", "true");
+
+    const reveal = reloadedCard.getByRole("button", { name: "Reveal" });
     await expect(reveal).toBeVisible();
-    await expect(reciteCard.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
+    await expect(reloadedCard.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
 
     // Reveal shows the exact source and the four self-ratings; grading records the review and the card
     // advances to the next due passage (bounded — one at a time, never an overdue wall).
     await reveal.click();
-    await reciteCard.getByRole("button", { name: "Clean and natural" }).click();
-    await expect(reciteCard.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
+    await reloadedCard.getByRole("button", { name: "Clean and natural" }).click();
+    await expect(reloadedCard.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
   });
 });

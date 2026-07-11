@@ -2,11 +2,13 @@ import type {
   DueRecitationPassageDto,
   RecitationCueStrengthDto,
   RecitationPassageDto,
-  RecitationReviewRating
+  RecitationReviewRating,
+  RecitationSupportLevelDto
 } from "@whetstone/contracts";
 import {
   applyRating,
   coveredPassageText,
+  DEFAULT_RECITATION_SUPPORT_LEVEL,
   mergePassageRanges,
   newReviewState,
   reanchorPassageRange,
@@ -130,6 +132,7 @@ export async function seedRecitationPassages(
     planEntryId,
     // Each seed range spans a block just loaded into `blockText`, so the covered text is always present.
     sourceText: coveredPassageText(range, blockText)!,
+    supportLevel: DEFAULT_RECITATION_SUPPORT_LEVEL,
     ...range,
     ...passageReviewStateColumns(newReviewState(now))
   }));
@@ -178,6 +181,7 @@ function newPassageRow(
     orderIndex,
     planEntryId,
     sourceText,
+    supportLevel: DEFAULT_RECITATION_SUPPORT_LEVEL,
     ...range,
     ...passageReviewStateColumns(newReviewState(now))
   };
@@ -373,9 +377,36 @@ export async function loadDueRecitationPassage(
     passageEntryId: due.row.entryId,
     planEntryId: due.row.planEntryId,
     precedingText,
+    supportLevel: due.row.supportLevel,
     targetText: due.row.sourceText,
     workTitle: due.workTitle
   };
+}
+
+export type SetPassageSupportLevelResult =
+  | Readonly<{ status: "set"; supportLevel: RecitationSupportLevelDto }>
+  | Readonly<{ status: "not_found" }>;
+
+// Remember a passage's visual support level (#579). This is a learner preference, not a recall: it never
+// applies FSRS and never appends a review row, so viewing or changing the fading leaves the schedule
+// untouched. Owner-scoped (`not_found` for a missing, forged, or cross-user passage id).
+export async function setRecitationPassageSupportLevel(
+  dependencies: RecitationPassageDependencies,
+  passageEntryId: EntryId,
+  supportLevel: RecitationSupportLevelDto,
+  userId: string
+): Promise<SetPassageSupportLevelResult> {
+  const owned = await loadOwnedPassage(dependencies.db, passageEntryId, userId);
+  if (owned === undefined) {
+    return { status: "not_found" };
+  }
+
+  await dependencies.db
+    .update(recitationPassages)
+    .set({ supportLevel })
+    .where(eq(recitationPassages.entryId, passageEntryId));
+
+  return { status: "set", supportLevel };
 }
 
 // Record a self-assessment of a passage: apply FSRS (#572), overwrite the passage's card, and append a

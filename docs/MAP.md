@@ -54,7 +54,10 @@ vocabulary `familiarizing`/`learning`/`maintenance` + `isRecitationPhase`), `rec
 the pure passage engine: `seedPassageRanges`/`splitPassageRange`/`mergePassageRanges` for boundary edits
 over blocks, `coveredPassageText`, `reanchorPassageRange` (unchanged/relocated/needs_repair), the
 `passageCueText` cue builder + `recitationRatingChoices`/`recitationCueStrengths`/`passageAnchorStatuses`
-vocabulary) and `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
+vocabulary), `recitationFading.ts` (#579 the pure render-time support-level projection:
+`recitationSupportLevels` `full`/`reduced`/`first`/`hidden` + `projectRecitationSupport`/
+`supportLevelShowsTarget`/`DEFAULT_RECITATION_SUPPORT_LEVEL`, masked runs carry a length only) and
+`diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
 ### `src/packages/contracts/` — shared API schemas/DTOs
@@ -73,8 +76,9 @@ the `kind === "diary"` filter — update edits the rich `bodyDoc`),
 request schemas, `RecitationPlanDto`/list/continue DTOs; the Timeline union gains a `recitation` member
 carrying the Work title + phase),
 `recitationPassageContracts.ts` (#578 passage practice: `RecitationPassageDto`/list, the
-`DueRecitationPassageDto` (context + cue material + `defaultCueStrength` + `anchorStatus`), the
-split/merge/record-review request schemas, and `parse*` boundary helpers),
+`DueRecitationPassageDto` (context + cue material + `defaultCueStrength` + `anchorStatus` + `supportLevel`),
+the split/merge/record-review request schemas, the #579 `recitationSupportLevelDtoSchema` + set-support-level
+request/response schemas, and `parse*` boundary helpers),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
 `queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
@@ -160,13 +164,16 @@ can navigate them from another package.
   (`seedRecitationPassages` one passage per non-empty source block, idempotent; `splitRecitationPassage`/
   `mergeNextRecitationPassage` edit boundaries only + reindex `order_index` in a transaction, FSRS reset;
   `loadDueRecitationPassage` re-anchors against live block text before serving — unchanged/relocated/
-  `needs_repair` — and derives the cue material + `defaultCueStrength`; `recordRecitationPassageReview`
-  applies FSRS (#572) and appends a `recitation_reviews` history row). `recitationPassageQueries.ts`
+  `needs_repair` — and derives the cue material + `defaultCueStrength` + the remembered `supportLevel`;
+  `recordRecitationPassageReview`
+  applies FSRS (#572) and appends a `recitation_reviews` history row; `setRecitationPassageSupportLevel`
+  (#579) persists the per-passage support-level preference only — never FSRS). `recitationPassageQueries.ts`
   (owner-scoped loaders via the plan's `personal_entries` facet, source-order block load, next-due lookup,
   review counts, FSRS↔column mapping). `recitationPassageRoutes.ts` (current-user scoped, Zod-validated,
   `now`/`createEntryId`/`createId` injected): `POST /api/recitation/plans/:id/passages/seed`,
   `GET /api/recitation/plans/:id/passages`, `GET /api/recitation/passages/due` (registered before the
-  parametric route), `POST /api/recitation/passages/:id/split|merge-next|review`; wired in
+  parametric route), `POST /api/recitation/passages/:id/split|merge-next|review`,
+  `PUT /api/recitation/passages/:id/support-level` (#579); wired in
   `createServer.ts`/`index.ts`. `library/libraryCommands.ts` `deleteWork` cascades passages + reviews.
   DTOs in `@whetstone/contracts` (`recitationPassageContracts.ts`).
 - Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
@@ -341,7 +348,8 @@ can navigate them from another package.
   `processing_status`/`failure_reason`), `recitation_plans` (#577 `entry_id` PK/FK, `work_entry_id` FK +
   index, `phase` enum, `session_count`, nullable `last_session_at`),
   `recitation_passages` (#578 `entry_id` PK/FK, `plan_entry_id` FK + index, `order_index`, start/end
-  `block_entry_id` + offsets, `source_text`, `context_snapshot`, `anchor_status` enum, per-passage FSRS
+  `block_entry_id` + offsets, `source_text`, `context_snapshot`, `anchor_status` enum, `support_level` enum
+  (#579, default `full`), per-passage FSRS
   card columns incl. `due_at`) and `recitation_reviews` (append-only history: `id` PK, `passage_entry_id`
   FK + index, `rating`, `cue_strength`, `reviewed_at`), links/templates, `reading_positions`, search indexes, and
   `toc_entries` (a work's authored nav-derived TOC: `entry_id` PK + `work_entry_id` FK to `entries`,
@@ -820,13 +828,17 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   an initial-phase picker Sheet (`createRecitationPlan`), and marks an already-adopted Work with a quiet
   "Reciting · ‹phase›" status instead; the Today Continue-recitation card is described above.
 - Recitation passage practice (#578): `src/apps/web/src/features/recitation/` (same slice) —
-  `recitationPassageApi.ts` (client for the passage endpoints — seed/list/due/split/merge-next/review —
-  every response parsed through `recitationPassageContracts`), `RecitationReviewCard.tsx` (one due passage
-  as a two-phase attempt: cue-strength toggle → **Reveal** → the four FSRS-mapped self-ratings; a
+  `recitationPassageApi.ts` (client for the passage endpoints — seed/list/due/split/merge-next/review/
+  set-support-level (#579) — every response parsed through `recitationPassageContracts`),
+  `RecitationReviewCard.tsx` (one due passage
+  as a two-phase attempt: a #579 support-level ladder (**Full**/**Reduced**/**First characters**/**Hidden**,
+  rendering the pure `projectRecitationSupport` projection with masked runs announced as "hidden text";
+  remembered per passage via `setSupportLevel`, reduced-motion honored) → **Reveal** → the four FSRS-mapped
+  self-ratings; a
   `needs_repair` passage shows a repair notice instead of stale text; only the final rating posts), and
   `RecitePage.tsx` — the `/recite?plan=<id>` segmentation surface (seed, then split/merge passage
   boundaries with per-passage review progress; canonical Work text untouched), routed in `app/AppRoutes.tsx`.
-  Cue-strength labels live in `recitationLabels.ts`; the Today **Recite** card composes `RecitationReviewCard`.
+  Support-level and cue-strength labels live in `recitationLabels.ts`; the Today **Recite** card composes `RecitationReviewCard`.
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

@@ -165,6 +165,17 @@ async function loadDue(): Promise<DueRecitationPassageResponse> {
   return response.json() as DueRecitationPassageResponse;
 }
 
+async function setSupportLevel(
+  passageEntryId: string,
+  supportLevel: string
+): Promise<ReturnType<TestContext["server"]["inject"]>> {
+  return context.server.inject({
+    method: "PUT",
+    payload: { supportLevel },
+    url: `/api/recitation/passages/${passageEntryId}/support-level`
+  });
+}
+
 // A plan whose Work has two recitable blocks (with a blank block between that must never seed a passage).
 async function seededTwoPassagePlan(): Promise<{
   planEntryId: string;
@@ -508,6 +519,7 @@ describe("GET /api/recitation/passages/due", () => {
       defaultCueStrength: "opening",
       passageEntryId: passages[0]!.entryId,
       precedingText: null,
+      supportLevel: "full",
       targetText: "The quick brown fox.",
       workTitle: "The Recitation"
     });
@@ -577,5 +589,69 @@ describe("GET /api/recitation/passages/due", () => {
       anchorStatus: "needs_repair",
       passageEntryId: passages[0]!.entryId
     });
+  });
+});
+
+describe("PUT /api/recitation/passages/:id/support-level", () => {
+  it("remembers the chosen level so the due passage opens at it", async () => {
+    const { passages } = await seededTwoPassagePlan();
+    expect((await loadDue()).passage?.supportLevel).toBe("full");
+
+    const response = await setSupportLevel(passages[0]!.entryId, "first");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ supportLevel: "first" });
+
+    expect((await loadDue()).passage?.supportLevel).toBe("first");
+  });
+
+  it("does not count as a review — the schedule is untouched", async () => {
+    const { passages } = await seededTwoPassagePlan();
+
+    await setSupportLevel(passages[0]!.entryId, "reduced");
+
+    const after = await loadDue();
+    // Same passage still due, no review recorded: changing support level never advances FSRS (#579).
+    expect(after.passage?.passageEntryId).toBe(passages[0]!.entryId);
+    const [row] = await context.db
+      .select()
+      .from(recitationPassages)
+      .where(eq(recitationPassages.entryId, passages[0]!.entryId));
+    expect(row?.reps).toBe(0);
+    expect(row?.lastReviewedAt).toBeNull();
+    // Seeding set the card due at the frozen clock; setting support level leaves that untouched.
+    expect(row?.dueAt.toISOString()).toBe("2026-07-01T09:00:00.000Z");
+  });
+
+  it("resets a split passage's fresh halves back to full support", async () => {
+    const { passages } = await seededTwoPassagePlan();
+    await setSupportLevel(passages[0]!.entryId, "hidden");
+
+    const split = await context.server.inject({
+      method: "POST",
+      payload: { atBlockEntryId: "block-a", atOffset: 4 },
+      url: `/api/recitation/passages/${passages[0]!.entryId}/split`
+    });
+    expect(split.statusCode).toBe(200);
+
+    // The split halves are fresh passages; the next due one opens at the default full support again.
+    expect((await loadDue()).passage?.supportLevel).toBe("full");
+  });
+
+  it("is 400 for an unknown support level", async () => {
+    const { passages } = await seededTwoPassagePlan();
+
+    const response = await setSupportLevel(passages[0]!.entryId, "peek");
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("is 404 for a passage the user does not own", async () => {
+    const { passages } = await seededTwoPassagePlan();
+    context.setUser(OTHER_USER_ID);
+
+    const response = await setSupportLevel(passages[0]!.entryId, "first");
+
+    expect(response.statusCode).toBe(404);
   });
 });

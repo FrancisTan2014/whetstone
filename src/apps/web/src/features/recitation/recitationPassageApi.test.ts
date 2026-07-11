@@ -6,6 +6,7 @@ import {
   mergeNextPassage,
   reviewPassage,
   seedPassages,
+  setSupportLevel,
   splitPassage
 } from "./recitationPassageApi";
 
@@ -33,6 +34,7 @@ const dueDto = {
   passageEntryId: "passage-1",
   planEntryId: "plan-1",
   precedingText: null,
+  supportLevel: "full",
   targetText: "The quick brown fox.",
   workTitle: "The Recitation"
 } as const;
@@ -121,6 +123,18 @@ describe("recitationPassageApi", () => {
     expect(path).toBe("/api/recitation/passages/passage-1/review");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ cueStrength: "opening", rating: "good" });
+  });
+
+  it("remembers a passage's support level with a PUT, echoing the stored level", async () => {
+    const fetchMock = mockFetchOnce({ supportLevel: "reduced" });
+
+    const result = await setSupportLevel("passage/1", "reduced");
+
+    expect(result).toBe("reduced");
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/recitation/passages/passage%2F1/support-level");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ supportLevel: "reduced" });
   });
 
   it("throws when a request is not ok", async () => {
