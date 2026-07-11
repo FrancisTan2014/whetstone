@@ -373,6 +373,33 @@ describe("RichContentEditor formatting", () => {
   });
 
   it.each([
+    ["Blockquote", "blockquote"],
+    ["Bullet list", "bulletList"]
+  ])(
+    "preserves the top-level block id when the %s toolbar button wraps the block (#588)",
+    async (label) => {
+      const { onChange, textbox, user } = await renderReady();
+
+      await user.click(textbox);
+      await user.type(textbox, "Body");
+      const idBefore = textbox.querySelector("p")?.getAttribute("data-id");
+      expect(idBefore).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: label }));
+
+      await waitFor(() => expect(lastDocument(onChange).content?.[0]?.type).not.toBe("paragraph"));
+      const wrapper = lastDocument(onChange).content?.[0];
+      // Routing the toolbar wrapping buttons through the shared catalog keeps the block's stable id
+      // on the NEW addressable top-level block (list/quote), not just for the slash menu (#588)...
+      expect(wrapper?.attrs?.["id"]).toBe(idBefore);
+      // ...and clears it from the now-nested paragraph so the id addresses exactly one block.
+      const nested = wrapper?.content?.[0];
+      const nestedParagraph = nested?.type === "listItem" ? nested.content?.[0] : nested;
+      expect(nestedParagraph?.attrs?.["id"]).not.toBe(idBefore);
+    }
+  );
+
+  it.each([
     ["Bold", "bold"],
     ["Italic", "italic"],
     ["Inline code", "code"]
@@ -435,7 +462,10 @@ describe("RichContentEditor links, paste, and save", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Remove link" }));
-    await user.click(textbox);
+    // Re-focus via the DOM so ProseMirror restores its retained end-of-doc selection. A synthetic
+    // pointer click maps to a jsdom hit position (which has no layout) and can collapse the caret to
+    // the document start under load, prepending " plain" -> " plainLinked"; focus() is deterministic.
+    textbox.focus();
     await waitFor(() => expect(document.activeElement).toBe(textbox));
     await user.type(textbox, " plain");
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("Linked plain"));

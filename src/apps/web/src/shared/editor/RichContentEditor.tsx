@@ -1,4 +1,5 @@
 import type { Editor, Extensions } from "@tiptap/core";
+import { Placeholder } from "@tiptap/extensions/placeholder";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { EditorContent, useEditor } from "@tiptap/react";
 import {
@@ -10,17 +11,29 @@ import {
 import { useEffect, useId, useMemo, useState } from "react";
 
 import { Button } from "../ui/Button.js";
+import { runBlockCommandById } from "./blockCommands.js";
 import {
   editorDocumentsEqual,
   normalizeEditorLinkHref,
   validateEditorDocument
 } from "./editorDocument.js";
 import { editorClassNames } from "./RichContentEditor.tokens.js";
+import { SlashCommand } from "./slashCommand.js";
 
 // pnpm exposes the same Tiptap runtime through the document and web workspace package boundaries,
 // but TypeScript treats Tiptap's privately-branded extension classes as nominal across their emitted
 // declarations. Narrow once at this integration seam; the runtime objects are the shared instances.
-const editorExtensions: Extensions = [...(documentExtensions as unknown as Extensions), UndoRedo];
+const editorExtensions: Extensions = [
+  ...(documentExtensions as unknown as Extensions),
+  UndoRedo,
+  SlashCommand,
+  // A restrained, decoration-only hint on a focused empty paragraph — never stored, copied, or read
+  // by the static reader (which mounts `documentExtensions` without this editing-only extension).
+  Placeholder.configure({
+    placeholder: ({ node }) => (node.type.name === "paragraph" ? "Type / for commands" : ""),
+    showOnlyCurrent: true
+  })
+];
 
 export type RichContentEditorPresentation = "compact" | "full";
 
@@ -161,18 +174,7 @@ export function RichContentEditor({
                 aria-label="Block style"
                 className={editorClassNames.blockStyle}
                 onChange={(event) => {
-                  const value = event.currentTarget.value;
-
-                  if (value === "paragraph") {
-                    editor.chain().focus().setNode("paragraph").run();
-                    return;
-                  }
-
-                  editor
-                    .chain()
-                    .focus()
-                    .setNode("heading", { level: Number(value.replace("heading-", "")) })
-                    .run();
+                  runBlockCommandById(editor, event.currentTarget.value);
                 }}
                 value={currentBlockStyle(editor)}
               >
@@ -185,28 +187,28 @@ export function RichContentEditor({
             <FormatButton
               active={editor.isActive("bulletList")}
               label="Bullet list"
-              onClick={() => editor.chain().focus().toggleList("bulletList", "listItem").run()}
+              onClick={() => runBlockCommandById(editor, "bullet-list")}
             >
               Bullets
             </FormatButton>
             <FormatButton
               active={editor.isActive("orderedList")}
               label="Ordered list"
-              onClick={() => editor.chain().focus().toggleList("orderedList", "listItem").run()}
+              onClick={() => runBlockCommandById(editor, "ordered-list")}
             >
               Numbered
             </FormatButton>
             <FormatButton
               active={editor.isActive("blockquote")}
               label="Blockquote"
-              onClick={() => editor.chain().focus().toggleWrap("blockquote").run()}
+              onClick={() => runBlockCommandById(editor, "blockquote")}
             >
               Quote
             </FormatButton>
             <FormatButton
               active={editor.isActive("codeBlock")}
               label="Code block"
-              onClick={() => editor.chain().focus().toggleNode("codeBlock", "paragraph").run()}
+              onClick={() => runBlockCommandById(editor, "code-block")}
             >
               Code block
             </FormatButton>

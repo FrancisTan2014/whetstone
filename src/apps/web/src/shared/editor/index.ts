@@ -4,6 +4,12 @@ export {
   type RichContentEditorProps
 } from "./RichContentEditor.js";
 export {
+  blockCommands,
+  type BlockCommand,
+  filterBlockCommands,
+  runBlockCommand
+} from "./blockCommands.js";
+export {
   createEmptyDocument,
   editorDocumentsEqual,
   normalizeEditorLinkHref,

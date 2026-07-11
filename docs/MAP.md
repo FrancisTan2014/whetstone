@@ -610,7 +610,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `RichContentEditor.tsx` mounts the single `@whetstone/document` extension set through Tiptap React,
   exposes compact/full presentations over one live document, and emits validated detached JSON on
   change/save; `editorDocument.ts` owns empty-document creation, validation/cloning, equality, and safe
-  authored-link normalization. Persistence and autosave policy stay with consuming features.
+  authored-link normalization. The keyboard-first slash menu (#588) is one shared seam: `blockCommands.ts`
+  is the single block-command catalog (id/label/aliases/`isAvailable`/`appendTo`) that later block menus
+  reuse, `slashCommandContext.ts` gates where `/` may open, `SlashCommandMenu.tsx` is the ARIA listbox,
+  and `slashCommand.ts` wires `@tiptap/suggestion` (trigger, positioning, dismissal) to them; a focused
+  empty paragraph shows a decoration-only `Type / for commands` hint the reader never mounts. Persistence
+  and autosave policy stay with consuming features.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
   field whose `searchApi.searchLibrary` hits `GET /api/search`, rendering block-level hits that each
