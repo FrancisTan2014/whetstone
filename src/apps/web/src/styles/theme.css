@@ -267,40 +267,71 @@
 }
 
 /*
- * Shared rich-content editor (#570). Compact and full presentations share one ProseMirror surface;
- * only the toolbar density and minimum writing height change. All color, type, and focus treatment
- * comes from semantic tokens, so the same boundary works in Day and Night without theme branches.
+ * Shared rich-content editor (#589). One document-first ProseMirror surface with no permanent chrome:
+ * inline formatting lives in the contextual toolbar (`.editorFormattingMenu`) beside a selection. The
+ * `full` presentation drops the card border and surface so the document shares the page's writing
+ * measure with read mode; the `compact` presentation keeps a clear input boundary because it is
+ * embedded among form controls. All color, type, and focus treatment comes from semantic tokens.
  */
 .richContentEditor {
   inline-size: 100%;
   max-inline-size: 100%;
+  color: var(--color-text);
+}
+
+.richContentEditor[data-presentation="compact"] {
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   background-color: var(--color-surface);
-  color: var(--color-text);
 }
 
-.richContentEditor:focus-within {
+.richContentEditor[data-presentation="compact"]:focus-within {
   border-color: var(--color-ring);
   box-shadow: 0 0 0 2px var(--color-ring);
 }
 
-.richContentEditorToolbar {
+/*
+ * The contextual formatting toolbar rendered inside Tiptap's BubbleMenu, plus its anchored link form
+ * (a Radix Popover). Both float above the page, so they carry their own surface, border, and shadow.
+ */
+.editorFormattingMenu {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem;
-  max-inline-size: 100%;
-  padding: 0.5rem;
-  border-block-end: 1px solid var(--color-border);
-  background-color: var(--color-bg);
+  z-index: 60;
+  padding: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background-color: var(--color-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
   font-family: var(--font-sans);
 }
 
-.richContentEditorToolbar :where(select, input) {
-  min-block-size: 2.75rem;
-  max-inline-size: 100%;
+.editorLinkForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 61;
+  inline-size: min(20rem, calc(100vw - 1.5rem));
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background-color: var(--color-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+.editorLinkFormField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.editorLinkFormInput {
+  inline-size: 100%;
+  padding: 0.5rem 0.625rem;
   border: 1px solid var(--color-border);
   border-radius: 0.25rem;
   background-color: var(--color-surface);
@@ -308,31 +339,20 @@
   font: inherit;
 }
 
-.richContentEditorToolbar :where(select, input):focus-visible {
+.editorLinkFormInput:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;
 }
 
-.richContentEditorBlockStyle {
-  padding-inline: 0.625rem 2rem;
-}
-
-.richContentEditorLinkField {
-  flex: 1 1 12rem;
-  min-inline-size: min(12rem, 100%);
-}
-
-.richContentEditorLinkInput {
-  inline-size: 100%;
-  padding-inline: 0.625rem;
-}
-
-.richContentEditorError {
+.editorLinkFormError {
   margin: 0;
-  padding: 0.5rem 0.75rem;
   color: var(--color-danger);
-  font-family: var(--font-sans);
   font-size: var(--text-scale-sm);
+}
+
+.editorLinkFormActions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .richContentEditorContent {

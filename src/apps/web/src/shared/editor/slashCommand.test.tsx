@@ -173,7 +173,9 @@ describe("slash command menu integration", () => {
     await user.keyboard("{ArrowDown}{Enter}");
     await waitFor(() => expect(firstBlock(lastDoc(onChange)).type).toBe("heading"));
 
-    await user.click(screen.getByRole("button", { name: "Undo" }));
+    // The fixed toolbar (and its Undo button) is gone as of #589; undo now runs from the keyboard.
+    textbox.focus();
+    await user.keyboard("{Control>}z{/Control}");
 
     await waitFor(() => expect(firstBlock(lastDoc(onChange)).type).toBe("paragraph"));
     expect(textbox.textContent).toBe("");

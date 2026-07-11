@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, Ref } from "react";
 
 import { Spinner } from "./Spinner.js";
 
@@ -32,16 +32,18 @@ export const buttonVariants = cva(
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> &
   VariantProps<typeof buttonVariants> &
-  Readonly<{ pending?: boolean }>;
+  Readonly<{ pending?: boolean; ref?: Ref<HTMLButtonElement> }>;
 
 // Buttons default to `type="button"` so they never accidentally submit a form. When
 // `pending`, the button shows a spinner, reports `aria-busy`, and is disabled so an
-// in-flight action cannot be double-submitted.
+// in-flight action cannot be double-submitted. The optional `ref` (a plain prop in React 19)
+// lets callers manage focus and lets Radix `asChild` triggers anchor to the real element.
 export function Button({
   children,
   className,
   disabled,
   pending,
+  ref,
   size,
   type,
   variant,
@@ -52,6 +54,7 @@ export function Button({
       className={buttonVariants({ className, size, variant })}
       type={type ?? "button"}
       {...rest}
+      ref={ref}
       aria-busy={pending}
       disabled={disabled === true || pending === true}
     >
