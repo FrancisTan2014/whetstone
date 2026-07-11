@@ -24,9 +24,17 @@ describe("entry/link vocabulary", () => {
       "note",
       "toc_entry",
       "diary_entry",
-      "recitation_plan"
+      "recitation_plan",
+      "memory_note",
+      "memory_prompt"
     ]);
-    expect(linkTypes).toEqual(["contains", "annotates", "references", "related_to"]);
+    expect(linkTypes).toEqual([
+      "contains",
+      "annotates",
+      "references",
+      "related_to",
+      "derived_from"
+    ]);
     expect(workTypes).toEqual(["book", "essay", "blog_post", "classical_text"]);
     expect(isEntryType("reading_unit")).toBe(true);
     expect(isEntryType("toc_entry")).toBe(true);

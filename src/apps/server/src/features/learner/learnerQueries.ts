@@ -9,8 +9,7 @@ import {
   chunkMasteryStatus,
   rankChunksByGapFrequency,
   type ChunkMasteryStatus,
-  type L1Language,
-  type ReviewState
+  type L1Language
 } from "@whetstone/domain";
 import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 
@@ -21,11 +20,10 @@ import {
   domains,
   errorPatterns,
   learnerProfiles,
-  recallItems,
   sessionExchanges,
   turnOutcomes
 } from "../../db/schema.js";
-import { rowToReviewState } from "../recall/recallQueries.js";
+import { allChunkReviewStates } from "../memory/memoryQueries.js";
 
 // The bounded slice compiled for each coaching call stays roughly constant in size regardless of
 // history: the top gap x frequency chunks, the most frequent/recent errors, and the most recent
@@ -46,29 +44,6 @@ export type EnrichedCandidate = Readonly<{
   frequency: number;
   status: ChunkMasteryStatus;
 }>;
-
-// Group the user's recall review states by the chunk each item is linked to. Only the user's own items
-// are read, so one user's progress never leaks into another's model.
-async function reviewStatesByChunkId(
-  db: DbClient,
-  userId: string
-): Promise<Map<string, ReviewState[]>> {
-  const rows = await db
-    .select()
-    .from(recallItems)
-    .where(and(eq(recallItems.userId, userId), isNotNull(recallItems.chunkId)));
-
-  const byChunk = new Map<string, ReviewState[]>();
-  for (const row of rows) {
-    // `chunkId` is non-null here: the `isNotNull` filter only matches linked items.
-    const chunkId = row.chunkId as string;
-    const states = byChunk.get(chunkId) ?? [];
-    states.push(rowToReviewState(row));
-    byChunk.set(chunkId, states);
-  }
-
-  return byChunk;
-}
 
 // Load every corpus chunk with its domain's frequency weight and the user's current mastery status for
 // it. The corpus is bounded, so this is constant in the learner's history.
@@ -92,7 +67,7 @@ export async function loadChunkCandidates(
     // ranking until a curator accepts them.
     .where(eq(cases.status, "active"));
 
-  const statesByChunkId = await reviewStatesByChunkId(db, userId);
+  const statesByChunkId = await allChunkReviewStates(db, userId);
 
   return chunkRows.map((row) => ({
     ...row,

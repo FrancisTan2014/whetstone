@@ -527,39 +527,44 @@ export {
 } from "./preferencesContracts.js";
 export type { PreferencesDto, UpsertPreferencesRequest } from "./preferencesContracts.js";
 export {
-  enrollRecallItemRequestSchema,
-  depositRecallItemToolInputSchema,
-  getRecallItemToolInputSchema,
-  listDueItemsToolInputSchema,
-  parseEnrollRecallItemRequest,
-  parseRecallItemDto,
-  parseRecallItemListDto,
-  parseRecordRecallReviewRequest,
-  recallItemDtoSchema,
-  recallItemListDtoSchema,
-  recallCategories,
-  recallCategorySchema,
-  recallKinds,
-  recallKindSchema,
-  recordRecallReviewRequestSchema,
+  captureSourceSchema,
+  depositMemoryRequestSchema,
+  getMemoryPromptToolInputSchema,
+  listDuePromptsToolInputSchema,
+  memoryDepositDtoSchema,
+  memoryNoteDtoSchema,
+  memoryPromptCardDtoSchema,
+  memoryPromptCardListDtoSchema,
+  memoryPromptDtoSchema,
+  memoryPromptInputSchema,
+  parseDepositMemoryRequest,
+  parseMemoryDepositDto,
+  parseMemoryPromptCardDto,
+  parseMemoryPromptCardListDto,
+  parseMemoryPromptDto,
+  parseRecordMemoryReviewRequest,
+  promptLifecycleSchema,
+  ratingSchema,
+  recordMemoryReviewRequestSchema,
   recordReviewToolInputSchema,
   reviewStateDtoSchema,
-  searchRecallItemsToolInputSchema
-} from "./recallContracts.js";
+  searchMemoryToolInputSchema
+} from "./memoryContracts.js";
 export type {
-  EnrollRecallItemRequest,
-  DepositRecallItemToolInput,
-  GetRecallItemToolInput,
-  ListDueItemsToolInput,
-  RecallCategory,
-  RecallItemDto,
-  RecallItemListDto,
-  RecallKind,
-  RecordRecallReviewRequest,
+  DepositMemoryRequest,
+  GetMemoryPromptToolInput,
+  ListDuePromptsToolInput,
+  MemoryDepositDto,
+  MemoryNoteDto,
+  MemoryPromptCardDto,
+  MemoryPromptCardListDto,
+  MemoryPromptDto,
+  MemoryPromptInput,
+  RecordMemoryReviewRequest,
   RecordReviewToolInput,
   ReviewStateDto,
-  SearchRecallItemsToolInput
-} from "./recallContracts.js";
+  SearchMemoryToolInput
+} from "./memoryContracts.js";
 export {
   parseSearchRequest,
   parseSearchResults,

@@ -45,10 +45,10 @@ export function extractGloss(entry: DictionaryEntry | null): string | null {
     : composed;
 }
 
-// Compose the two offline sources into the `resolveOfflineGloss` seam `enrollRecallItem` depends on:
+// Compose the two offline sources into the `resolveOfflineGloss` seam the Memory deposit paths depend on:
 // trim the term, pick the dictionary by script, and extract a bounded gloss. Fails soft in every
 // direction — a blank term, an unknown headword, or even a throwing lookup all resolve to null so
-// capture is never blocked and no error escapes the enroll path.
+// capture is never blocked (an unglossable prompt is simply saved as a draft) and no error escapes.
 export function createOfflineGloss(
   sources: OfflineGlossSources
 ): (text: string) => Promise<string | null> {

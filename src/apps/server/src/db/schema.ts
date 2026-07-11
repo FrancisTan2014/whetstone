@@ -28,7 +28,9 @@ export const entries = pgTable("entries", {
       "toc_entry",
       "diary_entry",
       "recitation_plan",
-      "recitation_passage"
+      "recitation_passage",
+      "memory_note",
+      "memory_prompt"
     ] as const
   }).notNull()
 });
@@ -205,7 +207,7 @@ export const entryLinks = pgTable(
       .notNull()
       .references(() => entries.id),
     type: text("type", {
-      enum: ["contains", "annotates", "references", "related_to"] as const
+      enum: ["contains", "annotates", "references", "related_to", "derived_from"] as const
     }).notNull()
   },
   (table) => [primaryKey({ columns: [table.fromEntryId, table.toEntryId, table.type] })]
@@ -520,89 +522,82 @@ export const chunks = pgTable(
   (table) => [index("chunks_case_idx").on(table.caseId)]
 );
 
-// A recall item: a pattern / idiom / proverb / chunk / word / phrase the learner wants to
-// remember, carrying its FSRS card state inline (one state per item) and an optional link into
-// the content graph (`provenance_entry_id` -> a source note or block when it came from reading;
-// null when jotted or LLM-supplied). User-owned personal data, like notes and reading position —
-// stamped with `user_id` on enroll and filtered by it on read.
-export const recallItems = pgTable(
-  "recall_items",
+// A Memory note (#595): the durable retention target as a first-class owned Entry. `body_doc` is the
+// canonical rich ProseMirror/Tiptap document; `body_text` is its readable plaintext projection
+// (`documentReadableText`) kept for preview/search. `capture_source` records how it was captured.
+// Ownership + chronology live in the shared `personal_entries` facet (like notes/diary), so the note
+// appears exactly once on the logical Timeline; provenance to the source it came from is a
+// `derived_from` row in `entry_links` (not a column). Keyed by the owning Entry.
+export const memoryNotes = pgTable("memory_notes", {
+  entryId: text("entry_id")
+    .primaryKey()
+    .references(() => entries.id),
+  bodyDoc: jsonb("body_doc").notNull(),
+  bodyText: text("body_text").notNull(),
+  captureSource: text("capture_source", {
+    enum: ["manual", "reader", "import", "practice", "tool"] as const
+  }).notNull()
+});
+
+// A Memory prompt (#595): one independently scheduled retrieval direction under a note. `note_entry_id`
+// is its owning note (the note carries the `personal_entries` row, so the prompt inherits ownership
+// transitively and never gets a Timeline row of its own — the note→prompt edge is also recorded in
+// `entry_links` as `contains`). `cue_doc`/`answer_doc` are the rich bodies, with `cue_text`/`answer_text`
+// their readable projections. `lifecycle` is `draft` (captured but no revealable answer, so no card) or
+// `scheduled`. `chunk_id` optionally links the direction to a practice chunk (#205) so Cases mastery /
+// Map / the learner model keep deriving mastery from the prompt's FSRS state by chunk. The inlined FSRS
+// card columns and `answer_doc`/`answer_text` are NULL for a draft and all set once scheduled; `due_at`
+// is indexed for a cheap due scan.
+export const memoryPrompts = pgTable(
+  "memory_prompts",
   {
-    id: text("id").primaryKey(),
-    userId: text("user_id").notNull(),
-    kind: text("kind", {
-      enum: ["pattern", "idiom", "proverb", "chunk", "word", "phrase"] as const
-    }).notNull(),
-    text: text("text").notNull(),
-    gloss: text("gloss"),
-    provenanceEntryId: text("provenance_entry_id").references(() => entries.id),
-    // Optional link to the practice chunk (#205) this item is recalling, so jots / reading captures
-    // attach to a case. Null when the item is not tied to the authored corpus. Per-case mastery is
-    // computed by joining a user's items to a case's chunks through this column.
+    entryId: text("entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    noteEntryId: text("note_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    cueDoc: jsonb("cue_doc").notNull(),
+    cueText: text("cue_text").notNull(),
+    answerDoc: jsonb("answer_doc"),
+    answerText: text("answer_text"),
+    lifecycle: text("lifecycle", { enum: ["draft", "scheduled"] as const }).notNull(),
     chunkId: text("chunk_id").references(() => chunks.id),
-    // Production-style recall metadata (#451) for items made durable from a Make Durable proposal.
-    // All nullable so existing reading/speech/jot feeders are unaffected (they leave these null).
-    // `cue` is the retrieval prompt; `use_context` is when/where to use the target; `category` is the
-    // one broad bucket; `tags_json` holds optional narrow tags; `source_proposal_candidate_id` links
-    // back to the candidate this item was saved from (audit/evidence) WITHOUT replacing
-    // `provenance_entry_id`, which still points at the source Entry.
-    cue: text("cue"),
-    useContext: text("use_context"),
-    category: text("category", {
-      enum: [
-        "language",
-        "work",
-        "family",
-        "technical",
-        "reading",
-        "reflection",
-        "daily_life"
-      ] as const
-    }),
-    tagsJson: jsonb("tags_json").$type<string[]>(),
-    // Not a Drizzle `.references()` FK: `proposal_candidates.related_recall_item_id` already points the
-    // other way, and a mutual inline FK is a type/definition cycle Drizzle cannot infer. The link is set
-    // only from a saved proposal, so it is enforced at the command boundary rather than by a DB constraint.
-    sourceProposalCandidateId: text("source_proposal_candidate_id"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
-    // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572): the full card the scheduler
-    // round-trips — stability/difficulty, elapsed/scheduled days, learning steps, reps, lapses, the
-    // lifecycle `state`, and the last-reviewed (null until first review) / due timestamps. `due_at` is
-    // indexed with the user so `listDue` is a cheap range scan.
-    stability: doublePrecision("stability").notNull(),
-    difficulty: doublePrecision("difficulty").notNull(),
-    elapsedDays: integer("elapsed_days").notNull(),
-    scheduledDays: integer("scheduled_days").notNull(),
-    learningSteps: integer("learning_steps").notNull(),
-    reps: integer("reps").notNull(),
-    lapses: integer("lapses").notNull(),
-    state: text("state", {
-      enum: ["new", "learning", "review", "relearning"] as const
-    }).notNull(),
+    // Inlined FSRS card state (@whetstone/domain `ReviewState`), NULL until the prompt is scheduled.
+    stability: doublePrecision("stability"),
+    difficulty: doublePrecision("difficulty"),
+    elapsedDays: integer("elapsed_days"),
+    scheduledDays: integer("scheduled_days"),
+    learningSteps: integer("learning_steps"),
+    reps: integer("reps"),
+    lapses: integer("lapses"),
+    state: text("state", { enum: ["new", "learning", "review", "relearning"] as const }),
     lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
-    dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
+    dueAt: timestamp("due_at", { mode: "date", withTimezone: true })
   },
   (table) => [
-    index("recall_items_user_due_idx").on(table.userId, table.dueAt),
-    index("recall_items_user_idx").on(table.userId)
+    index("memory_prompts_note_idx").on(table.noteEntryId),
+    index("memory_prompts_chunk_idx").on(table.chunkId),
+    index("memory_prompts_due_idx").on(table.dueAt)
   ]
 );
 
-// The append-only review log: one row per recorded review (the FSRS rating and when), so a recall
-// item's history is auditable independently of its current (overwritten) review state.
-export const recallReviews = pgTable(
-  "recall_reviews",
+// The append-only prompt review log: one row per recorded review (the FSRS rating and when), so a
+// prompt's history is auditable independently of its current (overwritten) card state.
+export const memoryPromptReviews = pgTable(
+  "memory_prompt_reviews",
   {
     id: text("id").primaryKey(),
-    recallItemId: text("recall_item_id")
+    promptEntryId: text("prompt_entry_id")
       .notNull()
-      .references(() => recallItems.id),
+      .references(() => memoryPrompts.entryId),
     rating: text("rating", {
       enum: ["again", "hard", "good", "easy"] as const
     }).notNull(),
     reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
   },
-  (table) => [index("recall_reviews_item_idx").on(table.recallItemId)]
+  (table) => [index("memory_prompt_reviews_prompt_idx").on(table.promptEntryId)]
 );
 
 // The learner model (#208) — user-owned personal data, like notes and recall. Three tables: the

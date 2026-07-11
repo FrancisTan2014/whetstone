@@ -5,10 +5,11 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { cases, domains } from "../../db/schema.js";
 import {
-  enrollRecallItem,
-  recordRecallReview,
-  type RecallDependencies
-} from "../recall/recallCommands.js";
+  depositMemory,
+  reviewChunkMemory,
+  type MemoryDependencies
+} from "../memory/memoryCommands.js";
+import { reviewStatesByChunkIds } from "../memory/memoryQueries.js";
 import { getCaseDetail, listCasesInDomain, listDomains } from "./caseQueries.js";
 import { seedCaseCorpus } from "./caseSeed.js";
 
@@ -16,7 +17,7 @@ const userA = "user-a";
 const userB = "user-b";
 const t0 = new Date("2026-01-01T00:00:00.000Z");
 
-type TestContext = Readonly<{ db: DbClient; recall: RecallDependencies }>;
+type TestContext = Readonly<{ db: DbClient; memory: MemoryDependencies }>;
 let context: TestContext;
 
 async function buildContext(): Promise<TestContext> {
@@ -25,10 +26,10 @@ async function buildContext(): Promise<TestContext> {
   const db = createDbClient(pglite);
   await seedCaseCorpus(db);
   let sequence = 0;
-  return { db, recall: { createId: () => `id-${(sequence += 1)}`, db } };
+  return { db, memory: { createId: () => `id-${(sequence += 1)}`, db } };
 }
 
-// Enroll a recall item linked to a chunk and drive it to a target FSRS maturity, so a chunk can be
+// Seed a Memory prompt linked to a chunk and drive it to a target FSRS maturity, so a chunk can be
 // asserted as new/learning/due/mastered. "due" = just enrolled (due immediately); "learning" = one
 // passing review (not due); "mastered" = spaced "easy" reviews at each due date until it graduates to a
 // comfortably long interval (state "review", scheduledDays >= 21).
@@ -37,27 +38,53 @@ async function practise(
   userId: string,
   maturity: "due" | "learning" | "mastered"
 ): Promise<void> {
-  const item = await enrollRecallItem(
-    context.recall,
-    { chunkId, kind: "chunk", text: chunkId },
-    userId,
-    t0
-  );
   if (maturity === "due") {
+    await depositMemory(
+      context.memory,
+      {
+        captureSource: "practice",
+        noteText: chunkId,
+        prompts: [{ answerText: chunkId, chunkId, cueText: chunkId }]
+      },
+      userId,
+      t0
+    );
     return;
   }
+  const reviewChunk = (rating: "good" | "easy", now: Date) =>
+    reviewChunkMemory(
+      context.memory,
+      { chunkId, situation: chunkId, target: chunkId, sourceBlockEntryId: null, userId },
+      rating,
+      now
+    );
   if (maturity === "learning") {
-    await recordRecallReview(context.recall, item.id, "good", userId, t0);
+    await reviewChunk("good", t0);
     return;
   }
   let now = t0;
   for (let i = 0; i < 12; i += 1) {
-    const result = await recordRecallReview(context.recall, item.id, "easy", userId, now);
-    if (result.status !== "recorded") throw new Error("review failed");
-    if (result.item.review.state === "review" && result.item.review.scheduledDays >= 21) return;
-    now = new Date(result.item.review.due);
+    await reviewChunk("easy", now);
+    const states = await reviewStatesByChunkIds(context.db, userId, [chunkId]);
+    const state = states.get(chunkId)?.[0];
+    if (state === undefined) throw new Error("review failed");
+    if (state.state === "review" && state.scheduledDays >= 21) return;
+    now = new Date(state.due);
   }
   throw new Error(`chunk ${chunkId} did not reach mastered`);
+}
+
+async function depositDuePrompt(chunkId: string, userId: string, text: string): Promise<void> {
+  await depositMemory(
+    context.memory,
+    {
+      captureSource: "practice",
+      noteText: text,
+      prompts: [{ answerText: text, chunkId, cueText: text }]
+    },
+    userId,
+    t0
+  );
 }
 
 beforeEach(async () => {
@@ -125,7 +152,7 @@ describe("getCaseDetail", () => {
     });
   });
 
-  it("derives the mastery summary from the user's linked recall items", async () => {
+  it("derives the mastery summary from the user's linked Memory prompts", async () => {
     // mastered: graduated and pushed past its due date; learning: one pass, not due; due: just
     // enrolled (due immediately). The remaining chunks stay new.
     await practise("kitchen.meal_planning.whats_for_dinner", userA, "mastered");
@@ -153,10 +180,10 @@ describe("getCaseDetail", () => {
     expect(forB?.mastery).toMatchObject({ masteredChunks: 1, newChunks: 6 });
   });
 
-  it("aggregates multiple recall items linked to the same chunk", async () => {
+  it("aggregates multiple Memory prompts linked to the same chunk", async () => {
     await practise("kitchen.meal_planning.whats_for_dinner", userA, "mastered");
     // A second item linked to the same chunk, still due — the chunk stays "due" (due wins).
-    await practise("kitchen.meal_planning.whats_for_dinner", userA, "due");
+    await depositDuePrompt("kitchen.meal_planning.whats_for_dinner", userA, "duplicate due");
 
     const detail = await getCaseDetail(context.db, "kitchen.meal_planning", userA, t0);
     expect(detail?.mastery).toMatchObject({ dueChunks: 1, masteredChunks: 0, newChunks: 6 });

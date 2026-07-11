@@ -1,15 +1,10 @@
 import type { NudgeDto } from "@whetstone/contracts";
-import {
-  chunkMasteryStatus,
-  topReadingNudge,
-  type ReadingNudgeCandidate,
-  type ReviewState
-} from "@whetstone/domain";
+import { chunkMasteryStatus, topReadingNudge, type ReadingNudgeCandidate } from "@whetstone/domain";
 import { and, eq, gt, inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { nudgeState, recallItems } from "../../db/schema.js";
-import { rowToReviewState } from "../recall/recallQueries.js";
+import { nudgeState } from "../../db/schema.js";
+import { reviewStatesByChunkIds } from "../memory/memoryQueries.js";
 import { listRecentReadingCaptures, type RecentReadingCapture } from "./nudgeQueries.js";
 
 // How many recent captures the ranking considers. The nudge surfaces only the single top one, but a
@@ -26,34 +21,6 @@ const READING_NUDGE_FREQUENCY = 1;
 // being lost forever — it can surface again once the cooldown lapses (gentle, never spammy).
 const NUDGE_COOLDOWN_DAYS = 3;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-// Group the user's recall review states by the chunk each item links to, for the chunks under
-// consideration. A chunk with no linked item (a never-practised capture) is simply absent (→ "new").
-async function reviewStatesForChunkIds(
-  db: DbClient,
-  userId: string,
-  chunkIds: ReadonlyArray<string>
-): Promise<Map<string, ReviewState[]>> {
-  const byChunk = new Map<string, ReviewState[]>();
-  if (chunkIds.length === 0) {
-    return byChunk;
-  }
-
-  const rows = await db
-    .select()
-    .from(recallItems)
-    .where(and(eq(recallItems.userId, userId), inArray(recallItems.chunkId, [...chunkIds])));
-
-  for (const row of rows) {
-    // `chunkId` is non-null here: the `inArray` filter only matches linked items.
-    const chunkId = row.chunkId as string;
-    const states = byChunk.get(chunkId) ?? [];
-    states.push(rowToReviewState(row));
-    byChunk.set(chunkId, states);
-  }
-
-  return byChunk;
-}
 
 // The subset of the given chunks that are in cooldown for the user (a dismiss whose horizon is still in
 // the future). User-scoped, so one user's cooldown never suppresses another's nudge.
@@ -98,7 +65,7 @@ export async function selectReadingNudgeCapture(
     captures.map((capture) => capture.chunkId)
   );
   const available = captures.filter((capture) => !cooled.has(capture.chunkId));
-  const statesByChunkId = await reviewStatesForChunkIds(
+  const statesByChunkId = await reviewStatesByChunkIds(
     db,
     userId,
     available.map((capture) => capture.chunkId)

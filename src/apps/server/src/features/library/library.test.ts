@@ -2,8 +2,6 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 
-import { newReviewState } from "@whetstone/domain";
-
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
@@ -15,12 +13,13 @@ import {
   domains,
   entries,
   entryLinks,
+  memoryNotes,
+  memoryPrompts,
   noteAnchors,
   notes,
   personalEntries,
   readingPositions,
   readingUnits,
-  recallItems,
   recitationPassages,
   recitationPlans,
   recitationReviews,
@@ -29,7 +28,8 @@ import {
   workSources
 } from "../../db/schema.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
-import { reviewStateColumns } from "../recall/recallQueries.js";
+import { depositMemory } from "../memory/memoryCommands.js";
+import { noteProvenanceEntryId } from "../memory/memoryQueries.js";
 import { createServer } from "../../http/createServer.js";
 
 type TestContext = Readonly<{
@@ -244,7 +244,7 @@ describe("library routes", () => {
   });
 });
 
-// Seed one fully-populated work ("work-1") plus recall/chunk references and a second untouched work
+// Seed one fully-populated work ("work-1") plus a harvested chunk reference and a second untouched work
 // ("work-2"), so a delete can assert both the cascade and the preservation guarantees.
 async function seedWorkWithContent(db: DbClient): Promise<void> {
   await db.insert(authorsTable).values({ id: "author-1", name: "Author" });
@@ -338,42 +338,31 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
     sourceBlockEntryId: "block-1",
     text: "chunk"
   });
+}
 
-  const reviewState = reviewStateColumns(newReviewState(new Date("2026-01-01T00:00:00.000Z")));
-  await db.insert(recallItems).values([
-    {
-      id: "recall-block",
-      kind: "word",
-      provenanceEntryId: "block-1",
-      text: "a",
-      userId: "user-a",
-      ...reviewState
-    },
-    {
-      id: "recall-pm",
-      kind: "word",
-      provenanceEntryId: "pmblock-1",
-      text: "b",
-      userId: "user-a",
-      ...reviewState
-    },
-    {
-      id: "recall-note",
-      kind: "phrase",
-      provenanceEntryId: "note-1",
-      text: "c",
-      userId: "user-a",
-      ...reviewState
-    },
-    {
-      id: "recall-other",
-      kind: "word",
-      provenanceEntryId: null,
-      text: "d",
-      userId: "user-a",
-      ...reviewState
-    }
-  ]);
+async function seedMemoriesDerivedFromWork(db: DbClient): Promise<ReadonlyArray<string>> {
+  let sequence = 0;
+  const createId = (): string => `memory-${(sequence += 1)}`;
+  const noteIds: string[] = [];
+  for (const [derivedFromEntryId, text] of [
+    ["block-1", "from legacy block"],
+    ["pmblock-1", "from document block"],
+    ["note-1", "from reader note"]
+  ] as const) {
+    const deposit = await depositMemory(
+      { createId, db },
+      {
+        captureSource: "reader",
+        derivedFromEntryId,
+        noteText: text,
+        prompts: [{ answerText: text, cueText: text }]
+      },
+      "user-a",
+      new Date("2026-01-01T00:00:00.000Z")
+    );
+    noteIds.push(deposit.note.noteId);
+  }
+  return noteIds;
 }
 
 async function rowsFor(db: DbClient): Promise<Record<string, number>> {
@@ -531,14 +520,17 @@ describe("DELETE /api/works/:workEntryId", () => {
     expect(remainingEntries).toEqual(["work-2"]);
   });
 
-  it("preserves recall items and harvested chunks, nulling their references to deleted content", async () => {
+  it("preserves Memory prompts and harvested chunks, detaching provenance to deleted content", async () => {
     await seedWorkWithContent(context.db);
+    const noteIds = await seedMemoriesDerivedFromWork(context.db);
 
     await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
 
-    const recall = await context.db.select().from(recallItems);
-    expect(recall).toHaveLength(4);
-    expect(recall.every((item) => item.provenanceEntryId === null)).toBe(true);
+    expect(await context.db.select().from(memoryNotes)).toHaveLength(3);
+    expect(await context.db.select().from(memoryPrompts)).toHaveLength(3);
+    for (const noteId of noteIds) {
+      expect(await noteProvenanceEntryId(context.db, noteId)).toBeNull();
+    }
 
     const chunkRows = await context.db.select().from(chunks);
     expect(chunkRows).toHaveLength(1);

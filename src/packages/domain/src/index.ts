@@ -101,6 +101,24 @@ export type { NormalizedEpubMetadata, RawEpubCreator, RawEpubMetadata } from "./
 export { decomposeHtmlChapter } from "./htmlBlocks.js";
 export { createEntryLink, isLinkType, linkTypes } from "./links.js";
 export type { EntryLink, LinkType } from "./links.js";
+export {
+  buildMemoryPrompt,
+  captureSources,
+  isCaptureSource,
+  isSchedulablePrompt,
+  memoryPromptFaces,
+  memoryPromptOwner,
+  promptLifecycles,
+  resolvePromptLifecycle
+} from "./memory.js";
+export type {
+  BuildMemoryPromptInput,
+  CaptureSource,
+  MemoryNote,
+  MemoryPrompt,
+  MemoryPromptFaces,
+  PromptLifecycle
+} from "./memory.js";
 export { blockFromMdastNode, decomposeMarkdown, mdastReadableText } from "./markdownBlocks.js";
 export type {
   DecomposedBlock,
