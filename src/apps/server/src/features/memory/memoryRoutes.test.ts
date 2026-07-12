@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
+  ImportMemoryResultDto,
   MemoryDepositDto,
   MemoryNoteDetailDto,
   MemoryNoteListDto,
@@ -231,6 +232,41 @@ describe("POST /api/memory/notes", () => {
       method: "POST",
       url: "/api/memory/notes",
       payload: { captureSource: "manual", noteText: "", prompts: [] }
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+});
+
+describe("POST /api/memory/import", () => {
+  it("imports a batch of pasted drafts and rejects an invalid batch", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      url: "/api/memory/import",
+      payload: {
+        items: [
+          { captureSource: "import", noteText: "per", prompts: [{ cueText: "per" }] },
+          {
+            captureSource: "import",
+            noteText: "push back",
+            prompts: [{ cueText: "push back", answerText: "pushback" }]
+          }
+        ]
+      }
+    });
+    expect(response.statusCode).toBe(201);
+    const result = response.json() as ImportMemoryResultDto;
+    expect(result.imported).toHaveLength(2);
+    expect(result.imported[0]?.prompts[0]?.lifecycle).toBe("draft");
+    expect(result.imported[1]?.prompts[0]?.lifecycle).toBe("scheduled");
+
+    // The imported notes are owned by the injected user and appear through the standard notes list.
+    const listResponse = await context.server.inject({ method: "GET", url: "/api/memory/notes" });
+    expect((listResponse.json() as MemoryNoteListDto).items).toHaveLength(2);
+
+    const invalid = await context.server.inject({
+      method: "POST",
+      url: "/api/memory/import",
+      payload: { items: [] }
     });
     expect(invalid.statusCode).toBe(400);
   });

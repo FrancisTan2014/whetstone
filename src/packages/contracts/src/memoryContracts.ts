@@ -1,9 +1,16 @@
 import { captureSources, promptLifecycles } from "@whetstone/domain";
+import { type DocumentNodeJSON, isValidDocument } from "@whetstone/document";
 import { z } from "zod";
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
 }
+
+// A ProseMirror/Tiptap document, validated against the shared document schema so a malformed or unsafe
+// cue/answer body never reaches storage. Typed as `DocumentNodeJSON` for consumers.
+export const memoryDocumentSchema = z.custom<DocumentNodeJSON>(isValidDocument, {
+  message: "must be a valid document."
+});
 
 export const captureSourceSchema = z.enum(captureSources);
 
@@ -114,6 +121,14 @@ export const memoryDepositDtoSchema = z
 
 export type MemoryDepositDto = z.infer<typeof memoryDepositDtoSchema>;
 
+// The result of importing a batch (#574): every note that was created, in the pasted order, each with its
+// prompts. The learner's review UI can confirm exactly what landed in Memory.
+export const importMemoryResultDtoSchema = z
+  .object({ imported: z.array(memoryDepositDtoSchema) })
+  .strict();
+
+export type ImportMemoryResultDto = z.infer<typeof importMemoryResultDtoSchema>;
+
 // The full detail of one Memory note (#573): the note plus every prompt hanging off it (draft or
 // scheduled), for the Memory detail/edit surface. Structurally the same as a deposit result, but named
 // for its read semantics.
@@ -161,9 +176,13 @@ export type EditMemoryPromptRequest = z.infer<typeof editMemoryPromptRequestSche
 
 // One retrieval direction supplied when depositing a Memory. `cueText` is the prompt shown first;
 // `answerText` is what to reveal and check against — absent means the producer had no revealable answer.
-// `glossTerm` optionally asks the offline dictionary to SUGGEST an answer (it never blocks the write): if
-// the dictionary knows the term the prompt is scheduled, otherwise it is saved as an unscheduled draft.
-// `chunkId` optionally links the direction to a practice chunk so mastery keeps deriving from FSRS state.
+// `cueDoc`/`answerDoc` optionally carry the rich ProseMirror document a richer authoring surface (the
+// paste-a-list import, #574) produced; when present the server stores them verbatim, otherwise it derives
+// a plain single-block document from the text — so plain-text feeders (Quick Add, MCP) keep working
+// unchanged. `glossTerm` optionally asks the offline dictionary to SUGGEST an answer (it never blocks the
+// write): if the dictionary knows the term the prompt is scheduled, otherwise it is saved as an
+// unscheduled draft. `chunkId` optionally links the direction to a practice chunk so mastery keeps
+// deriving from FSRS state.
 export const memoryPromptInputSchema = z
   .object({
     cueText: z.string().refine(isNonBlank, { message: "cueText must be non-empty." }),
@@ -171,6 +190,8 @@ export const memoryPromptInputSchema = z
       .string()
       .refine(isNonBlank, { message: "answerText must be non-empty." })
       .nullish(),
+    cueDoc: memoryDocumentSchema.nullish(),
+    answerDoc: memoryDocumentSchema.nullish(),
     chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }).nullish(),
     glossTerm: z.string().refine(isNonBlank, { message: "glossTerm must be non-empty." }).nullish()
   })
@@ -200,6 +221,19 @@ export const depositMemoryRequestSchema = z
   .strict();
 
 export type DepositMemoryRequest = z.infer<typeof depositMemoryRequestSchema>;
+
+// Import a batch of pasted notebook drafts (#574) as Memory notes in one atomic write. Each item is a
+// full deposit request, so an answerless term arrives as a note with a single cue-only prompt (an
+// unscheduled draft) and a term with an answer arrives with a cue/answer prompt. The server writes the
+// whole batch in one transaction: either every item is saved or none is, so a failed import never leaves
+// a partial or duplicated batch behind.
+export const importMemoryRequestSchema = z
+  .object({
+    items: z.array(depositMemoryRequestSchema).min(1, { message: "at least one item is required." })
+  })
+  .strict();
+
+export type ImportMemoryRequest = z.infer<typeof importMemoryRequestSchema>;
 
 // Record a review: the learner's (or an LLM's) four-button FSRS rating. The prompt, user, and time are
 // resolved by the server, not part of the body.
@@ -235,6 +269,14 @@ export type GetMemoryPromptToolInput = z.infer<typeof getMemoryPromptToolInputSc
 
 export function parseDepositMemoryRequest(value: unknown): DepositMemoryRequest {
   return depositMemoryRequestSchema.parse(value);
+}
+
+export function parseImportMemoryRequest(value: unknown): ImportMemoryRequest {
+  return importMemoryRequestSchema.parse(value);
+}
+
+export function parseImportMemoryResultDto(value: unknown): ImportMemoryResultDto {
+  return importMemoryResultDtoSchema.parse(value);
 }
 
 export function parseRecordMemoryReviewRequest(value: unknown): RecordMemoryReviewRequest {

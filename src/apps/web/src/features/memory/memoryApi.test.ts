@@ -16,6 +16,7 @@ import {
   editMemoryNote,
   editMemoryPrompt,
   getMemoryNote,
+  importMemory,
   listMemoryNotes,
   suggestGloss
 } from "./memoryApi";
@@ -165,6 +166,48 @@ describe("createMemory", () => {
     await expect(
       createMemory({ captureSource: "manual", noteText: "x", prompts: [{ cueText: "x" }] })
     ).rejects.toThrow("status 400");
+  });
+});
+
+describe("importMemory", () => {
+  it("posts the batch and returns the imported deposits", async () => {
+    const deposit = makeDeposit();
+    const fetchMock = stubFetch({ body: { imported: [deposit] }, ok: true });
+
+    await expect(
+      importMemory({
+        items: [
+          {
+            captureSource: "import",
+            noteText: "spill the beans",
+            prompts: [{ cueText: "spill the beans" }]
+          }
+        ]
+      })
+    ).resolves.toEqual([deposit]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/memory/import", {
+      body: JSON.stringify({
+        items: [
+          {
+            captureSource: "import",
+            noteText: "spill the beans",
+            prompts: [{ cueText: "spill the beans" }]
+          }
+        ]
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("throws when the import fails", async () => {
+    stubFetch({ ok: false, status: 500 });
+
+    await expect(
+      importMemory({
+        items: [{ captureSource: "import", noteText: "x", prompts: [{ cueText: "x" }] }]
+      })
+    ).rejects.toThrow("status 500");
   });
 });
 

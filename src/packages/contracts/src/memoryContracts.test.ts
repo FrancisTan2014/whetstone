@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { createTextDocument } from "@whetstone/document";
+
 import {
   depositMemoryRequestSchema,
   getMemoryPromptToolInputSchema,
+  importMemoryRequestSchema,
   listDuePromptsToolInputSchema,
   memoryPromptCardDtoSchema,
   parseAddMemoryPromptRequest,
   parseDepositMemoryRequest,
   parseEditMemoryNoteRequest,
   parseEditMemoryPromptRequest,
+  parseImportMemoryRequest,
+  parseImportMemoryResultDto,
   parseMemoryDepositDto,
   parseMemoryGlossSuggestionDto,
   parseMemoryNoteDetailDto,
@@ -54,6 +59,28 @@ describe("depositMemoryRequestSchema", () => {
     });
     expect(parsed.prompts[0]?.answerText ?? null).toBeNull();
     expect(parsed.derivedFromEntryId).toBe("block-9");
+  });
+
+  it("accepts optional rich cue/answer documents on a prompt (#574)", () => {
+    const cueDoc = createTextDocument("per");
+    const answerDoc = createTextDocument("each");
+    const parsed = parseDepositMemoryRequest({
+      captureSource: "import",
+      noteText: "per",
+      prompts: [{ cueText: "per", answerText: "each", cueDoc, answerDoc }]
+    });
+    expect(parsed.prompts[0]?.cueDoc).toEqual(cueDoc);
+    expect(parsed.prompts[0]?.answerDoc).toEqual(answerDoc);
+  });
+
+  it("rejects a cue document that is not a valid document node", () => {
+    expect(() =>
+      depositMemoryRequestSchema.parse({
+        captureSource: "import",
+        noteText: "per",
+        prompts: [{ cueText: "per", cueDoc: { type: "not-a-document" } }]
+      })
+    ).toThrow(/valid document/);
   });
 
   it("rejects an empty prompt list", () => {
@@ -275,5 +302,62 @@ describe("Memory CRUD requests + gloss suggestion (#573)", () => {
     expect(
       parseMemoryGlossSuggestionDto({ term: "xyzzy", suggestion: null }).suggestion
     ).toBeNull();
+  });
+});
+
+describe("import batch contracts (#574)", () => {
+  it("accepts a batch of deposit items and preserves their order", () => {
+    const parsed = parseImportMemoryRequest({
+      items: [
+        { captureSource: "import", noteText: "per", prompts: [{ cueText: "per" }] },
+        {
+          captureSource: "import",
+          noteText: "diem\n\nday",
+          prompts: [{ cueText: "diem", answerText: "day" }]
+        }
+      ]
+    });
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.items[1]?.prompts[0]?.answerText).toBe("day");
+  });
+
+  it("rejects an empty batch", () => {
+    expect(() => importMemoryRequestSchema.parse({ items: [] })).toThrow(/at least one item/);
+  });
+
+  it("rejects an item that is not a valid deposit request", () => {
+    expect(() =>
+      importMemoryRequestSchema.parse({
+        items: [{ captureSource: "import", noteText: "x", prompts: [] }]
+      })
+    ).toThrow(/at least one prompt/);
+  });
+
+  it("parses an import result of created notes via parseImportMemoryResultDto", () => {
+    const result = parseImportMemoryResultDto({
+      imported: [
+        {
+          note: {
+            noteId: "note-1",
+            captureSource: "import",
+            bodyText: "per",
+            derivedFromEntryId: null
+          },
+          prompts: [
+            {
+              promptId: "prompt-1",
+              noteId: "note-1",
+              lifecycle: "draft",
+              cueText: "per",
+              answerText: null,
+              chunkId: null,
+              review
+            }
+          ]
+        }
+      ]
+    });
+    expect(result.imported).toHaveLength(1);
+    expect(result.imported[0]?.prompts[0]?.lifecycle).toBe("draft");
   });
 });

@@ -16,6 +16,26 @@ vi.mock("./MemoryQuickAdd", () => ({
   )
 }));
 
+vi.mock("./MemoryImport", () => ({
+  MemoryImport: ({
+    onCancel,
+    onImported
+  }: {
+    onCancel: () => void;
+    onImported: () => void;
+  }): React.JSX.Element => (
+    <div>
+      <p>stub import</p>
+      <button onClick={onCancel} type="button">
+        stub import cancel
+      </button>
+      <button onClick={onImported} type="button">
+        stub imported
+      </button>
+    </div>
+  )
+}));
+
 vi.mock("./MemoryNoteDetail", () => ({
   MemoryNoteDetail: ({
     noteId,
@@ -169,5 +189,37 @@ describe("MemoryPage", () => {
 
     await waitFor(() => expect(mockedList).toHaveBeenLastCalledWith("x"));
     expect(await screen.findByRole("link", { name: "Review 2 due" })).toBeDefined();
+  });
+
+  it("toggles the paste-a-list importer and returns to the list on cancel", async () => {
+    mockedList.mockResolvedValue([makeSummary()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("spill the beans");
+    await user.click(screen.getByRole("button", { name: "Paste a list" }));
+
+    expect(screen.getByText("stub import")).toBeDefined();
+    // The quick-add and list are hidden while the importer is open.
+    expect(screen.queryByRole("button", { name: "stub created" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "stub import cancel" }));
+
+    expect(await screen.findByText("spill the beans")).toBeDefined();
+    expect(screen.queryByText("stub import")).toBeNull();
+  });
+
+  it("returns to the list and reloads after the importer reports imported memories", async () => {
+    mockedList.mockResolvedValue([makeSummary()]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("spill the beans");
+    await user.click(screen.getByRole("button", { name: "Paste a list" }));
+    await user.click(screen.getByRole("button", { name: "stub imported" }));
+
+    await screen.findByText("spill the beans");
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("stub import")).toBeNull();
   });
 });
