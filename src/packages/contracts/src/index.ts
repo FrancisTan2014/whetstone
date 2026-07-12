@@ -538,6 +538,7 @@ export {
   importMemoryResultDtoSchema,
   listDuePromptsToolInputSchema,
   memoryDepositDtoSchema,
+  memoryDocumentSchema,
   memoryGlossSuggestionDtoSchema,
   memoryNoteDetailDtoSchema,
   memoryNoteDtoSchema,

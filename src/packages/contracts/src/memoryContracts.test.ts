@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { createTextDocument } from "@whetstone/document";
+
 import {
   depositMemoryRequestSchema,
   getMemoryPromptToolInputSchema,
@@ -57,6 +59,28 @@ describe("depositMemoryRequestSchema", () => {
     });
     expect(parsed.prompts[0]?.answerText ?? null).toBeNull();
     expect(parsed.derivedFromEntryId).toBe("block-9");
+  });
+
+  it("accepts optional rich cue/answer documents on a prompt (#574)", () => {
+    const cueDoc = createTextDocument("per");
+    const answerDoc = createTextDocument("each");
+    const parsed = parseDepositMemoryRequest({
+      captureSource: "import",
+      noteText: "per",
+      prompts: [{ cueText: "per", answerText: "each", cueDoc, answerDoc }]
+    });
+    expect(parsed.prompts[0]?.cueDoc).toEqual(cueDoc);
+    expect(parsed.prompts[0]?.answerDoc).toEqual(answerDoc);
+  });
+
+  it("rejects a cue document that is not a valid document node", () => {
+    expect(() =>
+      depositMemoryRequestSchema.parse({
+        captureSource: "import",
+        noteText: "per",
+        prompts: [{ cueText: "per", cueDoc: { type: "not-a-document" } }]
+      })
+    ).toThrow(/valid document/);
   });
 
   it("rejects an empty prompt list", () => {

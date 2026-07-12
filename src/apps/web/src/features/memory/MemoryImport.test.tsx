@@ -3,10 +3,35 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createTextDocument } from "@whetstone/document";
+
 vi.mock("./memoryApi", () => ({
   importMemory: vi.fn(),
   suggestGloss: vi.fn()
 }));
+
+// The shared rich editor is a heavy Tiptap surface; stub it with a labelled textarea whose value round-
+// trips through the document helpers, so the review rows behave like editable cue/answer fields in tests.
+vi.mock("../../shared/editor", async () => {
+  const { createTextDocument: makeDoc, documentText } = await import("@whetstone/document");
+  return {
+    RichContentEditor: ({
+      ariaLabel,
+      document,
+      onChange
+    }: {
+      ariaLabel?: string;
+      document: Parameters<typeof documentText>[0];
+      onChange: (document: ReturnType<typeof makeDoc>) => void;
+    }) => (
+      <textarea
+        aria-label={ariaLabel}
+        onChange={(event) => onChange(makeDoc(event.target.value))}
+        value={documentText(document)}
+      />
+    )
+  };
+});
 
 import type { MemoryGlossSuggestionDto } from "@whetstone/contracts";
 
@@ -61,7 +86,7 @@ describe("MemoryImport paste phase", () => {
 });
 
 describe("MemoryImport review + import", () => {
-  it("imports each line as an item, splitting answers only on explicit separators", async () => {
+  it("imports each line as an item, carrying the rich cue/answer documents", async () => {
     const onImported = vi.fn();
     render(<MemoryImport onCancel={vi.fn()} onImported={onImported} />);
 
@@ -74,12 +99,19 @@ describe("MemoryImport review + import", () => {
           {
             captureSource: "import",
             noteText: "per",
-            prompts: [{ cueText: "per", answerText: "each" }]
+            prompts: [
+              {
+                cueText: "per",
+                answerText: "each",
+                cueDoc: createTextDocument("per"),
+                answerDoc: createTextDocument("each")
+              }
+            ]
           },
           {
             captureSource: "import",
             noteText: "serendipity",
-            prompts: [{ cueText: "serendipity" }]
+            prompts: [{ cueText: "serendipity", cueDoc: createTextDocument("serendipity") }]
           }
         ]
       })
@@ -100,7 +132,14 @@ describe("MemoryImport review + import", () => {
           {
             captureSource: "import",
             noteText: "push back\n\nresisted the plan in full",
-            prompts: [{ cueText: "push back", answerText: "pushback" }]
+            prompts: [
+              {
+                cueText: "push back",
+                answerText: "pushback",
+                cueDoc: createTextDocument("push back"),
+                answerDoc: createTextDocument("pushback")
+              }
+            ]
           }
         ]
       })
@@ -125,7 +164,14 @@ describe("MemoryImport review + import", () => {
           {
             captureSource: "import",
             noteText: "per annum",
-            prompts: [{ cueText: "per annum", answerText: "each year" }]
+            prompts: [
+              {
+                cueText: "per annum",
+                answerText: "each year",
+                cueDoc: createTextDocument("per annum"),
+                answerDoc: createTextDocument("each year")
+              }
+            ]
           }
         ]
       })
@@ -144,7 +190,11 @@ describe("MemoryImport review + import", () => {
     await waitFor(() =>
       expect(mockedImport).toHaveBeenCalledWith({
         items: [
-          { captureSource: "import", noteText: "per = each", prompts: [{ cueText: "per = each" }] }
+          {
+            captureSource: "import",
+            noteText: "per = each",
+            prompts: [{ cueText: "per = each", cueDoc: createTextDocument("per = each") }]
+          }
         ]
       })
     );
@@ -160,7 +210,11 @@ describe("MemoryImport review + import", () => {
     await waitFor(() =>
       expect(mockedImport).toHaveBeenCalledWith({
         items: [
-          { captureSource: "import", noteText: "alpha\n\nbeta", prompts: [{ cueText: "alpha" }] }
+          {
+            captureSource: "import",
+            noteText: "alpha\n\nbeta",
+            prompts: [{ cueText: "alpha", cueDoc: createTextDocument("alpha") }]
+          }
         ]
       })
     );
@@ -179,12 +233,21 @@ describe("MemoryImport review + import", () => {
           {
             captureSource: "import",
             noteText: "push back",
-            prompts: [{ cueText: "push back", answerText: "pushback" }]
+            prompts: [
+              {
+                cueText: "push back",
+                answerText: "pushback",
+                cueDoc: createTextDocument("push back"),
+                answerDoc: createTextDocument("pushback")
+              }
+            ]
           },
           {
             captureSource: "import",
             noteText: "resisted the plan",
-            prompts: [{ cueText: "resisted the plan" }]
+            prompts: [
+              { cueText: "resisted the plan", cueDoc: createTextDocument("resisted the plan") }
+            ]
           }
         ]
       })
@@ -202,7 +265,13 @@ describe("MemoryImport review + import", () => {
 
     await waitFor(() =>
       expect(mockedImport).toHaveBeenCalledWith({
-        items: [{ captureSource: "import", noteText: "keep", prompts: [{ cueText: "keep" }] }]
+        items: [
+          {
+            captureSource: "import",
+            noteText: "keep",
+            prompts: [{ cueText: "keep", cueDoc: createTextDocument("keep") }]
+          }
+        ]
       })
     );
   });
@@ -215,7 +284,9 @@ describe("MemoryImport review + import", () => {
     await user.click(screen.getByRole("button", { name: "Suggest answer" }));
 
     await waitFor(() =>
-      expect((screen.getByLabelText("Answer") as HTMLInputElement).value).toBe("to reveal a secret")
+      expect((screen.getByLabelText("Answer") as HTMLTextAreaElement).value).toBe(
+        "to reveal a secret"
+      )
     );
     await user.click(screen.getByRole("button", { name: /^Import/ }));
     await waitFor(() =>
@@ -224,7 +295,14 @@ describe("MemoryImport review + import", () => {
           {
             captureSource: "import",
             noteText: "spill",
-            prompts: [{ cueText: "spill", answerText: "to reveal a secret" }]
+            prompts: [
+              {
+                cueText: "spill",
+                answerText: "to reveal a secret",
+                cueDoc: createTextDocument("spill"),
+                answerDoc: createTextDocument("to reveal a secret")
+              }
+            ]
           }
         ]
       })

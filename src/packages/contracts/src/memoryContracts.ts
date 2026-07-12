@@ -1,9 +1,16 @@
 import { captureSources, promptLifecycles } from "@whetstone/domain";
+import { type DocumentNodeJSON, isValidDocument } from "@whetstone/document";
 import { z } from "zod";
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
 }
+
+// A ProseMirror/Tiptap document, validated against the shared document schema so a malformed or unsafe
+// cue/answer body never reaches storage. Typed as `DocumentNodeJSON` for consumers.
+export const memoryDocumentSchema = z.custom<DocumentNodeJSON>(isValidDocument, {
+  message: "must be a valid document."
+});
 
 export const captureSourceSchema = z.enum(captureSources);
 
@@ -169,9 +176,13 @@ export type EditMemoryPromptRequest = z.infer<typeof editMemoryPromptRequestSche
 
 // One retrieval direction supplied when depositing a Memory. `cueText` is the prompt shown first;
 // `answerText` is what to reveal and check against — absent means the producer had no revealable answer.
-// `glossTerm` optionally asks the offline dictionary to SUGGEST an answer (it never blocks the write): if
-// the dictionary knows the term the prompt is scheduled, otherwise it is saved as an unscheduled draft.
-// `chunkId` optionally links the direction to a practice chunk so mastery keeps deriving from FSRS state.
+// `cueDoc`/`answerDoc` optionally carry the rich ProseMirror document a richer authoring surface (the
+// paste-a-list import, #574) produced; when present the server stores them verbatim, otherwise it derives
+// a plain single-block document from the text — so plain-text feeders (Quick Add, MCP) keep working
+// unchanged. `glossTerm` optionally asks the offline dictionary to SUGGEST an answer (it never blocks the
+// write): if the dictionary knows the term the prompt is scheduled, otherwise it is saved as an
+// unscheduled draft. `chunkId` optionally links the direction to a practice chunk so mastery keeps
+// deriving from FSRS state.
 export const memoryPromptInputSchema = z
   .object({
     cueText: z.string().refine(isNonBlank, { message: "cueText must be non-empty." }),
@@ -179,6 +190,8 @@ export const memoryPromptInputSchema = z
       .string()
       .refine(isNonBlank, { message: "answerText must be non-empty." })
       .nullish(),
+    cueDoc: memoryDocumentSchema.nullish(),
+    answerDoc: memoryDocumentSchema.nullish(),
     chunkId: z.string().refine(isNonBlank, { message: "chunkId must be non-empty." }).nullish(),
     glossTerm: z.string().refine(isNonBlank, { message: "glossTerm must be non-empty." }).nullish()
   })

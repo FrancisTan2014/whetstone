@@ -142,6 +142,9 @@ can navigate them from another package.
   `PATCH /api/memory/prompts/:id`, `GET /api/memory/suggest` (offline gloss), and `POST /api/memory/import`
   (#574: `importMemoryBatch` deposits a pasted notebook list as many notes in ONE transaction — all-or-nothing,
   reusing the shared `writeMemory` atomic write; answers resolve up front, gloss stays outside the tx).
+  A prompt input carries optional `cueDoc`/`answerDoc` documents (`memoryDocumentSchema`, #574) so a rich
+  authoring surface can supply formatted cue/answer; when omitted the server derives a single-block document
+  from the text, so plain-text feeders (Quick Add, MCP) are unchanged.
   List/search/detail queries
   and the `editMemoryNote`/`editMemoryPrompt`/`addPromptToNote`/`deleteMemoryNote` commands live alongside
   the deposit path; a note appears once in the Timeline via `diaryQueries.ts` (a `memory_note` row with its
@@ -857,11 +860,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   requests an offline gloss then confirm-or-save-as-draft; expanded, a multi-direction cue/answer/context
   form). Opening a row shows `MemoryNoteDetail` (edit the fragment, `MemoryPromptRow` per prompt,
   `MemoryAddDirection`, delete). A "Paste a list" toggle opens `MemoryImport.tsx` (#574): paste multiline
-  plain text, preview the deterministic split into editable drafts (edit/undo-split/merge/split-context/
-  remove/suggest-answer), then import the whole batch atomically. Its pure list-edit logic lives in
-  `memoryImportDrafts.ts` (over `@whetstone/domain` `notebookImport`); the component only wires it to inputs
-  and the `importMemory` call. The review flow itself stays at `/recall`; Memory links there when a note is
-  due. `memoryApi.ts` calls `/api/memory/*` and parses every response through `memoryContracts`.
+  plain text, preview the deterministic split into editable drafts whose cue/answer are edited in the shared
+  `RichContentEditor` (edit/undo-split/merge/split-context/remove/suggest-answer), then import the whole
+  batch atomically. Each draft's rich cue/answer document rides through the deposit contract's optional
+  `cueDoc`/`answerDoc` (see `memoryContracts`). Its pure list-edit logic lives in
+  `memoryImportDrafts.ts` (doc-based drafts over `@whetstone/domain` `notebookImport`); the component only
+  wires it to inputs and the `importMemory` call. The review flow itself stays at `/recall`; Memory links
+  there when a note is due. `memoryApi.ts` calls `/api/memory/*` and parses every response through
+  `memoryContracts`.
   `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
   finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
   already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,

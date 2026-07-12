@@ -17,7 +17,7 @@ import {
   type ReviewRating,
   type ReviewState
 } from "@whetstone/domain";
-import { createTextDocument } from "@whetstone/document";
+import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 import { eq, inArray, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -88,11 +88,15 @@ export type DeleteMemoryNoteResult =
 const SNOOZE_DEFER_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-// One retrieval prompt to persist under a note, after the answer has been resolved.
+// One retrieval prompt to persist under a note, after the answer has been resolved. `cueDoc`/`answerDoc`
+// carry a rich authoring surface's supplied document (the paste-a-list import, #574); when null the row
+// builder derives a plain single-block document from the text, so plain-text feeders stay unchanged.
 type ResolvedPrompt = Readonly<{
   id: EntryId;
   cueText: string;
   answerText: string | null;
+  cueDoc: DocumentNodeJSON | null;
+  answerDoc: DocumentNodeJSON | null;
   chunkId: string | null;
 }>;
 
@@ -201,6 +205,8 @@ async function prepareDeposit(
       id: toEntryId(dependencies.createId()),
       cueText: prompt.cueText,
       answerText: await resolveAnswer(dependencies, prompt),
+      cueDoc: prompt.cueDoc ?? null,
+      answerDoc: prompt.answerDoc ?? null,
       chunkId: prompt.chunkId ?? null
     });
   }
@@ -282,6 +288,8 @@ async function depositSinglePromptMemory(
       id: toEntryId(dependencies.createId()),
       cueText: input.cueText,
       answerText,
+      cueDoc: null,
+      answerDoc: null,
       chunkId: input.chunkId
     },
     noteId,
@@ -389,9 +397,12 @@ function buildPromptRow(prompt: ResolvedPrompt, noteId: EntryId, now: Date): Mem
   const base = {
     entryId: prompt.id,
     noteEntryId: noteId,
-    cueDoc: createTextDocument(prompt.cueText),
+    cueDoc: prompt.cueDoc ?? createTextDocument(prompt.cueText),
     cueText: prompt.cueText,
-    answerDoc: prompt.answerText === null ? null : createTextDocument(prompt.answerText),
+    answerDoc:
+      prompt.answerText === null
+        ? null
+        : (prompt.answerDoc ?? createTextDocument(prompt.answerText)),
     answerText: prompt.answerText,
     lifecycle: built.lifecycle,
     chunkId: prompt.chunkId,
@@ -577,6 +588,8 @@ export async function addPromptToNote(
       id: toEntryId(dependencies.createId()),
       cueText: request.cueText,
       answerText,
+      cueDoc: request.cueDoc ?? null,
+      answerDoc: request.answerDoc ?? null,
       chunkId: request.chunkId ?? null
     },
     toEntryId(noteId),

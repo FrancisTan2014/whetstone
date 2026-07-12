@@ -1,3 +1,4 @@
+import { createTextDocument, documentText } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -20,24 +21,25 @@ function idMaker(): () => string {
   };
 }
 
+// The rich cue/answer are documents; read their plaintext to assert on the parsed content.
+function cueText(draft: ImportDraft | undefined): string | undefined {
+  return draft === undefined ? undefined : documentText(draft.cueDoc);
+}
+
+function answerText(draft: ImportDraft | undefined): string | undefined {
+  return draft === undefined ? undefined : documentText(draft.answerDoc);
+}
+
 describe("draftsFromText", () => {
-  it("parses each line into an editable draft with an id and normalized empty fields", () => {
+  it("parses each line into an editable draft with an id and rich cue/answer documents", () => {
     const drafts = draftsFromText("per = each\nserendipity", idMaker());
     expect(drafts).toHaveLength(2);
-    expect(drafts[0]).toMatchObject({
-      id: "id-1",
-      cue: "per",
-      answer: "each",
-      context: "",
-      separator: "=",
-      note: null
-    });
-    expect(drafts[1]).toMatchObject({
-      id: "id-2",
-      cue: "serendipity",
-      answer: "",
-      separator: null
-    });
+    expect(drafts[0]).toMatchObject({ id: "id-1", context: "", separator: "=", note: null });
+    expect(cueText(drafts[0])).toBe("per");
+    expect(answerText(drafts[0])).toBe("each");
+    expect(drafts[1]).toMatchObject({ id: "id-2", separator: null });
+    expect(cueText(drafts[1])).toBe("serendipity");
+    expect(answerText(drafts[1])).toBe("");
   });
 
   it("keeps indented lines as a draft's context string", () => {
@@ -49,14 +51,14 @@ describe("draftsFromText", () => {
 describe("updateDraftIn", () => {
   it("patches only the matching draft", () => {
     const drafts = draftsFromText("a\nb", idMaker());
-    const next = updateDraftIn(drafts, "id-1", { cue: "alpha" });
-    expect(next[0]?.cue).toBe("alpha");
-    expect(next[1]?.cue).toBe("b");
+    const next = updateDraftIn(drafts, "id-1", { cueDoc: createTextDocument("alpha") });
+    expect(cueText(next[0])).toBe("alpha");
+    expect(cueText(next[1])).toBe("b");
   });
 
   it("leaves the list unchanged for an unknown id", () => {
     const drafts = draftsFromText("a", idMaker());
-    expect(updateDraftIn(drafts, "missing", { cue: "x" })).toEqual(drafts);
+    expect(updateDraftIn(drafts, "missing", { cueDoc: createTextDocument("x") })).toEqual(drafts);
   });
 });
 
@@ -64,7 +66,7 @@ describe("removeDraftFrom", () => {
   it("drops the matching draft and keeps the rest", () => {
     const drafts = draftsFromText("keep\ndrop", idMaker());
     const next = removeDraftFrom(drafts, "id-2");
-    expect(next.map((draft) => draft.cue)).toEqual(["keep"]);
+    expect(next.map((draft) => documentText(draft.cueDoc))).toEqual(["keep"]);
   });
 });
 
@@ -72,13 +74,15 @@ describe("undoSplitIn", () => {
   it("restores the heading as the cue for a proposed split, preserving other drafts", () => {
     const drafts = draftsFromText("per = each\nplain", idMaker());
     const next = undoSplitIn(drafts, "id-1");
-    expect(next[0]).toMatchObject({ cue: "per = each", answer: "", separator: null });
-    expect(next[1]?.cue).toBe("plain");
+    expect(next[0]).toMatchObject({ separator: null });
+    expect(cueText(next[0])).toBe("per = each");
+    expect(answerText(next[0])).toBe("");
+    expect(cueText(next[1])).toBe("plain");
   });
 
   it("is a no-op for a draft that has no proposed split", () => {
     const drafts = draftsFromText("plain", idMaker());
-    expect(undoSplitIn(drafts, "id-1")[0]?.cue).toBe("plain");
+    expect(cueText(undoSplitIn(drafts, "id-1")[0])).toBe("plain");
   });
 });
 
@@ -87,8 +91,9 @@ describe("mergeDraftsAt", () => {
     const drafts = draftsFromText("alpha\nbeta\ngamma", idMaker());
     const next = mergeDraftsAt(drafts, 0);
     expect(next).toHaveLength(2);
-    expect(next[0]).toMatchObject({ cue: "alpha", context: "beta" });
-    expect(next[1]?.cue).toBe("gamma");
+    expect(next[0]).toMatchObject({ context: "beta" });
+    expect(cueText(next[0])).toBe("alpha");
+    expect(cueText(next[1])).toBe("gamma");
   });
 
   it("is a no-op when there is no draft after the index", () => {
@@ -103,8 +108,11 @@ describe("splitContextIn", () => {
     const drafts = draftsFromText("push back -> pushback\n    resisted the plan", make);
     const next = splitContextIn(drafts, "id-1", make);
     expect(next).toHaveLength(2);
-    expect(next[0]).toMatchObject({ cue: "push back", answer: "pushback", context: "" });
-    expect(next[1]).toMatchObject({ cue: "resisted the plan", context: "" });
+    expect(next[0]).toMatchObject({ context: "" });
+    expect(cueText(next[0])).toBe("push back");
+    expect(answerText(next[0])).toBe("pushback");
+    expect(next[1]).toMatchObject({ context: "" });
+    expect(cueText(next[1])).toBe("resisted the plan");
     expect(next[1]?.id).toBe("id-2");
   });
 
@@ -122,16 +130,23 @@ describe("splitContextIn", () => {
 });
 
 describe("importableDrafts / toImportItems", () => {
-  it("drops blank-cue rows and builds deposit items with import capture source", () => {
+  it("drops blank-cue rows and carries the rich cue/answer documents into deposit items", () => {
     const make = idMaker();
     let drafts = draftsFromText("per = each\nserendipity", make);
-    drafts = updateDraftIn(drafts, "id-2", { cue: "   " });
+    drafts = updateDraftIn(drafts, "id-2", { cueDoc: createTextDocument("   ") });
     expect(importableDrafts(drafts)).toHaveLength(1);
     expect(toImportItems(drafts)).toEqual([
       {
         captureSource: "import",
         noteText: "per",
-        prompts: [{ cueText: "per", answerText: "each" }]
+        prompts: [
+          {
+            cueText: "per",
+            answerText: "each",
+            cueDoc: createTextDocument("per"),
+            answerDoc: createTextDocument("each")
+          }
+        ]
       }
     ]);
   });
@@ -140,8 +155,8 @@ describe("importableDrafts / toImportItems", () => {
     const drafts: ImportDraft[] = [
       {
         id: "x",
-        cue: "term",
-        answer: "",
+        cueDoc: createTextDocument("term"),
+        answerDoc: createTextDocument(""),
         context: "an example",
         separator: null,
         raw: "term",
@@ -149,7 +164,11 @@ describe("importableDrafts / toImportItems", () => {
       }
     ];
     expect(toImportItems(drafts)).toEqual([
-      { captureSource: "import", noteText: "term\n\nan example", prompts: [{ cueText: "term" }] }
+      {
+        captureSource: "import",
+        noteText: "term\n\nan example",
+        prompts: [{ cueText: "term", cueDoc: createTextDocument("term") }]
+      }
     ]);
   });
 });

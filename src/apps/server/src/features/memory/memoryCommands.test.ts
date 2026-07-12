@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applyRating, newReviewState } from "@whetstone/domain";
+import { createTextDocument } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -360,6 +361,36 @@ describe("importMemoryBatch (#574)", () => {
     expect(imported[0]?.prompts[0]?.answerText).toBe("gloss:alpha");
     expect(imported[0]?.prompts[0]?.lifecycle).toBe("scheduled");
     expect(imported[1]?.prompts[0]?.answerText).toBe("gloss:beta");
+  });
+
+  it("persists a supplied rich cue/answer document verbatim, and derives one from text when omitted", async () => {
+    const richCue = createTextDocument("push back");
+    const richAnswer = createTextDocument("pushback");
+    await importMemoryBatch(
+      context.deps,
+      [
+        {
+          captureSource: "import",
+          noteText: "push back",
+          prompts: [
+            { cueText: "push back", answerText: "pushback", cueDoc: richCue, answerDoc: richAnswer }
+          ]
+        },
+        { captureSource: "import", noteText: "plain", prompts: [{ cueText: "plain" }] }
+      ],
+      userA,
+      t0
+    );
+
+    const rows = await context.db.select().from(memoryPrompts);
+    const supplied = rows.find((row) => row.cueText === "push back");
+    const derived = rows.find((row) => row.cueText === "plain");
+    // The learner's edited documents are stored as-is.
+    expect(supplied?.cueDoc).toEqual(richCue);
+    expect(supplied?.answerDoc).toEqual(richAnswer);
+    // A plain-text feeder (no supplied doc) still gets a single-block document derived from its text.
+    expect(derived?.cueDoc).toEqual(createTextDocument("plain"));
+    expect(derived?.answerDoc).toBeNull();
   });
 
   it("rolls back the whole batch when any item fails, saving nothing", async () => {

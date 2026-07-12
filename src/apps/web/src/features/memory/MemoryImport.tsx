@@ -1,5 +1,8 @@
 import { useRef, useState } from "react";
 
+import { createTextDocument, documentText } from "@whetstone/document";
+
+import { RichContentEditor } from "../../shared/editor";
 import { Button } from "../../shared/ui/Button";
 import { importMemory, suggestGloss } from "./memoryApi";
 import {
@@ -64,7 +67,10 @@ export function MemoryImport({ onImported, onCancel }: MemoryImportProps): React
           ? updateDraftIn(current, id, {
               note: `No dictionary suggestion for \u201c${term}\u201d.`
             })
-          : updateDraftIn(current, id, { answer: result.suggestion, note: null })
+          : updateDraftIn(current, id, {
+              answerDoc: createTextDocument(result.suggestion),
+              note: null
+            })
       );
     } catch {
       setError(requestFailedMessage);
@@ -131,26 +137,26 @@ export function MemoryImport({ onImported, onCancel }: MemoryImportProps): React
               >
                 <label className="flex flex-col gap-1 text-sm text-text">
                   Cue
-                  <input
-                    className="rounded border border-border bg-surface px-2 py-1 text-text"
-                    onChange={(event) =>
-                      setDrafts((current) =>
-                        updateDraftIn(current, draft.id, { cue: event.target.value })
-                      )
+                  <RichContentEditor
+                    ariaLabel="Cue"
+                    document={draft.cueDoc}
+                    onChange={(document) =>
+                      setDrafts((current) => updateDraftIn(current, draft.id, { cueDoc: document }))
                     }
-                    value={draft.cue}
+                    presentation="compact"
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-sm text-text">
                   Answer
-                  <input
-                    className="rounded border border-border bg-surface px-2 py-1 text-text"
-                    onChange={(event) =>
+                  <RichContentEditor
+                    ariaLabel="Answer"
+                    document={draft.answerDoc}
+                    onChange={(document) =>
                       setDrafts((current) =>
-                        updateDraftIn(current, draft.id, { answer: event.target.value })
+                        updateDraftIn(current, draft.id, { answerDoc: document })
                       )
                     }
-                    value={draft.answer}
+                    presentation="compact"
                   />
                 </label>
                 {draft.context.length > 0 ? (
@@ -178,9 +184,9 @@ export function MemoryImport({ onImported, onCancel }: MemoryImportProps): React
                       Undo split
                     </Button>
                   ) : null}
-                  {draft.answer.trim().length === 0 ? (
+                  {documentText(draft.answerDoc).trim().length === 0 ? (
                     <Button
-                      onClick={() => void suggest(draft.id, draft.cue)}
+                      onClick={() => void suggest(draft.id, documentText(draft.cueDoc))}
                       size="sm"
                       type="button"
                       variant="ghost"

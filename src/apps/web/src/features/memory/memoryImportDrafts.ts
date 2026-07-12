@@ -1,4 +1,5 @@
 import type { DepositMemoryRequest, ImportMemoryRequest } from "@whetstone/contracts";
+import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
 import {
   mergeNotebookDrafts,
   parseNotebookList,
@@ -8,14 +9,15 @@ import {
   type ParsedNotebookDraft
 } from "@whetstone/domain";
 
-// One editable review row for the "Paste a list" surface (#574). It carries every field the domain parser
-// produced (so the shared edit ops can be reused losslessly) plus a stable `id` for React keys and a
-// `note` for a per-row status message (e.g. a dictionary miss). `answer`/`context` are kept as strings
-// ("" = none) so the review inputs stay controlled.
+// One editable review row for the "Paste a list" surface (#574). The cue and answer are rich documents so
+// the learner can format them in the shared editor before importing (the reviewer's requirement); their
+// plaintext is derived on demand via `documentText`. `context` stays a plain string ("" = none) since the
+// reviewer's ask is cue/answer only. `separator`/`raw` retain the parse so the shared structural edit ops
+// stay lossless, `id` is a stable React key, and `note` is a per-row status message (e.g. a gloss miss).
 export type ImportDraft = Readonly<{
   id: string;
-  cue: string;
-  answer: string;
+  cueDoc: DocumentNodeJSON;
+  answerDoc: DocumentNodeJSON;
   context: string;
   separator: NotebookSeparator | null;
   raw: string;
@@ -26,11 +28,13 @@ export type ImportDraft = Readonly<{
 export type IdMaker = () => string;
 
 // Convert an editable row back into the domain's parsed shape so the shared edit ops operate on it; a
-// blank answer/context maps to null, matching the parser's own representation.
+// blank answer/context maps to null, matching the parser's own representation. Structural ops rebuild the
+// docs from this plaintext, so rich formatting is lost only on a reshape, never on a direct edit.
 function toParsed(draft: ImportDraft): ParsedNotebookDraft {
+  const answer = documentText(draft.answerDoc);
   return {
-    cue: draft.cue,
-    answer: draft.answer.trim().length === 0 ? null : draft.answer,
+    cue: documentText(draft.cueDoc),
+    answer: answer.trim().length === 0 ? null : answer,
     separator: draft.separator,
     context: draft.context.trim().length === 0 ? null : draft.context,
     raw: draft.raw
@@ -40,8 +44,8 @@ function toParsed(draft: ImportDraft): ParsedNotebookDraft {
 function fromParsed(parsed: ParsedNotebookDraft, id: string): ImportDraft {
   return {
     id,
-    cue: parsed.cue,
-    answer: parsed.answer ?? "",
+    cueDoc: createTextDocument(parsed.cue),
+    answerDoc: createTextDocument(parsed.answer ?? ""),
     context: parsed.context ?? "",
     separator: parsed.separator,
     raw: parsed.raw,
@@ -126,21 +130,26 @@ export function splitContextIn(
 
 // The drafts that carry a non-blank cue and can therefore be imported.
 export function importableDrafts(drafts: ReadonlyArray<ImportDraft>): ReadonlyArray<ImportDraft> {
-  return drafts.filter((draft) => draft.cue.trim().length > 0);
+  return drafts.filter((draft) => documentText(draft.cueDoc).trim().length > 0);
 }
 
 // Build the deposit item for one row: the note body is the cue plus any context (blank-line separated,
-// mirroring Quick Add), and the prompt carries an answer only when one is present — an answerless row
-// saves as an unscheduled draft.
+// mirroring Quick Add), and the prompt carries the rich cue document plus, when an answer is present, its
+// answer text and document — an answerless row saves as an unscheduled draft. `cueText`/`answerText` are
+// the trimmed plaintext (authoritative for search/lifecycle); the documents carry the learner's formatting.
 function toDepositItem(draft: ImportDraft): DepositMemoryRequest {
-  const cue = draft.cue.trim();
-  const answer = draft.answer.trim();
+  const cue = documentText(draft.cueDoc).trim();
+  const answer = documentText(draft.answerDoc).trim();
   const context = draft.context.trim();
   const noteText = context.length === 0 ? cue : `${cue}\n\n${context}`;
   return {
     captureSource: "import",
     noteText,
-    prompts: [answer.length === 0 ? { cueText: cue } : { cueText: cue, answerText: answer }]
+    prompts: [
+      answer.length === 0
+        ? { cueText: cue, cueDoc: draft.cueDoc }
+        : { cueText: cue, answerText: answer, cueDoc: draft.cueDoc, answerDoc: draft.answerDoc }
+    ]
   };
 }
 
