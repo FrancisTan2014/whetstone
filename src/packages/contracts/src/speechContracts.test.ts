@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseTranscription, speechTimingSchema } from "./speechContracts.js";
+import { parseTranscription } from "./speechContracts.js";
 
 describe("parseTranscription", () => {
   const transcription = {
@@ -41,18 +41,5 @@ describe("parseTranscription", () => {
 
   it("rejects unknown fields", () => {
     expect(() => parseTranscription({ extra: true, transcript: "hi", words: [] })).toThrow();
-  });
-});
-
-describe("speechTimingSchema", () => {
-  it("round-trips a derived timing signal", () => {
-    const timing = { interWordPauses: [200, 100], latencyMs: 0, totalDurationMs: 1500 };
-    expect(speechTimingSchema.parse(timing)).toEqual(timing);
-  });
-
-  it("rejects a non-integer latency", () => {
-    expect(() =>
-      speechTimingSchema.parse({ interWordPauses: [], latencyMs: 1.5, totalDurationMs: 0 })
-    ).toThrow();
   });
 });

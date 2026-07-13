@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import { captureLanguageSchema } from "./captureContracts.js";
 
+// The content type for raw recorded-audio uploads: a voice clip's bytes travel as an octet-stream
+// request body (not multipart), so the server registers a matching body parser once and the client
+// sets this as the upload's `content-type`.
+export const audioContentType = "application/octet-stream";
+
 // Shared, Zod-validated shapes for the asynchronous Tap-and-Talk voice capture (#565). A voice clip is
 // saved and durable BEFORE speech-to-text runs: submitting returns a pending capture id + status
 // immediately, and a background worker later transcribes → tidies → makes it ready. The frontend polls
