@@ -4,7 +4,7 @@
 // browser -> env.
 
 import { buildStep } from "./build.mjs";
-import { coachStep } from "./coach.mjs";
+import { aiStep } from "./ai.mjs";
 import { envStep } from "./env.mjs";
 import { installStep } from "./install.mjs";
 import { pdfStep } from "./pdf.mjs";
@@ -20,6 +20,6 @@ export const steps = [
   playwrightStep,
   envStep,
   voiceStep,
-  coachStep,
+  aiStep,
   pdfStep
 ];

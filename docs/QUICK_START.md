@@ -12,7 +12,7 @@ note capture. It does not describe features that are not implemented yet.
 A fresh clone reaches a working app with **one command**, then one to run it:
 
 ```powershell
-pnpm setup   # bootstrap: toolchain, install, build, E2E browser, .env — plus voice + local coach (consent-gated)
+pnpm setup   # bootstrap: toolchain, install, build, E2E browser, .env — deterministic base only (no models)
 pnpm dev     # run the whole stack
 ```
 
@@ -25,31 +25,35 @@ are skipped). To just check readiness without changing anything:
 pnpm setup:doctor   # report each capability as ready / optional-missing / failed; never mutates
 ```
 
-Heavy/system capabilities (voice, local coach, PDF ingestion) are **included in the base `pnpm
-setup`**, but each system install stays **consent-gated**: on a terminal you press **Y** before
-Ollama/Python/OCRmyPDF is installed; decline (or run non-interactively, e.g. CI) and that step falls
-back to instruct-only and the run still exits 0 — nothing installs silently. For a lean run that
-skips voice/coach/PDF entirely (fast iteration, reader-only, CI), use the opt-out:
+Heavy/system capabilities (voice, the local AI utilities, PDF ingestion) are **not** part of the base
+`pnpm setup` — a bare `pnpm setup` provisions only the deterministic base (toolchain, install, build,
+E2E browser, `.env`), so it needs no Ollama, no models, and works offline. Each heavy capability is
+opt-in and stays **consent-gated**: on a terminal you press **Y** before Ollama/Python/OCRmyPDF is
+installed; decline (or run non-interactively, e.g. CI) and that step falls back to instruct-only and
+the run still exits 0 — nothing installs silently. For the one-command full install (every optional
+capability at once):
 
 ```powershell
-pnpm setup:minimal   # base only: toolchain, install, build, E2E browser, .env — no voice/coach/pdf, no prompts
+pnpm setup:all   # base + voice + AI utilities + PDF, each consent-gated
 ```
 
-You can also (re)run a single capability on its own with `pnpm setup:voice`, `pnpm setup:coach`,
-`pnpm setup:pdf`, or `pnpm setup:all` (every capability). The canonical set: `pnpm setup` (full,
-consent-gated) / `pnpm setup:minimal` (lean) / `pnpm setup:doctor` (probe only).
+You can also (re)run a single capability on its own with `pnpm setup:voice`, `pnpm setup:ai`, or
+`pnpm setup:pdf`; `pnpm setup:minimal` is an explicit base-only alias of the default. The canonical
+set: `pnpm setup` (deterministic base) / `pnpm setup:all` (full, consent-gated) / `pnpm setup:doctor`
+(probe only).
 
 > **Why baked-in scripts and not a flag on `pnpm setup`?** `setup` is a **built-in pnpm command**, so
 > `pnpm setup` with any flag is routed to pnpm's built-in and fails with `Unknown option`. The
-> capability scripts (`setup:minimal`, `setup:voice`, `setup:coach`, `setup:pdf`, `setup:all`,
-> `setup:doctor`) bake the flag in and don't collide. For a raw flag/env combo, use the explicit run
-> form: `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes` for unattended consent).
+> capability scripts (`setup:minimal`, `setup:voice`, `setup:ai`, `setup:pdf`, `setup:all`,
+> `setup:doctor`) bake the flag in and don't collide. (`pnpm setup:coach` has been removed — it now
+> just prints the `pnpm setup:ai` migration.) For a raw flag/env combo, use the explicit run form:
+> `pnpm run setup -- --<flag>` (e.g. `pnpm run setup -- --yes` for unattended consent).
 
 ### Voice input (optional)
 
-Voice diary capture transcribes locally with Whisper. The base `pnpm setup` currently installs it
-(consent-gated); if you ran `pnpm setup:minimal`, or declined the prompt, typed diary remains complete
-while a voice capture stays retryable with setup guidance. To (re)run just this capability:
+Voice diary capture transcribes locally with Whisper. It is optional and **not** part of the base
+`pnpm setup`; until you enable it (or if you decline the prompt), typed diary remains complete while a
+voice capture stays retryable with setup guidance. To (re)run just this capability:
 
 ```powershell
 pnpm setup:voice   # installs faster-whisper + the whetstone-whisper wrapper, fetches the model, writes WHISPER_* to .env
@@ -63,7 +67,7 @@ and voice diary yields a real transcript. Details and the STT contract:
 ### PDF ingestion (optional)
 
 Uploading a `.pdf` converts it to Markdown with the local **Docling** worker behind an
-**OCRmyPDF/Tesseract** pre-pass for scanned pages. Unlike voice/coach there is **no runtime fake**, so
+**OCRmyPDF/Tesseract** pre-pass for scanned pages. Unlike voice/AI utilities there is **no runtime fake**, so
 if the toolchain is absent a perfectly valid PDF fails to convert — the app now says so distinctly
 ("PDF ingestion isn't set up on the server yet. Run `pnpm setup:pdf`…") instead of blaming the file,
 and a genuinely corrupt/unsupported PDF still reads as "We couldn't read this PDF." Check or enable the
@@ -164,23 +168,23 @@ ignores `.env`/`.env.*` and allows only `.env.example`.
 ### Coaching model (optional)
 
 The speaking coach runs on a **local Ollama LLM** when configured, and falls back to a deterministic
-fake when it isn't — so no model is required for the loop or the `pnpm validate` gate. The base
-`pnpm setup` already provisions it (consent-gated); to (re)run just this capability end to end:
+fake when it isn't — so no model is required for the loop or the `pnpm validate` gate. The coach is
+being retired, so it no longer has a one-command setup (the former `pnpm setup:coach` now just prints
+a migration hint). To run it locally, install Ollama, pull a converse model, and point the coach at it
+by hand:
 
 ```powershell
-pnpm setup:coach   # installs Ollama (with a Y/N prompt), pulls the converse + 解释 models, writes the coach env to .env
+ollama pull llama3.1:8b
+$env:COACH_MODEL = "llama3.1:8b"
+$env:COACH_CONVERSE_TIER = "cheap"; $env:COACH_ANALYZE_TIER = "cheap"
 ```
 
-It installs Ollama itself (consent-gated — an explicit `Y`, or `--yes` for unattended), pulls the
-converse model (`llama3.1:8b`) and the 文言 explain model (`qwen2.5`), and writes `COACH_MODEL`,
-`EXPLAIN_MODEL`, `COACH_CONVERSE_TIER=cheap`, and `COACH_ANALYZE_TIER=cheap` to `.env` — a
-**fully-local coach** (no cloud key, no data leaving the machine). Pick a different converse model with
-`COACH_MODEL`, or a different explain model with `EXPLAIN_MODEL`; setup pulls, verifies, and persists
-the exact model you choose, so the server serves it too. After it finishes, restart the server.
+That gives a **fully-local coach** (no cloud key, no data leaving the machine). After setting the env,
+restart the server.
 
-With no `COACH_API_KEY`, the coach still runs its cheap/local tier for real; because `pnpm setup
---coach` writes `COACH_ANALYZE_TIER=cheap`, every call is local (no cloud call). Any call still routed
-to `strong` without a key falls back to the deterministic fake.
+With no `COACH_API_KEY`, the coach still runs its cheap/local tier for real; with
+`COACH_ANALYZE_TIER=cheap` every call is local (no cloud call). Any call still routed to `strong`
+without a key falls back to the deterministic fake.
 
 | Variable        | Default   | Purpose                                                             |
 | --------------- | --------- | ------------------------------------------------------------------- |
@@ -201,24 +205,39 @@ On boot the server probes the local model and logs the result; if Ollama is down
 unpulled it **warns with an `ollama pull` hint and keeps running on the fake** (no crash). Full
 detail — tiers, routing, and the boot health check — is in [docs/COACH.md](./COACH.md).
 
-### Lookup "AI 解释" tab (optional, Chinese only)
+### Optional local AI utilities: diary "tidy" + lookup "AI 解释"
 
-For a Chinese selection, the reader's lookup popover offers an optional **"AI 解释 / Explain in context"**
-tab that sends the selected span plus its surrounding block to a **local** model and shows a short,
-clearly **AI-generated** contextual gloss — useful for classical-Chinese terms, 成語, allusions, and
-proper nouns the bundled dictionaries structurally miss. It reuses the same local Ollama daemon as the
-coach and is wired by the same `pnpm setup:coach` (which pulls `EXPLAIN_MODEL`, default `qwen2.5`,
-and writes it to `.env`). To point it at a different 文言-strong model, pull it and set `EXPLAIN_MODEL`:
+Two small, **local-only** AI helpers are decoupled from the coach and off by default (#602), so the
+base install stays deterministic. Provision both in one step with:
+
+```powershell
+pnpm setup:ai   # installs Ollama (Y/N prompt), pulls both models, writes DIARY_TIDY_MODEL + EXPLAIN_MODEL to .env
+```
+
+It pulls the diary-tidy model (`llama3.1:8b`, override `DIARY_TIDY_MODEL`) and the 文言 explain model
+(`qwen2.5`, override `EXPLAIN_MODEL`), verifies each answers through the daemon, and writes only those
+two vars — no cloud key, no coach tier, nothing sent to a cloud provider.
+
+- **Diary tidy** (`DIARY_TIDY_MODEL`): lightly cleans a voice-diary transcript (filler/pause removal,
+  never rewording). **Unset ⇒ the raw transcript is kept verbatim** — no model call.
+- **Lookup "AI 解释"** (`EXPLAIN_MODEL`): for a Chinese selection, the reader's lookup popover offers an
+  optional **"AI 解释 / Explain in context"** tab that sends the selected span plus its surrounding block
+  to a **local** model and shows a short, clearly **AI-generated** contextual gloss — useful for
+  classical-Chinese terms, 成語, allusions, and proper nouns the bundled dictionaries structurally miss.
+  **Unset ⇒ the tab shows a plain "unavailable" state** (never a hang, never a fabricated entry); the
+  dictionary tabs still work and `pnpm validate` stays green with no model.
+
+To point either at a different model, pull it and set the matching var by hand:
 
 ```bash
 ollama pull qwen2.5
 export EXPLAIN_MODEL=qwen2.5
 ```
 
-**Unset ⇒ the tab is absent/honest**: with no model configured it shows a plain "unavailable" state
-(never a hang, never a fabricated entry), the dictionary tabs still work, and `pnpm validate` stays
-green with no model. No cloud key is required. The gloss is a labeled reading aid, never an
-authoritative dictionary entry, and creates no note.
+The gloss is a labeled reading aid, never an authoritative dictionary entry, and creates no note. No
+cloud key is required for either utility. One-release compatibility: if `DIARY_TIDY_MODEL` is unset,
+an existing local `COACH_MODEL` value is honored as a read-only alias; new config should use
+`DIARY_TIDY_MODEL`.
 
 ### Data directory
 

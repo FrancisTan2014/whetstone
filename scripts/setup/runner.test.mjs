@@ -13,10 +13,11 @@ describe("parseArgs", () => {
     expect(parseArgs([])).toEqual({
       doctor: false,
       voice: false,
-      coach: false,
+      ai: false,
       pdf: false,
       all: false,
       minimal: false,
+      coachMoved: false,
       yes: false,
       unknown: []
     });
@@ -28,13 +29,14 @@ describe("parseArgs", () => {
   });
 
   it("recognizes opt-in capability flags, order-independent", () => {
-    expect(parseArgs(["--coach", "--voice"])).toEqual({
+    expect(parseArgs(["--ai", "--voice"])).toEqual({
       doctor: false,
       voice: true,
-      coach: true,
+      ai: true,
       pdf: false,
       all: false,
       minimal: false,
+      coachMoved: false,
       yes: false,
       unknown: []
     });
@@ -54,6 +56,10 @@ describe("parseArgs", () => {
     expect(parseArgs(["--minimal"]).minimal).toBe(true);
   });
 
+  it("recognizes the retired --coach flag so its migration can be printed, not silently ignored", () => {
+    expect(parseArgs(["--coach"])).toMatchObject({ coachMoved: true, unknown: [] });
+  });
+
   it("collects unrecognized flags", () => {
     expect(parseArgs(["--voice", "--nope", "-x"]).unknown).toEqual(["--nope", "-x"]);
   });
@@ -62,34 +68,34 @@ describe("parseArgs", () => {
 describe("selectSteps", () => {
   const base = createFakeStep({ id: "base" }).step;
   const voice = createFakeStep({ id: "voice", optional: true, capability: "voice" }).step;
-  const coach = createFakeStep({ id: "coach", optional: true, capability: "coach" }).step;
+  const ai = createFakeStep({ id: "ai", optional: true, capability: "ai" }).step;
   const pdf = createFakeStep({ id: "pdf", optional: true, capability: "pdf" }).step;
   const optionalNoCapability = createFakeStep({ id: "loose", optional: true }).step;
-  const steps = [base, voice, coach, pdf, optionalNoCapability];
+  const steps = [base, voice, ai, pdf, optionalNoCapability];
 
-  it("includes every optional capability by default (bare `pnpm setup` = full install)", () => {
-    expect(selectSteps(steps, { voice: false, coach: false })).toEqual([base, voice, coach, pdf]);
+  it("installs only the deterministic base by default (bare `pnpm setup` = no optional capability)", () => {
+    expect(selectSteps(steps, { voice: false, ai: false })).toEqual([base]);
   });
 
-  it("narrows to base-only under --minimal", () => {
-    expect(selectSteps(steps, { voice: false, coach: false, minimal: true })).toEqual([base]);
+  it("stays base-only under --minimal", () => {
+    expect(selectSteps(steps, { voice: false, ai: false, minimal: true })).toEqual([base]);
   });
 
-  it("adds only the matching optional capability when its flag is set (setup:voice / setup:coach / setup:pdf)", () => {
-    expect(selectSteps(steps, { voice: true, coach: false })).toEqual([base, voice]);
-    expect(selectSteps(steps, { voice: false, coach: true })).toEqual([base, coach]);
-    expect(selectSteps(steps, { voice: false, coach: false, pdf: true })).toEqual([base, pdf]);
+  it("adds only the matching optional capability when its flag is set (setup:voice / setup:ai / setup:pdf)", () => {
+    expect(selectSteps(steps, { voice: true, ai: false })).toEqual([base, voice]);
+    expect(selectSteps(steps, { voice: false, ai: true })).toEqual([base, ai]);
+    expect(selectSteps(steps, { voice: false, ai: false, pdf: true })).toEqual([base, pdf]);
   });
 
   it("adds both when both flags are set", () => {
-    expect(selectSteps(steps, { voice: true, coach: true })).toEqual([base, voice, coach]);
+    expect(selectSteps(steps, { voice: true, ai: true })).toEqual([base, voice, ai]);
   });
 
-  it("treats --all as an alias of the default (every optional capability)", () => {
-    expect(selectSteps(steps, { voice: false, coach: false, all: true })).toEqual([
+  it("installs every optional capability under --all (the explicit one-command full install)", () => {
+    expect(selectSteps(steps, { voice: false, ai: false, all: true })).toEqual([
       base,
       voice,
-      coach,
+      ai,
       pdf
     ]);
   });
