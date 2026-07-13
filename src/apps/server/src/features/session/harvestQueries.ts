@@ -5,8 +5,8 @@ import type { DbClient } from "../../db/dbClient.js";
 import { noteAnchors, notes, personalEntries, workMeta } from "../../db/schema.js";
 
 // One recent reading capture, shaped as a launchable harvest case (#243): the note that produced it,
-// the prospective harvest case/chunk ids (the SAME ids `harvestReadingCase` creates, so a nudge and a
-// practice lead refer to the same case), the captured snapshot, its source block, the work it came
+// the prospective harvest case/chunk ids (the SAME ids `harvestReadingCase` creates, so the query and
+// the seeded case refer to the same case), the captured snapshot, its source block, the work it came
 // from, and when it was captured (the recency signal).
 export type RecentReadingCapture = Readonly<{
   blockEntryId: string;
@@ -19,12 +19,12 @@ export type RecentReadingCapture = Readonly<{
 }>;
 
 // The harvest case id for a captured note. Kept here (and reused by `harvestReadingCase`) so the
-// nudge, the dismiss cooldown, and the practice lead all key off the same deterministic id.
-function harvestCaseId(noteEntryId: string): string {
+// capture query and the practice lead all key off the same deterministic id.
+export function harvestCaseId(noteEntryId: string): string {
   return `harvest-${noteEntryId}`;
 }
 
-function harvestChunkId(noteEntryId: string): string {
+export function harvestChunkId(noteEntryId: string): string {
   return `harvest-chunk-${noteEntryId}`;
 }
 

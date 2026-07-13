@@ -43,4 +43,21 @@ describe("createServer", () => {
       await server.close();
     }
   });
+
+  it("no longer serves the retired reading→Practice nudge routes (#601)", async () => {
+    const server = createServer({ logger: false });
+
+    try {
+      const get = await server.inject({ method: "GET", url: "/api/nudge" });
+      const dismiss = await server.inject({
+        method: "POST",
+        url: "/api/nudge/harvest-chunk-note-1/dismiss"
+      });
+
+      expect(get.statusCode).toBe(404);
+      expect(dismiss.statusCode).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
 });

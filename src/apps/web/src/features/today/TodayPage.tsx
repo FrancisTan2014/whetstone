@@ -6,7 +6,6 @@ import type {
   DueRecitationPassageDto,
   LatestReadingPositionDto,
   MemoryPromptCardDto,
-  NudgeDto,
   RecitationPlanDto,
   RecitationTodayDto
 } from "@whetstone/contracts";
@@ -15,7 +14,6 @@ import { buttonVariants } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
 import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi.js";
 import { fetchWorks } from "../library/libraryApi.js";
-import { dismissNudge, fetchNudge } from "../nudge/nudgeApi.js";
 import { fetchDueRecall } from "../recall/recallApi.js";
 import {
   fetchContinueRecitation,
@@ -31,15 +29,15 @@ import { fetchLatestReadingPosition } from "./todayApi.js";
 
 // Today is a calm, finite, clearable daily board (PRODUCT.md "v0 assistant home (Today)" + "The
 // arranger") — never a dashboard, feed, streak, or metric. It COMPOSES already-built slices: the
-// voice diary (#246), recall (#318), a Continue-reading seam over the latest reading position, and
-// the reading→practice nudge (#245). Each async arm loads independently so one failing never blanks
-// the page, and the reader stays calm (none of this lives in it).
+// voice diary (#246), recall (#318), and a Continue-reading seam over the latest reading position.
+// Each async arm loads independently so one failing never blanks the page, and the reader stays calm
+// (none of this lives in it). Today performs no proposal or nudge (PRODUCT.md #601).
 //
-// On a true cold start — no works, no reading position, no recall due, no nudge — Today would
-// otherwise say "done for today", which is untruthful when there is simply nothing to start from. So
-// it also reads whether the library holds any work: when every arm is loaded and empty it shows a
-// first-run on-ramp ("Start with one source" → Library) and hides the done-for-today line, until the
-// learner has at least one work or any trace (#391).
+// On a true cold start — no works, no reading position, no recall due — Today would otherwise say
+// "done for today", which is untruthful when there is simply nothing to start from. So it also reads
+// whether the library holds any work: when every arm is loaded and empty it shows a first-run on-ramp
+// ("Start with one source" → Library) and hides the done-for-today line, until the learner has at
+// least one work or any trace (#391).
 
 type RecallState =
   | Readonly<{ status: "error" }>
@@ -64,13 +62,6 @@ type RecitationState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
   | Readonly<{ plan: RecitationPlanDto | undefined; status: "ready" }>;
-
-// The nudge surfaces at most one proposed capture. `nudge: undefined` (cold start / all in cooldown)
-// and the loading/error arms all render nothing — the slot simply stays empty, never a placeholder.
-type NudgeState =
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "loading" }>
-  | Readonly<{ nudge: NudgeDto | undefined; status: "ready" }>;
 
 // Whether the library holds any work yet. Only its "ready + empty" arm feeds the first-run decision;
 // a still-loading or failed load simply means "not known to be a cold start", so Today never claims
@@ -102,7 +93,6 @@ export function TodayPage(): React.JSX.Element {
   const [writing, setWriting] = useState<WritingState>({ status: "loading" });
   const [recitation, setRecitation] = useState<RecitationState>({ status: "loading" });
   const [recite, setRecite] = useState<ReciteState>({ status: "loading" });
-  const [nudge, setNudge] = useState<NudgeState>({ status: "loading" });
   const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
 
   // Load the due-recall batch on mount. A diary capture journals only (#571) — nothing on Today mutates
@@ -149,22 +139,11 @@ export function TodayPage(): React.JSX.Element {
       ({ plan }) => setRecitation({ plan: plan ?? undefined, status: "ready" }),
       () => setRecitation({ status: "error" })
     );
-    fetchNudge().then(
-      (value) => setNudge({ nudge: value, status: "ready" }),
-      () => setNudge({ status: "error" })
-    );
     fetchWorks().then(
       (list) => setLibrary({ hasWorks: list.works.length > 0, status: "ready" }),
       () => setLibrary({ status: "error" })
     );
   }, [loadRecall, loadRecite]);
-
-  // Dismiss = cooldown: remove the card at once (a "not now" is honoured immediately) and tell the
-  // server in the background. A failed dismiss never blanks Today — the card is already gone.
-  function handleDismiss(chunkId: string): void {
-    setNudge({ nudge: undefined, status: "ready" });
-    void dismissNudge(chunkId).catch(() => undefined);
-  }
 
   // The explicit, learner-driven transition out of familiarization (#577): move the plan to "learning" and
   // reflect it at once. A failed transition leaves the card as it was — Today never blanks on it.
@@ -182,7 +161,7 @@ export function TodayPage(): React.JSX.Element {
     void recordRecitationSession(planEntryId).catch(() => undefined);
   }
 
-  const firstRun = isFirstRun({ library, nudge, reading, recall });
+  const firstRun = isFirstRun({ library, reading, recall });
 
   const body = createElement(
     "section",
@@ -215,8 +194,7 @@ export function TodayPage(): React.JSX.Element {
         state: recitation
       }),
       createElement(ReciteCard, { onReviewed: loadRecite, state: recite }),
-      createElement(NudgeCard, { onDismiss: handleDismiss, state: nudge }),
-      createElement(ClearedState, { library, nudge, reading, recall })
+      createElement(ClearedState, { library, reading, recall })
     )
   );
 
@@ -228,12 +206,10 @@ export function TodayPage(): React.JSX.Element {
 // claiming a first-run state it cannot confirm (#391).
 function isFirstRun({
   library,
-  nudge,
   reading,
   recall
 }: Readonly<{
   library: LibraryState;
-  nudge: NudgeState;
   reading: ContinueState;
   recall: RecallState;
 }>): boolean {
@@ -243,9 +219,7 @@ function isFirstRun({
     reading.status === "ready" &&
     reading.position === undefined &&
     recall.status === "ready" &&
-    recall.items.length === 0 &&
-    nudge.status === "ready" &&
-    nudge.nudge === undefined
+    recall.items.length === 0
   );
 }
 
@@ -580,77 +554,10 @@ function renderMaintenanceAction(
   );
 }
 
-// The reading→practice nudge (#245): a quiet, dismissible card proposing the single highest-value,
-// non-cooled-down recent reading capture to practise. Present -> a one-line invitation plus an accept
-// that opens Practice (where the session leads with this same proposed case) and a dismiss (✕) that
-// puts it in cooldown. Absent / loading / failed -> the slot renders nothing (no placeholder); a
-// nudge failure never blanks Today. One at a time, never spammy, never in the reader.
-const SNIPPET_MAX_CHARS = 80;
-
-function shortSnippet(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= SNIPPET_MAX_CHARS) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, SNIPPET_MAX_CHARS).trimEnd()}…`;
-}
-
-function activeNudge(state: NudgeState): NudgeDto | undefined {
-  return state.status === "ready" ? state.nudge : undefined;
-}
-
-function NudgeCard({
-  onDismiss,
-  state
-}: Readonly<{
-  onDismiss: (chunkId: string) => void;
-  state: NudgeState;
-}>): React.JSX.Element | null {
-  const nudge = activeNudge(state);
-  if (nudge === undefined) {
-    return null;
-  }
-
-  return createElement(
-    "section",
-    { "aria-label": "Practice nudge", className: "rounded border border-border bg-surface p-4" },
-    createElement(
-      "div",
-      { className: "flex items-start justify-between gap-3" },
-      createElement("h2", { className: "text-lg font-medium text-text" }, "Practice"),
-      createElement(
-        "button",
-        {
-          "aria-label": "Dismiss this practice nudge",
-          className:
-            "inline-flex min-h-11 min-w-11 items-center justify-center text-text-muted hover:text-text",
-          onClick: () => onDismiss(nudge.chunkId),
-          type: "button"
-        },
-        "✕"
-      )
-    ),
-    createElement(
-      "p",
-      { className: "mt-1 text-text" },
-      "Practise ",
-      createElement("em", null, shortSnippet(nudge.text)),
-      " from ",
-      createElement("em", null, nudge.workTitle),
-      "."
-    ),
-    createElement(
-      Link,
-      { className: `${buttonVariants({ variant: "primary" })} mt-3`, to: "/practice" },
-      "Practise now"
-    )
-  );
-}
-
 // The arranger's compassion clause (PRODUCT.md "The arranger"): when the actionable arms are cleared
-// (no recall due AND no practice nudge to act on), Today shows a calm "done for today" that frees the
-// user — NO streak, NO guilt, NO back-judge, NO penalty. A low or empty day is fine. Diary capture and
-// Continue reading may still show — they are invitations.
+// (no recall due), Today shows a calm "done for today" that frees the user — NO streak, NO guilt, NO
+// back-judge, NO penalty. A low or empty day is fine. Diary capture and Continue reading may still
+// show — they are invitations.
 //
 // "Done for today" is itself a state claim, so it may only appear once Today has positively ruled out
 // a cold start: a loaded non-empty library OR a loaded reading position. While the library (or every
@@ -658,20 +565,14 @@ function NudgeCard({
 // no state claim on unknown information (#391).
 function ClearedState({
   library,
-  nudge,
   reading,
   recall
 }: Readonly<{
   library: LibraryState;
-  nudge: NudgeState;
   reading: ContinueState;
   recall: RecallState;
 }>): React.JSX.Element | null {
-  const actionableClear =
-    recall.status === "ready" &&
-    recall.items.length === 0 &&
-    nudge.status === "ready" &&
-    nudge.nudge === undefined;
+  const actionableClear = recall.status === "ready" && recall.items.length === 0;
   const ruledOutColdStart =
     (library.status === "ready" && library.hasWorks) ||
     (reading.status === "ready" && reading.position !== undefined);

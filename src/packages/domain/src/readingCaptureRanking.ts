@@ -1,15 +1,16 @@
-// Pure ranking for the reading->practice nudge (#245): a recent reading capture is surfaced as ONE
-// value-ranked prompt. The order is gap x frequency (the same value signal the coach navigates by)
+// Pure ranking for the reading→speaking harvest on-ramp (#243): a recent reading capture is chosen to
+// seed a practice case. The order is gap × frequency (the same value signal the coach navigates by)
 // PLUS a bounded recency term, so a fresher capture is gently lifted but never overwhelms a
 // higher-value one. No persistence, network, or UI: the server feeds in candidates it has queried,
-// and these compute the same ranking for the real flow and the tests.
+// and these compute the ranking the harvest lead selects by. (The retired reading→Practice nudge, #245,
+// once shared this ranking; it now serves the harvest on-ramp alone.)
 
 import { chunkGap } from "./learnerModel.js";
 import type { ChunkMasteryStatus } from "./caseMastery.js";
 
 // The recency term peaks for a just-captured snippet and halves every RECENCY_HALF_LIFE_DAYS, so it
 // decays toward zero as a capture ages. Peak is deliberately below a full gap unit (chunkGap("new")
-// is 1), so gap x frequency dominates between captures of similar age while recency breaks ties and
+// is 1), so gap × frequency dominates between captures of similar age while recency breaks ties and
 // can lift a fresher, slightly-lower-gap capture over a stale higher-gap one.
 const RECENCY_PEAK = 0.5;
 const RECENCY_HALF_LIFE_DAYS = 7;
@@ -22,10 +23,10 @@ export function recencyBoost(now: Date, capturedAt: Date): number {
   return RECENCY_PEAK * Math.pow(2, -ageDays / RECENCY_HALF_LIFE_DAYS);
 }
 
-// A reading capture eligible to become the nudge: its identity and display text, the source block it
-// was captured from (for provenance / deep-linking), when it was captured (recency), and the value
+// A reading capture eligible to seed the harvest case: its identity and display text, the source block
+// it was captured from (for provenance / deep-linking), when it was captured (recency), and the value
 // signals (its domain frequency weight and the learner's current mastery status for the chunk).
-export type ReadingNudgeCandidate = Readonly<{
+export type ReadingCaptureCandidate = Readonly<{
   blockEntryId?: string;
   caseId: string;
   capturedAt: Date;
@@ -36,15 +37,15 @@ export type ReadingNudgeCandidate = Readonly<{
   workTitle: string;
 }>;
 
-// A ranked candidate, carrying the gap x frequency + recency score the order is by.
-export type RankedReadingNudge = ReadingNudgeCandidate & Readonly<{ score: number }>;
+// A ranked candidate, carrying the gap × frequency + recency score the order is by.
+export type RankedReadingCapture = ReadingCaptureCandidate & Readonly<{ score: number }>;
 
-// Rank captures by gap x frequency + recency, highest first (chunk id breaks exact ties for a stable
+// Rank captures by gap × frequency + recency, highest first (chunk id breaks exact ties for a stable
 // order). The freshest, highest-value capture the learner is weakest on comes first.
-export function rankReadingNudges(
-  candidates: ReadonlyArray<ReadingNudgeCandidate>,
+export function rankReadingCaptures(
+  candidates: ReadonlyArray<ReadingCaptureCandidate>,
   now: Date
-): ReadonlyArray<RankedReadingNudge> {
+): ReadonlyArray<RankedReadingCapture> {
   return candidates
     .map((candidate) => ({
       ...candidate,
@@ -59,9 +60,9 @@ export function rankReadingNudges(
 }
 
 // The single highest-ranked capture, or undefined when there are none to surface.
-export function topReadingNudge(
-  candidates: ReadonlyArray<ReadingNudgeCandidate>,
+export function topReadingCapture(
+  candidates: ReadonlyArray<ReadingCaptureCandidate>,
   now: Date
-): RankedReadingNudge | undefined {
-  return rankReadingNudges(candidates, now)[0];
+): RankedReadingCapture | undefined {
+  return rankReadingCaptures(candidates, now)[0];
 }

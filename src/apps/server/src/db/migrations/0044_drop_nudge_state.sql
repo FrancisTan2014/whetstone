@@ -1,0 +1,1 @@
+DROP TABLE "nudge_state" CASCADE;

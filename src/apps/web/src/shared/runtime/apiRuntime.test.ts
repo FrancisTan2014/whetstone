@@ -28,7 +28,7 @@ describe("bootstrapApiRuntime", () => {
     const resolution = bootstrapApiRuntime({});
 
     expect(resolution).toEqual({ config: defaultWebHostRuntimeConfig, ok: true });
-    expect(apiUrl("/nudge")).toBe("/api/nudge");
+    expect(apiUrl("/works")).toBe("/api/works");
     expect(hostPlatform()).toBe("web");
   });
 
