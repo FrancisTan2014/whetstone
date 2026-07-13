@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { buildDiaryTidyPrompt } from "@whetstone/domain";
 
-import { createDiaryTidy } from "./diaryTidy.js";
+import { createDiaryTidy, resolveDiaryTidy } from "./diaryTidy.js";
 
 describe("createDiaryTidy", () => {
   it("builds the tidy prompt, calls the model, and trims the reply", async () => {
@@ -55,5 +55,31 @@ describe("createDiaryTidy", () => {
     const tidy = createDiaryTidy(async () => "I did finish the task");
 
     await expect(tidy("I did not finish the task")).resolves.toBe("I did not finish the task");
+  });
+});
+
+describe("resolveDiaryTidy", () => {
+  it("returns an identity tidier (the faithful transcript) when no model is configured, calling no factory", async () => {
+    const createModel = vi.fn();
+    const tidy = resolveDiaryTidy({ config: { modelName: undefined }, createModel });
+
+    await expect(tidy("the original words")).resolves.toBe("the original words");
+    expect(createModel).not.toHaveBeenCalled();
+  });
+
+  it("returns an identity tidier when a model is configured but no factory is wired", async () => {
+    const tidy = resolveDiaryTidy({ config: { modelName: "llama3.1:8b" } });
+
+    await expect(tidy("the original words")).resolves.toBe("the original words");
+  });
+
+  it("builds a real tidier from the configured model when a factory is wired", async () => {
+    const chat = vi.fn(async () => "Today I read a book");
+    const createModel = vi.fn(() => chat);
+    const tidy = resolveDiaryTidy({ config: { modelName: "llama3.1:8b" }, createModel });
+
+    await expect(tidy("um today I, I read a book")).resolves.toBe("Today I read a book");
+    expect(createModel).toHaveBeenCalledWith("llama3.1:8b");
+    expect(chat).toHaveBeenCalledWith(buildDiaryTidyPrompt("um today I, I read a book"));
   });
 });

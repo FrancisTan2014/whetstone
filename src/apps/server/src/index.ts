@@ -32,11 +32,13 @@ import { readExplainConfig, resolveExplainer } from "./lookup/explainProvider.js
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createFakeCoach } from "./coach/fakeCoach.js";
-import { createCoachAdapters, defaultCheapModel } from "./coach/coachAdapters.js";
+import { createCoachAdapters } from "./coach/coachAdapters.js";
 import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
+import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
+import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
 import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
 import { checkCoachHealth } from "./coach/coachHealth.js";
-import { createDiaryTidy } from "./features/diary/diaryTidy.js";
+import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
 import {
   processNextVoiceCapture,
   requeueStalledVoiceCaptures,
@@ -104,8 +106,9 @@ lookupSources.push({ id: "cedict", languages: ["zh-CN", "zh-TW"], lookup: cedict
 // config resolves to an "unavailable" provider (the tab shows its honest empty state), so no model is
 // required for the deploy or the gate. It shares the one `LlmModel` seam (#385) — the same time-boxed
 // local adapter the coach and diary use — so an unreachable daemon can never hang the tab.
+const explainConfig = readExplainConfig();
 const explain = resolveExplainer({
-  config: readExplainConfig(),
+  config: explainConfig,
   createModel: createOllamaModel
 });
 lookupSources.push({
@@ -274,12 +277,15 @@ const server = createServer({
 });
 
 // The async Tap-and-Talk worker (#565): one in-process background loop that drains queued voice captures
-// one at a time (transcribe → tidy → ready). It reuses the same local model seam as diary tidy. No cloud
-// queue or external runtime — an in-process worker suits the local-first app.
+// one at a time (transcribe → tidy → ready). The diary "tidy" pass is an optional local AI utility now
+// decoupled from the coach (#602): it uses the model named in DIARY_TIDY_MODEL (or the COACH_MODEL
+// alias) through the shared `LlmModel` seam. With no model configured it resolves to an identity tidier,
+// so a capture is persisted verbatim (faithful, never faked) with no Ollama call.
+const diaryTidyConfig = readDiaryTidyConfig();
 const voiceCaptureWorker: VoiceCaptureWorkerDependencies = {
   db,
   speech,
-  tidy: createDiaryTidy(createOllamaModel(defaultCheapModel))
+  tidy: resolveDiaryTidy({ config: diaryTidyConfig, createModel: createOllamaModel })
 };
 const VOICE_CAPTURE_POLL_MS = 1_000;
 let voiceCaptureDraining = false;
@@ -327,6 +333,26 @@ try {
     server.log.warn({ coach: coachHealth.status }, coachHealth.message);
   } else {
     server.log.info({ coach: coachHealth.status }, coachHealth.message);
+  }
+
+  // Report the optional AI utilities' model wiring (#602): diary "tidy" and the Reader "AI 解释" gloss.
+  // A clean "run pnpm setup:ai" hint when a utility is off or its Ollama model is not serving, instead
+  // of a silent degrade (an un-tidied entry / an "unavailable" gloss tab). Neither blocks startup.
+  for (const utility of [
+    { label: "Diary tidy", modelName: diaryTidyConfig.modelName },
+    { label: "AI 解释", modelName: explainConfig.modelName }
+  ]) {
+    const utilityHealth = await checkAiUtilityHealth({
+      label: utility.label,
+      modelName: utility.modelName,
+      probeModel: probeOllamaModel,
+      setupHint: "pnpm setup:ai"
+    });
+    if (utilityHealth.status === "unavailable") {
+      server.log.warn({ aiUtility: utilityHealth.status }, utilityHealth.message);
+    } else {
+      server.log.info({ aiUtility: utilityHealth.status }, utilityHealth.message);
+    }
   }
 
   // Report the Whisper STT wiring (#347): a clear "run pnpm setup:voice" hint when spoken practice

@@ -13,6 +13,7 @@
     "setup:doctor": "node scripts/setup.mjs --check",
     "setup:minimal": "node scripts/setup.mjs --minimal",
     "setup:voice": "node scripts/setup.mjs --voice",
+    "setup:ai": "node scripts/setup.mjs --ai",
     "setup:coach": "node scripts/setup.mjs --coach",
     "setup:pdf": "node scripts/setup.mjs --pdf",
     "setup:all": "node scripts/setup.mjs --all",

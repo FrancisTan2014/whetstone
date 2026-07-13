@@ -36,7 +36,7 @@ function runShorthand(script) {
 }
 
 describe("pnpm setup:<capability> scripts do not collide with pnpm's built-in `setup` (#421)", () => {
-  for (const script of ["setup:minimal", "setup:voice", "setup:coach", "setup:pdf", "setup:all"]) {
+  for (const script of ["setup:minimal", "setup:voice", "setup:ai", "setup:pdf", "setup:all"]) {
     it(`\`pnpm ${script}\` reaches our doctor run, not pnpm's built-in setup`, () => {
       const { output } = runShorthand(script);
       // The reported failure: routing to the built-in rejects the baked-in flag as unknown.
@@ -46,4 +46,13 @@ describe("pnpm setup:<capability> scripts do not collide with pnpm's built-in `s
       expect(output).toContain("[setup] checking:");
     });
   }
+
+  it("`pnpm setup:coach` reaches our migration notice pointing at setup:ai, not an unknown-flag no-op (#602)", () => {
+    const { output } = runShorthand("setup:coach");
+    expect(output).not.toMatch(/Unknown option/i);
+    // The retired coach flag prints the exact migration command and exits cleanly, rather than being
+    // silently ignored as an unrecognized flag.
+    expect(output).toContain("pnpm setup:ai");
+    expect(output).not.toContain("[setup] checking:");
+  });
 });

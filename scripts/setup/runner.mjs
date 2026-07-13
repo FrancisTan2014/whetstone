@@ -25,10 +25,11 @@ import { error, isOk } from "./step.mjs";
  * @typedef {object} SetupArgs
  * @property {boolean} doctor            `--check` / `--doctor`: probe only, never mutate.
  * @property {boolean} voice             `--voice`: (re)run only the optional voice-capability steps.
- * @property {boolean} coach             `--coach`: (re)run only the optional coach-capability steps.
+ * @property {boolean} ai                `--ai`: (re)run only the optional AI-utility steps (diary tidy + "AI 解释").
  * @property {boolean} pdf               `--pdf`: (re)run only the optional PDF-ingestion steps.
- * @property {boolean} all               `--all`: every optional capability (voice + coach + pdf) — the default.
- * @property {boolean} minimal           `--minimal`: base steps only (no capabilities), for lean/CI runs.
+ * @property {boolean} all               `--all`: every optional capability (voice + ai + pdf).
+ * @property {boolean} minimal           `--minimal`: base steps only — same as the deterministic default.
+ * @property {boolean} coachMoved        `--coach`: the retired flag; setup.mjs prints the `setup:ai` migration and exits.
  * @property {boolean} yes               `--yes`: pre-consent every `ctx.confirm` (unattended installs).
  * @property {string[]} unknown          Unrecognized flags (reported, non-fatal).
  */
@@ -37,10 +38,13 @@ const RECOGNIZED = new Map([
   ["--check", "doctor"],
   ["--doctor", "doctor"],
   ["--voice", "voice"],
-  ["--coach", "coach"],
+  ["--ai", "ai"],
   ["--pdf", "pdf"],
   ["--all", "all"],
   ["--minimal", "minimal"],
+  // `--coach` retired (#602): recognized only so setup.mjs can print the exact `setup:ai` migration
+  // command instead of a silent "unrecognized flag" no-op.
+  ["--coach", "coachMoved"],
   ["--yes", "yes"]
 ]);
 
@@ -54,10 +58,11 @@ export function parseArgs(argv) {
   const args = {
     doctor: false,
     voice: false,
-    coach: false,
+    ai: false,
     pdf: false,
     all: false,
     minimal: false,
+    coachMoved: false,
     yes: false,
     unknown: /** @type {string[]} */ ([])
   };
@@ -73,34 +78,33 @@ export function parseArgs(argv) {
 }
 
 /**
- * Select the steps to run. The base (non-optional) steps always run. For the optional capabilities:
- * - `--minimal` → base only (no optional capabilities): the lean / CI / reader-only path.
- * - an explicit `--voice`, `--coach`, and/or `--pdf` → base plus exactly those capabilities: the
- *   single-capability conveniences (`pnpm setup:voice` / `setup:coach` / `setup:pdf`) to (re)run one.
- * - otherwise (the default, and the `--all` alias) → base plus **every** optional capability, so a
- *   bare `pnpm setup` reaches a fully-capable app (reader + voice + coach + PDF) in one command.
+ * Select the steps to run. The base (non-optional) steps always run — a bare `pnpm setup` provisions
+ * ONLY the deterministic base (no Ollama, no models, no heavy optional capability), so the default
+ * install is reproducible and offline-friendly (#602). Optional capabilities are opt-in and explicit:
+ * - `--all` → base plus **every** optional capability (voice + ai + pdf): the one-command full install.
+ * - an explicit `--voice`, `--ai`, and/or `--pdf` → base plus exactly those capabilities: the
+ *   single-capability conveniences (`pnpm setup:voice` / `setup:ai` / `setup:pdf`) to (re)run one.
+ * - otherwise (the bare default, and `--minimal`) → base only.
  *
  * Heavy installs stay consent-gated inside each optional step, so "selected" never means "installed
  * silently": a declined prompt (or a non-interactive run) falls back to instruct-only and stays green.
  *
  * @param {Step[]} steps
- * @param {{ voice: boolean, coach: boolean, pdf?: boolean, all?: boolean, minimal?: boolean }} flags
+ * @param {{ voice?: boolean, ai?: boolean, pdf?: boolean, all?: boolean, minimal?: boolean }} flags
  * @returns {Step[]}
  */
 export function selectSteps(steps, flags) {
   const enabled = new Set();
-  if (flags.minimal) {
-    // base only — enable no optional capability.
-  } else if (flags.voice || flags.coach || flags.pdf) {
-    // Explicit single-capability selection (setup:voice / setup:coach / setup:pdf).
-    if (flags.voice) enabled.add("voice");
-    if (flags.coach) enabled.add("coach");
-    if (flags.pdf) enabled.add("pdf");
-  } else {
-    // Default (and --all): every optional capability.
+  if (flags.all) {
+    // The explicit one-command full install: every optional capability.
     enabled.add("voice");
-    enabled.add("coach");
+    enabled.add("ai");
     enabled.add("pdf");
+  } else {
+    // Bare default (and --minimal) = base only; explicit flags add exactly their capability.
+    if (flags.voice) enabled.add("voice");
+    if (flags.ai) enabled.add("ai");
+    if (flags.pdf) enabled.add("pdf");
   }
   return steps.filter(
     (step) => !step.optional || (step.capability !== undefined && enabled.has(step.capability))

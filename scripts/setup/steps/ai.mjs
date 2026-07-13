@@ -1,48 +1,48 @@
-// Optional setup step (#382): make the LOCAL LLM coach work end to end with one command —
-// `pnpm setup:coach`. It installs Ollama itself (consent-gated via #383's `installSystemTool`,
-// never silently), pulls the local converse + "AI 解释" models, wires the non-secret coach env into
-// the root `.env` (EXPLAIN_MODEL + COACH_*_TIER=cheap for a fully-local coach), and verifies each
-// model actually answers through the daemon. Excluded from the base `pnpm setup` (heavy/network);
-// every failure mode returns an actionable { what, remedy }, never a raw crash. Secrets are NEVER
-// written here — the optional cloud judge (`COACH_API_KEY` + `COACH_ANALYZE_TIER=strong`) stays a
-// documented manual step (docs/COACH.md).
+// Optional setup step (#602): provision the local models the optional AI utilities use, with one
+// command — `pnpm setup:ai`. The two surviving utilities are the diary "tidy" pass (`DIARY_TIDY_MODEL`)
+// and the Reader "AI 解释" contextual gloss (`EXPLAIN_MODEL`); neither depends on the retiring coach.
+// This step installs Ollama itself (consent-gated via #383's `installSystemTool`, never silently),
+// pulls those two local models, wires the non-secret model names into the root `.env`, and verifies
+// each model actually answers through the daemon. It is NOT part of the deterministic base `pnpm
+// setup` (heavy/network) — an AI model never ships in the base install (#602). Every failure mode
+// returns an actionable { what, remedy }, never a raw crash. No secrets are ever written here, and no
+// diary/Reader content is sent to a cloud provider — these utilities are local-only.
 
 import { envPath, readEnv, upsertEnvVars } from "../env-file.mjs";
 import { installSystemTool } from "../installSystemTool.mjs";
 import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
 
-// The high-volume local converse tier's model (mirrors `defaultCheapModel` in coachAdapters.ts).
-// Override which model to pull with COACH_MODEL; the runtime still serves llama3.1:8b by default.
-const DEFAULT_CONVERSE_MODEL = "llama3.1:8b";
-// The 文言-strong local model behind the lookup "AI 解释" aid (readExplainConfig / EXPLAIN_MODEL).
+// The diary "tidy" model (readDiaryTidyConfig / DIARY_TIDY_MODEL). Mirrors the server's decoupled
+// default — llama3.1:8b, the English-best small model — with no coach coupling.
+const DEFAULT_DIARY_TIDY_MODEL = "llama3.1:8b";
+// The 文言-strong model behind the lookup "AI 解释" aid (readExplainConfig / EXPLAIN_MODEL).
 const DEFAULT_EXPLAIN_MODEL = "qwen2.5";
 
 const OLLAMA_DOCS = "https://ollama.com/download";
 const OLLAMA_REMEDY =
   "Install Ollama (https://ollama.com/download, or `winget install Ollama.Ollama` / " +
   "`brew install ollama` / `curl -fsSL https://ollama.com/install.sh | sh`), then re-run " +
-  "`pnpm setup:coach`.";
+  "`pnpm setup:ai`.";
 
 /**
- * The runtime-effective local converse model. Precedence mirrors what the server serves at boot (see
- * readCoachConfig / COACH_MODEL): a process-env `COACH_MODEL` override wins (dotenv does not overwrite
- * an already-set var), then the value persisted in `.env`, then the default. check/verify pull and
- * probe THIS exact model, and `provision` persists it to `.env`, so a `COACH_MODEL=<x> pnpm setup
- * --coach` override survives into `pnpm dev` instead of the server silently serving the default.
+ * The runtime-effective diary "tidy" model. Precedence mirrors what the server serves at boot (see
+ * readDiaryTidyConfig / DIARY_TIDY_MODEL): a process-env `DIARY_TIDY_MODEL` override wins (dotenv does
+ * not overwrite an already-set var), then the value persisted in `.env`, then the default. check/verify
+ * pull and probe THIS exact model, and `provision` persists it to `.env`, so a `DIARY_TIDY_MODEL=<x>
+ * pnpm setup:ai` override survives into `pnpm dev` instead of the server serving the default.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {string}
  */
-function resolveConverseModel(ctx) {
-  return ctx.env.COACH_MODEL ?? readEnv(ctx).COACH_MODEL ?? DEFAULT_CONVERSE_MODEL;
+function resolveDiaryTidyModel(ctx) {
+  return ctx.env.DIARY_TIDY_MODEL ?? readEnv(ctx).DIARY_TIDY_MODEL ?? DEFAULT_DIARY_TIDY_MODEL;
 }
 
 /**
  * The runtime-effective local "AI 解释" model. Precedence mirrors what the server actually serves at
  * boot: a process-env `EXPLAIN_MODEL` override wins (dotenv does not overwrite an already-set var),
  * then the value persisted in `.env`, then the default. check/verify pull and probe THIS exact model,
- * so setup never reports ready for a model the server would not use (e.g. `.env` names `qwen3` while
- * only the default `qwen2.5` is pulled).
+ * so setup never reports ready for a model the server would not use.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {string}
@@ -51,46 +51,29 @@ function resolveExplainModel(ctx) {
   return ctx.env.EXPLAIN_MODEL ?? readEnv(ctx).EXPLAIN_MODEL ?? DEFAULT_EXPLAIN_MODEL;
 }
 
-// The exact non-secret `.env` values `provision` writes to make the coach fully local. Both tiers must
-// read `cheap` so the runtime routes coach calls to the local Ollama adapter instead of the default
-// `analyze: "strong"` (which, with no cloud key, degrades to the deterministic fake). check/verify
-// require these exact values — a stale `.env` that lacks them, or pins one to `strong`, is reported
-// not-ready so `provision` upserts them.
-const REQUIRED_COACH_ENV = Object.freeze({
-  COACH_CONVERSE_TIER: "cheap",
-  COACH_ANALYZE_TIER: "cheap"
-});
-
 /**
- * Validate that `.env` wires the exact non-secret values the runtime consumes for a fully-local coach:
- * `COACH_MODEL` naming the local converse model and `EXPLAIN_MODEL` naming the local "AI 解释" model
- * (both pulled/verified), plus both `COACH_*_TIER=cheap` pins that route every coach call to the local
- * tier. Returns the first gap via `fail`, or null when fully wired.
+ * Validate that `.env` names the exact local models the runtime consumes for the optional AI
+ * utilities: `DIARY_TIDY_MODEL` (the diary "tidy" model) and `EXPLAIN_MODEL` (the "AI 解释" model),
+ * both pulled/verified. No coach tiers are pinned here — the utilities are independent of the coach.
+ * Returns the first gap via `fail`, or null when both are wired.
  *
  * @param {import("../step.mjs").SetupContext} ctx
- * @param {string} converseModel  The runtime-effective converse model (see resolveConverseModel).
+ * @param {string} diaryTidyModel  The runtime-effective diary tidy model (see resolveDiaryTidyModel).
  * @param {string} explainModel  The runtime-effective explain model (see resolveExplainModel).
  * @param {(what: string) => import("../step.mjs").StepResult} fail
  * @returns {import("../step.mjs").StepResult | null}
  */
-function checkEnvWiring(ctx, converseModel, explainModel, fail) {
+function checkEnvWiring(ctx, diaryTidyModel, explainModel, fail) {
   const env = readEnv(ctx);
-  if (env.COACH_MODEL !== converseModel) {
+  if (env.DIARY_TIDY_MODEL !== diaryTidyModel) {
     return fail(
-      `.env does not wire COACH_MODEL=${converseModel} — the local converse model the coach will use.`
+      `.env does not wire DIARY_TIDY_MODEL=${diaryTidyModel} — the local model the diary "tidy" pass will use.`
     );
   }
   if (env.EXPLAIN_MODEL !== explainModel) {
     return fail(
-      `.env does not wire EXPLAIN_MODEL=${explainModel} — the local "AI 解释" model the coach will use.`
+      `.env does not wire EXPLAIN_MODEL=${explainModel} — the local "AI 解释" model the Reader will use.`
     );
-  }
-  for (const [key, value] of Object.entries(REQUIRED_COACH_ENV)) {
-    if (env[key] !== value) {
-      return fail(
-        `.env does not pin ${key}=${value}, so a coach call would route to the cloud/fake tier, not the local model.`
-      );
-    }
   }
   return null;
 }
@@ -147,7 +130,7 @@ const OLLAMA_SPEC = {
   check: (ctx) =>
     ollamaPresent(ctx)
       ? ok()
-      : missing("Ollama was not found (required for the local coach + AI 解释).", OLLAMA_REMEDY),
+      : missing("Ollama was not found (required for the optional AI utilities).", OLLAMA_REMEDY),
   remedy: OLLAMA_REMEDY,
   docs: OLLAMA_DOCS,
   question: "Install Ollama now? [Y/n]",
@@ -165,9 +148,10 @@ const OLLAMA_SPEC = {
 };
 
 /**
- * Shape-check a local model's answer the way the runtime consumes it: `createOllamaChat` /
- * `createLlmExplainer` treat an empty response as "nothing to show". Setup must not report ready for
- * a model the server would get an empty answer from, so a blank/whitespace answer is off-contract.
+ * Shape-check a local model's answer the way the runtime consumes it: `createDiaryTidy` /
+ * `createLlmExplainer` treat an empty response as "nothing to show" (diary tidy then keeps the raw
+ * transcript; the explanation aid returns null). Setup must not report ready for a model the server
+ * would get an empty answer from, so a blank/whitespace answer is off-contract.
  *
  * @param {string} stdout
  * @returns {{ ok: true } | { ok: false, reason: string }}
@@ -179,37 +163,37 @@ export function validateOllamaAnswer(stdout) {
 }
 
 /** @type {import("../step.mjs").Step} */
-export const coachStep = {
-  id: "coach",
-  title: "Coaching model (local Ollama LLM)",
+export const aiStep = {
+  id: "ai",
+  title: "Optional AI utilities (local Ollama models)",
   optional: true,
-  capability: "coach",
+  capability: "ai",
   check(ctx) {
     if (!ollamaPresent(ctx)) {
       return missing(
-        "Ollama was not found (required for the local coach + AI 解释).",
+        "Ollama was not found (required for the optional AI utilities).",
         OLLAMA_REMEDY
       );
     }
     const listed = ctx.exec("ollama", ["list"]);
     const pulled = (model) => listed.code === 0 && isModelPulled(listed.stdout, model);
-    const converseModel = resolveConverseModel(ctx);
-    if (!pulled(converseModel)) {
+    const diaryTidyModel = resolveDiaryTidyModel(ctx);
+    if (!pulled(diaryTidyModel)) {
       return missing(
-        `The local coach model "${converseModel}" is not pulled.`,
-        `Run \`ollama pull ${converseModel}\` (or \`pnpm setup:coach\`).`
+        `The diary "tidy" model "${diaryTidyModel}" is not pulled.`,
+        `Run \`ollama pull ${diaryTidyModel}\` (or \`pnpm setup:ai\`).`
       );
     }
     const explainModel = resolveExplainModel(ctx);
     if (!pulled(explainModel)) {
       return missing(
         `The "AI 解释" model "${explainModel}" is not pulled.`,
-        `Run \`ollama pull ${explainModel}\` (or \`pnpm setup:coach\`).`
+        `Run \`ollama pull ${explainModel}\` (or \`pnpm setup:ai\`).`
       );
     }
     return (
-      checkEnvWiring(ctx, converseModel, explainModel, (what) =>
-        missing(what, "Run `pnpm setup:coach`.")
+      checkEnvWiring(ctx, diaryTidyModel, explainModel, (what) =>
+        missing(what, "Run `pnpm setup:ai`.")
       ) ?? ok()
     );
   },
@@ -221,15 +205,15 @@ export const coachStep = {
       return ollamaReady;
     }
 
-    const converseModel = resolveConverseModel(ctx);
+    const diaryTidyModel = resolveDiaryTidyModel(ctx);
     const explainModel = resolveExplainModel(ctx);
-    for (const model of [converseModel, explainModel]) {
+    for (const model of [diaryTidyModel, explainModel]) {
       const fetched = ctx.exec("ollama", ["pull", model]);
       if (fetched.code !== 0) {
         return error(
           `Pulling the Ollama model "${model}" failed.`,
           withOutputTail(
-            "Ensure the Ollama daemon is running (`ollama serve`) and check your network, then re-run `pnpm setup:coach`.",
+            "Ensure the Ollama daemon is running (`ollama serve`) and check your network, then re-run `pnpm setup:ai`.",
             fetched
           )
         );
@@ -238,38 +222,36 @@ export const coachStep = {
 
     const path = envPath(ctx);
     const content = ctx.fs.exists(path) ? ctx.fs.readText(path) : "";
-    // Non-secret env only: name the local converse + explain models the runtime reads (so a
-    // `COACH_MODEL` / `EXPLAIN_MODEL` override survives into `pnpm dev`) and pin both coach tiers to
-    // `cheap` so the coach runs fully local. NEVER write COACH_API_KEY — the cloud judge is manual.
+    // Non-secret env only: name the local diary-tidy + explain models the runtime reads (so a
+    // `DIARY_TIDY_MODEL` / `EXPLAIN_MODEL` override survives into `pnpm dev`). NEVER write any key or
+    // coach tier — these utilities are local-only and independent of the coach.
     ctx.fs.writeText(
       path,
       upsertEnvVars(content, {
-        COACH_MODEL: converseModel,
-        EXPLAIN_MODEL: explainModel,
-        COACH_CONVERSE_TIER: "cheap",
-        COACH_ANALYZE_TIER: "cheap"
+        DIARY_TIDY_MODEL: diaryTidyModel,
+        EXPLAIN_MODEL: explainModel
       })
     );
     return ok();
   },
   verify(ctx) {
-    const converseModel = resolveConverseModel(ctx);
+    const diaryTidyModel = resolveDiaryTidyModel(ctx);
     const explainModel = resolveExplainModel(ctx);
-    const wiringGap = checkEnvWiring(ctx, converseModel, explainModel, (what) =>
-      error(what, "Re-run `pnpm setup:coach`.")
+    const wiringGap = checkEnvWiring(ctx, diaryTidyModel, explainModel, (what) =>
+      error(what, "Re-run `pnpm setup:ai`.")
     );
     if (wiringGap) {
       return wiringGap;
     }
     // A minimal generate call per model confirms the daemon actually answers — setup must not report
     // ok for a model the server would fail on (daemon down, model unpulled, or an empty response).
-    for (const model of [converseModel, explainModel]) {
+    for (const model of [diaryTidyModel, explainModel]) {
       const result = ctx.exec("ollama", ["run", model, "Reply with the single word: ok"]);
       if (result.code !== 0) {
         return error(
           `The Ollama model "${model}" did not answer.`,
           withOutputTail(
-            "Ensure the Ollama daemon is running (`ollama serve`) and the model is pulled, then re-run `pnpm setup:coach`.",
+            "Ensure the Ollama daemon is running (`ollama serve`) and the model is pulled, then re-run `pnpm setup:ai`.",
             result
           )
         );
@@ -278,7 +260,7 @@ export const coachStep = {
       if (!shape.ok) {
         return error(
           `The Ollama model "${model}" answered off-contract: ${shape.reason}.`,
-          withOutputTail(`Re-pull it (\`ollama pull ${model}\`), then re-run \`pnpm setup:coach\`.`, result)
+          withOutputTail(`Re-pull it (\`ollama pull ${model}\`), then re-run \`pnpm setup:ai\`.`, result)
         );
       }
     }

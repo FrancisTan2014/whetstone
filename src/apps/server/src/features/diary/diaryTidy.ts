@@ -1,5 +1,6 @@
 import { buildDiaryTidyPrompt, isFaithfulTidy } from "@whetstone/domain";
 
+import type { DiaryTidyConfig } from "../../llm/aiUtilityConfig.js";
 import type { LlmModel } from "../../llm/llmModel.js";
 
 // The diary "tidy" seam (#246): a transcript in, the tidied entry out. The real implementation wraps the
@@ -30,4 +31,23 @@ export function createDiaryTidy(chat: LlmModel): DiaryTidy {
 
     return tidied;
   };
+}
+
+// Resolve the diary tidier from config: the real local-model tidier when BOTH a model is configured
+// (`DIARY_TIDY_MODEL`, or the `COACH_MODEL` alias) and a model factory is wired, otherwise an identity
+// tidier that returns the transcript unchanged. So with no model configured — the deterministic base
+// install — a diary capture is saved verbatim (faithful, never faked) with no Ollama call, exactly
+// like the "unavailable" explanation aid. Mirrors `resolveExplainer` (#341) so both optional AI
+// utilities share one absent-config-safe resolution shape, independent of the retiring coach.
+export function resolveDiaryTidy(dependencies: {
+  config: DiaryTidyConfig;
+  createModel?: (modelName: string) => LlmModel;
+}): DiaryTidy {
+  const { config, createModel } = dependencies;
+
+  if (config.modelName === undefined || createModel === undefined) {
+    return (transcript) => Promise.resolve(transcript);
+  }
+
+  return createDiaryTidy(createModel(config.modelName));
 }

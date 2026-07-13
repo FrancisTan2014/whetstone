@@ -85,8 +85,21 @@ export async function probeOllamaModel(model: string): Promise<boolean> {
       return false;
     }
     const body = (await response.json()) as { models?: ReadonlyArray<{ name?: string }> };
-    return (body.models ?? []).some((entry) => entry.name === model);
+    return (body.models ?? []).some(
+      (entry) => entry.name !== undefined && ollamaModelMatches(entry.name, model)
+    );
   } catch {
     return false;
   }
+}
+
+// Does a daemon-listed model `entryName` satisfy a requested `model`? Ollama assigns the `:latest` tag
+// to an untagged pull and `/api/tags` reports the tagged name — so `ollama pull qwen2.5` lists as
+// `qwen2.5:latest`. An untagged request must therefore also match the daemon's `:latest` entry, exactly
+// the equivalence `setup:ai`'s `isModelPulled` uses; without it the boot health check falsely reports a
+// model `pnpm setup:ai` just pulled and verified as unavailable (#602). A tagged request (e.g.
+// `llama3.1:8b`) still matches only its exact tag.
+export function ollamaModelMatches(entryName: string, model: string): boolean {
+  const withLatest = model.includes(":") ? model : `${model}:latest`;
+  return entryName === model || entryName === withLatest;
 }
