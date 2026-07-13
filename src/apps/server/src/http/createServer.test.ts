@@ -60,4 +60,22 @@ describe("createServer", () => {
       await server.close();
     }
   });
+
+  it("no longer serves the retired coach-led Practice session routes (#603)", async () => {
+    const server = createServer({ logger: false });
+
+    try {
+      const start = await server.inject({ method: "POST", url: "/api/session/start" });
+      const turn = await server.inject({ method: "POST", url: "/api/session/session-1/turn" });
+      const end = await server.inject({ method: "POST", url: "/api/session/session-1/end" });
+      const summary = await server.inject({ method: "GET", url: "/api/session/session-1/summary" });
+
+      expect(start.statusCode).toBe(404);
+      expect(turn.statusCode).toBe(404);
+      expect(end.statusCode).toBe(404);
+      expect(summary.statusCode).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
 });

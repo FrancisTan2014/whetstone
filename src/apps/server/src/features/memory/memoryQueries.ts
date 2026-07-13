@@ -7,7 +7,7 @@ import type {
   MemoryPromptDto
 } from "@whetstone/contracts";
 import type { ReviewState } from "@whetstone/domain";
-import { and, asc, desc, eq, inArray, isNotNull, lte, or, ilike } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, ilike } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entryLinks, memoryNotes, memoryPrompts, personalEntries } from "../../db/schema.js";
@@ -35,7 +35,7 @@ type ScheduledPromptRow = MemoryPromptRow &
 
 // True for a card-bearing (scheduled) prompt. The store writes a full FSRS card together with the
 // `scheduled` lifecycle and never one without the other, so the lifecycle discriminant alone identifies
-// the card-bearing shape — the same construction invariant `scheduledPromptReviewState` relies on. This
+// the card-bearing shape — the same construction invariant `promptReviewState` relies on. This
 // keeps the guard a single, always-meaningful check (no structurally-unreachable null probes on columns
 // that a scheduled row can never actually be missing).
 function isScheduledRow(row: MemoryPromptRow): row is ScheduledPromptRow {
@@ -93,14 +93,6 @@ export function promptReviewColumns(
 // The review state a prompt row carries, or null for a draft.
 export function promptReviewStateOrNull(row: MemoryPromptRow): ReviewState | null {
   return isScheduledRow(row) ? promptReviewState(row) : null;
-}
-
-// The review state of a prompt the caller has ALREADY established is scheduled — e.g. a row from a
-// `lifecycle = 'scheduled'` query, or a freshly built schedulable prompt. The scheduled invariant (all
-// FSRS columns present) is guaranteed by the write path and the query filter, so this narrows without a
-// runtime branch; use `promptReviewStateOrNull` when the lifecycle is not yet known.
-export function scheduledPromptReviewState(row: MemoryPromptRow): ReviewState {
-  return promptReviewState(row as ScheduledPromptRow);
 }
 
 export function toMemoryPromptDto(row: MemoryPromptRow): MemoryPromptDto {
@@ -169,49 +161,6 @@ export async function getMemoryPromptForUser(
   return row === undefined ? undefined : toMemoryPromptDto(row);
 }
 
-// The user's scheduled prompt linked to a given chunk, if any (newest first). Used by the practice
-// session to find-or-create the prompt to schedule for a practised chunk. Only scheduled prompts
-// match — a draft has no card to advance.
-export async function getScheduledPromptByChunkForUser(
-  db: DbClient,
-  userId: string,
-  chunkId: string
-): Promise<MemoryPromptRow | undefined> {
-  const rows = await db
-    .select({ prompt: memoryPrompts })
-    .from(memoryPrompts)
-    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
-    .where(
-      and(
-        eq(personalEntries.userId, userId),
-        eq(memoryPrompts.chunkId, chunkId),
-        eq(memoryPrompts.lifecycle, "scheduled")
-      )
-    )
-    .orderBy(desc(memoryPrompts.createdAt), asc(memoryPrompts.entryId))
-    .limit(1);
-
-  return rows[0]?.prompt;
-}
-
-// The user's most-recent prompt with this exact cue text, if any. Used to dedupe LLM-supplied prompts
-// (e.g. the bilingual coach's pushed English target, #270) that have no chunk FK to match on.
-export async function getPromptByCueTextForUser(
-  db: DbClient,
-  userId: string,
-  cueText: string
-): Promise<MemoryPromptRow | undefined> {
-  const rows = await db
-    .select({ prompt: memoryPrompts })
-    .from(memoryPrompts)
-    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
-    .where(and(eq(personalEntries.userId, userId), eq(memoryPrompts.cueText, cueText)))
-    .orderBy(desc(memoryPrompts.createdAt), asc(memoryPrompts.entryId))
-    .limit(1);
-
-  return rows[0]?.prompt;
-}
-
 // The user's scheduled prompts due at `now` (due_at <= now), soonest-due first, capped at `limit`.
 export async function listDuePromptCards(
   db: DbClient,
@@ -265,59 +214,6 @@ export async function searchMemoryPrompts(
     .orderBy(desc(memoryPrompts.createdAt), asc(memoryPrompts.entryId));
 
   return rows.map((joined) => toMemoryPromptDto(joined.prompt));
-}
-
-// Group the user's scheduled prompt review states by the chunk each prompt is linked to. Shared by
-// Cases mastery, the Map, the learner model, and the reading-capture harvest ranking (each restricts to a chunk set or
-// takes all linked chunks), so the ownership join + draft exclusion live in one place.
-async function chunkReviewStates(
-  db: DbClient,
-  userId: string,
-  restrictChunkIds: ReadonlyArray<string> | null
-): Promise<Map<string, ReviewState[]>> {
-  const chunkFilter =
-    restrictChunkIds === null
-      ? isNotNull(memoryPrompts.chunkId)
-      : inArray(memoryPrompts.chunkId, [...restrictChunkIds]);
-  const rows = await db
-    .select({ prompt: memoryPrompts })
-    .from(memoryPrompts)
-    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
-    .where(
-      and(eq(personalEntries.userId, userId), eq(memoryPrompts.lifecycle, "scheduled"), chunkFilter)
-    );
-
-  const byChunk = new Map<string, ReviewState[]>();
-  for (const { prompt } of rows) {
-    // The query restricts to scheduled prompts with a non-null chunk, so both are guaranteed here (the
-    // same invariant `scheduledPromptReviewState` trusts); group each chunk's review states together.
-    const chunkId = prompt.chunkId as string;
-    const states = byChunk.get(chunkId) ?? [];
-    states.push(scheduledPromptReviewState(prompt));
-    byChunk.set(chunkId, states);
-  }
-  return byChunk;
-}
-
-// The user's scheduled prompt review states for a given set of chunk ids, grouped by chunk. An empty
-// set yields an empty map without a query.
-export async function reviewStatesByChunkIds(
-  db: DbClient,
-  userId: string,
-  chunkIds: ReadonlyArray<string>
-): Promise<Map<string, ReviewState[]>> {
-  if (chunkIds.length === 0) {
-    return new Map();
-  }
-  return chunkReviewStates(db, userId, chunkIds);
-}
-
-// The user's scheduled prompt review states for every chunk-linked prompt, grouped by chunk.
-export async function allChunkReviewStates(
-  db: DbClient,
-  userId: string
-): Promise<Map<string, ReviewState[]>> {
-  return chunkReviewStates(db, userId, null);
 }
 
 // The `derived_from` provenance target of a note (the source Entry it was made durable from), or null.

@@ -12,10 +12,8 @@ import {
   newReviewState,
   reconcilePromptEdit,
   toEntryId,
-  type CaptureSource,
   type EntryId,
-  type ReviewRating,
-  type ReviewState
+  type ReviewRating
 } from "@whetstone/domain";
 import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 import { eq, inArray, or } from "drizzle-orm";
@@ -33,10 +31,8 @@ import {
   getMemoryNoteDetail,
   getMemoryNoteRowForUser,
   getPromptRowForUser,
-  getScheduledPromptByChunkForUser,
   promptReviewColumns,
   promptReviewStateOrNull,
-  scheduledPromptReviewState,
   toMemoryDepositDto,
   toMemoryPromptDto,
   type MemoryNoteRow,
@@ -247,139 +243,6 @@ export async function importMemoryBatch(
   return prepared.map((deposit) =>
     toMemoryDepositDto(deposit.noteRow, deposit.derivedFromEntryId, deposit.promptRows)
   );
-}
-
-// One prompt to deposit under a fresh single-prompt memory, before its answer is resolved.
-type SinglePromptInput = Readonly<{
-  cueText: string;
-  answerText: string | null;
-  chunkId: string | null;
-  glossTerm: string | null;
-  captureSource: CaptureSource;
-  noteText: string;
-  derivedFromEntryId: string | null;
-}>;
-
-// Deposit a memory holding exactly one prompt and return the created note id and the single prompt row —
-// without any array indexing at the call site. The prompt's lifecycle follows the same rule as
-// `depositMemory` (scheduled iff cue and answer are both meaningful, else draft). Shared by the session
-// deposit paths (chunk practice and pushed-phrase capture).
-async function depositSinglePromptMemory(
-  dependencies: MemoryDependencies,
-  input: SinglePromptInput,
-  userId: string,
-  now: Date
-): Promise<Readonly<{ noteId: EntryId; promptRow: MemoryPromptRow }>> {
-  const noteId = toEntryId(dependencies.createId());
-  const answerText = await resolveAnswer(dependencies, {
-    cueText: input.cueText,
-    ...(input.answerText === null ? {} : { answerText: input.answerText }),
-    ...(input.chunkId === null ? {} : { chunkId: input.chunkId }),
-    ...(input.glossTerm === null ? {} : { glossTerm: input.glossTerm })
-  });
-  const noteRow: MemoryNoteRow = {
-    entryId: noteId,
-    bodyDoc: createTextDocument(input.noteText),
-    bodyText: input.noteText,
-    captureSource: input.captureSource
-  };
-  const promptRow = buildPromptRow(
-    {
-      id: toEntryId(dependencies.createId()),
-      cueText: input.cueText,
-      answerText,
-      cueDoc: null,
-      answerDoc: null,
-      chunkId: input.chunkId
-    },
-    noteId,
-    now
-  );
-
-  await dependencies.db.transaction((tx) =>
-    writeMemory(tx, {
-      noteRow,
-      derivedFromEntryId: input.derivedFromEntryId,
-      promptRows: [promptRow],
-      userId,
-      now
-    })
-  );
-
-  return { noteId, promptRow };
-}
-
-// A chunk practice deposit + review: the situation cues the target (always schedulable), deduped by
-// chunk so repeated practice keeps one prompt. Returns the prompt id and its next due date (the pure FSRS
-// advance, deterministic under seeded fuzz). Used by the session's per-turn and debrief chunk deposits.
-export async function reviewChunkMemory(
-  dependencies: MemoryDependencies,
-  params: Readonly<{
-    userId: string;
-    chunkId: string;
-    situation: string;
-    target: string;
-    sourceBlockEntryId: string | null;
-  }>,
-  rating: ReviewRating,
-  now: Date
-): Promise<Readonly<{ promptId: string; nextDueAt: Date }>> {
-  const { userId, chunkId, situation, target, sourceBlockEntryId } = params;
-  const existing = await getScheduledPromptByChunkForUser(dependencies.db, userId, chunkId);
-
-  let promptId: string;
-  let currentState: ReviewState;
-  if (existing === undefined) {
-    const { promptRow } = await depositSinglePromptMemory(
-      dependencies,
-      {
-        cueText: situation,
-        answerText: target,
-        chunkId,
-        glossTerm: null,
-        captureSource: "practice",
-        noteText: target,
-        derivedFromEntryId: sourceBlockEntryId
-      },
-      userId,
-      now
-    );
-    promptId = promptRow.entryId;
-    currentState = scheduledPromptReviewState(promptRow);
-  } else {
-    promptId = existing.entryId;
-    currentState = scheduledPromptReviewState(existing);
-  }
-
-  const nextDueAt = applyRating(currentState, rating, now).due;
-  await recordPromptReview(dependencies, promptId, rating, userId, now);
-  return { promptId, nextDueAt: new Date(nextDueAt) };
-}
-
-// A pushed-phrase deposit (#270/#595): the coach's English target becomes a prompt cued by itself, with
-// its answer suggested from the offline dictionary via `glossTerm`. When no gloss is found the prompt is
-// saved as an unscheduled draft (review null), so the caller does not surface it as due. Returns the
-// created prompt (its review is null for a draft, the seeded card for a scheduled prompt).
-export async function depositPushedPhrase(
-  dependencies: MemoryDependencies,
-  params: Readonly<{ userId: string; target: string }>,
-  now: Date
-): Promise<MemoryPromptDto> {
-  const { promptRow } = await depositSinglePromptMemory(
-    dependencies,
-    {
-      cueText: params.target,
-      answerText: null,
-      chunkId: null,
-      glossTerm: params.target,
-      captureSource: "practice",
-      noteText: params.target,
-      derivedFromEntryId: null
-    },
-    params.userId,
-    now
-  );
-  return toMemoryPromptDto(promptRow);
 }
 
 // Build the persisted prompt row, deciding lifecycle + FSRS card together via the domain invariant: a

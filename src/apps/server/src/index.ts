@@ -1,7 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
@@ -16,7 +15,6 @@ import { createImageResourceStore } from "./files/imageResourceStore.js";
 import { composePdfToMarkdown, createDoclingPdfToMarkdown } from "./files/pdfToMarkdown.js";
 import { createOcrmypdfPreprocess } from "./files/pdfOcr.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
-import { seedCaseCorpus } from "./features/cases/caseSeed.js";
 import { seedNoteTemplates } from "./features/notes/noteCommands.js";
 import { createCedictProvider, parseCedict } from "./lookup/cedict.js";
 import { createWiktionaryEntryLookup, createWordNetEntryLookup } from "./lookup/englishLookup.js";
@@ -31,13 +29,9 @@ import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
 import { readExplainConfig, resolveExplainer } from "./lookup/explainProvider.js";
 import { createServer } from "./http/createServer.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
-import { createFakeCoach } from "./coach/fakeCoach.js";
-import { createCoachAdapters } from "./coach/coachAdapters.js";
 import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
-import { readCoachConfig, resolveCoach } from "./coach/coachConfig.js";
-import { checkCoachHealth } from "./coach/coachHealth.js";
 import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
 import {
   processNextVoiceCapture,
@@ -54,7 +48,6 @@ const pglite = new PGlite(config.databaseDir);
 await runMigrations(pglite);
 const db = createDbClient(pglite);
 await seedNoteTemplates(db);
-await seedCaseCorpus(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
 const epubParser = createEpubParser(
   join(config.sourceFilesDir, "epub-resources"),
@@ -105,7 +98,7 @@ lookupSources.push({ id: "cedict", languages: ["zh-CN", "zh-TW"], lookup: cedict
 // of the selected span in its sentence, served by the local Ollama model named in EXPLAIN_MODEL. Absent
 // config resolves to an "unavailable" provider (the tab shows its honest empty state), so no model is
 // required for the deploy or the gate. It shares the one `LlmModel` seam (#385) — the same time-boxed
-// local adapter the coach and diary use — so an unreachable daemon can never hang the tab.
+// local adapter diary tidy uses — so an unreachable daemon can never hang the tab.
 const explainConfig = readExplainConfig();
 const explain = resolveExplainer({
   config: explainConfig,
@@ -131,25 +124,9 @@ const resolveOfflineGloss = createOfflineGloss({
   chinese: (term) => cedict.lookup(term)
 });
 
-// The coach (#206) and speech (#207) seams: config-gated and absent-config-safe. With no key the
-// coach still runs its LOCAL cheap tier (routing sends converse/analyze there after `pnpm setup
-// --coach`); strong-routed calls with no key, and any model failure, degrade to the deterministic
-// fake. With no Whisper, speech stays on its fake; configured (WHISPER_BINARY + WHISPER_MODEL_PATH),
-// the real local adapter transcribes spoken turns (#236).
-const coachConfig = readCoachConfig();
-const coach = resolveCoach({
-  config: coachConfig,
-  createAdapters: (apiKey) =>
-    createCoachAdapters(
-      apiKey,
-      // Observability (#432): a coach call that fails and degrades to the fake emits one structured
-      // warn (method/model/reason only — no prompt, transcript, or key), matching the ingestionLogger
-      // convention above, so a degraded coach is diagnosable instead of silently masquerading.
-      (info) => console.warn("[coach] local model call failed; using fake", JSON.stringify(info)),
-      coachConfig.converseModel
-    ),
-  fake: createFakeCoach()
-});
+// The speech input seam (#207): config-gated and absent-config-safe. With no Whisper, speech stays on
+// its fake; configured (WHISPER_BINARY + WHISPER_MODEL_PATH), the real local adapter transcribes voice
+// diary captures (#236).
 const speechConfig = readSpeechConfig();
 const speech = resolveSpeechInput({
   config: speechConfig,
@@ -157,8 +134,7 @@ const speech = resolveSpeechInput({
   fake: createFakeSpeechInput({ transcript: "", words: [] })
 });
 
-// Durable store for recorded Tap-and-Talk clips (#565): unlike the session STT boundary (which writes to
-// the OS temp dir, fine for a synchronous transcribe), an async voice capture must survive a restart
+// Durable store for recorded Tap-and-Talk clips (#565): an async voice capture must survive a restart
 // until the worker transcribes it, so its audio is written under the server-owned sources dir.
 const voiceCaptureAudioDir = join(config.sourceFilesDir, "voice-captures");
 mkdirSync(voiceCaptureAudioDir, { recursive: true });
@@ -227,7 +203,6 @@ const server = createServer({
   },
   logger: createLoggerOptions(config.logLevel),
   lookup: { lookup: lookupService.lookup },
-  map: { db, now: () => new Date() },
   notes: {
     createEntryId: () => randomUUID(),
     db,
@@ -258,19 +233,6 @@ const server = createServer({
     now: () => new Date()
   },
   search: { db },
-  session: {
-    coach,
-    createId: () => randomUUID(),
-    db,
-    now: () => new Date(),
-    resolveOfflineGloss,
-    saveAudio: (audio) => {
-      const path = join(tmpdir(), `whetstone-${randomUUID()}.audio`);
-      writeFileSync(path, audio);
-      return Promise.resolve(path);
-    },
-    speech
-  },
   // In a single-origin deploy (#184) the built web client is served from this same server; in
   // dev/tests WEB_DIR is unset and Vite serves the client separately.
   web: config.webDir !== undefined ? { dir: config.webDir } : undefined
@@ -322,19 +284,6 @@ try {
     void drainVoiceCaptureQueue();
   }, VOICE_CAPTURE_POLL_MS).unref();
 
-  // Report the coach model wiring (#271): a clean "pull the model" hint when the local tier is
-  // configured but its Ollama model is not serving, instead of a silent fallback to the fake.
-  const coachHealth = await checkCoachHealth({
-    config: coachConfig,
-    localModel: coachConfig.converseModel,
-    probeLocalModel: probeOllamaModel
-  });
-  if (coachHealth.status === "local_unavailable") {
-    server.log.warn({ coach: coachHealth.status }, coachHealth.message);
-  } else {
-    server.log.info({ coach: coachHealth.status }, coachHealth.message);
-  }
-
   // Report the optional AI utilities' model wiring (#602): diary "tidy" and the Reader "AI 解释" gloss.
   // A clean "run pnpm setup:ai" hint when a utility is off or its Ollama model is not serving, instead
   // of a silent degrade (an un-tidied entry / an "unavailable" gloss tab). Neither blocks startup.
@@ -355,7 +304,7 @@ try {
     }
   }
 
-  // Report the Whisper STT wiring (#347): a clear "run pnpm setup:voice" hint when spoken practice
+  // Report the Whisper STT wiring (#347): a clear "run pnpm setup:voice" hint when voice diary capture
   // would otherwise silently transcribe to empty, instead of an unexplained empty transcript.
   const speechHealth = checkSpeechHealth({ config: speechConfig });
   if (speechHealth.status === "fake") {

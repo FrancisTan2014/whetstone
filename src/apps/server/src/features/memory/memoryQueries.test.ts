@@ -5,16 +5,12 @@ import { newReviewState } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { cases, chunks, domains, entries } from "../../db/schema.js";
+import { entries } from "../../db/schema.js";
 import { depositMemory, type MemoryDependencies } from "./memoryCommands.js";
 import {
-  allChunkReviewStates,
   getMemoryPromptForUser,
-  getPromptByCueTextForUser,
-  getScheduledPromptByChunkForUser,
   listDuePromptCards,
   noteProvenanceEntryId,
-  reviewStatesByChunkIds,
   searchMemoryPrompts
 } from "./memoryQueries.js";
 
@@ -35,46 +31,20 @@ async function buildContext(): Promise<TestContext> {
   return { db, deps: { createId: () => `id-${(sequence += 1)}`, db } };
 }
 
-// A memory prompt's chunk FK requires a real chunk (and its case/domain chain); seed a minimal one.
-async function seedChunk(id: string): Promise<void> {
-  await context.db
-    .insert(domains)
-    .values({ id: "dom", name: "Dom", weight: 0.5, orderIndex: 0 })
-    .onConflictDoNothing();
-  await context.db
-    .insert(cases)
-    .values({
-      id: "case",
-      domainId: "dom",
-      communicativeFunction: "f",
-      situation: "s",
-      orderIndex: 0
-    })
-    .onConflictDoNothing();
-  await context.db
-    .insert(chunks)
-    .values({ id, caseId: "case", orderIndex: 0, text: id })
-    .onConflictDoNothing();
-}
-
 // Seed one prompt under a fresh note. A supplied answer schedules the prompt; omit it for a draft.
 async function seedPrompt(
   params: Readonly<{
     userId: string;
     cueText: string;
     answerText?: string;
-    chunkId?: string;
     derivedFromEntryId?: string;
     now: Date;
   }>
 ): Promise<Readonly<{ promptId: string; noteId: string }>> {
-  if (params.chunkId !== undefined) {
-    await seedChunk(params.chunkId);
-  }
   const deposit = await depositMemory(
     context.deps,
     {
-      captureSource: "practice",
+      captureSource: "diary",
       noteText: params.cueText,
       ...(params.derivedFromEntryId === undefined
         ? {}
@@ -82,8 +52,7 @@ async function seedPrompt(
       prompts: [
         {
           cueText: params.cueText,
-          ...(params.answerText === undefined ? {} : { answerText: params.answerText }),
-          ...(params.chunkId === undefined ? {} : { chunkId: params.chunkId })
+          ...(params.answerText === undefined ? {} : { answerText: params.answerText })
         }
       ]
     },
@@ -116,51 +85,6 @@ describe("getMemoryPromptForUser", () => {
 
     expect(await getMemoryPromptForUser(context.db, promptId, userB)).toBeUndefined();
     expect(await getMemoryPromptForUser(context.db, "missing", userA)).toBeUndefined();
-  });
-});
-
-describe("getScheduledPromptByChunkForUser", () => {
-  it("returns the newest scheduled prompt for the chunk, excluding drafts and other users", async () => {
-    await seedPrompt({
-      userId: userA,
-      cueText: "older",
-      answerText: "a",
-      chunkId: "chunk-1",
-      now: t0
-    });
-    const newer = await seedPrompt({
-      userId: userA,
-      cueText: "newer",
-      answerText: "a",
-      chunkId: "chunk-1",
-      now: at(1)
-    });
-
-    const row = await getScheduledPromptByChunkForUser(context.db, userA, "chunk-1");
-    expect(row?.entryId).toBe(newer.promptId);
-
-    // A draft linked to a chunk is not a schedulable match.
-    await seedPrompt({ userId: userA, cueText: "draft", chunkId: "chunk-2", now: t0 });
-    expect(await getScheduledPromptByChunkForUser(context.db, userA, "chunk-2")).toBeUndefined();
-
-    expect(await getScheduledPromptByChunkForUser(context.db, userB, "chunk-1")).toBeUndefined();
-  });
-});
-
-describe("getPromptByCueTextForUser", () => {
-  it("returns the newest prompt with the exact cue, or nothing", async () => {
-    await seedPrompt({ userId: userA, cueText: "same cue", answerText: "a", now: t0 });
-    const newer = await seedPrompt({
-      userId: userA,
-      cueText: "same cue",
-      answerText: "b",
-      now: at(1)
-    });
-
-    const row = await getPromptByCueTextForUser(context.db, userA, "same cue");
-    expect(row?.entryId).toBe(newer.promptId);
-
-    expect(await getPromptByCueTextForUser(context.db, userA, "no such cue")).toBeUndefined();
   });
 });
 
@@ -226,53 +150,6 @@ describe("searchMemoryPrompts", () => {
 
   it("is scoped to the user and empty on a non-match", async () => {
     expect(await searchMemoryPrompts(context.db, userA, "zzz")).toEqual([]);
-  });
-});
-
-describe("chunk review-state grouping", () => {
-  it("groups the user's scheduled prompt states by chunk, excluding drafts, null chunks, and other users", async () => {
-    await seedPrompt({
-      userId: userA,
-      cueText: "c1-a",
-      answerText: "a",
-      chunkId: "chunk-1",
-      now: t0
-    });
-    await seedPrompt({
-      userId: userA,
-      cueText: "c1-b",
-      answerText: "a",
-      chunkId: "chunk-1",
-      now: at(1)
-    });
-    await seedPrompt({
-      userId: userA,
-      cueText: "c2",
-      answerText: "a",
-      chunkId: "chunk-2",
-      now: t0
-    });
-    await seedPrompt({ userId: userA, cueText: "draft", chunkId: "chunk-3", now: t0 });
-    await seedPrompt({ userId: userA, cueText: "no-chunk", answerText: "a", now: t0 });
-    await seedPrompt({
-      userId: userB,
-      cueText: "other",
-      answerText: "a",
-      chunkId: "chunk-1",
-      now: t0
-    });
-
-    const all = await allChunkReviewStates(context.db, userA);
-    expect([...all.keys()].sort()).toEqual(["chunk-1", "chunk-2"]);
-    expect(all.get("chunk-1")).toHaveLength(2);
-    expect(all.get("chunk-2")).toHaveLength(1);
-
-    const subset = await reviewStatesByChunkIds(context.db, userA, ["chunk-2"]);
-    expect([...subset.keys()]).toEqual(["chunk-2"]);
-
-    // An empty id set short-circuits to an empty map without a query.
-    const empty = await reviewStatesByChunkIds(context.db, userA, []);
-    expect(empty.size).toBe(0);
   });
 });
 

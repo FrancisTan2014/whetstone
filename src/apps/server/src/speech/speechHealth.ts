@@ -1,10 +1,10 @@
 import type { SpeechConfig } from "./speechConfig.js";
 
-// A boot-time report of whether local Whisper STT is actually configured. Like `checkCoachHealth`,
-// this only *reports*: `resolveSpeechInput` already falls back to the deterministic fake when no
-// Whisper is configured, so a missing model never crashes the loop. Without this, spoken practice
-// silently returns an empty transcript with no signal; the warning turns that silent degrade into a
-// clear "run `pnpm setup:voice`" hint.
+// A boot-time report of whether local Whisper STT is actually configured. This only *reports*:
+// `resolveSpeechInput` already falls back to the deterministic fake when no Whisper is configured, so a
+// missing model never crashes the loop. Without this, voice diary capture silently returns an empty
+// transcript with no signal; the warning turns that silent degrade into a clear "run `pnpm
+// setup:voice`" hint.
 type SpeechHealthStatus = "fake" | "configured";
 
 export type SpeechHealthReport = Readonly<{
