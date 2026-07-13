@@ -30,7 +30,9 @@
     "screenshots": "node scripts/screenshots.mjs",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "validate": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm smoke && pnpm e2e",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "data:backup": "node --import tsx --env-file-if-exists=.env src/apps/server/src/data/backupCli.ts",
+    "data:restore": "node --import tsx --env-file-if-exists=.env src/apps/server/src/data/restoreCli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
