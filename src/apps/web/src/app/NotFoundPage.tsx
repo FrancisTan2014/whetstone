@@ -12,7 +12,7 @@ export function NotFoundPage(): React.JSX.Element {
       <p className="mt-2 text-text-muted">
         That page isn’t here. It may have moved, or the link may be out of date.
       </p>
-      <Link className="mt-4 inline-block text-text underline" to="/">
+      <Link className="mt-4 inline-flex min-h-[44px] items-center text-text underline" to="/">
         Back to Today
       </Link>
     </section>

@@ -27,20 +27,18 @@ const DESKTOP = { height: 900, width: 1280 } as const;
 
 // Every primary route from the app's hash router, with an optional route-specific ready marker that
 // only mounts once the route has rendered its actual controls (so the sweep never measures a bare
-// loading state). Where a route's ready state varies too much for a single positive marker (Practice's
-// loading/empty/error/ready, Map's ready/error), the loading-indicator wait below is the guard instead.
+// loading state). Where a route has no single positive ready marker, the loading-indicator wait below
+// is the guard instead.
 const ROUTES: ReadonlyArray<readonly [string, string, string | undefined]> = [
   ["Today", "#/", 'section[aria-label="Capture today"]'],
   ["Library", "#/library", 'a[href^="#/reader?work="]'],
-  ["Practice", "#/practice", undefined],
-  ["Map", "#/progress", undefined],
   ["Search", "#/search", 'input[type="search"]'],
   ["Diary", "#/diary", 'section[aria-label="Capture today"]']
 ];
 
 // The shared `LoadingIndicator` renders `[role="status"][aria-busy="true"]`. An async route (Diary,
-// Practice, Map, Today's recall/reading cards, the Library shelf) shows it while loading, so waiting for
-// it to clear guarantees we sweep the route's READY-state controls, not a spinner (#519 review).
+// Today's recall/reading cards, the Library shelf) shows it while loading, so waiting for it to clear
+// guarantees we sweep the route's READY-state controls, not a spinner (#519 review).
 const LOADING = '[role="status"][aria-busy="true"]';
 
 function report(surface: string, violations: ReadonlyArray<HitTargetViolation>): string {
