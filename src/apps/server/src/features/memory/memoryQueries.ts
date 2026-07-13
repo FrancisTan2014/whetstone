@@ -268,7 +268,7 @@ export async function searchMemoryPrompts(
 }
 
 // Group the user's scheduled prompt review states by the chunk each prompt is linked to. Shared by
-// Cases mastery, the Map, the learner model, and the nudge ranking (each restricts to a chunk set or
+// Cases mastery, the Map, the learner model, and the reading-capture harvest ranking (each restricts to a chunk set or
 // takes all linked chunks), so the ownership join + draft exclusion live in one place.
 async function chunkReviewStates(
   db: DbClient,

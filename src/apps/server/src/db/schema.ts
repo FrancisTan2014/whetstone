@@ -715,23 +715,6 @@ export const sessionExchanges = pgTable(
   ]
 );
 
-// Per-chunk nudge interaction state (#245): the lightweight, user-owned record behind the
-// reading->practice nudge. The ranking is derived LIVE each time from the user's recent captures; only
-// this interaction state is persisted. One row per (user, chunk). `dismissed_until` is the cooldown
-// horizon a dismiss sets (the chunk is suppressed while `now < dismissed_until`); `last_surfaced_at`
-// records when the nudge was last shown. `chunk_id` is intentionally NOT a FK to `chunks`: a fresh
-// capture can be dismissed by its prospective harvest chunk id before any `chunks` row exists.
-export const nudgeState = pgTable(
-  "nudge_state",
-  {
-    chunkId: text("chunk_id").notNull(),
-    dismissedUntil: timestamp("dismissed_until", { mode: "date", withTimezone: true }),
-    lastSurfacedAt: timestamp("last_surfaced_at", { mode: "date", withTimezone: true }),
-    userId: text("user_id").notNull()
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.chunkId] })]
-);
-
 // The shared ownership + chronology facet for personal (owned) Entries (#571): owner and the three
 // timestamps a logical Timeline needs — `occurred_at` (when the entry happened, the Timeline sort key),
 // `created_at` (when it was captured), and `updated_at` (last edit). Every personal Entry carries exactly

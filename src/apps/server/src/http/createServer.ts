@@ -47,8 +47,6 @@ import {
   registerMemoryRoutes
 } from "../features/memory/memoryRoutes.js";
 import type { MemoryRouteDependencies } from "../features/memory/memoryRoutes.js";
-import { registerNudgeRoutes } from "../features/nudge/nudgeRoutes.js";
-import type { NudgeRouteDependencies } from "../features/nudge/nudgeRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
@@ -82,7 +80,6 @@ export type CreateServerOptions = Readonly<{
   recitation?: RecitationRouteDependencies;
   recitationPassages?: RecitationPassageRouteDependencies;
   recitationChaining?: RecitationChainingRouteDependencies;
-  nudge?: NudgeRouteDependencies;
   search?: SearchDependencies;
   session?: SessionDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
@@ -176,10 +173,6 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   if (options.recall !== undefined) {
     registerMemoryReviewRoutes(server, options.recall);
     registerMemoryRoutes(server, options.recall);
-  }
-
-  if (options.nudge !== undefined) {
-    registerNudgeRoutes(server, options.nudge);
   }
 
   if (options.images !== undefined) {

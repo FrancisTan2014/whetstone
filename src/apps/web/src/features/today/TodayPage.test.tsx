@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../recall/recallApi", () => ({ fetchDueRecall: vi.fn() }));
 vi.mock("./todayApi", () => ({ fetchLatestReadingPosition: vi.fn() }));
-vi.mock("../nudge/nudgeApi", () => ({ dismissNudge: vi.fn(), fetchNudge: vi.fn() }));
 vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
 vi.mock("../authoredWorks/authoredWorkApi", () => ({ fetchContinueWriting: vi.fn() }));
 vi.mock("../recitation/recitationApi", () => ({
@@ -37,7 +36,6 @@ import type {
   DueRecitationPassageDto,
   LatestReadingPositionDto,
   MemoryPromptCardDto,
-  NudgeDto,
   RecitationPlanDto,
   RecitationTodayDto,
   ReviewStateDto,
@@ -54,15 +52,12 @@ import {
 import { fetchToday } from "../recitation/recitationChainingApi";
 import { fetchDuePassage, reviewPassage } from "../recitation/recitationPassageApi";
 import { fetchWorks } from "../library/libraryApi";
-import { dismissNudge, fetchNudge } from "../nudge/nudgeApi";
 import { fetchDueRecall } from "../recall/recallApi";
 import { fetchLatestReadingPosition } from "./todayApi";
 import { TodayPage } from "./TodayPage";
 
 const mockedRecall = vi.mocked(fetchDueRecall);
 const mockedReading = vi.mocked(fetchLatestReadingPosition);
-const mockedNudge = vi.mocked(fetchNudge);
-const mockedDismiss = vi.mocked(dismissNudge);
 const mockedWorks = vi.mocked(fetchWorks);
 const mockedWriting = vi.mocked(fetchContinueWriting);
 const mockedRecitation = vi.mocked(fetchContinueRecitation);
@@ -138,17 +133,6 @@ function makeRecitationPlan(overrides: Partial<RecitationPlanDto> = {}): Recitat
   };
 }
 
-function makeNudge(overrides: Partial<NudgeDto> = {}): NudgeDto {
-  return {
-    blockEntryId: "blk-1",
-    caseId: "harvest-note-1",
-    chunkId: "harvest-chunk-note-1",
-    text: "thrive under pressure",
-    workTitle: "On Grit",
-    ...overrides
-  };
-}
-
 // Hold both async arms open so the component stays in its loading state for a render assertion.
 function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
@@ -208,7 +192,6 @@ beforeEach(() => {
   );
   mockedRecall.mockReturnValue(pending<ReadonlyArray<MemoryPromptCardDto>>());
   mockedReading.mockReturnValue(pending<LatestReadingPositionDto | undefined>());
-  mockedNudge.mockReturnValue(pending<NudgeDto | undefined>());
   mockedWorks.mockReturnValue(pending<WorkListDto>());
   mockedWriting.mockReturnValue(pending<{ work: AuthoredWorkSummaryDto | null }>());
   mockedRecitation.mockReturnValue(pending<ContinueRecitationDto>());
@@ -315,82 +298,11 @@ describe("TodayPage", () => {
     expect(await screen.findByText(/Couldn’t load your reading/)).toBeDefined();
   });
 
-  it("surfaces a single proposed practice nudge with an accept link to Practice", async () => {
-    mockedNudge.mockResolvedValue(makeNudge());
-    renderToday();
-
-    expect(await screen.findByText("thrive under pressure")).toBeDefined();
-    expect(screen.getByText("On Grit")).toBeDefined();
-    const links = screen.getAllByRole("link", { name: "Practise now" });
-    expect(links).toHaveLength(1);
-    expect(links[0]?.getAttribute("href")).toBe("/practice");
-  });
-
-  it("shortens a long captured snippet so the nudge card stays calm", async () => {
-    const longText = "a".repeat(120);
-    mockedNudge.mockResolvedValue(makeNudge({ text: longText }));
-    renderToday();
-
-    const snippet = await screen.findByText(/a{80}…$/);
-    expect(snippet.textContent).toBe(`${"a".repeat(80)}…`);
-  });
-
-  it("dismisses the nudge — removing the card and telling the server (cooldown)", async () => {
-    mockedNudge.mockResolvedValue(makeNudge());
-    mockedDismiss.mockResolvedValue(undefined);
-    renderToday();
-
-    await screen.findByText("thrive under pressure");
-    const dismiss = screen.getByRole("button", { name: "Dismiss this practice nudge" });
-    // The dismiss control is a >=44px hit target (#489); it was just the ✕ glyph (~13x24) before.
-    // jsdom has no layout, so assert the sizing utilities (min-h-11 = min-w-11 = 44px).
-    expect(dismiss.className).toContain("min-h-11");
-    expect(dismiss.className).toContain("min-w-11");
-    fireEvent.click(dismiss);
-
-    expect(mockedDismiss).toHaveBeenCalledWith("harvest-chunk-note-1");
-    await waitFor(() => {
-      expect(screen.queryByRole("region", { name: "Practice nudge" })).toBeNull();
-    });
-  });
-
-  it("still removes the card when the dismiss call fails, never blanking Today", async () => {
-    mockedNudge.mockResolvedValue(makeNudge());
-    mockedDismiss.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    await screen.findByText("thrive under pressure");
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss this practice nudge" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("region", { name: "Practice nudge" })).toBeNull();
-    });
-    expect(screen.getByText("Capture today")).toBeDefined();
-  });
-
-  it("renders no nudge card when there is nothing to surface (null)", async () => {
-    mockedNudge.mockResolvedValue(undefined);
-    mockedRecall.mockResolvedValue([]);
-    renderToday();
-
-    await screen.findByText(/Nothing due — you’re caught up/);
-    expect(screen.queryByRole("region", { name: "Practice nudge" })).toBeNull();
-  });
-
-  it("never blanks Today when the nudge fails to load", async () => {
-    mockedNudge.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    expect(await screen.findByText("Capture today")).toBeDefined();
-    expect(screen.queryByRole("region", { name: "Practice nudge" })).toBeNull();
-  });
-
   it("shows a compassionate cleared state when nothing is due — no streak, guilt, or penalty", async () => {
     // A learner with a work but nothing due: a truthful cleared board (not a cold start).
     mockedWorks.mockResolvedValue(makeWorkList(1));
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     expect(await screen.findByText(/You’re done for today/)).toBeDefined();
@@ -408,22 +320,11 @@ describe("TodayPage", () => {
     expect(screen.queryByText(/You’re done for today/)).toBeNull();
   });
 
-  it("does not show the cleared state while a practice nudge is still actionable", async () => {
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(makeNudge());
-    renderToday();
-
-    await screen.findByText("thrive under pressure");
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
-  });
-
   it("shows a truthful first-run on-ramp on a cold start, hiding done-for-today", async () => {
-    // No works, no reading position, no recall due, no nudge: point to the on-ramp, not "done".
+    // No works, no reading position, no recall due: point to the on-ramp, not "done".
     mockedWorks.mockResolvedValue(emptyWorks);
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     expect(await screen.findByText("Start with one source")).toBeDefined();
@@ -438,7 +339,6 @@ describe("TodayPage", () => {
     mockedWorks.mockResolvedValue(emptyWorks);
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     const view = renderToday();
 
     expect(await screen.findByText("Start with one source")).toBeDefined();
@@ -452,7 +352,6 @@ describe("TodayPage", () => {
     mockedWorks.mockResolvedValue(makeWorkList(1));
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     expect(await screen.findByText(/You’re done for today/)).toBeDefined();
@@ -464,7 +363,6 @@ describe("TodayPage", () => {
     mockedWorks.mockResolvedValue(emptyWorks);
     mockedRecall.mockResolvedValue([makeItem()]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     await screen.findByText("spill the beans");
@@ -472,25 +370,11 @@ describe("TodayPage", () => {
     expect(screen.queryByText(/You’re done for today/)).toBeNull();
   });
 
-  it("does not show the on-ramp when a practice nudge marks the learner though the library is empty", async () => {
-    // A present nudge is a trace/action: not a cold start, so the nudge shows and no on-ramp appears.
-    mockedWorks.mockResolvedValue(emptyWorks);
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(makeNudge());
-    renderToday();
-
-    await screen.findByText("thrive under pressure");
-    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
-  });
-
   it("makes no state claim while the library load is still pending", async () => {
-    // Recall/reading/nudge are empty but the library is still loading: Today must not claim the
+    // Recall/reading are empty but the library is still loading: Today must not claim the
     // first-run card NOR "done for today" — a done claim on unknown cold-start info is untruthful.
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     mockedWorks.mockReturnValue(pending<WorkListDto>());
     renderToday();
 
@@ -505,7 +389,6 @@ describe("TodayPage", () => {
     mockedWorks.mockRejectedValue(new Error("boom"));
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(undefined);
-    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     await screen.findByText(/Nothing to continue yet/);
@@ -519,7 +402,6 @@ describe("TodayPage", () => {
     mockedWorks.mockResolvedValue(emptyWorks);
     mockedRecall.mockResolvedValue([]);
     mockedReading.mockResolvedValue(makePosition());
-    mockedNudge.mockResolvedValue(undefined);
     renderToday();
 
     expect(await screen.findByText(/You’re done for today/)).toBeDefined();

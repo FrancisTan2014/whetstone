@@ -148,6 +148,35 @@ describe("startSession", () => {
     const plan = await startSession(makeDeps(), userA, now);
     expect(plan.cues[0]?.target).toBe("newer phrase");
   });
+
+  it("does not immediately re-surface a practised capture — the next-best leads instead (#245)", async () => {
+    // Two captures; the newer leads first by recency. Practising its chunk gives it review state (a
+    // lower gap), so on the next start the higher-gap older capture out-ranks it and leads instead —
+    // the value ranking, not a cooldown, is what rotates the lead.
+    const now = new Date("2026-03-01T00:00:00Z");
+    await seedCapture("older phrase", "blk-old", "note-old", new Date("2026-01-01T00:00:00Z"));
+    await seedCapture(
+      "thrive under pressure",
+      "blk-new",
+      "note-new",
+      new Date("2026-02-01T00:00:00Z")
+    );
+
+    const first = await startSession(makeDeps(), userA, now);
+    expect(first.cues[0]?.target).toBe("thrive under pressure");
+    const practisedChunkId = first.cues[0]?.chunkId ?? "";
+
+    const outcome = await submitTurn(
+      makeDeps(),
+      { chunkId: practisedChunkId, transcript: "thrive under pressure" },
+      userA,
+      now
+    );
+    expect(outcome.status).toBe("ok");
+
+    const second = await startSession(makeDeps(), userA, now);
+    expect(second.cues[0]?.target).toBe("older phrase");
+  });
   it("does not harvest a case when there are no domains to attach it to", async () => {
     const empty = await buildDb(false);
     const previous = db;

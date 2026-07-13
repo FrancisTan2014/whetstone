@@ -118,8 +118,7 @@ can navigate them from another package.
   (a `note` Entry gets a `personal_entries` row on create — `user_id`/`occurred_at`/`created_at`/`updated_at`;
   reads filter by `personal_entries.user_id`) rather than a `user_id`/`created_at` on `notes` itself
   (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; the Memory notes
-  - (via the shared `personal_entries` facet, below) and `nudge_state` (the reading→practice nudge
-    cooldown, below) are user-owned the same way; shared
+  - (via the shared `personal_entries` facet, below) are user-owned the same way; shared
     content tables stay unowned.
 - Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
   recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
@@ -159,22 +158,13 @@ can navigate them from another package.
   diary write path (`diaryCommands.ts`/`voiceCaptureCommands.ts`/`voiceCaptureWorker.ts`), the derived
   Timeline query (`diaryQueries.ts` over `personal_entries` + `diary_entries` + `notes`), and the web
   `CaptureCard`/`DiaryPage` are described in the "Diary" bullets below.
-- Reading→practice nudge: `src/features/nudge/` (#245) surfaces ONE value-ranked, recency-decaying,
-  cooldown-gated recent reading capture as a practice prompt. `nudgeQueries.ts`
-  `listRecentReadingCaptures` reads `notes` + `note_anchors` (newest first, join to the source block's
-  work for the title) and shapes each as the SAME deterministic harvest case/chunk ids
-  (`harvestCaseId`/`harvestChunkId` = `harvest-<noteId>` / `harvest-chunk-<noteId>`, reused by
-  `harvestReadingCase`). `nudgeCommands.ts` `selectReadingNudgeCapture` ranks the captures via the pure
-  domain `rankReadingNudges`/`topReadingNudge` (`@whetstone/domain` `readingNudge.ts`, score = gap ×
-  frequency + a bounded recency boost that halves every 7 days; reading captures use neutral frequency 1
-  and a derived live mastery status) after excluding any chunk in cooldown, and is shared by BOTH the
-  nudge endpoint and the practice lead so they propose the same case. `computeReadingNudge` returns the
-  top as a `NudgeDto` (and records `last_surfaced_at`); `dismissReadingNudge` = cooldown (`dismissed_until`
-  = now + `NUDGE_COOLDOWN_DAYS` = 3). The only persisted state is `nudge_state` (PK `(user_id, chunk_id)`,
-  nullable `dismissed_until`/`last_surfaced_at`) — user-owned, ranking derived live each time. Routes
-  (`nudgeRoutes.ts`, current-user scoped, Zod-validated, `now` injected): `GET /api/nudge` →
-  `{ nudge: NudgeDto | null }`, `POST /api/nudge/:chunkId/dismiss` → 204; wired in `createServer.ts` /
-  `index.ts`. DTO in `@whetstone/contracts` (`nudgeContracts.ts`).
+- Reading→practice nudge: retired (#601). The unsolicited Today nudge card, its `GET /api/nudge` /
+  `POST /api/nudge/:chunkId/dismiss` routes, the `NudgeDto` contracts, and the `nudge_state` cooldown
+  table are gone. The recent-reading-capture selection it once shared now lives with the surviving
+  reading→speaking harvest on-ramp (below): `session/harvestQueries.ts` (`listRecentReadingCaptures`,
+  `harvestCaseId`/`harvestChunkId`) + `session/harvestCommands.ts` (`selectReadingHarvestCapture`,
+  cooldown-free) over the pure domain ranking (`@whetstone/domain` `readingCaptureRanking.ts`,
+  `rankReadingCaptures`/`topReadingCapture`, score = gap × frequency + a bounded recency boost).
 - Recitation routines (owned) (#577): `src/apps/server/src/features/recitation/` — adopt any Work
   (imported or authored) as a recitation plan. `recitationCommands.ts` (`createRecitationPlan` writes a
   `recitation_plan` `entries` row + shared `personal_entries` facet + `recitation_plans` row in one
@@ -301,10 +291,10 @@ can navigate them from another package.
   coach (#206) and speech (#207) seams + #205/#208/#189: `startSession` proposes cues (top gap x
   frequency chunks; English situation, native target hidden), `submitTurn` judges + grades the
   submitted transcript and DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on first
-  practice, + records the turn outcome with its mistake category #208). The harvested first cue (#243):
-  `harvestReadingCase(db, userId, now)` no longer leads with the strictly-newest capture — it reuses the
-  nudge's `selectReadingNudgeCapture` (ranked gap×freq+recency, cooldown-excluded), so the Practice lead
-  and the Today nudge propose the SAME case; when nothing qualifies (cold start / all in cooldown) it
+  practice (#243): `harvestReadingCase(db, userId, now)` no longer leads with the strictly-newest
+  capture — it selects via `session/harvestCommands.selectReadingHarvestCapture` (ranked
+  gap×freq+recency over the pure domain `readingCaptureRanking`), so the Practice lead opens on the
+  learner's highest-value recent reading; when nothing qualifies (cold start) it
   harvests nothing and the session falls back to authored cases. `converseTurn` (#220) holds a
   conversational coach turn: it loads the case, rebuilds the conversation from the persisted
   `session_exchanges` rows (append-only, user+case scoped, ordered by `order_index`), calls the coach's
@@ -898,13 +888,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   inline as one `RecitationReviewCard` attempt (payload from `recitationPassageApi.fetchDuePassage`,
   `GET /api/recitation/passages/due`) — re-deciding the next action only after it is reviewed (no overdue
   wall) — or surfaces a chain / whole-work invitation linking to `#/recite?plan=<id>` (caught-up/quiet-note
-  otherwise), and the
-  reading→practice nudge card (#245) in its `nudge/` slice: `nudgeApi.ts` `fetchNudge` (`GET /api/nudge`,
-  null → undefined) renders ONE quiet, dismissible card — "Practise _‹snippet›_ from _‹work›_" with an
-  accept link to `/practice` (where `startSession` leads with the same proposed case) and a ✕ that calls
-  `dismissNudge` (`POST /api/nudge/:chunkId/dismiss`, cooldown) and removes the card at once; absent on
-  null/loading/error (no placeholder). When the actionable arms clear (no recall due AND no present
-  nudge) it shows a compassionate "done for today" — NO streak/guilt/penalty. Each async arm loads
+  otherwise), and then, when the actionable arms clear (no recall due), a compassionate "done for
+  today" — NO streak/guilt/penalty. Each async arm loads
   independently so one failing never blanks the page; the reader stays calm.
   `authoredWorks/` is the owned-Work editor slice (#576): `AuthoredWorkPage.tsx` is the immersive
   `/write?work=<id>` surface that loads a user-authored Work's canonical ProseMirror document

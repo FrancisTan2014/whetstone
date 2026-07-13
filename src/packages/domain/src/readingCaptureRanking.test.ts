@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { ChunkMasteryStatus } from "./caseMastery.js";
 import {
-  rankReadingNudges,
+  rankReadingCaptures,
   recencyBoost,
-  topReadingNudge,
-  type ReadingNudgeCandidate
-} from "./readingNudge.js";
+  topReadingCapture,
+  type ReadingCaptureCandidate
+} from "./readingCaptureRanking.js";
 
 const now = new Date("2026-03-01T00:00:00.000Z");
 const day = 24 * 60 * 60 * 1000;
@@ -16,8 +16,8 @@ function candidate(
   chunkId: string,
   status: ChunkMasteryStatus,
   capturedAt: Date,
-  overrides: Partial<ReadingNudgeCandidate> = {}
-): ReadingNudgeCandidate {
+  overrides: Partial<ReadingCaptureCandidate> = {}
+): ReadingCaptureCandidate {
   return {
     blockEntryId: `${chunkId}-block`,
     caseId: `${chunkId}-case`,
@@ -44,9 +44,9 @@ describe("recencyBoost", () => {
   });
 });
 
-describe("rankReadingNudges", () => {
+describe("rankReadingCaptures", () => {
   it("leads with the highest gap x frequency even when a lower-value capture is fresher", () => {
-    const ranked = rankReadingNudges(
+    const ranked = rankReadingCaptures(
       [
         candidate("fresh-low", "learning", now), // gap 0.4 + 0.5 = 0.9
         candidate("stale-high", "new", ago(14)) // gap 1 + 0.125 = 1.125
@@ -59,7 +59,7 @@ describe("rankReadingNudges", () => {
   });
 
   it("breaks an equal gap x frequency by recency — the fresher capture wins", () => {
-    const ranked = rankReadingNudges(
+    const ranked = rankReadingCaptures(
       [candidate("older", "new", ago(10)), candidate("newer", "new", now)],
       now
     );
@@ -68,7 +68,7 @@ describe("rankReadingNudges", () => {
   });
 
   it("lets recency lift a fresher, slightly-lower-gap capture over a stale higher-gap one", () => {
-    const ranked = rankReadingNudges(
+    const ranked = rankReadingCaptures(
       [
         candidate("fresh-due", "due", now), // gap 0.6 + 0.5 = 1.1
         candidate("stale-new", "new", ago(21)) // gap 1 + ~0.0625 = ~1.0625
@@ -80,7 +80,7 @@ describe("rankReadingNudges", () => {
   });
 
   it("weights gap by the domain frequency", () => {
-    const ranked = rankReadingNudges(
+    const ranked = rankReadingCaptures(
       [
         candidate("weak-rare", "new", now, { frequency: 0.2 }), // 0.2 + 0.5 = 0.7
         candidate("weak-common", "new", now, { frequency: 1 }) // 1 + 0.5 = 1.5
@@ -92,15 +92,18 @@ describe("rankReadingNudges", () => {
   });
 
   it("breaks an exact score tie by chunk id ascending", () => {
-    const ranked = rankReadingNudges([candidate("b", "new", now), candidate("a", "new", now)], now);
+    const ranked = rankReadingCaptures(
+      [candidate("b", "new", now), candidate("a", "new", now)],
+      now
+    );
 
     expect(ranked.map((entry) => entry.chunkId)).toEqual(["a", "b"]);
   });
 });
 
-describe("topReadingNudge", () => {
+describe("topReadingCapture", () => {
   it("returns the single highest-ranked capture", () => {
-    const top = topReadingNudge(
+    const top = topReadingCapture(
       [candidate("low", "mastered", now), candidate("high", "new", now)],
       now
     );
@@ -109,6 +112,6 @@ describe("topReadingNudge", () => {
   });
 
   it("returns undefined when there are no candidates", () => {
-    expect(topReadingNudge([], now)).toBeUndefined();
+    expect(topReadingCapture([], now)).toBeUndefined();
   });
 });
