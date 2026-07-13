@@ -568,6 +568,16 @@ can navigate them from another package.
   sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
   language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
+- Backup/restore (#600): `src/data/` owns verified whole-instance backup and restore. Pure, covered
+  modules — `archive.ts` (versioned single-ZIP format: `manifest.json` + gzip database dump + per-root
+  files, with SHA-256 checksums and `verifyArchive`), `dataRoots.ts` (durable file-root inventory from
+  server config), `metadata.ts` (app + schema version), `fileTree.ts` (collect/write a root), `backup.ts`
+  and `restore.ts` (orchestrators with injectable I/O), and `cli.ts` (arg parse + output/error mapping).
+  The thin, coverage-excluded `backupCli.ts`/`restoreCli.ts` wire real PGlite (`dumpDataDir`/`loadDataDir`)
+  and fs for `pnpm data:backup -- --output <artifact>` / `pnpm data:restore -- --input <artifact>
+  --target <empty-dir>`. Backup refuses an in-memory `DATABASE_DIR` and an existing output; restore
+  verifies before writing, refuses a non-empty target, runs migrations, and integrity-probes the restored
+  database. Operator guide: `docs/BACKUP.md`.
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA

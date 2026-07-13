@@ -30,6 +30,10 @@ export default defineConfig({
         "**/src/db/migrations/**",
         "**/src/db/schema.ts", // Drizzle table declarations are exercised through migrations and integration tests.
         "**/src/index.ts",
+        // Real PGlite + argv bootstraps for `pnpm data:backup` / `pnpm data:restore`: wiring-only
+        // I/O entrypoints (like index.ts); all decision logic lives in the covered data/*.ts modules.
+        "**/src/data/backupCli.ts",
+        "**/src/data/restoreCli.ts",
         // The setup runner's real-I/O boundary: builds the SetupContext from Node's
         // child_process/fs/os and is wiring-only (like src/**/index.ts). All setup decision logic
         // lives in scripts/setup/runner.mjs and the steps, covered via fakes.
