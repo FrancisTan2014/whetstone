@@ -43,13 +43,10 @@ export default defineConfig({
         "scripts/setup/testSupport.mjs",
         "**/src/mcp/main.ts", // MCP stdio bootstrap is wiring-only infrastructure (like index.ts).
         "**/src/main.tsx",
-        // Browser Web Audio / MediaRecorder boundary for live turn-taking (#219): touches
+        // Browser Web Audio / MediaRecorder boundary for voice-diary capture (#455/#565): touches
         // AudioContext/AnalyserNode/MediaRecorder/real timers, not exercisable in jsdom; every decision
-        // delegates to the pure endpointing/turnTaking modules, which are covered.
-        "**/features/session/liveCapture.ts",
-        // Browser speechSynthesis wiring for voice-out (#221): touches window.speechSynthesis and the
-        // SpeechSynthesisUtterance constructor, absent in jsdom; the logic is in createVoiceOut, covered.
-        "**/features/session/browserVoiceOut.ts",
+        // delegates to the pure endpointing module, which is covered.
+        "**/features/capture/liveCapture.ts",
         // Browser audio boundary for unified capture (#455): wraps the same MediaRecorder/Web Audio
         // live-capture seam into a one-shot record/stop, not exercisable in jsdom; CaptureCard's own
         // logic is covered.

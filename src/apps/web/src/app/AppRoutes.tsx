@@ -5,17 +5,14 @@ import { AuthoredWorkPage } from "../features/authoredWorks/AuthoredWorkPage.js"
 import { DiaryPage } from "../features/diary/DiaryPage.js";
 import { MemoryPage } from "../features/memory/MemoryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
-import { ProgressMapPage } from "../features/progress/ProgressMapPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { RecallPage } from "../features/recall/RecallPage.js";
 import { RecitePage } from "../features/recitation/RecitePage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
-import { SessionPage } from "../features/session/SessionPage.js";
 import { TodayPage } from "../features/today/TodayPage.js";
-import { createLiveCapture, isVoiceCaptureSupported } from "../features/session/liveCapture.js";
-import { createBrowserVoiceOut } from "../features/session/browserVoiceOut.js";
 import { AppShell } from "./AppShell.js";
 import { LibraryMode } from "./LibraryMode.js";
+import { NotFoundPage } from "./NotFoundPage.js";
 
 // The reader route opens straight into a work when the library passes `?work=<entryId>`;
 // an optional `?block=<entryId>` deep-links to a specific block. Without a work param the
@@ -69,25 +66,15 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<LibraryMode />} path="library" />
         <Route element={<ReaderRoute />} path="reader" />
         <Route element={<WriteRoute />} path="write" />
-        <Route
-          element={
-            <SessionPage
-              live={{
-                createCapture: createLiveCapture,
-                createVoiceOut: createBrowserVoiceOut,
-                supported: isVoiceCaptureSupported()
-              }}
-            />
-          }
-          path="practice"
-        />
-        <Route element={<ProgressMapPage />} path="progress" />
         <Route element={<MemoryPage />} path="memory" />
         <Route element={<RecallPage />} path="recall" />
         <Route element={<ReciteRoute />} path="recite" />
         <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />
+        {/* Any unrecognized path — including retired routes like /practice and /progress — resolves to
+            the calm not-found page inside the shell, never a blank screen. */}
+        <Route element={<NotFoundPage />} path="*" />
       </Route>
     </Routes>
   );

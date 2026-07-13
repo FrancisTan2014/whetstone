@@ -7,10 +7,9 @@ export type NavDestination = Readonly<{
 
 // The primary navigation destinations (#573): exactly four calm, product-facing modes — Today, Library,
 // Memory, and Search. Today is the proactive landing (index route); Memory is where the learner browses
-// and grows everything they have deliberately chosen to retain. Practice and Map keep their routes
-// (/practice, /progress) but are no longer primary — they are reached from the places that need them.
-// Reader, Recall, Notes, and Diary are also secondary: Reader is an immersive destination opened from
-// context; Today links to Recall/Diary; Library links to the all-notes surface.
+// and grows everything they have deliberately chosen to retain. Reader, Recall, Notes, and Diary are
+// secondary: Reader is an immersive destination opened from context; Today links to Recall/Diary;
+// Library links to the all-notes surface.
 export const navDestinations: ReadonlyArray<NavDestination> = [
   { end: true, label: "Today", to: "/" },
   { label: "Library", to: "/library" },

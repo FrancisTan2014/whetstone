@@ -1,49 +1,42 @@
-// Thin browser audio layer for live turn-taking (#219). This is the only impure part of the engine: it
-// touches Web Audio (`AudioContext`/`AnalyserNode`), `MediaRecorder`, `navigator.mediaDevices`, and real
-// timers, none of which run in jsdom. Every turn-taking decision delegates to the pure `turnTaking`
-// engine in `@whetstone/domain`; this file only measures per-frame microphone energy, forwards it, and
-// dispatches the resulting effects to callbacks. It is therefore excluded from coverage (see
-// vitest.config.ts), like the other browser boundaries in this feature (`browserVoiceOut.ts`).
+// Thin browser audio layer for voice-diary capture (#455/#565). This is the only impure part of the
+// capture path: it touches Web Audio (`AudioContext`/`AnalyserNode`), `MediaRecorder`,
+// `navigator.mediaDevices`, and real timers, none of which run in jsdom. Every voice-activity decision
+// delegates to the pure `endpointing` VAD in `@whetstone/domain`; this file only measures per-frame
+// microphone energy, forwards it, and dispatches the resulting effects to callbacks. It is therefore
+// excluded from coverage (see vitest.config.ts), like the sibling `captureVoice.ts` adapter.
 //
-// Continuous capture preserves the onset: a fresh `MediaRecorder` starts on `capture-start` — the first
-// candidate voiced frame — so the recording already covers the utterance onset by the time the engine
-// *confirms* the start `minSpeechMs` later. A candidate that dies (`capture-discard`) throws its
-// recording away; a confirmed end (`utterance-end`, or a manual `finishUtterance()`) finalizes the blob
-// and hands it to `onUtterance`. A confirmed start while the coach is playing is a barge-in: `onBargeIn`
-// fires so the consumer can stop playback. No STT, coach, or TTS lives here — the blob is just handed off.
+// Continuous capture preserves the onset: a fresh `MediaRecorder` starts on `speech-candidate` — the
+// first candidate voiced frame — so the recording already covers the utterance onset by the time the VAD
+// *confirms* the start `minSpeechMs` later. A candidate that dies (`speech-aborted`) throws its recording
+// away; a confirmed end (`utterance-end`, or a manual `finishUtterance()`) finalizes the blob and hands
+// it to `onUtterance`. No STT or persistence lives here — the blob is just handed off.
 
 import {
-  createTurnTaking,
-  finishTurn,
-  observeFrame,
-  setCoachPlaying,
+  createEndpointer,
+  forceEndUtterance,
+  pushFrame,
   type EndpointConfig,
-  type TurnStep,
-  type TurnTakingState
+  type EndpointStep
 } from "@whetstone/domain";
 
 export type LiveCaptureCallbacks = Readonly<{
-  // The learner finished an utterance; `audio` is the captured turn (onset included), ready for STT.
+  // The speaker finished an utterance; `audio` is the captured turn (onset included), ready for STT.
   onUtterance: (audio: Blob) => void;
-  // The learner started speaking while the coach was playing — stop playback and switch to capture.
-  onBargeIn?: () => void;
-  // The learner started speaking while the coach was idle — a normal turn start.
+  // The speaker started speaking (a confirmed utterance start) — a normal capture start.
   onUtteranceStart?: () => void;
 }>;
 
 export type LiveCapture = Readonly<{
-  // Open the microphone and begin continuous turn-taking. Rejects if mic permission is denied.
+  // Open the microphone and begin continuous voice-activity capture. Rejects if mic permission is denied.
   start: () => Promise<void>;
   // Stop sampling, release the microphone, and tear down audio resources (drops any in-flight capture).
   stop: () => void;
-  // Tell the engine whether the coach is currently speaking, so a later start reads as barge-in.
-  setCoachPlaying: (playing: boolean) => void;
   // "Tap to finish": force the current utterance to end (covers rough VAD on noisy devices).
   finishUtterance: () => void;
 }>;
 
-// Defaults tuned for conversational speech sampled at 30ms frames: a short start window so the turn
-// feels responsive, and a generous end-silence that acts only as a backstop — the learner owns the turn
+// Defaults tuned for conversational speech sampled at 30ms frames: a short start window so capture feels
+// responsive, and a generous end-silence that acts only as a backstop — the speaker owns the turn
 // boundary via the "Done" control (#436), so a natural mid-sentence pause (1-3s) never cuts them off.
 const defaultEndpointConfig: EndpointConfig = {
   endSilenceMs: 3000,
@@ -74,7 +67,7 @@ export function createLiveCapture(
   callbacks: LiveCaptureCallbacks,
   config: EndpointConfig = defaultEndpointConfig
 ): LiveCapture {
-  let state: TurnTakingState = createTurnTaking(config);
+  let state = createEndpointer(config);
   let stream: MediaStream | null = null;
   let audioContext: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
@@ -119,22 +112,18 @@ export function createLiveCapture(
     recorder.stop();
   }
 
-  function dispatch(step: TurnStep): void {
+  function dispatch(step: EndpointStep): void {
     state = step.state;
-    const effect = step.effect;
-    if (effect === null) {
+    const event = step.event;
+    if (event === null) {
       return;
     }
-    switch (effect.type) {
-      case "capture-start":
+    switch (event.type) {
+      case "speech-candidate":
         ensureRecording();
         break;
-      case "capture-discard":
+      case "speech-aborted":
         stopRecording(false);
-        break;
-      case "barge-in":
-        callbacks.onBargeIn?.();
-        ensureRecording();
         break;
       case "utterance-start":
         callbacks.onUtteranceStart?.();
@@ -152,7 +141,7 @@ export function createLiveCapture(
     }
     const buffer = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buffer);
-    dispatch(observeFrame(state, frameEnergy(buffer)));
+    dispatch(pushFrame(state, frameEnergy(buffer)));
   }
 
   async function start(): Promise<void> {
@@ -185,10 +174,7 @@ export function createLiveCapture(
 
   return {
     finishUtterance: () => {
-      dispatch(finishTurn(state));
-    },
-    setCoachPlaying: (playing: boolean) => {
-      state = setCoachPlaying(state, playing);
+      dispatch(forceEndUtterance(state));
     },
     start,
     stop
