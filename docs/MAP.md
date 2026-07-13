@@ -160,11 +160,8 @@ can navigate them from another package.
   `CaptureCard`/`DiaryPage` are described in the "Diary" bullets below.
 - Reading→practice nudge: retired (#601). The unsolicited Today nudge card, its `GET /api/nudge` /
   `POST /api/nudge/:chunkId/dismiss` routes, the `NudgeDto` contracts, and the `nudge_state` cooldown
-  table are gone. The recent-reading-capture selection it once shared now lives with the surviving
-  reading→speaking harvest on-ramp (below): `session/harvestQueries.ts` (`listRecentReadingCaptures`,
-  `harvestCaseId`/`harvestChunkId`) + `session/harvestCommands.ts` (`selectReadingHarvestCapture`,
-  cooldown-free) over the pure domain ranking (`@whetstone/domain` `readingCaptureRanking.ts`,
-  `rankReadingCaptures`/`topReadingCapture`, score = gap × frequency + a bounded recency boost).
+  table are gone. The reading→speaking harvest on-ramp that once consumed its recent-reading-capture
+  selection retired with the coach-led Practice (#603).
 - Recitation routines (owned) (#577): `src/apps/server/src/features/recitation/` — adopt any Work
   (imported or authored) as a recitation plan. `recitationCommands.ts` (`createRecitationPlan` writes a
   `recitation_plan` `entries` row + shared `personal_entries` facet + `recitation_plans` row in one
@@ -208,20 +205,7 @@ can navigate them from another package.
   (200/400/404/409/422), `POST /api/recitation/plans/:id/whole-work/review` (200/400/404/409/422),
   `GET /api/recitation/today`; wired in `createServer.ts`/`index.ts`. DTOs in
   `@whetstone/contracts` (`recitationChainingContracts.ts`).
-- Case/map content model: `src/features/cases/` (`caseSeed.ts` seeds the authored corpus on boot;
-  `caseQueries.ts` `listDomains`/`listCasesInDomain`/`getCaseDetail`) over shared `domains` -> `cases`
-  -> `chunks`. The case detail returns the chunk inventory plus a per-user mastery summary COMPUTED
-  (never stored) from the user's `memory_prompts.chunk_id` links via `@whetstone/domain`
-  `summarizeCaseMastery`. Corpus + mastery logic are pure in `@whetstone/domain`
-  (`caseCorpus.ts`/`caseMastery.ts`); DTOs in `@whetstone/contracts` (`caseContracts.ts`).
-- Case authoring (#209): `src/features/authoring/` — `authoringCommands.ts` (`authorCase` calls the coach
-  seam to author a case + chunks into #205, persisted as `needs_review` and **cached by brief key** so a
-  repeat brief reuses the stored case with no model call; `reviewCase` edits/accepts -> `active`) and
-  `authoringQueries.ts` (`listCasesNeedingReview`, the curation queue). Cases carry a `status`
-  (`active` default; authored start `needs_review`) and a unique `brief_key`; the practice ranking in
-  `features/learner` only loads `active` cases, so unreviewed authored content is never practised.
-  Shapes in `@whetstone/contracts` (`caseContracts.ts`).
-- Memory MCP server: `src/apps/server/src/mcp/` exposes the Memory store to any MCP client (a local/cloud LLM coach) —
+- Memory MCP server: `src/apps/server/src/mcp/` exposes the Memory store to any MCP client (a local/cloud LLM) —
   `recallTools.ts` (the Memory-op tools: `deposit_memory` (#458/#595): a production-style deposit of a
   memory note + one-or-more prompts — captureSource/noteText/prompts (each cue + optional answer/gloss/
   provenance) — that reuses the `depositMemory` command directly (no proposal/review gate) and never
@@ -230,103 +214,22 @@ can navigate them from another package.
   and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
   logic duplicated. Tool list + transport: `docs/MCP.md`.
 - Shared LLM seam: `src/llm/` — the one model-agnostic prompt→text boundary every server LLM caller
-  (coach cheap tier, diary tidy, AI 解释) goes through. `llmModel.ts` exports the `LlmModel` type
+  (diary tidy, AI 解释) goes through. `llmModel.ts` exports the `LlmModel` type
   (`(prompt: string) => Promise<string>`), `createOllamaModel(model)` (local Ollama via the Vercel AI
   SDK over its OpenAI-compatible `/v1`, one shared `llmTimeoutMs`) and `probeOllamaModel(model)` (the
   boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
   base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
-- Coach LLM boundary: `src/coach/` — the coaching contract the language loop calls, composed over the
-  shared `src/llm/` seam. `coachProvider.ts` (the `CoachProvider` interface: judge / ratingForScheduler /
-  propose / author / converse / analyze), `fakeCoach.ts` (a deterministic, keyless fake so the loop builds
-  and runs with no API key), `coachRouter.ts` (cost-routing — judge/converse/analyze=strong,
-  propose/author=cheap, configurable) and `coachConfig.ts` (env-driven routing + an absent-config-safe
-  `resolveCoach` that builds the cost-routed adapters whenever the adapter factory is wired — even with
-  no key: the cheap/local tier runs, while `strong`-routed calls with no key resolve to the fake; it
-  falls back to the plain fake only when no factory is wired). `converse` (#220) is the
-  conversational next-turn call the live loop makes per user turn (no per-turn grading); `analyze` (#222)
-  is the end-of-round one-pass call: the whole round (transcript + word-timings + the case's target chunks
-  - compiled context) -> a rating per chunk, the top tagged mistakes, wins, and one native upgrade (the
-    only place a round is graded). Both `converse` and `analyze` carry the adaptive **`CoachKnobs`** (#223)
-    — difficulty/focus/probe-patterns derived deterministically from the learner model by `deriveCoachKnobs`
-    (`@whetstone/domain` `coachKnobs.ts`), briefing the FIXED coach skill (no self-tuning yet). The knobs also
-    carry the **bilingual language-mix dial** (#270): `targetL1Share` (from the learner's English share via
-    `languageMix.ts`) lets the cheap-tier `converse` reply in the learner's EN/L1 mix while always pushing one
-    English target; `englishShare(userTurn)` is recorded per turn on `session_exchanges` as the level signal.
-    The verdict
-    -> FSRS rating map is pure in `@whetstone/domain`
-    (`coachGrade.ts` `judgementToRating`); boundary shapes/validation in `@whetstone/contracts` (`coachContracts.ts`).
-    `coachAdapters.ts` composes the real tiers over the shared `src/llm/` seam — **cheap = local Ollama**
-    (`llama3.1:8b` via `createOllamaModel`), **strong = cloud** — each wrapped over the fake so any
-    model/parse failure
-    still grades the round. `coachHealth.ts` is the boot probe (`checkCoachHealth`): it pings the
-    local model on startup and reports `local_ready` / `local_unavailable` (with an `ollama pull`
-    hint) / `cloud_only` / `fake`, so a missing model degrades cleanly to the fake instead of
-    crashing. Deploy + provisioning steps: `docs/COACH.md`.
-- Voice input (STT) seam: `src/coach/`'s sibling `src/speech/` — `speechInput.ts` (the `SpeechInput`
+- Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe({ path, language? }) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
   offline CLI args, using the per-request language before the `WHISPER_LANGUAGE` config fallback; validates
   the word-timestamped JSON at the boundary; maps to a `Transcription`),
   `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
   safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured).
-  `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`, mirrors `checkCoachHealth`) logs a
-  boot warning when STT is on the fake, pointing at `pnpm setup:voice`. The
-  latency/inter-word-pause derivation is pure in `@whetstone/domain` (`speechTiming.ts`); shapes in
+  `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`) logs a
+  boot warning when STT is on the fake, pointing at `pnpm setup:voice`. Transcript shapes in
   `@whetstone/contracts` (`speechContracts.ts`). Audio never leaves the machine; setup in
   `docs/SPEECH.md`.
-- Learner model: `src/features/learner/` — the retrieval half of the moat. `learnerCommands.ts`
-  (`depositTurnOutcome` appends a turn + increments its categorized error pattern; `updateLearnerProfile`
-  recomputes the rolling profile — level/strengths/weaknesses/focus — with an injectable phraser for the
-  LLM seam) and `learnerQueries.ts` (`compileContext(now)` assembles a BOUNDED slice: rolling profile +
-  top gap x frequency chunks + relevant errors + recent outcomes, each capped so size stays ~constant as
-  history grows) over user-scoped `error_patterns`, `turn_outcomes`, `learner_profiles`. The gap x
-  frequency ranking + level derivation are pure in `@whetstone/domain` (`learnerModel.ts`); shapes in
-  `@whetstone/contracts` (`learnerContracts.ts`).
-- Progress map: `src/features/map/` — `mapQueries.ts` `compileProgressMap(now)` composes #205 per-case
-  mastery into lit/dim/dark light levels (`@whetstone/domain` `caseLightLevel`) over active cases, plus
-  owned/weak counts and the #208 recommendation + error trend; exposed by `mapRoutes.ts` at
-  `GET /api/progress-map`. Shapes in `@whetstone/contracts` (`mapContracts.ts`). Visualization only — no
-  scoring logic.
-- Practice session: `src/features/session/` — `sessionEngine.ts` orchestrates the turn loop over the
-  coach (#206) and speech (#207) seams + #205/#208/#189: `startSession` proposes cues (top gap x
-  frequency chunks; English situation, native target hidden), `submitTurn` judges + grades the
-  submitted transcript and DEPOSITS (schedules the chunk's recall item #188/#189, enrolling on first
-  practice (#243): `harvestReadingCase(db, userId, now)` no longer leads with the strictly-newest
-  capture — it selects via `session/harvestCommands.selectReadingHarvestCapture` (ranked
-  gap×freq+recency over the pure domain `readingCaptureRanking`), so the Practice lead opens on the
-  learner's highest-value recent reading; when nothing qualifies (cold start) it
-  harvests nothing and the session falls back to authored cases. `converseTurn` (#220) holds a
-  conversational coach turn: it loads the case, rebuilds the conversation from the persisted
-  `session_exchanges` rows (append-only, user+case scoped, ordered by `order_index`), calls the coach's
-  `converse`, persists the learner line + coach reply, and returns the reply (no per-turn grading).
-  `endSession` (#222) is the end-of-round one pass: it rebuilds the round (transcript from
-  `session_exchanges` + the request's word-timings + the case's target chunks + compiled context), calls
-  the coach's `analyze`, and DEPOSITS the durable trace deterministically — chunk ratings -> FSRS recall
-  (#188/#189, which also advances case mastery and so the map #210), tagged mistakes -> error-pattern
-  counts (#208), and the rolling profile (#208) — then returns the compact debrief. The
-  spoken path posts recorded audio bytes to `POST /api/session/transcribe` (optionally
-  `?language=zh|en` for capture; the coach omits it and uses the fallback default), via injected
-  `saveAudio` + speech, returning transcript + word-timings, and submits the recognized transcript; typing
-  is the fallback. `sessionRoutes.ts`: `POST /api/session/` `start|transcribe|turn|say|end`. The
-  coach/speech seams are resolved (fakes when unconfigured) in `index.ts`. Mistake-category map is pure in
-  `@whetstone/domain` (`mistakeCategory.ts`); shapes in `@whetstone/contracts` (`sessionContracts.ts`).
-  Web: the live **call surface** `SessionPage` (#221, #393) — before the call the page is a calm hero:
-  the situation plus one primary **Start call** (End is not a peer yet). Tap it to talk continuously; the
-  coach replies in voice, with **barge-in** and scrolling **live captions**, the call state
-  (Ready/listening/thinking/speaking) leading and one **End & review** action. The typed box is the
-  fallback, not a competing field: hidden behind a secondary **Type instead** when voice is supported,
-  and shown automatically with a calm explanation only when voice is unsupported or the mic fails (the
-  session stays usable). It wires the foundations end to end: continuous capture + endpointing
-  (`liveCapture.ts`, #219) → STT (`transcribe`, #207) → coach (`say` → `/api/session/say`, #220) →
-  browser TTS out (`voiceOut.ts`'s `createVoiceOut`, wired to `window.speechSynthesis` in the
-  coverage-excluded `browserVoiceOut.ts`). The browser audio/speech boundaries (`liveCapture.ts`,
-  `browserVoiceOut.ts`) are injected via the `live` prop and excluded from coverage; the loop
-  orchestration, `pickEnglishVoice`/`createVoiceOut`, and `sessionApi` are covered. **End** runs the
-  end-of-round analysis (`endSession`) and renders the compact **debrief** (`DebriefView`, #222):
-  encouragement, the few moments (said -> native + why), the one upgrade, and what was scheduled for
-  recall (each with its next-due date, so the debrief never contradicts the due-now Recall page — #478).
-  After a soft time-box (`timeBoxMs`, ~15 min) the call surfaces a calm, non-blocking "land the plane"
-  nudge offering to wrap up; the explicit **End** still works and the call is never hard-cut.
 - Diary (rich Entry + logical Timeline): `src/features/diary/` (#246 origin, #571 rich-Entry rework) — the
   owned diary capture. A diary artifact is a `diary_entry` whose durable body is a **ProseMirror/Tiptap
   document** (`body_doc` JSONB + `body_text` plaintext projection) built via `@whetstone/document`
@@ -346,7 +249,7 @@ can navigate them from another package.
   `groupTimelineEntriesByDay` (`occurred_at` DESC, `entry_id` ASC tie-break) — never a stored Timeline
   object; `listTimelinePage` pages days newest-first via the exclusive `before` day-key cursor,
   `listCalendarDates` returns days-with-entries from `occurred_at`, `listDiaryEntriesForUser` is the
-  coach-readable facet. Diary is the `kind === "diary"` filter over that result. `diaryRoutes.ts`:
+  full-state read facet. Diary is the `kind === "diary"` filter over that result. `diaryRoutes.ts`:
   `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`, `GET /api/diary/calendar?from&to`,
   `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). No proposal card is
   returned. The tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`. Shapes in
@@ -594,14 +497,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
   `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"
-  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Practice =
-  `SessionPage`, Progress = `ProgressMapPage`, Memory = `MemoryPage` at `/memory`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
+  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Memory = `MemoryPage` at `/memory`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
   `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`, Write =
-  `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`); `AppShell.tsx` is the responsive frame (one `Primary`
+  `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`; a trailing `path="*"`
+  catch-all renders `NotFoundPage` so any unknown hash route — including the retired `#/practice` — resolves to
+  the calm not-found page inside the shell); `AppShell.tsx` is the responsive frame (one `Primary`
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
   `ToastViewport` live region). `navigation.ts` holds the **four** primary destinations — Today,
   Library, **Memory**, Search — rendered as a **single non-wrapping row of ≥44px targets** on mobile
-  (#390, #573). Reader, Recall, Notes, Diary, **Practice**, and **Map** (`/progress`) keep their routes
+  (#390, #573). Reader, Recall, Notes, and Diary keep their routes
   but are NOT primary: Reader is an immersive destination opened from context, and the others are
   reached from where they belong (Today links to Recall/Diary; Memory links to Recall when something is
   due; Library links to the all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
@@ -959,7 +863,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `hostConfigInjectionScript` emits the `window.__WHETSTONE_HOST_CONFIG__ = {…}` JS, and
   `injectHostConfigScript` inserts it before `</head>` (fail-loud if absent). `src/iosPermissions.ts`
   (pure, 100%-covered) holds `ensureInfoPlistPermissions`, which idempotently adds the required
-  `NSMicrophoneUsageDescription` (Practice voice, AC #4) to the generated Info.plist. `scripts/` hold
+  `NSMicrophoneUsageDescription` (voice diary, AC #4) to the generated Info.plist. `scripts/` hold
   the sync-time I/O glue: `injectHostConfig.ts` (reads `WHETSTONE_API_BASE_URL`, fail-loud on
   missing/invalid, injects into the synced `ios/App/App/public/index.html`) and `applyIosPermissions.ts`
   (patches `ios/App/App/Info.plist`); both are wired into `add:ios`/`sync` so a clean checkout is
@@ -973,7 +877,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 
 - Workspace: pnpm + TypeScript project references. `pnpm install` then `pnpm build` before first use.
 - Run/use walkthrough: `docs/QUICK_START.md` (install, env/data config, run server + web, first note flow).
-- Setup (one command): `pnpm setup` (`scripts/setup.mjs`) — a declarative, extensible bootstrap. The runner (`scripts/setup/runner.mjs`) runs each step (`scripts/setup/steps/*.mjs`: toolchain check, install, build, Playwright Chromium, `.env` scaffold) through `check -> provision -> verify`, idempotent and fail-loud (each non-ok `StepResult` carries `what` + `remedy`). A **bare `pnpm setup` provisions ONLY the deterministic base** (no Ollama, no models, no heavy optional capability), so the default install is reproducible and offline-friendly (#602): `selectSteps` enables no optional capability unless asked. `pnpm setup:all` (`--all`) is the explicit one-command full install (base **plus every optional capability**: voice + ai + PDF, consent-gated); `pnpm setup:minimal` (`--minimal`) is an explicit base-only alias of the default; `pnpm setup:doctor` reports readiness without mutating. Single capabilities are (re)run on their own — `pnpm setup:voice`, `pnpm setup:ai`, `pnpm setup:pdf` — because `setup` is a built-in pnpm command, so passing a flag to a bare `pnpm setup` routes to the built-in and fails. The retired `pnpm setup:coach` (`--coach`) is recognized only to print the exact `pnpm setup:ai` migration and exit, never a silent no-op (#602). A raw flag/env combo (e.g. `--yes` to pre-consent installs) goes through the explicit `pnpm run setup -- --<flag>` escape hatch (`pnpm run setup -- --yes` = fully unattended). A system prerequisite is installed only through the consent seam `ctx.confirm` (`scripts/setup/confirm.mjs`; real stdin/tty wiring in `context.mjs`) via the reusable, consent-gated `installSystemTool` helper (`scripts/setup/installSystemTool.mjs`: check → package-manager detect → Y/N → install → on win32 refresh PATH from the registry and re-resolve so an install→use flow completes in one run, else name the stale-shell-PATH cause; instruct-only fallback on decline / no manager / non-interactive). The optional **voice** step (`scripts/setup/steps/voice.mjs`, `--voice`) installs faster-whisper + the bundled `whetstone-whisper` pip console-script wrapper (`scripts/setup/whisper-wrapper/`, emits the `docs/SPEECH.md` JSON contract), fetches the model, and writes `WHISPER_*` to `.env`; its Python 3 prerequisite is the first `installSystemTool` consumer (winget/brew after a Y, else instruct-only). The optional **ai** step (`scripts/setup/steps/ai.mjs`, `--ai`) is the second `installSystemTool` consumer and provisions the two optional local-only AI utilities (diary "tidy" + the Reader "AI 解释" gloss), decoupled from the retiring coach (#602): it installs Ollama (winget/brew/official-script after a Y, else instruct-only), pulls the diary-tidy (`llama3.1:8b`, override `DIARY_TIDY_MODEL`) + explain (`qwen2.5`, override `EXPLAIN_MODEL`) models, verifies each answers through the daemon, and writes `DIARY_TIDY_MODEL` + `EXPLAIN_MODEL` (never a key or coach tier) to `.env`. The optional **pdf** step (`scripts/setup/steps/pdf.mjs`, `--pdf`) provisions the PDF-ingestion lane: it checks Python + the Docling pip package + OCRmyPDF + Tesseract, reporting each missing piece distinctly, installs Python (consent-gated) then `pip install docling`, and leaves the heavy OCRmyPDF/Tesseract system tools consent-gated (brew) or instruct-only (no clean install, e.g. Windows). The `.env` line read/upsert helpers are the shared owner `scripts/setup/env-file.mjs` (used by both voice and ai). Real I/O is confined to `scripts/setup/context.mjs`. Adding a runtime dependency = drop one step file here (GUIDELINES "Setup steps" gate).
+- Setup (one command): `pnpm setup` (`scripts/setup.mjs`) — a declarative, extensible bootstrap. The runner (`scripts/setup/runner.mjs`) runs each step (`scripts/setup/steps/*.mjs`: toolchain check, install, build, Playwright Chromium, `.env` scaffold) through `check -> provision -> verify`, idempotent and fail-loud (each non-ok `StepResult` carries `what` + `remedy`). A **bare `pnpm setup` provisions ONLY the deterministic base** (no Ollama, no models, no heavy optional capability), so the default install is reproducible and offline-friendly (#602): `selectSteps` enables no optional capability unless asked. `pnpm setup:all` (`--all`) is the explicit one-command full install (base **plus every optional capability**: voice + ai + PDF, consent-gated); `pnpm setup:minimal` (`--minimal`) is an explicit base-only alias of the default; `pnpm setup:doctor` reports readiness without mutating. Single capabilities are (re)run on their own — `pnpm setup:voice`, `pnpm setup:ai`, `pnpm setup:pdf` — because `setup` is a built-in pnpm command, so passing a flag to a bare `pnpm setup` routes to the built-in and fails. The retired `pnpm setup:coach` (`--coach`) is recognized only to print the exact `pnpm setup:ai` migration and exit, never a silent no-op (#602). A raw flag/env combo (e.g. `--yes` to pre-consent installs) goes through the explicit `pnpm run setup -- --<flag>` escape hatch (`pnpm run setup -- --yes` = fully unattended). A system prerequisite is installed only through the consent seam `ctx.confirm` (`scripts/setup/confirm.mjs`; real stdin/tty wiring in `context.mjs`) via the reusable, consent-gated `installSystemTool` helper (`scripts/setup/installSystemTool.mjs`: check → package-manager detect → Y/N → install → on win32 refresh PATH from the registry and re-resolve so an install→use flow completes in one run, else name the stale-shell-PATH cause; instruct-only fallback on decline / no manager / non-interactive). The optional **voice** step (`scripts/setup/steps/voice.mjs`, `--voice`) installs faster-whisper + the bundled `whetstone-whisper` pip console-script wrapper (`scripts/setup/whisper-wrapper/`, emits the `docs/SPEECH.md` JSON contract), fetches the model, and writes `WHISPER_*` to `.env`; its Python 3 prerequisite is the first `installSystemTool` consumer (winget/brew after a Y, else instruct-only). The optional **ai** step (`scripts/setup/steps/ai.mjs`, `--ai`) is the second `installSystemTool` consumer and provisions the two optional local-only AI utilities (diary "tidy" + the Reader "AI 解释" gloss), off by default (#602): it installs Ollama (winget/brew/official-script after a Y, else instruct-only), pulls the diary-tidy (`llama3.1:8b`, override `DIARY_TIDY_MODEL`) + explain (`qwen2.5`, override `EXPLAIN_MODEL`) models, verifies each answers through the daemon, and writes `DIARY_TIDY_MODEL` + `EXPLAIN_MODEL` (never a key or cloud tier) to `.env`. The optional **pdf** step (`scripts/setup/steps/pdf.mjs`, `--pdf`) provisions the PDF-ingestion lane: it checks Python + the Docling pip package + OCRmyPDF + Tesseract, reporting each missing piece distinctly, installs Python (consent-gated) then `pip install docling`, and leaves the heavy OCRmyPDF/Tesseract system tools consent-gated (brew) or instruct-only (no clean install, e.g. Windows). The `.env` line read/upsert helpers are the shared owner `scripts/setup/env-file.mjs` (used by both voice and ai). Real I/O is confined to `scripts/setup/context.mjs`. Adding a runtime dependency = drop one step file here (GUIDELINES "Setup steps" gate).
 - Dev (one command): `pnpm dev` (`scripts/dev.mjs`) builds the shared packages once, then runs the API server from source with reload (`tsx watch`) and the Vite web dev server together — route changes go live with no manual `build`. Production still runs the built `dist` via `pnpm --filter @whetstone/server start`.
 - Gate: `pnpm validate` (= `typecheck && lint && test && build && smoke && e2e`); mirrors `.github/workflows/ci.yml`. `smoke` (`src/apps/web/dev-smoke.mjs`) boots the Vite dev server and checks every dependency resolves at serve time — catching dev-only breakage that `build` (rolldown) does not.
 - Mutation testing (advisory, non-gating): `pnpm mutation` (Stryker, `stryker.conf.mjs`) plants mutants over `@whetstone/domain` + `@whetstone/contracts` to surface shallow tests that pass at 100% coverage — backing the GUIDELINES mutation-resistance rule. It uses a scoped `vitest.stryker.config.ts` (only those packages' tests) with the same `@whetstone/*` aliases, writes `reports/mutation/`, and runs nightly via `.github/workflows/mutation.yml` (uploads the report). Never part of `pnpm validate`; `break` unset so it can't fail a merge; `thresholds.low` is the advisory baseline. Extend the `mutate` globs to add a package later.

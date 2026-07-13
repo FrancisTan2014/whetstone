@@ -1,11 +1,11 @@
 # whetstone memory MCP server
 
-whetstone exposes an **MCP server** (#190) whose tools let any MCP client — a local or cloud LLM
-"coach" — drive the deposit-and-recall loop over the Memory store (#595). It is a **thin adapter**: every
+whetstone exposes an **MCP server** (#190) whose tools let any MCP client — a local or cloud LLM —
+drive the deposit-and-recall loop over the Memory store (#595). It is a **thin adapter**: every
 tool validates its input with the shared `@whetstone/contracts` schemas and calls the same store
-operations the rest of the app uses. No coaching logic, model calls, or scheduling math live here —
-FSRS scheduling (v6, via `ts-fsrs`) is `@whetstone/domain` (#188), persistence is the Memory store (#595),
-which stores a durable **Memory note** and its **Memory prompts** as owned Entries.
+operations the rest of the app uses. No conversational or grading logic, model calls, or scheduling math
+live here — FSRS scheduling (v6, via `ts-fsrs`) is `@whetstone/domain` (#188), persistence is the Memory
+store (#595), which stores a durable **Memory note** and its **Memory prompts** as owned Entries.
 
 ## Tools
 
@@ -31,7 +31,7 @@ The server is transport-agnostic (`createRecallMcpServer(context)` in
 - Entry point: `src/apps/server/src/mcp/main.ts` → built to `dist/mcp/main.js`.
 - Run it: `pnpm --filter @whetstone/server mcp` (after `pnpm build`).
 - It opens PGlite at `DATABASE_DIR` — **point it at the same `DATABASE_DIR` as the HTTP server** so
-  the coach and the reader share one Memory store (notes/reading position live there too).
+  the MCP client and the reader share one Memory store (notes/reading position live there too).
 
 Wire it into an MCP client (e.g. Claude Desktop) as a stdio server:
 
