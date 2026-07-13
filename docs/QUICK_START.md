@@ -165,49 +165,9 @@ missing `.env` is fine (no extra dependency, nothing to fail in CI). Each Merria
 source is skipped when its key is absent. Never commit `.env` or real keys — `.gitignore`
 ignores `.env`/`.env.*` and allows only `.env.example`.
 
-### Coaching model (optional)
-
-The speaking coach runs on a **local Ollama LLM** when configured, and falls back to a deterministic
-fake when it isn't — so no model is required for the loop or the `pnpm validate` gate. The coach is
-being retired, so it no longer has a one-command setup (the former `pnpm setup:coach` now just prints
-a migration hint). To run it locally, install Ollama, pull a converse model, and point the coach at it
-by hand:
-
-```powershell
-ollama pull llama3.1:8b
-$env:COACH_MODEL = "llama3.1:8b"
-$env:COACH_CONVERSE_TIER = "cheap"; $env:COACH_ANALYZE_TIER = "cheap"
-```
-
-That gives a **fully-local coach** (no cloud key, no data leaving the machine). After setting the env,
-restart the server.
-
-With no `COACH_API_KEY`, the coach still runs its cheap/local tier for real; with
-`COACH_ANALYZE_TIER=cheap` every call is local (no cloud call). Any call still routed to `strong`
-without a key falls back to the deterministic fake.
-
-| Variable        | Default   | Purpose                                                             |
-| --------------- | --------- | ------------------------------------------------------------------- |
-| `COACH_*_TIER`  | see docs  | Per-call tier override (`cheap` = local Ollama / `strong` = cloud). |
-| `COACH_API_KEY` | _(unset)_ | Cloud key — only for the optional cloud judge (see below).          |
-
-**Optional cloud judge (manual):** to route the end-of-round _analyze_ (judge) call to a stronger
-cloud model instead of local, set `COACH_API_KEY` (never commit it) and `COACH_ANALYZE_TIER=strong`,
-then start the server:
-
-```bash
-export COACH_API_KEY=sk-...
-export COACH_ANALYZE_TIER=strong
-pnpm --filter @whetstone/server start
-```
-
-On boot the server probes the local model and logs the result; if Ollama is down or the model is
-unpulled it **warns with an `ollama pull` hint and keeps running on the fake** (no crash). Full
-detail — tiers, routing, and the boot health check — is in [docs/COACH.md](./COACH.md).
-
 ### Optional local AI utilities: diary "tidy" + lookup "AI 解释"
 
-Two small, **local-only** AI helpers are decoupled from the coach and off by default (#602), so the
+Two small, **local-only** AI helpers are off by default (#602), so the
 base install stays deterministic. Provision both in one step with:
 
 ```powershell
@@ -216,7 +176,7 @@ pnpm setup:ai   # installs Ollama (Y/N prompt), pulls both models, writes DIARY_
 
 It pulls the diary-tidy model (`llama3.1:8b`, override `DIARY_TIDY_MODEL`) and the 文言 explain model
 (`qwen2.5`, override `EXPLAIN_MODEL`), verifies each answers through the daemon, and writes only those
-two vars — no cloud key, no coach tier, nothing sent to a cloud provider.
+two vars — no cloud key, nothing sent to a cloud provider.
 
 - **Diary tidy** (`DIARY_TIDY_MODEL`): lightly cleans a voice-diary transcript (filler/pause removal,
   never rewording). **Unset ⇒ the raw transcript is kept verbatim** — no model call.
@@ -476,8 +436,8 @@ whetstone also ships as a **native iOS app** (`src/apps/mobile/`) using a
 [Capacitor](https://capacitorjs.com/) shell around the same web core. The app embeds the **bundled**
 web build (it does not load a remote URL) and injects the host runtime config (`platform="ios"` + your
 absolute `apiBaseUrl`) into the packaged `index.html` before the web app boots, so every API call
-targets your server (the on-device app has no local Ollama/Whisper — Practice and lookup call the
-server APIs). External links (e.g. the reader's dictionary lookups) open in **Safari**, not the app
+targets your server (the on-device app has no local Ollama/Whisper — the voice diary and lookup call
+the server APIs). External links (e.g. the reader's dictionary lookups) open in **Safari**, not the app
 webview.
 
 > **Windows note.** The native iOS project is generated and built with Apple tooling, so **§ 8 requires
@@ -504,8 +464,8 @@ export WHETSTONE_API_BASE_URL="https://whetstone.example.ts.net/api"   # your re
 pnpm --filter @whetstone/mobile add:ios   # generates src/apps/mobile/ios and applies the mic permission
 ```
 
-**Microphone permission is applied automatically (AC #4).** Practice records voice, so iOS requires an
-`NSMicrophoneUsageDescription`. Rather than a manual edit, `add:ios` and `sync` run a checked-in patch
+**Microphone permission is applied automatically (AC #4).** The voice diary records audio, so iOS
+requires an `NSMicrophoneUsageDescription`. Rather than a manual edit, `add:ios` and `sync` run a checked-in patch
 (`scripts/applyIosPermissions.ts`, unit-tested) that ensures this key is present in
 `src/apps/mobile/ios/App/App/Info.plist` (idempotent). The committed iOS project keeps the permission,
 so a clean checkout following these scripts is TestFlight-ready. To (re)apply it on its own:

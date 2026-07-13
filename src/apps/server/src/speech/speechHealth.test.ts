@@ -9,6 +9,7 @@ describe("checkSpeechHealth", () => {
     expect(report.status).toBe("fake");
     expect(report.message).toContain("pnpm setup:voice");
     expect(report.message).toContain("WHISPER_BINARY");
+    expect(report.message).toContain("voice diary");
   });
 
   it("reports configured when a Whisper config is present", () => {
@@ -19,6 +20,7 @@ describe("checkSpeechHealth", () => {
     });
 
     expect(report.status).toBe("configured");
+    expect(report.message).toContain("voice diary");
   });
 
   it("emits pure-ASCII log messages so the Windows console renders them cleanly (#439)", () => {

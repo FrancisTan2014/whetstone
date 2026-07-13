@@ -28,10 +28,6 @@ import { registerSearchRoutes } from "../features/search/searchRoutes.js";
 import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
 import type { ImageDependencies } from "../features/images/imageRoutes.js";
-import { registerMapRoutes } from "../features/map/mapRoutes.js";
-import type { MapDependencies } from "../features/map/mapRoutes.js";
-import { registerSessionRoutes } from "../features/session/sessionRoutes.js";
-import type { SessionDependencies } from "../features/session/sessionEngine.js";
 import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
 import type { DiaryRouteDependencies } from "../features/diary/diaryRoutes.js";
 import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWorkRoutes.js";
@@ -72,7 +68,6 @@ export type CreateServerOptions = Readonly<{
   library?: LibraryRouteDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
-  map?: MapDependencies;
   notes?: NotesDependencies;
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
@@ -81,7 +76,6 @@ export type CreateServerOptions = Readonly<{
   recitationPassages?: RecitationPassageRouteDependencies;
   recitationChaining?: RecitationChainingRouteDependencies;
   search?: SearchDependencies;
-  session?: SessionDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
   // deploy, #184). Left unset in dev/tests, where Vite serves the client separately.
   web?: { dir: string } | undefined;
@@ -95,9 +89,8 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   server.decorate("currentUser", options.currentUser ?? createDefaultCurrentUserProvider());
 
-  // Raw audio uploads (recorded clips) arrive as an octet-stream body the speech seam / voice-capture
-  // worker read as bytes. Registered once here — both the session STT boundary and the async
-  // Tap-and-Talk capture consume it, so a per-route registration would double-register and throw.
+  // Raw audio uploads (recorded clips) arrive as an octet-stream body the voice-capture worker reads
+  // as bytes. Registered once here so the async Tap-and-Talk capture can consume it.
   server.addContentTypeParser(audioContentType, { parseAs: "buffer" }, (_request, body, done) =>
     done(null, body)
   );
@@ -140,14 +133,6 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.search !== undefined) {
     registerSearchRoutes(server, options.search);
-  }
-
-  if (options.map !== undefined) {
-    registerMapRoutes(server, options.map);
-  }
-
-  if (options.session !== undefined) {
-    registerSessionRoutes(server, options.session);
   }
 
   if (options.diary !== undefined) {

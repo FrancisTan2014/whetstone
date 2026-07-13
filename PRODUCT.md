@@ -63,9 +63,9 @@ The usable personal-learning cycle contains:
 - **Today:** show deterministic due work and explicit routine state, then a truthful completion.
 - **Timeline and Search:** recover personal artifacts chronologically and source content by text.
 
-The currently shipped Practice, Progress Map, generated-case, and reading-nudge surfaces are legacy
-experiments, not part of this contract. They are retired in small vertical slices; their presence in
-the current build must not be interpreted as product direction.
+The former Practice, Progress Map, generated-case, and reading-nudge surfaces were legacy
+experiments, not part of this contract. They have been retired, so the shipped product no longer
+contains a coach-led Practice experience or a deterministic fake standing in for one.
 
 ## Information architecture
 

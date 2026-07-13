@@ -1,11 +1,11 @@
-// The iOS shell must declare why it uses the microphone, or iOS kills the app the moment Practice
-// requests capture. Capacitor generates Info.plist once (on macOS, via `cap add ios`) without this
-// key, so — rather than a manual, forgettable edit — the mobile setup/sync flow runs a checked-in
+// The iOS shell must declare why it uses the microphone, or iOS kills the app the moment the voice
+// diary requests capture. Capacitor generates Info.plist once (on macOS, via `cap add ios`) without
+// this key, so — rather than a manual, forgettable edit — the mobile setup/sync flow runs a checked-in
 // patch (scripts/applyIosPermissions.ts) built on these pure, testable helpers. Keeping the logic here
 // (not in the I/O script) lets it be unit-tested without a native project.
 
 export const microphoneUsageDescription =
-  "Whetstone uses the microphone for spoken Practice sessions.";
+  "Whetstone uses the microphone to record voice diary entries.";
 
 const microphoneUsageKey = "NSMicrophoneUsageDescription";
 const topLevelDictOpen = "<dict>";

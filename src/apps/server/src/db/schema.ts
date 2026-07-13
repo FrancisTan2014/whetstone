@@ -465,11 +465,13 @@ export const noteAnchors = pgTable(
   (table) => [index("note_anchors_block_idx").on(table.blockEntryId)]
 );
 
-// The authored content substrate for the language coach (#205): a map of everyday-life domains, each
-// holding cases (a situation + communicative function), each carrying a chunk inventory (the native
-// phrasings to practise). This is SHARED content (no owner, like works/blocks); it is seeded from the
-// domain's canonical corpus on boot. Per-user mastery is never stored here — it is computed from the
-// recall store (#189) via `recall_items.chunk_id`.
+// The `domains`/`cases`/`chunks` tables (#205) are RETAINED after the coach-led Practice retirement
+// (#603) as the temporary owner of Memory provenance: `memory_prompts.chunk_id` still references
+// `chunks.id`, so a scheduled Memory prompt harvested from a practice chunk keeps its provenance and
+// its FSRS state stays derivable by chunk. Practice no longer writes these tables (they are seeded but
+// otherwise inert); a later issue may migrate the surviving provenance off `chunk_id` and drop them.
+// This is SHARED content (no owner, like works/blocks). Per-user mastery is never stored here — it is
+// computed from the recall store (#189) via `recall_items.chunk_id`.
 export const domains = pgTable("domains", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -544,8 +546,9 @@ export const memoryNotes = pgTable("memory_notes", {
 // transitively and never gets a Timeline row of its own — the note→prompt edge is also recorded in
 // `entry_links` as `contains`). `cue_doc`/`answer_doc` are the rich bodies, with `cue_text`/`answer_text`
 // their readable projections. `lifecycle` is `draft` (captured but no revealable answer, so no card) or
-// `scheduled`. `chunk_id` optionally links the direction to a practice chunk (#205) so Cases mastery /
-// Map / the learner model keep deriving mastery from the prompt's FSRS state by chunk. The inlined FSRS
+// `scheduled`. `chunk_id` optionally links the direction to a practice chunk (#205) so the prompt's FSRS
+// state stays derivable by chunk — retained Memory provenance after the Practice retirement (#603). The
+// inlined FSRS
 // card columns and `answer_doc`/`answer_text` are NULL for a draft and all set once scheduled; `due_at`
 // is indexed for a cheap due scan.
 export const memoryPrompts = pgTable(
@@ -562,6 +565,9 @@ export const memoryPrompts = pgTable(
     answerDoc: jsonb("answer_doc"),
     answerText: text("answer_text"),
     lifecycle: text("lifecycle", { enum: ["draft", "scheduled"] as const }).notNull(),
+    // Temporary retained Memory-provenance link (#603): optionally ties a prompt to the practice chunk
+    // (#205) it was harvested from, so its FSRS state stays derivable by chunk. Retained until a later
+    // issue migrates provenance off `chunk_id` and drops `domains`/`cases`/`chunks`.
     chunkId: text("chunk_id").references(() => chunks.id),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     // Inlined FSRS card state (@whetstone/domain `ReviewState`), NULL until the prompt is scheduled.
@@ -598,121 +604,6 @@ export const memoryPromptReviews = pgTable(
     reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
   },
   (table) => [index("memory_prompt_reviews_prompt_idx").on(table.promptEntryId)]
-);
-
-// The learner model (#208) — user-owned personal data, like notes and recall. Three tables: the
-// categorized error-pattern store, the deposited turn outcomes, and the rolling profile. Enum literals
-// mirror `@whetstone/domain` (`learnerModel.ts`); duplicated so migration generation does not depend
-// on the domain package being built first.
-
-// Per-user categorized recurring errors with frequency (`count`) and recency (`last_seen_at`). One row
-// per (user, category) — a deposited turn with that category increments the count and bumps recency.
-export const errorPatterns = pgTable(
-  "error_patterns",
-  {
-    category: text("category", {
-      enum: [
-        "article_drop",
-        "l1_calque",
-        "wrong_collocation",
-        "register",
-        "word_order",
-        "tense_aspect",
-        "other"
-      ] as const
-    }).notNull(),
-    count: integer("count").notNull(),
-    lastSeenAt: timestamp("last_seen_at", { mode: "date", withTimezone: true }).notNull(),
-    userId: text("user_id").notNull()
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.category] })]
-);
-
-// The append-only log of deposited turn outcomes: the grade, the chunk practised (if any), and the
-// diagnosed error category (if any). Recent outcomes for the compiled context come from here.
-export const turnOutcomes = pgTable(
-  "turn_outcomes",
-  {
-    chunkId: text("chunk_id").references(() => chunks.id),
-    errorCategory: text("error_category", {
-      enum: [
-        "article_drop",
-        "l1_calque",
-        "wrong_collocation",
-        "register",
-        "word_order",
-        "tense_aspect",
-        "other"
-      ] as const
-    }),
-    grade: integer("grade").notNull(),
-    id: text("id").primaryKey(),
-    recordedAt: timestamp("recorded_at", { mode: "date", withTimezone: true }).notNull(),
-    userId: text("user_id").notNull()
-  },
-  (table) => [index("turn_outcomes_user_recorded_idx").on(table.userId, table.recordedAt)]
-);
-
-// The rolling, periodically-distilled profile: one row per user (level, focus, a phrased summary, and
-// the structured strengths/weaknesses lists), recomputed from outcomes.
-export const learnerProfiles = pgTable("learner_profiles", {
-  focus: text("focus").notNull(),
-  level: text("level", {
-    enum: ["beginner", "elementary", "intermediate", "advanced"] as const
-  }).notNull(),
-  strengthsJson: jsonb("strengths_json").notNull(),
-  summary: text("summary").notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull(),
-  userId: text("user_id").primaryKey(),
-  weaknessesJson: jsonb("weaknesses_json").notNull()
-});
-
-// A finished practice session's summary (#211): one row per ended session, user-scoped. The per-turn
-// deposits live in recall (#189) and `turn_outcomes` (#208); this records the session recap that is
-// shown to the learner and kept for history.
-export const sessionSummaries = pgTable(
-  "session_summaries",
-  {
-    averageGrade: doublePrecision("average_grade").notNull(),
-    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
-    errorCountsJson: jsonb("error_counts_json").notNull(),
-    id: text("id").primaryKey(),
-    strongTurns: integer("strong_turns").notNull(),
-    turnCount: integer("turn_count").notNull(),
-    userId: text("user_id").notNull()
-  },
-  (table) => [index("session_summaries_user_idx").on(table.userId, table.createdAt)]
-);
-
-// The append-only conversational exchange of a live coaching call (#220): one row per turn the learner
-// or coach spoke, user-owned and scoped to the case the call is set in. The server reconstructs the
-// conversation history from these rows (ordered by `order_index`, which is monotonic per user+case and
-// stable under a fixed clock) so the client only sends the latest line. `repair_json` records the
-// coach's light-repair signal on a breakdown turn (null otherwise). No per-turn grade lives here —
-// grading is the end-of-round job (#222).
-export const sessionExchanges = pgTable(
-  "session_exchanges",
-  {
-    caseId: text("case_id")
-      .notNull()
-      .references(() => cases.id),
-    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull(),
-    id: text("id").primaryKey(),
-    orderIndex: integer("order_index").notNull(),
-    // The English share of a user turn (#270): the bilingual-dial level signal, recorded per turn so
-    // the trend can be read over rounds. Null on coach turns.
-    englishShare: doublePrecision("english_share"),
-    // The one English chunk the bilingual coach pushed for the learner to retry (#270), recorded on
-    // the coach turn so it can be deposited as recall practice at end of round. Null otherwise.
-    englishTarget: text("english_target"),
-    repairJson: jsonb("repair_json"),
-    role: text("role", { enum: ["user", "coach"] as const }).notNull(),
-    text: text("text").notNull(),
-    userId: text("user_id").notNull()
-  },
-  (table) => [
-    index("session_exchanges_user_case_idx").on(table.userId, table.caseId, table.orderIndex)
-  ]
 );
 
 // The shared ownership + chronology facet for personal (owned) Entries (#571): owner and the three

@@ -17,7 +17,7 @@ function renderAt(path: string): string {
 }
 
 // Live render (jsdom) so we can query the Primary nav landmark and assert exactly which links it
-// contains — the route content (e.g. Today's "Recall"/"Practice" cards) shares those words, so the
+// contains — the route content (e.g. Today's "Recall" card) shares those words, so the
 // "removed from primary nav" invariant (#390) must be scoped to the nav, not the whole document.
 function renderLiveAt(path: string): ReturnType<typeof render> {
   return render(
@@ -47,11 +47,11 @@ describe("App shell and routes", () => {
     expect(labels).toEqual(["Today", "Library", "Memory", "Search"]);
   });
 
-  it("keeps Reader, Recall, Notes, Diary, Progress, and Practice out of the primary nav (#573)", () => {
+  it("keeps Reader, Recall, Notes, and Diary out of the primary nav (#573)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
-    for (const secondary of ["Reader", "Recall", "Notes", "Diary", "Progress", "Practice", "Map"]) {
+    for (const secondary of ["Reader", "Recall", "Notes", "Diary"]) {
       expect(within(nav).queryByRole("link", { name: secondary })).toBeNull();
     }
   });
@@ -134,11 +134,23 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Opening your diary…");
   });
 
-  it("resolves the progress route to the mastery map page (labelled Map in the nav)", () => {
-    const markup = renderAt("/progress");
+  it("resolves a retired /practice navigation to the not-found page inside the shell", () => {
+    const markup = renderAt("/practice");
 
+    // The retired coach Practice route is gone: #/practice lands on the normal not-found route, never a
+    // SessionPage. The shell (primary nav) still frames it, so it is a calm not-found, not a blank screen.
     expect(markup).toContain('aria-label="Primary"');
-    expect(markup).toContain('id="progress-heading"');
+    expect(markup).toContain('id="not-found-heading"');
+    expect(markup).toContain("Page not found");
+  });
+
+  it("resolves the retired /progress route and any unknown path to the not-found page", () => {
+    for (const path of ["/progress", "/does-not-exist"]) {
+      const markup = renderAt(path);
+
+      expect(markup).toContain('id="not-found-heading"');
+      expect(markup).not.toContain('id="progress-heading"');
+    }
   });
 
   it("resolves the reader route with a work query param to the reader page", () => {

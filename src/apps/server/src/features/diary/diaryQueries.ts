@@ -193,9 +193,9 @@ export async function listCalendarDates(
   return [...days].filter((day) => day >= from && day <= to).sort();
 }
 
-// Every diary Entry the user owns, newest first — the coach-readable learner-history facet, and the read
-// side commands project after a write. Includes in-flight/failed voice captures (unlike the Timeline) so
-// a caller can inspect the full diary state; scoped to the owner via `personal_entries`.
+// Every diary Entry the user owns, newest first — the full-state read facet the write-side commands
+// project after a write. Includes in-flight/failed voice captures (unlike the Timeline) so a caller can
+// inspect the full diary state; scoped to the owner via `personal_entries`.
 export async function listDiaryEntriesForUser(
   db: DbClient,
   userId: string

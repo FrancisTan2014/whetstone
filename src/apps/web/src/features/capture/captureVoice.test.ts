@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { LiveCaptureCallbacks } from "../session/liveCapture";
+import type { LiveCaptureCallbacks } from "./liveCapture";
 import { createCaptureVoice, type CreateLiveCapture } from "./captureVoice";
 
 // A deterministic stand-in for the browser live-capture seam: it records the callbacks the adapter
@@ -11,11 +11,10 @@ function fakeLiveCapture() {
   const start = vi.fn(async () => {});
   const stop = vi.fn();
   const finishUtterance = vi.fn();
-  const setCoachPlaying = vi.fn();
 
   const create: CreateLiveCapture = (received) => {
     callbacks = received;
-    return { finishUtterance, setCoachPlaying, start, stop };
+    return { finishUtterance, start, stop };
   };
 
   return {

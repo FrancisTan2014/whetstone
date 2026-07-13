@@ -1,6 +1,6 @@
 # Voice input (STT) — local Whisper
 
-The practice loop turns a recorded utterance into a transcript + word timings through the
+The voice diary turns a recorded utterance into a transcript + word timings through the
 `SpeechInput` seam (`src/apps/server/src/speech/`). Transcription runs **locally and offline** with
 OSS Whisper — **no audio leaves the machine** and there is ~zero token cost. Pronunciation / prosody
 scoring is out of scope; it plugs in later behind the same seam.
@@ -61,7 +61,7 @@ Use an OSS Whisper runtime, e.g.:
 - **faster-whisper** — a small CLI wrapper around `WhisperModel` works too.
 
 The adapter invokes the binary as below. A request language overrides `WHISPER_LANGUAGE`; when the
-request omits language (for example, the coach path), the configured fallback is used.
+request omits language, the configured fallback is used.
 
 ```
 <WHISPER_BINARY> --model <WHISPER_MODEL_PATH> --language <lang> --output json --word-timestamps <audio>

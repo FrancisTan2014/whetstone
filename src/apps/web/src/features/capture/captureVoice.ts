@@ -1,8 +1,8 @@
 // Browser audio boundary for unified capture (#455): the single impure adapter that turns the
-// existing live-capture seam (`createLiveCapture`, the same Web Audio/MediaRecorder path the practice
-// call uses) into the capture card's one-shot record/stop shape. It touches
+// live-capture seam (`createLiveCapture`, a Web Audio/MediaRecorder path) into the capture card's
+// one-shot record/stop shape. It touches
 // MediaRecorder/getUserMedia (through `createLiveCapture`), which jsdom does not provide, so — like
-// `features/session/liveCapture.ts` — it is excluded from coverage in vitest.config.ts. No STT, tidy, or
+// `features/capture/liveCapture.ts` — it is excluded from coverage in vitest.config.ts. No STT, tidy, or
 // persistence lives here: `stop()` resolves the captured blob, which `CaptureCard` hands to the existing
 // `transcribe()` seam before submitting the transcript as a voice capture.
 //
@@ -13,8 +13,8 @@
 // then does `stop()` await the finalized audio; otherwise it releases the mic and settles with empty audio
 // so the caller falls back to the calm no-speech retry / typed box instead of hanging in "transcribing".
 
-import { createLiveCapture, isVoiceCaptureSupported } from "../session/liveCapture.js";
-import type { LiveCapture, LiveCaptureCallbacks } from "../session/liveCapture.js";
+import { createLiveCapture, isVoiceCaptureSupported } from "./liveCapture.js";
+import type { LiveCapture, LiveCaptureCallbacks } from "./liveCapture.js";
 import type { CaptureVoiceDependencies, VoiceRecording } from "./CaptureCard.js";
 
 // The live-capture factory, injected so the one-shot orchestration (including the no-utterance path) is
@@ -32,9 +32,6 @@ export function createCaptureVoice(
         resolveUtterance = resolve;
       });
       const capture = createCapture({
-        onBargeIn: () => {
-          confirmed = true;
-        },
         onUtterance: (audio) => resolveUtterance(audio),
         onUtteranceStart: () => {
           confirmed = true;

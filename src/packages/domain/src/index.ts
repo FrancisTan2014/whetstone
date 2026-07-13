@@ -4,63 +4,6 @@ export { blockTypes } from "./block.js";
 export type { BlockType } from "./block.js";
 export { blockSimilarity, diffBlocks } from "./blockDiff.js";
 export type { BlockDiff, DiffNewBlock, DiffOldBlock } from "./blockDiff.js";
-export { caseCorpus, getCorpusDomain } from "./caseCorpus.js";
-export type { CorpusCase, CorpusChunk, CorpusDomain } from "./caseCorpus.js";
-export { chunkMasteryStatus, chunkMasteryStatuses, summarizeCaseMastery } from "./caseMastery.js";
-export type { CaseMasterySummary, ChunkMasteryStatus } from "./caseMastery.js";
-export { judgementToRating, productionCategories } from "./coachGrade.js";
-export type { ProductionCategory } from "./coachGrade.js";
-export { coachIntensities, coachPaces, coachRegisters, deriveCoachKnobs } from "./coachKnobs.js";
-export type {
-  CoachIntensity,
-  CoachKnobs,
-  CoachPace,
-  CoachRegister,
-  LearnerSnapshot
-} from "./coachKnobs.js";
-export { englishShare, l1Languages, MAX_L1_SHARE, targetL1Share } from "./languageMix.js";
-export type { L1Language } from "./languageMix.js";
-export {
-  createEndpointer,
-  forceEndUtterance,
-  isCapturingUtterance,
-  pushFrame
-} from "./endpointing.js";
-export type {
-  EndpointConfig,
-  EndpointEvent,
-  EndpointerState,
-  EndpointStep,
-  SpeechAbortedEvent,
-  SpeechCandidateEvent,
-  UtteranceEndEvent,
-  UtteranceStartEvent
-} from "./endpointing.js";
-export {
-  createTurnTaking,
-  finishTurn,
-  isListening,
-  observeFrame,
-  setCoachPlaying
-} from "./turnTaking.js";
-export type { TurnEffect, TurnStep, TurnTakingState } from "./turnTaking.js";
-export { deriveSpeechTiming } from "./speechTiming.js";
-export type { SpeechTiming, WordBoundary } from "./speechTiming.js";
-export {
-  chunkGap,
-  deriveLevel,
-  errorCategories,
-  proficiencyLevels,
-  rankChunksByGapFrequency
-} from "./learnerModel.js";
-export type {
-  ChunkCandidate,
-  ErrorCategory,
-  ProficiencyLevel,
-  RankedChunk
-} from "./learnerModel.js";
-export { rankReadingCaptures, recencyBoost, topReadingCapture } from "./readingCaptureRanking.js";
-export type { ReadingCaptureCandidate, RankedReadingCapture } from "./readingCaptureRanking.js";
 export { buildDiaryTidyPrompt, diaryTidyInstructions, isFaithfulTidy } from "./diaryTidy.js";
 export {
   entryTypeForTimelineKind,
@@ -80,12 +23,6 @@ export {
   toDayKey,
   toMonthKey
 } from "./diaryTimeline.js";
-export { caseLightLevel, caseLightLevels } from "./progressMap.js";
-export type { CaseLightLevel } from "./progressMap.js";
-export { mistakeCategoryFromIssues } from "./mistakeCategory.js";
-export type { ProductionIssueLike } from "./mistakeCategory.js";
-export { summarizeSessionTurns } from "./sessionSummary.js";
-export type { SessionErrorCount, SessionSummary, SessionTurn } from "./sessionSummary.js";
 export { blocksToMarkdown, blockToMarkdown } from "./blockMarkdown.js";
 export {
   addEntryLink,
@@ -162,6 +99,8 @@ export {
   retrievability
 } from "./fsrs.js";
 export type { CardState, ReviewRating, ReviewState, SchedulerOptions } from "./fsrs.js";
+export { createEndpointer, forceEndUtterance, pushFrame } from "./endpointing.js";
+export type { EndpointConfig, EndpointEvent, EndpointStep } from "./endpointing.js";
 export { sanitizeSvg } from "./svgSanitizer.js";
 export { isWorkType, workTypes } from "./work.js";
 export { isRecitationPhase, recitationPhases } from "./recitation.js";

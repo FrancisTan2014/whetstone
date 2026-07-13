@@ -20,10 +20,8 @@ import {
 } from "../../db/schema.js";
 import {
   depositMemory,
-  depositPushedPhrase,
   importMemoryBatch,
   recordPromptReview,
-  reviewChunkMemory,
   snoozePrompt,
   type MemoryDependencies
 } from "./memoryCommands.js";
@@ -419,113 +417,6 @@ describe("importMemoryBatch (#574)", () => {
       (row) => row.type === "memory_note"
     );
     expect(noteEntries).toHaveLength(0);
-  });
-});
-
-describe("reviewChunkMemory", () => {
-  it("creates a scheduled chunk prompt on first review, then dedupes and advances it", async () => {
-    await seedChunk("chunk-1");
-    const first = await reviewChunkMemory(
-      context.deps,
-      {
-        userId: userA,
-        chunkId: "chunk-1",
-        situation: "greet a stranger",
-        target: "how do you do",
-        sourceBlockEntryId: null
-      },
-      "good",
-      t0
-    );
-
-    // The returned due matches the pure FSRS advance of the freshly seeded card.
-    expect(first.nextDueAt.toISOString()).toBe(applyRating(newReviewState(t0), "good", t0).due);
-
-    const second = await reviewChunkMemory(
-      context.deps,
-      {
-        userId: userA,
-        chunkId: "chunk-1",
-        situation: "greet a stranger",
-        target: "how do you do",
-        sourceBlockEntryId: null
-      },
-      "good",
-      at(1)
-    );
-
-    // Same prompt is reused (dedupe by chunk), not a second one.
-    expect(second.promptId).toBe(first.promptId);
-    const promptsForChunk = await context.db
-      .select()
-      .from(memoryPrompts)
-      .where(eq(memoryPrompts.chunkId, "chunk-1"));
-    expect(promptsForChunk).toHaveLength(1);
-
-    // Two reviews are logged, and reps advanced past the first.
-    const history = await context.db
-      .select()
-      .from(memoryPromptReviews)
-      .where(eq(memoryPromptReviews.promptEntryId, first.promptId));
-    expect(history).toHaveLength(2);
-    expect(second.nextDueAt.getTime()).toBeGreaterThan(at(1).getTime());
-  });
-
-  it("links the chunk prompt to its source block as provenance", async () => {
-    await context.db.insert(entries).values({ id: "block-1", type: "block" });
-    await seedChunk("chunk-9");
-
-    const result = await reviewChunkMemory(
-      context.deps,
-      {
-        userId: userA,
-        chunkId: "chunk-9",
-        situation: "s",
-        target: "t",
-        sourceBlockEntryId: "block-1"
-      },
-      "good",
-      t0
-    );
-
-    const promptRow = (
-      await context.db
-        .select()
-        .from(memoryPrompts)
-        .where(eq(memoryPrompts.entryId, result.promptId))
-    )[0];
-    const provenance = await context.db
-      .select()
-      .from(entryLinks)
-      .where(eq(entryLinks.fromEntryId, promptRow!.noteEntryId));
-    expect(
-      provenance.some((row) => row.type === "derived_from" && row.toEntryId === "block-1")
-    ).toBe(true);
-  });
-});
-
-describe("depositPushedPhrase", () => {
-  it("schedules a self-cued prompt when the glosser suggests an answer", async () => {
-    const deps = buildDeps(context.db, async () => "a temporary state");
-
-    const prompt = await depositPushedPhrase(deps, { userId: userA, target: "ephemeral" }, t0);
-
-    expect(prompt.lifecycle).toBe("scheduled");
-    expect(prompt.cueText).toBe("ephemeral");
-    expect(prompt.answerText).toBe("a temporary state");
-    expect(prompt.review).not.toBeNull();
-  });
-
-  it("saves an unscheduled draft when no answer is found", async () => {
-    const prompt = await depositPushedPhrase(
-      context.deps,
-      { userId: userA, target: "ephemeral" },
-      t0
-    );
-
-    expect(prompt.lifecycle).toBe("draft");
-    expect(prompt.answerText).toBeNull();
-    expect(prompt.review).toBeNull();
   });
 });
 
