@@ -83,6 +83,24 @@ describe("probeOllamaModel", () => {
     expect(spy).toHaveBeenCalledWith(`${ollamaBaseUrl}/api/tags`, expect.anything());
   });
 
+  // Regression (#602): Ollama tags an untagged pull as `:latest` and `/api/tags` reports the tagged
+  // name, so `ollama pull qwen2.5` (the default EXPLAIN_MODEL) lists as `qwen2.5:latest`. The boot
+  // health probe must treat the untagged request as a match — otherwise it falsely logs a model
+  // `pnpm setup:ai` just pulled/verified as "unavailable", the exact defect the reviewer flagged.
+  it("matches an untagged request against the daemon's ':latest' tag (setup:ai default)", async () => {
+    mockTags({ models: [{ name: "qwen2.5:latest" }] });
+
+    await expect(probeOllamaModel("qwen2.5")).resolves.toBe(true);
+  });
+
+  // ...but the match is by full name, not a loose substring: an untagged `qwen2.5` must NOT match a
+  // different model that merely shares the prefix (e.g. `qwen2.5-coder:latest`).
+  it("does not loosely match a different model sharing the requested name's prefix", async () => {
+    mockTags({ models: [{ name: "qwen2.5-coder:latest" }] });
+
+    await expect(probeOllamaModel("qwen2.5")).resolves.toBe(false);
+  });
+
   it("reports false when the model is not among the served models", async () => {
     mockTags({ models: [{ name: "qwen2.5" }] });
 
