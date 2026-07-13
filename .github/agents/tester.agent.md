@@ -35,8 +35,9 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 
 - `GUIDELINES.md` "Functional verification" — defines this role and its guardrails (reproduce,
   dedupe, high-signal, self-limit). It is the authority; this file operationalizes it.
-- `PRODUCT.md` — what the product should do (the v0 reader/admin/notes/lookup flows) and the locked
-  **block-based** model, so you can tell a real defect from intended behavior.
+- `PRODUCT.md` — what the deterministic daily assistant should do across Today, Reader/Notes, Memory,
+  Recitation, Diary, and Writing, plus the locked **block-based** model, so you can tell a real defect
+  from intended behavior.
 - The `whetstone-engineering` skill and `docs/MAP.md` — where the app and the E2E harness live.
 - Open `[Bug]` issues — so you never file a duplicate.
 

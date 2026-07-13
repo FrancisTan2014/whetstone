@@ -26,10 +26,14 @@ This repository is built through a design -> issue -> implementation -> review l
 
 ## Product direction
 
-Start from the simplest v0 product:
+Whetstone is a private, deterministic personal learning assistant:
 
-- Admin pages input source reading materials.
-- Reader pages display materials.
-- Users click or tap words/phrases in the reader to create notes linked to that source text.
+- The learner chooses what matters; Whetstone remembers, schedules, presents, and records it.
+- The complete product must work with every AI/model integration disabled.
+- Recitation with FSRS is the reference daily routine, alongside reading, Memory, diary, and writing.
+- Today shows explicit routines and deterministic due work, never unsolicited proposals.
+- Model-backed diary tidy and contextual explanation may remain only as optional, non-blocking
+  utilities over an already-saved deterministic result.
 
-Do not reintroduce older complex scope unless a later issue explicitly asks for it.
+Do not reintroduce the autonomous coach, generated cases, Progress Map, reading nudges, or other
+proposal-led scope unless a later product decision explicitly restores it.
