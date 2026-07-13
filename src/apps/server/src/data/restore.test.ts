@@ -53,6 +53,37 @@ function sampleArchive(): Uint8Array {
   return buildArchive(manifest, payloads);
 }
 
+// A checksum-valid archive whose extraction layout is malicious: the payload's byte count and
+// SHA-256 match (so verifyArchive passes), but the root name / relativePath try to escape the
+// target. Restore must reject it on the safety guard, before any write.
+function tamperedArchive(opts: { rootName?: string; relativePath?: string }): Uint8Array {
+  const dbBytes = strToU8("DUMP");
+  const fileBytes = strToU8("srcfile");
+  const filePath = "files/sources/a.txt";
+  const payloads = new Map<string, Uint8Array>([
+    [DATABASE_ENTRY, dbBytes],
+    [filePath, fileBytes]
+  ]);
+  const manifest: BackupManifest = {
+    formatVersion: BACKUP_FORMAT_VERSION,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    app: { name: "whetstone", version: "0.0.0" },
+    schemaVersion: "0043_test",
+    database: payloadRef(DATABASE_ENTRY, dbBytes),
+    roots: [
+      {
+        name: opts.rootName ?? "sources",
+        configuredPath: "/d/sources",
+        present: true,
+        fileCount: 1,
+        totalBytes: fileBytes.length,
+        files: [{ ...payloadRef(filePath, fileBytes), relativePath: opts.relativePath ?? "a.txt" }]
+      }
+    ]
+  };
+  return buildArchive(manifest, payloads);
+}
+
 function fakeFs(opts: { hasEntries?: boolean } = {}): {
   fs: RestoreFs;
   writes: { dir: string; files: CollectedFile[] }[];
@@ -140,6 +171,42 @@ describe("restoreData", () => {
       })
     ).rejects.toThrow(/mig fail/);
     expect(calls.close).toBe(1);
+  });
+
+  it("rejects a traversing file path before writing or opening the database", async () => {
+    const { fs, writes } = fakeFs();
+    let opened = false;
+    await expect(
+      restoreData({
+        archive: tamperedArchive({ relativePath: "../../evil.txt" }),
+        targetDir: "/restore",
+        fs,
+        openDatabase: async () => {
+          opened = true;
+          return fakeDb().db;
+        }
+      })
+    ).rejects.toThrow(/escapes its data root/);
+    expect(writes).toEqual([]);
+    expect(opened).toBe(false);
+  });
+
+  it("rejects an unexpected root name before writing or opening the database", async () => {
+    const { fs, writes } = fakeFs();
+    let opened = false;
+    await expect(
+      restoreData({
+        archive: tamperedArchive({ rootName: "../escape" }),
+        targetDir: "/restore",
+        fs,
+        openDatabase: async () => {
+          opened = true;
+          return fakeDb().db;
+        }
+      })
+    ).rejects.toThrow(/unexpected data root/);
+    expect(writes).toEqual([]);
+    expect(opened).toBe(false);
   });
 });
 

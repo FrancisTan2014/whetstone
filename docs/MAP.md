@@ -571,7 +571,9 @@ can navigate them from another package.
 - Backup/restore (#600): `src/data/` owns verified whole-instance backup and restore. Pure, covered
   modules — `archive.ts` (versioned single-ZIP format: `manifest.json` + gzip database dump + per-root
   files, with SHA-256 checksums and `verifyArchive`), `dataRoots.ts` (durable file-root inventory from
-  server config), `metadata.ts` (app + schema version), `fileTree.ts` (collect/write a root), `backup.ts`
+  server config), `metadata.ts` (app + schema version), `fileTree.ts` (collect/write a root),
+  `restoreSafety.ts` (rejects traversal/absolute/drive/backslash paths and unknown root names in the
+  archive before any write), `backup.ts`
   and `restore.ts` (orchestrators with injectable I/O), and `cli.ts` (arg parse + output/error mapping).
   The thin, coverage-excluded `backupCli.ts`/`restoreCli.ts` wire real PGlite (`dumpDataDir`/`loadDataDir`)
   and fs for `pnpm data:backup -- --output <artifact>` / `pnpm data:restore -- --input <artifact>

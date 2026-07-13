@@ -6,6 +6,7 @@ import { BackupError } from "./backupError.js";
 import { RESTORE_DATABASE_SUBDIR, SOURCE_FILES_ROOT } from "./dataRoots.js";
 import { writeRoot } from "./fileTree.js";
 import type { CollectedFile } from "./fileTree.js";
+import { assertSafeRestoreLayout } from "./restoreSafety.js";
 
 // Orchestrates one restore into a fresh, empty target directory: verify the archive end to end
 // before writing anything, lay out the database dump and every file root, load the database, run
@@ -78,6 +79,10 @@ export async function restoreData(params: RestoreParams): Promise<RestoreSummary
   const parsed = readArchive(params.archive);
   verifyArchive(parsed);
   const { manifest, payloads } = parsed;
+
+  // Constrain the extraction layout: only known root names, and every file path must resolve inside
+  // its root. This runs before any write, so a tampered archive can never escape the target (#600).
+  assertSafeRestoreLayout(manifest);
 
   if (fs.directoryHasEntries(targetDir)) {
     throw new BackupError(
