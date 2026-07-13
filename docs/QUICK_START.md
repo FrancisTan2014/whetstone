@@ -47,10 +47,9 @@ consent-gated) / `pnpm setup:minimal` (lean) / `pnpm setup:doctor` (probe only).
 
 ### Voice input (optional)
 
-Spoken practice transcribes locally with Whisper. The base `pnpm setup` already installs it
-(consent-gated); if you ran `pnpm setup:minimal`, or declined the prompt, voice stays off — a spoken
-turn transcribes to empty and the server logs a one-line boot warning telling you how to enable it.
-To (re)run just this capability:
+Voice diary capture transcribes locally with Whisper. The base `pnpm setup` currently installs it
+(consent-gated); if you ran `pnpm setup:minimal`, or declined the prompt, typed diary remains complete
+while a voice capture stays retryable with setup guidance. To (re)run just this capability:
 
 ```powershell
 pnpm setup:voice   # installs faster-whisper + the whetstone-whisper wrapper, fetches the model, writes WHISPER_* to .env
@@ -58,7 +57,8 @@ pnpm setup:voice   # installs faster-whisper + the whetstone-whisper wrapper, fe
 
 Pick a different model with `WHISPER_MODEL` (default `small`, multilingual): e.g.
 `WHISPER_MODEL=base.en pnpm run setup -- --voice` for English-only. After it finishes, restart `pnpm dev`
-and speaking yields a real transcript. Details and the STT contract: [docs/SPEECH.md](./SPEECH.md).
+and voice diary yields a real transcript. Details and the STT contract:
+[docs/SPEECH.md](./SPEECH.md).
 
 ### PDF ingestion (optional)
 
@@ -396,9 +396,9 @@ To run whetstone continuously on a Mac and reach it from your phone over HTTPS, 
 **Tailscale `serve`** — a private, tailnet-only `https://<machine>.<tailnet>.ts.net` over a direct
 WireGuard connection (near-LAN speed, no public exposure), asserted by the deploy CI via the
 `TAILSCALE_SERVE_ENABLED` repo variable. A **named Cloudflare Tunnel** (`whetstone.<your-domain>`) is
-the alternative if you own a Cloudflare domain, and **Tailscale Funnel** is the opt-in way to share
-publicly — never a random `trycloudflare.com` quick tunnel. Any tokens/keys stay in the host's
-environment; nothing secret is committed. See
+not a supported alternative yet, and neither are Tailscale Funnel or quick public tunnels: v0 has one
+default user and no authentication, so public exposure would expose the personal app to anyone who
+can reach the URL. Keep the deployment tailnet-only. See
 [DEPLOY.md § 5 — A stable, fast URL (Tailscale `serve`)](./DEPLOY.md#5-a-stable-fast-url-tailscale-serve--recommended).
 
 ## 7. Desktop app (Tauri, Windows/macOS)
@@ -514,7 +514,7 @@ pnpm exec vitest run src/apps/mobile
 
 ### TestFlight handoff checklist (macOS)
 
-1. Set a distributable `WHETSTONE_API_BASE_URL` (a public/tailnet server the phone can reach), then
+1. Set `WHETSTONE_API_BASE_URL` to the private tailnet server the phone can reach, then
    `pnpm --filter @whetstone/mobile sync`.
 2. In Xcode → **Signing & Capabilities**, select your Apple Developer team and set a unique bundle
    identifier (defaults to `com.whetstone.app`).

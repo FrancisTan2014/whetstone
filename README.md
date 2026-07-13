@@ -1,23 +1,22 @@
 # whetstone
 
-A simple personal reading app, starting from a sharp v0:
+A private, deterministic personal learning assistant for reading, recitation, Memory, diary, and
+writing. The learner chooses what matters; Whetstone remembers, schedules, presents, and records it.
+The complete daily loop works without an AI provider.
 
-1. Admin pages input source reading materials.
-2. Reader pages display materials.
-3. Users click or tap words/phrases to create notes linked to the source text.
-
-The v0 admin, reader, and note-capture flows are implemented. To run the app and walk through the
-first author → work → reader → note flow, see the [quick start guide](./docs/QUICK_START.md).
+To run the app and walk through the current Library → Reader → Notes/Memory flow, see the
+[quick start guide](./docs/QUICK_START.md). The current product contract and recitation-first delivery
+order live in [PRODUCT.md](./PRODUCT.md).
 
 ## Monorepo layout
 
 ```text
 src/
   apps/
-    web/       React + Vite PWA client (library admin, reader, note capture)
-    server/    Fastify API server (library, content, notes, /health)
+    web/       React + Vite PWA client
+    server/    Fastify API server
   packages/
-    domain/    Pure Entry/link/block/template/note-anchor logic
+    domain/    Pure product logic (Entries, anchors, FSRS, recitation)
     contracts/ Shared API schemas and DTOs (Zod)
 ```
 
