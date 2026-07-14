@@ -1,5 +1,6 @@
 import {
   createRecitationPlanRequestSchema,
+  recitationSessionResponseSchema,
   setRecitationPhaseRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
@@ -15,6 +16,7 @@ import {
 } from "./recitationCommands.js";
 import { loadRecitationHub } from "./recitationHubQueries.js";
 import { getContinueRecitation, listRecitationPlans } from "./recitationQueries.js";
+import { loadRecitationSession } from "./recitationSessionQueries.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
@@ -86,6 +88,16 @@ export function registerRecitationRoutes(
     const timeZone = await getLearnerTimeZone(dependencies.db, userId);
     const hub = await loadRecitationHub(dependencies, userId, dependencies.now(), timeZone);
     return { hub };
+  });
+
+  // The complete inline recitation session (#609): a transient projection over the same canonical rows
+  // as the hub, but ordered for one due-first practice run (due passages → whole-Work → chain → optional
+  // new passage → clear). The route validates the response envelope at the boundary before sending.
+  server.get("/api/recitation/session", async (request) => {
+    const userId = request.server.currentUser.getCurrentUserId();
+    const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+    const session = await loadRecitationSession(dependencies, userId, dependencies.now(), timeZone);
+    return recitationSessionResponseSchema.parse({ session });
   });
 
   // Pause a plan (#608): remove its cards from all due/Today selection without deleting progress,

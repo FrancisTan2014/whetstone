@@ -67,11 +67,13 @@ vocabulary), `recitationFading.ts` (#579 the pure render-time support-level proj
 `selectRecitationTodayAction` bounded priority `due_passage`>`chain`>`whole_work`>`none`, and the
 `SessionRecallOutcome` held/broke logic `passagesToFailFromOutcome`/`isOutcomePassageInSession`),
 `recitationIntroduction.ts` (#607 the pure paced-introduction evaluator: `RECITATION_DAILY_INTRODUCTION_CAP`
-+ `evaluateRecitationIntroduction` deciding new-passage availability + a machine reason with fixed
+and `evaluateRecitationIntroduction` deciding new-passage availability + a machine reason with fixed
 precedence `not_learning`>`due_work_remains`>`all_introduced`>`cap_reached`),
 `recitationHub.ts` (#608 the pure routine-stage derivation: `recitationRoutineStages`
 `familiarize`/`learn_passage`/`chain`/`whole_work_maintenance` + `deriveRecitationStage` mapping plan
-phase + chain eligibility/active-chain to the hub's "where am I" stage) and
+phase + chain eligibility/active-chain to the hub's "where am I" stage), `recitationSession.ts`
+(#609 the pure transient session step selector `due_passage`>`whole_work`>`chain`>`new_passage`>`clear`,
+kept separate from Today's #580 chain-before-whole-work selector) and
 `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
@@ -106,6 +108,8 @@ review-whole-work request schemas, and their `parse*` boundary helpers),
 (plan/title/phase/paused, `passages` introduced-of-total, `due` due/overdue counts, the reused #607
 `recitationIntroductionStatusDtoSchema`, the derived `stage`, and the reused #580
 `recitationTodayActionDtoSchema` primary action) — `recitationHubResponseSchema` + `parseRecitationHubResponse`),
+`recitationSessionContracts.ts` (#609 transient session projection DTO: server-selected step plus raw
+availability booleans/due/new-passage hints so the web session can recompute after local dismissals),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
 `queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
@@ -274,13 +278,16 @@ can navigate them from another package.
   a paused plan is still shown with all progress but surfaces zeroed due counts and a `none` action — it
   persists NO parallel counter, stage flag, or copied due date). `recitationCommands.ts` adds
   `setRecitationPlanPaused` (owner-scoped → `not_found`, idempotent UPDATE of `paused_at`).
-  `recitationRoutes.ts` adds `GET /api/recitation/hub` and `POST /api/recitation/plans/:id/pause|resume`
-  (404 when not owned, else 200 with the refreshed hub DTO; the zone resolves via `getLearnerTimeZone`).
+  `recitationSessionQueries.ts` (#609 `loadRecitationSession` — the transient due-first session projection
+  over the same canonical rows, ordered due passage → whole-work → active chain → optional new passage → clear).
+  `recitationRoutes.ts` adds `GET /api/recitation/hub`, `GET /api/recitation/session`, and
+  `POST /api/recitation/plans/:id/pause|resume` (404 when not owned, else 200 with the refreshed hub DTO;
+  the zone resolves via `getLearnerTimeZone`).
   The load-bearing pause invariant: `isNull(recitation_plans.paused_at)` is added to the three cross-plan
   due scans — `loadNextDuePassage` (`recitationPassageQueries.ts`), `loadEarliestActiveChainForUser` +
   `listWholeWorkScanPlansForUser` (`recitationChainingQueries.ts`) — so a paused plan drops out of
   `loadRecitationToday` and every due selection without deleting progress/schedule/support/chains/history.
-  DTOs in `@whetstone/contracts` (`recitationHubContracts.ts`).
+  DTOs in `@whetstone/contracts` (`recitationHubContracts.ts`, `recitationSessionContracts.ts`).
 - Memory MCP server: `src/apps/server/src/mcp/` exposes the Memory store to any MCP client (a local/cloud LLM) —
   `recallTools.ts` (the Memory-op tools: `deposit_memory` (#458/#595): a production-style deposit of a
   memory note + one-or-more prompts — captureSource/noteText/prompts (each cue + optional answer/gloss/
@@ -915,14 +922,18 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   here" on one identified passage), and, once every passage is owned, a **Whole-work maintenance** prompt with
   the four ratings + an optional break-point `<select>`. Reloads live after each action; nothing is a Timeline
   Entry. The E2E `e2e/tests/recitation-chaining.spec.ts` drives owned-prefix → chain → whole-work end to end.
-- Recitation routine hub (#608): `src/apps/web/src/features/recitation/` (same slice) — `recitationHubApi.ts`
-  (`getRecitationHub`/`pausePlan`/`resumePlan`, every response parsed through `recitationHubContracts`) and
+- Recitation routine hub + inline session (#608/#609): `src/apps/web/src/features/recitation/` (same slice) —
+  `recitationHubApi.ts` (`getRecitationHub`/`pausePlan`/`resumePlan`, every response parsed through
+  `recitationHubContracts`), `recitationSessionApi.ts` (`getRecitationSession`, parsed through
+  `recitationSessionContracts`), `RecitationSessionPanel.tsx` (the inline due-first stepper that reuses
+  `RecitationReviewCard`, `WholeWork`, `ChainStart`/`ActiveChain`, and `PassageIntroductionPanel`, with only
+  transient chain-dismiss/new-passage-skip state) and
   `RecitationHubPage.tsx` — the calm single-column `#/recitation` hub (a SECONDARY route in `app/AppRoutes.tsx`,
   deliberately NOT in `navigation.ts`) rendering explicit states with no dashboard grid/streak/score/chart:
   loading, error, the restrained `no_plan` empty state (link to Library), and the active projection — Work
   title + phase, "{introducedCount} of {totalCount} passages introduced" human copy, the routine stage label,
-  due/overdue counts first, then the single due-first primary action (→ `#/recite?plan=<id>`), then the #607
-  new-passage affordance only when available, then a caught-up state; a paused banner + **Resume routine** when
+  due/overdue counts first, then a single **Start session** control that mounts the #609 session inline (no
+  hub action link to `#/recite`), then a caught-up state; a paused banner + **Resume routine** when
   paused, else a **Pause routine** button (both call the api and refresh from the returned hub). Pure enum→label
   maps live in the coverage-excluded `RecitationHubPage.tokens.ts`. Reached via quiet secondary links: Today's
   **Open recitation hub** (in the Continue-recitation card) and the Library **Recitation** Work action (in

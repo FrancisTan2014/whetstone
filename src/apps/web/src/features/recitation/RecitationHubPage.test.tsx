@@ -10,29 +10,24 @@ vi.mock("./recitationHubApi", () => ({
   resumePlan: vi.fn()
 }));
 
-vi.mock("./recitationPassageApi", () => ({
-  fetchDuePassageForPlan: vi.fn()
-}));
-
-// The real due-review card is exercised by RecitationReviewCard.test.tsx and the hub E2E; here it is
-// stubbed to a minimal control so these tests assert the HUB's wiring — that it launches the session with
-// the fetched passage and refreshes on completion — not the card's internals.
-vi.mock("./RecitationReviewCard", () => ({
-  RecitationReviewCard: ({
-    onReviewed,
-    passage
+vi.mock("./RecitationSessionPanel", () => ({
+  RecitationSessionPanel: ({
+    onExit,
+    planEntryId
   }: {
-    onReviewed: () => void;
-    passage: { passageEntryId: string };
+    onExit: () => void;
+    planEntryId: string;
   }) => (
-    <button onClick={onReviewed} type="button">
-      complete review {passage.passageEntryId}
-    </button>
+    <div aria-label="Recitation session" role="group">
+      <p>session for {planEntryId}</p>
+      <button onClick={onExit} type="button">
+        Exit session
+      </button>
+    </div>
   )
 }));
 
 import type {
-  DueRecitationPassageDto,
   RecitationHubDto,
   RecitationIntroductionStatusDto,
   RecitationTodayActionDto,
@@ -41,27 +36,10 @@ import type {
 
 import { RecitationHubPage } from "./RecitationHubPage";
 import { getRecitationHub, pausePlan, resumePlan } from "./recitationHubApi";
-import { fetchDuePassageForPlan } from "./recitationPassageApi";
 
 const mockedGet = vi.mocked(getRecitationHub);
 const mockedPause = vi.mocked(pausePlan);
 const mockedResume = vi.mocked(resumePlan);
-const mockedDue = vi.mocked(fetchDuePassageForPlan);
-
-function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecitationPassageDto {
-  return {
-    anchorStatus: "anchored",
-    context: "Chapter 1",
-    defaultCueStrength: "opening",
-    passageEntryId: "passage-1",
-    planEntryId: "plan-1",
-    precedingText: null,
-    supportLevel: "full",
-    targetText: "To be, or not to be.",
-    workTitle: "Meditations",
-    ...overrides
-  };
-}
 
 function makeIntro(
   overrides: Partial<RecitationIntroductionStatusDto> = {}
@@ -154,12 +132,11 @@ describe("RecitationHubPage", () => {
     expect(screen.getByText("4 of 12 passages introduced")).toBeDefined();
     expect(screen.getByText("Stage: Learning passages")).toBeDefined();
 
-    const due = screen.getByLabelText("Due review");
-    expect(within(due).getByText("2 due · 1 overdue")).toBeDefined();
-    // The due action launches the real review session inline — it is a control, not a link to the
-    // segmentation surface.
-    expect(within(due).getByRole("button", { name: "Start review" })).toBeDefined();
-    expect(within(due).queryByRole("link")).toBeNull();
+    const session = screen.getByLabelText("Session");
+    expect(within(session).getByText("2 due · 1 overdue")).toBeDefined();
+    expect(within(session).getByText("Next: Start review")).toBeDefined();
+    expect(within(session).getByRole("button", { name: "Start session" })).toBeDefined();
+    expect(within(session).queryByRole("link")).toBeNull();
   });
 
   it("shows a due count without the overdue clause when nothing is overdue", async () => {
@@ -167,12 +144,12 @@ describe("RecitationHubPage", () => {
       makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
     );
     renderPage();
-    const due = await screen.findByLabelText("Due review");
-    expect(within(due).getByText("1 due")).toBeDefined();
-    expect(within(due).queryByText(/overdue/)).toBeNull();
+    const session = await screen.findByLabelText("Session");
+    expect(within(session).getByText("1 due")).toBeDefined();
+    expect(within(session).queryByText(/overdue/)).toBeNull();
   });
 
-  it("runs the due review session inline and refreshes the hub when a review completes", async () => {
+  it("starts the complete recitation session inline and refreshes the hub on exit", async () => {
     mockedGet
       .mockResolvedValueOnce(
         makeHub({
@@ -182,61 +159,17 @@ describe("RecitationHubPage", () => {
         })
       )
       .mockResolvedValueOnce(makeHub({ primaryAction: "none" }));
-    mockedDue.mockResolvedValue(makeDuePassage({ passageEntryId: "passage-7" }));
     renderPage();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start session" }));
 
-    // The fetched due passage is handed to the shared review card (stubbed here), and it is fetched for
-    // the SAME plan the hub projects — never the earliest-due passage across other plans (#608 review).
-    const complete = await screen.findByRole("button", { name: "complete review passage-7" });
-    expect(mockedDue).toHaveBeenCalledTimes(1);
-    expect(mockedDue).toHaveBeenCalledWith("plan-hub");
+    const session = await screen.findByLabelText("Recitation session");
+    expect(within(session).getByText("session for plan-hub")).toBeDefined();
 
-    // Completing the review refreshes the hub, which re-decides the next action (now caught up).
-    await userEvent.click(complete);
+    await userEvent.click(within(session).getByRole("button", { name: "Exit session" }));
     expect(await screen.findByLabelText("Caught up")).toBeDefined();
     expect(mockedGet).toHaveBeenCalledTimes(2);
-    expect(screen.queryByLabelText("Due review")).toBeNull();
-  });
-
-  it("resolves to a calm caught-up line when the due passage cleared before it was fetched", async () => {
-    mockedGet.mockResolvedValue(
-      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
-    );
-    mockedDue.mockResolvedValue(null);
-    renderPage();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
-    const due = screen.getByLabelText("Due review");
-    expect(await within(due).findByText(/Nothing to recite/i)).toBeDefined();
-    expect(within(due).queryByRole("button", { name: "Start review" })).toBeNull();
-  });
-
-  it("surfaces an inline error when the due passage fails to load, keeping the hub", async () => {
-    mockedGet.mockResolvedValue(
-      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
-    );
-    mockedDue.mockRejectedValue(new Error("network"));
-    renderPage();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
-    const due = screen.getByLabelText("Due review");
-    expect(await within(due).findByRole("alert")).toBeDefined();
-    // The session can be retried; the hub itself is intact.
-    expect(within(due).getByRole("button", { name: "Start review" })).toBeDefined();
-    expect(screen.getByRole("heading", { name: "Meditations" })).toBeDefined();
-  });
-
-  it("shows a quiet loading line while the due passage resolves", async () => {
-    mockedGet.mockResolvedValue(
-      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
-    );
-    mockedDue.mockReturnValue(new Promise(() => {}));
-    renderPage();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
-    expect(screen.getByText(/Finding your next passage/i)).toBeDefined();
+    expect(screen.queryByLabelText("Session")).toBeNull();
   });
 
   it("labels the chain and whole-work primary actions from the stage", async () => {
@@ -244,7 +177,8 @@ describe("RecitationHubPage", () => {
       makeHub({ due: { dueCount: 3, overdueCount: 1 }, primaryAction: "chain", stage: "chain" })
     );
     renderPage();
-    expect(await screen.findByRole("link", { name: "Continue chain" })).toBeDefined();
+    expect(await screen.findByText("Next: Continue chain")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDefined();
     expect(screen.getByText("Stage: Chaining passages")).toBeDefined();
     expect(screen.getByText("3 due · 1 overdue")).toBeDefined();
 
@@ -258,7 +192,7 @@ describe("RecitationHubPage", () => {
       })
     );
     renderPage();
-    expect(await screen.findByRole("link", { name: "Whole-work review" })).toBeDefined();
+    expect(await screen.findByText("Next: Whole-work review")).toBeDefined();
     expect(screen.getByText("Stage: Whole-work maintenance")).toBeDefined();
   });
 
@@ -276,11 +210,10 @@ describe("RecitationHubPage", () => {
       )
     );
     renderPage();
-    const panel = await screen.findByLabelText("New passage");
-    expect(within(panel).getByText("1 of 3 introduced today · 2 left")).toBeDefined();
-    expect(within(panel).getByRole("link", { name: "New passage" }).getAttribute("href")).toBe(
-      "#/recite?plan=plan-1"
-    );
+    const panel = await screen.findByLabelText("Session");
+    expect(within(panel).getByText("0 due")).toBeDefined();
+    expect(within(panel).getByText("New passage available")).toBeDefined();
+    expect(within(panel).getByRole("button", { name: "Start session" })).toBeDefined();
     // With a new passage available, the learner is not "caught up".
     expect(screen.queryByLabelText("Caught up")).toBeNull();
   });
@@ -299,9 +232,8 @@ describe("RecitationHubPage", () => {
       )
     );
     renderPage();
-    const panel = await screen.findByLabelText("New passage");
-    expect(within(panel).getByRole("link", { name: "Start first passage" })).toBeDefined();
-    expect(within(panel).getByText("3 of 3 introduced today")).toBeDefined();
+    const panel = await screen.findByLabelText("Session");
+    expect(within(panel).getByText("Start first passage")).toBeDefined();
     expect(within(panel).queryByText(/left/)).toBeNull();
   });
 
@@ -310,8 +242,7 @@ describe("RecitationHubPage", () => {
     renderPage();
     const caughtUp = await screen.findByLabelText("Caught up");
     expect(within(caughtUp).getByText(/caught up for today/i)).toBeDefined();
-    expect(screen.queryByLabelText("Due review")).toBeNull();
-    expect(screen.queryByLabelText("New passage")).toBeNull();
+    expect(screen.queryByLabelText("Session")).toBeNull();
   });
 
   it("shows a paused banner and resumes from the returned hub", async () => {
@@ -321,7 +252,7 @@ describe("RecitationHubPage", () => {
 
     expect(await screen.findByText(/this routine is paused/i)).toBeDefined();
     // A paused plan withholds obligations and the new-passage affordance.
-    expect(screen.queryByLabelText("Due review")).toBeNull();
+    expect(screen.queryByLabelText("Session")).toBeNull();
     expect(screen.queryByRole("button", { name: "Pause routine" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Resume routine" }));
