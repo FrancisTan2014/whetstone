@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { NoteTemplateDto, WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
+import type { WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
@@ -30,13 +30,12 @@ vi.mock("./readerApi", () => ({
 vi.mock("../notes/notesApi", () => ({
   createNote: vi.fn(),
   deleteNote: vi.fn(),
-  fetchNoteTemplates: vi.fn(),
   fetchNotes: vi.fn(),
   updateNote: vi.fn()
 }));
 vi.mock("../lookup/lookupApi", () => ({ lookupTerm: vi.fn() }));
 
-import { fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
+import { fetchNotes } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
   fetchUnitContent,
@@ -52,7 +51,6 @@ const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
 const mockedFetchWorkAnchorIndex = vi.mocked(fetchWorkAnchorIndex);
 const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
 const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
-const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedLookupTerm = vi.mocked(lookupTerm);
 
@@ -68,14 +66,6 @@ const work: WorkListItemDto = {
     workType: "essay"
   }
 };
-
-const templates: ReadonlyArray<NoteTemplateDto> = [
-  {
-    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
-    id: "vocabulary",
-    name: "Vocabulary"
-  }
-];
 
 const blockCount = 50;
 
@@ -149,7 +139,6 @@ beforeEach(() => {
     return unit;
   });
   mockedLocateBlockUnit.mockResolvedValue(undefined);
-  mockedFetchNoteTemplates.mockResolvedValue({ templates });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
   mockedLookupTerm.mockResolvedValue({ found: false });
 });

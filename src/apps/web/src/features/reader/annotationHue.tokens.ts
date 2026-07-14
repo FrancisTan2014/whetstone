@@ -1,30 +1,15 @@
-// Maps a note template to its annotation hue (Vocabulary amber, Expression teal-green, Thought
-// violet) plus the dedicated Gem hue for a mark-only highlight (#255, null template). Unknown
-// templates fall back to the vocabulary hue. The hue carries the note's meaning; callers turn the
-// key into the underline-span class (`noteMark--<hue>`) or the whole-block gutter class
-// (`readerBlock--<hue>`).
-type AnnotationHue = "expr" | "gem" | "thought" | "vocab";
+// One muted amber annotation channel for every rich note, plus a lighter variant for a bodyless Mark
+// (#619). The channel carries only the note/mark distinction — never the note's content — so editing a
+// note never changes its colour. Callers turn the kind into the underline-span class
+// (`noteMark--<kind>`) or the whole-block gutter class (`readerBlock--<kind>`).
+type NoteKind = "mark" | "note";
 
-const hueByTemplate: Readonly<Record<string, AnnotationHue>> = {
-  expression: "expr",
-  thought: "thought",
-  vocabulary: "vocab"
-};
-
-function annotationHueKey(templateId: string | null): AnnotationHue {
-  if (templateId === null) {
-    return "gem";
-  }
-
-  return hueByTemplate[templateId] ?? "vocab";
+// The underline-span hue class for a sub-block note or mark.
+export function noteMarkHueClass(kind: NoteKind): string {
+  return `noteMark--${kind}`;
 }
 
-// The underline-span hue class for a sub-block note in the given template's colour.
-export function noteMarkHueClass(templateId: string | null): string {
-  return `noteMark--${annotationHueKey(templateId)}`;
-}
-
-// The whole-block gutter-bar hue class for a note with no sub-block offsets.
-export function blockGutterHueClass(templateId: string | null): string {
-  return `readerBlock--${annotationHueKey(templateId)}`;
+// The whole-block gutter-bar hue class for a note or mark with no sub-block offsets.
+export function blockGutterHueClass(kind: NoteKind): string {
+  return `readerBlock--${kind}`;
 }

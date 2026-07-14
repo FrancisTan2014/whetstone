@@ -1,16 +1,18 @@
 import { useState } from "react";
 
-import type { CreateNoteRequest, NoteDto, NoteTemplateDto } from "@whetstone/contracts";
-import { preselectTemplateId } from "@whetstone/domain";
+import type { CreateNoteRequest, NoteDto } from "@whetstone/contracts";
+import { documentText, type DocumentNodeJSON } from "@whetstone/document";
 
+import { RichContentEditor } from "../../shared/editor/index.js";
+import { createEmptyDocument } from "../../shared/editor/editorDocument.js";
 import { Button } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
 import { createNote, updateNote } from "./notesApi";
 import { draftToAnchor, type NoteDraft } from "./noteCapture";
-import { templateSwatchClass } from "./templateHue.tokens";
 
-// The editor opens either to capture a new note from a reader selection, or to edit an
-// existing note reopened from a highlight or the note list.
+// The editor opens either to capture a new note from a reader selection, or to edit an existing note
+// reopened from a highlight or the note list. A note is always authored content — one rich body, no
+// template choice and no classification; a bodyless Mark (#255) is never routed here.
 export type NoteEditorTarget =
   | Readonly<{ draft: NoteDraft; kind: "create" }>
   | Readonly<{ kind: "edit"; note: NoteDto }>;
@@ -19,36 +21,8 @@ type NoteEditorProps = Readonly<{
   onClose: () => void;
   onSaved: (note: NoteDto) => void;
   target: NoteEditorTarget;
-  templates: ReadonlyArray<NoteTemplateDto>;
   workEntryId: string;
 }>;
-
-function initialTemplateId(
-  templates: ReadonlyArray<NoteTemplateDto>,
-  preselectedId: string
-): string | undefined {
-  const preselected = templates.find((template) => template.id === preselectedId);
-
-  return preselected?.id ?? templates[0]?.id;
-}
-
-function buildCreateRequest(
-  draft: NoteDraft,
-  templateId: string,
-  answers: Record<string, string>
-): CreateNoteRequest {
-  return { answers, anchor: draftToAnchor(draft), templateId };
-}
-
-function preselectionFor(target: NoteEditorTarget): string {
-  if (target.kind === "create") {
-    return target.draft.preselectedTemplateId;
-  }
-
-  // A mark (null template) has no Edit affordance in the UI; if one is ever edited, fall back to the
-  // size-based preselection so the editor still opens on a sensible template.
-  return target.note.templateId ?? preselectTemplateId(target.note.anchor.selectedTextSnapshot);
-}
 
 function selectionTextFor(target: NoteEditorTarget): string {
   return target.kind === "create"
@@ -56,79 +30,57 @@ function selectionTextFor(target: NoteEditorTarget): string {
     : target.note.anchor.selectedTextSnapshot;
 }
 
-function initialAnswersFor(target: NoteEditorTarget): Record<string, string> {
-  return target.kind === "create" ? {} : { ...target.note.answers };
+function initialBodyFor(target: NoteEditorTarget): DocumentNodeJSON {
+  // A new capture starts from an empty document; an edited note always carries a canonical body
+  // (`kind = 'note'` ⇒ non-null `body_doc`), so the cast is sound — a Mark never reaches the editor.
+  return target.kind === "create"
+    ? createEmptyDocument()
+    : (target.note.bodyDoc as DocumentNodeJSON);
 }
 
-// The editor is hosted in the shared responsive `Sheet` (right-docked side panel on
-// desktop, bottom sheet above the keyboard on mobile). The active template is derived
-// from the current `templates` prop each render (falling back to the size-based
-// preselection for a new note, or the note's own template when editing) so templates that
-// load after the editor opens are used; an explicit choice, once made, takes precedence.
+// The editor is hosted in the shared responsive `Sheet` (right-docked side panel on desktop, bottom
+// sheet above the keyboard on mobile) and opens straight to ONE focused rich body. The selected source
+// text shows as read-only anchor context outside the editable body — it is provenance, never copied
+// into the note. Save is disabled while the body is blank and a blank save attempt is announced
+// through an accessible alert; the server always re-derives the readable projection.
 export function NoteEditor({
   onClose,
   onSaved,
   target,
-  templates,
   workEntryId
 }: NoteEditorProps): React.JSX.Element {
-  const [chosenTemplateId, setChosenTemplateId] = useState<string | undefined>(undefined);
-  const [answers, setAnswers] = useState<Record<string, string>>(() => initialAnswersFor(target));
+  const initialBody = initialBodyFor(target);
+  const [draft, setDraft] = useState<DocumentNodeJSON>(initialBody);
   const [error, setError] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
 
-  const activeTemplateId =
-    chosenTemplateId ?? initialTemplateId(templates, preselectionFor(target));
-  const template = templates.find((candidate) => candidate.id === activeTemplateId);
   const heading = target.kind === "create" ? "New note" : "Edit note";
+  const blank = documentText(draft).trim().length === 0;
 
-  if (template === undefined) {
-    return (
-      <Sheet onOpenChange={onClose} open title={heading}>
-        <p role="alert">Note templates are unavailable. Please try again.</p>
-      </Sheet>
-    );
-  }
-
-  function setAnswer(fieldId: string, value: string): void {
-    setAnswers((previous) => ({ ...previous, [fieldId]: value }));
-  }
-
-  async function persist(currentTemplate: NoteTemplateDto): Promise<NoteDto> {
-    const filled: Record<string, string> = {};
-
-    for (const field of currentTemplate.fields) {
-      filled[field.id] = answers[field.id] ?? "";
-    }
-
-    if (!Object.values(filled).some((value) => value.trim().length > 0)) {
-      throw new Error("empty");
-    }
-
+  async function persist(): Promise<NoteDto> {
     if (target.kind === "create") {
-      return createNote(workEntryId, buildCreateRequest(target.draft, currentTemplate.id, filled));
+      const request: CreateNoteRequest = { anchor: draftToAnchor(target.draft), bodyDoc: draft };
+      return createNote(workEntryId, request);
     }
 
-    return updateNote(workEntryId, target.note.entryId, {
-      answers: filled,
-      templateId: currentTemplate.id
-    });
+    return updateNote(workEntryId, target.note.entryId, { bodyDoc: draft });
   }
 
-  async function onSave(currentTemplate: NoteTemplateDto): Promise<void> {
+  async function onSave(): Promise<void> {
+    if (blank) {
+      setError("Write something before saving the note.");
+      return;
+    }
+
     let saved: NoteDto;
 
     setError(undefined);
     setSaving(true);
 
     try {
-      saved = await persist(currentTemplate);
-    } catch (caught) {
-      setError(
-        caught instanceof Error && caught.message === "empty"
-          ? "Add at least one answer before saving."
-          : "Could not save the note. Please try again."
-      );
+      saved = await persist();
+    } catch {
+      setError("Could not save the note. Please try again.");
       return;
     } finally {
       setSaving(false);
@@ -142,45 +94,18 @@ export function NoteEditor({
       <div className="noteEditor">
         <p className="noteEditorSelection">Selected: {selectionTextFor(target)}</p>
 
-        <div aria-label="Template" className="noteEditorTemplates" role="group">
-          {templates.map((candidate) => (
-            <button
-              aria-label={candidate.name}
-              aria-pressed={candidate.id === template.id}
-              className={`noteEditorTemplate ${templateSwatchClass(candidate.id)}`}
-              key={candidate.id}
-              onClick={() => setChosenTemplateId(candidate.id)}
-              type="button"
-            >
-              {candidate.name}
-            </button>
-          ))}
-        </div>
-
-        {template.fields.map((field) => (
-          <div className="noteEditorField" key={field.id}>
-            <label htmlFor={`note-field-${field.id}`}>{field.label}</label>
-            {field.type === "long_text" ? (
-              <textarea
-                id={`note-field-${field.id}`}
-                onChange={(event) => setAnswer(field.id, event.currentTarget.value)}
-                value={answers[field.id] ?? ""}
-              />
-            ) : (
-              <input
-                id={`note-field-${field.id}`}
-                onChange={(event) => setAnswer(field.id, event.currentTarget.value)}
-                type="text"
-                value={answers[field.id] ?? ""}
-              />
-            )}
-          </div>
-        ))}
+        <RichContentEditor
+          ariaLabel="Note body"
+          document={initialBody}
+          onChange={setDraft}
+          onSave={() => void onSave()}
+          presentation="compact"
+        />
 
         {error !== undefined ? <p role="alert">{error}</p> : null}
 
         <div className="noteEditorActions">
-          <Button onClick={() => void onSave(template)} pending={saving} type="button">
+          <Button disabled={blank} onClick={() => void onSave()} pending={saving} type="button">
             Save note
           </Button>
           <Button onClick={onClose} type="button" variant="secondary">

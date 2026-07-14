@@ -1,5 +1,3 @@
-import { preselectTemplateId } from "@whetstone/domain";
-
 import type { NoteDraft } from "../notes/noteCapture";
 import { isCjkText, segmentWordAt } from "../lookup/segmentWord";
 import { blockTextContent, rangeWithinElement, textOffsetOf } from "./blockText";
@@ -55,7 +53,6 @@ function singleBlockDraft(
   const base = {
     blockEntryId: id,
     contextSnapshot: blockText,
-    preselectedTemplateId: preselectTemplateId(selectedText),
     selectedText
   };
 
@@ -152,7 +149,6 @@ export function captureSelectionAnchor(
     contextSnapshot: startText,
     endBlockEntryId: blockId(endBlock),
     endOffset,
-    preselectedTemplateId: preselectTemplateId(range.toString()),
     selectedText: range.toString(),
     startOffset
   };

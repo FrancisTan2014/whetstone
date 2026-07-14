@@ -21,18 +21,18 @@ const CONTEXT_CHARS = 32;
 
 // A resolvable highlight for one sub-block or cross-block note: the offset span (start/end block +
 // offsets) for the primary resolution, plus the TextQuote (exact + bounded prefix/suffix) for the
-// fallback, and the presentation (hue class via template, accessible label, note id).
+// fallback, and the presentation (hue class via note kind, accessible label, note id).
 export type NoteHighlightDescriptor = Readonly<{
   ariaLabel: string;
   endBlockEntryId: string;
   endOffset: number;
   exact: string;
+  kind: "mark" | "note";
   noteId: string;
   prefix: string;
   startBlockEntryId: string;
   startOffset: number;
   suffix: string;
-  templateId: string | null;
 }>;
 
 // The highlight descriptors for a set of notes, in note order. A whole-block note (no offsets) is
@@ -59,6 +59,7 @@ export function noteHighlightDescriptors(
       endBlockEntryId,
       endOffset: anchor.endOffset,
       exact: anchor.selectedTextSnapshot,
+      kind: note.kind,
       noteId: note.entryId,
       prefix: anchor.contextSnapshot.slice(
         Math.max(0, anchor.startOffset - CONTEXT_CHARS),
@@ -70,8 +71,7 @@ export function noteHighlightDescriptors(
       // a single-block note can derive a trailing suffix from that snapshot.
       suffix: sameBlock
         ? anchor.contextSnapshot.slice(anchor.endOffset, anchor.endOffset + CONTEXT_CHARS)
-        : "",
-      templateId: note.templateId
+        : ""
     });
   }
 
@@ -91,7 +91,7 @@ function blockIdOf(block: HTMLElement): string {
 function highlightAttributes(descriptor: NoteHighlightDescriptor): Record<string, string> {
   return {
     "aria-label": descriptor.ariaLabel,
-    class: `noteMark ${noteMarkHueClass(descriptor.templateId)}`,
+    class: `noteMark ${noteMarkHueClass(descriptor.kind)}`,
     "data-note-id": descriptor.noteId,
     role: "button",
     tabindex: "0"

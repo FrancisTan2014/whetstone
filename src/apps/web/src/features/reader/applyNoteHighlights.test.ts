@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { NoteDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 import { applyNoteHighlights, noteHighlightDescriptors } from "./applyNoteHighlights";
@@ -21,11 +22,11 @@ function reader(html: string): HTMLElement {
 
 function note(anchor: NoteDto["anchor"], overrides: Partial<NoteDto> = {}): NoteDto {
   return {
-    answers: {},
     blockEntryId: anchor.blockEntryId,
+    bodyDoc: createTextDocument("a note"),
+    bodyText: "a note",
     entryId: toEntryId("note-1"),
-    markdown: "",
-    templateId: "vocabulary",
+    kind: "note",
     ...overrides,
     anchor
   };
@@ -143,7 +144,7 @@ describe("applyNoteHighlights", () => {
           selectedTextSnapshot: "block text.Second",
           startOffset: 6
         },
-        { entryId: toEntryId("n2"), templateId: null }
+        { entryId: toEntryId("n2"), kind: "note" }
       )
     ]);
 

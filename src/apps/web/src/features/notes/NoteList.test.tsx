@@ -4,16 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NoteList } from "./NoteList";
-import type { NoteDto, NoteTemplateDto } from "@whetstone/contracts";
+import type { NoteDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
-
-const templates: ReadonlyArray<NoteTemplateDto> = [
-  {
-    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
-    id: "vocabulary",
-    name: "Vocabulary"
-  }
-];
 
 function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
   return {
@@ -23,13 +16,23 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
       endBlockEntryId: toEntryId("block-1"),
       selectedTextSnapshot: "fox"
     },
-    answers: { meaning: "a sly animal" },
     blockEntryId: toEntryId("block-1"),
+    bodyDoc: createTextDocument("a sly animal"),
+    bodyText: "a sly animal",
     entryId: toEntryId("note-1"),
-    markdown: "**Meaning in this context**\n\na sly animal",
-    templateId: "vocabulary",
+    kind: "note",
     ...overrides
   };
+}
+
+function makeMark(overrides: Partial<NoteDto> = {}): NoteDto {
+  return makeNote({
+    bodyDoc: null,
+    bodyText: null,
+    entryId: toEntryId("mark-1"),
+    kind: "mark",
+    ...overrides
+  });
 }
 
 function renderList(
@@ -47,7 +50,6 @@ function renderList(
       onDelete={handlers.onDelete ?? vi.fn()}
       onEdit={handlers.onEdit ?? vi.fn()}
       onJump={handlers.onJump ?? vi.fn()}
-      templates={templates}
     />
   );
 }
@@ -63,18 +65,13 @@ describe("NoteList", () => {
     expect(screen.getByText("No notes yet.")).toBeDefined();
   });
 
-  it("renders each note's snippet, template name chip, and rendered body", () => {
+  it("renders a note's snippet, Note chip, and derived body preview", () => {
     renderList([makeNote()]);
 
     expect(screen.getByText(/fox/)).toBeDefined();
-    expect(screen.getByText("Vocabulary")).toBeDefined();
+    const chip = screen.getByText("Note");
+    expect(chip.className).toContain("noteCardChip--note");
     expect(screen.getByText("a sly animal")).toBeDefined();
-  });
-
-  it("falls back to the raw template id as the chip label when the template is unknown", () => {
-    renderList([makeNote({ templateId: "gone" })]);
-
-    expect(screen.getByText("gone")).toBeDefined();
   });
 
   it("invokes jump, edit, and delete callbacks with the chosen note", async () => {
@@ -95,25 +92,19 @@ describe("NoteList", () => {
     expect(onDelete).toHaveBeenCalledWith(note);
   });
 
-  it("renders a mark (null template) as a Gem card with no body or edit, still removable", async () => {
+  it("renders a bodyless mark as a Gem card with no body or edit, still removable", async () => {
     const onDelete = vi.fn();
     const onEdit = vi.fn();
-    const mark = makeNote({
-      answers: {},
-      entryId: toEntryId("mark-1"),
-      markdown: "",
-      templateId: null
-    });
+    const mark = makeMark();
     const user = userEvent.setup();
     renderList([mark], { onDelete, onEdit });
 
-    // A dedicated "Gem" chip with its gem swatch, the snippet, and no Edit control.
     const chip = screen.getByText("Gem");
-    expect(chip.className).toContain("templateHue--gem");
+    expect(chip.className).toContain("noteCardChip--mark");
     expect(screen.getByText(/fox/)).toBeDefined();
+    expect(screen.queryByText("a sly animal")).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit note: fox" })).toBeNull();
 
-    // Removable via its delete control.
     await user.click(screen.getByRole("button", { name: "Delete mark: fox" }));
     expect(onDelete).toHaveBeenCalledWith(mark);
     expect(onEdit).not.toHaveBeenCalled();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NoteDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 import type { NoteDraft } from "../notes/noteCapture";
@@ -13,11 +14,11 @@ function block(entryId: string, plaintext: string): ReaderBlock {
 
 function note(overrides: Partial<NoteDto> & { anchor: NoteDto["anchor"] }): NoteDto {
   return {
-    answers: {},
     blockEntryId: overrides.anchor.blockEntryId,
+    bodyDoc: createTextDocument("a note"),
+    bodyText: "a note",
     entryId: toEntryId("note-1"),
-    markdown: "",
-    templateId: "vocabulary",
+    kind: "note",
     ...overrides
   };
 }
@@ -30,7 +31,6 @@ describe("draftOverlapsNotes", () => {
     blockEntryId: "b1",
     contextSnapshot: "First block text.",
     endOffset: 11,
-    preselectedTemplateId: "vocabulary",
     selectedText: "block",
     startOffset: 6
   };
@@ -67,7 +67,6 @@ describe("draftOverlapsNotes", () => {
     const wholeDraft: NoteDraft = {
       blockEntryId: "b1",
       contextSnapshot: "First block text.",
-      preselectedTemplateId: "thought",
       selectedText: "First block text."
     };
     const sub = note({
@@ -88,7 +87,6 @@ describe("draftOverlapsNotes", () => {
     const wholeDraft: NoteDraft = {
       blockEntryId: "gone",
       contextSnapshot: "x",
-      preselectedTemplateId: "thought",
       selectedText: "x"
     };
     const whole = note({

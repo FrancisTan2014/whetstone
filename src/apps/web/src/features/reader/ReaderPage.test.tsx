@@ -41,10 +41,33 @@ vi.mock("../notes/notesApi", () => ({
   createMark: vi.fn(),
   createNote: vi.fn(),
   deleteNote: vi.fn(),
-  fetchNoteTemplates: vi.fn(),
   fetchNotes: vi.fn(),
   updateNote: vi.fn()
 }));
+
+// The shared rich editor (#570) is exercised in its own suite; here it stands in as a plain textarea so
+// the note editor's behaviour (which document is saved) is asserted without driving Tiptap in jsdom.
+vi.mock("../../shared/editor/index.js", async () => {
+  const { createTextDocument, documentText } = await import("@whetstone/document");
+  const React = await import("react");
+  return {
+    RichContentEditor: ({
+      ariaLabel,
+      document,
+      onChange
+    }: {
+      ariaLabel?: string;
+      document: unknown;
+      onChange: (document: unknown) => void;
+    }) =>
+      React.createElement("textarea", {
+        "aria-label": ariaLabel,
+        defaultValue: documentText(document as never),
+        onChange: (event: { target: { value: string } }) =>
+          onChange(createTextDocument(event.target.value))
+      })
+  };
+});
 
 vi.mock("../lookup/lookupApi", () => ({
   lookupTerm: vi.fn()
@@ -55,14 +78,7 @@ vi.mock("./readingPositionApi", () => ({
   saveReadingPosition: vi.fn()
 }));
 
-import {
-  createMark,
-  createNote,
-  deleteNote,
-  fetchNoteTemplates,
-  fetchNotes,
-  updateNote
-} from "../notes/notesApi";
+import { createMark, createNote, deleteNote, fetchNotes, updateNote } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
   fetchUnitContent,
@@ -85,12 +101,12 @@ import { buildAnchorIndex } from "./referenceResolver";
 import type { ReaderBlock, ReaderStructure } from "./readerModel";
 import type {
   NoteDto,
-  NoteTemplateDto,
   WorkContentDto,
   WorkListDto,
   WorkListItemDto,
   WorkStructureDto
 } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
@@ -98,7 +114,6 @@ const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
 const mockedFetchWorkAnchorIndex = vi.mocked(fetchWorkAnchorIndex);
 const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
 const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
-const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedCreateNote = vi.mocked(createNote);
 const mockedCreateMark = vi.mocked(createMark);
 const mockedFetchNotes = vi.mocked(fetchNotes);
@@ -107,14 +122,6 @@ const mockedDeleteNote = vi.mocked(deleteNote);
 const mockedLookupTerm = vi.mocked(lookupTerm);
 const mockedFetchReadingPosition = vi.mocked(fetchReadingPosition);
 const mockedSaveReadingPosition = vi.mocked(saveReadingPosition);
-
-const noteTemplates: ReadonlyArray<NoteTemplateDto> = [
-  {
-    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
-    id: "vocabulary",
-    name: "Vocabulary"
-  }
-];
 
 const author = { id: toAuthorId("author-1"), name: "George Orwell" };
 
@@ -979,7 +986,6 @@ beforeEach(() => {
           (unit.docBlocks ?? []).some((block) => block.entryId === blockEntryId)
       )?.entryId
   );
-  mockedFetchNoteTemplates.mockResolvedValue({ templates: noteTemplates });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
   // The server is the source of truth for reading position; default to "no saved position".
   mockedFetchReadingPosition.mockResolvedValue(undefined);
@@ -1823,11 +1829,11 @@ describe("ReaderPage", () => {
         selectedTextSnapshot: "block text.Second",
         startOffset: 6
       },
-      answers: {},
+      bodyDoc: null,
       blockEntryId: toEntryId("b-1"),
+      bodyText: null,
       entryId: toEntryId("span-1"),
-      markdown: "",
-      templateId: null
+      kind: "mark"
     } as NoteDto;
     mockedCreateMark.mockResolvedValue(spanNote);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
@@ -1874,11 +1880,11 @@ describe("ReaderPage", () => {
         selectedTextSnapshot: "block text.Second",
         startOffset: 6
       },
-      answers: {},
+      bodyDoc: null,
       blockEntryId: toEntryId("b-1"),
+      bodyText: null,
       entryId: toEntryId("span-1"),
-      markdown: "",
-      templateId: null
+      kind: "mark"
     } as NoteDto;
     seedWorkContent(crossBlockContent);
     mockedFetchNotes.mockResolvedValue({ notes: [spanNote] });
@@ -1928,12 +1934,11 @@ describe("ReaderPage", () => {
     fireEvent.mouseUp(blockElement(container, "b-rep"));
 
     await user.click(await screen.findByRole("button", { name: "Add note" }));
-    await user.type(await screen.findByLabelText("Meaning in this context"), "definite article");
+    await user.type(await screen.findByLabelText("Note body"), "definite article");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     await waitFor(() =>
       expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
-        answers: { meaning: "definite article" },
         anchor: {
           blockEntryId: "b-rep",
           contextSnapshot: "the cat sat on the mat",
@@ -1942,7 +1947,7 @@ describe("ReaderPage", () => {
           selectedTextSnapshot: "the",
           startOffset: 15
         },
-        templateId: "vocabulary"
+        bodyDoc: createTextDocument("definite article")
       })
     );
   });
@@ -1979,7 +1984,7 @@ describe("ReaderPage", () => {
     fireEvent.mouseUp(block);
 
     await user.click(await screen.findByRole("button", { name: "Add note" }));
-    await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+    await user.type(await screen.findByLabelText("Note body"), "the start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     // No success toast (#300): the editor simply closes once the save resolves.
@@ -1997,11 +2002,11 @@ describe("ReaderPage", () => {
         selectedTextSnapshot: "Intro",
         startOffset: 0
       },
-      answers: {},
+      bodyDoc: null,
       blockEntryId: toEntryId("b-1"),
+      bodyText: null,
       entryId: toEntryId("mark-1"),
-      markdown: "",
-      templateId: null
+      kind: "mark"
     } as NoteDto;
     mockedCreateMark.mockResolvedValue(mark);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
@@ -2084,49 +2089,13 @@ describe("ReaderPage", () => {
 
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
   });
-
-  it("shows the unavailable editor when note templates fail to load", async () => {
-    seedWorkContent(multiUnitContent);
-    mockedFetchNoteTemplates.mockRejectedValue(new Error("nope"));
-    const user = userEvent.setup();
-    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
-    await screen.findByText("Intro paragraph.");
-    const block = blockElement(container, "b-1");
-    selectText(block, "Intro");
-    fireEvent.mouseUp(block);
-
-    await user.click(await screen.findByRole("button", { name: "Add note" }));
-
-    expect(
-      await screen.findByText("Note templates are unavailable. Please try again.")
-    ).toBeDefined();
-  });
 });
-
-const threeTemplates: ReadonlyArray<NoteTemplateDto> = [
-  {
-    fields: [{ id: "meaning", label: "Meaning in this context", type: "long_text" }],
-    id: "vocabulary",
-    name: "Vocabulary"
-  },
-  {
-    fields: [{ id: "noticed", label: "What I noticed", type: "long_text" }],
-    id: "expression",
-    name: "Expression"
-  },
-  {
-    fields: [{ id: "thought", label: "What I thought", type: "long_text" }],
-    id: "thought",
-    name: "Thought"
-  }
-];
 
 async function openHuedReader(): Promise<{
   container: HTMLElement;
   user: ReturnType<typeof userEvent.setup>;
 }> {
   seedWorkContent(multiUnitContent);
-  mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
   const user = userEvent.setup();
   const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
@@ -2136,38 +2105,6 @@ async function openHuedReader(): Promise<{
 }
 
 describe("ReaderPage selection toolbar", () => {
-  it("shows only the two primary actions, not inline template buttons", async () => {
-    const { container } = await openHuedReader();
-    const block = blockElement(container, "b-1");
-
-    selectText(block, "Intro");
-    fireEvent.mouseUp(block);
-
-    await screen.findByRole("toolbar", { name: "Annotate selection" });
-    expect(screen.getByRole("button", { name: "Add note" })).toBeDefined();
-    expect(screen.getByRole("button", { name: "Look up" })).toBeDefined();
-    expect(screen.queryByRole("button", { name: "Vocabulary" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Expression" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Thought" })).toBeNull();
-  });
-
-  it("preselects the size-based template in the editor (one word picks Vocabulary)", async () => {
-    const { container, user } = await openHuedReader();
-    const block = blockElement(container, "b-1");
-
-    selectText(block, "Intro");
-    fireEvent.mouseUp(block);
-    await user.click(await screen.findByRole("button", { name: "Add note" }));
-
-    await screen.findByRole("heading", { name: "New note" });
-    expect(screen.getByRole("button", { name: "Vocabulary" }).getAttribute("aria-pressed")).toBe(
-      "true"
-    );
-    expect(screen.getByRole("button", { name: "Expression" }).getAttribute("aria-pressed")).toBe(
-      "false"
-    );
-  });
-
   it("opens the toolbar from the keyboard (key-up over a selection)", async () => {
     const { container } = await openHuedReader();
     const block = blockElement(container, "b-1");
@@ -2196,7 +2133,7 @@ describe("ReaderPage selection toolbar", () => {
     selectText(block, "Intro");
     fireEvent.mouseUp(block);
     await user.click(await screen.findByRole("button", { name: "Add note" }));
-    await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+    await user.type(await screen.findByLabelText("Note body"), "the start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     // No success toast (#300): the born highlight animation alone confirms the save.
@@ -2225,7 +2162,7 @@ describe("ReaderPage selection toolbar", () => {
       selectText(block, "Intro");
       fireEvent.mouseUp(block);
       await user.click(await screen.findByRole("button", { name: "Add note" }));
-      await user.type(await screen.findByLabelText("Meaning in this context"), "the start");
+      await user.type(await screen.findByLabelText("Note body"), "the start");
       await user.click(screen.getByRole("button", { name: "Save note" }));
 
       // No success toast (#300); the highlight is born immediately (no entrance animation).
@@ -2247,11 +2184,11 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
       endBlockEntryId: toEntryId("b-1"),
       selectedTextSnapshot: "Intro"
     },
-    answers: { meaning: "the beginning" },
+    bodyDoc: createTextDocument("the beginning"),
     blockEntryId: toEntryId("b-1"),
+    bodyText: "the beginning",
     entryId: toEntryId("note-1"),
-    markdown: "**Meaning in this context**\n\nthe beginning",
-    templateId: "vocabulary",
+    kind: "note",
     ...overrides
   };
 }
@@ -2385,7 +2322,10 @@ describe("ReaderPage note management", () => {
   it("reopens a block's notes from its highlight and edits one", async () => {
     seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
-    const updated = makeNote({ answers: { meaning: "a fresh start" } });
+    const updated = makeNote({
+      bodyDoc: createTextDocument("a fresh start"),
+      bodyText: "a fresh start"
+    });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
     mockedUpdateNote.mockResolvedValue(updated);
     const user = userEvent.setup();
@@ -2398,7 +2338,7 @@ describe("ReaderPage note management", () => {
     await user.click(within(panel).getByRole("button", { name: "Edit note: Intro" }));
 
     expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
-    const field = screen.getByLabelText("Meaning in this context") as HTMLTextAreaElement;
+    const field = screen.getByLabelText("Note body") as HTMLTextAreaElement;
     expect(field.value).toBe("the beginning");
 
     await user.clear(field);
@@ -2408,8 +2348,7 @@ describe("ReaderPage note management", () => {
     // No success toast (#300): the editor closes once the update resolves.
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull());
     expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
-      answers: { meaning: "a fresh start" },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("a fresh start")
     });
   });
 
@@ -2458,7 +2397,7 @@ describe("ReaderPage note management", () => {
   it("edits a note from the per-work note list", async () => {
     seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
-    const updated = makeNote({ answers: { meaning: "edited" } });
+    const updated = makeNote({ bodyDoc: createTextDocument("edited"), bodyText: "edited" });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [updated] });
     mockedUpdateNote.mockResolvedValue(updated);
     const user = userEvent.setup();
@@ -2474,8 +2413,7 @@ describe("ReaderPage note management", () => {
     // No success toast (#300): the per-work edit closes silently on success.
     await waitFor(() =>
       expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
-        answers: { meaning: "the beginning" },
-        templateId: "vocabulary"
+        bodyDoc: createTextDocument("the beginning")
       })
     );
   });
@@ -2686,7 +2624,7 @@ describe("ReaderPage reading controls", () => {
   it("tints annotated blocks with the note's annotation hue", async () => {
     const container = await openWorkWithNotes([makeNote()]);
 
-    expect(blockElement(container, "b-1").className).toContain("readerBlock--vocab");
+    expect(blockElement(container, "b-1").className).toContain("readerBlock--note");
   });
 
   it("keeps the desktop tools rail persistently visible while scrolling (no recede)", async () => {
@@ -2904,7 +2842,6 @@ describe("ReaderPage vocabulary lookup", () => {
   it("routes a Chinese work's selection to the work's language", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
     seedWorkContent(chineseContent);
-    mockedFetchNoteTemplates.mockResolvedValue({ templates: threeTemplates });
     mockedLookupTerm.mockResolvedValue({
       entry: {
         headword: "你好",

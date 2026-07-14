@@ -1,18 +1,10 @@
 import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
 
 import type { NoteOverviewDto } from "@whetstone/contracts";
 
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { fetchAllNotes } from "./notesApi";
 import { groupNotesByWork, type WorkNotes } from "./groupNotesByWork";
-
-// remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so a rendered note
-// body never executes raw markup (same safety contract as the reader's NoteList).
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeSanitize];
 
 type NotesState =
   | Readonly<{ status: "loading" }>
@@ -103,11 +95,9 @@ function renderNote(note: NoteOverviewDto): React.JSX.Element {
   return (
     <li className="rounded border border-border bg-surface p-4" key={note.entryId}>
       <p className="text-sm text-text-muted">“{note.anchor.selectedTextSnapshot}”</p>
-      <div className="mt-2 text-text">
-        <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
-          {note.markdown}
-        </Markdown>
-      </div>
+      {note.kind === "note" ? (
+        <p className="mt-2 whitespace-pre-wrap text-text">{note.bodyText}</p>
+      ) : null}
       <a
         className="mt-3 inline-flex min-h-11 min-w-11 items-center text-sm text-accent hover:text-accent-hover"
         href={`#/reader?work=${encodeURIComponent(note.workEntryId)}&block=${encodeURIComponent(

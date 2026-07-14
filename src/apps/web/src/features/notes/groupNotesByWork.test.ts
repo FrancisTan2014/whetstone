@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NoteOverviewDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 import { groupNotesByWork } from "./groupNotesByWork";
@@ -18,12 +19,12 @@ function note(
       endBlockEntryId: toEntryId(`${entryId}-block`),
       selectedTextSnapshot: "s"
     },
-    answers: {},
     authorName,
     blockEntryId: toEntryId(`${entryId}-block`),
+    bodyDoc: createTextDocument(`body ${entryId}`),
+    bodyText: `body ${entryId}`,
     entryId: toEntryId(entryId),
-    markdown: `body ${entryId}`,
-    templateId: "thought",
+    kind: "note",
     workEntryId: toEntryId(workEntryId),
     workTitle
   };

@@ -3,6 +3,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { NoteDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 import { useNoteHighlights } from "./useNoteHighlights";
@@ -14,7 +15,6 @@ afterEach(() => {
 
 function note(): NoteDto {
   return {
-    answers: {},
     anchor: {
       blockEntryId: toEntryId("b1"),
       contextSnapshot: "First block text.",
@@ -24,9 +24,10 @@ function note(): NoteDto {
       startOffset: 6
     },
     blockEntryId: toEntryId("b1"),
+    bodyDoc: createTextDocument("a note"),
+    bodyText: "a note",
     entryId: toEntryId("n1"),
-    markdown: "",
-    templateId: "vocabulary"
+    kind: "note"
   };
 }
 

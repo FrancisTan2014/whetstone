@@ -79,6 +79,18 @@
   --color-anno-gem-wash: #ffe4e6;
   --color-anno-gem-wash: oklch(0.95 0.03 12);
 
+  /* The single muted-amber annotation channel for every rich note (#619), plus a lighter variant for
+   * a bodyless Mark. The channel carries only the note/mark distinction — never the note's content.
+   * Day values; the .dark block overrides them. */
+  --color-anno-note: #b45309;
+  --color-anno-note: oklch(0.58 0.13 65);
+  --color-anno-note-wash: #fef3c7;
+  --color-anno-note-wash: oklch(0.95 0.05 85);
+  --color-anno-mark: #d97706;
+  --color-anno-mark: oklch(0.7 0.11 65);
+  --color-anno-mark-wash: #fffbeb;
+  --color-anno-mark-wash: oklch(0.97 0.03 85);
+
   /* Part-of-speech hues for the dictionary lookup (restrained: noun blue, verb green,
    * adjective amber, adverb violet). Day values; the .dark block overrides them. */
   --color-pos-noun: #1d4ed8;
@@ -161,6 +173,14 @@
   --color-anno-gem: oklch(0.8 0.1 12);
   --color-anno-gem-wash: #3a1620;
   --color-anno-gem-wash: oklch(0.3 0.05 12);
+  --color-anno-note: #fbbf24;
+  --color-anno-note: oklch(0.82 0.12 80);
+  --color-anno-note-wash: #3a2f12;
+  --color-anno-note-wash: oklch(0.3 0.04 80);
+  --color-anno-mark: #fcd34d;
+  --color-anno-mark: oklch(0.88 0.09 85);
+  --color-anno-mark-wash: #2a2410;
+  --color-anno-mark-wash: oklch(0.28 0.03 85);
   --color-pos-noun: #93b4fc;
   --color-pos-noun: oklch(0.74 0.12 260);
   --color-pos-noun-wash: #1a2540;
@@ -901,9 +921,10 @@
 }
 
 /*
- * A whole-block note (one with no sub-block offsets) gets a restrained left gutter bar in its
- * template hue — never a full-block background wash. Sub-block notes use `.noteMark` underlines
- * (below) instead, so the reading surface stays calm and you can see which words a note is about.
+ * A whole-block note (one with no sub-block offsets) gets a restrained left gutter bar in the single
+ * amber annotation channel — never a full-block background wash. A bodyless Mark uses the lighter
+ * variant. Sub-block notes use `.noteMark` underlines (below) instead, so the reading surface stays
+ * calm and you can see which words a note is about.
  */
 .readerBlock--annotated {
   border-inline-start: 3px solid var(--color-border);
@@ -911,27 +932,20 @@
   padding-inline-start: 0.75rem;
 }
 
-.readerBlock--vocab {
-  border-inline-start-color: var(--color-anno-vocab);
+.readerBlock--note {
+  border-inline-start-color: var(--color-anno-note);
 }
 
-.readerBlock--expr {
-  border-inline-start-color: var(--color-anno-expr);
-}
-
-.readerBlock--thought {
-  border-inline-start-color: var(--color-anno-thought);
-}
-
-.readerBlock--gem {
-  border-inline-start-color: var(--color-anno-gem);
+.readerBlock--mark {
+  border-inline-start-color: var(--color-anno-mark);
 }
 
 /*
- * A sub-block note marks exactly its anchored characters with a delicate underline in the template
- * hue — the hue carries the meaning, not the weight. `text-decoration: underline` follows wrapped
- * lines (unlike a border); `from-font` thickness tracks the reading size; the offset gives the text
- * air. The underlined span is the tap/keyboard target that opens the note, legible in Day and Night.
+ * A sub-block note marks exactly its anchored characters with a delicate underline in the single
+ * amber annotation channel — the colour carries only the note/mark distinction, never the note's
+ * content. `text-decoration: underline` follows wrapped lines (unlike a border); `from-font`
+ * thickness tracks the reading size; the offset gives the text air. The underlined span is the
+ * tap/keyboard target that opens the note, legible in Day and Night.
  */
 .noteMark {
   text-decoration-line: underline;
@@ -940,20 +954,12 @@
   cursor: pointer;
 }
 
-.noteMark--vocab {
-  text-decoration-color: var(--color-anno-vocab);
+.noteMark--note {
+  text-decoration-color: var(--color-anno-note);
 }
 
-.noteMark--expr {
-  text-decoration-color: var(--color-anno-expr);
-}
-
-.noteMark--thought {
-  text-decoration-color: var(--color-anno-thought);
-}
-
-.noteMark--gem {
-  text-decoration-color: var(--color-anno-gem);
+.noteMark--mark {
+  text-decoration-color: var(--color-anno-mark);
 }
 
 .noteMark:focus-visible {

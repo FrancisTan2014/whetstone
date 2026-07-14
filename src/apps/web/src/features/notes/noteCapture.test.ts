@@ -8,7 +8,6 @@ describe("draftToAnchor", () => {
       blockEntryId: "b1",
       contextSnapshot: "ctx",
       endOffset: 5,
-      preselectedTemplateId: "vocabulary",
       selectedText: "ctx",
       startOffset: 0
     });
@@ -22,7 +21,6 @@ describe("draftToAnchor", () => {
     const anchor = draftToAnchor({
       blockEntryId: "b1",
       contextSnapshot: "ctx",
-      preselectedTemplateId: "thought",
       selectedText: "ctx"
     });
 
@@ -37,7 +35,6 @@ describe("draftToAnchor", () => {
       contextSnapshot: "ctx",
       endBlockEntryId: "b2",
       endOffset: 4,
-      preselectedTemplateId: "expression",
       selectedText: "spanned",
       startOffset: 10
     });
