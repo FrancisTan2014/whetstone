@@ -11,7 +11,7 @@ vi.mock("./recitationHubApi", () => ({
 }));
 
 vi.mock("./recitationPassageApi", () => ({
-  fetchDuePassage: vi.fn()
+  fetchDuePassageForPlan: vi.fn()
 }));
 
 // The real due-review card is exercised by RecitationReviewCard.test.tsx and the hub E2E; here it is
@@ -41,12 +41,12 @@ import type {
 
 import { RecitationHubPage } from "./RecitationHubPage";
 import { getRecitationHub, pausePlan, resumePlan } from "./recitationHubApi";
-import { fetchDuePassage } from "./recitationPassageApi";
+import { fetchDuePassageForPlan } from "./recitationPassageApi";
 
 const mockedGet = vi.mocked(getRecitationHub);
 const mockedPause = vi.mocked(pausePlan);
 const mockedResume = vi.mocked(resumePlan);
-const mockedDue = vi.mocked(fetchDuePassage);
+const mockedDue = vi.mocked(fetchDuePassageForPlan);
 
 function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecitationPassageDto {
   return {
@@ -175,7 +175,11 @@ describe("RecitationHubPage", () => {
   it("runs the due review session inline and refreshes the hub when a review completes", async () => {
     mockedGet
       .mockResolvedValueOnce(
-        makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
+        makeHub({
+          due: { dueCount: 1, overdueCount: 0 },
+          planEntryId: "plan-hub",
+          primaryAction: "due_passage"
+        })
       )
       .mockResolvedValueOnce(makeHub({ primaryAction: "none" }));
     mockedDue.mockResolvedValue(makeDuePassage({ passageEntryId: "passage-7" }));
@@ -183,9 +187,11 @@ describe("RecitationHubPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
 
-    // The fetched due passage is handed to the shared review card (stubbed here).
+    // The fetched due passage is handed to the shared review card (stubbed here), and it is fetched for
+    // the SAME plan the hub projects — never the earliest-due passage across other plans (#608 review).
     const complete = await screen.findByRole("button", { name: "complete review passage-7" });
     expect(mockedDue).toHaveBeenCalledTimes(1);
+    expect(mockedDue).toHaveBeenCalledWith("plan-hub");
 
     // Completing the review refreshes the hub, which re-decides the next action (now caught up).
     await userEvent.click(complete);

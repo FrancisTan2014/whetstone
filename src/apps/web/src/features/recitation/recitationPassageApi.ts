@@ -84,6 +84,17 @@ export async function fetchDuePassage(): Promise<DueRecitationPassageDto | null>
     .passage;
 }
 
+// The next due passage of ONE plan (#608), re-anchored server-side, or null when that plan is caught up.
+// The recitation hub uses this so its due-first session reviews the passage of the SAME plan it projects,
+// never the earliest-due passage of a different plan.
+export async function fetchDuePassageForPlan(
+  planEntryId: string
+): Promise<DueRecitationPassageDto | null> {
+  return parseDueRecitationPassageResponse(
+    await requestJson(apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/passages/due`))
+  ).passage;
+}
+
 // Split a passage at a text position into two contiguous passages; resolves with the reindexed list.
 export async function splitPassage(
   passageEntryId: string,

@@ -317,7 +317,8 @@ export async function loadBlockTextByIds(
 export async function loadNextDuePassage(
   db: DbClient,
   userId: string,
-  now: Date
+  now: Date,
+  planEntryId?: string
 ): Promise<OwnedPassage | undefined> {
   const [row] = await db
     .select({
@@ -339,7 +340,10 @@ export async function loadNextDuePassage(
         eq(recitationPlans.phase, "learning"),
         isNotNull(recitationPassages.introducedAt),
         eq(reviewCards.status, "active"),
-        lte(reviewCards.dueAt, now)
+        lte(reviewCards.dueAt, now),
+        // Optional plan scope (#608): the hub reviews the due passage of the SAME plan it projects, not
+        // the earliest-due passage across all plans. Omitted for the cross-plan Today selection.
+        planEntryId === undefined ? undefined : eq(recitationPassages.planEntryId, planEntryId)
       )
     )
     .orderBy(

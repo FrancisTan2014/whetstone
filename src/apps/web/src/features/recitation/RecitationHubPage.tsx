@@ -6,7 +6,7 @@ import type { DueRecitationPassageDto, RecitationHubDto } from "@whetstone/contr
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { getRecitationHub, pausePlan, resumePlan } from "./recitationHubApi";
-import { fetchDuePassage } from "./recitationPassageApi";
+import { fetchDuePassageForPlan } from "./recitationPassageApi";
 import { RecitationReviewCard } from "./RecitationReviewCard";
 import { recitationPhaseLabels } from "./recitationLabels";
 import { recitationPrimaryActionLabels, recitationStageLabels } from "./RecitationHubPage.tokens";
@@ -158,7 +158,11 @@ function ActivePlanView({
       <p className="text-sm text-text-muted">Stage: {recitationStageLabels[hub.stage]}</p>
 
       {hub.primaryAction === "due_passage" ? (
-        <DueReviewSection due={hub.due} onReviewed={() => runMutation(getRecitationHub())} />
+        <DueReviewSection
+          due={hub.due}
+          onReviewed={() => runMutation(getRecitationHub())}
+          planEntryId={hub.planEntryId}
+        />
       ) : hub.primaryAction === "chain" || hub.primaryAction === "whole_work" ? (
         <div aria-label="Maintenance" className="flex flex-col gap-2" role="group">
           <p className="text-text">
@@ -221,23 +225,25 @@ type DueReviewSession =
   | Readonly<{ passage: DueRecitationPassageDto; status: "reviewing" }>;
 
 // The due-first review session, run INLINE on the hub (#608) so the primary action actually reviews the
-// due passage instead of routing to the passage-segmentation surface. "Start review" fetches the single
-// next due passage — the same cross-plan due-session flow Today surfaces (#580) — and hands it to the
-// shared RecitationReviewCard (cue → reveal → self-assess). A completed review refreshes the hub, which
-// re-decides the next action one at a time (never an overdue wall); a rare cleared-before-fetch race
-// resolves to the same calm caught-up line, never a broken card.
+// due passage instead of routing to the passage-segmentation surface. "Start review" fetches the next due
+// passage OF THE SAME PLAN the hub projects (#608 review: never the earliest-due passage of a different
+// plan) and hands it to the shared RecitationReviewCard (cue → reveal → self-assess). A completed review
+// refreshes the hub, which re-decides the next action one at a time (never an overdue wall); a rare
+// cleared-before-fetch race resolves to the same calm caught-up line, never a broken card.
 function DueReviewSection({
   due,
-  onReviewed
+  onReviewed,
+  planEntryId
 }: Readonly<{
   due: ActiveHub["due"];
   onReviewed: () => void;
+  planEntryId: string;
 }>): React.JSX.Element {
   const [session, setSession] = useState<DueReviewSession>({ status: "idle" });
 
   function start(): void {
     setSession({ status: "loading" });
-    fetchDuePassage().then(
+    fetchDuePassageForPlan(planEntryId).then(
       (passage) =>
         setSession(passage === null ? { status: "empty" } : { passage, status: "reviewing" }),
       () => setSession({ status: "error" })

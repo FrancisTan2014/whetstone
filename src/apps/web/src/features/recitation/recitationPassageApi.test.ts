@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   fetchDuePassage,
+  fetchDuePassageForPlan,
   getIntroductionStatus,
   introduceNextPassage,
   listPassages,
@@ -137,6 +138,24 @@ describe("recitationPassageApi", () => {
     const result = await fetchDuePassage();
 
     expect(result?.passageEntryId).toBe("passage-1");
+  });
+
+  it("fetches ONE plan's due passage, encoding the plan id", async () => {
+    const fetchMock = mockFetchOnce({ passage: dueDto });
+
+    const result = await fetchDuePassageForPlan("plan/1");
+
+    expect(result?.passageEntryId).toBe("passage-1");
+    const [path] = fetchMock.mock.calls[0] as [string];
+    expect(path).toBe("/api/recitation/plans/plan%2F1/passages/due");
+  });
+
+  it("tolerates a null when a plan is caught up", async () => {
+    mockFetchOnce({ passage: null });
+
+    const result = await fetchDuePassageForPlan("plan-1");
+
+    expect(result).toBeNull();
   });
 
   it("splits a passage, POSTing the cut position", async () => {
