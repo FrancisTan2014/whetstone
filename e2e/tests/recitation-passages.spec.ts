@@ -51,6 +51,17 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
     await expect(firstPassage).toBeVisible();
     await expect(firstPassage.getByText(/Passage 1 ·/)).toBeVisible();
 
+    // Passages now seed QUEUED — Learning introduction is explicit and paced (#607). Nothing is due until
+    // the learner deliberately introduces the first passage; the "Start first passage" action stamps it
+    // introduced and seeds one due card. Wait for that write so Today below reads the newly due passage.
+    const introductionPanel = page.getByRole("region", { name: "New passage" });
+    await Promise.all([
+      page.waitForResponse(
+        (response) => response.url().includes("/introduce-next") && response.ok()
+      ),
+      introductionPanel.getByRole("button", { name: "Start first passage" }).click()
+    ]);
+
     // Back on Today, the next due passage surfaces as one bounded attempt. It opens at full visual
     // support (the whole passage as a scaffold); the learner fades support down the ladder before
     // reciting from memory.
