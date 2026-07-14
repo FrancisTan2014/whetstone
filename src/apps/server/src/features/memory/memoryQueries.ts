@@ -10,92 +10,37 @@ import type { ReviewState } from "@whetstone/domain";
 import { and, asc, desc, eq, inArray, lte, or, ilike } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entryLinks, memoryNotes, memoryPrompts, personalEntries } from "../../db/schema.js";
+import {
+  entryLinks,
+  memoryNotes,
+  memoryPrompts,
+  personalEntries,
+  reviewCards
+} from "../../db/schema.js";
+import { reviewStateFromCard, type ReviewCardRow } from "../review/reviewCardQueries.js";
 
-// One persisted memory-note / memory-prompt row, as selected from its table.
+// One persisted memory-note / memory-prompt row, as selected from its table. A prompt row no longer holds
+// any scheduling state — the FSRS card lives in the shared `review_cards` substrate (#617).
 export type MemoryNoteRow = typeof memoryNotes.$inferSelect;
 export type MemoryPromptRow = typeof memoryPrompts.$inferSelect;
 
-// A scheduled prompt carries a full inlined FSRS card (all columns non-null) and a revealable answer; a
-// draft carries neither. This narrows the row to the scheduled shape so the review-state reconstruction
-// and the card projection are total functions.
-type ScheduledPromptRow = MemoryPromptRow &
-  Readonly<{
-    answerText: string;
-    stability: number;
-    difficulty: number;
-    elapsedDays: number;
-    scheduledDays: number;
-    learningSteps: number;
-    reps: number;
-    lapses: number;
-    state: NonNullable<MemoryPromptRow["state"]>;
-    dueAt: Date;
-  }>;
+// A ready prompt row narrowed so its answer is present. `ready` means "revealable answer" by construction
+// (the domain lifecycle gate), so a ready row's `answerText` is never null — this makes the card
+// projection a total function without a runtime fallback.
+type ReadyPromptRow = MemoryPromptRow & Readonly<{ answerText: string }>;
 
-// True for a card-bearing (scheduled) prompt. The store writes a full FSRS card together with the
-// `scheduled` lifecycle and never one without the other, so the lifecycle discriminant alone identifies
-// the card-bearing shape — the same construction invariant `promptReviewState` relies on. This
-// keeps the guard a single, always-meaningful check (no structurally-unreachable null probes on columns
-// that a scheduled row can never actually be missing).
-function isScheduledRow(row: MemoryPromptRow): row is ScheduledPromptRow {
-  return row.lifecycle === "scheduled";
+// True for a ready prompt row. The lifecycle discriminant alone identifies the answer-bearing shape (the
+// domain guarantees `ready ⇒ meaningful answer`), so this is a single always-meaningful check.
+function isReadyRow(row: MemoryPromptRow): row is ReadyPromptRow {
+  return row.lifecycle === "ready";
 }
 
-// Reconstruct the domain ReviewState from a scheduled prompt row (timestamps -> ISO; null last-reviewed
-// preserved), so a recorded review can be scheduled by `@whetstone/domain`.
-export function promptReviewState(row: ScheduledPromptRow): ReviewState {
-  return {
-    due: row.dueAt.toISOString(),
-    stability: row.stability,
-    difficulty: row.difficulty,
-    elapsedDays: row.elapsedDays,
-    scheduledDays: row.scheduledDays,
-    learningSteps: row.learningSteps,
-    reps: row.reps,
-    lapses: row.lapses,
-    state: row.state,
-    lastReviewedAt: row.lastReviewedAt === null ? null : row.lastReviewedAt.toISOString()
-  };
-}
-
-// Map a ReviewState onto the prompt's FSRS columns (ISO -> Date) for insert/update. A scheduled prompt
-// always writes these together with `lifecycle: "scheduled"`.
-export function promptReviewColumns(
-  state: ReviewState
-): Pick<
-  MemoryPromptRow,
-  | "dueAt"
-  | "stability"
-  | "difficulty"
-  | "elapsedDays"
-  | "scheduledDays"
-  | "learningSteps"
-  | "reps"
-  | "lapses"
-  | "state"
-  | "lastReviewedAt"
-> {
-  return {
-    dueAt: new Date(state.due),
-    stability: state.stability,
-    difficulty: state.difficulty,
-    elapsedDays: state.elapsedDays,
-    scheduledDays: state.scheduledDays,
-    learningSteps: state.learningSteps,
-    reps: state.reps,
-    lapses: state.lapses,
-    state: state.state,
-    lastReviewedAt: state.lastReviewedAt === null ? null : new Date(state.lastReviewedAt)
-  };
-}
-
-// The review state a prompt row carries, or null for a draft.
-export function promptReviewStateOrNull(row: MemoryPromptRow): ReviewState | null {
-  return isScheduledRow(row) ? promptReviewState(row) : null;
-}
-
-export function toMemoryPromptDto(row: MemoryPromptRow): MemoryPromptDto {
+// Project a prompt row plus its review state (from the shared card, or null when the prompt is not
+// enrolled) into the full prompt DTO.
+export function toMemoryPromptDto(
+  row: MemoryPromptRow,
+  review: ReviewState | null
+): MemoryPromptDto {
   return {
     promptId: row.entryId,
     noteId: row.noteEntryId,
@@ -103,23 +48,29 @@ export function toMemoryPromptDto(row: MemoryPromptRow): MemoryPromptDto {
     cueText: row.cueText,
     answerText: row.answerText,
     chunkId: row.chunkId,
-    review: promptReviewStateOrNull(row)
+    review
   };
 }
 
-// A scheduled prompt as the review surface shows it — a card with a revealable answer and FSRS state.
-// Only scheduled rows map to a card; a draft has no card face.
-export function toMemoryPromptCardDto(row: ScheduledPromptRow): MemoryPromptCardDto {
+// A ready, enrolled prompt as the review surface shows it — a card with a revealable answer and the FSRS
+// state read from its shared review card. Only a ready row with an active card reaches here.
+export function toMemoryPromptCardDto(
+  row: ReadyPromptRow,
+  card: ReviewCardRow
+): MemoryPromptCardDto {
   return {
     promptId: row.entryId,
     noteId: row.noteEntryId,
     cueText: row.cueText,
-    // A scheduled prompt always carries a non-null answer (the scheduled invariant), reflected in the
-    // narrowed row type, so the projection needs no fallback.
     answerText: row.answerText,
     chunkId: row.chunkId,
-    review: promptReviewState(row)
+    review: reviewStateFromCard(card)
   };
+}
+
+// Map a prompt row and its optional shared card into the prompt DTO (card -> review state, or null).
+function promptRowWithCardToDto(row: MemoryPromptRow, card: ReviewCardRow | null): MemoryPromptDto {
+  return toMemoryPromptDto(row, card === null ? null : reviewStateFromCard(card));
 }
 
 export function toMemoryNoteDto(
@@ -135,7 +86,7 @@ export function toMemoryNoteDto(
 }
 
 // One prompt row scoped to its owner (the owning note's `personal_entries` user), used to authorize a
-// review or fetch. Returns the raw row so a caller can reconstruct its review state.
+// review or fetch. Returns the raw row so a caller can pair it with its shared review card.
 export async function getPromptRowForUser(
   db: DbClient,
   promptId: string,
@@ -151,17 +102,27 @@ export async function getPromptRowForUser(
   return rows[0]?.prompt;
 }
 
-// One prompt scoped to its owner as a DTO (the read counterpart of `get_memory_prompt`).
+// One prompt scoped to its owner as a DTO (the read counterpart of `get_memory_prompt`), pairing the
+// prompt with its shared review card (null when the prompt is an unenrolled draft).
 export async function getMemoryPromptForUser(
   db: DbClient,
   promptId: string,
   userId: string
 ): Promise<MemoryPromptDto | undefined> {
-  const row = await getPromptRowForUser(db, promptId, userId);
-  return row === undefined ? undefined : toMemoryPromptDto(row);
+  const rows = await db
+    .select({ prompt: memoryPrompts, card: reviewCards })
+    .from(memoryPrompts)
+    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
+    .leftJoin(reviewCards, eq(reviewCards.targetEntryId, memoryPrompts.entryId))
+    .where(and(eq(memoryPrompts.entryId, promptId), eq(personalEntries.userId, userId)))
+    .limit(1);
+  const row = rows[0];
+  return row === undefined ? undefined : promptRowWithCardToDto(row.prompt, row.card);
 }
 
-// The user's scheduled prompts due at `now` (due_at <= now), soonest-due first, capped at `limit`.
+// The user's enrolled prompts whose active card is due at `now` (`due_at` <= now), soonest-due first,
+// capped at `limit`. The due schedule is read from the shared `review_cards` substrate; the prompt
+// supplies the reviewable content.
 export async function listDuePromptCards(
   db: DbClient,
   userId: string,
@@ -169,23 +130,24 @@ export async function listDuePromptCards(
   limit: number
 ): Promise<ReadonlyArray<MemoryPromptCardDto>> {
   const rows = await db
-    .select({ prompt: memoryPrompts })
+    .select({ prompt: memoryPrompts, card: reviewCards })
     .from(memoryPrompts)
-    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
-    .where(
+    .innerJoin(
+      reviewCards,
       and(
-        eq(personalEntries.userId, userId),
-        eq(memoryPrompts.lifecycle, "scheduled"),
-        lte(memoryPrompts.dueAt, now)
+        eq(reviewCards.targetEntryId, memoryPrompts.entryId),
+        eq(reviewCards.status, "active"),
+        lte(reviewCards.dueAt, now)
       )
     )
-    .orderBy(asc(memoryPrompts.dueAt), asc(memoryPrompts.entryId))
+    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
+    .where(eq(personalEntries.userId, userId))
+    .orderBy(asc(reviewCards.dueAt), asc(memoryPrompts.entryId))
     .limit(limit);
 
   return rows
-    .map((joined) => joined.prompt)
-    .filter(isScheduledRow)
-    .map(toMemoryPromptCardDto);
+    .filter((row): row is { prompt: ReadyPromptRow; card: ReviewCardRow } => isReadyRow(row.prompt))
+    .map((row) => toMemoryPromptCardDto(row.prompt, row.card));
 }
 
 // LIKE metacharacters are escaped so a query is matched literally; PostgreSQL ILIKE treats backslash as
@@ -194,7 +156,8 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
-// The user's prompts whose cue or answer text contains `query` (case-insensitive), newest first.
+// The user's prompts whose cue or answer text contains `query` (case-insensitive), newest first, each
+// paired with its shared review card (null for a draft).
 export async function searchMemoryPrompts(
   db: DbClient,
   userId: string,
@@ -202,9 +165,10 @@ export async function searchMemoryPrompts(
 ): Promise<ReadonlyArray<MemoryPromptDto>> {
   const pattern = `%${escapeLike(query)}%`;
   const rows = await db
-    .select({ prompt: memoryPrompts })
+    .select({ prompt: memoryPrompts, card: reviewCards })
     .from(memoryPrompts)
     .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
+    .leftJoin(reviewCards, eq(reviewCards.targetEntryId, memoryPrompts.entryId))
     .where(
       and(
         eq(personalEntries.userId, userId),
@@ -213,7 +177,7 @@ export async function searchMemoryPrompts(
     )
     .orderBy(desc(memoryPrompts.createdAt), asc(memoryPrompts.entryId));
 
-  return rows.map((joined) => toMemoryPromptDto(joined.prompt));
+  return rows.map((row) => promptRowWithCardToDto(row.prompt, row.card));
 }
 
 // The `derived_from` provenance target of a note (the source Entry it was made durable from), or null.
@@ -245,29 +209,33 @@ export async function getMemoryNoteRowForUser(
   return rows[0]?.note;
 }
 
+// A prompt paired with its shared review card (null when the prompt is an unenrolled draft), used to roll
+// a note's prompts up for the summary and to project detail.
+type PromptWithCard = Readonly<{ prompt: MemoryPromptRow; card: ReviewCardRow | null }>;
+
 // Roll a note's prompts up into the jargon-free summary the Memory list/search row shows: total prompts,
-// how many are drafts vs scheduled, how many are due now, and the soonest next-due (null when the note
-// has no scheduled prompt). The counts read as "N prompts · draft/due state" without any storage jargon.
+// how many are drafts vs scheduled (enrolled with a card), how many are due now, and the soonest next-due
+// (null when the note has no scheduled prompt). The scheduling facts read from each prompt's shared card.
 function summarizeNote(
   note: MemoryNoteRow,
-  prompts: ReadonlyArray<MemoryPromptRow>,
+  prompts: ReadonlyArray<PromptWithCard>,
   now: Date
 ): MemoryNoteSummaryDto {
   let draftCount = 0;
   let scheduledCount = 0;
   let dueCount = 0;
   let nextDueAt: Date | null = null;
-  for (const prompt of prompts) {
-    if (prompt.lifecycle !== "scheduled" || prompt.dueAt === null) {
+  for (const { card } of prompts) {
+    if (card === null) {
       draftCount += 1;
       continue;
     }
     scheduledCount += 1;
-    if (prompt.dueAt <= now) {
+    if (card.dueAt <= now) {
       dueCount += 1;
     }
-    if (nextDueAt === null || prompt.dueAt < nextDueAt) {
-      nextDueAt = prompt.dueAt;
+    if (nextDueAt === null || card.dueAt < nextDueAt) {
+      nextDueAt = card.dueAt;
     }
   }
   return {
@@ -283,8 +251,9 @@ function summarizeNote(
 }
 
 // The owner's memory notes as summaries, newest first, restricted to `restrictNoteIds` when given (an
-// empty restriction yields no rows without a query). Notes and their prompts are loaded once each and
-// aggregated in memory, so the summary counts derive from a single consistent read.
+// empty restriction yields no rows without a query). Notes and their prompts (each with its shared card)
+// are loaded once each and aggregated in memory, so the summary counts derive from a single consistent
+// read.
 async function loadNoteSummaries(
   db: DbClient,
   userId: string,
@@ -310,13 +279,14 @@ async function loadNoteSummaries(
   }
   const noteIds = noteRows.map((row) => row.note.entryId);
   const promptRows = await db
-    .select({ prompt: memoryPrompts })
+    .select({ prompt: memoryPrompts, card: reviewCards })
     .from(memoryPrompts)
+    .leftJoin(reviewCards, eq(reviewCards.targetEntryId, memoryPrompts.entryId))
     .where(inArray(memoryPrompts.noteEntryId, noteIds));
-  const byNote = new Map<string, MemoryPromptRow[]>();
-  for (const { prompt } of promptRows) {
+  const byNote = new Map<string, PromptWithCard[]>();
+  for (const { prompt, card } of promptRows) {
     const bucket = byNote.get(prompt.noteEntryId) ?? [];
-    bucket.push(prompt);
+    bucket.push({ prompt, card });
     byNote.set(prompt.noteEntryId, bucket);
   }
   return noteRows.map((row) => summarizeNote(row.note, byNote.get(row.note.entryId) ?? [], now));
@@ -368,8 +338,8 @@ export async function searchMemoryNotes(
 }
 
 // The full detail of one memory note the user owns: the note (with its provenance target) and every
-// prompt under it (draft or scheduled), oldest first. Undefined when the note does not exist or is not
-// owned by the user.
+// prompt under it (draft or scheduled, each with its shared card), oldest first. Undefined when the note
+// does not exist or is not owned by the user.
 export async function getMemoryNoteDetail(
   db: DbClient,
   userId: string,
@@ -381,25 +351,28 @@ export async function getMemoryNoteDetail(
   }
   const derivedFromEntryId = await noteProvenanceEntryId(db, noteId);
   const promptRows = await db
-    .select({ prompt: memoryPrompts })
+    .select({ prompt: memoryPrompts, card: reviewCards })
     .from(memoryPrompts)
+    .leftJoin(reviewCards, eq(reviewCards.targetEntryId, memoryPrompts.entryId))
     .where(eq(memoryPrompts.noteEntryId, noteId))
     .orderBy(asc(memoryPrompts.createdAt), asc(memoryPrompts.entryId));
   return {
     note: toMemoryNoteDto(noteRow, derivedFromEntryId),
-    prompts: promptRows.map((row) => toMemoryPromptDto(row.prompt))
+    prompts: promptRows.map((row) => promptRowWithCardToDto(row.prompt, row.card))
   };
 }
 
-// Assemble a full deposit DTO (the note plus every prompt under it) from persisted rows.
+// Assemble a full deposit DTO (the note plus every prompt under it) from persisted rows and the review
+// states seeded for the ready prompts (keyed by prompt id; absent for a draft).
 export function toMemoryDepositDto(
   note: MemoryNoteRow,
   derivedFromEntryId: string | null,
-  prompts: ReadonlyArray<MemoryPromptRow>
+  prompts: ReadonlyArray<MemoryPromptRow>,
+  reviews: ReadonlyMap<string, ReviewState>
 ): MemoryDepositDto {
   return {
     note: toMemoryNoteDto(note, derivedFromEntryId),
-    prompts: prompts.map(toMemoryPromptDto)
+    prompts: prompts.map((row) => toMemoryPromptDto(row, reviews.get(row.entryId) ?? null))
   };
 }
 

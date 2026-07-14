@@ -41,7 +41,7 @@ describe("MemoryPromptRow", () => {
     render(
       <MemoryPromptRow
         onSaved={vi.fn()}
-        prompt={makePrompt({ answerText: "to reveal a secret", lifecycle: "scheduled" })}
+        prompt={makePrompt({ answerText: "to reveal a secret", lifecycle: "ready" })}
       />
     );
 
@@ -79,7 +79,7 @@ describe("MemoryPromptRow", () => {
     render(
       <MemoryPromptRow
         onSaved={vi.fn()}
-        prompt={makePrompt({ answerText: "to reveal a secret", lifecycle: "scheduled" })}
+        prompt={makePrompt({ answerText: "to reveal a secret", lifecycle: "ready" })}
       />
     );
 

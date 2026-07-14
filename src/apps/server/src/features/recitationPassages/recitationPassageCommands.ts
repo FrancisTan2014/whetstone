@@ -12,6 +12,7 @@ import {
   mergePassageRanges,
   newReviewState,
   reanchorPassageRange,
+  RECALL_REQUEST_RETENTION,
   seedPassageRanges,
   splitPassageRange,
   toEntryId,
@@ -470,7 +471,7 @@ export async function recordRecitationPassageReview(
   const now = dependencies.now();
   const introducedAt = owned.row.introducedAt ?? now;
   const priorState = passageRowToReviewStateOrNull(owned.row) ?? newReviewState(now);
-  const nextState = applyRating(priorState, rating, now);
+  const nextState = applyRating(priorState, rating, now, RECALL_REQUEST_RETENTION);
   const columns = passageReviewStateColumns(nextState);
   const reviewId = dependencies.createId();
   const preceding = leadInFailed
@@ -493,7 +494,7 @@ export async function recordRecitationPassageReview(
     // twice, never an unmarked passage). The target's own rating above is unaffected.
     if (preceding !== undefined) {
       const precedingPrior = passageRowToReviewStateOrNull(preceding) ?? newReviewState(now);
-      const precedingState = applyRating(precedingPrior, "again", now);
+      const precedingState = applyRating(precedingPrior, "again", now, RECALL_REQUEST_RETENTION);
       await tx
         .update(recitationPassages)
         .set({

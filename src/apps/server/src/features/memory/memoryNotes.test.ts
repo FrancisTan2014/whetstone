@@ -8,9 +8,10 @@ import {
   entries,
   entryLinks,
   memoryNotes,
-  memoryPromptReviews,
   memoryPrompts,
-  personalEntries
+  personalEntries,
+  reviewCards,
+  reviewEvents
 } from "../../db/schema.js";
 import {
   addPromptToNote,
@@ -250,7 +251,7 @@ describe("getMemoryNoteDetail", () => {
     const detail = await getMemoryNoteDetail(context.db, userA, deposit.note.noteId);
     expect(detail?.note.derivedFromEntryId).toBe("source-1");
     expect(detail?.prompts).toHaveLength(2);
-    expect(detail?.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(detail?.prompts[0]?.lifecycle).toBe("ready");
     expect(detail?.prompts[1]?.lifecycle).toBe("draft");
   });
 
@@ -330,7 +331,7 @@ describe("editMemoryPrompt", () => {
     // Record a real review so there is history and an advanced card.
     await recordPromptReview(context.deps, promptId, "good", userA, at(2));
     const before = (
-      await context.db.select().from(memoryPrompts).where(eq(memoryPrompts.entryId, promptId))
+      await context.db.select().from(reviewCards).where(eq(reviewCards.targetEntryId, promptId))
     )[0];
 
     const result = await editMemoryPrompt(
@@ -345,18 +346,21 @@ describe("editMemoryPrompt", () => {
     const after = (
       await context.db.select().from(memoryPrompts).where(eq(memoryPrompts.entryId, promptId))
     )[0];
-    expect(after?.lifecycle).toBe("scheduled");
+    const afterCard = (
+      await context.db.select().from(reviewCards).where(eq(reviewCards.targetEntryId, promptId))
+    )[0];
+    expect(after?.lifecycle).toBe("ready");
     expect(after?.cueText).toBe("reworded cue");
     expect(after?.answerText).toBe("reworded answer");
     // The FSRS schedule is preserved (content edit never resets review history).
-    expect(after?.dueAt).toEqual(before?.dueAt);
-    expect(after?.reps).toBe(before?.reps);
-    expect(after?.stability).toBe(before?.stability);
+    expect(afterCard?.dueAt).toEqual(before?.dueAt);
+    expect(afterCard?.reps).toBe(before?.reps);
+    expect(afterCard?.stability).toBe(before?.stability);
     // The append-only review log survives the edit.
     const reviews = await context.db
       .select()
-      .from(memoryPromptReviews)
-      .where(eq(memoryPromptReviews.promptEntryId, promptId));
+      .from(reviewEvents)
+      .where(eq(reviewEvents.targetEntryId, promptId));
     expect(reviews).toHaveLength(1);
   });
 
@@ -380,7 +384,7 @@ describe("editMemoryPrompt", () => {
     if (result.status !== "updated") {
       return;
     }
-    expect(result.prompt.lifecycle).toBe("scheduled");
+    expect(result.prompt.lifecycle).toBe("ready");
     expect(result.prompt.review?.due).toBe(at(5).toISOString());
   });
 
@@ -413,13 +417,17 @@ describe("editMemoryPrompt", () => {
     expect(after?.lifecycle).toBe("draft");
     expect(after?.answerText).toBeNull();
     expect(after?.answerDoc).toBeNull();
-    expect(after?.dueAt).toBeNull();
-    expect(after?.stability).toBeNull();
+    // The card is dropped when the prompt reverts to a draft.
+    const cards = await context.db
+      .select()
+      .from(reviewCards)
+      .where(eq(reviewCards.targetEntryId, promptId));
+    expect(cards).toHaveLength(0);
     // The history is never deleted, even when the card is dropped.
     const reviews = await context.db
       .select()
-      .from(memoryPromptReviews)
-      .where(eq(memoryPromptReviews.promptEntryId, promptId));
+      .from(reviewEvents)
+      .where(eq(reviewEvents.targetEntryId, promptId));
     expect(reviews).toHaveLength(1);
   });
 
@@ -463,7 +471,7 @@ describe("addPromptToNote", () => {
     }
     expect(result.detail.prompts).toHaveLength(2);
     const added = result.detail.prompts.find((prompt) => prompt.cueText === "second direction");
-    expect(added?.lifecycle).toBe("scheduled");
+    expect(added?.lifecycle).toBe("ready");
 
     const links = await context.db
       .select()
@@ -519,7 +527,7 @@ describe("addPromptToNote", () => {
         return;
       }
       const added = result.detail.prompts.find((prompt) => prompt.cueText === "遠慮");
-      expect(added?.lifecycle).toBe("scheduled");
+      expect(added?.lifecycle).toBe("ready");
       expect(added?.answerText).toBe("to hold back out of consideration");
     } finally {
       await context2.db.$client.close();
@@ -587,8 +595,14 @@ describe("deleteMemoryNote", () => {
     expect(
       await context.db
         .select()
-        .from(memoryPromptReviews)
-        .where(eq(memoryPromptReviews.promptEntryId, scheduledPromptId))
+        .from(reviewEvents)
+        .where(eq(reviewEvents.targetEntryId, scheduledPromptId))
+    ).toHaveLength(0);
+    expect(
+      await context.db
+        .select()
+        .from(reviewCards)
+        .where(eq(reviewCards.targetEntryId, scheduledPromptId))
     ).toHaveLength(0);
     expect(
       await context.db

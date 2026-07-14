@@ -3,7 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { applyRating, newReviewState } from "@whetstone/domain";
+import { applyRating, newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../db/dbClient.js";
 import { runMigrations } from "../db/migrate.js";
@@ -113,7 +113,7 @@ describe("callRecallTool", () => {
       answerText: "risk reduction",
       chunkId: null,
       cueText: "mitigation",
-      lifecycle: "scheduled",
+      lifecycle: "ready",
       noteId: "id-1",
       promptId: "id-2",
       review: { due: t0.toISOString() }
@@ -127,7 +127,7 @@ describe("callRecallTool", () => {
     expect(saved.prompts[2]).toMatchObject({
       answerText: "risk reduction",
       cueText: "dictionary-backed",
-      lifecycle: "scheduled",
+      lifecycle: "ready",
       review: { due: t0.toISOString() }
     });
   });
@@ -150,7 +150,7 @@ describe("callRecallTool", () => {
   it("records a scheduled prompt review and removes it from today's due list", async () => {
     const { promptId } = await depositScheduled("spill the beans", "reveal a secret");
 
-    const expected = applyRating(newReviewState(t0), "good", t0);
+    const expected = applyRating(newReviewState(t0), "good", t0, RECALL_REQUEST_RETENTION);
     const reviewed = dataOf(
       await callRecallTool(ctx.context, "record_review", { promptId, rating: "good" })
     ) as { review: { due: string; reps: number; state: string } };

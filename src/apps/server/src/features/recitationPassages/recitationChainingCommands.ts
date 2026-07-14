@@ -15,6 +15,7 @@ import {
   isWholeWorkOwned,
   newReviewState,
   passagesToFailFromOutcome,
+  RECALL_REQUEST_RETENTION,
   resolveChainBoundary,
   selectRecitationTodayAction,
   toEntryId,
@@ -199,7 +200,7 @@ async function applyTargetedAgain(
     .where(eq(recitationPassages.entryId, passageEntryId))
     .limit(1);
   const priorState = passageRowToReviewStateOrNull(row!) ?? newReviewState(now);
-  const nextState = applyRating(priorState, "again", now);
+  const nextState = applyRating(priorState, "again", now, RECALL_REQUEST_RETENTION);
   await tx
     .update(recitationPassages)
     .set({ ...passageReviewStateColumns(nextState), introducedAt: row!.introducedAt ?? now })
@@ -312,7 +313,7 @@ export async function reviewWholeWork(
 
   const priorState =
     existing === undefined ? newReviewState(now) : passageRowToReviewState(existing);
-  const nextState = applyRating(priorState, rating, now);
+  const nextState = applyRating(priorState, rating, now, RECALL_REQUEST_RETENTION);
   const columns = passageReviewStateColumns(nextState);
 
   await dependencies.db.transaction(async (tx) => {

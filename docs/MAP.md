@@ -125,14 +125,28 @@ can navigate them from another package.
   (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; the Memory notes
   - (via the shared `personal_entries` facet, below) are user-owned the same way; shared
     content tables stay unowned.
+- Review substrate (shared FSRS cards) (#617): `src/apps/server/src/features/review/` is the single owner
+  of spaced-repetition scheduler mechanics, extracted out of Memory so Recitation (and future recall
+  surfaces) share it. `review_cards` holds one card per learnable target (keyed by the target's `entries.id`
+  via `target_entry_id`, owner-scoped by `user_id`) with the FSRS columns; `review_events` is the
+  append-only history (FK → `entries.id`, not the card, so events survive a card being cleared/restarted;
+  a `type` check discriminates `rating`/`reset`). `reviewCardCommands.ts` is the write/transition boundary
+  (`seedReviewCard`/`rateReviewCard`/`restartReviewCard`/`snoozeReviewCard`/`pauseReviewCard`/
+  `resumeReviewCard`/`deleteReviewCard`/`deleteReviewCardsAndEvents`); rate/restart append exactly one
+  event, snooze/pause/resume append none. `reviewCardQueries.ts` maps a card row → domain `ReviewState`
+  (`reviewStateFromCard`, `reviewStateColumns`, owner-scoped `getReviewCardForUser`). Consumers read schedule
+  through these and never re-implement `applyRating`/`newReviewState` (guarded by
+  `memory/memoryReviewOwnership.test.ts`).
 - Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
   recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
   <->row mapping) over Entry-backed rows: a `memory_notes` note (a first-class owned Entry — ownership +
   chronology in the shared `personal_entries` facet; provenance to its source is a `derived_from`
   `entry_links` row, not a column) and one-or-more `memory_prompts` (each a child Entry linked by
   `contains`; `cue`/`answer` docs + text, a `lifecycle` of `draft` — captured but no revealable answer, so
-  no card — or `scheduled` with inline FSRS columns + an optional `chunk_id` link to a practice chunk
-  (#205)), with `memory_prompt_reviews` as the append-only history. A prompt is `scheduled` (and appears in
+  no card — or `ready` with an optional `chunk_id` link to a practice chunk (#205)). FSRS state and history
+  no longer live on the prompt: since #617 a `ready` prompt owns a row in the shared `review_cards` substrate
+  (below, keyed by the prompt's Entry id) and its append-only history lands in `review_events`
+  (`memory_prompt_reviews` was migrated away in 0048). A prompt is `ready` (and appears in
   the due queue) iff it has BOTH a non-blank cue AND answer; the offline dictionary may SUGGEST an answer
   but never blocks the write. Pure scheduling is `@whetstone/domain` FSRS (v6, via `ts-fsrs`, in `fsrs.ts`);
   DTOs/validation in `@whetstone/contracts` (`memoryContracts.ts`). The web Recall surface is served by

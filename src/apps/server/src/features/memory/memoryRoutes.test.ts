@@ -10,11 +10,11 @@ import type {
   MemoryPromptCardDto,
   MemoryPromptDto
 } from "@whetstone/contracts";
-import { applyRating, newReviewState } from "@whetstone/domain";
+import { applyRating, newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { memoryPromptReviews, memoryPrompts } from "../../db/schema.js";
+import { reviewCards, reviewEvents } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { depositMemory } from "./memoryCommands.js";
@@ -120,7 +120,7 @@ describe("GET /api/recall/due", () => {
 describe("POST /api/recall/prompts/:id/review", () => {
   it("applies FSRS, persists the advanced card, writes a review row, and returns the updated prompt", async () => {
     const promptId = await seedScheduled("quick", DEFAULT_USER_ID, at(-1));
-    const expected = applyRating(newReviewState(at(-1)), "good", at(0));
+    const expected = applyRating(newReviewState(at(-1)), "good", at(0), RECALL_REQUEST_RETENTION);
 
     context.setNow(at(0));
     const response = await context.server.inject({
@@ -136,16 +136,17 @@ describe("POST /api/recall/prompts/:id/review", () => {
 
     const [row] = await context.db
       .select()
-      .from(memoryPrompts)
-      .where(eq(memoryPrompts.entryId, promptId));
+      .from(reviewCards)
+      .where(eq(reviewCards.targetEntryId, promptId));
     expect(row?.reps).toBe(1);
     expect(row?.dueAt?.toISOString()).toBe(expected.due);
 
     const reviews = await context.db
       .select()
-      .from(memoryPromptReviews)
-      .where(eq(memoryPromptReviews.promptEntryId, promptId));
+      .from(reviewEvents)
+      .where(eq(reviewEvents.targetEntryId, promptId));
     expect(reviews).toHaveLength(1);
+    expect(reviews[0]?.type).toBe("rating");
     expect(reviews[0]?.rating).toBe("good");
 
     // A reviewed prompt drops out of today's due batch.
@@ -191,8 +192,8 @@ describe("POST /api/recall/prompts/:id/snooze", () => {
 
     const reviews = await context.db
       .select()
-      .from(memoryPromptReviews)
-      .where(eq(memoryPromptReviews.promptEntryId, promptId));
+      .from(reviewEvents)
+      .where(eq(reviewEvents.targetEntryId, promptId));
     expect(reviews).toHaveLength(0);
     expect(await getDue()).toEqual([]);
   });
@@ -225,7 +226,7 @@ describe("POST /api/memory/notes", () => {
       noteText: "遠慮 — to hold back",
       prompts: [{ cueText: "when holding back", answerText: "遠慮" }, { cueText: "answerless" }]
     });
-    expect(deposit.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(deposit.prompts[0]?.lifecycle).toBe("ready");
     expect(deposit.prompts[1]?.lifecycle).toBe("draft");
 
     const invalid = await context.server.inject({
@@ -257,7 +258,7 @@ describe("POST /api/memory/import", () => {
     const result = response.json() as ImportMemoryResultDto;
     expect(result.imported).toHaveLength(2);
     expect(result.imported[0]?.prompts[0]?.lifecycle).toBe("draft");
-    expect(result.imported[1]?.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(result.imported[1]?.prompts[0]?.lifecycle).toBe("ready");
 
     // The imported notes are owned by the injected user and appear through the standard notes list.
     const listResponse = await context.server.inject({ method: "GET", url: "/api/memory/notes" });

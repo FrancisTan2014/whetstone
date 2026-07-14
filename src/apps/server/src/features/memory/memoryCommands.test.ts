@@ -2,7 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { applyRating, newReviewState } from "@whetstone/domain";
+import { applyRating, newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 import { createTextDocument } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -14,9 +14,10 @@ import {
   entries,
   entryLinks,
   memoryNotes,
-  memoryPromptReviews,
   memoryPrompts,
-  personalEntries
+  personalEntries,
+  reviewCards,
+  reviewEvents
 } from "../../db/schema.js";
 import {
   depositMemory,
@@ -109,7 +110,7 @@ describe("depositMemory", () => {
     expect(deposit.note.derivedFromEntryId).toBe("source-1");
     expect(deposit.prompts).toHaveLength(2);
     // First prompt has a cue AND an answer -> scheduled with a seeded card; second is answerless -> draft.
-    expect(deposit.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(deposit.prompts[0]?.lifecycle).toBe("ready");
     expect(deposit.prompts[0]?.answerText).toBe("spill the beans");
     expect(deposit.prompts[0]?.chunkId).toBe("chunk-1");
     expect(deposit.prompts[0]?.review).toEqual(newReviewState(t0));
@@ -195,7 +196,7 @@ describe("depositMemory answer resolution (#526/#595)", () => {
     );
 
     expect(seen).toEqual(["spill it"]);
-    expect(deposit.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(deposit.prompts[0]?.lifecycle).toBe("ready");
     expect(deposit.prompts[0]?.answerText).toBe("to reveal a secret");
   });
 
@@ -312,7 +313,7 @@ describe("importMemoryBatch (#574)", () => {
     ]);
     // Answerless terms save as unscheduled drafts; the one with an answer is scheduled.
     expect(imported[0]?.prompts[0]?.lifecycle).toBe("draft");
-    expect(imported[1]?.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(imported[1]?.prompts[0]?.lifecycle).toBe("ready");
     expect(imported[1]?.prompts[0]?.answerText).toBe("pushback");
     expect(imported[2]?.prompts[0]?.lifecycle).toBe("draft");
 
@@ -357,7 +358,7 @@ describe("importMemoryBatch (#574)", () => {
 
     expect(seen).toEqual(["alpha", "beta"]);
     expect(imported[0]?.prompts[0]?.answerText).toBe("gloss:alpha");
-    expect(imported[0]?.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(imported[0]?.prompts[0]?.lifecycle).toBe("ready");
     expect(imported[1]?.prompts[0]?.answerText).toBe("gloss:beta");
   });
 
@@ -437,7 +438,7 @@ describe("recordPromptReview", () => {
 
   it("applies FSRS, persists the new card, and appends a history row", async () => {
     const promptId = await seedScheduled();
-    const expected = applyRating(newReviewState(t0), "good", at(1));
+    const expected = applyRating(newReviewState(t0), "good", at(1), RECALL_REQUEST_RETENTION);
 
     const result = await recordPromptReview(context.deps, promptId, "good", userA, at(1));
     if (result.status !== "recorded") {
@@ -448,9 +449,10 @@ describe("recordPromptReview", () => {
 
     const history = await context.db
       .select()
-      .from(memoryPromptReviews)
-      .where(eq(memoryPromptReviews.promptEntryId, promptId));
+      .from(reviewEvents)
+      .where(eq(reviewEvents.targetEntryId, promptId));
     expect(history).toHaveLength(1);
+    expect(history[0]?.type).toBe("rating");
     expect(history[0]?.rating).toBe("good");
   });
 
@@ -468,7 +470,7 @@ describe("recordPromptReview", () => {
     });
 
     const row = (
-      await context.db.select().from(memoryPrompts).where(eq(memoryPrompts.entryId, promptId))
+      await context.db.select().from(reviewCards).where(eq(reviewCards.targetEntryId, promptId))
     )[0];
     expect(row?.reps).toBe(0);
   });
@@ -512,7 +514,7 @@ describe("snoozePrompt", () => {
     expect(result.prompt.review).toEqual({ ...newReviewState(t0), due: at(4).toISOString() });
 
     const row = (
-      await context.db.select().from(memoryPrompts).where(eq(memoryPrompts.entryId, promptId))
+      await context.db.select().from(reviewCards).where(eq(reviewCards.targetEntryId, promptId))
     )[0];
     expect(row?.dueAt).toEqual(at(4));
     expect(row?.reps).toBe(0);

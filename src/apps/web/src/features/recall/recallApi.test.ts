@@ -34,7 +34,7 @@ function makePrompt(overrides: Partial<MemoryPromptDto> = {}): MemoryPromptDto {
     answerText: "fast",
     chunkId: null,
     cueText: "quick",
-    lifecycle: "scheduled",
+    lifecycle: "ready",
     noteId: "note-1",
     promptId: "prompt-1",
     review,
