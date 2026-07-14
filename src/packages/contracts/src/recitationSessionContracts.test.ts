@@ -7,7 +7,7 @@ import {
 
 const activeSession = {
   chainAvailable: true,
-  due: { dueCount: 2, overdueCount: 1 },
+  due: { dueCount: 2, nextDueAt: "2026-07-15T00:00:00.000Z", overdueCount: 1 },
   hasDuePassage: true,
   newPassage: {
     anyIntroduced: true,
@@ -43,7 +43,7 @@ describe("recitationSessionDtoSchema", () => {
     expect(() =>
       recitationSessionDtoSchema.parse({
         ...activeSession,
-        due: { dueCount: -1, overdueCount: 0 }
+        due: { dueCount: -1, nextDueAt: null, overdueCount: 0 }
       })
     ).toThrow();
   });

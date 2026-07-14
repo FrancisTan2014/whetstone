@@ -7,6 +7,7 @@ import type {
   MemoryPromptDto
 } from "@whetstone/contracts";
 import type { ReviewState } from "@whetstone/domain";
+import { localDayBoundary } from "@whetstone/domain";
 import { and, asc, desc, eq, inArray, lte, or, ilike } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -148,6 +149,51 @@ export async function listDuePromptCards(
   return rows
     .filter((row): row is { prompt: ReadyPromptRow; card: ReviewCardRow } => isReadyRow(row.prompt))
     .map((row) => toMemoryPromptCardDto(row.prompt, row.card));
+}
+
+// The learner's Memory-review routine as Today's board reads it (#610): one grouped summary over the
+// user's enrolled prompts' active review cards — how many are due now (`due_at` <= now), how many are
+// overdue (due before the local day started, #606), and the earliest due instant (null when nothing is
+// due). Paused/snoozed prompts are simply prompts whose card is not yet due, so they fall out naturally.
+// A single scoped read of the active cards' due instants; the counts are folded in memory so the whole
+// routine costs one round-trip.
+export async function loadMemoryRoutineSummary(
+  db: DbClient,
+  userId: string,
+  now: Date,
+  timeZone: string
+): Promise<Readonly<{ dueCount: number; nextDueAt: string | null; overdueCount: number }>> {
+  const rows = await db
+    .select({ dueAt: reviewCards.dueAt })
+    .from(reviewCards)
+    .innerJoin(memoryPrompts, eq(reviewCards.targetEntryId, memoryPrompts.entryId))
+    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
+    .where(and(eq(personalEntries.userId, userId), eq(reviewCards.status, "active")));
+
+  const { utcStart } = localDayBoundary(now, timeZone);
+  const nowMs = now.getTime();
+  const dayStartMs = utcStart.getTime();
+  let dueCount = 0;
+  let overdueCount = 0;
+  let earliestDueMs: number | null = null;
+  for (const row of rows) {
+    const dueMs = row.dueAt.getTime();
+    if (dueMs > nowMs) {
+      continue;
+    }
+    dueCount += 1;
+    if (dueMs < dayStartMs) {
+      overdueCount += 1;
+    }
+    if (earliestDueMs === null || dueMs < earliestDueMs) {
+      earliestDueMs = dueMs;
+    }
+  }
+  return {
+    dueCount,
+    nextDueAt: earliestDueMs === null ? null : new Date(earliestDueMs).toISOString(),
+    overdueCount
+  };
 }
 
 // LIKE metacharacters are escaped so a query is matched literally; PostgreSQL ILIKE treats backslash as

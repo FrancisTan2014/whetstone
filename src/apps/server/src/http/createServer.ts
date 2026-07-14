@@ -43,6 +43,8 @@ import {
   registerMemoryRoutes
 } from "../features/memory/memoryRoutes.js";
 import type { MemoryRouteDependencies } from "../features/memory/memoryRoutes.js";
+import { registerTodayRoutes } from "../features/today/todayRoutes.js";
+import type { TodayRouteDependencies } from "../features/today/todayRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
 import {
   createDefaultCurrentUserProvider,
@@ -76,6 +78,7 @@ export type CreateServerOptions = Readonly<{
   recitationPassages?: RecitationPassageRouteDependencies;
   recitationChaining?: RecitationChainingRouteDependencies;
   search?: SearchDependencies;
+  today?: TodayRouteDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
   // deploy, #184). Left unset in dev/tests, where Vite serves the client separately.
   web?: { dir: string } | undefined;
@@ -158,6 +161,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   if (options.recall !== undefined) {
     registerMemoryReviewRoutes(server, options.recall);
     registerMemoryRoutes(server, options.recall);
+  }
+
+  if (options.today !== undefined) {
+    registerTodayRoutes(server, options.today);
   }
 
   if (options.images !== undefined) {
