@@ -1,3 +1,4 @@
+import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -5,118 +6,72 @@ import {
   createNoteRequestSchema,
   parseCreateMarkRequest,
   parseCreateNoteRequest,
-  parseNoteTemplateDto,
   parseUpdateNoteRequest,
   updateNoteRequestSchema
 } from "./noteContracts.js";
 
-const validTemplate = {
-  fields: [
-    { id: "meaning", label: "Meaning in this context", type: "long_text" },
-    { id: "memory_hook", label: "Memory hook", type: "short_text" }
-  ],
-  id: "vocabulary",
-  name: "Vocabulary"
+const anchor = {
+  blockEntryId: "block-1",
+  contextSnapshot: "He would not capitulate.",
+  endOffset: 18,
+  selectedTextSnapshot: "capitulate",
+  startOffset: 8
 } as const;
 
-const validRequest = {
-  answers: { meaning: "to surrender" },
-  anchor: {
-    blockEntryId: "block-1",
-    contextSnapshot: "He would not capitulate.",
-    endOffset: 18,
-    selectedTextSnapshot: "capitulate",
-    startOffset: 8
-  },
-  templateId: "vocabulary"
-} as const;
+const bodyDoc = createTextDocument("to surrender");
 
 describe("createNoteRequestSchema", () => {
-  it("parses a well-formed create-note request", () => {
-    const parsed = parseCreateNoteRequest(validRequest);
+  it("parses a well-formed create-note request and defaults the end block", () => {
+    const parsed = parseCreateNoteRequest({ anchor, bodyDoc });
 
-    expect(parsed.templateId).toBe("vocabulary");
-    expect(parsed.answers).toEqual({ meaning: "to surrender" });
-    expect(parsed.anchor).toEqual({
-      ...validRequest.anchor,
-      endBlockEntryId: validRequest.anchor.blockEntryId
-    });
+    expect(parsed.bodyDoc).toEqual(bodyDoc);
+    expect(parsed.anchor).toEqual({ ...anchor, endBlockEntryId: anchor.blockEntryId });
   });
 
   it("accepts a whole-block anchor without an offset range", () => {
     const parsed = parseCreateNoteRequest({
-      ...validRequest,
       anchor: {
         blockEntryId: "block-1",
         contextSnapshot: "capitulate",
         selectedTextSnapshot: "capitulate"
-      }
+      },
+      bodyDoc
     });
 
     expect(parsed.anchor.startOffset).toBeUndefined();
   });
 
-  it("rejects a blank template id and unexpected keys", () => {
-    expect(() => parseCreateNoteRequest({ ...validRequest, templateId: " " })).toThrow();
-    expect(() => parseCreateNoteRequest({ ...validRequest, extra: true })).toThrow();
-    expect(createNoteRequestSchema.safeParse({ answers: {}, templateId: "x" }).success).toBe(false);
+  it("rejects a blank body, an invalid document, and unexpected keys", () => {
+    // A blank document is not a note (whitespace-only trims to empty).
+    expect(() => parseCreateNoteRequest({ anchor, bodyDoc: createTextDocument("   ") })).toThrow();
+    // A malformed document fails the shared document validation.
+    expect(() => parseCreateNoteRequest({ anchor, bodyDoc: { type: "not-a-doc" } })).toThrow();
+    expect(createNoteRequestSchema.safeParse({ anchor, bodyDoc, extra: true }).success).toBe(false);
   });
 });
 
 describe("createMarkRequestSchema", () => {
   it("parses a mark request carrying only the anchor", () => {
-    const parsed = parseCreateMarkRequest({ anchor: validRequest.anchor });
+    const parsed = parseCreateMarkRequest({ anchor });
 
-    expect(parsed.anchor).toEqual({
-      ...validRequest.anchor,
-      endBlockEntryId: validRequest.anchor.blockEntryId
-    });
+    expect(parsed.anchor).toEqual({ ...anchor, endBlockEntryId: anchor.blockEntryId });
   });
 
-  it("rejects a mark request with a template, answers, or unexpected keys", () => {
-    expect(
-      createMarkRequestSchema.safeParse({ anchor: validRequest.anchor, templateId: "vocabulary" })
-        .success
-    ).toBe(false);
-    expect(() => parseCreateMarkRequest({ anchor: validRequest.anchor, answers: {} })).toThrow();
+  it("rejects a mark request that carries a body or unexpected keys", () => {
+    expect(createMarkRequestSchema.safeParse({ anchor, bodyDoc }).success).toBe(false);
     expect(() => parseCreateMarkRequest({})).toThrow();
   });
 });
 
 describe("updateNoteRequestSchema", () => {
   it("parses a well-formed update-note request", () => {
-    const parsed = parseUpdateNoteRequest({
-      answers: { meaning: "to give in" },
-      templateId: "vocabulary"
-    });
+    const parsed = parseUpdateNoteRequest({ bodyDoc });
 
-    expect(parsed).toEqual({ answers: { meaning: "to give in" }, templateId: "vocabulary" });
+    expect(parsed).toEqual({ bodyDoc });
   });
 
-  it("rejects a blank template id and unexpected keys", () => {
-    expect(() => parseUpdateNoteRequest({ answers: { meaning: "x" }, templateId: " " })).toThrow();
-    expect(
-      updateNoteRequestSchema.safeParse({
-        answers: { meaning: "x" },
-        anchor: {},
-        templateId: "vocabulary"
-      }).success
-    ).toBe(false);
-  });
-});
-
-describe("parseNoteTemplateDto", () => {
-  it("parses a seeded template row", () => {
-    expect(parseNoteTemplateDto(validTemplate)).toEqual(validTemplate);
-  });
-
-  it("rejects templates with no fields or an unknown field type", () => {
-    expect(() => parseNoteTemplateDto({ ...validTemplate, fields: [] })).toThrow();
-    expect(() =>
-      parseNoteTemplateDto({
-        ...validTemplate,
-        fields: [{ id: "x", label: "X", type: "rich_text" }]
-      })
-    ).toThrow();
+  it("rejects a blank body and unexpected keys (the anchor is fixed at capture)", () => {
+    expect(() => parseUpdateNoteRequest({ bodyDoc: createTextDocument("") })).toThrow();
+    expect(updateNoteRequestSchema.safeParse({ bodyDoc, anchor }).success).toBe(false);
   });
 });

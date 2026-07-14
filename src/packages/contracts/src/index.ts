@@ -335,11 +335,9 @@ export type {
 export {
   createMarkRequestSchema,
   createNoteRequestSchema,
-  noteFieldTypeDtoSchema,
-  noteTemplateDtoSchema,
+  noteBodyDocSchema,
   parseCreateMarkRequest,
   parseCreateNoteRequest,
-  parseNoteTemplateDto,
   parseUpdateNoteRequest,
   updateNoteRequestSchema
 } from "./noteContracts.js";
@@ -350,9 +348,6 @@ export type {
   NoteListDto,
   NoteOverviewDto,
   NotesOverviewListDto,
-  NoteTemplateDto,
-  NoteTemplateFieldDto,
-  NoteTemplateListDto,
   UpdateNoteRequest
 } from "./noteContracts.js";
 export {
