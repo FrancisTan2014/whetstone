@@ -19,22 +19,19 @@ async function adoptPlan(
 }
 
 test.describe("recitation passage practice (#578, faded by #579)", () => {
-  test("start reciting, divide into passages, fade support, and complete one scheduled review", async ({
+  test("divide into passages, fade support, and complete one scheduled review", async ({
     page,
     setup
   }) => {
+    // The inline passage-practice surface moved from Today's retired Recite card to the recitation hub
+    // session (#610), so this flow reaches practice through the hub. Adopt straight into Learning (the
+    // phase the old "Start reciting" transition produced) since Today no longer hosts that control.
     const planEntryId = await adoptPlan(
       setup.baseURL,
       page.request,
       setup.epub.entryId,
-      "familiarizing"
+      "learning"
     );
-
-    // From Today, the explicit "Start reciting" transition moves the routine into active recitation.
-    await page.goto(`${setup.baseURL}#/`);
-    const recitationCard = page.getByRole("region", { name: "Continue recitation" });
-    await recitationCard.getByRole("button", { name: "Start reciting" }).click();
-    await expect(recitationCard.getByRole("button", { name: "Start reciting" })).toHaveCount(0);
 
     // Reach the segmentation surface through its real Library entry point — this Work's card links
     // "Divide into passages" into #/recite?plan=<id> — not a hand-built URL. Scope by this plan's href
@@ -53,7 +50,7 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
 
     // Passages now seed QUEUED — Learning introduction is explicit and paced (#607). Nothing is due until
     // the learner deliberately introduces the first passage; the "Start first passage" action stamps it
-    // introduced and seeds one due card. Wait for that write so Today below reads the newly due passage.
+    // introduced and seeds one due card. Wait for that write so the hub session below reads the due passage.
     const introductionPanel = page.getByRole("region", { name: "New passage" });
     await Promise.all([
       page.waitForResponse(
@@ -62,12 +59,14 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
       introductionPanel.getByRole("button", { name: "Start first passage" }).click()
     ]);
 
-    // Back on Today, the next due passage surfaces as one bounded attempt. It opens at full visual
-    // support (the whole passage as a scaffold); the learner fades support down the ladder before
-    // reciting from memory.
-    await page.goto(`${setup.baseURL}#/`);
-    const reciteCard = page.getByRole("region", { name: "Recite" });
-    const supportGroup = reciteCard.getByRole("group", { name: "Support level" });
+    // Practise the due passage inside the recitation hub session (#609). It opens at full visual support
+    // (the whole passage as a scaffold); the learner fades support down the ladder before reciting from
+    // memory.
+    await page.goto(`${setup.baseURL}#/recitation`);
+    const hub = page.getByRole("region", { name: "Recitation" });
+    await hub.getByRole("button", { name: "Start session" }).click();
+    const session = hub.getByRole("region", { name: "Recitation session" });
+    const supportGroup = session.getByRole("group", { name: "Support level" });
     await expect(supportGroup.getByRole("button", { name: "Full text" })).toHaveAttribute(
       "aria-pressed",
       "true"
@@ -82,23 +81,27 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
       supportGroup.getByRole("button", { name: "First characters" }).click()
     ]);
 
-    // Reloading Today re-fetches the passage; the chosen support level is remembered per passage.
-    await page.goto(`${setup.baseURL}#/`);
-    const reloadedCard = page.getByRole("region", { name: "Recite" });
+    // Re-entering the session re-fetches the passage; the chosen support level is remembered per passage.
+    // A hash change alone would not remount the SPA, so force a real document reload to prove the level was
+    // persisted server-side (not just kept in memory).
+    await page.reload();
+    const reloadedHub = page.getByRole("region", { name: "Recitation" });
+    await reloadedHub.getByRole("button", { name: "Start session" }).click();
+    const reloadedSession = reloadedHub.getByRole("region", { name: "Recitation session" });
     await expect(
-      reloadedCard.getByRole("group", { name: "Support level" }).getByRole("button", {
+      reloadedSession.getByRole("group", { name: "Support level" }).getByRole("button", {
         name: "First characters"
       })
     ).toHaveAttribute("aria-pressed", "true");
 
-    const reveal = reloadedCard.getByRole("button", { name: "Reveal" });
+    const reveal = reloadedSession.getByRole("button", { name: "Reveal" });
     await expect(reveal).toBeVisible();
-    await expect(reloadedCard.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
+    await expect(reloadedSession.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
 
     // Reveal shows the exact source and the four self-ratings; grading records the review and the card
-    // advances to the next due passage (bounded — one at a time, never an overdue wall).
+    // advances out of due (bounded — one at a time, never an overdue wall).
     await reveal.click();
-    await reloadedCard.getByRole("button", { name: "Clean and natural" }).click();
-    await expect(reloadedCard.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
+    await reloadedSession.getByRole("button", { name: "Clean and natural" }).click();
+    await expect(reloadedSession.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
   });
 });

@@ -19,6 +19,11 @@ import { todayRoutineActionLabels, todayRoutinePaths, todayRoutineTitles } from 
 // The whole board is one fetch; every deep link routes into the owning feature and returns to a freshly
 // recomputed board, so Today also refetches whenever the tab regains focus.
 
+// The quiet, visibly-secondary Continue links stay light (a small underlined link) but still meet the
+// ≥44px WCAG 2.5.5 hit target (#519) via an inline-flex box with a 44px min height and width.
+const quietLinkClass =
+  "inline-flex min-h-[44px] min-w-[44px] items-center text-sm text-text underline";
+
 type BoardState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
@@ -217,7 +222,7 @@ function ContinueSection({
       <ContinueReading reading={board.continueReading} reload={reload} />
       <ContinueWriting writing={board.continueWriting} reload={reload} />
       <NewPassageInvitation newPassage={board.newPassage} reload={reload} />
-      <Link className="text-sm text-text-muted underline" to="/diary">
+      <Link className={quietLinkClass} to="/diary">
         Return to your diary
       </Link>
     </section>
@@ -236,7 +241,7 @@ function ContinueReading({
   }
   return (
     <Link
-      className="text-sm text-text underline"
+      className={quietLinkClass}
       to={`/reader?work=${encodeURIComponent(reading.position.workEntryId)}`}
     >
       Keep reading {reading.position.workTitle}
@@ -255,10 +260,7 @@ function ContinueWriting({
     return <p className="text-sm text-text-muted">No writing in progress.</p>;
   }
   return (
-    <Link
-      className="text-sm text-text underline"
-      to={`/write?work=${encodeURIComponent(writing.work.entryId)}`}
-    >
+    <Link className={quietLinkClass} to={`/write?work=${encodeURIComponent(writing.work.entryId)}`}>
       Keep writing {writing.work.title}
     </Link>
   );
@@ -278,7 +280,7 @@ function NewPassageInvitation({
     return null;
   }
   return (
-    <Link className="text-sm text-text underline" to="/recitation">
+    <Link className={quietLinkClass} to="/recitation">
       Start a new passage
     </Link>
   );
@@ -292,7 +294,7 @@ function FailedInvitation({
   return (
     <div className="flex flex-wrap items-center gap-2" role="alert">
       <p className="text-sm text-text-muted">Couldn&rsquo;t load your {label} right now.</p>
-      <button className="text-sm text-text-muted underline" onClick={reload} type="button">
+      <button className={quietLinkClass} onClick={reload} type="button">
         Retry
       </button>
     </div>
