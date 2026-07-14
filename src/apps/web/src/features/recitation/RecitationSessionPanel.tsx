@@ -36,12 +36,21 @@ export function RecitationSessionPanel({
   const [chainDismissed, setChainDismissed] = useState(false);
   const [newPassageIntroduced, setNewPassageIntroduced] = useState(false);
   const [newPassageSkipped, setNewPassageSkipped] = useState(false);
+  // Bumped on every canonical reload so the mounted step remounts and re-fetches its own step-local
+  // data. Without it, a step that stays selected after an action (another due passage remains, or a
+  // just-started chain) keeps its stale fetch and never drains — its effect keys only on planEntryId.
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   function load(): void {
     getRecitationSession().then(
       (session) => setState({ session, status: "ready" }),
       () => setState({ status: "error" })
     );
+  }
+
+  function reload(): void {
+    setReloadNonce((nonce) => nonce + 1);
+    load();
   }
 
   useEffect(load, [planEntryId]);
@@ -67,11 +76,12 @@ export function RecitationSessionPanel({
       newPassageSkipped={newPassageSkipped}
       onChainDismissed={() => setChainDismissed(true)}
       onExit={onExit}
-      onReload={load}
+      onReload={reload}
       onSessionIntroducedNewPassage={() => setNewPassageIntroduced(true)}
       onSkipNewPassage={() => setNewPassageSkipped(true)}
       onUseNewPassage={() => setNewPassageSkipped(false)}
       planEntryId={planEntryId}
+      reloadNonce={reloadNonce}
       session={state.session}
     />
   );
@@ -88,6 +98,7 @@ function ActiveSessionPanel({
   onSkipNewPassage,
   onUseNewPassage,
   planEntryId,
+  reloadNonce,
   session
 }: Readonly<{
   chainDismissed: boolean;
@@ -100,6 +111,7 @@ function ActiveSessionPanel({
   onSkipNewPassage: () => void;
   onUseNewPassage: () => void;
   planEntryId: string;
+  reloadNonce: number;
   session: ActiveSession;
 }>): React.JSX.Element {
   const displayedStep = selectRecitationSessionStep({
@@ -118,11 +130,21 @@ function ActiveSessionPanel({
       </div>
 
       {displayedStep === "due_passage" ? (
-        <DuePassageStep onReviewed={onReload} planEntryId={planEntryId} />
+        <DuePassageStep
+          key={`due-${reloadNonce}`}
+          onReviewed={onReload}
+          planEntryId={planEntryId}
+        />
       ) : displayedStep === "whole_work" ? (
-        <MaintenanceStep mode="whole_work" onAction={onReload} planEntryId={planEntryId} />
+        <MaintenanceStep
+          key={`whole-${reloadNonce}`}
+          mode="whole_work"
+          onAction={onReload}
+          planEntryId={planEntryId}
+        />
       ) : displayedStep === "chain" ? (
         <MaintenanceStep
+          key={`chain-${reloadNonce}`}
           mode="chain"
           onAction={onReload}
           onDismissChain={onChainDismissed}

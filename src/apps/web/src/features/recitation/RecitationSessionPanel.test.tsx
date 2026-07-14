@@ -346,4 +346,46 @@ describe("RecitationSessionPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "New passage" }));
     await waitFor(() => expect(mockedIntroduce).toHaveBeenCalledWith("plan-1"));
   });
+
+  it("drains to the next due passage after one is reviewed, without reopening the session", async () => {
+    mockedSession.mockResolvedValue(
+      makeSession({ due: { dueCount: 2, overdueCount: 0 }, hasDuePassage: true })
+    );
+    mockedDue
+      .mockResolvedValueOnce(makeDuePassage({ passageEntryId: "passage-1" }))
+      .mockResolvedValueOnce(makeDuePassage({ passageEntryId: "passage-2" }));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "reviewed passage-1" }));
+
+    expect(await screen.findByRole("button", { name: "reviewed passage-2" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "reviewed passage-1" })).toBeNull();
+    expect(mockedDue).toHaveBeenCalledTimes(2);
+  });
+
+  it("advances from chain start to the active chain in place after Start chain", async () => {
+    mockedSession.mockResolvedValue(makeSession({ chainAvailable: true }));
+    mockedChaining.mockResolvedValueOnce(makeChaining()).mockResolvedValueOnce(
+      makeChaining({
+        activeChain: {
+          chainId: "chain-1",
+          endOrderIndex: 1,
+          passages: [
+            { orderIndex: 0, passageEntryId: "passage-1", sourceText: "First line." },
+            { orderIndex: 1, passageEntryId: "passage-2", sourceText: "Second line." }
+          ],
+          planEntryId: "plan-1",
+          status: "active"
+        }
+      })
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start chain" }));
+
+    expect(mockedStart).toHaveBeenCalledWith("plan-1", 1);
+    expect(await screen.findByRole("list", { name: "Chain passages" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Start chain" })).toBeNull();
+    expect(mockedChaining).toHaveBeenCalledTimes(2);
+  });
 });
