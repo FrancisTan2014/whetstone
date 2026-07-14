@@ -1099,7 +1099,7 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Reciting · Familiarizing")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
     // A familiarizing plan does NOT expose passage practice — that is the opt-in Learning-phase engine,
-    // reached first via Today's "Start reciting" (#578).
+    // reached first via the Recitation hub's "Start reciting" (#578).
     expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
     // The contextual entry into the recitation routine hub (#608) appears for any adopted plan.
     expect(screen.getByRole("link", { name: "Recitation" }).getAttribute("href")).toBe(

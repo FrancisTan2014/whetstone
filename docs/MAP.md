@@ -935,10 +935,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   loading, error, the restrained `no_plan` empty state (link to Library), and the active projection — Work
   title + phase, "{introducedCount} of {totalCount} passages introduced" human copy, the routine stage label,
   due/overdue counts first, then a single **Start session** control that mounts the #609 session inline (no
-  hub action link to `#/recite`), then a caught-up state; a paused banner + **Resume routine** when
+  hub action link to `#/recite`), then a caught-up state; a `familiarizing` plan instead shows a **Start
+  reciting** control that runs the explicit familiarizing→learning transition (#577, `setRecitationPhase`)
+  and refreshes — the hub is that transition's only home now that Today (#610) no longer hosts recitation
+  cards; a paused banner + **Resume routine** when
   paused, else a **Pause routine** button (both call the api and refresh from the returned hub). Pure enum→label
   maps live in the coverage-excluded `RecitationHubPage.tokens.ts`. Reached via quiet secondary links: Today's
-  **Open recitation hub** (in the Continue-recitation card) and the Library **Recitation** Work action (in
+  **Due now** recitation row (deep-links to `#/recitation`) and the Library **Recitation** Work action (in
   `AdminLibraryPage.tsx`, per adopted plan). The E2E `e2e/tests/recitation-hub.spec.ts` drives adopt → hub →
   pause (due action disappears) → resume (state preserved).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
