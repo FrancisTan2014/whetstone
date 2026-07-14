@@ -1,5 +1,23 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { expect, test } from "../fixtures";
 import type { APIRequestContext } from "@playwright/test";
+
+// Passage seeding reads the ProseMirror `doc_blocks` that only EPUB ingestion writes, so the hub flow
+// needs an EPUB-backed Work. EPUB upload dedupes by content sha256, so this spec uploads its OWN
+// dedicated fixture (`three-character-classic.epub`) rather than the shared `setup.epub` (owned by the
+// passages spec) or `recitation-chain.epub` (owned by the chaining spec) — otherwise the second adopt of
+// the same Work would collide (one plan per user+Work).
+const hubEpubFixture = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "fixtures",
+  "epub",
+  "three-character-classic.epub"
+);
 
 // v0 resolves a single DEFAULT_USER_ID, so a plan adopted/seeded over the API is owned by the same user
 // the browser acts as. We drive the routine into a Learning state with one due passage over the API, then
@@ -16,14 +34,31 @@ async function post(
   return response.json();
 }
 
+// Upload the dedicated hub fixture as its own Work (distinct sha256) and return its id + title.
+async function uploadHubWork(
+  request: APIRequestContext,
+  baseURL: string
+): Promise<{ entryId: string; title: string }> {
+  const response = await request.post(`${baseURL}api/works/epub`, {
+    data: readFileSync(hubEpubFixture),
+    headers: { "content-type": "application/epub+zip" }
+  });
+  expect([200, 201], `EPUB upload → ${response.status()}: ${await response.text()}`).toContain(
+    response.status()
+  );
+  const { work } = (await response.json()) as { work: { entryId: string; title: string } };
+  return work;
+}
+
 test.describe("recitation routine hub (#608)", () => {
   test("adopt a Work, open the hub, then pause and resume with progress preserved", async ({
     page,
     setup
   }) => {
+    const work = await uploadHubWork(page.request, setup.baseURL);
     const plan = (await post(page.request, setup.baseURL, "/recitation/plans", {
       phase: "learning",
-      workEntryId: setup.epub.entryId
+      workEntryId: work.entryId
     })) as { entryId: string };
     const planEntryId = plan.entryId;
 
@@ -35,7 +70,7 @@ test.describe("recitation routine hub (#608)", () => {
     // The hub projects the active plan: its title, the routine stage, and the single due-first action.
     await page.goto(`${setup.baseURL}#/recitation`);
     const hub = page.getByRole("region", { name: "Recitation" });
-    await expect(hub.getByRole("heading", { name: setup.epub.title })).toBeVisible();
+    await expect(hub.getByRole("heading", { name: work.title })).toBeVisible();
     await expect(hub.getByText("Stage: Learning passages")).toBeVisible();
 
     const dueReview = hub.getByRole("group", { name: "Due review" });
