@@ -1165,6 +1165,35 @@ describe("POST /api/recitation/plans/:id/introduce-next (#607)", () => {
     });
   });
 
+  it("agrees on all_introduced (not cap_reached) when the queue empties exactly at the daily cap", async () => {
+    // Exactly cap-many passages, each introduced today with its due card cleared between introductions:
+    // both blocking conditions hold at once — the queue is empty AND the daily cap is reached. The status
+    // endpoint follows the domain precedence (all_introduced before cap_reached), so the activation
+    // command must too; otherwise GET /introduction and POST /introduce-next disagree for one plan state.
+    const { passages, planEntryId } = await seededLearningPlan(RECITATION_DAILY_INTRODUCTION_CAP);
+    for (const passage of passages) {
+      expect((await introduceNext(planEntryId)).statusCode).toBe(200);
+      await review(passage.entryId);
+    }
+
+    const status = await getIntroduction(planEntryId);
+    expect(status).toMatchObject({
+      dueCount: 0,
+      introducedToday: RECITATION_DAILY_INTRODUCTION_CAP,
+      newPassageAvailable: false,
+      reason: "all_introduced",
+      remainingCapacity: 0
+    });
+    expect(status.nextQueued).toBeNull();
+
+    const response = await introduceNext(planEntryId);
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: "introduction_unavailable",
+      reason: "all_introduced"
+    });
+  });
+
   it("refuses introduction on a maintenance plan (learning phase only)", async () => {
     const { planEntryId } = await seededMaintenancePlan();
 

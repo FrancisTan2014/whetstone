@@ -227,7 +227,8 @@ function countDuePassages(
 // create a duplicate card. Activating stamps `introduced_at` and seeds ONE active review card at the 0.95
 // recitation retention through the shared scheduler boundary. The LOWEST-order queued passage is always
 // the one introduced (the ordered rows never skip). Gates in fixed order (not_learning → due_work_remains
-// → cap_reached → all_introduced) via the learner's LOCAL day for the cap (#606). Owner-scoped
+// → all_introduced → cap_reached) matching the domain evaluator / status endpoint, via the learner's LOCAL
+// day for the cap (#606). Owner-scoped
 // (`not_found`).
 export async function activateNextRecitationPassage(
   dependencies: RecitationPassageDependencies,
@@ -276,6 +277,13 @@ export async function activateNextRecitationPassage(
       if (countDuePassages(passages, cards, now) > 0) {
         return { reason: "due_work_remains", status: "unavailable" };
       }
+      // Precedence must match the domain evaluator / status endpoint (resolveReason): running out of
+      // queued passages is `all_introduced`, checked BEFORE the daily cap, so GET /introduction and
+      // POST /introduce-next never disagree when a plan is both fully introduced and at the cap.
+      const nextQueued = passages.find((passage) => passage.introducedAt === null);
+      if (nextQueued === undefined) {
+        return { reason: "all_introduced", status: "unavailable" };
+      }
       const { utcEnd, utcStart } = localDayBoundary(now, timeZone);
       const introducedToday = passages.filter(
         (passage) =>
@@ -285,10 +293,6 @@ export async function activateNextRecitationPassage(
       ).length;
       if (introducedToday >= RECITATION_DAILY_INTRODUCTION_CAP) {
         return { reason: "cap_reached", status: "unavailable" };
-      }
-      const nextQueued = passages.find((passage) => passage.introducedAt === null);
-      if (nextQueued === undefined) {
-        return { reason: "all_introduced", status: "unavailable" };
       }
 
       await tx
