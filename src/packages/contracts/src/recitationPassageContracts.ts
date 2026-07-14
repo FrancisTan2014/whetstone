@@ -1,9 +1,12 @@
 import {
   passageAnchorStatuses,
   recitationCueStrengths,
+  recitationIntroductionReasons,
   recitationSupportLevels
 } from "@whetstone/domain";
 import { z } from "zod";
+
+import { recitationPhaseDtoSchema } from "./recitationContracts.js";
 
 // Shared, Zod-validated shapes for recitation passage practice (#578): a learner divides a recitation
 // Work into contiguous passages, edits the boundaries (split / merge), practises the next due passage
@@ -88,6 +91,57 @@ export const recitationPassageListDtoSchema = z
 
 export type RecitationPassageListDto = z.infer<typeof recitationPassageListDtoSchema>;
 
+// The server-computed new-passage introduction status for one plan (#607). Learning introduction is
+// explicit and paced: passages seed queued, and a learner introduces the next one at a time, capped per
+// local day and only when no introduced passage is still due. `dueCount` is how many introduced passages
+// are due/overdue; `introducedToday` is how many were introduced on the learner's current local day out
+// of `dailyCap`, with `remainingCapacity` the paced remainder; `anyIntroduced` lets the UI label the
+// action "Start first passage" vs "New passage"; `newPassageAvailable` + `reason` are the single decision
+// (available only when learning, nothing due, under the cap, and a queued passage remains); `nextQueued`
+// previews the lowest-order queued passage (null when none remains).
+export const recitationIntroductionNextQueuedSchema = z
+  .object({
+    entryId: z.string(),
+    orderIndex: z.number().int().nonnegative(),
+    sourceText: z.string()
+  })
+  .strict();
+
+export type RecitationIntroductionNextQueued = z.infer<
+  typeof recitationIntroductionNextQueuedSchema
+>;
+
+export const recitationIntroductionStatusDtoSchema = z
+  .object({
+    anyIntroduced: z.boolean(),
+    dailyCap: z.number().int().nonnegative(),
+    dueCount: z.number().int().nonnegative(),
+    introducedToday: z.number().int().nonnegative(),
+    newPassageAvailable: z.boolean(),
+    nextQueued: recitationIntroductionNextQueuedSchema.nullable(),
+    phase: recitationPhaseDtoSchema,
+    planEntryId: z.string(),
+    reason: z.enum(recitationIntroductionReasons),
+    remainingCapacity: z.number().int().nonnegative()
+  })
+  .strict();
+
+export type RecitationIntroductionStatusDto = z.infer<typeof recitationIntroductionStatusDtoSchema>;
+
+// The result of introducing the next queued passage (#607): the newly-activated passage (now an active
+// card at the 0.95 recitation retention) plus the fresh introduction status, so the client updates the
+// action and the pacing state in one round-trip.
+export const activateNextRecitationPassageResponseSchema = z
+  .object({
+    passage: recitationPassageDtoSchema,
+    status: recitationIntroductionStatusDtoSchema
+  })
+  .strict();
+
+export type ActivateNextRecitationPassageResponse = z.infer<
+  typeof activateNextRecitationPassageResponseSchema
+>;
+
 // Split a passage at a text position: the block and character offset to cut at (strictly inside the
 // passage). The passage to split is named in the route path.
 export const splitRecitationPassageRequestSchema = z
@@ -165,6 +219,18 @@ export type RecordRecitationReviewResponse = z.infer<typeof recordRecitationRevi
 
 export function parseRecitationPassageListDto(value: unknown): RecitationPassageListDto {
   return recitationPassageListDtoSchema.parse(value);
+}
+
+export function parseRecitationIntroductionStatusDto(
+  value: unknown
+): RecitationIntroductionStatusDto {
+  return recitationIntroductionStatusDtoSchema.parse(value);
+}
+
+export function parseActivateNextRecitationPassageResponse(
+  value: unknown
+): ActivateNextRecitationPassageResponse {
+  return activateNextRecitationPassageResponseSchema.parse(value);
 }
 
 export function parseSplitRecitationPassageRequest(value: unknown): SplitRecitationPassageRequest {
