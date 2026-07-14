@@ -63,13 +63,20 @@ test("the notes side sheet scrolls so the lowest note's actions stay reachable (
   for (const anchor of anchors) {
     const response = await page.request.post(notesEndpoint, {
       data: {
-        answers: { meaning: `Seed note for ${anchor.word}.` },
         anchor: {
           blockEntryId: anchor.blockEntryId,
           contextSnapshot: anchor.word,
           selectedTextSnapshot: anchor.word
         },
-        templateId: "vocabulary"
+        bodyDoc: {
+          content: [
+            {
+              content: [{ text: `Seed note for ${anchor.word}.`, type: "text" }],
+              type: "paragraph"
+            }
+          ],
+          type: "doc"
+        }
       }
     });
     expect(response.status()).toBe(201);

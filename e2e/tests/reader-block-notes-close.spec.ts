@@ -69,13 +69,15 @@ test("mobile: the block-notes panel Close button is a >=44px hit target (#413)",
     `${setup.baseURL}api/works/${encodeURIComponent(work.entryId)}/notes`,
     {
       data: {
-        answers: { meaning: "Touch-target note." },
         anchor: {
           blockEntryId: anchor!.blockEntryId,
           contextSnapshot: anchor!.word,
           selectedTextSnapshot: anchor!.word
         },
-        templateId: "vocabulary"
+        bodyDoc: {
+          content: [{ content: [{ text: "Touch-target note.", type: "text" }], type: "paragraph" }],
+          type: "doc"
+        }
       }
     }
   );

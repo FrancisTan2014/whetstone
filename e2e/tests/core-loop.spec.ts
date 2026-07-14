@@ -35,7 +35,7 @@ test.describe("core reader loop", () => {
     await page.getByRole("button", { name: "Add note" }).click();
     const editor = page.getByRole("dialog");
     await expect(editor).toBeVisible();
-    await editor.locator("textarea, input[type=text]").first().fill("E2E smoke note.");
+    await editor.getByRole("textbox", { name: "Note body" }).fill("E2E smoke note.");
     await page.getByRole("button", { name: "Save note" }).click();
     await expect(page.locator('[data-has-notes="true"]').first()).toBeVisible();
 
@@ -68,7 +68,7 @@ test.describe("core reader loop", () => {
     await page.getByRole("button", { name: "Add note" }).click();
     const editor = page.getByRole("dialog");
     await expect(editor).toBeVisible();
-    await editor.locator("textarea, input[type=text]").first().fill("Blockquote note.");
+    await editor.getByRole("textbox", { name: "Note body" }).fill("Blockquote note.");
     await page.getByRole("button", { name: "Save note" }).click();
 
     // The note anchors and persists on the blockquote block, and it survives a reload.
@@ -118,7 +118,10 @@ test.describe("core reader loop", () => {
     await expect(lookup.locator(".lookupGloss").first()).toBeVisible();
   });
 
-  test("A+ resizes the body paragraph text, not just the heading (#330)", async ({ page, setup }) => {
+  test("A+ resizes the body paragraph text, not just the heading (#330)", async ({
+    page,
+    setup
+  }) => {
     await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
     const paragraph = page.locator(`${blockWith("p")} p`).first();
     await expect(paragraph).toBeVisible();
