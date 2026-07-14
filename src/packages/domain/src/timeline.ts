@@ -4,7 +4,7 @@
 // Timeline-only entity whose identity exists only because it appears here. No persistence, DB, or I/O.
 
 import { entryTypes, type EntryType } from "./entry.js";
-import { toDayKey } from "./diaryTimeline.js";
+import { localDayKey } from "./localDay.js";
 
 // The kinds a Timeline row can take. Each is a filter over the one derived result — the Diary is the
 // `diary` filter, and a future all-history view is the union. Ordered by nothing meaningful; membership,
@@ -73,17 +73,19 @@ export type TimelineDay<TEntry extends TimelineChronology> = Readonly<{
 }>;
 
 // The Timeline grouped into days, newest day first, each day's entries in the same deterministic order
-// (`orderTimelineEntries`). The day key is the UTC calendar day the `occurredAt` instant falls on, so the
-// same instant groups to the same day on every machine. Because the entries are ordered newest-first
-// before bucketing and days are emitted in first-seen order, the day sections come out newest-first too.
+// (`orderTimelineEntries`). The day key is the learner's local calendar day (`timeZone`, #606) the
+// `occurredAt` instant falls on, so every routine agrees on "the day" regardless of where the server
+// runs. Because the entries are ordered newest-first before bucketing and days are emitted in first-seen
+// order, the day sections come out newest-first too.
 export function groupTimelineEntriesByDay<TEntry extends TimelineChronology>(
-  entries: ReadonlyArray<TEntry>
+  entries: ReadonlyArray<TEntry>,
+  timeZone: string
 ): ReadonlyArray<TimelineDay<TEntry>> {
   const ordered = orderTimelineEntries(entries);
   const byDay = new Map<string, TEntry[]>();
 
   for (const entry of ordered) {
-    const date = toDayKey(new Date(entry.occurredAt));
+    const date = localDayKey(new Date(entry.occurredAt), timeZone);
     const bucket = byDay.get(date);
     if (bucket === undefined) {
       byDay.set(date, [entry]);
@@ -95,12 +97,14 @@ export function groupTimelineEntriesByDay<TEntry extends TimelineChronology>(
   return [...byDay.entries()].map(([date, dayEntries]) => ({ date, entries: dayEntries }));
 }
 
-// The distinct UTC days that carry at least one Timeline entry, newest first — the marks the diary's
-// date-jump calendar paints, derived from `occurredAt` rather than a stored day column.
+// The distinct local days that carry at least one Timeline entry, newest first — the marks the diary's
+// date-jump calendar paints, derived from `occurredAt` through the learner's timezone rather than a
+// stored day column.
 export function timelineDays<TEntry extends TimelineChronology>(
-  entries: ReadonlyArray<TEntry>
+  entries: ReadonlyArray<TEntry>,
+  timeZone: string
 ): ReadonlyArray<string> {
-  return groupTimelineEntriesByDay(entries).map((day) => day.date);
+  return groupTimelineEntriesByDay(entries, timeZone).map((day) => day.date);
 }
 
 // A guard used by contract/domain tests to assert the Timeline vocabulary introduces no entity whose

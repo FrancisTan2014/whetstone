@@ -1,24 +1,15 @@
-// Pure date/grouping helpers for the voice diary (#246). The diary's storage and timeline are dated
-// traces (one entry → one block under a day), so the only product logic worth isolating is the date-key
-// derivation and the date-jump calendar's month grid. Day-grouping now lives in the shared Timeline
-// helper (`groupTimelineEntriesByDay`, #571). No persistence, React, or I/O — the server and client feed
-// in values and render the result.
+// Pure calendar helpers for the voice diary (#246). The diary's storage and timeline are dated traces
+// (one entry → one block under a day), so the product logic worth isolating is the date-jump calendar's
+// month arithmetic. The instant → local-day-key projection lives in the shared local-day boundary
+// (`localDayKey`, #606) so every routine derives "the day" from the learner's one timezone; day-grouping
+// lives in the shared Timeline helper (`groupTimelineEntriesByDay`, #571). The helpers here operate on
+// day/month KEYS (strings), so they are timezone-independent. No persistence, React, or I/O.
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_KEY_PATTERN = /^\d{4}-\d{2}$/;
 
 function pad(value: number, width: number): string {
   return value.toString().padStart(width, "0");
-}
-
-// The `YYYY-MM-DD` day key a `Date` falls on, read in UTC so the same instant maps to the same day on
-// every machine (the server stamps `entry_date` from its clock; tests pass fixed instants). v0 treats
-// the UTC calendar day as "the day"; a per-user local-day refinement is a later concern.
-export function toDayKey(date: Date): string {
-  return `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1, 2)}-${pad(
-    date.getUTCDate(),
-    2
-  )}`;
 }
 
 // Whether a string is a well-formed `YYYY-MM-DD` day key. Used at the API boundary to reject a malformed

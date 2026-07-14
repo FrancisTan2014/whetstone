@@ -42,11 +42,22 @@ vi.mock("../capture/voiceCaptureApi", () => ({
   retryVoiceCapture: vi.fn()
 }));
 
+// The page adopts the learner's server-owned timezone once on mount (#606); stub the preferences module
+// so grouping is deterministic (the real one performs a network fetch).
+vi.mock("../../shared/preferences/preferencesApi", () => ({
+  loadPersistedTimeZone: vi.fn(),
+  resolveBrowserTimeZone: vi.fn()
+}));
+
 import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
-import { toDayKey } from "@whetstone/domain";
+import { localDayKey } from "@whetstone/domain";
 
 import { submitVoiceCapture, fetchActiveVoiceCaptures } from "../capture/voiceCaptureApi";
+import {
+  loadPersistedTimeZone,
+  resolveBrowserTimeZone
+} from "../../shared/preferences/preferencesApi";
 import {
   submitDiaryCapture,
   deleteDiaryEntry,
@@ -64,10 +75,16 @@ const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
 const mockedVoiceSubmit = vi.mocked(submitVoiceCapture);
 const mockedVoiceActive = vi.mocked(fetchActiveVoiceCaptures);
+const mockedZone = vi.mocked(loadPersistedTimeZone);
+const mockedResolveZone = vi.mocked(resolveBrowserTimeZone);
+
+// The learner's zone the page groups by. Use the real browser zone so it matches how the test builds
+// in-month dates (MONTH below), keeping grouping deterministic on any machine.
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // Dates are built inside the diary's current month so the date-jump calendar actually renders their
 // buttons (the grid only draws the visible month).
-const MONTH = toDayKey(new Date()).slice(0, 7);
+const MONTH = localDayKey(new Date(), BROWSER_ZONE).slice(0, 7);
 const d = (day: number): string => `${MONTH}-${String(day).padStart(2, "0")}`;
 
 // A diary timeline row (#571): a discriminated `kind: "diary"` DTO carrying the rich body + its plaintext.
@@ -182,6 +199,8 @@ beforeEach(() => {
   mockedTimeline.mockResolvedValue({ days: [] });
   mockedCalendar.mockResolvedValue({ dates: [] });
   mockedVoiceActive.mockResolvedValue([]);
+  mockedResolveZone.mockReturnValue(BROWSER_ZONE);
+  mockedZone.mockResolvedValue(BROWSER_ZONE);
   vi.stubGlobal("IntersectionObserver", StubObserver);
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -196,6 +215,107 @@ describe("DiaryPage timeline", () => {
     await renderReady(makeCapture().capture);
 
     expect(screen.getByText(/No entries yet/)).toBeTruthy();
+  });
+
+  it("ignores a timezone that resolves after the page unmounts (no update on an unmounted page)", async () => {
+    let resolveZone: ((value: string) => void) | undefined;
+    mockedZone.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveZone = resolve;
+      })
+    );
+    // Never resolve the first page, so nothing but the timezone adoption is in flight.
+    mockedTimeline.mockReturnValue(new Promise(() => {}));
+
+    const view = render(<DiaryPage capture={makeCapture().capture} />);
+    view.unmount();
+
+    // Resolving after unmount hits the cleanup guard: it must not throw or attempt a state update.
+    await act(async () => {
+      resolveZone?.("America/New_York");
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("heading", { level: 1, name: "Diary" })).toBeNull();
+  });
+
+  it("ignores a failed timezone resolve after the page unmounts (no update on an unmounted page)", async () => {
+    let rejectZone: ((reason?: unknown) => void) | undefined;
+    mockedZone.mockReset();
+    mockedZone.mockReturnValueOnce(
+      new Promise<string>((_resolve, reject) => {
+        rejectZone = reject;
+      })
+    );
+    // Never resolve the first page, so nothing but the timezone adoption is in flight.
+    mockedTimeline.mockReturnValue(new Promise(() => {}));
+
+    const view = render(<DiaryPage capture={makeCapture().capture} />);
+    view.unmount();
+
+    // Rejecting after unmount hits the cleanup guard on the failure path: no throw, no state update.
+    await act(async () => {
+      rejectZone?.(new Error("preferences unavailable"));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("heading", { level: 1, name: "Diary" })).toBeNull();
+  });
+
+  it("waits for the persisted learner zone before the first timeline load, so paging uses the browser-zone cursor (#606)", async () => {
+    // First use: the browser zone persists only after a tick. Until it lands, the server's timeline
+    // would answer in its UTC fallback with a UTC-grouped cursor — the page must not page off that.
+    // Hold the zone, prove no timeline fetch happens, then release it.
+    let resolveZone: ((value: string) => void) | undefined;
+    mockedZone.mockReset();
+    mockedZone.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveZone = resolve;
+      })
+    );
+    // A full first page (7 days) grouped in the learner's browser zone, so its oldest day-key cursor is
+    // the browser-zone key d(22) — only reachable because the load waited for the zone to persist.
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValueOnce({
+      days: [28, 27, 26, 25, 24, 23, 22].map((day) =>
+        tDay(d(day), [tEntry(`r${day}`, `${d(day)}T08:00:00.000Z`, `entry ${day}`)])
+      )
+    });
+    mockedTimeline.mockResolvedValueOnce({
+      days: [tDay(d(21), [tEntry("r21", `${d(21)}T08:00:00.000Z`, "entry 21")])]
+    });
+
+    render(<DiaryPage capture={makeCapture().capture} />);
+
+    // Gate holds: no timeline request until the zone is persisted (the bug fetched it immediately).
+    expect(mockedTimeline).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveZone?.(BROWSER_ZONE);
+      await Promise.resolve();
+    });
+
+    await screen.findByText("entry 22");
+    expect(mockedTimeline).toHaveBeenNthCalledWith(1, undefined, 7);
+
+    // Older-page load pages off the browser-zone cursor from that first (post-persistence) page.
+    const observer = await waitForObserver();
+    await act(async () => {
+      observer.trigger(true);
+    });
+
+    await screen.findByText("entry 21");
+    expect(mockedTimeline).toHaveBeenNthCalledWith(2, d(22), 7);
+  });
+
+  it("still loads the timeline under the browser-zone fallback when resolving the persisted zone fails (#606)", async () => {
+    mockedZone.mockReset();
+    mockedZone.mockRejectedValueOnce(new Error("preferences unavailable"));
+
+    await renderReady(makeCapture().capture);
+
+    expect(screen.getByText(/No entries yet/)).toBeTruthy();
+    expect(mockedTimeline).toHaveBeenCalledWith(undefined, 7);
   });
 
   it("shows a fatal error with retry when the first page fails to load", async () => {

@@ -17,9 +17,20 @@ export async function upsertPreferences(
 
   await dependencies.db
     .insert(readerPreferences)
-    .values({ readingSize: request.readingSize, theme: request.theme, updatedAt, userId })
+    .values({
+      readingSize: request.readingSize,
+      theme: request.theme,
+      timezone: request.timeZone,
+      updatedAt,
+      userId
+    })
     .onConflictDoUpdate({
-      set: { readingSize: request.readingSize, theme: request.theme, updatedAt },
+      set: {
+        readingSize: request.readingSize,
+        theme: request.theme,
+        timezone: request.timeZone,
+        updatedAt
+      },
       target: readerPreferences.userId
     });
 }

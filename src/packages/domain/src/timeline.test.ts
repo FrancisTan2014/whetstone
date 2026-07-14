@@ -94,13 +94,16 @@ describe("orderTimelineEntries", () => {
 });
 
 describe("groupTimelineEntriesByDay", () => {
-  it("groups into UTC days, newest day first, ordered within each day", () => {
-    const days = groupTimelineEntriesByDay([
-      row("n1", "note", "2026-01-01T23:00:00.000Z", "jan1-note"),
-      row("d2", "diary", "2026-01-03T06:00:00.000Z", "jan3-diary-early"),
-      row("d1", "diary", "2026-01-03T09:00:00.000Z", "jan3-diary-late"),
-      row("n2", "note", "2026-01-02T12:00:00.000Z", "jan2-note")
-    ]);
+  it("groups into the learner's local days, newest day first, ordered within each day", () => {
+    const days = groupTimelineEntriesByDay(
+      [
+        row("n1", "note", "2026-01-01T23:00:00.000Z", "jan1-note"),
+        row("d2", "diary", "2026-01-03T06:00:00.000Z", "jan3-diary-early"),
+        row("d1", "diary", "2026-01-03T09:00:00.000Z", "jan3-diary-late"),
+        row("n2", "note", "2026-01-02T12:00:00.000Z", "jan2-note")
+      ],
+      "UTC"
+    );
 
     expect(days.map((day) => day.date)).toEqual(["2026-01-03", "2026-01-02", "2026-01-01"]);
     // Within 2026-01-03, later instant first; the tie-break never triggers here because instants differ.
@@ -112,28 +115,39 @@ describe("groupTimelineEntriesByDay", () => {
     expect(days[2]?.entries.map((entry) => entry.label)).toEqual(["jan1-note"]);
   });
 
-  it("buckets by the UTC calendar day the instant falls on", () => {
-    // 2026-01-02T00:30 UTC is still Jan 2 in UTC even though it is Jan 1 evening in some local zones.
-    const days = groupTimelineEntriesByDay([
+  it("buckets by the local calendar day the instant falls on in the learner's zone", () => {
+    // 2026-01-02T00:30 UTC is Jan 2 in UTC, but still Jan 1 evening in a zone behind UTC. The same two
+    // instants therefore group into different days depending on the learner's timezone.
+    const instants = [
       row("late", "diary", "2026-01-02T00:30:00.000Z", "after-midnight"),
       row("early", "note", "2026-01-01T23:30:00.000Z", "before-midnight")
-    ]);
+    ];
 
-    expect(days.map((day) => day.date)).toEqual(["2026-01-02", "2026-01-01"]);
+    expect(groupTimelineEntriesByDay(instants, "UTC").map((day) => day.date)).toEqual([
+      "2026-01-02",
+      "2026-01-01"
+    ]);
+    // New York is UTC−5 in January, so both instants fall on Jan 1 there — one local day, not two.
+    expect(groupTimelineEntriesByDay(instants, "America/New_York").map((day) => day.date)).toEqual([
+      "2026-01-01"
+    ]);
   });
 
   it("returns no days for no entries", () => {
-    expect(groupTimelineEntriesByDay([])).toEqual([]);
+    expect(groupTimelineEntriesByDay([], "UTC")).toEqual([]);
   });
 });
 
 describe("timelineDays", () => {
   it("lists distinct days newest first", () => {
-    const days = timelineDays([
-      row("a", "note", "2026-01-01T10:00:00.000Z", "a"),
-      row("b", "diary", "2026-01-03T10:00:00.000Z", "b"),
-      row("c", "note", "2026-01-03T18:00:00.000Z", "c")
-    ]);
+    const days = timelineDays(
+      [
+        row("a", "note", "2026-01-01T10:00:00.000Z", "a"),
+        row("b", "diary", "2026-01-03T10:00:00.000Z", "b"),
+        row("c", "note", "2026-01-03T18:00:00.000Z", "c")
+      ],
+      "UTC"
+    );
 
     expect(days).toEqual(["2026-01-03", "2026-01-01"]);
   });

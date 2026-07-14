@@ -1,25 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  isDayKey,
-  monthBounds,
-  monthGrid,
-  shiftMonth,
-  toDayKey,
-  toMonthKey
-} from "./diaryTimeline.js";
-
-describe("toDayKey", () => {
-  it("formats a date as a zero-padded UTC YYYY-MM-DD key", () => {
-    expect(toDayKey(new Date("2026-06-30T20:38:00.000Z"))).toBe("2026-06-30");
-    expect(toDayKey(new Date("2026-01-05T00:00:00.000Z"))).toBe("2026-01-05");
-    expect(toDayKey(new Date("0099-09-09T12:00:00.000Z"))).toBe("0099-09-09");
-  });
-
-  it("reads the day in UTC so the same instant maps to one day everywhere", () => {
-    expect(toDayKey(new Date("2026-06-30T23:59:59.999Z"))).toBe("2026-06-30");
-  });
-});
+import { isDayKey, monthBounds, monthGrid, shiftMonth, toMonthKey } from "./diaryTimeline.js";
 
 describe("isDayKey", () => {
   it("accepts a well-formed day key and rejects malformed ones", () => {

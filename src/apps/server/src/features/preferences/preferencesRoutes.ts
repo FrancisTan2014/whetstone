@@ -1,7 +1,7 @@
 import {
   defaultPreferences,
   upsertPreferencesRequestSchema,
-  type PreferencesDto
+  type StoredPreferencesDto
 } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
 
@@ -22,10 +22,20 @@ export function registerPreferencesRoutes(
       request.server.currentUser.getCurrentUserId()
     );
 
-    const preferences: PreferencesDto =
+    // `timeZone` is null until first-use defaulting persists the browser's zone (#606); the client sends
+    // its resolved zone once when it sees null. Reading size / theme fall back to defaults.
+    const preferences: StoredPreferencesDto =
       stored === undefined
-        ? defaultPreferences
-        : ({ readingSize: stored.readingSize, theme: stored.theme } as PreferencesDto);
+        ? {
+            readingSize: defaultPreferences.readingSize,
+            theme: defaultPreferences.theme,
+            timeZone: null
+          }
+        : ({
+            readingSize: stored.readingSize,
+            theme: stored.theme,
+            timeZone: stored.timeZone
+          } as StoredPreferencesDto);
 
     return { preferences };
   });

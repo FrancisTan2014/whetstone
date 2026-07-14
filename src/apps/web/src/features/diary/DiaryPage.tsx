@@ -4,16 +4,20 @@ import type { DiaryEntryDto, TimelineDayDto } from "@whetstone/contracts";
 import { documentText, type DocumentNodeJSON } from "@whetstone/document";
 import {
   groupTimelineEntriesByDay,
+  localDayKey,
   monthBounds,
   monthGrid,
   shiftMonth,
-  toDayKey,
   toMonthKey
 } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
 import { RichContentEditor } from "../../shared/editor/index.js";
+import {
+  loadPersistedTimeZone,
+  resolveBrowserTimeZone
+} from "../../shared/preferences/preferencesApi.js";
 import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCard.js";
 import {
   deleteDiaryEntry,
@@ -64,11 +68,11 @@ function flatten(days: ReadonlyArray<TimelineDayDto>): ReadonlyArray<FlatEntry> 
   );
 }
 
-function toFlat(entry: DiaryEntryDto): FlatEntry {
+function toFlat(entry: DiaryEntryDto, timeZone: string): FlatEntry {
   return {
     bodyDoc: entry.bodyDoc,
     bodyText: entry.bodyText,
-    date: toDayKey(new Date(entry.occurredAt)),
+    date: localDayKey(new Date(entry.occurredAt), timeZone),
     entryId: entry.id,
     kind: "diary",
     language: entry.language,
@@ -127,9 +131,21 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [monthKey, setMonthKey] = useState(() => toMonthKey(toDayKey(new Date())));
+  const [monthKey, setMonthKey] = useState(() =>
+    toMonthKey(localDayKey(new Date(), resolveBrowserTimeZone()))
+  );
   const [markedDays, setMarkedDays] = useState<ReadonlySet<string>>(new Set());
   const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+  // The learner's calendar-day zone (#606): starts from the browser so the first render groups sensibly,
+  // then adopts the server-owned preference once loaded. Day sections and the new-entry day derive from
+  // it, so the client and server agree on which local day each entry falls under.
+  const [timeZone, setTimeZone] = useState(() => resolveBrowserTimeZone());
+  // Gate the first timeline/calendar load until the learner's zone is resolved *and persisted* (#606).
+  // On first use, `loadPersistedTimeZone` writes the browser zone before resolving, so once this flips
+  // true the server's timeline/calendar queries group by the same zone the client pages with — the
+  // day-key cursor stays coherent across pages instead of mixing a UTC-fallback first page with
+  // browser-zone older pages.
+  const [zoneReady, setZoneReady] = useState(false);
 
   // Mirrors of the paging state, read inside async callbacks (the IntersectionObserver tick, a date jump)
   // so they act on the latest committed values rather than a stale closure.
@@ -152,11 +168,39 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
 
-  const grouped = useMemo(() => groupTimelineEntriesByDay(entries), [entries]);
+  const grouped = useMemo(() => groupTimelineEntriesByDay(entries, timeZone), [entries, timeZone]);
 
-  // Load the first (newest) page on mount and on retry. The async work awaits before any setState so the
-  // effect never updates state synchronously in its body.
+  // Adopt the learner's server-owned timezone once, waiting for the first-use default to persist before
+  // marking the zone ready (#606), so day grouping and the timeline/calendar cursor match the server's
+  // projection. A failed resolve still flips ready so the timeline can load (and surface its own error)
+  // under the browser-zone fallback rather than hanging on the loading state.
   useEffect(() => {
+    let active = true;
+    loadPersistedTimeZone().then(
+      (zone) => {
+        if (active) {
+          setTimeZone(zone);
+          setZoneReady(true);
+        }
+      },
+      () => {
+        if (active) {
+          setZoneReady(true);
+        }
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Load the first (newest) page on mount and on retry, but only once the learner's zone is persisted so
+  // the server groups this page — and every older page's cursor — by that one zone (#606). The async work
+  // awaits before any setState so the effect never updates state synchronously in its body.
+  useEffect(() => {
+    if (!zoneReady) {
+      return;
+    }
     fetchTimeline(undefined, PAGE_SIZE).then(
       ({ days }) => {
         setEntries(flatten(days));
@@ -166,16 +210,21 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       },
       () => setLoad("error")
     );
-  }, [reloadKey]);
+  }, [reloadKey, zoneReady]);
 
-  // The date-jump calendar's marks for the visible month. Non-critical: a failure simply shows no marks.
+  // The date-jump calendar's marks for the visible month. Waits for the persisted zone (#606) so the
+  // server computes marks in the same local-day projection the timeline pages by. Non-critical: a failure
+  // simply shows no marks.
   useEffect(() => {
+    if (!zoneReady) {
+      return;
+    }
     const { from, to } = monthBounds(monthKey);
     fetchDiaryCalendar(from, to).then(
       (dto) => setMarkedDays(new Set(dto.dates)),
       () => setMarkedDays(new Set())
     );
-  }, [monthKey]);
+  }, [monthKey, zoneReady]);
 
   // After a jump has loaded (and rendered) the target day, scroll its header into view, then clear.
   useEffect(() => {
@@ -260,7 +309,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
 
   function handleCaptured(entry: DiaryEntryDto): void {
     setNotice(null);
-    const flat = toFlat(entry);
+    const flat = toFlat(entry, timeZone);
     setEntries((previous) => [...previous, flat]);
     markEntryDay(flat.date);
     pendingEntryScrollRef.current = entry.id;
