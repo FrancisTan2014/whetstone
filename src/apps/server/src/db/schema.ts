@@ -233,31 +233,35 @@ export const workSources = pgTable(
   (table) => [index("work_sources_work_idx").on(table.workEntryId)]
 );
 
-// v0 note templates, seeded from the domain's canonical definitions. `fields_json`
-// stores the ordered field list (id, label, v0 field type); the note editor loads
-// these from the API rather than hard-coding them.
-export const noteTemplates = pgTable("note_templates", {
-  fieldsJson: jsonb("fields_json").notNull(),
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  orderIndex: integer("order_index").notNull()
-});
-
-// A note is an Entry annotating a source block. `answers_json` holds the structured
-// answers keyed by template field id; `markdown_body` is the rendered note body. Ownership and
-// chronology (owner, occurredAt, createdAt, updatedAt) live in the shared `personal_entries` facet
-// (#571) — a note is a personal (owned) Entry, so it carries a `personal_entries` row and this table
-// stays a pure content facet.
-export const notes = pgTable("notes", {
-  answersJson: jsonb("answers_json").notNull(),
-  entryId: text("entry_id")
-    .primaryKey()
-    .references(() => entries.id),
-  markdownBody: text("markdown_body").notNull(),
-  // Null for a mark-only highlight (a "Gem", #255): a one-tap highlight with no template/body that
-  // reuses the note anchor + overlap + delete model. A templated note references a seeded template.
-  templateId: text("template_id").references(() => noteTemplates.id)
-});
+// A note is an Entry annotating a source block (#619). `kind` discriminates the two shapes a note row
+// can take: a `note` carries a canonical rich ProseMirror/Tiptap document (`body_doc`) plus its
+// server-derived readable projection (`body_text`); a `mark` is a one-tap bodyless highlight (a "Gem",
+// #255) with both body columns null. `capture_source` records how it was captured (reuses the shared
+// capture-source vocabulary; reader captures are `reader`). Ownership and chronology (owner, occurredAt,
+// createdAt, updatedAt) live in the shared `personal_entries` facet (#571) — a note is a personal
+// (owned) Entry, so it carries a `personal_entries` row and this table stays a pure content facet.
+export const notes = pgTable(
+  "notes",
+  {
+    bodyDoc: jsonb("body_doc"),
+    bodyText: text("body_text"),
+    captureSource: text("capture_source", {
+      enum: ["manual", "reader", "import", "practice", "tool"] as const
+    }).notNull(),
+    entryId: text("entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    kind: text("kind", { enum: ["note", "mark"] as const }).notNull()
+  },
+  (table) => [
+    // The discriminated shape is enforced in the database, not only at the contract boundary: a note
+    // always has both a body doc and its text; a mark has neither.
+    check(
+      "notes_kind_body_ck",
+      sql`(${table.kind} = 'note' and ${table.bodyDoc} is not null and ${table.bodyText} is not null) or (${table.kind} = 'mark' and ${table.bodyDoc} is null and ${table.bodyText} is null)`
+    )
+  ]
+);
 
 // Per-user, per-work reading position: the reading unit the reader last had open and a
 // best-effort topmost-visible block anchor within it, so reopening a work resumes where the
