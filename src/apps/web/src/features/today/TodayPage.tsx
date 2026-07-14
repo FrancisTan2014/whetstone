@@ -1,598 +1,302 @@
-import { createElement, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import type {
-  AuthoredWorkSummaryDto,
-  DueRecitationPassageDto,
-  LatestReadingPositionDto,
-  MemoryPromptCardDto,
-  RecitationPlanDto,
-  RecitationTodayDto
-} from "@whetstone/contracts";
+import type { TodayBoardDto, TodayRoutineDto, TodayRoutineKind } from "@whetstone/contracts";
 
-import { buttonVariants } from "../../shared/ui/Button.js";
-import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
-import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi.js";
-import { fetchWorks } from "../library/libraryApi.js";
-import { fetchDueRecall } from "../recall/recallApi.js";
-import {
-  fetchContinueRecitation,
-  recordRecitationSession,
-  setRecitationPhase
-} from "../recitation/recitationApi.js";
-import { fetchToday } from "../recitation/recitationChainingApi.js";
-import { fetchDuePassage } from "../recitation/recitationPassageApi.js";
-import { RecitationReviewCard } from "../recitation/RecitationReviewCard.js";
-import { recitationPhaseLabels } from "../recitation/recitationLabels.js";
-import { CaptureCard } from "../capture/CaptureCard.js";
-import { fetchLatestReadingPosition } from "./todayApi.js";
+import { buttonVariants } from "../../shared/ui/Button";
+import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { CaptureCard } from "../capture/CaptureCard";
+import { fetchTodayBoard } from "./todayApi";
+import { todayRoutineActionLabels, todayRoutinePaths, todayRoutineTitles } from "./today.tokens";
 
-// Today is a calm, finite, clearable daily board (PRODUCT.md "v0 assistant home (Today)" + "The
-// arranger") — never a dashboard, feed, streak, or metric. It COMPOSES already-built slices: the
-// voice diary (#246), recall (#318), and a Continue-reading seam over the latest reading position.
-// Each async arm loads independently so one failing never blanks the page, and the reader stays calm
-// (none of this lives in it). Today performs no proposal or nudge (PRODUCT.md #601).
+// Today is the deterministic routine board (#610): one calm, finishable, vertical column composed
+// entirely server-side for the learner's local day (#606). It shows only true obligations — each due
+// routine (#609 Recitation, Memory review) as ONE grouped row, ordered overdue-first — plus visibly
+// secondary Continue invitations that never block the clear state, and the always-present save-first
+// quick capture. It infers nothing, ranks nothing, and never shows a false "all clear": a routine that
+// failed to load keeps the board un-clear. There is NO dashboard, feed, streak, score, or nudge.
 //
-// On a true cold start — no works, no reading position, no recall due — Today would otherwise say
-// "done for today", which is untruthful when there is simply nothing to start from. So it also reads
-// whether the library holds any work: when every arm is loaded and empty it shows a first-run on-ramp
-// ("Start with one source" → Library) and hides the done-for-today line, until the learner has at
-// least one work or any trace (#391).
+// The whole board is one fetch; every deep link routes into the owning feature and returns to a freshly
+// recomputed board, so Today also refetches whenever the tab regains focus.
 
-type RecallState =
+// The quiet, visibly-secondary Continue links stay light (a small underlined link) but still meet the
+// ≥44px WCAG 2.5.5 hit target (#519) via an inline-flex box with a 44px min height and width.
+const quietLinkClass =
+  "inline-flex min-h-[44px] min-w-[44px] items-center text-sm text-text underline";
+
+type BoardState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
-  | Readonly<{ items: ReadonlyArray<MemoryPromptCardDto>; status: "ready" }>;
-
-type ContinueState =
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "loading" }>
-  | Readonly<{ position: LatestReadingPositionDto | undefined; status: "ready" }>;
-
-// The most recently edited unfinished authored Work, powering the "Continue writing" card. An explicit
-// server null (nothing authored yet) resolves to `undefined`; a failed load renders a quiet inline note.
-type WritingState =
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "loading" }>
-  | Readonly<{ status: "ready"; work: AuthoredWorkSummaryDto | undefined }>;
-
-// The learner's most recently touched recitation plan (#577), powering the "Continue recitation" card. An
-// explicit server null (no routine adopted) resolves to `undefined`; a failed load renders a quiet note.
-type RecitationState =
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "loading" }>
-  | Readonly<{ plan: RecitationPlanDto | undefined; status: "ready" }>;
-
-// Whether the library holds any work yet. Only its "ready + empty" arm feeds the first-run decision;
-// a still-loading or failed load simply means "not known to be a cold start", so Today never claims
-// the first-run state on incomplete information.
-type LibraryState =
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "loading" }>
-  | Readonly<{ hasWorks: boolean; status: "ready" }>;
-
-// The single recitation action Today surfaces (#580), decided server-side across every plan and
-// bounded to at most one: due passage > active chain > whole-work maintenance > none, so Today is
-// never an overdue wall. For a due passage the bounded practice runs inline (its payload is fetched
-// alongside the decision); a chain or whole-work action surfaces a calm invitation that routes to the
-// plan's practice surface. `action: "none"` is a quiet caught-up line, and a failed load a quiet note.
-// Kept independent of the first-run/cleared logic — like Continue reading, it is an invitation, not a
-// gate — so it never contributes to an "overdue wall".
-type ReciteState =
-  | Readonly<{ status: "error" }>
-  | Readonly<{ status: "loading" }>
-  | Readonly<{
-      passage: DueRecitationPassageDto | undefined;
-      status: "ready";
-      today: RecitationTodayDto;
-    }>;
+  | Readonly<{ board: TodayBoardDto; status: "ready" }>;
 
 export function TodayPage(): React.JSX.Element {
-  const [recall, setRecall] = useState<RecallState>({ status: "loading" });
-  const [reading, setReading] = useState<ContinueState>({ status: "loading" });
-  const [writing, setWriting] = useState<WritingState>({ status: "loading" });
-  const [recitation, setRecitation] = useState<RecitationState>({ status: "loading" });
-  const [recite, setRecite] = useState<ReciteState>({ status: "loading" });
-  const [library, setLibrary] = useState<LibraryState>({ status: "loading" });
+  const [state, setState] = useState<BoardState>({ status: "loading" });
 
-  // Load the due-recall batch on mount. A diary capture journals only (#571) — nothing on Today mutates
-  // recall after mount — so this is a plain one-shot load with no in-flight reconciliation. Stable across
-  // renders so the effect stays a one-shot, and the resolved arm is set only after the fetch settles (no
-  // synchronous setState in the mount effect).
-  const loadRecall = useCallback(() => {
-    fetchDueRecall().then(
-      (items) => setRecall({ items, status: "ready" }),
-      () => setRecall({ status: "error" })
+  // One board load, reused by the mount effect, the focus refetch, and every Retry. State is set only
+  // after the fetch settles (never synchronously inside the effect), so the initial `loading` state
+  // covers the first paint and a refetch swaps the board in place without a flash.
+  const load = useCallback(() => {
+    fetchTodayBoard().then(
+      (board) => setState({ board, status: "ready" }),
+      () => setState({ status: "error" })
     );
-  }, []);
-
-  // Load the single bounded recitation action Today surfaces (#580): the server decides across every
-  // plan in fixed priority (due passage > chain > whole-work > none). Only a due-passage decision pulls
-  // the passage payload for inline practice; chain/whole-work/none need no extra fetch. Stable so the
-  // mount effect stays one-shot and so a completed review can re-decide the next action (one at a time —
-  // never an overdue wall). Set only after the fetch settles (no synchronous setState in the effect).
-  const loadRecite = useCallback(() => {
-    fetchToday()
-      .then((today) =>
-        today.action === "due_passage"
-          ? fetchDuePassage().then((passage) => ({ passage: passage ?? undefined, today }))
-          : { passage: undefined, today }
-      )
-      .then(
-        ({ passage, today }) => setRecite({ passage, status: "ready", today }),
-        () => setRecite({ status: "error" })
-      );
   }, []);
 
   useEffect(() => {
-    loadRecall();
-    loadRecite();
-    fetchLatestReadingPosition().then(
-      (position) => setReading({ position, status: "ready" }),
-      () => setReading({ status: "error" })
-    );
-    fetchContinueWriting().then(
-      ({ work }) => setWriting({ status: "ready", work: work ?? undefined }),
-      () => setWriting({ status: "error" })
-    );
-    fetchContinueRecitation().then(
-      ({ plan }) => setRecitation({ plan: plan ?? undefined, status: "ready" }),
-      () => setRecitation({ status: "error" })
-    );
-    fetchWorks().then(
-      (list) => setLibrary({ hasWorks: list.works.length > 0, status: "ready" }),
-      () => setLibrary({ status: "error" })
-    );
-  }, [loadRecall, loadRecite]);
+    load();
+  }, [load]);
 
-  // The explicit, learner-driven transition out of familiarization (#577): move the plan to "learning" and
-  // reflect it at once. A failed transition leaves the card as it was — Today never blanks on it.
-  function handleStartReciting(planEntryId: string): void {
-    setRecitationPhase(planEntryId, "learning").then(
-      (plan) => setRecitation({ plan, status: "ready" }),
-      () => undefined
-    );
-  }
+  // Returning from a deep-linked feature (recitation, recall, reader, writing, diary) must show a freshly
+  // recomputed board, so recompute whenever the tab regains focus rather than trusting the stale snapshot.
+  useEffect(() => {
+    const handleFocus = (): void => load();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [load]);
 
-  // Opening a recitation session records lightweight routine state (session count + time) in the
-  // background; the reader deep-link (the anchor's href) resumes the saved position. Best-effort — a failed
-  // record never blocks opening the reader.
-  function handleRecitationSession(planEntryId: string): void {
-    void recordRecitationSession(planEntryId).catch(() => undefined);
-  }
-
-  const firstRun = isFirstRun({ library, reading, recall });
-
-  const body = createElement(
-    "section",
-    { "aria-labelledby": "today-heading", className: "mx-auto max-w-2xl p-6" },
-    createElement(
-      "header",
-      null,
-      createElement(
-        "h1",
-        { className: "text-2xl font-semibold text-text", id: "today-heading" },
-        "Today"
-      ),
-      createElement(
-        "p",
-        { className: "mt-1 text-text-muted" },
-        "A small, finishable set. Clear it, then rest and play freely."
-      )
-    ),
-    createElement(
-      "div",
-      { className: "mt-6 flex flex-col gap-4" },
-      firstRun ? createElement(FirstRunCard) : null,
-      createElement(CaptureCard),
-      createElement(RecallCard, { state: recall }),
-      createElement(ContinueReadingCard, { state: reading }),
-      createElement(ContinueWritingCard, { state: writing }),
-      createElement(ContinueRecitationCard, {
-        onContinue: handleRecitationSession,
-        onStartReciting: handleStartReciting,
-        state: recitation
-      }),
-      createElement(ReciteCard, { onReviewed: loadRecite, state: recite }),
-      createElement(ClearedState, { library, reading, recall })
-    )
-  );
-
-  return body;
-}
-
-// A truthful cold start: every actionable arm is loaded AND empty and the library holds no work.
-// Any arm still loading or failed makes this false, so Today shows the normal board rather than
-// claiming a first-run state it cannot confirm (#391).
-function isFirstRun({
-  library,
-  reading,
-  recall
-}: Readonly<{
-  library: LibraryState;
-  reading: ContinueState;
-  recall: RecallState;
-}>): boolean {
   return (
-    library.status === "ready" &&
-    !library.hasWorks &&
-    reading.status === "ready" &&
-    reading.position === undefined &&
-    recall.status === "ready" &&
-    recall.items.length === 0
+    <section aria-labelledby="today-heading" className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
+      <header>
+        <h1 className="text-2xl font-semibold text-text" id="today-heading">
+          Today
+        </h1>
+        <p className="mt-1 text-text-muted">
+          A small, finishable set. Clear it, then rest and play freely.
+        </p>
+      </header>
+      {renderPrimary(state, load)}
+      {/* Quick capture is save-first and always available — even while the board loads or fails —
+          and never marks other work done or schedules review. */}
+      <CaptureCard />
+      {state.status === "ready" ? <ContinueSection board={state.board} reload={load} /> : null}
+    </section>
   );
 }
 
-// The first-run on-ramp: shown only on a confirmed cold start. It points at the single next step —
-// add or import one work — and routes to Library (never duplicating Library's add/upload forms).
-function FirstRunCard(): React.JSX.Element {
-  return createElement(
-    "section",
-    {
-      "aria-label": "Start with one source",
-      className: "rounded border border-border bg-surface p-4"
-    },
-    createElement("h2", { className: "text-lg font-medium text-text" }, "Start with one source"),
-    createElement(
-      "p",
-      { className: "mt-1 text-text-muted" },
-      "Add or import a reading — one work is enough to begin."
-    ),
-    createElement(
-      Link,
-      { className: `${buttonVariants({ variant: "primary" })} mt-3`, to: "/library" },
-      "Open Library"
-    )
-  );
-}
-
-// Recall proposals: today's due batch (already capped server-side). Restraint — at most ONE item is
-// shown here at a glance, with a Review link to the full Recall surface for the rest. Zero due is a
-// quiet, explicit empty line; a load failure is a quiet inline note, never a page-blanking error.
-function RecallCard({ state }: Readonly<{ state: RecallState }>): React.JSX.Element {
-  return createElement(
-    "section",
-    { "aria-label": "Recall", className: "rounded border border-border bg-surface p-4" },
-    createElement("h2", { className: "text-lg font-medium text-text" }, "Recall"),
-    createElement("div", { className: "mt-2" }, renderRecall(state))
-  );
-}
-
-function renderRecall(state: RecallState): React.JSX.Element {
+function renderPrimary(state: BoardState, reload: () => void): React.JSX.Element {
   if (state.status === "loading") {
-    return <LoadingIndicator label="Gathering what's due…" />;
+    return <LoadingIndicator label="Loading your day…" />;
   }
-
   if (state.status === "error") {
     return (
-      <p className="text-text-muted" role="alert">
-        Couldn&rsquo;t load recall right now.
-      </p>
-    );
-  }
-
-  const [first] = state.items;
-
-  if (first === undefined) {
-    return <p className="text-text-muted">Nothing due — you&rsquo;re caught up.</p>;
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-text">
-        Recall {state.items.length === 1 ? "this 1 item" : `these ${state.items.length} items`}.
-      </p>
-      <div>
-        <p className="text-lg text-text">{first.cueText}</p>
-      </div>
-      <Link className={buttonVariants({ variant: "secondary" })} to="/recall">
-        Review
-      </Link>
-    </div>
-  );
-}
-
-// Continue reading composes the cross-work latest reading position. Present -> a deep link straight
-// back into the reader (`#/reader?work=…`, the same convention Search uses). None -> a quiet line; a
-// failure -> a quiet inline note. The reader stays calm — opening it here changes nothing about it.
-function ContinueReadingCard({ state }: Readonly<{ state: ContinueState }>): React.JSX.Element {
-  return createElement(
-    "section",
-    { "aria-label": "Continue reading", className: "rounded border border-border bg-surface p-4" },
-    createElement("h2", { className: "text-lg font-medium text-text" }, "Continue reading"),
-    createElement("div", { className: "mt-2" }, renderReading(state))
-  );
-}
-
-function renderReading(state: ContinueState): React.JSX.Element {
-  if (state.status === "loading") {
-    return <LoadingIndicator label="Finding where you left off…" />;
-  }
-
-  if (state.status === "error") {
-    return (
-      <p className="text-text-muted" role="alert">
-        Couldn&rsquo;t load your reading right now.
-      </p>
-    );
-  }
-
-  if (state.position === undefined) {
-    return <p className="text-text-muted">Nothing to continue yet.</p>;
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-text">{state.position.workTitle}</p>
-      <a
-        className={buttonVariants({ variant: "secondary" })}
-        href={`#/reader?work=${encodeURIComponent(state.position.workEntryId)}`}
-      >
-        Continue
-      </a>
-    </div>
-  );
-}
-
-// Continue writing composes the most recently edited unfinished authored Work (#576). Present -> a deep
-// link straight into the immersive editor (`#/write?work=…`). None -> a quiet line; a failure -> a quiet
-// inline note. Like the other arms it loads independently, so a failure here never blanks Today.
-function ContinueWritingCard({ state }: Readonly<{ state: WritingState }>): React.JSX.Element {
-  return createElement(
-    "section",
-    { "aria-label": "Continue writing", className: "rounded border border-border bg-surface p-4" },
-    createElement("h2", { className: "text-lg font-medium text-text" }, "Continue writing"),
-    createElement("div", { className: "mt-2" }, renderWriting(state))
-  );
-}
-
-function renderWriting(state: WritingState): React.JSX.Element {
-  if (state.status === "loading") {
-    return <LoadingIndicator label="Finding your latest draft…" />;
-  }
-
-  if (state.status === "error") {
-    return (
-      <p className="text-text-muted" role="alert">
-        Couldn&rsquo;t load your writing right now.
-      </p>
-    );
-  }
-
-  if (state.work === undefined) {
-    return <p className="text-text-muted">No drafts yet — start one from your Library.</p>;
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-text">{state.work.title}</p>
-      <a
-        className={buttonVariants({ variant: "secondary" })}
-        href={`#/write?work=${encodeURIComponent(state.work.entryId)}`}
-      >
-        Continue
-      </a>
-    </div>
-  );
-}
-
-// Continue recitation composes the learner's most recently touched recitation plan (#577). Present -> the
-// Work title, its current phase, a Continue that resumes the saved reading position (`#/reader?work=…`,
-// recording a lightweight session), and — only while familiarizing — an explicit "Start reciting" that
-// moves into active recitation. None -> a quiet line; a failure -> a quiet inline note. There is NO
-// streak, timer, backlog, or warning: a missed day costs nothing (the arranger's compassion clause).
-function ContinueRecitationCard({
-  onContinue,
-  onStartReciting,
-  state
-}: Readonly<{
-  onContinue: (planEntryId: string) => void;
-  onStartReciting: (planEntryId: string) => void;
-  state: RecitationState;
-}>): React.JSX.Element {
-  return createElement(
-    "section",
-    {
-      "aria-label": "Continue recitation",
-      className: "rounded border border-border bg-surface p-4"
-    },
-    createElement("h2", { className: "text-lg font-medium text-text" }, "Continue recitation"),
-    createElement(
-      "div",
-      { className: "mt-2" },
-      renderRecitation(state, onContinue, onStartReciting)
-    ),
-    createElement(
-      "a",
-      {
-        className:
-          "mt-3 inline-flex min-h-11 items-center text-sm text-accent hover:text-accent-hover",
-        href: "#/recitation"
-      },
-      "Open recitation hub"
-    )
-  );
-}
-
-function renderRecitation(
-  state: RecitationState,
-  onContinue: (planEntryId: string) => void,
-  onStartReciting: (planEntryId: string) => void
-): React.JSX.Element {
-  if (state.status === "loading") {
-    return <LoadingIndicator label="Finding your recitation routine…" />;
-  }
-
-  if (state.status === "error") {
-    return (
-      <p className="text-text-muted" role="alert">
-        Couldn&rsquo;t load your recitation right now.
-      </p>
-    );
-  }
-
-  if (state.plan === undefined) {
-    return (
-      <p className="text-text-muted">No recitation routine yet — adopt one from your Library.</p>
-    );
-  }
-
-  const plan = state.plan;
-  return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <p className="text-text">{plan.workTitle}</p>
-        <p className="text-sm text-text-muted">{recitationPhaseLabels[plan.phase]}</p>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <a
-          className={buttonVariants({ variant: "secondary" })}
-          href={`#/reader?work=${encodeURIComponent(plan.workEntryId)}`}
-          onClick={() => onContinue(plan.entryId)}
-        >
-          Continue
-        </a>
-        {plan.phase === "familiarizing" ? (
+      <div className="flex flex-col gap-3" role="alert">
+        <p className="text-text-muted">
+          Couldn&rsquo;t load your day right now. Check your connection and try again.
+        </p>
+        <div>
           <button
-            className={buttonVariants({ variant: "primary" })}
-            onClick={() => onStartReciting(plan.entryId)}
+            className={buttonVariants({ variant: "secondary" })}
+            onClick={reload}
             type="button"
           >
-            Start reciting
+            Retry
           </button>
-        ) : null}
+        </div>
       </div>
-    </div>
-  );
-}
-
-// Recite (#578, #580): the single bounded recitation action Today surfaces, decided server-side across
-// every plan in fixed priority (due passage > active chain > whole-work > none). A due passage runs
-// inline as one practice attempt via the shared RecitationReviewCard (cue → reveal → self-assess), and
-// a completed review re-decides the next action (one at a time, never an overdue wall). A chain or
-// whole-work action surfaces a calm invitation that routes to the plan's practice surface. None -> a
-// quiet caught-up line; a failure -> a quiet inline note. Independent of the first-run/cleared logic —
-// an invitation, never a gate.
-function ReciteCard({
-  onReviewed,
-  state
-}: Readonly<{
-  onReviewed: () => void;
-  state: ReciteState;
-}>): React.JSX.Element {
-  return createElement(
-    "section",
-    { "aria-label": "Recite", className: "rounded border border-border bg-surface p-4" },
-    createElement("h2", { className: "text-lg font-medium text-text" }, "Recite"),
-    createElement("div", { className: "mt-2" }, renderRecite(state, onReviewed))
-  );
-}
-
-const caughtUpRecite = (
-  <p className="text-text-muted">Nothing to recite — you&rsquo;re caught up.</p>
-);
-
-function renderRecite(state: ReciteState, onReviewed: () => void): React.JSX.Element {
-  if (state.status === "loading") {
-    return <LoadingIndicator label="Finding your next passage…" />;
-  }
-
-  if (state.status === "error") {
-    return (
-      <p className="text-text-muted" role="alert">
-        Couldn&rsquo;t load your recitation passage right now.
-      </p>
     );
   }
-
-  if (state.today.action === "due_passage") {
-    // The decision named a due passage; its payload rides alongside. A rare race (scheduled then
-    // cleared before the payload arrived) resolves to the same quiet caught-up line, never a broken card.
-    return state.passage === undefined ? (
-      caughtUpRecite
-    ) : (
-      <RecitationReviewCard
-        key={state.passage.passageEntryId}
-        onReviewed={onReviewed}
-        passage={state.passage}
-      />
-    );
-  }
-
-  if (state.today.action === "chain" || state.today.action === "whole_work") {
-    return renderMaintenanceAction(
-      state.today.action,
-      state.today.planEntryId,
-      state.today.workTitle
-    );
-  }
-
-  return caughtUpRecite;
+  return <PrimaryBoard board={state.board} reload={reload} />;
 }
 
-// A chain or whole-work maintenance action: a calm one-line invitation plus a primary link into the
-// plan's practice surface (#/recite?plan=<entryId>), where the chaining panel runs the reveal. The
-// server pairs these actions with a plan; a null plan (malformed decision) degrades to the caught-up
-// line rather than a dead link.
-function renderMaintenanceAction(
-  action: "chain" | "whole_work",
-  planEntryId: string | null,
-  workTitle: string | null
-): React.JSX.Element {
-  if (planEntryId === null) {
-    return caughtUpRecite;
-  }
-
-  const inWork = workTitle === null ? "" : ` in \u201C${workTitle}\u201D`;
-  const lead =
-    action === "chain"
-      ? `A recitation chain is ready${inWork}.`
-      : `Whole-work maintenance is due${inWork}.`;
-  const linkLabel = action === "chain" ? "Practise the chain" : "Maintain the whole work";
-
+// A confirmed first run: nothing is due, no routine failed, and there is not a single thing to continue.
+// Only then does Today replace the caught-up line with an on-ramp, so it never claims "first run" while
+// the learner in fact has work in progress.
+function isFirstRun(board: TodayBoardDto): boolean {
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-text">{lead}</p>
-      <Link
-        className={buttonVariants({ variant: "primary" })}
-        to={`/recite?plan=${encodeURIComponent(planEntryId)}`}
-      >
-        {linkLabel}
-      </Link>
+    board.clear &&
+    board.continueReading.status === "empty" &&
+    board.continueWriting.status === "empty" &&
+    board.newPassage.status !== "available"
+  );
+}
+
+// The primary obligations region: the Due-now routines, any routine-failure notes, and either the
+// first-run on-ramp or the truthful clear line. Quick capture and the Continue section render outside it.
+function PrimaryBoard({
+  board,
+  reload
+}: Readonly<{ board: TodayBoardDto; reload: () => void }>): React.JSX.Element {
+  const firstRun = isFirstRun(board);
+  return (
+    <div className="flex flex-col gap-6">
+      {board.dueNow.length > 0 ? (
+        <section aria-labelledby="today-due-heading" className="flex flex-col gap-3">
+          <h2 className="text-lg font-medium text-text" id="today-due-heading">
+            Due now
+          </h2>
+          <ul className="flex flex-col gap-3">
+            {board.dueNow.map((routine) => (
+              <DueRoutineRow key={routine.kind} routine={routine} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {board.routineFailures.map((kind) => (
+        <RoutineFailureNote key={kind} kind={kind} reload={reload} />
+      ))}
+
+      {firstRun ? (
+        <FirstRunOnRamp />
+      ) : board.clear ? (
+        <p className="text-text" role="status">
+          All due work is clear.
+        </p>
+      ) : null}
     </div>
   );
 }
 
-// The arranger's compassion clause (PRODUCT.md "The arranger"): when the actionable arms are cleared
-// (no recall due), Today shows a calm "done for today" that frees the user — NO streak, NO guilt, NO
-// back-judge, NO penalty. A low or empty day is fine. Diary capture and Continue reading may still
-// show — they are invitations.
-//
-// "Done for today" is itself a state claim, so it may only appear once Today has positively ruled out
-// a cold start: a loaded non-empty library OR a loaded reading position. While the library (or every
-// arm) is still loading or has failed, neither this line nor the first-run card is shown — Today makes
-// no state claim on unknown information (#391).
-function ClearedState({
-  library,
-  reading,
-  recall
-}: Readonly<{
-  library: LibraryState;
-  reading: ContinueState;
-  recall: RecallState;
-}>): React.JSX.Element | null {
-  const actionableClear = recall.status === "ready" && recall.items.length === 0;
-  const ruledOutColdStart =
-    (library.status === "ready" && library.hasWorks) ||
-    (reading.status === "ready" && reading.position !== undefined);
+// One grouped Due-now row: the routine title, a single count (with overdue emphasis when any are
+// overdue), and one deep link into the owning feature. Never one row per prompt or passage.
+function DueRoutineRow({ routine }: Readonly<{ routine: TodayRoutineDto }>): React.JSX.Element {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-surface p-4">
+      <div>
+        <p className="font-medium text-text">{todayRoutineTitles[routine.kind]}</p>
+        <p
+          className={routine.overdue ? "text-sm font-medium text-text" : "text-sm text-text-muted"}
+        >
+          {routine.dueCount} due
+          {routine.overdue ? ` · ${routine.overdueCount} overdue` : ""}
+        </p>
+      </div>
+      <Link className={buttonVariants({ variant: "primary" })} to={todayRoutinePaths[routine.kind]}>
+        {todayRoutineActionLabels[routine.kind]}
+      </Link>
+    </li>
+  );
+}
 
-  if (!actionableClear || !ruledOutColdStart) {
+// A routine source that failed to load: a quiet, un-clearing note with a Retry that recomputes the whole
+// board, so a transient failure never reads as "all clear".
+function RoutineFailureNote({
+  kind,
+  reload
+}: Readonly<{ kind: TodayRoutineKind; reload: () => void }>): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2" role="alert">
+      <p className="text-text-muted">
+        Couldn&rsquo;t load your {todayRoutineTitles[kind].toLowerCase()} right now.
+      </p>
+      <button
+        className={buttonVariants({ size: "sm", variant: "secondary" })}
+        onClick={reload}
+        type="button"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
+// The first-run on-ramp: shown only on a confirmed cold start. It names the single next step — add one
+// source — and routes to the Library rather than duplicating its forms.
+function FirstRunOnRamp(): React.JSX.Element {
+  return (
+    <section
+      aria-label="Get started"
+      className="flex flex-col gap-2 rounded border border-border bg-surface p-4"
+    >
+      <p className="text-text">Start with one source to read, recite, or remember.</p>
+      <div>
+        <Link className={buttonVariants({ variant: "primary" })} to="/library">
+          Go to your Library
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+// The visibly-secondary Continue section: optional invitations that never block the clear state. Each
+// renders its own ready/empty/failed state in quiet copy, and the diary return link is always offered.
+function ContinueSection({
+  board,
+  reload
+}: Readonly<{ board: TodayBoardDto; reload: () => void }>): React.JSX.Element {
+  return (
+    <section aria-labelledby="today-continue-heading" className="flex flex-col gap-3">
+      <h2 className="text-sm font-medium text-text-muted" id="today-continue-heading">
+        Continue
+      </h2>
+      <ContinueReading reading={board.continueReading} reload={reload} />
+      <ContinueWriting writing={board.continueWriting} reload={reload} />
+      <NewPassageInvitation newPassage={board.newPassage} reload={reload} />
+      <Link className={quietLinkClass} to="/diary">
+        Return to your diary
+      </Link>
+    </section>
+  );
+}
+
+function ContinueReading({
+  reading,
+  reload
+}: Readonly<{ reading: TodayBoardDto["continueReading"]; reload: () => void }>): React.JSX.Element {
+  if (reading.status === "failed") {
+    return <FailedInvitation label="reading" reload={reload} />;
+  }
+  if (reading.status === "empty") {
+    return <p className="text-sm text-text-muted">No reading in progress.</p>;
+  }
+  return (
+    <Link
+      className={quietLinkClass}
+      to={`/reader?work=${encodeURIComponent(reading.position.workEntryId)}`}
+    >
+      Keep reading {reading.position.workTitle}
+    </Link>
+  );
+}
+
+function ContinueWriting({
+  writing,
+  reload
+}: Readonly<{ writing: TodayBoardDto["continueWriting"]; reload: () => void }>): React.JSX.Element {
+  if (writing.status === "failed") {
+    return <FailedInvitation label="writing" reload={reload} />;
+  }
+  if (writing.status === "empty") {
+    return <p className="text-sm text-text-muted">No writing in progress.</p>;
+  }
+  return (
+    <Link className={quietLinkClass} to={`/write?work=${encodeURIComponent(writing.work.entryId)}`}>
+      Keep writing {writing.work.title}
+    </Link>
+  );
+}
+
+function NewPassageInvitation({
+  newPassage,
+  reload
+}: Readonly<{
+  newPassage: TodayBoardDto["newPassage"];
+  reload: () => void;
+}>): React.JSX.Element | null {
+  if (newPassage.status === "failed") {
+    return <FailedInvitation label="new passage" reload={reload} />;
+  }
+  if (newPassage.status === "unavailable") {
     return null;
   }
+  return (
+    <Link className={quietLinkClass} to="/recitation">
+      Start a new passage
+    </Link>
+  );
+}
 
-  return createElement(
-    "p",
-    { className: "rounded border border-border bg-surface p-4 text-text-muted" },
-    "You’re done for today. Rest and play freely."
+// A failed invitation load: a quiet retry that never blocks the clear state or shouts for attention.
+function FailedInvitation({
+  label,
+  reload
+}: Readonly<{ label: string; reload: () => void }>): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="alert">
+      <p className="text-sm text-text-muted">Couldn&rsquo;t load your {label} right now.</p>
+      <button className={quietLinkClass} onClick={reload} type="button">
+        Retry
+      </button>
+    </div>
   );
 }

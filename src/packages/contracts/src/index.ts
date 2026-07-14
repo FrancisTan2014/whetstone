@@ -467,3 +467,17 @@ export {
   searchResultsDtoSchema
 } from "./searchContracts.js";
 export type { SearchRequest, SearchResultDto, SearchResultsDto } from "./searchContracts.js";
+export {
+  parseTodayBoardResponse,
+  todayBoardDtoSchema,
+  todayBoardResponseSchema,
+  todayRoutineDtoSchema,
+  todayRoutineKinds,
+  todayRoutineKindSchema
+} from "./todayContracts.js";
+export type {
+  TodayBoardDto,
+  TodayBoardResponse,
+  TodayRoutineDto,
+  TodayRoutineKind
+} from "./todayContracts.js";

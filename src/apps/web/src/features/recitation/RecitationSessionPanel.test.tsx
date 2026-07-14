@@ -69,7 +69,7 @@ function makeSession(
 ): Extract<RecitationSessionDto, { status: "active" }> {
   return {
     chainAvailable: false,
-    due: { dueCount: 0, overdueCount: 0 },
+    due: { dueCount: 0, nextDueAt: null, overdueCount: 0 },
     hasDuePassage: false,
     newPassage: {
       anyIntroduced: true,
@@ -221,7 +221,10 @@ describe("RecitationSessionPanel", () => {
   it("runs a due passage step and reloads after the review card records", async () => {
     mockedSession
       .mockResolvedValueOnce(
-        makeSession({ due: { dueCount: 1, overdueCount: 0 }, hasDuePassage: true })
+        makeSession({
+          due: { dueCount: 1, nextDueAt: "2026-07-01T06:00:00.000Z", overdueCount: 0 },
+          hasDuePassage: true
+        })
       )
       .mockResolvedValueOnce(makeSession());
     renderPanel();
@@ -363,7 +366,10 @@ describe("RecitationSessionPanel", () => {
 
   it("drains to the next due passage after one is reviewed, without reopening the session", async () => {
     mockedSession.mockResolvedValue(
-      makeSession({ due: { dueCount: 2, overdueCount: 0 }, hasDuePassage: true })
+      makeSession({
+        due: { dueCount: 2, nextDueAt: "2026-07-01T06:00:00.000Z", overdueCount: 0 },
+        hasDuePassage: true
+      })
     );
     mockedDue
       .mockResolvedValueOnce(makeDuePassage({ passageEntryId: "passage-1" }))

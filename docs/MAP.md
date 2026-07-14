@@ -480,6 +480,15 @@ can navigate them from another package.
   deep-links to the right block (#312). Joined to work + author, ordered by reading order, capped at
   `searchResultLimit`, LIKE wildcards escaped; v0 is a substring scan, not ranked FTS
   (PRODUCT.md "v0 search").
+  `today/` composes the Today board (#610): `todayQueries.loadTodayBoard` fetches each source guarded by
+  its own try/catch (so one throwing marks only that source failed, never blanking the board) — the
+  recitation routine + New-passage invitation from `loadRecitationSession`, the memory routine from
+  `memoryQueries.loadMemoryRoutineSummary`, Continue reading/writing from the readingPosition/authoredWorks
+  queries — folds them through the pure `@whetstone/domain` `composeTodayBoard`, sets `date` =
+  `localDayKey(now, timeZone)`, and `todayRoutes.registerTodayRoutes` serves `GET /api/today` (userId +
+  `getLearnerTimeZone`, response validated via `todayBoardResponseSchema`); wired in `createServer.ts`/
+  `index.ts`. The composer, DTOs (`todayContracts`), and the additive recitation-session `due.nextDueAt`
+  Today consumes are the whole read model — Today persists no task or completion rows.
 - Source files: `src/files/sourceFileStore.ts` — persists uploaded/manual Markdown and uploaded
   `.epub` bytes under a server-generated path with sha256 (path-traversal-guarded) for provenance
   only; blocks remain the source of truth. `src/files/epubSource.ts` — the EPUB parsing boundary
@@ -861,27 +870,20 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   wires it to inputs and the `importMemory` call. The review flow itself stays at `/recall`; Memory links
   there when a note is due. `memoryApi.ts` calls `/api/memory/*` and parses every response through
   `memoryContracts`.
-  `today/` is the proactive Today home (#319) and the app's landing (`/`): `TodayPage.tsx` is a calm,
-  finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") that COMPOSES
-  already-built slices — a greeting, an always-present voice-diary quick-capture linking to `/diary`,
-  a restrained Recall card (`fetchDueRecall`: the first due item at a glance + a Review link to
-  `/recall`, else a quiet "caught up" line), a Continue-reading card (`todayApi.fetchLatestReadingPosition`
-  → `GET /api/reading-position/latest`, deep-linking `#/reader?work=`, else a quiet line), a
-  Continue-writing card (#576, `authoredWorks/authoredWorkApi.fetchContinueWriting` →
-  `GET /api/authored-works/continue`, the most recently edited authored Work, deep-linking
-  `#/write?work=`, else a quiet "no drafts yet" line), a Continue-recitation card (#577,
-  `recitation/recitationApi.fetchContinueRecitation` → `GET /api/recitation/continue`, the most recently
-  touched recitation plan with its Work title + phase; **Continue** records a session and deep-links
-  `#/reader?work=`, and only while `familiarizing` an explicit **Start reciting** transitions to
-  `learning`; else a quiet line), a **Recite** card (#578/#580, the single bounded recitation action
-  decided server-side via `recitation/recitationChainingApi.fetchToday` → `GET /api/recitation/today`,
-  in fixed priority due passage > active chain > whole-work > none) that either runs the next due passage
-  inline as one `RecitationReviewCard` attempt (payload from `recitationPassageApi.fetchDuePassage`,
-  `GET /api/recitation/passages/due`) — re-deciding the next action only after it is reviewed (no overdue
-  wall) — or surfaces a chain / whole-work invitation linking to `#/recite?plan=<id>` (caught-up/quiet-note
-  otherwise), and then, when the actionable arms clear (no recall due), a compassionate "done for
-  today" — NO streak/guilt/penalty. Each async arm loads
-  independently so one failing never blanks the page; the reader stays calm.
+  `today/` is the deterministic routine board (#610) and the app's landing (`/`): `TodayPage.tsx` is a
+  calm, finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") rendered
+  from ONE server-composed read model — `todayApi.fetchTodayBoard` → `GET /api/today`, parsed once through
+  `parseTodayBoardResponse`. It renders a greeting; a **Due now** section with each deterministic routine
+  as ONE grouped row (recitation count/overdue → Start `#/recitation`, memory count/overdue → Review
+  `#/recall`), ordered as the DTO gives (overdue-first, then `nextDueAt`); a truthful **All due work is
+  clear** line ONLY when `board.clear`; a per-routine failure note with a Retry (a failed routine keeps the
+  board un-clear — never a false clear); the always-present save-first quick-capture `CaptureCard` (`/diary`);
+  a first-run on-ramp to the Library when nothing is due or continuable; and a visibly-secondary **Continue**
+  section of optional invitations (reading `#/reader?work=`, writing `#/write?work=`, recitation New passage
+  `#/recitation`, diary return) each with ready/empty/failed copy. It handles loading and offline/retry, and
+  refetches the whole board on window focus so returning from a deep-linked feature shows a freshly recomputed
+  board. Pure routine-kind → title/action/path maps live in `today.tokens.ts` (coverage-excluded). The board
+  persists no Today state; it is a pure read/compose over feature-owned canonical state.
   `authoredWorks/` is the owned-Work editor slice (#576): `AuthoredWorkPage.tsx` is the immersive
   `/write?work=<id>` surface that loads a user-authored Work's canonical ProseMirror document
   (`authoredWorkApi.fetchAuthoredWork`), edits it in the shared `RichContentEditor`, and reads it back
@@ -933,10 +935,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   loading, error, the restrained `no_plan` empty state (link to Library), and the active projection — Work
   title + phase, "{introducedCount} of {totalCount} passages introduced" human copy, the routine stage label,
   due/overdue counts first, then a single **Start session** control that mounts the #609 session inline (no
-  hub action link to `#/recite`), then a caught-up state; a paused banner + **Resume routine** when
+  hub action link to `#/recite`), then a caught-up state; a `familiarizing` plan instead shows a **Start
+  reciting** control that runs the explicit familiarizing→learning transition (#577, `setRecitationPhase`)
+  and refreshes — the hub is that transition's only home now that Today (#610) no longer hosts recitation
+  cards; a paused banner + **Resume routine** when
   paused, else a **Pause routine** button (both call the api and refresh from the returned hub). Pure enum→label
   maps live in the coverage-excluded `RecitationHubPage.tokens.ts`. Reached via quiet secondary links: Today's
-  **Open recitation hub** (in the Continue-recitation card) and the Library **Recitation** Work action (in
+  **Due now** recitation row (deep-links to `#/recitation`) and the Library **Recitation** Work action (in
   `AdminLibraryPage.tsx`, per adopted plan). The E2E `e2e/tests/recitation-hub.spec.ts` drives adopt → hub →
   pause (due action disappears) → resume (state preserved).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when

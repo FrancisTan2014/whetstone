@@ -27,6 +27,10 @@ vi.mock("./RecitationSessionPanel", () => ({
   )
 }));
 
+vi.mock("./recitationApi", () => ({
+  setRecitationPhase: vi.fn()
+}));
+
 import type {
   RecitationHubDto,
   RecitationIntroductionStatusDto,
@@ -35,11 +39,13 @@ import type {
 } from "@whetstone/contracts";
 
 import { RecitationHubPage } from "./RecitationHubPage";
+import { setRecitationPhase } from "./recitationApi";
 import { getRecitationHub, pausePlan, resumePlan } from "./recitationHubApi";
 
 const mockedGet = vi.mocked(getRecitationHub);
 const mockedPause = vi.mocked(pausePlan);
 const mockedResume = vi.mocked(resumePlan);
+const mockedSetPhase = vi.mocked(setRecitationPhase);
 
 function makeIntro(
   overrides: Partial<RecitationIntroductionStatusDto> = {}
@@ -243,6 +249,36 @@ describe("RecitationHubPage", () => {
     const caughtUp = await screen.findByLabelText("Caught up");
     expect(within(caughtUp).getByText(/caught up for today/i)).toBeDefined();
     expect(screen.queryByLabelText("Session")).toBeNull();
+  });
+
+  it("offers Start reciting on a familiarizing plan and transitions it into Learning (#577)", async () => {
+    // A familiarizing plan has no due work and no session; its only forward step is the explicit
+    // learner-driven transition into Learning, which now lives on the hub (Today no longer hosts it).
+    mockedGet
+      .mockResolvedValueOnce(makeHub({ phase: "familiarizing", primaryAction: "none" }))
+      .mockResolvedValueOnce(makeHub({ phase: "learning", primaryAction: "none" }));
+    mockedSetPhase.mockResolvedValue({
+      createdAt: "2026-07-01T09:00:00.000Z",
+      entryId: "plan-1",
+      lastSessionAt: null,
+      phase: "learning",
+      sessionCount: 0,
+      updatedAt: "2026-07-01T09:00:00.000Z",
+      workEntryId: "work-1",
+      workTitle: "Meditations"
+    });
+    renderPage();
+
+    const start = await screen.findByLabelText("Start reciting");
+    // A familiarizing plan is neither an obligation nor "caught up" — the only affordance is to begin.
+    expect(screen.queryByLabelText("Session")).toBeNull();
+    expect(screen.queryByLabelText("Caught up")).toBeNull();
+
+    await userEvent.click(within(start).getByRole("button", { name: "Start reciting" }));
+    expect(mockedSetPhase).toHaveBeenCalledWith("plan-1", "learning");
+    // The refreshed hub is now in Learning, so the Start-reciting affordance is gone.
+    await waitFor(() => expect(screen.queryByLabelText("Start reciting")).toBeNull());
+    expect(mockedGet).toHaveBeenCalledTimes(2);
   });
 
   it("shows a paused banner and resumes from the returned hub", async () => {

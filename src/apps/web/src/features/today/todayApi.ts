@@ -1,21 +1,16 @@
-import {
-  parseLatestReadingPositionResponse,
-  type LatestReadingPositionDto
-} from "@whetstone/contracts";
+import { parseTodayBoardResponse, type TodayBoardDto } from "@whetstone/contracts";
 
 import { apiUrl } from "../../shared/runtime";
 
-// Today composes already-built slices; its only new fetch is the cross-work "latest reading position"
-// seam that powers the Continue reading card. Recall reuses the recall feature's `fetchDueRecall`. The
-// response is validated at the boundary; an explicit server null (no saved position) returns undefined.
-export async function fetchLatestReadingPosition(): Promise<LatestReadingPositionDto | undefined> {
-  const response = await fetch(apiUrl("/reading-position/latest"));
+// Today's single fetch (#610): the whole board is composed server-side into one read model for the
+// learner's local day, so the client makes exactly one request and validates it once at the boundary.
+// The page derives all copy and deep links per routine kind; the DTO carries only data.
+export async function fetchTodayBoard(): Promise<TodayBoardDto> {
+  const response = await fetch(apiUrl("/today"));
 
   if (!response.ok) {
-    throw new Error(`Latest reading-position request failed with status ${response.status}.`);
+    throw new Error(`Today board request failed with status ${response.status}.`);
   }
 
-  const { position } = parseLatestReadingPositionResponse(await response.json());
-
-  return position ?? undefined;
+  return parseTodayBoardResponse(await response.json()).board;
 }

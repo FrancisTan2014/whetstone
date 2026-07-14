@@ -69,8 +69,13 @@ export async function loadRecitationSession(
   const paused = (await loadPlanPausedAt(db, plan.entryId)) !== null;
   const { utcStart } = localDayBoundary(now, timeZone);
   const dueCards = activeCards.filter((card) => card.dueAt.getTime() <= now.getTime());
+  // The earliest due active card's instant, for Today's routine ordering (#610); null when nothing is
+  // due (or the plan is paused, which zeroes the due summary below).
+  const earliestDueMs =
+    dueCards.length === 0 ? null : Math.min(...dueCards.map((card) => card.dueAt.getTime()));
   const due = {
     dueCount: paused ? 0 : dueCards.length,
+    nextDueAt: paused || earliestDueMs === null ? null : new Date(earliestDueMs).toISOString(),
     overdueCount: paused
       ? 0
       : dueCards.filter((card) => card.dueAt.getTime() < utcStart.getTime()).length

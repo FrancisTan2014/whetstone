@@ -283,7 +283,7 @@ describe("GET /api/recitation/session", () => {
 
     const session = activeSession(await getSession());
     expect(session.step).toBe("clear");
-    expect(session.due).toEqual({ dueCount: 0, overdueCount: 0 });
+    expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
   });
 
   it("targets the most-recent plan rather than an older plan with due work", async () => {
@@ -311,7 +311,21 @@ describe("GET /api/recitation/session", () => {
 
     const session = activeSession(await getSession());
     expect(session.paused).toBe(true);
-    expect(session.due).toEqual({ dueCount: 0, overdueCount: 0 });
+    expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
     expect(session.step).toBe("clear");
+  });
+
+  it("summarizes the earliest due card as the due nextDueAt", async () => {
+    const { passageIds, planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
+    await introduceNext(planEntryId);
+    await ownPassage(passageIds[0]!);
+    await introduceNext(planEntryId);
+    await ownPassage(passageIds[1]!);
+    await setDueAt(passageIds[0]!, "2026-07-01T06:00:00.000Z");
+    await setDueAt(passageIds[1]!, "2026-07-01T05:00:00.000Z");
+
+    const session = activeSession(await getSession());
+    expect(session.due.dueCount).toBe(2);
+    expect(session.due.nextDueAt).toBe("2026-07-01T05:00:00.000Z");
   });
 });

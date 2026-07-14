@@ -12,6 +12,9 @@ export type RecitationSessionStepDto = z.infer<typeof recitationSessionStepDtoSc
 const sessionDueSchema = z
   .object({
     dueCount: z.number().int().nonnegative(),
+    // The earliest due active card's instant, or null when nothing is due (or the plan is paused). Today
+    // (#610) reads this to order the grouped Recitation routine among the day's obligations.
+    nextDueAt: z.string().datetime().nullable(),
     overdueCount: z.number().int().nonnegative()
   })
   .strict();

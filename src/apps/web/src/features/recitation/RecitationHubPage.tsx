@@ -5,9 +5,10 @@ import type { RecitationHubDto } from "@whetstone/contracts";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { setRecitationPhase } from "./recitationApi";
 import { getRecitationHub, pausePlan, resumePlan } from "./recitationHubApi";
 import { RecitationSessionPanel } from "./RecitationSessionPanel";
-import { recitationPhaseLabels } from "./recitationLabels";
+import { recitationPhaseHints, recitationPhaseLabels } from "./recitationLabels";
 import { recitationPrimaryActionLabels, recitationStageLabels } from "./RecitationHubPage.tokens";
 
 type HubState =
@@ -128,10 +129,19 @@ function ActivePlanView({
   sessionOpen: boolean;
   setSessionOpen: (open: boolean) => void;
 }>): React.JSX.Element {
+  // A `familiarizing` plan is calm daily reading with no due work yet; its only forward step is the
+  // explicit learner-driven transition into Learning (#577). This lives on the hub — the recitation home
+  // Today deep-links into — so the routine is never stranded once Today (#610) stopped hosting it.
+  const familiarizing = !hub.paused && hub.phase === "familiarizing";
   const caughtUp =
-    !hub.paused && hub.primaryAction === "none" && !hub.introduction.newPassageAvailable;
+    !hub.paused &&
+    !familiarizing &&
+    hub.primaryAction === "none" &&
+    !hub.introduction.newPassageAvailable;
   const sessionAvailable =
-    !hub.paused && (hub.primaryAction !== "none" || hub.introduction.newPassageAvailable);
+    !hub.paused &&
+    !familiarizing &&
+    (hub.primaryAction !== "none" || hub.introduction.newPassageAvailable);
 
   return (
     <div className="flex flex-col gap-6">
@@ -168,6 +178,23 @@ function ActivePlanView({
       </p>
 
       <p className="text-sm text-text-muted">Stage: {recitationStageLabels[hub.stage]}</p>
+
+      {familiarizing ? (
+        <div aria-label="Start reciting" className="flex flex-col gap-2" role="group">
+          <p className="text-sm text-text-muted">{recitationPhaseHints.familiarizing}</p>
+          <Button
+            disabled={pending}
+            onClick={() =>
+              runMutation(
+                setRecitationPhase(hub.planEntryId, "learning").then(() => getRecitationHub())
+              )
+            }
+            variant="primary"
+          >
+            Start reciting
+          </Button>
+        </div>
+      ) : null}
 
       {sessionOpen ? (
         <RecitationSessionPanel

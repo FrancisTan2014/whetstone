@@ -1,15 +1,17 @@
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { newReviewState } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries } from "../../db/schema.js";
+import { entries, reviewCards } from "../../db/schema.js";
 import { depositMemory, type MemoryDependencies } from "./memoryCommands.js";
 import {
   getMemoryPromptForUser,
   listDuePromptCards,
+  loadMemoryRoutineSummary,
   noteProvenanceEntryId,
   searchMemoryPrompts
 } from "./memoryQueries.js";
@@ -172,5 +174,55 @@ describe("noteProvenanceEntryId", () => {
       now: t0
     });
     expect(await noteProvenanceEntryId(context.db, standalone.noteId)).toBeNull();
+  });
+});
+
+describe("loadMemoryRoutineSummary", () => {
+  const zone = "UTC";
+  const setDueAt = async (promptId: string, iso: string): Promise<void> => {
+    await context.db
+      .update(reviewCards)
+      .set({ dueAt: new Date(iso) })
+      .where(eq(reviewCards.targetEntryId, promptId));
+  };
+
+  it("counts due and overdue enrolled cards and reports the earliest due instant", async () => {
+    const overdue = await seedPrompt({ userId: userA, cueText: "a", answerText: "x", now: t0 });
+    const dueToday = await seedPrompt({ userId: userA, cueText: "b", answerText: "x", now: t0 });
+    const future = await seedPrompt({ userId: userA, cueText: "c", answerText: "x", now: t0 });
+    await seedPrompt({ userId: userA, cueText: "draft", now: t0 });
+    const otherUser = await seedPrompt({ userId: userB, cueText: "d", answerText: "x", now: t0 });
+
+    await setDueAt(overdue.promptId, "2026-01-01T00:00:00.000Z");
+    await setDueAt(dueToday.promptId, "2026-01-02T06:00:00.000Z");
+    await setDueAt(future.promptId, "2026-01-03T00:00:00.000Z");
+    await setDueAt(otherUser.promptId, "2026-01-01T00:00:00.000Z");
+
+    const summary = await loadMemoryRoutineSummary(
+      context.db,
+      userA,
+      new Date("2026-01-02T12:00:00.000Z"),
+      zone
+    );
+
+    expect(summary).toEqual({
+      dueCount: 2,
+      nextDueAt: "2026-01-01T00:00:00.000Z",
+      overdueCount: 1
+    });
+  });
+
+  it("reports nothing due when every card is in the future", async () => {
+    const later = await seedPrompt({ userId: userA, cueText: "a", answerText: "x", now: t0 });
+    await setDueAt(later.promptId, "2026-01-05T00:00:00.000Z");
+
+    const summary = await loadMemoryRoutineSummary(
+      context.db,
+      userA,
+      new Date("2026-01-02T12:00:00.000Z"),
+      zone
+    );
+
+    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
   });
 });

@@ -1,676 +1,250 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../recall/recallApi", () => ({ fetchDueRecall: vi.fn() }));
-vi.mock("./todayApi", () => ({ fetchLatestReadingPosition: vi.fn() }));
-vi.mock("../library/libraryApi", () => ({ fetchWorks: vi.fn() }));
-vi.mock("../authoredWorks/authoredWorkApi", () => ({ fetchContinueWriting: vi.fn() }));
-vi.mock("../recitation/recitationApi", () => ({
-  fetchContinueRecitation: vi.fn(),
-  recordRecitationSession: vi.fn(),
-  setRecitationPhase: vi.fn()
-}));
-vi.mock("../recitation/recitationPassageApi", () => ({
-  fetchDuePassage: vi.fn(),
-  reviewPassage: vi.fn()
-}));
-vi.mock("../recitation/recitationChainingApi", () => ({
-  fetchToday: vi.fn()
-}));
-vi.mock("../diary/diaryApi", () => ({
-  submitDiaryCapture: vi.fn()
-}));
-vi.mock("../capture/voiceCaptureApi", () => ({
-  submitVoiceCapture: vi.fn(),
-  fetchActiveVoiceCaptures: vi.fn(() => Promise.resolve([])),
-  fetchVoiceCaptureStatus: vi.fn(),
-  retryVoiceCapture: vi.fn()
+vi.mock("./todayApi", () => ({
+  fetchTodayBoard: vi.fn()
 }));
 
-import type {
-  AuthorDto,
-  AuthoredWorkSummaryDto,
-  ContinueRecitationDto,
-  DueRecitationPassageDto,
-  LatestReadingPositionDto,
-  MemoryPromptCardDto,
-  RecitationPlanDto,
-  RecitationTodayDto,
-  ReviewStateDto,
-  WorkDto,
-  WorkListDto
-} from "@whetstone/contracts";
+vi.mock("../capture/CaptureCard", () => ({
+  CaptureCard: () => <section aria-label="Capture today">capture</section>
+}));
 
-import { fetchContinueWriting } from "../authoredWorks/authoredWorkApi";
-import {
-  fetchContinueRecitation,
-  recordRecitationSession,
-  setRecitationPhase
-} from "../recitation/recitationApi";
-import { fetchToday } from "../recitation/recitationChainingApi";
-import { fetchDuePassage, reviewPassage } from "../recitation/recitationPassageApi";
-import { fetchWorks } from "../library/libraryApi";
-import { fetchDueRecall } from "../recall/recallApi";
-import { fetchLatestReadingPosition } from "./todayApi";
+import type { TodayBoardDto, TodayRoutineDto } from "@whetstone/contracts";
+
 import { TodayPage } from "./TodayPage";
+import { fetchTodayBoard } from "./todayApi";
 
-const mockedRecall = vi.mocked(fetchDueRecall);
-const mockedReading = vi.mocked(fetchLatestReadingPosition);
-const mockedWorks = vi.mocked(fetchWorks);
-const mockedWriting = vi.mocked(fetchContinueWriting);
-const mockedRecitation = vi.mocked(fetchContinueRecitation);
-const mockedStartReciting = vi.mocked(setRecitationPhase);
-const mockedRecitationSession = vi.mocked(recordRecitationSession);
-const mockedDuePassage = vi.mocked(fetchDuePassage);
-const mockedToday = vi.mocked(fetchToday);
-const mockedReviewPassage = vi.mocked(reviewPassage);
+const mockedFetch = vi.mocked(fetchTodayBoard);
 
-const emptyWorks: WorkListDto = { works: [] };
-
-function makeWorkList(count: number): WorkListDto {
-  const works = Array.from({ length: count }, (_, index) => ({
-    author: { id: `author-${index}` as AuthorDto["id"], name: "Aesop" },
-    work: {
-      authorId: `author-${index}` as WorkDto["authorId"],
-      entryId: `work-${index}` as WorkDto["entryId"],
-      language: "en" as WorkDto["language"],
-      title: "Fables",
-      workType: "book" as WorkDto["workType"]
-    }
-  }));
-
-  return { works };
+function makeBoard(overrides: Partial<TodayBoardDto> = {}): TodayBoardDto {
+  return {
+    clear: true,
+    continueReading: { status: "empty" },
+    continueWriting: { status: "empty" },
+    date: "2026-07-01",
+    dueNow: [],
+    newPassage: { status: "unavailable" },
+    routineFailures: [],
+    ...overrides
+  };
 }
 
-const review: ReviewStateDto = {
-  due: "2026-01-01T00:00:00.000Z",
-  stability: 0,
-  difficulty: 0,
-  elapsedDays: 0,
-  scheduledDays: 0,
-  learningSteps: 0,
-  reps: 0,
-  lapses: 0,
-  state: "new",
-  lastReviewedAt: null
+const memoryDue: TodayRoutineDto = {
+  dueCount: 1,
+  kind: "memory",
+  nextDueAt: "2026-07-01T06:00:00.000Z",
+  overdue: false,
+  overdueCount: 0
 };
 
-function makeItem(overrides: Partial<MemoryPromptCardDto> = {}): MemoryPromptCardDto {
-  return {
-    answerText: "to reveal a secret",
-    chunkId: null,
-    cueText: "spill the beans",
-    noteId: "note-1",
-    promptId: "prompt-1",
-    review,
-    ...overrides
-  };
-}
+const recitationOverdue: TodayRoutineDto = {
+  dueCount: 2,
+  kind: "recitation",
+  nextDueAt: "2026-06-30T22:00:00.000Z",
+  overdue: true,
+  overdueCount: 2
+};
 
-function makePosition(overrides: Partial<LatestReadingPositionDto> = {}): LatestReadingPositionDto {
-  return {
-    anchorBlockEntryId: null,
-    unitEntryId: "unit-1",
-    workEntryId: "work-1",
-    workTitle: "Aesop's Fables",
-    ...overrides
-  };
-}
-
-function makeRecitationPlan(overrides: Partial<RecitationPlanDto> = {}): RecitationPlanDto {
-  return {
-    createdAt: "2026-07-01T09:00:00.000Z",
-    entryId: "plan-1",
-    lastSessionAt: null,
-    phase: "familiarizing",
-    sessionCount: 0,
-    updatedAt: "2026-07-01T09:00:00.000Z",
-    workEntryId: "work-1",
-    workTitle: "腾王阁序",
-    ...overrides
-  };
-}
-
-// Hold both async arms open so the component stays in its loading state for a render assertion.
-function pending<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
-
-function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecitationPassageDto {
-  return {
-    anchorStatus: "anchored",
-    context: "Aesop's Fables · The Fox and the Grapes",
-    defaultCueStrength: "opening",
-    passageEntryId: "passage-2",
-    planEntryId: "plan-1",
-    precedingText: "Earlier line here.",
-    supportLevel: "hidden",
-    targetText: "The quick brown fox jumps.",
-    workTitle: "Aesop's Fables",
-    ...overrides
-  };
-}
-
-function makeToday(overrides: Partial<RecitationTodayDto> = {}): RecitationTodayDto {
-  return {
-    action: "due_passage",
-    activeChain: null,
-    planEntryId: "plan-1",
-    workTitle: "Aesop's Fables",
-    ...overrides
-  };
-}
-
-function todayElement(): React.JSX.Element {
-  return (
+function renderPage(): void {
+  render(
     <MemoryRouter>
       <TodayPage />
     </MemoryRouter>
   );
 }
 
-function renderToday(): ReturnType<typeof render> {
-  return render(todayElement());
+function href(name: RegExp | string): string | null {
+  return screen.getByRole("link", { name }).getAttribute("href");
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn((query: string) => ({
-      addEventListener: vi.fn(),
-      addListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-      matches: false,
-      media: query,
-      onchange: null,
-      removeEventListener: vi.fn(),
-      removeListener: vi.fn()
-    }))
-  );
-  mockedRecall.mockReturnValue(pending<ReadonlyArray<MemoryPromptCardDto>>());
-  mockedReading.mockReturnValue(pending<LatestReadingPositionDto | undefined>());
-  mockedWorks.mockReturnValue(pending<WorkListDto>());
-  mockedWriting.mockReturnValue(pending<{ work: AuthoredWorkSummaryDto | null }>());
-  mockedRecitation.mockReturnValue(pending<ContinueRecitationDto>());
-  mockedToday.mockReturnValue(pending<RecitationTodayDto>());
-  mockedDuePassage.mockReturnValue(pending<DueRecitationPassageDto | null>());
+  mockedFetch.mockReset();
 });
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("TodayPage", () => {
-  it("always offers the unified tap-and-talk plus typed capture", () => {
-    renderToday();
+  it("shows a loading state while the board is in flight", () => {
+    mockedFetch.mockReturnValue(new Promise(() => {}));
 
-    expect(screen.getByText("Capture today")).toBeDefined();
-    expect(screen.getByLabelText("Capture text")).toBeDefined();
+    renderPage();
+
+    expect(screen.getByText("Loading your day…")).toBeTruthy();
   });
 
-  it("offers no proposal / history-mining controls on Today capture (#571)", () => {
-    renderToday();
+  it("surfaces an offline error with a Retry that recomputes the board", async () => {
+    mockedFetch.mockRejectedValueOnce(new Error("offline"));
+    renderPage();
 
-    // A diary capture journals only — the "Mine my history" action and proposal cards are gone.
-    expect(screen.queryByRole("button", { name: "Mine my history" })).toBeNull();
-    expect(screen.queryByText("Make this durable?")).toBeNull();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    mockedFetch.mockResolvedValueOnce(makeBoard());
+    await userEvent.click(retry);
+
+    expect(await screen.findByText(/Start with one source/)).toBeTruthy();
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the calm greeting header without any metric or streak", () => {
-    renderToday();
-
-    expect(screen.getByRole("heading", { level: 1, name: "Today" })).toBeDefined();
-    expect(screen.queryByText(/streak/i)).toBeNull();
-  });
-
-  it("shows loading states for both composed arms while they resolve", () => {
-    renderToday();
-
-    expect(screen.getByText("Gathering what's due…")).toBeDefined();
-    expect(screen.getByText("Finding where you left off…")).toBeDefined();
-  });
-
-  it("surfaces the first due item at a glance with a Review link, holding back the rest", async () => {
-    mockedRecall.mockResolvedValue([
-      makeItem(),
-      makeItem({ cueText: "by and large", promptId: "prompt-2" })
-    ]);
-    renderToday();
-
-    expect(await screen.findByText("Recall these 2 items.")).toBeDefined();
-    expect(screen.getByText("spill the beans")).toBeDefined();
-    expect(screen.queryByText("to reveal a secret")).toBeNull();
-    // Restraint: only the first item is shown here; the rest live behind the Review link.
-    expect(screen.queryByText("by and large")).toBeNull();
-    expect(screen.getByRole("link", { name: "Review" }).getAttribute("href")).toBe("/recall");
-  });
-
-  it("phrases a single due prompt in the singular", async () => {
-    mockedRecall.mockResolvedValue([makeItem()]);
-    renderToday();
-
-    expect(await screen.findByText("Recall this 1 item.")).toBeDefined();
-    expect(screen.getByText("spill the beans")).toBeDefined();
-    expect(screen.queryByText("to reveal a secret")).toBeNull();
-  });
-
-  it("shows a quiet recall empty line when nothing is due", async () => {
-    mockedRecall.mockResolvedValue([]);
-    renderToday();
-
-    expect(await screen.findByText(/Nothing due — you’re caught up/)).toBeDefined();
-  });
-
-  it("shows a quiet inline note when recall fails to load, without blanking the page", async () => {
-    mockedRecall.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    expect(await screen.findByText(/Couldn’t load recall/)).toBeDefined();
-    // The page does not blank — the always-present capture invitation still renders.
-    expect(screen.getByText("Capture today")).toBeDefined();
-  });
-
-  it("offers Continue reading from the latest position, deep-linking into the reader", async () => {
-    mockedReading.mockResolvedValue(makePosition());
-    renderToday();
-
-    expect(await screen.findByText("Aesop's Fables")).toBeDefined();
-    expect(screen.getByRole("link", { name: "Continue" }).getAttribute("href")).toBe(
-      "#/reader?work=work-1"
+  it("shows the truthful clear line only when the board is clear and something can be continued", async () => {
+    mockedFetch.mockResolvedValue(
+      makeBoard({
+        continueReading: {
+          position: {
+            anchorBlockEntryId: null,
+            unitEntryId: "unit-1",
+            workEntryId: "work-1",
+            workTitle: "Fables"
+          },
+          status: "ready"
+        }
+      })
     );
+    renderPage();
+
+    expect(await screen.findByText("All due work is clear.")).toBeTruthy();
+    expect(screen.queryByText(/Start with one source/)).toBeNull();
+    expect(href(/Keep reading Fables/)).toBe("/reader?work=work-1");
+    expect(href("Return to your diary")).toBe("/diary");
   });
 
-  it("shows a quiet line when there is nothing to continue", async () => {
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
+  it("shows a first-run on-ramp instead of the clear line when there is nothing to continue", async () => {
+    mockedFetch.mockResolvedValue(makeBoard());
+    renderPage();
 
-    expect(await screen.findByText("Nothing to continue yet.")).toBeDefined();
+    expect(await screen.findByText(/Start with one source/)).toBeTruthy();
+    expect(screen.queryByText("All due work is clear.")).toBeNull();
+    expect(href("Go to your Library")).toBe("/library");
+    // Continue empties render as quiet copy; the unavailable new passage offers no invitation.
+    expect(screen.getByText("No reading in progress.")).toBeTruthy();
+    expect(screen.getByText("No writing in progress.")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Start a new passage" })).toBeNull();
   });
 
-  it("shows a quiet inline note when the latest position fails to load", async () => {
-    mockedReading.mockRejectedValue(new Error("boom"));
-    renderToday();
+  it("groups a single due routine into one row with a review deep link", async () => {
+    mockedFetch.mockResolvedValue(makeBoard({ clear: false, dueNow: [memoryDue] }));
+    renderPage();
 
-    expect(await screen.findByText(/Couldn’t load your reading/)).toBeDefined();
+    expect(await screen.findByText("Memory review")).toBeTruthy();
+    expect(screen.getByText("1 due")).toBeTruthy();
+    expect(screen.queryByText(/overdue/)).toBeNull();
+    expect(href("Review")).toBe("/recall");
+    expect(screen.getByRole("listitem")).toBeTruthy();
+    expect(screen.queryByText("All due work is clear.")).toBeNull();
+    expect(screen.queryByText(/Start with one source/)).toBeNull();
   });
 
-  it("shows a compassionate cleared state when nothing is due — no streak, guilt, or penalty", async () => {
-    // A learner with a work but nothing due: a truthful cleared board (not a cold start).
-    mockedWorks.mockResolvedValue(makeWorkList(1));
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
-
-    expect(await screen.findByText(/You’re done for today/)).toBeDefined();
-    for (const word of [/streak/i, /guilt/i, /penalty/i, /broke/i]) {
-      expect(screen.queryByText(word)).toBeNull();
-    }
-  });
-
-  it("does not show the cleared state while there is still a due item to act on", async () => {
-    mockedRecall.mockResolvedValue([makeItem()]);
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
-
-    await screen.findByText("spill the beans");
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
-  });
-
-  it("shows a truthful first-run on-ramp on a cold start, hiding done-for-today", async () => {
-    // No works, no reading position, no recall due: point to the on-ramp, not "done".
-    mockedWorks.mockResolvedValue(emptyWorks);
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
-
-    expect(await screen.findByText("Start with one source")).toBeDefined();
-    expect(screen.getByRole("link", { name: "Open Library" }).getAttribute("href")).toBe(
-      "/library"
+  it("orders overdue routines first and emphasizes the overdue count", async () => {
+    mockedFetch.mockResolvedValue(
+      makeBoard({ clear: false, dueNow: [recitationOverdue, memoryDue] })
     );
-    // The done-for-today message is untruthful here, so it stays hidden.
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
+    renderPage();
+
+    await screen.findByText("Recitation");
+    const rows = screen.getAllByRole("listitem");
+    expect(rows[0]?.textContent).toContain("Recitation");
+    expect(rows[0]?.textContent).toContain("2 due · 2 overdue");
+    expect(rows[1]?.textContent).toContain("Memory review");
+    expect(href("Start")).toBe("/recitation");
   });
 
-  it("keeps the first-run on-ramp stable across a parent rerender", async () => {
-    mockedWorks.mockResolvedValue(emptyWorks);
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    const view = renderToday();
+  it("keeps the board un-clear and offers a Retry when a routine source fails", async () => {
+    mockedFetch.mockResolvedValueOnce(makeBoard({ clear: false, routineFailures: ["memory"] }));
+    renderPage();
 
-    expect(await screen.findByText("Start with one source")).toBeDefined();
-    view.rerender(todayElement());
+    expect(await screen.findByText("Couldn’t load your memory review right now.")).toBeTruthy();
+    expect(screen.queryByText("All due work is clear.")).toBeNull();
 
-    expect(screen.getByRole("link", { name: "Open Library" })).toBeDefined();
-    expect(mockedRecall).toHaveBeenCalledTimes(1);
+    mockedFetch.mockResolvedValueOnce(makeBoard());
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText(/Start with one source/)).toBeTruthy();
+    expect(screen.queryByText("Couldn’t load your memory review right now.")).toBeNull();
   });
 
-  it("returns to the normal cleared board once the learner has at least one work", async () => {
-    mockedWorks.mockResolvedValue(makeWorkList(1));
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
-
-    expect(await screen.findByText(/You’re done for today/)).toBeDefined();
-    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-  });
-
-  it("does not show the first-run on-ramp when a learner trace exists though the library is empty", async () => {
-    // A due recall item is a trace: the learner is not truly at a cold start, so no on-ramp card.
-    mockedWorks.mockResolvedValue(emptyWorks);
-    mockedRecall.mockResolvedValue([makeItem()]);
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
-
-    await screen.findByText("spill the beans");
-    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
-  });
-
-  it("makes no state claim while the library load is still pending", async () => {
-    // Recall/reading are empty but the library is still loading: Today must not claim the
-    // first-run card NOR "done for today" — a done claim on unknown cold-start info is untruthful.
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    mockedWorks.mockReturnValue(pending<WorkListDto>());
-    renderToday();
-
-    await screen.findByText(/Nothing to continue yet/);
-    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
-  });
-
-  it("makes no state claim when the library load fails", async () => {
-    // A failed library arm cannot confirm or rule out a cold start: neither the on-ramp card nor
-    // "done for today" appears, and the page does not blank.
-    mockedWorks.mockRejectedValue(new Error("boom"));
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(undefined);
-    renderToday();
-
-    await screen.findByText(/Nothing to continue yet/);
-    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-    expect(screen.queryByText(/You’re done for today/)).toBeNull();
-    expect(screen.getByText("Capture today")).toBeDefined();
-  });
-
-  it("shows the cleared board for a returning learner known only by a reading position", async () => {
-    // A loaded reading position rules out a cold start even when the library request is empty.
-    mockedWorks.mockResolvedValue(emptyWorks);
-    mockedRecall.mockResolvedValue([]);
-    mockedReading.mockResolvedValue(makePosition());
-    renderToday();
-
-    expect(await screen.findByText(/You’re done for today/)).toBeDefined();
-    expect(screen.queryByRole("region", { name: "Start with one source" })).toBeNull();
-  });
-
-  it("shows a loading line for the Continue writing card while its draft resolves", () => {
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Continue writing" });
-    expect(within(card).getByText("Finding your latest draft…")).toBeDefined();
-  });
-
-  it("offers Continue writing from the latest draft, deep-linking into the editor", async () => {
-    const summary: AuthoredWorkSummaryDto = {
-      createdAt: "2026-07-01T00:00:00.000Z",
-      entryId: "work 9",
-      language: "en",
-      title: "My unfinished essay",
-      updatedAt: "2026-07-05T00:00:00.000Z",
-      workType: "book"
-    };
-    mockedWriting.mockResolvedValue({ work: summary });
-    renderToday();
-
-    const card = await screen.findByRole("region", { name: "Continue writing" });
-    expect(await within(card).findByText("My unfinished essay")).toBeDefined();
-    expect(within(card).getByRole("link", { name: "Continue" }).getAttribute("href")).toBe(
-      "#/write?work=work%209"
+  it("offers each ready Continue invitation as a deep link into its feature", async () => {
+    mockedFetch.mockResolvedValue(
+      makeBoard({
+        continueReading: {
+          position: {
+            anchorBlockEntryId: null,
+            unitEntryId: "unit-1",
+            workEntryId: "work-1",
+            workTitle: "Fables"
+          },
+          status: "ready"
+        },
+        continueWriting: {
+          work: {
+            createdAt: "2026-06-01T00:00:00.000Z",
+            entryId: "draft-1",
+            language: "en",
+            title: "My Draft",
+            updatedAt: "2026-06-30T00:00:00.000Z",
+            workType: "book"
+          },
+          status: "ready"
+        },
+        newPassage: { planEntryId: "plan-1", status: "available" }
+      })
     );
+    renderPage();
+
+    expect(await screen.findByRole("link", { name: /Keep reading Fables/ })).toBeTruthy();
+    expect(href(/Keep reading Fables/)).toBe("/reader?work=work-1");
+    expect(href(/Keep writing My Draft/)).toBe("/write?work=draft-1");
+    expect(href("Start a new passage")).toBe("/recitation");
   });
 
-  it("shows a quiet line when the learner has no draft to continue", async () => {
-    mockedWriting.mockResolvedValue({ work: null });
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Continue writing" });
-    expect(await within(card).findByText(/No drafts yet/)).toBeDefined();
-  });
-
-  it("shows a quiet inline note when the Continue writing draft fails to load", async () => {
-    mockedWriting.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Continue writing" });
-    expect(await within(card).findByText(/Couldn’t load your writing/)).toBeDefined();
-    expect(screen.getByText("Capture today")).toBeDefined();
-  });
-
-  it("shows a loading line for the Continue recitation card while its routine resolves", () => {
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Continue recitation" });
-    expect(within(card).getByText("Finding your recitation routine…")).toBeDefined();
-    // A quiet secondary entry into the recitation routine hub (#608), independent of routine state.
-    expect(
-      within(card).getByRole("link", { name: "Open recitation hub" }).getAttribute("href")
-    ).toBe("#/recitation");
-  });
-
-  it("offers Continue recitation from the latest routine, recording a session and deep-linking to the reader", async () => {
-    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
-    mockedRecitationSession.mockResolvedValue(makeRecitationPlan());
-    renderToday();
-
-    const card = await screen.findByRole("region", { name: "Continue recitation" });
-    expect(await within(card).findByText("腾王阁序")).toBeDefined();
-    expect(within(card).getByText("Familiarizing")).toBeDefined();
-
-    const link = within(card).getByRole("link", { name: "Continue" });
-    expect(link.getAttribute("href")).toBe("#/reader?work=work-1");
-    fireEvent.click(link);
-    expect(mockedRecitationSession).toHaveBeenCalledWith("plan-1");
-  });
-
-  it("still opens the reader when recording the recitation session fails, best-effort", async () => {
-    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
-    mockedRecitationSession.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    const card = await screen.findByRole("region", { name: "Continue recitation" });
-    const link = within(card).getByRole("link", { name: "Continue" });
-    fireEvent.click(link);
-
-    await waitFor(() => {
-      expect(mockedRecitationSession).toHaveBeenCalledWith("plan-1");
-    });
-    // The failed record never blanks the card or blocks the reader deep-link.
-    expect(link.getAttribute("href")).toBe("#/reader?work=work-1");
-    expect(within(card).getByText("腾王阁序")).toBeDefined();
-  });
-
-  it("offers Start reciting only while familiarizing, transitioning the plan into learning", async () => {
-    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
-    mockedStartReciting.mockResolvedValue(makeRecitationPlan({ phase: "learning" }));
-    renderToday();
-
-    const card = await screen.findByRole("region", { name: "Continue recitation" });
-    const start = await within(card).findByRole("button", { name: "Start reciting" });
-    fireEvent.click(start);
-
-    expect(mockedStartReciting).toHaveBeenCalledWith("plan-1", "learning");
-    // Once learning, the card drops the Start-reciting affordance (only familiarizing offers it).
-    await waitFor(() => {
-      expect(within(card).queryByRole("button", { name: "Start reciting" })).toBeNull();
-    });
-    expect(within(card).getByText("Learning")).toBeDefined();
-  });
-
-  it("keeps the card even when Start reciting fails, never blanking Today", async () => {
-    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan() });
-    mockedStartReciting.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    const card = await screen.findByRole("region", { name: "Continue recitation" });
-    fireEvent.click(await within(card).findByRole("button", { name: "Start reciting" }));
-
-    await waitFor(() => {
-      expect(mockedStartReciting).toHaveBeenCalled();
-    });
-    // The routine is still shown; the failed transition left it familiarizing.
-    expect(within(card).getByText("腾王阁序")).toBeDefined();
-    expect(screen.getByText("Capture today")).toBeDefined();
-  });
-
-  it("hides Start reciting for a routine already past familiarizing", async () => {
-    mockedRecitation.mockResolvedValue({ plan: makeRecitationPlan({ phase: "maintenance" }) });
-    renderToday();
-
-    const card = await screen.findByRole("region", { name: "Continue recitation" });
-    expect(await within(card).findByText("Maintenance")).toBeDefined();
-    expect(within(card).queryByRole("button", { name: "Start reciting" })).toBeNull();
-  });
-
-  it("shows a quiet line when the learner has no recitation routine", async () => {
-    mockedRecitation.mockResolvedValue({ plan: null });
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Continue recitation" });
-    expect(await within(card).findByText(/No recitation routine yet/)).toBeDefined();
-  });
-
-  it("shows a quiet inline note when the recitation routine fails to load", async () => {
-    mockedRecitation.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Continue recitation" });
-    expect(await within(card).findByText(/Couldn’t load your recitation/)).toBeDefined();
-    expect(screen.getByText("Capture today")).toBeDefined();
-  });
-
-  it("surfaces the next due recitation passage as a bounded practice attempt", async () => {
-    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
-    mockedDuePassage.mockResolvedValue(makeDuePassage());
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByLabelText("Cue")).toBeDefined();
-    // The full target stays hidden until Reveal (no overdue wall, one attempt at a time).
-    expect(within(card).queryByText("The quick brown fox jumps.")).toBeNull();
-  });
-
-  it("surfaces an active chain as the one Today action, linking to the plan's practice", async () => {
-    mockedToday.mockResolvedValue(
-      makeToday({ action: "chain", planEntryId: "plan-7", workTitle: "Aesop's Fables" })
+  it("surfaces a quiet Retry for every failed Continue invitation", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      makeBoard({
+        continueReading: { status: "failed" },
+        continueWriting: { status: "failed" },
+        newPassage: { status: "failed" }
+      })
     );
-    renderToday();
+    renderPage();
 
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(
-      await within(card).findByText(/A recitation chain is ready in “Aesop's Fables”\./)
-    ).toBeDefined();
-    const link = within(card).getByRole("link", { name: "Practise the chain" });
-    expect(link.getAttribute("href")).toBe("/recite?plan=plan-7");
-    // A chain action is decided without pulling any due-passage payload (priority is server-side).
-    expect(mockedDuePassage).not.toHaveBeenCalled();
+    expect(await screen.findByText("Couldn’t load your reading right now.")).toBeTruthy();
+    expect(screen.getByText("Couldn’t load your writing right now.")).toBeTruthy();
+    expect(screen.getByText("Couldn’t load your new passage right now.")).toBeTruthy();
+
+    mockedFetch.mockResolvedValueOnce(makeBoard());
+    const [firstRetry] = screen.getAllByRole("button", { name: "Retry" });
+    await userEvent.click(firstRetry!);
+    expect(await screen.findByText(/Start with one source/)).toBeTruthy();
   });
 
-  it("surfaces whole-work maintenance as the one Today action, even without a work title", async () => {
-    mockedToday.mockResolvedValue(
-      makeToday({ action: "whole_work", planEntryId: "plan-9", workTitle: null })
-    );
-    renderToday();
+  it("recomputes the board when the tab regains focus", async () => {
+    mockedFetch.mockResolvedValueOnce(makeBoard({ clear: false, dueNow: [memoryDue] }));
+    renderPage();
+    await screen.findByText("Memory review");
 
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByText("Whole-work maintenance is due.")).toBeDefined();
-    const link = within(card).getByRole("link", { name: "Maintain the whole work" });
-    expect(link.getAttribute("href")).toBe("/recite?plan=plan-9");
+    mockedFetch.mockResolvedValueOnce(makeBoard());
+    window.dispatchEvent(new Event("focus"));
+
+    expect(await screen.findByText(/Start with one source/)).toBeTruthy();
+    expect(screen.queryByText("Memory review")).toBeNull();
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("degrades a maintenance action with no plan to the caught-up line (never a dead link)", async () => {
-    mockedToday.mockResolvedValue(makeToday({ action: "chain", planEntryId: null }));
-    renderToday();
+  it("keeps the save-first quick capture present on every board", async () => {
+    mockedFetch.mockResolvedValue(makeBoard({ clear: false, dueNow: [memoryDue] }));
+    renderPage();
 
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
-    expect(within(card).queryByRole("link", { name: "Practise the chain" })).toBeNull();
+    expect(await screen.findByLabelText("Capture today")).toBeTruthy();
   });
 
-  it("shows a caught-up line when there is no recitation action", async () => {
-    mockedToday.mockResolvedValue(
-      makeToday({ action: "none", planEntryId: null, workTitle: null })
-    );
-    renderToday();
+  it("keeps the save-first quick capture present while the board is still loading", () => {
+    mockedFetch.mockReturnValue(new Promise(() => {}));
 
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
-  });
+    renderPage();
 
-  it("shows a caught-up line when the decision named a due passage but none remains", async () => {
-    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
-    mockedDuePassage.mockResolvedValue(null);
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
-  });
-
-  it("shows a quiet inline note when the recitation decision fails to load", async () => {
-    mockedToday.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByText(/Couldn’t load your recitation passage/)).toBeDefined();
-  });
-
-  it("shows a quiet inline note when the due passage fails to load", async () => {
-    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
-    mockedDuePassage.mockRejectedValue(new Error("boom"));
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Recite" });
-    expect(await within(card).findByText(/Couldn’t load your recitation passage/)).toBeDefined();
-  });
-
-  it("re-decides the next recitation action after a review, stopping when caught up", async () => {
-    mockedReviewPassage.mockResolvedValue({} as never);
-    mockedToday
-      .mockResolvedValueOnce(makeToday({ action: "due_passage" }))
-      .mockResolvedValueOnce(makeToday({ action: "none", planEntryId: null, workTitle: null }));
-    mockedDuePassage.mockResolvedValueOnce(makeDuePassage());
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Recite" });
-    fireEvent.click(await within(card).findByRole("button", { name: "Reveal" }));
-    fireEvent.click(within(card).getByRole("button", { name: "Couldn't continue" }));
-
-    expect(await within(card).findByText(/Nothing to recite/)).toBeDefined();
-    expect(mockedToday).toHaveBeenCalledTimes(2);
-    expect(mockedDuePassage).toHaveBeenCalledTimes(1);
-  });
-
-  it("resets to the cue phase for the next passage after a review, hiding its target until Reveal", async () => {
-    mockedReviewPassage.mockResolvedValue({} as never);
-    mockedToday.mockResolvedValue(makeToday({ action: "due_passage" }));
-    mockedDuePassage
-      .mockResolvedValueOnce(makeDuePassage())
-      .mockResolvedValueOnce(
-        makeDuePassage({ passageEntryId: "passage-3", targetText: "A second hidden line." })
-      );
-    renderToday();
-
-    const card = screen.getByRole("region", { name: "Recite" });
-    fireEvent.click(await within(card).findByRole("button", { name: "Reveal" }));
-    fireEvent.click(within(card).getByRole("button", { name: "Clean and natural" }));
-
-    // The next passage re-enters the cue phase: Reveal returns and the new target stays hidden until
-    // the learner reveals it (a stale revealed state would leak the answer without a retrieval attempt).
-    expect(await within(card).findByRole("button", { name: "Reveal" })).toBeDefined();
-    expect(within(card).queryByText("A second hidden line.")).toBeNull();
+    expect(screen.getByText("Loading your day…")).toBeTruthy();
+    expect(screen.getByLabelText("Capture today")).toBeTruthy();
   });
 });

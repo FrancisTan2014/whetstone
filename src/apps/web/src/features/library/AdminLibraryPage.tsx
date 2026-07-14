@@ -744,8 +744,8 @@ const cardActionClass =
 // offers "Divide into passages" (the opt-in Learning-phase segmentation + progress surface, #578); a
 // `maintenance` plan — a Work the learner already knows — offers "Set up passages" into the same surface
 // so whole-work upkeep can start without earning every passage through Learning first (#605). A
-// `familiarizing` plan offers no link; it reaches Learning first via Today's "Start reciting". An
-// un-adopted Work offers "Practise recitation" to open the phase picker (#577).
+// `familiarizing` plan offers no link here; it reaches Learning first via the Recitation hub's "Start
+// reciting". An un-adopted Work offers "Practise recitation" to open the phase picker (#577).
 function renderRecitationAction(
   item: WorkListItemDto,
   options: RenderLibraryOptions

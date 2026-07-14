@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { recitationSessionSteps, selectRecitationSessionStep } from "./recitationSession.js";
+import {
+  isRequiredRecitationStep,
+  recitationSessionSteps,
+  selectRecitationSessionStep
+} from "./recitationSession.js";
 
 describe("selectRecitationSessionStep", () => {
   it("lists the due-first session steps in priority order ending in clear", () => {
@@ -66,5 +70,18 @@ describe("selectRecitationSessionStep", () => {
         wholeWorkDue: false
       })
     ).toBe("clear");
+  });
+});
+
+describe("isRequiredRecitationStep", () => {
+  it("treats due-passage, whole-work, and chain as required obligations", () => {
+    expect(isRequiredRecitationStep("due_passage")).toBe(true);
+    expect(isRequiredRecitationStep("whole_work")).toBe(true);
+    expect(isRequiredRecitationStep("chain")).toBe(true);
+  });
+
+  it("treats the new-passage invitation and the terminal clear as not required", () => {
+    expect(isRequiredRecitationStep("new_passage")).toBe(false);
+    expect(isRequiredRecitationStep("clear")).toBe(false);
   });
 });

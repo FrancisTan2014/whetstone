@@ -37,3 +37,12 @@ export function selectRecitationSessionStep(
   }
   return "clear";
 }
+
+// Whether a session step is a deterministic obligation the learner must clear — a due passage, due
+// whole-Work maintenance, or an eligible chain — as opposed to the optional `new_passage` invitation or
+// the terminal `clear`. Today keeps the Recitation routine due while the session sits on any required
+// step, even when no individual review card is due yet: an unstarted whole-Work step or an eligible
+// owned-prefix chain carries no card, so a card-only view would falsely report the routine clear (#610).
+export function isRequiredRecitationStep(step: RecitationSessionStep): boolean {
+  return recitationSessionSteps.indexOf(step) < recitationSessionSteps.indexOf("new_passage");
+}
