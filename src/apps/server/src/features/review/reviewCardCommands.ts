@@ -94,6 +94,38 @@ export async function deleteReviewCardsAndEvents(
   await tx.delete(reviewCards).where(inArray(reviewCards.targetEntryId, ids));
 }
 
+// Apply a learner's rating to a target's card WITHIN a caller's transaction (#618), so a feature can
+// compose a card write with its own atomic side-effects (a Recitation cue-strength evidence row, a second
+// card for a failed lead-in) in the SAME transaction. It schedules the next review with the card's OWN
+// stored requested retention, overwrites the card's FSRS state (bumping `updatedAt`), appends exactly one
+// `rating` review event with the caller-supplied `eventId`, then awaits the optional `afterEvent` hook so
+// the feature can attach evidence keyed to that event. Returns the updated card + new state. The caller
+// owns reading the card and opening the transaction, so this stays a pure composition primitive.
+export async function applyRatingToCardInTx(
+  tx: Transaction,
+  card: ReviewCardRow,
+  rating: ReviewRating,
+  now: Date,
+  eventId: string,
+  afterEvent?: (tx: Transaction, eventId: string) => Promise<void>
+): Promise<{ card: ReviewCardRow; state: ReviewState }> {
+  const state = applyRating(reviewStateFromCard(card), rating, now, card.requestedRetention);
+  const columns = reviewStateColumns(state);
+  await tx
+    .update(reviewCards)
+    .set({ ...columns, updatedAt: now })
+    .where(eq(reviewCards.targetEntryId, card.targetEntryId));
+  await tx.insert(reviewEvents).values({
+    id: eventId,
+    targetEntryId: card.targetEntryId,
+    type: "rating",
+    rating,
+    occurredAt: now
+  });
+  await afterEvent?.(tx, eventId);
+  return { card: { ...card, ...columns, updatedAt: now }, state };
+}
+
 // Apply a learner's rating to a target's card (#617): schedule the next review with the card's OWN stored
 // requested retention (never a global assumption, never switching on target type), overwrite the card's
 // FSRS state, and append exactly one `rating` review event — atomically, in one transaction. A target
@@ -109,23 +141,10 @@ export async function rateReviewCard(
   if (card === undefined) {
     return { status: "not_found" };
   }
-  const state = applyRating(reviewStateFromCard(card), rating, now, card.requestedRetention);
-  const columns = reviewStateColumns(state);
-  const eventId = dependencies.createId();
-  await dependencies.db.transaction(async (tx) => {
-    await tx
-      .update(reviewCards)
-      .set({ ...columns, updatedAt: now })
-      .where(eq(reviewCards.targetEntryId, targetEntryId));
-    await tx.insert(reviewEvents).values({
-      id: eventId,
-      targetEntryId,
-      type: "rating",
-      rating,
-      occurredAt: now
-    });
-  });
-  return { card: { ...card, ...columns, updatedAt: now }, state, status: "rated" };
+  const result = await dependencies.db.transaction((tx) =>
+    applyRatingToCardInTx(tx, card, rating, now, dependencies.createId())
+  );
+  return { card: result.card, state: result.state, status: "rated" };
 }
 
 // Explicitly restart a target's schedule (#617): reset the card to a brand-new FSRS state (keeping its

@@ -92,6 +92,7 @@ export {
   isDue,
   newReviewState,
   RECALL_REQUEST_RETENTION,
+  RECITATION_REQUEST_RETENTION,
   retrievability
 } from "./fsrs.js";
 export type { CardState, ReviewRating, ReviewState, SchedulerOptions } from "./fsrs.js";

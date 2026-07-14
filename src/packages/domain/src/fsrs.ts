@@ -42,6 +42,12 @@ export type ReviewState = Readonly<{
 // at a different retention without this module knowing which feature owns it.
 export const RECALL_REQUEST_RETENTION = 0.9;
 
+// The requested retention Recitation seeds every passage and whole-Work card at (#618). A recitation
+// target is held to a higher retention than a recall prompt, so its intervals stay tighter. Because a
+// card carries its own requested retention, every later rating of a recitation card schedules at 0.95
+// automatically — the substrate never switches policy by feature.
+export const RECITATION_REQUEST_RETENTION = 0.95;
+
 // The requested retention is a probability strictly between 0 and 1: 0 or 1 (or anything outside) is not
 // an achievable retention target and would make the scheduler's interval maths meaningless. Validated
 // here, at the scheduler boundary, so no caller can drive FSRS with an out-of-range policy.
