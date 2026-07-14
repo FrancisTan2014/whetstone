@@ -154,6 +154,29 @@ async function seedPlan(
   return { passageIds, planEntryId };
 }
 
+// Seed a maintenance plan: the learner already knows the Work, so its passages are laid out as queued
+// (no schedule, no due work) and whole-work upkeep is eligible immediately (#605).
+async function seedMaintenancePlan(
+  workEntryId: string,
+  texts: readonly string[]
+): Promise<{ planEntryId: string; passageIds: string[] }> {
+  await seedWorkWithBlocks(
+    workEntryId,
+    texts.map((text, index) => ({ id: `${workEntryId}-b${index}`, text }))
+  );
+  const planEntryId = await adopt(workEntryId, "maintenance");
+  const seeded = await context.server.inject({
+    method: "POST",
+    url: `/api/recitation/plans/${planEntryId}/passages/seed`
+  });
+  expect(seeded.statusCode).toBe(201);
+  const passages = (
+    seeded.json() as { passages: ReadonlyArray<{ entryId: string; status: string }> }
+  ).passages;
+  expect(passages.every((passage) => passage.status === "queued")).toBe(true);
+  return { passageIds: passages.map((passage) => passage.entryId), planEntryId };
+}
+
 // Record `count` Good reviews on a passage at the current clock, making it owned once count >= 2 (and
 // retrievability is still high because we do not advance the clock).
 async function ownPassage(passageEntryId: string, count = 2): Promise<void> {
@@ -559,6 +582,81 @@ describe("POST /api/recitation/plans/:id/whole-work/review", () => {
     context.setUser(OTHER_USER_ID);
     const foreign = await reviewWholeWork(planEntryId, "good", { status: "held" });
     expect(foreign.statusCode).toBe(404);
+  });
+});
+
+describe("maintenance whole-work upkeep (#605)", () => {
+  it("offers whole-work maintenance from queued passages without owning any of them", async () => {
+    const { planEntryId } = await seedMaintenancePlan("work-m", ["One.", "Two."]);
+
+    const chaining = await getChaining(planEntryId);
+    // Eligible to start upkeep (>=1 anchored passage), yet no passage is owned — the learner never
+    // earned them through Learning.
+    expect(chaining.wholeWork).toEqual({ due: true, dueAt: null, exists: false });
+    expect(chaining.wholeWorkOwned).toBe(false);
+    expect(chaining.ownedPrefix).toEqual({ ownedCount: 0, total: 2 });
+  });
+
+  it("is not eligible when a maintenance plan has only unanchored (needs_repair) passages", async () => {
+    const { planEntryId, passageIds } = await seedMaintenancePlan("work-m", ["One.", "Two."]);
+    for (const passageEntryId of passageIds) {
+      await context.db
+        .update(recitationPassages)
+        .set({ anchorStatus: "needs_repair" })
+        .where(eq(recitationPassages.entryId, passageEntryId));
+    }
+
+    expect((await getChaining(planEntryId)).wholeWork.due).toBe(false);
+    const response = await reviewWholeWork(planEntryId, "good", { status: "held" });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "not_eligible" });
+  });
+
+  it("starts the aggregate card on a held review, leaving every passage queued", async () => {
+    const { planEntryId, passageIds } = await seedMaintenancePlan("work-m", ["One.", "Two."]);
+
+    const response = await reviewWholeWork(planEntryId, "good", { status: "held" });
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as WholeWorkResponse).wholeWork.exists).toBe(true);
+
+    // A clean whole-work run rates nothing, so the passages are still queued (no schedule, no reviews).
+    for (const passageEntryId of passageIds) {
+      const row = await passageRow(passageEntryId);
+      expect(row.introducedAt).toBeNull();
+      expect(row.dueAt).toBeNull();
+    }
+  });
+
+  it("activates only the identified queued passage on a whole-work break", async () => {
+    const { planEntryId, passageIds } = await seedMaintenancePlan("work-m", ["One.", "Two."]);
+
+    const response = await reviewWholeWork(planEntryId, "good", {
+      passageEntryId: passageIds[0]!,
+      status: "broke"
+    });
+    expect(response.statusCode).toBe(200);
+
+    // The broken passage is now an active, scheduled card that recorded its first review (the Again).
+    // A fresh card taking Again enters learning without a lapse (a lapse needs a prior review card).
+    const activated = await passageRow(passageIds[0]!);
+    expect(activated.introducedAt).not.toBeNull();
+    expect(activated.dueAt).not.toBeNull();
+    expect(activated.reps).toBe(1);
+    expect(activated.lapses).toBe(0);
+    // Its sibling stays queued — a break never activates a passage the learner did not identify.
+    const sibling = await passageRow(passageIds[1]!);
+    expect(sibling.introducedAt).toBeNull();
+    expect(sibling.dueAt).toBeNull();
+  });
+
+  it("surfaces whole-work upkeep on Today for a maintenance plan with only queued passages", async () => {
+    const { planEntryId } = await seedMaintenancePlan("work-m", ["One.", "Two."]);
+
+    // No passage is due (all queued) and no chain is active, so the maintenance plan's whole-work prompt
+    // is what Today offers — proving the Today scan includes maintenance plans.
+    const today = await getToday();
+    expect(today.action).toBe("whole_work");
+    expect(today.planEntryId).toBe(planEntryId);
   });
 });
 

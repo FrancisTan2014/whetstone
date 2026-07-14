@@ -25,6 +25,7 @@ describe("entry/link vocabulary", () => {
       "toc_entry",
       "diary_entry",
       "recitation_plan",
+      "recitation_passage",
       "memory_note",
       "memory_prompt"
     ]);
@@ -39,6 +40,7 @@ describe("entry/link vocabulary", () => {
     expect(isEntryType("reading_unit")).toBe(true);
     expect(isEntryType("toc_entry")).toBe(true);
     expect(isEntryType("diary_entry")).toBe(true);
+    expect(isEntryType("recitation_passage")).toBe(true);
     expect(isEntryType("template")).toBe(false);
     expect(isLinkType("annotates")).toBe(true);
     expect(isLinkType("invalid")).toBe(false);

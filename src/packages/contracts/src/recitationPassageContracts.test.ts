@@ -29,12 +29,43 @@ const passage = {
   reviewCount: 0,
   sourceText: "Alpha beta",
   startBlockEntryId: "b1",
-  startOffset: 0
+  startOffset: 0,
+  status: "active" as const
+};
+
+const queuedPassage = {
+  anchorStatus: "anchored" as const,
+  endBlockEntryId: "b1",
+  endOffset: 10,
+  entryId: "passage-2",
+  orderIndex: 1,
+  planEntryId: "plan-1",
+  reviewCount: 0,
+  sourceText: "Gamma delta",
+  startBlockEntryId: "b1",
+  startOffset: 0,
+  status: "queued" as const
 };
 
 describe("recitationPassageDtoSchema", () => {
-  it("accepts a well-formed passage", () => {
+  it("accepts a well-formed active passage", () => {
     expect(recitationPassageDtoSchema.parse(passage)).toEqual(passage);
+  });
+
+  it("accepts a queued passage with no FSRS summary", () => {
+    expect(recitationPassageDtoSchema.parse(queuedPassage)).toEqual(queuedPassage);
+  });
+
+  it("rejects a queued passage carrying an FSRS summary (must be active)", () => {
+    expect(
+      recitationPassageDtoSchema.safeParse({ ...queuedPassage, dueAt: passage.dueAt }).success
+    ).toBe(false);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(recitationPassageDtoSchema.safeParse({ ...passage, status: "paused" }).success).toBe(
+      false
+    );
   });
 
   it("rejects an unknown anchor status", () => {
@@ -49,9 +80,11 @@ describe("recitationPassageDtoSchema", () => {
 });
 
 describe("parseRecitationPassageListDto", () => {
-  it("accepts a plan's passage list", () => {
-    expect(parseRecitationPassageListDto({ passages: [passage], planEntryId: "plan-1" })).toEqual({
-      passages: [passage],
+  it("accepts a plan's passage list mixing queued and active", () => {
+    expect(
+      parseRecitationPassageListDto({ passages: [passage, queuedPassage], planEntryId: "plan-1" })
+    ).toEqual({
+      passages: [passage, queuedPassage],
       planEntryId: "plan-1"
     });
   });

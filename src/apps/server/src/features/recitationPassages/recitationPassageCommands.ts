@@ -33,7 +33,8 @@ import {
   loadWorkTextBlocks,
   listPassageRowsForPlan,
   passageReviewStateColumns,
-  passageRowToReviewState,
+  passageRowToReviewStateOrNull,
+  queuedPassageLifecycleColumns,
   toRecitationPassageDto,
   type RecitationPassageRow
 } from "./recitationPassageQueries.js";
@@ -83,6 +84,32 @@ function rowToRange(row: RecitationPassageRow): PassageRange {
   };
 }
 
+// The FSRS + lifecycle columns for a newly seeded/edited passage (#605). A `scheduled` passage is active
+// immediately (introduced now, a fresh FSRS card due now) — the Learning-phase behavior. A queued
+// passage is introduced but unscheduled (every FSRS field null), so a maintenance plan can lay out its
+// boundaries without adding passage due work; the passage activates only when a whole-work break
+// identifies it. Every lifecycle column is present (not optional) so the result completes a full
+// `RecitationPassageRow`.
+type PassageLifecycleColumns = Readonly<{
+  difficulty: number | null;
+  dueAt: Date | null;
+  elapsedDays: number | null;
+  introducedAt: Date | null;
+  lapses: number | null;
+  lastReviewedAt: Date | null;
+  learningSteps: number | null;
+  reps: number | null;
+  scheduledDays: number | null;
+  stability: number | null;
+  state: "new" | "learning" | "review" | "relearning" | null;
+}>;
+
+function newPassageLifecycleColumns(scheduled: boolean, now: Date): PassageLifecycleColumns {
+  return scheduled
+    ? { introducedAt: now, ...passageReviewStateColumns(newReviewState(now)) }
+    : queuedPassageLifecycleColumns();
+}
+
 async function dtosWithCounts(
   db: DbClient,
   rows: ReadonlyArray<RecitationPassageRow>
@@ -95,11 +122,13 @@ async function dtosWithCounts(
 }
 
 // Seed one passage per non-empty source text block of the plan's Work, in source order, each an
-// addressable Entry with its own FSRS card due immediately. Idempotent: a plan already divided returns
-// its current passages as `already_seeded` (never a second set). Passage practice is the opt-in
-// Learning-phase engine, so a plan that is still `familiarizing` (or already on to `maintenance`) is
-// rejected as `wrong_phase` — the learner reaches Learning via Today's explicit "Start reciting" (#578).
-// Owner-scoped (`not_found` otherwise).
+// addressable Entry. In `learning` the passages are active (a fresh FSRS card due immediately) — the
+// opt-in Learning-phase engine (#578). In `maintenance` the passages are queued (no schedule, no due
+// work): a learner who already knows the Work only needs its boundaries laid out so whole-work upkeep
+// can start, without earning every passage through Learning first (#605). Idempotent: a plan already
+// divided returns its current passages as `already_seeded` (never a second set). A plan still
+// `familiarizing` is rejected as `wrong_phase` (the learner reaches Learning via Today's "Start
+// reciting"). Owner-scoped (`not_found` otherwise).
 export async function seedRecitationPassages(
   dependencies: RecitationPassageDependencies,
   planEntryId: EntryId,
@@ -109,7 +138,7 @@ export async function seedRecitationPassages(
   if (owned === undefined) {
     return { status: "not_found" };
   }
-  if (owned.phase !== "learning") {
+  if (owned.phase === "familiarizing") {
     return { status: "wrong_phase" };
   }
 
@@ -122,6 +151,7 @@ export async function seedRecitationPassages(
   const ranges = seedPassageRanges(blocks);
   const blockText = new Map(blocks.map((block) => [block.blockEntryId, block.text] as const));
   const now = dependencies.now();
+  const scheduled = owned.phase === "learning";
 
   const rows: RecitationPassageRow[] = ranges.map((range, index) => ({
     anchorStatus: "anchored",
@@ -134,7 +164,7 @@ export async function seedRecitationPassages(
     sourceText: coveredPassageText(range, blockText)!,
     supportLevel: DEFAULT_RECITATION_SUPPORT_LEVEL,
     ...range,
-    ...passageReviewStateColumns(newReviewState(now))
+    ...newPassageLifecycleColumns(scheduled, now)
   }));
 
   await dependencies.db.transaction(async (tx) => {
@@ -171,6 +201,7 @@ function newPassageRow(
   range: PassageRange,
   sourceText: string,
   orderIndex: number,
+  scheduled: boolean,
   now: Date
 ): RecitationPassageRow {
   return {
@@ -183,7 +214,7 @@ function newPassageRow(
     sourceText,
     supportLevel: DEFAULT_RECITATION_SUPPORT_LEVEL,
     ...range,
-    ...passageReviewStateColumns(newReviewState(now))
+    ...newPassageLifecycleColumns(scheduled, now)
   };
 }
 
@@ -212,6 +243,9 @@ export async function splitRecitationPassage(
   const now = dependencies.now();
   const planEntryId = owned.row.planEntryId;
   const at0 = owned.row.orderIndex;
+  // Split preserves the source passage's lifecycle: two active halves for a scheduled passage (FSRS
+  // reset), two queued halves for a queued (maintenance) passage — never activating a queued passage.
+  const scheduled = owned.row.introducedAt !== null;
   const first = newPassageRow(
     dependencies,
     planEntryId,
@@ -221,6 +255,7 @@ export async function splitRecitationPassage(
     // text is always present.
     coveredPassageText(result.first, blockText)!,
     at0,
+    scheduled,
     now
   );
   const second = newPassageRow(
@@ -230,6 +265,7 @@ export async function splitRecitationPassage(
     result.second,
     coveredPassageText(result.second, blockText)!,
     at0 + 1,
+    scheduled,
     now
   );
 
@@ -289,6 +325,9 @@ export async function mergeNextRecitationPassage(
     // (the passage then re-anchors to `needs_repair` when next served).
     coveredPassageText(result.range, blockText) ?? "",
     owned.row.orderIndex,
+    // The merged passage keeps the pair's lifecycle: active (FSRS reset) for a scheduled passage, queued
+    // for a queued maintenance passage.
+    owned.row.introducedAt !== null,
     now
   );
 
@@ -429,7 +468,9 @@ export async function recordRecitationPassageReview(
   }
 
   const now = dependencies.now();
-  const nextState = applyRating(passageRowToReviewState(owned.row), rating, now);
+  const introducedAt = owned.row.introducedAt ?? now;
+  const priorState = passageRowToReviewStateOrNull(owned.row) ?? newReviewState(now);
+  const nextState = applyRating(priorState, rating, now);
   const columns = passageReviewStateColumns(nextState);
   const reviewId = dependencies.createId();
   const preceding = leadInFailed
@@ -439,7 +480,7 @@ export async function recordRecitationPassageReview(
   await dependencies.db.transaction(async (tx) => {
     await tx
       .update(recitationPassages)
-      .set(columns)
+      .set({ ...columns, introducedAt })
       .where(eq(recitationPassages.entryId, passageEntryId));
     await tx.insert(recitationReviews).values({
       cueStrength,
@@ -451,10 +492,14 @@ export async function recordRecitationPassageReview(
     // A failed lead-in fails only the immediate predecessor, and only when one exists (never the target
     // twice, never an unmarked passage). The target's own rating above is unaffected.
     if (preceding !== undefined) {
-      const precedingState = applyRating(passageRowToReviewState(preceding), "again", now);
+      const precedingPrior = passageRowToReviewStateOrNull(preceding) ?? newReviewState(now);
+      const precedingState = applyRating(precedingPrior, "again", now);
       await tx
         .update(recitationPassages)
-        .set(passageReviewStateColumns(precedingState))
+        .set({
+          ...passageReviewStateColumns(precedingState),
+          introducedAt: preceding.introducedAt ?? now
+        })
         .where(eq(recitationPassages.entryId, preceding.entryId));
       await tx.insert(recitationReviews).values({
         cueStrength: "preceding_line",
@@ -469,7 +514,10 @@ export async function recordRecitationPassageReview(
   const counts = await countReviewsByPassage(dependencies.db, [passageEntryId]);
   return {
     // The review just inserted guarantees a count row for this passage.
-    passage: toRecitationPassageDto({ ...owned.row, ...columns }, counts.get(passageEntryId)!),
+    passage: toRecitationPassageDto(
+      { ...owned.row, ...columns, introducedAt },
+      counts.get(passageEntryId)!
+    ),
     status: "recorded"
   };
 }

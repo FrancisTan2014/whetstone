@@ -8,6 +8,7 @@
 // FSRS retrievability is read through the domain scheduler boundary.
 
 import { RECALL_REQUEST_RETENTION, retrievability, type ReviewState } from "./fsrs.js";
+import type { RecitationPhase } from "./recitation.js";
 
 // A passage counts as *owned* only after at least this many clean recalls. Two successful (Good/Easy)
 // reviews is the deterministic floor from #580 — one lucky recall is not ownership.
@@ -23,19 +24,24 @@ export const OWNERSHIP_RETENTION_TARGET = RECALL_REQUEST_RETENTION;
 export const MIN_CHAIN_LENGTH = 2;
 
 // One passage's ownership signal in source order: its addressable id, how many successful (Good/Easy)
-// self-assessments it has recorded, and its current FSRS card. The caller supplies passages already in
-// reciting order (orderIndex ascending); this module never reorders them.
+// self-assessments it has recorded, whether its source range is still anchored (a `needs_repair` passage
+// is not valid to recite), and its current FSRS card — or `null` when the passage is still *queued*
+// (introduced but never activated, so it has no schedule and no reviews yet, #605). The caller supplies
+// passages already in reciting order (orderIndex ascending); this module never reorders them.
 export type PassageMastery = Readonly<{
   passageEntryId: string;
   successfulReviews: number;
-  state: ReviewState;
+  anchored: boolean;
+  state: ReviewState | null;
 }>;
 
 // A passage is owned when the learner has recalled it cleanly enough *and* still retains it now: at
-// least two successful reviews, and current retrievability at or above the retention target. The
-// retrievability check makes ownership a live property (it lapses as memory fades), not a one-time badge.
+// least two successful reviews, and current retrievability at or above the retention target. A queued
+// passage (null FSRS card) is never owned — it has no schedule and no reviews. The retrievability check
+// makes ownership a live property (it lapses as memory fades), not a one-time badge.
 export function isPassageOwned(passage: PassageMastery, now: Date): boolean {
   return (
+    passage.state !== null &&
     passage.successfulReviews >= OWNERSHIP_MIN_SUCCESSFUL_REVIEWS &&
     retrievability(passage.state, now) >= OWNERSHIP_RETENTION_TARGET
   );
@@ -64,6 +70,29 @@ export function computeOwnedPrefix(passages: readonly PassageMastery[], now: Dat
 export function isWholeWorkOwned(passages: readonly PassageMastery[], now: Date): boolean {
   const { ownedCount, total } = computeOwnedPrefix(passages, now);
   return total > 0 && ownedCount === total;
+}
+
+// Whether the plan has at least one valid, anchored passage to recite from. A `needs_repair` passage is
+// not valid material, so it does not count. This is the bootstrap signal for maintenance whole-work
+// upkeep: a learner who already knows the Work only needs its boundaries set up, not every passage
+// earned through Learning first (#605).
+export function hasValidAnchoredPassage(passages: readonly PassageMastery[]): boolean {
+  return passages.some((passage) => passage.anchored);
+}
+
+// Whether a plan's *unstarted* whole-work maintenance prompt (no aggregate card yet) may be offered,
+// applying the phase-specific rule (#605). A `maintenance` plan is eligible as soon as it has one valid
+// anchored passage — the learner already knows the work, so ownership of every passage is not required.
+// A `learning` (or `familiarizing`) plan keeps the original rule: the whole work must be fully owned.
+// Once the aggregate card exists it runs on its own FSRS schedule and this rule no longer applies.
+export function isUnstartedWholeWorkEligible(
+  phase: RecitationPhase,
+  passages: readonly PassageMastery[],
+  now: Date
+): boolean {
+  return phase === "maintenance"
+    ? hasValidAnchoredPassage(passages)
+    : isWholeWorkOwned(passages, now);
 }
 
 // Whether a contiguous chain session may be offered, and if so the furthest end boundary the learner may

@@ -24,7 +24,8 @@ const passageDto = {
   reviewCount: 0,
   sourceText: "The quick brown fox.",
   startBlockEntryId: "block-a",
-  startOffset: 0
+  startOffset: 0,
+  status: "active"
 } as const;
 
 const dueDto = {

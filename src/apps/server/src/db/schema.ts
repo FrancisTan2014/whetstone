@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  check,
   doublePrecision,
   index,
   integer,
@@ -346,23 +347,48 @@ export const recitationPassages = pgTable(
       .notNull()
       .default("full"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
-    // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572), mirroring `recall_items`.
-    stability: doublePrecision("stability").notNull(),
-    difficulty: doublePrecision("difficulty").notNull(),
-    elapsedDays: integer("elapsed_days").notNull(),
-    scheduledDays: integer("scheduled_days").notNull(),
-    learningSteps: integer("learning_steps").notNull(),
-    reps: integer("reps").notNull(),
-    lapses: integer("lapses").notNull(),
+    // The passage lifecycle (#605): `introduced_at` is null while the passage is *queued* (introduced,
+    // awaiting activation) and non-null once it is *active* (has a scheduled FSRS card). The inlined FSRS
+    // columns below are therefore nullable — all null while queued, all non-null once active — enforced
+    // by `recitation_passages_lifecycle_ck`. Maintenance seeding creates queued passages so a plan the
+    // learner already knows can start whole-work upkeep without earning every passage through Learning.
+    introducedAt: timestamp("introduced_at", { mode: "date", withTimezone: true }),
+    // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572), mirroring `recall_items`. Nullable
+    // as a set: present exactly when the passage is active (see `introduced_at`).
+    stability: doublePrecision("stability"),
+    difficulty: doublePrecision("difficulty"),
+    elapsedDays: integer("elapsed_days"),
+    scheduledDays: integer("scheduled_days"),
+    learningSteps: integer("learning_steps"),
+    reps: integer("reps"),
+    lapses: integer("lapses"),
     state: text("state", {
       enum: ["new", "learning", "review", "relearning"] as const
-    }).notNull(),
+    }),
     lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
-    dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
+    dueAt: timestamp("due_at", { mode: "date", withTimezone: true })
   },
   (table) => [
     index("recitation_passages_plan_order_idx").on(table.planEntryId, table.orderIndex),
-    index("recitation_passages_plan_due_idx").on(table.planEntryId, table.dueAt)
+    index("recitation_passages_plan_due_idx").on(table.planEntryId, table.dueAt),
+    // A passage is either fully queued (introduced_at + every FSRS field null) or fully active
+    // (introduced_at + every schedule field non-null); `last_reviewed_at` stays free (null until the
+    // first review even when active). This makes an unscheduled passage impossible to treat as a card.
+    check(
+      "recitation_passages_lifecycle_ck",
+      sql`(
+        ${table.introducedAt} is null and ${table.stability} is null and ${table.difficulty} is null
+        and ${table.elapsedDays} is null and ${table.scheduledDays} is null
+        and ${table.learningSteps} is null and ${table.reps} is null and ${table.lapses} is null
+        and ${table.state} is null and ${table.dueAt} is null and ${table.lastReviewedAt} is null
+      ) or (
+        ${table.introducedAt} is not null and ${table.stability} is not null
+        and ${table.difficulty} is not null and ${table.elapsedDays} is not null
+        and ${table.scheduledDays} is not null and ${table.learningSteps} is not null
+        and ${table.reps} is not null and ${table.lapses} is not null and ${table.state} is not null
+        and ${table.dueAt} is not null
+      )`
+    )
   ]
 );
 

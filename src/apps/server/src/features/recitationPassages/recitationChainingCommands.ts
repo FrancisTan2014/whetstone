@@ -11,6 +11,7 @@ import {
   chainEligibility,
   computeOwnedPrefix,
   isOutcomePassageInSession,
+  isUnstartedWholeWorkEligible,
   isWholeWorkOwned,
   newReviewState,
   passagesToFailFromOutcome,
@@ -38,7 +39,8 @@ import {
   loadOwnedPlanForPassages,
   loadNextDuePassage,
   passageReviewStateColumns,
-  passageRowToReviewState
+  passageRowToReviewState,
+  passageRowToReviewStateOrNull
 } from "./recitationPassageQueries.js";
 import {
   loadActiveChainForPlan,
@@ -47,7 +49,7 @@ import {
   loadOwnedChain,
   loadPassageMasteries,
   loadWholeWorkForPlan,
-  listLearningPlansForUser,
+  listWholeWorkScanPlansForUser,
   type RecitationChainRow,
   type RecitationWholeWorkRow
 } from "./recitationChainingQueries.js";
@@ -72,12 +74,13 @@ async function chainRowToDto(db: DbClient, row: RecitationChainRow): Promise<Rec
 
 function wholeWorkDto(
   row: RecitationWholeWorkRow | undefined,
-  wholeWorkOwned: boolean,
+  unstartedEligible: boolean,
   now: Date
 ): WholeWorkStateDto {
   if (row === undefined) {
-    // Not yet started: it becomes available (due) only once the learner owns the entire Work.
-    return { due: wholeWorkOwned, dueAt: null, exists: false };
+    // Not yet started: it becomes available (due) only when the plan's phase makes whole-work review
+    // eligible — the whole Work owned in Learning, or ≥1 anchored passage in Maintenance (#605).
+    return { due: unstartedEligible, dueAt: null, exists: false };
   }
   // Once started the aggregate prompt runs on its own FSRS schedule, independent of later passage decay.
   return {
@@ -109,6 +112,7 @@ export async function loadRecitationChaining(
   const activeChain = await loadActiveChainForPlan(dependencies.db, planEntryId);
   const wholeWorkRow = await loadWholeWorkForPlan(dependencies.db, planEntryId);
   const wholeWorkOwned = isWholeWorkOwned(masteries, now);
+  const unstartedEligible = isUnstartedWholeWorkEligible(owned.phase, masteries, now);
 
   return {
     chaining: {
@@ -117,7 +121,7 @@ export async function loadRecitationChaining(
       chainEligibility: chainEligibility(masteries, now),
       ownedPrefix: computeOwnedPrefix(masteries, now),
       planEntryId,
-      wholeWork: wholeWorkDto(wholeWorkRow, wholeWorkOwned, now),
+      wholeWork: wholeWorkDto(wholeWorkRow, unstartedEligible, now),
       wholeWorkOwned
     },
     status: "loaded"
@@ -179,7 +183,10 @@ export async function startRecitationChain(
 
 // Apply a targeted Again to a single passage inside a transaction: overwrite its FSRS card and append an
 // Again review row. The caller always passes an id drawn from the session's own passages (a chain's
-// rendered sequence or the plan's full passage set), so the row is present.
+// rendered sequence or the plan's full passage set), so the row is present. A queued (maintenance)
+// passage identified as the break is activated here: it starts from a fresh card, takes the Again, and is
+// stamped `introducedAt` so it becomes live passage-review work (#605) — the whole-work break is exactly
+// the moment such a passage needs targeted practice.
 async function applyTargetedAgain(
   tx: DbTransaction,
   createId: () => string,
@@ -191,10 +198,11 @@ async function applyTargetedAgain(
     .from(recitationPassages)
     .where(eq(recitationPassages.entryId, passageEntryId))
     .limit(1);
-  const nextState = applyRating(passageRowToReviewState(row!), "again", now);
+  const priorState = passageRowToReviewStateOrNull(row!) ?? newReviewState(now);
+  const nextState = applyRating(priorState, "again", now);
   await tx
     .update(recitationPassages)
-    .set(passageReviewStateColumns(nextState))
+    .set({ ...passageReviewStateColumns(nextState), introducedAt: row!.introducedAt ?? now })
     .where(eq(recitationPassages.entryId, passageEntryId));
   await tx.insert(recitationReviews).values({
     cueStrength: "preceding_line",
@@ -274,8 +282,9 @@ export type ReviewWholeWorkResult =
 // Review the whole-work maintenance prompt: apply the aggregate FSRS rating to the plan's separate
 // whole-work card (created lazily on first review), and — via the targeted-lapse rule — apply an Again
 // to a single identified broken passage without resetting any other. The two FSRS states never merge: a
-// whole-work lapse reschedules only the aggregate. Eligible only once the whole Work is owned (until the
-// card exists); afterwards it runs on its own schedule. Owner-scoped (`not_found`).
+// whole-work lapse reschedules only the aggregate. Eligible while unstarted only when the plan's phase
+// allows it (whole Work owned in Learning, or ≥1 anchored passage in Maintenance — #605); afterwards it
+// runs on its own schedule. Owner-scoped (`not_found`).
 export async function reviewWholeWork(
   dependencies: RecitationChainingDependencies,
   planEntryId: EntryId,
@@ -291,7 +300,7 @@ export async function reviewWholeWork(
   const now = dependencies.now();
   const masteries = await loadPassageMasteries(dependencies.db, planEntryId);
   const existing = await loadWholeWorkForPlan(dependencies.db, planEntryId);
-  if (existing === undefined && !isWholeWorkOwned(masteries, now)) {
+  if (existing === undefined && !isUnstartedWholeWorkEligible(owned.phase, masteries, now)) {
     return { status: "not_eligible" };
   }
 
@@ -341,13 +350,14 @@ export async function loadRecitationToday(
   const duePassage = await loadNextDuePassage(dependencies.db, userId, now);
   const activeChain = await loadEarliestActiveChainForUser(dependencies.db, userId);
 
-  // Scan learning plans for the first whose whole-work prompt is due (owned but unstarted, or a started
-  // card past its due instant); deterministic order comes from `listLearningPlansForUser`.
+  // Scan every plan (Learning and Maintenance) for the first whose whole-work prompt is due — owned but
+  // unstarted / phase-eligible, or a started card past its due instant. Deterministic order and the
+  // per-plan phase come from `listWholeWorkScanPlansForUser` (#605).
   let wholeWorkPlan: Readonly<{ planEntryId: string; workTitle: string }> | undefined;
-  for (const plan of await listLearningPlansForUser(dependencies.db, userId)) {
+  for (const plan of await listWholeWorkScanPlansForUser(dependencies.db, userId)) {
     const masteries = await loadPassageMasteries(dependencies.db, toEntryId(plan.planEntryId));
     const row = await loadWholeWorkForPlan(dependencies.db, plan.planEntryId);
-    if (wholeWorkDto(row, isWholeWorkOwned(masteries, now), now).due) {
+    if (wholeWorkDto(row, isUnstartedWholeWorkEligible(plan.phase, masteries, now), now).due) {
       wholeWorkPlan = plan;
       break;
     }
