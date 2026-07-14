@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compareRoutines,
   composeTodayBoard,
   type ComposeTodayBoardInput,
+  type TodayRoutineComposition,
   type TodayRoutineSource
 } from "./todayBoard.js";
 
@@ -163,5 +165,42 @@ describe("composeTodayBoard", () => {
     expect(composeTodayBoard(baseInput({ newPassage: { status: "failed" } })).newPassage).toEqual({
       status: "failed"
     });
+  });
+});
+
+describe("compareRoutines", () => {
+  function routine(over: Partial<TodayRoutineComposition> = {}): TodayRoutineComposition {
+    return {
+      dueCount: 1,
+      kind: "memory",
+      nextDueAt: "2026-07-15T09:00:00.000Z",
+      overdue: false,
+      overdueCount: 0,
+      ...over
+    };
+  }
+
+  it("orders an overdue routine before a not-overdue one in either argument order", () => {
+    const overdue = routine({ kind: "recitation", overdue: true });
+    const onTime = routine({ kind: "memory", overdue: false });
+
+    expect(compareRoutines(overdue, onTime)).toBeLessThan(0);
+    expect(compareRoutines(onTime, overdue)).toBeGreaterThan(0);
+  });
+
+  it("orders by earliest nextDueAt when overdue status matches, in either argument order", () => {
+    const earlier = routine({ kind: "memory", nextDueAt: "2026-07-15T06:00:00.000Z" });
+    const later = routine({ kind: "recitation", nextDueAt: "2026-07-15T09:00:00.000Z" });
+
+    expect(compareRoutines(earlier, later)).toBeLessThan(0);
+    expect(compareRoutines(later, earlier)).toBeGreaterThan(0);
+  });
+
+  it("tie-breaks equal overdue and nextDueAt by kind, in either argument order", () => {
+    const memory = routine({ kind: "memory" });
+    const recitation = routine({ kind: "recitation" });
+
+    expect(compareRoutines(memory, recitation)).toBeLessThan(0);
+    expect(compareRoutines(recitation, memory)).toBeGreaterThan(0);
   });
 });

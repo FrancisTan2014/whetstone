@@ -84,7 +84,9 @@ export type ComposeTodayBoardInput<Position, Work> = Readonly<{
 
 // Order Due now: overdue routines first, then earliest `nextDueAt` ascending, then kind as a stable
 // deterministic tie-break (kinds are always distinct). ISO instants compare chronologically as strings.
-function compareRoutines(a: TodayRoutineComposition, b: TodayRoutineComposition): number {
+// Exported so the total order can be verified directly in both argument orders — `composeTodayBoard`
+// only ever sorts a fixed-order two-routine array, which cannot exercise every comparison branch.
+export function compareRoutines(a: TodayRoutineComposition, b: TodayRoutineComposition): number {
   if (a.overdue !== b.overdue) {
     return a.overdue ? -1 : 1;
   }

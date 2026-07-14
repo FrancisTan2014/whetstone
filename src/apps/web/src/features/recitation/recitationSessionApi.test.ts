@@ -4,7 +4,7 @@ import { getRecitationSession } from "./recitationSessionApi";
 
 const activeSession = {
   chainAvailable: false,
-  due: { dueCount: 1, overdueCount: 0 },
+  due: { dueCount: 1, nextDueAt: "2026-01-01T00:00:00.000Z", overdueCount: 0 },
   hasDuePassage: true,
   newPassage: {
     anyIntroduced: true,

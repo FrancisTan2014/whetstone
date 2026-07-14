@@ -238,4 +238,13 @@ describe("TodayPage", () => {
 
     expect(await screen.findByLabelText("Capture today")).toBeTruthy();
   });
+
+  it("keeps the save-first quick capture present while the board is still loading", () => {
+    mockedFetch.mockReturnValue(new Promise(() => {}));
+
+    renderPage();
+
+    expect(screen.getByText("Loading your day…")).toBeTruthy();
+    expect(screen.getByLabelText("Capture today")).toBeTruthy();
+  });
 });

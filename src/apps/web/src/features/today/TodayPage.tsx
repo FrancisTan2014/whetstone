@@ -59,12 +59,16 @@ export function TodayPage(): React.JSX.Element {
           A small, finishable set. Clear it, then rest and play freely.
         </p>
       </header>
-      {renderBoard(state, load)}
+      {renderPrimary(state, load)}
+      {/* Quick capture is save-first and always available — even while the board loads or fails —
+          and never marks other work done or schedules review. */}
+      <CaptureCard />
+      {state.status === "ready" ? <ContinueSection board={state.board} reload={load} /> : null}
     </section>
   );
 }
 
-function renderBoard(state: BoardState, reload: () => void): React.JSX.Element {
+function renderPrimary(state: BoardState, reload: () => void): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading your day…" />;
   }
@@ -86,7 +90,7 @@ function renderBoard(state: BoardState, reload: () => void): React.JSX.Element {
       </div>
     );
   }
-  return <ReadyBoard board={state.board} reload={reload} />;
+  return <PrimaryBoard board={state.board} reload={reload} />;
 }
 
 // A confirmed first run: nothing is due, no routine failed, and there is not a single thing to continue.
@@ -101,7 +105,9 @@ function isFirstRun(board: TodayBoardDto): boolean {
   );
 }
 
-function ReadyBoard({
+// The primary obligations region: the Due-now routines, any routine-failure notes, and either the
+// first-run on-ramp or the truthful clear line. Quick capture and the Continue section render outside it.
+function PrimaryBoard({
   board,
   reload
 }: Readonly<{ board: TodayBoardDto; reload: () => void }>): React.JSX.Element {
@@ -132,10 +138,6 @@ function ReadyBoard({
           All due work is clear.
         </p>
       ) : null}
-
-      <CaptureCard />
-
-      <ContinueSection board={board} reload={reload} />
     </div>
   );
 }
