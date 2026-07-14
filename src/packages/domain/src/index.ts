@@ -102,6 +102,8 @@ export { sanitizeSvg } from "./svgSanitizer.js";
 export { isWorkType, workTypes } from "./work.js";
 export { isRecitationPhase, recitationPhases } from "./recitation.js";
 export type { RecitationPhase } from "./recitation.js";
+export { deriveRecitationStage, recitationRoutineStages } from "./recitationHub.js";
+export type { RecitationRoutineStage } from "./recitationHub.js";
 export {
   coveredPassageText,
   isRecitationCueStrength,
