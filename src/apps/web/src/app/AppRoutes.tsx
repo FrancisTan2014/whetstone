@@ -8,6 +8,7 @@ import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { RecallPage } from "../features/recall/RecallPage.js";
 import { RecitePage } from "../features/recitation/RecitePage.js";
+import { RecitationHubPage } from "../features/recitation/RecitationHubPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { TodayPage } from "../features/today/TodayPage.js";
 import { AppShell } from "./AppShell.js";
@@ -69,6 +70,7 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<MemoryPage />} path="memory" />
         <Route element={<RecallPage />} path="recall" />
         <Route element={<ReciteRoute />} path="recite" />
+        <Route element={<RecitationHubPage />} path="recitation" />
         <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />

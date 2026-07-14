@@ -762,6 +762,9 @@ function renderRecitationAction(
             {plan.phase === "learning" ? "Divide into passages" : "Set up passages"}
           </a>
         )}
+        <a className={cardActionClass} href="#/recitation">
+          Recitation
+        </a>
       </>
     );
   }

@@ -1101,6 +1101,10 @@ describe("AdminLibraryPage", () => {
     // A familiarizing plan does NOT expose passage practice — that is the opt-in Learning-phase engine,
     // reached first via Today's "Start reciting" (#578).
     expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
+    // The contextual entry into the recitation routine hub (#608) appears for any adopted plan.
+    expect(screen.getByRole("link", { name: "Recitation" }).getAttribute("href")).toBe(
+      "#/recitation"
+    );
   });
 
   it("shows the reciting status (not an adopt button) for an already-adopted Work (#577)", async () => {
