@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchPreferences, resolveBrowserTimeZone, savePreferences } from "./preferencesApi";
+import {
+  fetchPreferences,
+  loadPersistedTimeZone,
+  resolveBrowserTimeZone,
+  savePreferences
+} from "./preferencesApi";
 
 const browserZone = resolveBrowserTimeZone();
 
@@ -125,6 +130,64 @@ describe("fetchPreferences", () => {
       theme: "day",
       timeZone: browserZone
     });
+  });
+});
+
+describe("loadPersistedTimeZone", () => {
+  it("resolves the browser zone only after the first-use persistence PUT settles", async () => {
+    let resolvePut: ((value: unknown) => void) | undefined;
+    let markPutIssued: (() => void) | undefined;
+    const putIssued = new Promise<void>((resolve) => {
+      markPutIssued = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      // GET: no stored zone yet (first use).
+      .mockResolvedValueOnce({
+        json: () =>
+          Promise.resolve({ preferences: { readingSize: "md", theme: "day", timeZone: null } }),
+        ok: true
+      })
+      // The first-use PUT, held open so we can prove the resolve waits for persistence.
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePut = resolve as never;
+            markPutIssued?.();
+          })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    let settled = false;
+    const pending = loadPersistedTimeZone().then((zone) => {
+      settled = true;
+      return zone;
+    });
+
+    // Wait deterministically until the PUT is actually in flight; the resolve must still be pending.
+    await putIssued;
+    expect(settled).toBe(false);
+
+    resolvePut?.({ ok: true });
+    expect(await pending).toBe(browserZone);
+    const puts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse((puts[0]?.[1] as RequestInit).body as string).timeZone).toBe(browserZone);
+  });
+
+  it("returns the stored zone without persisting when one is already set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () =>
+        Promise.resolve({
+          preferences: { readingSize: "lg", theme: "night", timeZone: "America/New_York" }
+        }),
+      ok: true
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await loadPersistedTimeZone()).toBe("America/New_York");
+    const puts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "PUT");
+    expect(puts).toHaveLength(0);
   });
 });
 

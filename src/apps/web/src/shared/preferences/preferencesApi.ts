@@ -69,6 +69,20 @@ export async function fetchPreferences(): Promise<PreferencesDto> {
   return load;
 }
 
+// Resolve the learner's effective calendar-day zone, ensuring the first-use browser-zone default has
+// actually been persisted before returning (#606). Timezone-scoped reads — the Diary timeline and
+// calendar — call this before their first fetch so the server groups by, and the client then pages
+// with, one coherent zone. Without the wait, a first-use timeline page is served in the server's UTC
+// fallback while the browser zone is still being written, so its day-key cursor no longer matches the
+// zone a later page is read in and older local days can be skipped or duplicated around midnight.
+export async function loadPersistedTimeZone(): Promise<string> {
+  const preferences = await fetchPreferences();
+  // fetchPreferences fire-and-forgets the first-use persistence onto the serial save chain; await the
+  // chain's current tail so that write has landed before any timezone-scoped query runs.
+  await saveChain;
+  return preferences.timeZone;
+}
+
 // Merge the changed field and upsert, serialized so concurrent saves accumulate onto one record (the
 // last PUT carries every field) and merge after any in-flight load. Failures never break reading.
 export async function savePreferences(partial: Partial<PreferencesDto>): Promise<void> {
