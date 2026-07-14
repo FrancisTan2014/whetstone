@@ -268,9 +268,9 @@ function MaintenanceStep(props: MaintenanceStepProps): React.JSX.Element {
 
   useEffect(load, [planEntryId]);
 
-  function runAction(action: Promise<unknown>): void {
+  function runAction(action: Promise<unknown>, onSuccess: () => void = onAction): void {
     setActionFailed(false);
-    action.then(onAction, () => setActionFailed(true));
+    action.then(onSuccess, () => setActionFailed(true));
   }
 
   if (state.status === "loading") {
@@ -309,7 +309,15 @@ function MaintenanceStep(props: MaintenanceStepProps): React.JSX.Element {
           ) : (
             <ActiveChain
               chain={activeChain}
-              onComplete={(outcome) => runAction(completeChain(activeChain.chainId, outcome))}
+              onComplete={(outcome) =>
+                // Completing the active chain ends the chain step for this session pass. Without this the
+                // still-owned prefix stays chain-eligible and the session would re-offer a fresh chain
+                // start forever instead of advancing to the next step (#609).
+                runAction(completeChain(activeChain.chainId, outcome), () => {
+                  props.onDismissChain();
+                  onAction();
+                })
+              }
             />
           )}
           <div>

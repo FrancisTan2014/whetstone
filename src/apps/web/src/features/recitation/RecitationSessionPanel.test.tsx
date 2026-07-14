@@ -259,7 +259,7 @@ describe("RecitationSessionPanel", () => {
     expect(mockedReviewWhole).toHaveBeenCalledWith("plan-1", "good", { status: "held" });
   });
 
-  it("starts a chain, completes an active chain, and can dismiss chain rehearsal", async () => {
+  it("starts a chain and can dismiss the chain offer to move on", async () => {
     mockedSession.mockResolvedValue(
       makeSession({
         chainAvailable: true,
@@ -272,6 +272,18 @@ describe("RecitationSessionPanel", () => {
     expect(mockedStart).toHaveBeenCalledWith("plan-1", 1);
     cleanup();
 
+    mockedSession.mockResolvedValue(
+      makeSession({
+        chainAvailable: true,
+        newPassage: { ...makeSession().newPassage, available: true }
+      })
+    );
+    renderPanel();
+    await userEvent.click(await screen.findByRole("button", { name: "Done with chains" }));
+    expect(await screen.findByRole("button", { name: "New passage" })).toBeDefined();
+  });
+
+  it("advances past chains automatically after an active chain is completed", async () => {
     mockedSession.mockResolvedValue(
       makeSession({
         chainAvailable: true,
@@ -300,8 +312,10 @@ describe("RecitationSessionPanel", () => {
       status: "broke"
     });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Done with chains" }));
+    // No manual "Done with chains" click — completing the active chain ends the chain step for this
+    // pass even though the still-owned prefix stays eligible on reload.
     expect(await screen.findByRole("button", { name: "New passage" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Done with chains" })).toBeNull();
   });
 
   it("surfaces maintenance load and action errors without losing the step", async () => {

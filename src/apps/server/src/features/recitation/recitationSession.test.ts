@@ -251,6 +251,29 @@ describe("GET /api/recitation/session", () => {
     expect(session.chainAvailable).toBe(true);
   });
 
+  it("offers the chain step for an eligible owned prefix with no active chain, and starts it inline", async () => {
+    const { passageIds, planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
+    await introduceNext(planEntryId);
+    await ownPassage(passageIds[0]!);
+    await introduceNext(planEntryId);
+    await ownPassage(passageIds[1]!);
+    // Retire the whole-work prompt (own it) so it does not precede the chain step, leaving an eligible
+    // owned prefix with no active chain — the projection must still surface the chain step.
+    await reviewWholeWork(planEntryId);
+
+    let session = activeSession(await getSession());
+    expect(session.hasDuePassage).toBe(false);
+    expect(session.wholeWorkDue).toBe(false);
+    expect(session.chainAvailable).toBe(true);
+    expect(session.step).toBe("chain");
+
+    // The learner can start the chain inline; the projection then still holds the chain step (now active).
+    await startChain(planEntryId);
+    session = activeSession(await getSession());
+    expect(session.chainAvailable).toBe(true);
+    expect(session.step).toBe("chain");
+  });
+
   it("recomputes to clear after the only due passage is rated", async () => {
     const { passageIds, planEntryId } = await seedPlan("work-1", ["Only."]);
     await introduceNext(planEntryId);

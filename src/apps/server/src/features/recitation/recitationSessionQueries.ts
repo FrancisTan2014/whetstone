@@ -1,5 +1,6 @@
 import type { RecitationSessionDto } from "@whetstone/contracts";
 import {
+  chainEligibility,
   isUnstartedWholeWorkEligible,
   localDayBoundary,
   selectRecitationSessionStep,
@@ -91,7 +92,11 @@ export async function loadRecitationSession(
     (wholeWorkRow !== undefined
       ? wholeWorkRow.card.dueAt.getTime() <= now.getTime()
       : isUnstartedWholeWorkEligible(plan.phase, masteries, now));
-  const chainAvailable = !paused && activeChain !== undefined;
+  // A chain step is offered when there is an active chain to finish OR an eligible owned-prefix to start
+  // one inline — so the routine can be completed on the hub without leaving for the chaining page (#609).
+  const chainAvailable =
+    !paused &&
+    (activeChain !== undefined || chainEligibility(masteries, now).status === "eligible");
   const newPassageAvailable = !paused && introduction.newPassageAvailable;
   const step = selectRecitationSessionStep({
     chainAvailable,
