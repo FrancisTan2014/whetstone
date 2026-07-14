@@ -1,9 +1,27 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { LatestReadingPositionDto } from "@whetstone/contracts";
+import type { TodayBoardDto } from "@whetstone/contracts";
 
-import { fetchLatestReadingPosition } from "./todayApi";
+import { fetchTodayBoard } from "./todayApi";
+
+const board: TodayBoardDto = {
+  clear: false,
+  continueReading: { status: "empty" },
+  continueWriting: { status: "empty" },
+  date: "2026-07-01",
+  dueNow: [
+    {
+      dueCount: 2,
+      kind: "recitation",
+      nextDueAt: "2026-06-30T22:00:00.000Z",
+      overdue: true,
+      overdueCount: 2
+    }
+  ],
+  newPassage: { status: "unavailable" },
+  routineFailures: []
+};
 
 function stubFetch(response: {
   body?: unknown;
@@ -23,29 +41,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("fetchLatestReadingPosition", () => {
-  it("requests the latest endpoint and returns the parsed position", async () => {
-    const position: LatestReadingPositionDto = {
-      anchorBlockEntryId: null,
-      unitEntryId: "unit-1",
-      workEntryId: "work-1",
-      workTitle: "Fables"
-    };
-    const fetchMock = stubFetch({ body: { position }, ok: true });
+describe("fetchTodayBoard", () => {
+  it("requests the Today endpoint and returns the parsed board", async () => {
+    const fetchMock = stubFetch({ body: { board }, ok: true });
 
-    await expect(fetchLatestReadingPosition()).resolves.toEqual(position);
-    expect(fetchMock).toHaveBeenCalledWith("/api/reading-position/latest");
-  });
-
-  it("returns undefined when the server reports no saved position", async () => {
-    stubFetch({ body: { position: null }, ok: true });
-
-    await expect(fetchLatestReadingPosition()).resolves.toBeUndefined();
+    await expect(fetchTodayBoard()).resolves.toEqual(board);
+    expect(fetchMock).toHaveBeenCalledWith("/api/today");
   });
 
   it("throws on a non-2xx response", async () => {
-    stubFetch({ ok: false, status: 500 });
+    stubFetch({ ok: false, status: 503 });
 
-    await expect(fetchLatestReadingPosition()).rejects.toThrow("status 500");
+    await expect(fetchTodayBoard()).rejects.toThrow("status 503");
   });
 });
