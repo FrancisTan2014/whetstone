@@ -1,5 +1,5 @@
 import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
-import { groupTimelineEntriesByDay, toDayKey } from "@whetstone/domain";
+import { groupTimelineEntriesByDay, localDayKey } from "@whetstone/domain";
 import { type DocumentNodeJSON } from "@whetstone/document";
 import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 
@@ -165,23 +165,26 @@ export async function listTimelinePage(
   db: DbClient,
   userId: string,
   before: string | undefined,
-  limitDays: number
+  limitDays: number,
+  timeZone: string
 ): Promise<ReadonlyArray<TimelineDayDto>> {
   const all = await loadPersonalTimelineEntries(db, userId);
-  const days = groupTimelineEntriesByDay(all);
+  const days = groupTimelineEntriesByDay(all, timeZone);
   const filtered = before === undefined ? days : days.filter((day) => day.date < before);
 
   return filtered.slice(0, limitDays).map((day) => ({ date: day.date, entries: [...day.entries] }));
 }
 
 // The dates in `[from, to]` that have ≥1 ready diary entry for the user — the date-jump calendar's marks,
-// derived from each entry's `occurred_at` (UTC day) rather than a stored day column. Distinct, ascending.
-// Diary-scoped so the calendar marks land on the days the diary-filtered Timeline actually shows.
+// derived from each entry's `occurred_at` projected through the learner's timezone (#606) rather than a
+// stored day column. Distinct, ascending. Diary-scoped so the calendar marks land on the days the
+// diary-filtered Timeline actually shows.
 export async function listCalendarDates(
   db: DbClient,
   userId: string,
   from: string,
-  to: string
+  to: string,
+  timeZone: string
 ): Promise<ReadonlyArray<string>> {
   const rows = await db
     .select({ occurredAt: personalEntries.occurredAt })
@@ -189,7 +192,7 @@ export async function listCalendarDates(
     .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
     .where(and(eq(personalEntries.userId, userId), readyDiary()));
 
-  const days = new Set(rows.map((row) => toDayKey(row.occurredAt)));
+  const days = new Set(rows.map((row) => localDayKey(row.occurredAt, timeZone)));
   return [...days].filter((day) => day >= from && day <= to).sort();
 }
 

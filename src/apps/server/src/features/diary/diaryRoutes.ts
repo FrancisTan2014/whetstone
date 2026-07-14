@@ -14,6 +14,7 @@ import {
   type DiaryDependencies
 } from "./diaryCommands.js";
 import { listCalendarDates, listTimelinePage } from "./diaryQueries.js";
+import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
   getVoiceCaptureStatus,
   listActiveVoiceCaptures,
@@ -147,11 +148,13 @@ export function registerDiaryRoutes(
       return reply.code(400).send(invalidRequest);
     }
 
+    const userId = request.server.currentUser.getCurrentUserId();
     const days = await listTimelinePage(
       dependencies.db,
-      request.server.currentUser.getCurrentUserId(),
+      userId,
       parsed.data.before,
-      parsed.data.limit ?? DEFAULT_TIMELINE_DAYS
+      parsed.data.limit ?? DEFAULT_TIMELINE_DAYS,
+      await getLearnerTimeZone(dependencies.db, userId)
     );
 
     return { days };
@@ -164,11 +167,13 @@ export function registerDiaryRoutes(
       return reply.code(400).send(invalidRequest);
     }
 
+    const userId = request.server.currentUser.getCurrentUserId();
     const dates = await listCalendarDates(
       dependencies.db,
-      request.server.currentUser.getCurrentUserId(),
+      userId,
       parsed.data.from,
-      parsed.data.to
+      parsed.data.to,
+      await getLearnerTimeZone(dependencies.db, userId)
     );
 
     return { dates };

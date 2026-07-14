@@ -42,11 +42,24 @@ vi.mock("../capture/voiceCaptureApi", () => ({
   retryVoiceCapture: vi.fn()
 }));
 
-import type { DiaryEntryDto, TimelineDayDto, TimelineEntryDto } from "@whetstone/contracts";
+// The page adopts the learner's server-owned timezone once on mount (#606); stub the preferences module
+// so grouping is deterministic (the real one performs a network fetch).
+vi.mock("../../shared/preferences/preferencesApi", () => ({
+  fetchPreferences: vi.fn(),
+  resolveBrowserTimeZone: vi.fn()
+}));
+
+import type {
+  DiaryEntryDto,
+  PreferencesDto,
+  TimelineDayDto,
+  TimelineEntryDto
+} from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
-import { toDayKey } from "@whetstone/domain";
+import { localDayKey } from "@whetstone/domain";
 
 import { submitVoiceCapture, fetchActiveVoiceCaptures } from "../capture/voiceCaptureApi";
+import { fetchPreferences, resolveBrowserTimeZone } from "../../shared/preferences/preferencesApi";
 import {
   submitDiaryCapture,
   deleteDiaryEntry,
@@ -64,10 +77,16 @@ const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
 const mockedVoiceSubmit = vi.mocked(submitVoiceCapture);
 const mockedVoiceActive = vi.mocked(fetchActiveVoiceCaptures);
+const mockedPreferences = vi.mocked(fetchPreferences);
+const mockedResolveZone = vi.mocked(resolveBrowserTimeZone);
+
+// The learner's zone the page groups by. Use the real browser zone so it matches how the test builds
+// in-month dates (MONTH below), keeping grouping deterministic on any machine.
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // Dates are built inside the diary's current month so the date-jump calendar actually renders their
 // buttons (the grid only draws the visible month).
-const MONTH = toDayKey(new Date()).slice(0, 7);
+const MONTH = localDayKey(new Date(), BROWSER_ZONE).slice(0, 7);
 const d = (day: number): string => `${MONTH}-${String(day).padStart(2, "0")}`;
 
 // A diary timeline row (#571): a discriminated `kind: "diary"` DTO carrying the rich body + its plaintext.
@@ -182,6 +201,8 @@ beforeEach(() => {
   mockedTimeline.mockResolvedValue({ days: [] });
   mockedCalendar.mockResolvedValue({ dates: [] });
   mockedVoiceActive.mockResolvedValue([]);
+  mockedResolveZone.mockReturnValue(BROWSER_ZONE);
+  mockedPreferences.mockResolvedValue({ readingSize: "md", theme: "day", timeZone: BROWSER_ZONE });
   vi.stubGlobal("IntersectionObserver", StubObserver);
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -196,6 +217,28 @@ describe("DiaryPage timeline", () => {
     await renderReady(makeCapture().capture);
 
     expect(screen.getByText(/No entries yet/)).toBeTruthy();
+  });
+
+  it("ignores a timezone that resolves after the page unmounts (no update on an unmounted page)", async () => {
+    let resolvePreferences: ((value: PreferencesDto) => void) | undefined;
+    mockedPreferences.mockReturnValueOnce(
+      new Promise<PreferencesDto>((resolve) => {
+        resolvePreferences = resolve;
+      })
+    );
+    // Never resolve the first page, so nothing but the timezone adoption is in flight.
+    mockedTimeline.mockReturnValue(new Promise(() => {}));
+
+    const view = render(<DiaryPage capture={makeCapture().capture} />);
+    view.unmount();
+
+    // Resolving after unmount hits the cleanup guard: it must not throw or attempt a state update.
+    await act(async () => {
+      resolvePreferences?.({ readingSize: "md", theme: "day", timeZone: "America/New_York" });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("heading", { level: 1, name: "Diary" })).toBeNull();
   });
 
   it("shows a fatal error with retry when the first page fails to load", async () => {

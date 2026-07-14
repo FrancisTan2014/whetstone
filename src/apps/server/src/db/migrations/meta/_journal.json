@@ -330,6 +330,13 @@
       "when": 1783989843228,
       "tag": "0046_lively_sunspot",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1783995836211,
+      "tag": "0047_silent_jackpot",
+      "breakpoints": true
     }
   ]
 }

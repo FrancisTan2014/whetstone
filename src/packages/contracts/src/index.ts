@@ -347,14 +347,21 @@ export type {
 } from "./readingPositionContracts.js";
 export {
   defaultPreferences,
+  ianaTimeZoneSchema,
   parsePreferences,
+  parseStoredPreferences,
   parseUpsertPreferencesRequest,
   preferencesSchema,
   readingSizes,
+  storedPreferencesSchema,
   themes,
   upsertPreferencesRequestSchema
 } from "./preferencesContracts.js";
-export type { PreferencesDto, UpsertPreferencesRequest } from "./preferencesContracts.js";
+export type {
+  PreferencesDto,
+  StoredPreferencesDto,
+  UpsertPreferencesRequest
+} from "./preferencesContracts.js";
 export {
   addMemoryPromptRequestSchema,
   captureSourceSchema,

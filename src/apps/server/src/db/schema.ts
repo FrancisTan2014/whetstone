@@ -459,10 +459,13 @@ export const recitationWholeWork = pgTable("recitation_whole_work", {
 
 // Per-user reader preferences (work-independent): text size and Day/Night theme, server-owned so they
 // restore on any device. One row per user (current user = DEFAULT_USER_ID in v0). Designed to grow —
-// new settings join as columns, no new endpoint. `updated_at` records the last change.
+// new settings join as columns, no new endpoint. `timezone` is the learner's IANA calendar-day zone
+// (#606), nullable until first-use defaulting persists the browser's resolved zone. `updated_at` records
+// the last change.
 export const readerPreferences = pgTable("reader_preferences", {
   readingSize: text("reading_size").notNull(),
   theme: text("theme").notNull(),
+  timezone: text("timezone"),
   updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
   userId: text("user_id").primaryKey()
 });

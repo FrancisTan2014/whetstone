@@ -1,0 +1,1 @@
+ALTER TABLE "reader_preferences" ADD COLUMN "timezone" text;

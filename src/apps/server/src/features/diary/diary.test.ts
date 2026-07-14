@@ -19,7 +19,8 @@ import {
   memoryNotes,
   memoryPrompts,
   notes,
-  personalEntries
+  personalEntries,
+  readerPreferences
 } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
@@ -435,6 +436,55 @@ describe("GET /api/diary/calendar", () => {
     });
 
     expect(response.statusCode).toBe(400);
+  });
+});
+
+describe("day grouping honors the learner's stored timezone (#606)", () => {
+  // Two instants on the same UTC calendar day (2026-06-10) that fall on DIFFERENT days in a zone behind
+  // UTC: 02:00Z is still 2026-06-09 in New York (UTC−4 in June), while 12:00Z is 2026-06-10 there.
+  async function seedStraddlingEntries(): Promise<void> {
+    context.setNow("2026-06-10T02:00:00.000Z");
+    await createEntry("late on the 9th in New York");
+    context.setNow("2026-06-10T12:00:00.000Z");
+    await createEntry("midday on the 10th in New York");
+  }
+
+  it("groups the calendar by the learner's local day, not the server's UTC day", async () => {
+    await seedStraddlingEntries();
+
+    // Without a stored zone, both instants share the UTC day 2026-06-10.
+    const utcCalendar = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/calendar?from=2026-06-01&to=2026-06-30"
+    });
+    expect(utcCalendar.json()).toEqual({ dates: ["2026-06-10"] });
+
+    // Persist a New York zone; the same instants now split across two local days.
+    await context.db.insert(readerPreferences).values({
+      readingSize: "md",
+      theme: "day",
+      timezone: "America/New_York",
+      userId: DEFAULT_USER_ID
+    });
+
+    const nyCalendar = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/calendar?from=2026-06-01&to=2026-06-30"
+    });
+    expect(nyCalendar.json()).toEqual({ dates: ["2026-06-09", "2026-06-10"] });
+  });
+
+  it("groups the timeline by the learner's local day", async () => {
+    await seedStraddlingEntries();
+    await context.db.insert(readerPreferences).values({
+      readingSize: "md",
+      theme: "day",
+      timezone: "America/New_York",
+      userId: DEFAULT_USER_ID
+    });
+
+    const page = await timeline();
+    expect(page.days.map((day) => day.date)).toEqual(["2026-06-10", "2026-06-09"]);
   });
 });
 

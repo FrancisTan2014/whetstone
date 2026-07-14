@@ -43,12 +43,17 @@ rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`
 `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
-`diaryTimeline.ts` (#246 voice-diary pure date logic — `toDayKey`/`isDayKey`/`toMonthKey`, and
+`diaryTimeline.ts` (#246 voice-diary pure date logic — `isDayKey`/`toMonthKey`, and
 `monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar; day-grouping now lives in `timeline.ts`),
+`localDay.ts` (#606 the learner's local calendar-day boundary: the single pure projection
+`localDayKey(instant, timeZone)` + `localDayBoundary(now, timeZone) → {dateKey, utcStart, utcEnd}` and
+`isTimeZone`, exact over `Intl` — every day-grouping/per-day-cap consumer derives its day from here so
+Today/Recitation/Diary can never disagree; DST-length days are why the boundary returns two instants),
 `timeline.ts` (#571 the logical Timeline: the `diary`/`note`/`work`/`recitation` discriminated-kind
 vocabulary, each kind
 mapped to a real Entry type — there is no `timeline_entry`; the deterministic order `occurredAt` DESC with a
-stable `entryId` ASC tie-break; and day-grouping/`timelineDays`/`groupTimelineEntriesByDay` so the Timeline
+stable `entryId` ASC tie-break; and day-grouping/`timelineDays`/`groupTimelineEntriesByDay` (each taking the
+learner's `timeZone` via `localDay.ts`) so the Timeline
 is a derived view, never a store), `recitation.ts` (#577 the learner-controlled recitation-plan phase
 vocabulary `familiarizing`/`learning`/`maintenance` + `isRecitationPhase`), `recitationPassage.ts` (#578
 the pure passage engine: `seedPassageRanges`/`splitPassageRange`/`mergePassageRanges` for boundary edits
