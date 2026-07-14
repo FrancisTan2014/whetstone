@@ -50,11 +50,11 @@ async function loadPersonalTimelineEntries(
     .select({
       entryId: notes.entryId,
       occurredAt: personalEntries.occurredAt,
-      text: notes.markdownBody
+      text: notes.bodyText
     })
     .from(notes)
     .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
-    .where(eq(personalEntries.userId, userId));
+    .where(and(eq(personalEntries.userId, userId), eq(notes.kind, "note")));
 
   // An authored (owned) Work is a personal Entry too (#576): it draws chronology from the same
   // `personal_entries` facet, so it surfaces on the learner's Timeline alongside diary entries and notes.
@@ -122,7 +122,9 @@ async function loadPersonalTimelineEntries(
     entryId: row.entryId,
     kind: "note",
     occurredAt: row.occurredAt.toISOString(),
-    text: row.text
+    // `body_text` is non-null for a `kind = 'note'` row (the DB check constraint guarantees it), and the
+    // query filters to notes, so the readable body is always present here.
+    text: row.text as string
   }));
   const workTimeline: ReadonlyArray<TimelineEntryDto> = workRows.map((row) => ({
     entryId: row.entryId,

@@ -12,6 +12,7 @@ import type {
   ReadingPositionResponse
 } from "@whetstone/contracts";
 import { epubContentType } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -20,7 +21,6 @@ import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
-import { seedNoteTemplates } from "../notes/noteCommands.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
@@ -65,7 +65,6 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
   const pglite = new PGlite();
   await runMigrations(pglite);
   const db = createDbClient(pglite);
-  await seedNoteTemplates(db);
   const sourcesDir = await mkdtemp(join(tmpdir(), "whetstone-doc-anchor-"));
   const imagesDir = await mkdtemp(join(tmpdir(), "whetstone-doc-anchor-img-"));
 
@@ -158,13 +157,12 @@ describe("PM doc_block ids are first-class addressable anchors (#312 regression)
     const { docBlockId, plaintext, workEntryId } = await ingestEpubWithDocBlock();
 
     const created = await postNote(workEntryId, {
-      answers: { noticed: "A tidy opening." },
       anchor: {
         blockEntryId: docBlockId,
         contextSnapshot: plaintext,
         selectedTextSnapshot: plaintext
       },
-      templateId: "thought"
+      bodyDoc: createTextDocument("A tidy opening.")
     });
     expect(created.statusCode).toBe(201);
     const note = created.json() as NoteDto;
@@ -192,11 +190,11 @@ describe("PM doc_block ids are first-class addressable anchors (#312 regression)
     // Editing the note authorizes through the doc_block-anchored lookup (getNoteForWork).
     const patched = await context.server.inject({
       method: "PATCH",
-      payload: { answers: { noticed: "Revised." }, templateId: "thought" },
+      payload: { bodyDoc: createTextDocument("Revised.") },
       url: `/api/works/${workEntryId}/notes/${note.entryId}`
     });
     expect(patched.statusCode).toBe(200);
-    expect((patched.json() as NoteDto).answers["noticed"]).toBe("Revised.");
+    expect((patched.json() as NoteDto).bodyText).toBe("Revised.");
   });
 
   it("saves and restores a reading position anchored to a PM doc_block id", async () => {

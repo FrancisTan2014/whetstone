@@ -1,9 +1,5 @@
-import {
-  parseNoteTemplateDto,
-  type NoteDto,
-  type NoteOverviewDto,
-  type NoteTemplateDto
-} from "@whetstone/contracts";
+import type { NoteDto, NoteOverviewDto } from "@whetstone/contracts";
+import type { DocumentNodeJSON } from "@whetstone/document";
 import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
@@ -12,47 +8,11 @@ import type { DbClient } from "../../db/dbClient.js";
 import {
   authors,
   noteAnchors,
-  noteTemplates,
   notes,
   personalEntries,
   readingUnits,
   workMeta
 } from "../../db/schema.js";
-
-type TemplateRow = Readonly<{
-  fieldsJson: unknown;
-  id: string;
-  name: string;
-}>;
-
-const templateColumns = {
-  fieldsJson: noteTemplates.fieldsJson,
-  id: noteTemplates.id,
-  name: noteTemplates.name
-} as const;
-
-function toTemplateDto(row: TemplateRow): NoteTemplateDto {
-  return parseNoteTemplateDto({ fields: row.fieldsJson, id: row.id, name: row.name });
-}
-
-export async function listNoteTemplates(db: DbClient): Promise<ReadonlyArray<NoteTemplateDto>> {
-  const rows = await db
-    .select(templateColumns)
-    .from(noteTemplates)
-    .orderBy(asc(noteTemplates.orderIndex));
-
-  return rows.map(toTemplateDto);
-}
-
-export async function getNoteTemplateById(
-  db: DbClient,
-  id: string
-): Promise<NoteTemplateDto | undefined> {
-  const rows = await db.select(templateColumns).from(noteTemplates).where(eq(noteTemplates.id, id));
-  const row = rows[0];
-
-  return row === undefined ? undefined : toTemplateDto(row);
-}
 
 // A block's content plus its position in the work's reading order — the reading unit's order index
 // then the block's order index within that unit — so a cross-block span can be checked for a valid
@@ -99,29 +59,29 @@ export async function findBlockInWork(
 }
 
 type NoteRow = Readonly<{
-  answersJson: unknown;
   blockEntryId: string;
+  bodyDoc: unknown;
+  bodyText: string | null;
   contextSnapshot: string;
   endBlockEntryId: string;
   endOffset: number | null;
   entryId: string;
-  markdownBody: string;
+  kind: "note" | "mark";
   selectedText: string;
   startOffset: number | null;
-  templateId: string | null;
 }>;
 
 const noteColumns = {
-  answersJson: notes.answersJson,
   blockEntryId: noteAnchors.blockEntryId,
+  bodyDoc: notes.bodyDoc,
+  bodyText: notes.bodyText,
   contextSnapshot: noteAnchors.contextSnapshot,
   endBlockEntryId: noteAnchors.endBlockEntryId,
   endOffset: noteAnchors.endOffset,
   entryId: notes.entryId,
-  markdownBody: notes.markdownBody,
+  kind: notes.kind,
   selectedText: noteAnchors.selectedText,
-  startOffset: noteAnchors.startOffset,
-  templateId: notes.templateId
+  startOffset: noteAnchors.startOffset
 } as const;
 
 function toNoteAnchor(row: NoteRow): NoteAnchor {
@@ -142,11 +102,11 @@ function toNoteAnchor(row: NoteRow): NoteAnchor {
 function toNoteDto(row: NoteRow): NoteDto {
   return {
     anchor: toNoteAnchor(row),
-    answers: row.answersJson as Record<string, string>,
     blockEntryId: toEntryId(row.blockEntryId),
+    bodyDoc: row.bodyDoc as DocumentNodeJSON | null,
+    bodyText: row.bodyText,
     entryId: toEntryId(row.entryId),
-    markdown: row.markdownBody,
-    templateId: row.templateId
+    kind: row.kind
   };
 }
 

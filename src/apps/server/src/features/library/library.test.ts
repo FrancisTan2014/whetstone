@@ -1,6 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
+import { createTextDocument } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -308,7 +309,13 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
     sha256: "hash",
     workEntryId: "work-1"
   });
-  await db.insert(notes).values({ answersJson: {}, entryId: "note-1", markdownBody: "note" });
+  await db.insert(notes).values({
+    bodyDoc: createTextDocument("note"),
+    bodyText: "note",
+    captureSource: "reader",
+    entryId: "note-1",
+    kind: "note"
+  });
   await db.insert(personalEntries).values({
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     entryId: "note-1",

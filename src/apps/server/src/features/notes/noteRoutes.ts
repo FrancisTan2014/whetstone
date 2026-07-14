@@ -13,7 +13,7 @@ import {
   updateNote,
   type NotesDependencies
 } from "./noteCommands.js";
-import { listNoteTemplates, listNotesForUser, listNotesForWork } from "./noteQueries.js";
+import { listNotesForUser, listNotesForWork } from "./noteQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 
@@ -22,10 +22,6 @@ type WorkParams = Readonly<{ workEntryId: string }>;
 type NoteParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 
 export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesDependencies): void {
-  server.get("/api/note-templates", async () => ({
-    templates: await listNoteTemplates(dependencies.db)
-  }));
-
   // Every note the current user owns, across all works, for the cross-work Notes mode.
   server.get("/api/notes", async (request) => ({
     notes: await listNotesForUser(dependencies.db, request.server.currentUser.getCurrentUserId())
@@ -55,10 +51,6 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
     );
 
     switch (result.status) {
-      case "template_not_found":
-        return reply.code(400).send({ error: "template_not_found" });
-      case "invalid_answers":
-        return reply.code(400).send({ error: "invalid_answers", reason: result.reason });
       case "anchor_out_of_range":
         return reply.code(400).send({ error: "anchor_out_of_range" });
       case "block_not_found":
@@ -135,10 +127,6 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
       switch (result.status) {
         case "note_not_found":
           return reply.code(404).send({ error: "note_not_found" });
-        case "template_not_found":
-          return reply.code(400).send({ error: "template_not_found" });
-        case "invalid_answers":
-          return reply.code(400).send({ error: "invalid_answers", reason: result.reason });
         case "updated":
           request.log.info(
             {

@@ -9,11 +9,11 @@ import type {
   NoteDto,
   NoteListDto,
   NotesOverviewListDto,
-  NoteTemplateListDto,
   ReadingUnitContentDto,
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -21,7 +21,7 @@ import { entries, entryLinks, noteAnchors, notes, personalEntries } from "../../
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
-import { seedNoteTemplates, type NotesDependencies } from "./noteCommands.js";
+import type { NotesDependencies } from "./noteCommands.js";
 import { listNotesForUser, listNotesForWork } from "./noteQueries.js";
 import { toEntryId } from "@whetstone/domain";
 import type { ContentDependencies } from "../content/contentCommands.js";
@@ -40,7 +40,6 @@ async function buildContext(): Promise<TestContext> {
   const pglite = new PGlite();
   await runMigrations(pglite);
   const db = createDbClient(pglite);
-  await seedNoteTemplates(db);
   const sourcesDir = await mkdtemp(join(tmpdir(), "whetstone-notes-"));
 
   let workSequence = 0;
@@ -224,7 +223,6 @@ async function createSubBlockNote(
   plaintext: string
 ): Promise<NoteDto> {
   const response = await postNote(workEntryId, {
-    answers: { meaning: "to outwit" },
     anchor: {
       blockEntryId,
       contextSnapshot: plaintext,
@@ -232,7 +230,7 @@ async function createSubBlockNote(
       selectedTextSnapshot: "brown fox",
       startOffset: 10
     },
-    templateId: "vocabulary"
+    bodyDoc: createTextDocument("to outwit")
   });
 
   return response.json() as NoteDto;
@@ -244,9 +242,8 @@ async function createWholeBlockNote(
   plaintext: string
 ): Promise<NoteDto> {
   const response = await postNote(workEntryId, {
-    answers: { noticed: "A tidy aphorism." },
     anchor: { blockEntryId, contextSnapshot: plaintext, selectedTextSnapshot: plaintext },
-    templateId: "thought"
+    bodyDoc: createTextDocument("A tidy aphorism.")
   });
 
   return response.json() as NoteDto;
@@ -308,39 +305,11 @@ afterEach(async () => {
   await rm(context.sourcesDir, { force: true, recursive: true });
 });
 
-describe("note template routes", () => {
-  it("lists the seeded templates in order", async () => {
-    const response = await context.server.inject({ method: "GET", url: "/api/note-templates" });
-
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as NoteTemplateListDto;
-    expect(body.templates.map((template) => template.id)).toEqual([
-      "vocabulary",
-      "expression",
-      "thought"
-    ]);
-    expect(body.templates[0]?.fields.map((field) => field.id)).toEqual([
-      "meaning",
-      "explanation",
-      "memory_hook",
-      "example"
-    ]);
-  });
-
-  it("seeds idempotently", async () => {
-    await seedNoteTemplates(context.db);
-
-    const response = await context.server.inject({ method: "GET", url: "/api/note-templates" });
-    expect((response.json() as NoteTemplateListDto).templates).toHaveLength(3);
-  });
-});
-
 describe("create note route", () => {
-  it("creates a sub-block note linked to its source block", async () => {
+  it("creates a sub-block note linked to its source block, deriving its readable text", async () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "to surrender", memory_hook: "" },
       anchor: {
         blockEntryId,
         contextSnapshot: plaintext,
@@ -348,15 +317,16 @@ describe("create note route", () => {
         selectedTextSnapshot: "brown fox",
         startOffset: 10
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("to surrender")
     });
 
     expect(response.statusCode).toBe(201);
     const note = response.json() as NoteDto;
-    expect(note.templateId).toBe("vocabulary");
+    expect(note.kind).toBe("note");
     expect(note.blockEntryId).toBe(blockEntryId);
-    expect(note.answers).toEqual({ meaning: "to surrender", memory_hook: "" });
-    expect(note.markdown).toBe("**Meaning in this context**\n\nto surrender");
+    expect(note.bodyDoc).toEqual(createTextDocument("to surrender"));
+    // The readable text is derived on the server, never trusted from the client.
+    expect(note.bodyText).toBe("to surrender");
     expect(note.anchor).toEqual({
       blockEntryId,
       contextSnapshot: plaintext,
@@ -367,7 +337,10 @@ describe("create note route", () => {
     });
 
     const noteRows = await context.db.select().from(notes).where(eq(notes.entryId, note.entryId));
-    expect(noteRows[0]?.markdownBody).toBe("**Meaning in this context**\n\nto surrender");
+    expect(noteRows[0]?.kind).toBe("note");
+    expect(noteRows[0]?.bodyDoc).toEqual(createTextDocument("to surrender"));
+    expect(noteRows[0]?.bodyText).toBe("to surrender");
+    expect(noteRows[0]?.captureSource).toBe("reader");
 
     const anchorRows = await context.db
       .select()
@@ -390,9 +363,8 @@ describe("create note route", () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { noticed: "A tidy aphorism." },
       anchor: { blockEntryId, contextSnapshot: plaintext, selectedTextSnapshot: plaintext },
-      templateId: "thought"
+      bodyDoc: createTextDocument("A tidy aphorism.")
     });
 
     expect(response.statusCode).toBe(201);
@@ -406,56 +378,28 @@ describe("create note route", () => {
     expect(anchorRows[0]?.startOffset).toBeNull();
   });
 
-  it("rejects an unknown template", async () => {
+  it("rejects a blank note body at the boundary", async () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: { blockEntryId, contextSnapshot: plaintext, selectedTextSnapshot: plaintext },
-      templateId: "missing"
+      bodyDoc: createTextDocument("   ")
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "template_not_found" });
-  });
-
-  it("rejects answers that use an unknown field", async () => {
-    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
-
-    const response = await postNote(workEntryId, {
-      answers: { mystery: "x" },
-      anchor: { blockEntryId, contextSnapshot: plaintext, selectedTextSnapshot: plaintext },
-      templateId: "vocabulary"
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "invalid_answers", reason: "unknown_field" });
-  });
-
-  it("rejects a note with no non-blank answers", async () => {
-    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
-
-    const response = await postNote(workEntryId, {
-      answers: { meaning: "   " },
-      anchor: { blockEntryId, contextSnapshot: plaintext, selectedTextSnapshot: plaintext },
-      templateId: "vocabulary"
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "invalid_answers", reason: "empty" });
+    expect(response.json()).toEqual({ error: "invalid_request" });
   });
 
   it("returns 404 when the block is not part of the work", async () => {
     const { workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId: "missing-block",
         contextSnapshot: "absent text",
         selectedTextSnapshot: "absent"
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(404);
@@ -466,7 +410,6 @@ describe("create note route", () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId,
         contextSnapshot: plaintext,
@@ -474,7 +417,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "brown fox",
         startOffset: 0
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(400);
@@ -485,7 +428,6 @@ describe("create note route", () => {
     const { blockEntryId, workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId,
         contextSnapshot: "a sly brown fox from another tale",
@@ -493,7 +435,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "brown fox",
         startOffset: 10
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(400);
@@ -504,13 +446,12 @@ describe("create note route", () => {
     const { blockEntryId, workEntryId } = await createWorkWithBlock();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId,
         contextSnapshot: "absent here",
         selectedTextSnapshot: "absent"
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(400);
@@ -520,7 +461,7 @@ describe("create note route", () => {
   it("rejects a malformed request body at the boundary", async () => {
     const { workEntryId } = await createWorkWithBlock();
 
-    const response = await postNote(workEntryId, { templateId: "vocabulary" });
+    const response = await postNote(workEntryId, { bodyDoc: createTextDocument("x") });
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
@@ -531,7 +472,6 @@ describe("create note route", () => {
       await createWorkWithTwoBlocks();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "spanning two blocks" },
       anchor: {
         blockEntryId: startBlockEntryId,
         contextSnapshot: startPlaintext,
@@ -540,7 +480,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "fox. Jumps",
         startOffset: 16
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("spanning two blocks")
     });
 
     expect(response.statusCode).toBe(201);
@@ -563,7 +503,6 @@ describe("create note route", () => {
     const { startBlockEntryId, startPlaintext, workEntryId } = await createWorkWithTwoBlocks();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId: startBlockEntryId,
         contextSnapshot: startPlaintext,
@@ -572,7 +511,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "fox",
         startOffset: 16
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(404);
@@ -584,7 +523,6 @@ describe("create note route", () => {
       await createWorkWithTwoBlocks();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId: startBlockEntryId,
         contextSnapshot: startPlaintext,
@@ -593,7 +531,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "fox",
         startOffset: 16
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(400);
@@ -606,7 +544,6 @@ describe("create note route", () => {
 
     // Reversed: the start is the later block and the end is the earlier block, same unit.
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId: endBlockEntryId,
         contextSnapshot: endPlaintext,
@@ -615,7 +552,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "reversed",
         startOffset: 5
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(400);
@@ -627,7 +564,6 @@ describe("create note route", () => {
       await createWorkWithTwoUnits();
 
     const response = await postNote(workEntryId, {
-      answers: { meaning: "x" },
       anchor: {
         blockEntryId: firstUnitBlockEntryId,
         contextSnapshot: firstUnitPlaintext,
@@ -636,7 +572,7 @@ describe("create note route", () => {
         selectedTextSnapshot: "across units",
         startOffset: 4
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(400);
@@ -656,7 +592,7 @@ describe("create mark route", () => {
     });
   }
 
-  it("saves a mark as a note with a null template and empty body", async () => {
+  it("saves a bodyless mark with a null body and lists and deletes like a note", async () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
 
     const response = await postMark(workEntryId, {
@@ -671,10 +607,16 @@ describe("create mark route", () => {
 
     expect(response.statusCode).toBe(201);
     const mark = response.json() as NoteDto;
-    expect(mark.templateId).toBeNull();
-    expect(mark.markdown).toBe("");
-    expect(mark.answers).toEqual({});
+    expect(mark.kind).toBe("mark");
+    expect(mark.bodyDoc).toBeNull();
+    expect(mark.bodyText).toBeNull();
     expect(mark.anchor.selectedTextSnapshot).toBe("brown fox");
+
+    const markRows = await context.db.select().from(notes).where(eq(notes.entryId, mark.entryId));
+    expect(markRows[0]?.kind).toBe("mark");
+    expect(markRows[0]?.bodyDoc).toBeNull();
+    expect(markRows[0]?.bodyText).toBeNull();
+    expect(markRows[0]?.captureSource).toBe("reader");
 
     // It persists and is listed like any note, and can be deleted.
     const listed = (await listNotes(workEntryId)).json() as NoteListDto;
@@ -721,7 +663,7 @@ describe("create mark route", () => {
   it("rejects a malformed mark body at the boundary", async () => {
     const { workEntryId } = await createWorkWithBlock();
 
-    const response = await postMark(workEntryId, { templateId: "vocabulary" });
+    const response = await postMark(workEntryId, { bodyDoc: createTextDocument("x") });
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
@@ -759,12 +701,12 @@ describe("list notes route", () => {
       selectedTextSnapshot: "brown fox",
       startOffset: 10
     });
-    expect(sub?.markdown).toBe("**Meaning in this context**\n\nto outwit");
+    expect(sub?.bodyText).toBe("to outwit");
 
     const whole = body.notes.find((note) => note.entryId === wholeBlock.entryId);
     expect(whole?.anchor.startOffset).toBeUndefined();
     expect(whole?.anchor.endOffset).toBeUndefined();
-    expect(whole?.templateId).toBe("thought");
+    expect(whole?.kind).toBe("note");
   });
 
   it("does not list a note that belongs to another work", async () => {
@@ -806,28 +748,27 @@ describe("note user ownership", () => {
 });
 
 describe("update note route", () => {
-  it("updates a note's answers and template and re-renders its markdown", async () => {
+  it("replaces the note body and re-derives its readable text", async () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
     const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
 
     const response = await patchNote(workEntryId, note.entryId, {
-      answers: { noticed: "Now a thought." },
-      templateId: "thought"
+      bodyDoc: createTextDocument("Now a thought.")
     });
 
     expect(response.statusCode).toBe(200);
     const updated = response.json() as NoteDto;
-    expect(updated.templateId).toBe("thought");
-    expect(updated.answers).toEqual({ noticed: "Now a thought." });
-    expect(updated.markdown).toBe("**What I noticed**\n\nNow a thought.");
+    expect(updated.kind).toBe("note");
+    expect(updated.bodyDoc).toEqual(createTextDocument("Now a thought."));
+    expect(updated.bodyText).toBe("Now a thought.");
     expect(updated.anchor).toEqual(note.anchor);
 
     const rows = await context.db.select().from(notes).where(eq(notes.entryId, note.entryId));
-    expect(rows[0]?.templateId).toBe("thought");
-    expect(rows[0]?.markdownBody).toBe("**What I noticed**\n\nNow a thought.");
+    expect(rows[0]?.bodyDoc).toEqual(createTextDocument("Now a thought."));
+    expect(rows[0]?.bodyText).toBe("Now a thought.");
 
     const listed = (await listNotes(workEntryId).then((r) => r.json())) as NoteListDto;
-    expect(listed.notes[0]?.templateId).toBe("thought");
+    expect(listed.notes[0]?.bodyText).toBe("Now a thought.");
   });
 
   it("bumps the shared personal-entry updated_at on edit, leaving created/occurred at capture (#571)", async () => {
@@ -843,8 +784,7 @@ describe("update note route", () => {
 
     context.setNow("2026-06-02T09:30:00.000Z");
     const response = await patchNote(workEntryId, note.entryId, {
-      answers: { noticed: "Edited note." },
-      templateId: "thought"
+      bodyDoc: createTextDocument("Edited note.")
     });
     expect(response.statusCode).toBe(200);
 
@@ -864,45 +804,30 @@ describe("update note route", () => {
     const second = await createWorkWithBlock();
 
     const response = await patchNote(second.workEntryId, note.entryId, {
-      answers: { noticed: "x" },
-      templateId: "thought"
+      bodyDoc: createTextDocument("x")
     });
 
     expect(response.statusCode).toBe(404);
     expect(response.json()).toEqual({ error: "note_not_found" });
   });
 
-  it("rejects an unknown template", async () => {
+  it("rejects a blank note body at the boundary", async () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
     const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
 
     const response = await patchNote(workEntryId, note.entryId, {
-      answers: { meaning: "x" },
-      templateId: "missing"
+      bodyDoc: createTextDocument("  ")
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "template_not_found" });
-  });
-
-  it("rejects answers with no non-blank value", async () => {
-    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
-    const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
-
-    const response = await patchNote(workEntryId, note.entryId, {
-      answers: { meaning: "  " },
-      templateId: "vocabulary"
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "invalid_answers", reason: "empty" });
+    expect(response.json()).toEqual({ error: "invalid_request" });
   });
 
   it("rejects a malformed update body at the boundary", async () => {
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
     const note = await createSubBlockNote(workEntryId, blockEntryId, plaintext);
 
-    const response = await patchNote(workEntryId, note.entryId, { answers: { meaning: "x" } });
+    const response = await patchNote(workEntryId, note.entryId, {});
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
@@ -983,8 +908,7 @@ describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
 
     // The note is still editable.
     const patched = await patchNote(workEntryId, note.entryId, {
-      answers: { noticed: "Still addressable." },
-      templateId: "thought"
+      bodyDoc: createTextDocument("Still addressable.")
     });
     expect(patched.statusCode).toBe(200);
 
@@ -1023,7 +947,7 @@ describe("cross-work notes overview", () => {
     expect(first?.workEntryId).toBe(aesop.workEntryId);
     expect(first?.authorName).toBe("Aesop");
     expect(first?.blockEntryId).toBe(aesop.blockEntryId);
-    expect(first?.markdown.length).toBeGreaterThan(0);
+    expect((first?.bodyText ?? "").length).toBeGreaterThan(0);
   });
 
   it("returns an empty list when the user has no notes", async () => {
@@ -1084,7 +1008,7 @@ describe("notes route isolation (cross-user) and failure paths", () => {
     try {
       const patch = await other.inject({
         method: "PATCH",
-        payload: { answers: { noticed: "hijacked" }, templateId: "thought" },
+        payload: { bodyDoc: createTextDocument("hijacked") },
         url: `/api/works/${workEntryId}/notes/${note.entryId}`
       });
       expect(patch.statusCode).toBe(404);

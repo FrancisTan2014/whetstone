@@ -1,11 +1,5 @@
-import {
-  noteTemplates as domainNoteTemplates,
-  renderNoteMarkdown,
-  toEntryId,
-  validateNoteAnswers,
-  type EntryId,
-  type NoteAnchor
-} from "@whetstone/domain";
+import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
+import { documentReadableText, type DocumentNodeJSON } from "@whetstone/document";
 import type {
   CreateMarkRequest,
   CreateNoteRequest,
@@ -15,20 +9,8 @@ import type {
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import {
-  entries,
-  entryLinks,
-  noteAnchors,
-  noteTemplates,
-  notes,
-  personalEntries
-} from "../../db/schema.js";
-import {
-  findBlockInWork,
-  getNoteForWork,
-  getNoteTemplateById,
-  type BlockInWork
-} from "./noteQueries.js";
+import { entries, entryLinks, noteAnchors, notes, personalEntries } from "../../db/schema.js";
+import { findBlockInWork, getNoteForWork, type BlockInWork } from "./noteQueries.js";
 
 // Real infrastructure boundaries (database client, id generation, the clock) are passed in so
 // commands stay deterministic and testable. `now` stamps the shared `personal_entries` chronology
@@ -41,59 +23,31 @@ export type NotesDependencies = Readonly<{
 
 export type CreateNoteResult =
   | Readonly<{ note: NoteDto; status: "created" }>
-  | Readonly<{ status: "template_not_found" }>
   | Readonly<{ status: "block_not_found" }>
-  | Readonly<{ reason: "empty" | "unknown_field"; status: "invalid_answers" }>
   | Readonly<{ status: "anchor_out_of_range" }>;
 
-// A mark (#255) skips the template, so it has no template/answer failure modes — only the shared
-// anchor checks a templated note also runs.
-export type CreateMarkResult =
-  | Readonly<{ note: NoteDto; status: "created" }>
-  | Readonly<{ status: "block_not_found" }>
-  | Readonly<{ status: "anchor_out_of_range" }>;
+// A mark (#255) shares the note anchor checks but has no body, so its only failure modes are the
+// shared anchor checks a note also runs.
+export type CreateMarkResult = CreateNoteResult;
 
 export type UpdateNoteResult =
   | Readonly<{ note: NoteDto; status: "updated" }>
-  | Readonly<{ status: "note_not_found" }>
-  | Readonly<{ status: "template_not_found" }>
-  | Readonly<{ reason: "empty" | "unknown_field"; status: "invalid_answers" }>;
+  | Readonly<{ status: "note_not_found" }>;
 
 export type DeleteNoteResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "note_not_found" }>;
 
-// Seed the v0 templates from the domain's canonical definitions. Idempotent: re-running
-// inserts nothing for ids that already exist.
-export async function seedNoteTemplates(db: DbClient): Promise<void> {
-  const rows = domainNoteTemplates.map((template, index) => ({
-    fieldsJson: template.fields,
-    id: template.id,
-    name: template.name,
-    orderIndex: index
-  }));
-
-  await db.insert(noteTemplates).values(rows).onConflictDoNothing();
-}
-
+// Capture a note from a reader selection (#619): the client supplies the anchor and the canonical rich
+// `bodyDoc`; the readable `body_text` is ALWAYS derived here from that document, never trusted from the
+// client. After the shared anchor checks pass, persist a `note` row (its body + `capture_source =
+// 'reader'`) with its anchor and `annotates` link.
 export async function createNote(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
   request: CreateNoteRequest,
   userId: string
 ): Promise<CreateNoteResult> {
-  const template = await getNoteTemplateById(dependencies.db, request.templateId);
-
-  if (template === undefined) {
-    return { status: "template_not_found" };
-  }
-
-  const validation = validateNoteAnswers(template, request.answers);
-
-  if (validation.status !== "valid") {
-    return { reason: validation.status, status: "invalid_answers" };
-  }
-
   const blockCheck = await validateAnchorBlocks(dependencies.db, workEntryId, request.anchor);
 
   if (blockCheck !== "ok") {
@@ -102,44 +56,45 @@ export async function createNote(
 
   const noteEntryId = toEntryId(dependencies.createEntryId());
   const anchor = request.anchor;
-  const markdown = renderNoteMarkdown(template, validation.answers);
+  const bodyDoc = request.bodyDoc;
+  const bodyText = documentReadableText(bodyDoc);
 
   await persistNoteWithAnchor(dependencies.db, {
-    answers: validation.answers,
     anchor,
-    markdown,
+    bodyDoc,
+    bodyText,
+    kind: "note",
     noteEntryId,
     now: dependencies.now(),
-    templateId: template.id,
     userId
   });
 
   return {
     note: {
       anchor,
-      answers: validation.answers,
       blockEntryId: anchor.blockEntryId,
+      bodyDoc,
+      bodyText,
       entryId: noteEntryId,
-      markdown,
-      templateId: template.id
+      kind: "note"
     },
     status: "created"
   };
 }
 
-// Insert a note (templated or a mark) with its anchor and `annotates` link in one transaction.
-// `templateId` is null and `markdown`/`answers` empty for a mark (#255); a templated note passes its
-// rendered body and validated answers. Single owner of note row + its `personal_entries` chronology
-// facet (owner + timestamps; occurredAt = createdAt at capture) + anchor + link creation.
+// Insert a note (a rich body) or a mark (no body) with its anchor and `annotates` link in one
+// transaction. `body_doc`/`body_text` are null for a mark (#255); a note carries its validated document
+// and server-derived text. Single owner of note row + its `personal_entries` chronology facet (owner +
+// timestamps; occurredAt = createdAt at capture) + anchor + link creation.
 async function persistNoteWithAnchor(
   db: DbClient,
   params: Readonly<{
-    answers: Readonly<Record<string, string>>;
     anchor: NoteAnchor;
-    markdown: string;
+    bodyDoc: DocumentNodeJSON | null;
+    bodyText: string | null;
+    kind: "note" | "mark";
     noteEntryId: EntryId;
     now: Date;
-    templateId: string | null;
     userId: string;
   }>
 ): Promise<void> {
@@ -153,10 +108,11 @@ async function persistNoteWithAnchor(
       userId: params.userId
     });
     await tx.insert(notes).values({
-      answersJson: params.answers,
+      bodyDoc: params.bodyDoc,
+      bodyText: params.bodyText,
+      captureSource: "reader",
       entryId: params.noteEntryId,
-      markdownBody: params.markdown,
-      templateId: params.templateId
+      kind: params.kind
     });
     await tx.insert(noteAnchors).values({
       blockEntryId: params.anchor.blockEntryId,
@@ -175,9 +131,9 @@ async function persistNoteWithAnchor(
   });
 }
 
-// Create a mark (#255): a one-tap highlight with no template or body. Runs the same block + anchor
-// checks a templated note does, then persists a note with a null template and empty body/answers, so
-// it reuses the anchor, overlap, list, and delete model with no new entity.
+// Create a mark (#255): a one-tap highlight with no body. Runs the same block + anchor checks a note
+// does, then persists a bodyless `mark` row, so it reuses the anchor, overlap, list, and delete model
+// with no new entity.
 export async function createMark(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
@@ -194,30 +150,31 @@ export async function createMark(
   const anchor = request.anchor;
 
   await persistNoteWithAnchor(dependencies.db, {
-    answers: {},
     anchor,
-    markdown: "",
+    bodyDoc: null,
+    bodyText: null,
+    kind: "mark",
     noteEntryId,
     now: dependencies.now(),
-    templateId: null,
     userId
   });
 
   return {
     note: {
       anchor,
-      answers: {},
       blockEntryId: anchor.blockEntryId,
+      bodyDoc: null,
+      bodyText: null,
       entryId: noteEntryId,
-      markdown: "",
-      templateId: null
+      kind: "mark"
     },
     status: "created"
   };
 }
 
-// Edit an existing note's template and answers. The anchor is fixed at capture time and is
-// not changed here. The note must already belong to the work, so a forged or cross-work note
+// Edit an existing note's canonical body (#619): replace `body_doc` with the supplied document and
+// re-derive `body_text` from it on the server. The anchor is fixed at capture time and is not changed
+// here; the row stays a `note`. The note must already belong to the work, so a forged or cross-work note
 // id is rejected.
 export async function updateNote(
   dependencies: NotesDependencies,
@@ -232,25 +189,11 @@ export async function updateNote(
     return { status: "note_not_found" };
   }
 
-  const template = await getNoteTemplateById(dependencies.db, request.templateId);
-
-  if (template === undefined) {
-    return { status: "template_not_found" };
-  }
-
-  const validation = validateNoteAnswers(template, request.answers);
-
-  if (validation.status !== "valid") {
-    return { reason: validation.status, status: "invalid_answers" };
-  }
-
-  const markdown = renderNoteMarkdown(template, validation.answers);
+  const bodyDoc = request.bodyDoc;
+  const bodyText = documentReadableText(bodyDoc);
 
   await dependencies.db.transaction(async (tx) => {
-    await tx
-      .update(notes)
-      .set({ answersJson: validation.answers, markdownBody: markdown, templateId: template.id })
-      .where(eq(notes.entryId, noteEntryId));
+    await tx.update(notes).set({ bodyDoc, bodyText }).where(eq(notes.entryId, noteEntryId));
     // The note's owner/chronology lives in the shared `personal_entries` facet (#571); an edit is a
     // change to this Timeline-backed personal Entry, so bump `updated_at` in the same write.
     await tx
@@ -260,12 +203,7 @@ export async function updateNote(
   });
 
   return {
-    note: {
-      ...existing,
-      answers: validation.answers,
-      markdown,
-      templateId: template.id
-    },
+    note: { ...existing, bodyDoc, bodyText, kind: "note" },
     status: "updated"
   };
 }
