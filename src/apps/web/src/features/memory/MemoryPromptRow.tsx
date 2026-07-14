@@ -37,7 +37,7 @@ export function MemoryPromptRow({ onSaved, prompt }: MemoryPromptRowProps): Reac
   return (
     <li className="flex flex-col gap-2 rounded border border-border p-3">
       <p className="text-xs uppercase tracking-wide text-text-muted">
-        {prompt.lifecycle === "scheduled" ? "Scheduled" : "Draft"}
+        {prompt.lifecycle === "ready" ? "Scheduled" : "Draft"}
       </p>
       <label className="flex flex-col gap-1 text-sm text-text">
         Cue

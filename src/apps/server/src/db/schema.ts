@@ -570,16 +570,15 @@ export const memoryNotes = pgTable("memory_notes", {
   }).notNull()
 });
 
-// A Memory prompt (#595): one independently scheduled retrieval direction under a note. `note_entry_id`
-// is its owning note (the note carries the `personal_entries` row, so the prompt inherits ownership
-// transitively and never gets a Timeline row of its own — the note→prompt edge is also recorded in
-// `entry_links` as `contains`). `cue_doc`/`answer_doc` are the rich bodies, with `cue_text`/`answer_text`
-// their readable projections. `lifecycle` is `draft` (captured but no revealable answer, so no card) or
-// `scheduled`. `chunk_id` optionally links the direction to a practice chunk (#205) so the prompt's FSRS
-// state stays derivable by chunk — retained Memory provenance after the Practice retirement (#603). The
-// inlined FSRS
-// card columns and `answer_doc`/`answer_text` are NULL for a draft and all set once scheduled; `due_at`
-// is indexed for a cheap due scan.
+// A Memory prompt (#595, #617): one independently reviewable retrieval direction under a note.
+// `note_entry_id` is its owning note (the note carries the `personal_entries` row, so the prompt inherits
+// ownership transitively and never gets a Timeline row of its own — the note→prompt edge is also recorded
+// in `entry_links` as `contains`). `cue_doc`/`answer_doc` are the rich bodies, with `cue_text`/`answer_text`
+// their readable projections. `lifecycle` records content completeness: `draft` (no revealable answer, so
+// `answer_doc`/`answer_text` are NULL) or `ready` (a revealable answer). Scheduling state is NOT stored
+// here anymore — enrollment and FSRS state live in the shared `review_cards` substrate keyed by this
+// prompt's `entry_id` (#617). `chunk_id` optionally links the direction to a practice chunk (#205),
+// retained Memory provenance after the Practice retirement (#603).
 export const memoryPrompts = pgTable(
   "memory_prompts",
   {
@@ -593,46 +592,79 @@ export const memoryPrompts = pgTable(
     cueText: text("cue_text").notNull(),
     answerDoc: jsonb("answer_doc"),
     answerText: text("answer_text"),
-    lifecycle: text("lifecycle", { enum: ["draft", "scheduled"] as const }).notNull(),
+    lifecycle: text("lifecycle", { enum: ["draft", "ready"] as const }).notNull(),
     // Temporary retained Memory-provenance link (#603): optionally ties a prompt to the practice chunk
-    // (#205) it was harvested from, so its FSRS state stays derivable by chunk. Retained until a later
-    // issue migrates provenance off `chunk_id` and drops `domains`/`cases`/`chunks`.
+    // (#205) it was harvested from. Retained until a later issue migrates provenance off `chunk_id` and
+    // drops `domains`/`cases`/`chunks`.
     chunkId: text("chunk_id").references(() => chunks.id),
-    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
-    // Inlined FSRS card state (@whetstone/domain `ReviewState`), NULL until the prompt is scheduled.
-    stability: doublePrecision("stability"),
-    difficulty: doublePrecision("difficulty"),
-    elapsedDays: integer("elapsed_days"),
-    scheduledDays: integer("scheduled_days"),
-    learningSteps: integer("learning_steps"),
-    reps: integer("reps"),
-    lapses: integer("lapses"),
-    state: text("state", { enum: ["new", "learning", "review", "relearning"] as const }),
-    lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
-    dueAt: timestamp("due_at", { mode: "date", withTimezone: true })
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
   },
   (table) => [
     index("memory_prompts_note_idx").on(table.noteEntryId),
-    index("memory_prompts_chunk_idx").on(table.chunkId),
-    index("memory_prompts_due_idx").on(table.dueAt)
+    index("memory_prompts_chunk_idx").on(table.chunkId)
   ]
 );
 
-// The append-only prompt review log: one row per recorded review (the FSRS rating and when), so a
-// prompt's history is auditable independently of its current (overwritten) card state.
-export const memoryPromptReviews = pgTable(
-  "memory_prompt_reviews",
+// The shared review-card substrate (#617): the single owner of scheduling state for ANY reviewable
+// target. Keyed one-to-one by `target_entry_id` (an `entries.id`), so a target has a card iff it is
+// enrolled for review — a target with no row is not enrolled. `user_id` is the owner; `status` is
+// `active` (surfaced in the due scan) or `paused` (retained but withheld). `requested_retention` is the
+// resolved scheduling policy the seeding caller chose (review-time code reads it here, never switching
+// on the target's feature). Every `@whetstone/domain` `ReviewState` field is stored NOT NULL — a card is
+// complete, never a partial FSRS state — except `last_reviewed_at`, which is legitimately null until the
+// first review. This table depends only on `entries`; it never references Memory or Recitation.
+export const reviewCards = pgTable(
+  "review_cards",
+  {
+    targetEntryId: text("target_entry_id")
+      .primaryKey()
+      .references(() => entries.id),
+    userId: text("user_id").notNull(),
+    status: text("status", { enum: ["active", "paused"] as const }).notNull(),
+    requestedRetention: doublePrecision("requested_retention").notNull(),
+    stability: doublePrecision("stability").notNull(),
+    difficulty: doublePrecision("difficulty").notNull(),
+    elapsedDays: integer("elapsed_days").notNull(),
+    scheduledDays: integer("scheduled_days").notNull(),
+    learningSteps: integer("learning_steps").notNull(),
+    reps: integer("reps").notNull(),
+    lapses: integer("lapses").notNull(),
+    state: text("state", { enum: ["new", "learning", "review", "relearning"] as const }).notNull(),
+    dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull(),
+    lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("review_cards_owner_status_due_idx").on(table.userId, table.status, table.dueAt)
+  ]
+);
+
+// The append-only review-event log (#617): one row per scheduler transition on a target, keyed by the
+// same `target_entry_id` that identifies its card, so the history outlives any single card (it survives
+// a restart that re-seeds the card, and an unenroll that drops it). Discriminated by `type`: a `rating`
+// event carries the learner's FSRS `rating`; a `reset` event records an explicit schedule restart and
+// carries no rating. `occurred_at` is the review/restart instant. Reveal, snooze, pause, and resume write
+// no event. The `review_events_type_ck` check keeps the discriminant honest (rating ⇒ rating set, reset
+// ⇒ rating null). It references `entries`, never Memory or Recitation.
+export const reviewEvents = pgTable(
+  "review_events",
   {
     id: text("id").primaryKey(),
-    promptEntryId: text("prompt_entry_id")
+    targetEntryId: text("target_entry_id")
       .notNull()
-      .references(() => memoryPrompts.entryId),
-    rating: text("rating", {
-      enum: ["again", "hard", "good", "easy"] as const
-    }).notNull(),
-    reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
+      .references(() => entries.id),
+    type: text("type", { enum: ["rating", "reset"] as const }).notNull(),
+    rating: text("rating", { enum: ["again", "hard", "good", "easy"] as const }),
+    occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull()
   },
-  (table) => [index("memory_prompt_reviews_prompt_idx").on(table.promptEntryId)]
+  (table) => [
+    index("review_events_target_idx").on(table.targetEntryId),
+    check(
+      "review_events_type_ck",
+      sql`(${table.type} = 'rating' and ${table.rating} is not null) or (${table.type} = 'reset' and ${table.rating} is null)`
+    )
+  ]
 );
 
 // The shared ownership + chronology facet for personal (owned) Entries (#571): owner and the three

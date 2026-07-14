@@ -78,7 +78,8 @@ export const memoryNoteListDtoSchema = z
 export type MemoryNoteListDto = z.infer<typeof memoryNoteListDtoSchema>;
 
 // A Memory prompt DTO in full (used by the MCP get/search/deposit surfaces): it may be a `draft`
-// (no card, no revealable answer) or `scheduled` (both present).
+// (no reveal, no enrolled card) or `ready` (a revealable answer; `review` carries the card's FSRS state
+// when the prompt is enrolled, null otherwise).
 export const memoryPromptDtoSchema = z
   .object({
     promptId: z.string(),
@@ -93,8 +94,8 @@ export const memoryPromptDtoSchema = z
 
 export type MemoryPromptDto = z.infer<typeof memoryPromptDtoSchema>;
 
-// A due Memory prompt as the review surface shows it: a scheduled prompt always carries a revealable
-// answer and a card, so `answerText` and `review` are non-null here.
+// A due Memory prompt as the review surface shows it: an enrolled, ready prompt always carries a
+// revealable answer and an active card, so `answerText` and `review` are non-null here.
 export const memoryPromptCardDtoSchema = z
   .object({
     promptId: z.string(),

@@ -186,7 +186,7 @@ describe("memoryDepositDtoSchema", () => {
         {
           promptId: "prompt-1",
           noteId: "note-1",
-          lifecycle: "scheduled",
+          lifecycle: "ready",
           cueText: "when holding back",
           answerText: "遠慮",
           chunkId: "chunk-1",
@@ -196,7 +196,7 @@ describe("memoryDepositDtoSchema", () => {
     });
     expect(deposit.note.noteId).toBe("note-1");
     expect(deposit.prompts).toHaveLength(1);
-    expect(deposit.prompts[0]?.lifecycle).toBe("scheduled");
+    expect(deposit.prompts[0]?.lifecycle).toBe("ready");
   });
 });
 

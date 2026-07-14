@@ -48,7 +48,7 @@ function makePrompt(overrides: Partial<MemoryPromptDto> = {}): MemoryPromptDto {
     answerText: "to reveal a secret",
     chunkId: null,
     cueText: "spill the beans",
-    lifecycle: "scheduled",
+    lifecycle: "ready",
     noteId: "note-1",
     promptId: "prompt-1",
     review,

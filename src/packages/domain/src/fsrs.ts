@@ -36,8 +36,20 @@ export type ReviewState = Readonly<{
   lastReviewedAt: string | null;
 }>;
 
-// The single v0 scheduler parameter: the requested retention the scheduler optimises intervals for.
+// The default requested retention a seeding caller applies when it has no reason to choose another
+// (#617). It is only a *seed* default now: `applyRating` no longer assumes it — the requested retention
+// is an explicit input, resolved per card from the stored policy — so a consumer may schedule a target
+// at a different retention without this module knowing which feature owns it.
 export const RECALL_REQUEST_RETENTION = 0.9;
+
+// The requested retention is a probability strictly between 0 and 1: 0 or 1 (or anything outside) is not
+// an achievable retention target and would make the scheduler's interval maths meaningless. Validated
+// here, at the scheduler boundary, so no caller can drive FSRS with an out-of-range policy.
+export function assertRequestedRetention(requestedRetention: number): void {
+  if (!(requestedRetention > 0 && requestedRetention < 1)) {
+    throw new RangeError("requestedRetention must satisfy 0 < requestedRetention < 1.");
+  }
+}
 
 // Scheduler options. Production leaves fuzz ON (small random interval jitter that de-synchronises
 // batches); tests pass `enableFuzz: false` for deterministic intervals.
@@ -65,11 +77,13 @@ const enumByRating: Readonly<Record<ReviewRating, Grade>> = Object.freeze({
   easy: Rating.Easy
 });
 
-// The FSRS scheduler instance for the given options. Centralises the v0 parameters (requested
-// retention 0.9) so every scheduled prompt goes through one boundary.
-function scheduler(options?: SchedulerOptions) {
+// The FSRS scheduler instance for the given requested retention and options. The requested retention is
+// an explicit input (#617) — validated here so an out-of-range policy never reaches the library — and
+// fuzz stays independently configurable so tests can request deterministic intervals.
+function scheduler(requestedRetention: number, options?: SchedulerOptions) {
+  assertRequestedRetention(requestedRetention);
   return fsrs({
-    request_retention: RECALL_REQUEST_RETENTION,
+    request_retention: requestedRetention,
     enable_fuzz: options?.enableFuzz ?? true
   });
 }
@@ -114,15 +128,20 @@ export function newReviewState(now: Date): ReviewState {
   return fromCard(createEmptyCard(now));
 }
 
-// Apply a rating to produce the next state. Deterministic given `(state, rating, now)` when fuzz is
-// off. The input is never mutated; the result is frozen.
+// Apply a rating to produce the next state, optimising intervals for the given requested retention
+// (#617) — the caller resolves it from the target's stored policy, never a global assumption.
+// Deterministic given `(state, rating, now, requestedRetention)` when fuzz is off. The input is never
+// mutated; the result is frozen.
 export function applyRating(
   state: ReviewState,
   rating: ReviewRating,
   now: Date,
+  requestedRetention: number,
   options?: SchedulerOptions
 ): ReviewState {
-  return fromCard(scheduler(options).next(toCard(state), now, enumByRating[rating]).card);
+  return fromCard(
+    scheduler(requestedRetention, options).next(toCard(state), now, enumByRating[rating]).card
+  );
 }
 
 // Whether the item is due for review at `now` (its due instant has arrived).
@@ -131,7 +150,8 @@ export function isDue(state: ReviewState, now: Date): boolean {
 }
 
 // The FSRS retrievability at `now`: the estimated probability (0..1) the learner still recalls the
-// item. Decreases as time passes since the last review.
+// item. Independent of the requested retention (which only shapes next-interval length), so the seed
+// default is used purely to obtain a scheduler instance.
 export function retrievability(state: ReviewState, now: Date): number {
-  return scheduler().get_retrievability(toCard(state), now, false);
+  return scheduler(RECALL_REQUEST_RETENTION).get_retrievability(toCard(state), now, false);
 }

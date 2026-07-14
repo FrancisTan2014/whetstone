@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { applyRating, newReviewState, retrievability, type ReviewState } from "./fsrs.js";
+import {
+  applyRating,
+  newReviewState,
+  RECALL_REQUEST_RETENTION,
+  retrievability,
+  type ReviewState
+} from "./fsrs.js";
 import {
   chainEligibility,
   computeOwnedPrefix,
@@ -27,8 +33,14 @@ const NO_FUZZ = { enableFuzz: false } as const;
 // the second review retrievability is ~1; letting `at` run far past the due date lets a test drive it
 // below the retention target to prove ownership lapses with memory.
 function reviewedTwice(t0: Date): ReviewState {
-  const first = applyRating(newReviewState(t0), "good", t0, NO_FUZZ);
-  return applyRating(first, "good", new Date(t0.getTime() + DAY_MS), NO_FUZZ);
+  const first = applyRating(newReviewState(t0), "good", t0, RECALL_REQUEST_RETENTION, NO_FUZZ);
+  return applyRating(
+    first,
+    "good",
+    new Date(t0.getTime() + DAY_MS),
+    RECALL_REQUEST_RETENTION,
+    NO_FUZZ
+  );
 }
 
 // A passage-mastery fixture with the given successful-review count and a state reviewed twice at `t0`.

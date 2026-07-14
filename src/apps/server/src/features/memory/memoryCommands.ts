@@ -7,13 +7,13 @@ import type {
   MemoryPromptDto
 } from "@whetstone/contracts";
 import {
-  applyRating,
   buildMemoryPrompt,
-  newReviewState,
+  RECALL_REQUEST_RETENTION,
   reconcilePromptEdit,
   toEntryId,
   type EntryId,
-  type ReviewRating
+  type ReviewRating,
+  type ReviewState
 } from "@whetstone/domain";
 import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 import { eq, inArray, or } from "drizzle-orm";
@@ -23,16 +23,21 @@ import {
   entries,
   entryLinks,
   memoryNotes,
-  memoryPromptReviews,
   memoryPrompts,
   personalEntries
 } from "../../db/schema.js";
 import {
+  deleteReviewCard,
+  deleteReviewCardsAndEvents,
+  rateReviewCard,
+  seedReviewCard,
+  snoozeReviewCard
+} from "../review/reviewCardCommands.js";
+import { getReviewCardForUser, reviewStateFromCard } from "../review/reviewCardQueries.js";
+import {
   getMemoryNoteDetail,
   getMemoryNoteRowForUser,
   getPromptRowForUser,
-  promptReviewColumns,
-  promptReviewStateOrNull,
   toMemoryDepositDto,
   toMemoryPromptDto,
   type MemoryNoteRow,
@@ -40,7 +45,7 @@ import {
 } from "./memoryQueries.js";
 
 // Real infrastructure boundaries (the database client, id generation) are injected so the commands stay
-// deterministic and testable; `now` is passed in explicitly (and feeds the pure FSRS scheduler).
+// deterministic and testable; `now` is passed in explicitly (and feeds the shared FSRS scheduler).
 export type MemoryDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
@@ -80,10 +85,6 @@ export type DeleteMemoryNoteResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "not_found" }>;
 
-// How far a snooze defers a prompt: one day, so it leaves today's batch and reappears tomorrow.
-const SNOOZE_DEFER_DAYS = 1;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 // One retrieval prompt to persist under a note, after the answer has been resolved. `cueDoc`/`answerDoc`
 // carry a rich authoring surface's supplied document (the paste-a-list import, #574); when null the row
 // builder derives a plain single-block document from the text, so plain-text feeders stay unchanged.
@@ -116,17 +117,14 @@ async function resolveAnswer(
   return dependencies.resolveOfflineGloss(prompt.glossTerm);
 }
 
-// Deposit a Memory: one note (the durable retention target) and one-or-more retrieval prompts, atomically.
-// The note is a first-class owned Entry (its `personal_entries` facet carries ownership + chronology, like
-// notes/diary); provenance is a `derived_from` link, not a column; each prompt is a child Entry linked to
-// the note by `contains`, scheduled iff it has both a meaningful cue and a revealable answer.
 // The transaction handle drizzle passes into `db.transaction`, so a shared write helper can run inside a
-// caller's transaction.
+// caller's transaction — and card seeding can compose in the same atomic write as the note/prompts.
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 // Atomically insert a memory note (its Entry + ownership facet + row), its optional `derived_from`
-// provenance link, and each prompt (Entry + row + `contains` link). Shared by every deposit path so the
-// note/prompt/link wiring lives in one place.
+// provenance link, and each prompt (Entry + row + `contains` link), seeding a shared review card for each
+// ready prompt in the same transaction. Returns the seeded review states keyed by prompt id (absent for a
+// draft) so the caller can project each prompt's schedule without a re-read. Shared by every deposit path.
 async function writeMemory(
   tx: Transaction,
   params: Readonly<{
@@ -136,7 +134,7 @@ async function writeMemory(
     userId: string;
     now: Date;
   }>
-): Promise<void> {
+): Promise<Map<string, ReviewState>> {
   const { noteRow, derivedFromEntryId, promptRows, userId, now } = params;
   await tx.insert(entries).values({ id: noteRow.entryId, type: "memory_note" });
   await tx.insert(personalEntries).values({
@@ -154,6 +152,7 @@ async function writeMemory(
       type: "derived_from"
     });
   }
+  const reviews = new Map<string, ReviewState>();
   for (const promptRow of promptRows) {
     await tx.insert(entries).values({ id: promptRow.entryId, type: "memory_prompt" });
     await tx.insert(memoryPrompts).values(promptRow);
@@ -162,7 +161,17 @@ async function writeMemory(
       toEntryId: promptRow.entryId,
       type: "contains"
     });
+    if (promptRow.lifecycle === "ready") {
+      const state = await seedReviewCard(tx, {
+        targetEntryId: promptRow.entryId,
+        userId,
+        requestedRetention: RECALL_REQUEST_RETENTION,
+        now
+      });
+      reviews.set(promptRow.entryId, state);
+    }
   }
+  return reviews;
 }
 
 export async function depositMemory(
@@ -173,9 +182,16 @@ export async function depositMemory(
 ): Promise<MemoryDepositDto> {
   const prepared = await prepareDeposit(dependencies, request, now);
 
-  await dependencies.db.transaction((tx) => writeMemory(tx, { ...prepared, userId, now }));
+  const reviews = await dependencies.db.transaction((tx) =>
+    writeMemory(tx, { ...prepared, userId, now })
+  );
 
-  return toMemoryDepositDto(prepared.noteRow, prepared.derivedFromEntryId, prepared.promptRows);
+  return toMemoryDepositDto(
+    prepared.noteRow,
+    prepared.derivedFromEntryId,
+    prepared.promptRows,
+    reviews
+  );
 }
 
 // A single deposit resolved into the exact rows to persist, with all async answer resolution already done.
@@ -234,30 +250,31 @@ export async function importMemoryBatch(
     prepared.push(await prepareDeposit(dependencies, item, now));
   }
 
+  const results: MemoryDepositDto[] = [];
   await dependencies.db.transaction(async (tx) => {
     for (const deposit of prepared) {
-      await writeMemory(tx, { ...deposit, userId, now });
+      const reviews = await writeMemory(tx, { ...deposit, userId, now });
+      results.push(
+        toMemoryDepositDto(deposit.noteRow, deposit.derivedFromEntryId, deposit.promptRows, reviews)
+      );
     }
   });
 
-  return prepared.map((deposit) =>
-    toMemoryDepositDto(deposit.noteRow, deposit.derivedFromEntryId, deposit.promptRows)
-  );
+  return results;
 }
 
-// Build the persisted prompt row, deciding lifecycle + FSRS card together via the domain invariant: a
-// scheduled prompt (meaningful cue AND answer) carries a seeded card and its columns; a draft carries
-// none (all FSRS columns and the rich answer doc stay null).
+// Build the persisted prompt row (content + content lifecycle only). Scheduling is no longer stored on the
+// prompt: a ready prompt's review card is seeded separately in the shared substrate (#617). The lifecycle
+// is decided by the domain from the cue/answer — `ready` iff both are meaningful, else `draft`.
 function buildPromptRow(prompt: ResolvedPrompt, noteId: EntryId, now: Date): MemoryPromptRow {
   const built = buildMemoryPrompt({
     id: prompt.id,
     noteId,
     cueText: prompt.cueText,
     answerText: prompt.answerText,
-    chunkId: prompt.chunkId,
-    seedReview: () => newReviewState(now)
+    chunkId: prompt.chunkId
   });
-  const base = {
+  return {
     entryId: prompt.id,
     noteEntryId: noteId,
     cueDoc: prompt.cueDoc ?? createTextDocument(prompt.cueText),
@@ -271,27 +288,11 @@ function buildPromptRow(prompt: ResolvedPrompt, noteId: EntryId, now: Date): Mem
     chunkId: prompt.chunkId,
     createdAt: now
   };
-  if (built.review === null) {
-    return {
-      ...base,
-      stability: null,
-      difficulty: null,
-      elapsedDays: null,
-      scheduledDays: null,
-      learningSteps: null,
-      reps: null,
-      lapses: null,
-      state: null,
-      lastReviewedAt: null,
-      dueAt: null
-    };
-  }
-  return { ...base, ...promptReviewColumns(built.review) };
 }
 
-// Record a review of one of the user's scheduled prompts: apply FSRS (#572), overwrite the prompt's card
-// state, and append a history row — atomically. A draft cannot be reviewed (`not_scheduled`), and a
-// missing or non-owned prompt is `not_found`.
+// Record a review of one of the user's ready prompts (#572): apply FSRS through the shared review-card
+// substrate, which overwrites the card and appends the review event atomically. A draft has no card
+// (`not_scheduled`), and a missing or non-owned prompt is `not_found`.
 export async function recordPromptReview(
   dependencies: MemoryDependencies,
   promptId: string,
@@ -303,28 +304,22 @@ export async function recordPromptReview(
   if (existing === undefined) {
     return { status: "not_found" };
   }
-  const currentState = promptReviewStateOrNull(existing);
-  if (currentState === null) {
+  const result = await rateReviewCard(
+    { createId: dependencies.createId, db: dependencies.db },
+    promptId,
+    userId,
+    rating,
+    now
+  );
+  if (result.status === "not_found") {
     return { status: "not_scheduled" };
   }
-
-  const nextState = applyRating(currentState, rating, now);
-  const columns = promptReviewColumns(nextState);
-  const reviewId = dependencies.createId();
-
-  await dependencies.db.transaction(async (tx) => {
-    await tx.update(memoryPrompts).set(columns).where(eq(memoryPrompts.entryId, promptId));
-    await tx
-      .insert(memoryPromptReviews)
-      .values({ id: reviewId, promptEntryId: promptId, rating, reviewedAt: now });
-  });
-
-  return { prompt: toMemoryPromptDto({ ...existing, ...columns }), status: "recorded" };
+  return { prompt: toMemoryPromptDto(existing, result.state), status: "recorded" };
 }
 
-// Snooze defers a prompt OUT of today's batch by moving ONLY its `due_at` forward one day. It is NOT a
-// rating: the FSRS card state is left untouched, so the schedule is unchanged. Only a scheduled prompt has
-// a card to defer.
+// Snooze defers a prompt OUT of today's batch by moving ONLY its shared card's `due_at` forward one day.
+// It is NOT a rating: the FSRS card state is left untouched and no review event is written, so the
+// schedule is unchanged. Only a ready, enrolled prompt has a card to defer (`not_scheduled` otherwise).
 export async function snoozePrompt(
   db: DbClient,
   userId: string,
@@ -335,30 +330,15 @@ export async function snoozePrompt(
   if (existing === undefined) {
     return { status: "not_found" };
   }
-  if (promptReviewStateOrNull(existing) === null) {
+  const result = await snoozeReviewCard(db, promptId, userId, now);
+  if (result.status === "not_found") {
     return { status: "not_scheduled" };
   }
-
-  const dueAt = new Date(now.getTime() + SNOOZE_DEFER_DAYS * MS_PER_DAY);
-  await db.update(memoryPrompts).set({ dueAt }).where(eq(memoryPrompts.entryId, promptId));
-
-  return { prompt: toMemoryPromptDto({ ...existing, dueAt }), status: "snoozed" };
+  return {
+    prompt: toMemoryPromptDto(existing, reviewStateFromCard(result.card)),
+    status: "snoozed"
+  };
 }
-
-// The FSRS card columns nulled out — a draft carries no card. Used when an edit reverts a prompt to a
-// draft (`clear`): the card state is dropped, but the append-only review LOG is deliberately untouched.
-const nullReviewColumns = {
-  stability: null,
-  difficulty: null,
-  elapsedDays: null,
-  scheduledDays: null,
-  learningSteps: null,
-  reps: null,
-  lapses: null,
-  state: null,
-  lastReviewedAt: null,
-  dueAt: null
-} as const;
 
 // Edit a memory note's durable body (#573): rewrite its rich doc + readable projection and bump the
 // shared personal-entry `updatedAt`, atomically. The capture source (structured provenance) is never
@@ -390,10 +370,10 @@ export async function editMemoryNote(
   return { detail: detail as MemoryNoteDetailDto, status: "updated" };
 }
 
-// Edit one prompt's cue/answer (#573), reconciling the edit with its schedule via the pure domain rule so
-// editing content never silently resets review history: a prompt that stays schedulable keeps its card
-// (FSRS columns untouched); a draft that becomes schedulable seeds a fresh card; a prompt that loses its
-// revealable answer reverts to a draft and drops its card. The append-only review LOG is never deleted.
+// Edit one prompt's cue/answer (#573), reconciling the edit with its shared review card via the pure
+// domain rule so editing content never silently resets review history: a prompt that stays ready keeps its
+// card (untouched); a draft that becomes ready seeds a fresh card; a prompt that loses its revealable
+// answer reverts to a draft and drops its card. The append-only review EVENT history is never deleted.
 export async function editMemoryPrompt(
   dependencies: MemoryDependencies,
   promptId: string,
@@ -407,33 +387,43 @@ export async function editMemoryPrompt(
   }
   const answerText = request.answerText ?? null;
   const outcome = reconcilePromptEdit(existing.lifecycle, request.cueText, answerText);
-  const base = {
+  const content = {
     cueDoc: createTextDocument(request.cueText),
     cueText: request.cueText,
     answerDoc: answerText === null ? null : createTextDocument(answerText),
     answerText,
     lifecycle: outcome.lifecycle
   };
-  const columns =
-    outcome.reviewAction === "keep"
-      ? base
-      : outcome.reviewAction === "seed"
-        ? { ...base, ...promptReviewColumns(newReviewState(now)) }
-        : { ...base, ...nullReviewColumns };
 
-  await dependencies.db
-    .update(memoryPrompts)
-    .set(columns)
-    .where(eq(memoryPrompts.entryId, promptId));
+  await dependencies.db.transaction(async (tx) => {
+    await tx.update(memoryPrompts).set(content).where(eq(memoryPrompts.entryId, promptId));
+    if (outcome.reviewAction === "seed") {
+      await seedReviewCard(tx, {
+        targetEntryId: promptId,
+        userId,
+        requestedRetention: RECALL_REQUEST_RETENTION,
+        now
+      });
+    } else if (outcome.reviewAction === "clear") {
+      await deleteReviewCard(tx, promptId);
+    }
+  });
 
   const updated = await getPromptRowForUser(dependencies.db, promptId, userId);
-  return { prompt: toMemoryPromptDto(updated as MemoryPromptRow), status: "updated" };
+  const card = await getReviewCardForUser(dependencies.db, promptId, userId);
+  return {
+    prompt: toMemoryPromptDto(
+      updated as MemoryPromptRow,
+      card === undefined ? null : reviewStateFromCard(card)
+    ),
+    status: "updated"
+  };
 }
 
 // Add one additional retrieval direction to an existing note (#573): resolve its answer (an offline gloss
-// suggestion when only a bare term is given), persist the prompt Entry + row + `contains` link, and bump
-// the note's `updatedAt` — atomically. A missing or non-owned note is `not_found`. The new prompt is
-// scheduled iff it has a meaningful cue and a revealable answer, else saved as a draft.
+// suggestion when only a bare term is given), persist the prompt Entry + row + `contains` link, seed a
+// shared review card when the direction is ready, and bump the note's `updatedAt` — atomically. A missing
+// or non-owned note is `not_found`.
 export async function addPromptToNote(
   dependencies: MemoryDependencies,
   noteId: string,
@@ -466,6 +456,14 @@ export async function addPromptToNote(
       toEntryId: promptRow.entryId,
       type: "contains"
     });
+    if (promptRow.lifecycle === "ready") {
+      await seedReviewCard(tx, {
+        targetEntryId: promptRow.entryId,
+        userId,
+        requestedRetention: RECALL_REQUEST_RETENTION,
+        now
+      });
+    }
     await tx
       .update(personalEntries)
       .set({ updatedAt: now })
@@ -476,9 +474,9 @@ export async function addPromptToNote(
 }
 
 // Delete a memory note and everything under it (#573), atomically and FK-safe (children first): every
-// prompt's review-log rows, then the note/prompt `entry_links`, then the prompt rows, then the prompt
-// Entries, then the note row, its personal-entry facet, and finally the note Entry. A missing or
-// non-owned note is `not_found` — one user can never delete another's note.
+// prompt's shared review card + append-only events, then the note/prompt `entry_links`, then the prompt
+// rows, then the prompt Entries, then the note row, its personal-entry facet, and finally the note Entry.
+// A missing or non-owned note is `not_found` — one user can never delete another's note.
 export async function deleteMemoryNote(
   dependencies: MemoryDependencies,
   noteId: string,
@@ -496,11 +494,7 @@ export async function deleteMemoryNote(
   const linkEntryIds = [noteId, ...promptIds];
 
   await dependencies.db.transaction(async (tx) => {
-    if (promptIds.length > 0) {
-      await tx
-        .delete(memoryPromptReviews)
-        .where(inArray(memoryPromptReviews.promptEntryId, promptIds));
-    }
+    await deleteReviewCardsAndEvents(tx, promptIds);
     await tx
       .delete(entryLinks)
       .where(

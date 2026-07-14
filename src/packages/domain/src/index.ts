@@ -37,7 +37,7 @@ export {
   buildMemoryPrompt,
   captureSources,
   isCaptureSource,
-  isSchedulablePrompt,
+  isReadyPrompt,
   memoryPromptFaces,
   memoryPromptOwner,
   promptLifecycles,
@@ -87,6 +87,7 @@ export { formatProductHeading, productIdentity } from "./productIdentity.js";
 export type { ProductIdentity } from "./productIdentity.js";
 export {
   applyRating,
+  assertRequestedRetention,
   cardStates,
   isDue,
   newReviewState,

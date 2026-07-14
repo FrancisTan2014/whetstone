@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyRating,
+  assertRequestedRetention,
   cardStates,
   isDue,
   newReviewState,
@@ -15,6 +16,7 @@ const now = new Date("2026-01-01T00:00:00.000Z");
 const deterministic = { enableFuzz: false } as const;
 const minute = 60 * 1000;
 const day = 24 * 60 * 60 * 1000;
+const rr = RECALL_REQUEST_RETENTION;
 
 describe("newReviewState", () => {
   it("is a fresh, never-reviewed card due immediately at `now`", () => {
@@ -33,9 +35,30 @@ describe("newReviewState", () => {
     });
   });
 
-  it("exposes the requested-retention parameter and card-state vocabulary", () => {
+  it("exposes the requested-retention seed default and card-state vocabulary", () => {
     expect(RECALL_REQUEST_RETENTION).toBe(0.9);
     expect(cardStates).toEqual(["new", "learning", "review", "relearning"]);
+  });
+});
+
+describe("assertRequestedRetention", () => {
+  it("accepts a probability strictly between 0 and 1", () => {
+    expect(() => assertRequestedRetention(0.9)).not.toThrow();
+    expect(() => assertRequestedRetention(0.5)).not.toThrow();
+    expect(() => assertRequestedRetention(0.999)).not.toThrow();
+  });
+
+  it.each([0, 1, -0.1, 1.5, Number.NaN])(
+    "rejects the out-of-range retention %s",
+    (value: number) => {
+      expect(() => assertRequestedRetention(value)).toThrow(RangeError);
+    }
+  );
+
+  it("is enforced at the scheduler boundary (applyRating rejects an invalid policy)", () => {
+    expect(() => applyRating(newReviewState(now), "good", now, 0, deterministic)).toThrow(
+      RangeError
+    );
   });
 });
 
@@ -48,7 +71,7 @@ describe("applyRating from a new card", () => {
   ] as const)(
     "rating %s advances due, sets reps to 1, and stamps the review time",
     (rating: ReviewRating, expectedState, dueDeltaMs) => {
-      const next = applyRating(newReviewState(now), rating, now, deterministic);
+      const next = applyRating(newReviewState(now), rating, now, rr, deterministic);
       expect(next.state).toBe(expectedState);
       expect(next.reps).toBe(1);
       expect(next.lapses).toBe(0);
@@ -60,22 +83,35 @@ describe("applyRating from a new card", () => {
   );
 
   it("graduates a new card to long-term review on Easy with a multi-day interval", () => {
-    const next = applyRating(newReviewState(now), "easy", now, deterministic);
+    const next = applyRating(newReviewState(now), "easy", now, rr, deterministic);
     expect(next.state).toBe("review");
     expect(next.scheduledDays).toBe(8);
     expect(next.stability).toBeGreaterThan(0);
   });
 });
 
+describe("requested retention shapes the interval", () => {
+  // The requested retention is now an explicit per-card input (#617): a higher target retention means
+  // the learner wants to remember more reliably, so FSRS schedules the next review sooner (a shorter
+  // interval). This proves the parameter is actually consumed, not ignored.
+  it("schedules a Good review sooner at higher requested retention (0.95 vs 0.90)", () => {
+    const review = applyRating(newReviewState(now), "easy", now, rr, deterministic);
+    const at = new Date(review.due);
+    const lowRetention = applyRating(review, "good", at, 0.9, deterministic);
+    const highRetention = applyRating(review, "good", at, 0.95, deterministic);
+    expect(highRetention.scheduledDays).toBeLessThan(lowRetention.scheduledDays);
+  });
+});
+
 describe("applyRating on a graduated card", () => {
   // A review-state card: Easy from new graduates straight to "review".
   function reviewCard(): ReviewState {
-    return applyRating(newReviewState(now), "easy", now, deterministic);
+    return applyRating(newReviewState(now), "easy", now, rr, deterministic);
   }
 
   it("counts a lapse and drops to relearning when a review card is rated Again", () => {
     const review = reviewCard();
-    const lapsed = applyRating(review, "again", new Date(review.due), deterministic);
+    const lapsed = applyRating(review, "again", new Date(review.due), rr, deterministic);
     expect(review.state).toBe("review");
     expect(review.lapses).toBe(0);
     expect(lapsed.state).toBe("relearning");
@@ -85,7 +121,7 @@ describe("applyRating on a graduated card", () => {
 
   it("keeps growing the interval on a successful Good review", () => {
     const review = reviewCard();
-    const next = applyRating(review, "good", new Date(review.due), deterministic);
+    const next = applyRating(review, "good", new Date(review.due), rr, deterministic);
     expect(next.state).toBe("review");
     expect(next.lapses).toBe(0);
     expect(next.reps).toBe(review.reps + 1);
@@ -99,7 +135,7 @@ describe("isDue", () => {
   });
 
   it("is false before due and true at/after the due instant (boundary at due)", () => {
-    const scheduled = applyRating(newReviewState(now), "easy", now, deterministic);
+    const scheduled = applyRating(newReviewState(now), "easy", now, rr, deterministic);
     const due = new Date(scheduled.due);
     expect(isDue(scheduled, new Date(due.getTime() - 1))).toBe(false);
     expect(isDue(scheduled, due)).toBe(true);
@@ -109,7 +145,7 @@ describe("isDue", () => {
 
 describe("retrievability", () => {
   it("is a probability that decreases as time passes since review", () => {
-    const scheduled = applyRating(newReviewState(now), "easy", now, deterministic);
+    const scheduled = applyRating(newReviewState(now), "easy", now, rr, deterministic);
     const near = retrievability(scheduled, new Date(scheduled.due));
     const far = retrievability(scheduled, new Date(new Date(scheduled.due).getTime() + 30 * day));
     expect(near).toBeGreaterThan(far);
@@ -122,15 +158,15 @@ describe("retrievability", () => {
 
 describe("determinism and immutability", () => {
   it("is deterministic when fuzz is disabled", () => {
-    const first = applyRating(newReviewState(now), "good", now, deterministic);
-    const second = applyRating(newReviewState(now), "good", now, deterministic);
+    const first = applyRating(newReviewState(now), "good", now, rr, deterministic);
+    const second = applyRating(newReviewState(now), "good", now, rr, deterministic);
     expect(first).toEqual(second);
   });
 
   it("does not mutate the input state and returns a frozen result", () => {
     const input = newReviewState(now);
     const snapshot = { ...input };
-    const next = applyRating(input, "good", now, deterministic);
+    const next = applyRating(input, "good", now, rr, deterministic);
     expect(input).toEqual(snapshot);
     expect(Object.isFrozen(next)).toBe(true);
     expect(Object.isFrozen(newReviewState(now))).toBe(true);

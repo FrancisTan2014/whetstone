@@ -270,7 +270,7 @@ describe("addPromptToNote", () => {
 
 describe("editMemoryPrompt", () => {
   it("patches the prompt and returns the parsed prompt", async () => {
-    const prompt = makePrompt({ answerText: "to reveal", lifecycle: "scheduled" });
+    const prompt = makePrompt({ answerText: "to reveal", lifecycle: "ready" });
     const fetchMock = stubFetch({ body: prompt, ok: true });
 
     await expect(
