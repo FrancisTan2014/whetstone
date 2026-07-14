@@ -157,4 +157,12 @@ describe("ReadingHeader", () => {
     expect(screen.getByRole("button", { name: "Your notes" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Increase reading text size" })).toBeDefined();
   });
+
+  it("offers a contextual Recitation entry linking to the secondary hub", () => {
+    renderHeader();
+
+    // A Reader Work action reaches the Recitation hub (#608) without being a primary nav item.
+    const recitation = screen.getByRole("link", { name: "Recitation" });
+    expect(recitation.getAttribute("href")).toBe("#/recitation");
+  });
 });
