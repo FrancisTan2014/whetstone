@@ -300,7 +300,7 @@ describe("RecitationSessionPanel", () => {
       status: "broke"
     });
 
-    await userEvent.click(screen.getByRole("button", { name: "Done with chains" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Done with chains" }));
     expect(await screen.findByRole("button", { name: "New passage" })).toBeDefined();
   });
 
