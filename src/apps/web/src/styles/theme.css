@@ -1303,7 +1303,8 @@
 }
 
 /* Every rail control is a comfortable >= 44px tap target with a centered icon. */
-.readingTools button {
+.readingTools button,
+.readingTools a {
   display: inline-flex;
   align-items: center;
   justify-content: center;

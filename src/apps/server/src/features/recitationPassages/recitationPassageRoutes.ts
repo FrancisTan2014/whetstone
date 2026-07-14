@@ -10,6 +10,7 @@ import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
   activateNextRecitationPassage,
   loadDueRecitationPassage,
+  loadDueRecitationPassageForPlan,
   listRecitationPassages,
   loadRecitationIntroductionStatusForPlan,
   mergeNextRecitationPassage,
@@ -124,6 +125,24 @@ export function registerRecitationPassageRoutes(
     );
     return { passage };
   });
+
+  // ONE plan's next due passage (#608): the recitation hub reviews the due passage of the same plan it
+  // projects, not the earliest-due passage across all plans. Owner-scoped (404 otherwise); null passage
+  // when that plan is caught up.
+  server.get<{ Params: PlanParams }>(
+    "/api/recitation/plans/:id/passages/due",
+    async (request, reply) => {
+      const result = await loadDueRecitationPassageForPlan(
+        dependencies,
+        toEntryId(request.params.id),
+        request.server.currentUser.getCurrentUserId()
+      );
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      return reply.code(200).send({ passage: result.passage });
+    }
+  );
 
   // Split a passage at a text position. A malformed body is 400; a split outside the passage or on a
   // boundary is 422 `invalid_split`; owner-scoped (404 otherwise).

@@ -1,6 +1,6 @@
 import type { ChainPassageDto } from "@whetstone/contracts";
 import type { EntryId, PassageMastery } from "@whetstone/domain";
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -178,7 +178,13 @@ export async function loadEarliestActiveChainForUser(
     .innerJoin(recitationPlans, eq(recitationPlans.entryId, recitationChains.planEntryId))
     .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
-    .where(and(eq(personalEntries.userId, userId), eq(recitationChains.status, "active")))
+    .where(
+      and(
+        eq(personalEntries.userId, userId),
+        isNull(recitationPlans.pausedAt),
+        eq(recitationChains.status, "active")
+      )
+    )
     .orderBy(asc(recitationChains.createdAt), asc(recitationChains.id))
     .limit(1);
   return row === undefined ? undefined : { row: row.chain, workTitle: row.workTitle };
@@ -203,6 +209,8 @@ export async function listWholeWorkScanPlansForUser(
     .where(
       and(
         eq(personalEntries.userId, userId),
+        // A paused plan (#608) is excluded from the cross-plan whole-work scan Today reads.
+        isNull(recitationPlans.pausedAt),
         inArray(recitationPlans.phase, ["learning", "maintenance"])
       )
     )

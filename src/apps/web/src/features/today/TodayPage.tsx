@@ -401,6 +401,15 @@ function ContinueRecitationCard({
       "div",
       { className: "mt-2" },
       renderRecitation(state, onContinue, onStartReciting)
+    ),
+    createElement(
+      "a",
+      {
+        className:
+          "mt-3 inline-flex min-h-11 items-center text-sm text-accent hover:text-accent-hover",
+        href: "#/recitation"
+      },
+      "Open recitation hub"
     )
   );
 }

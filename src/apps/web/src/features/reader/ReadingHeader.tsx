@@ -1,4 +1,4 @@
-import { Button } from "../../shared/ui/Button";
+import { Button, buttonVariants } from "../../shared/ui/Button";
 import { ThemeToggle } from "../../shared/theme/ThemeToggle";
 import {
   isLargestReadingSize,
@@ -42,6 +42,23 @@ function NotesIcon(): React.JSX.Element {
     <svg aria-hidden className="readingToolIcon" fill="none" viewBox="0 0 24 24">
       <path
         d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 20V4a.5.5 0 0 1 .5-.5zM14.5 3.5V8h4.5M9 13h6M9 16.5h4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+// An open-book glyph for the contextual Recitation control (labelled by the link's aria-label, so
+// the icon itself is decorative). Recitation works from the text you are reading, so an open book
+// reads more naturally here than a nav label.
+function RecitationIcon(): React.JSX.Element {
+  return (
+    <svg aria-hidden className="readingToolIcon" fill="none" viewBox="0 0 24 24">
+      <path
+        d="M12 6.5C10 5 7 5 4.5 6v12C7 17 10 17 12 18.5M12 6.5C14 5 17 5 19.5 6v12C17 17 14 17 12 18.5M12 6.5v12"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -137,6 +154,15 @@ export function ReadingHeader({
           <NotesIcon />
           {notesCount > 0 ? <span className="readingToolBadge">{notesCount}</span> : null}
         </Button>
+        {/* A quiet, contextual Recitation entry from the Work you are reading (#608): it links to
+            the secondary Recitation hub without becoming a fifth primary navigation item. */}
+        <a
+          aria-label="Recitation"
+          className={buttonVariants({ size: "sm", variant: "ghost" })}
+          href="#/recitation"
+        >
+          <RecitationIcon />
+        </a>
       </div>
     </header>
   );

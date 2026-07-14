@@ -43,6 +43,7 @@ import {
   loadWorkTextBlocks,
   listPassageRowsForPlan,
   toRecitationPassageDto,
+  type OwnedPassage,
   type RecitationIntroductionStatus,
   type RecitationPassageRow
 } from "./recitationPassageQueries.js";
@@ -527,10 +528,42 @@ export async function loadDueRecitationPassage(
 ): Promise<DueRecitationPassageDto | null> {
   const now = dependencies.now();
   const due = await loadNextDuePassage(dependencies.db, userId, now);
-  if (due === undefined) {
-    return null;
-  }
+  return due === undefined ? null : buildDuePassageDto(dependencies, due);
+}
 
+export type LoadDuePassageForPlanResult =
+  | Readonly<{ status: "not_found" }>
+  | Readonly<{ passage: DueRecitationPassageDto | null; status: "ok" }>;
+
+// The next due passage of ONE plan, scoped so the recitation hub reviews the due passage of the SAME plan
+// it projects — never the earliest-due passage of a different plan (#608). Owner-scoped: a missing,
+// forged, or cross-user plan id is `not_found` (the route answers 404), matching the sibling plan
+// routes; an owned plan with nothing due resolves to `{ status: "ok", passage: null }` (caught up).
+export async function loadDueRecitationPassageForPlan(
+  dependencies: RecitationPassageDependencies,
+  planEntryId: EntryId,
+  userId: string
+): Promise<LoadDuePassageForPlanResult> {
+  const owned = await loadOwnedPlanForPassages(dependencies.db, planEntryId, userId);
+  if (owned === undefined) {
+    return { status: "not_found" };
+  }
+  const now = dependencies.now();
+  const due = await loadNextDuePassage(dependencies.db, userId, now, planEntryId);
+  return {
+    passage: due === undefined ? null : await buildDuePassageDto(dependencies, due),
+    status: "ok"
+  };
+}
+
+// Re-anchor a due passage against the live Work text and project it as the practice DTO (shared by the
+// cross-plan and plan-scoped due readers). When the source still matches it is served as-is; when it
+// drifted within the same block it is re-anchored in place; when it can no longer be located it is marked
+// `needs_repair` so the client shows a repair prompt instead of practising stale text (#578).
+async function buildDuePassageDto(
+  dependencies: RecitationPassageDependencies,
+  due: OwnedPassage
+): Promise<DueRecitationPassageDto> {
   const blockText = await loadBlockTextByIds(dependencies.db, [
     due.row.startBlockEntryId,
     due.row.endBlockEntryId

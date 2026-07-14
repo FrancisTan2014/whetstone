@@ -194,6 +194,16 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Loading passages…");
   });
 
+  it("resolves the recitation route to the routine hub, framed by the primary nav (#608)", () => {
+    const markup = renderAt("/recitation");
+
+    // A secondary destination — reachable off-nav but still framed by the shell. Effects do not run
+    // under static render, so the hub mounts in its loading arm.
+    expect(markup).toContain('aria-label="Primary"');
+    expect(markup).toContain('id="recitation-hub-heading"');
+    expect(markup).toContain("Loading your recitation…");
+  });
+
   it("resolves the search route to the library search page", () => {
     const markup = renderAt("/search");
 

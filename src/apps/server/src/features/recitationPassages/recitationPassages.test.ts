@@ -874,6 +874,77 @@ describe("GET /api/recitation/passages/due", () => {
   });
 });
 
+describe("GET /api/recitation/plans/:id/passages/due (#608)", () => {
+  async function loadDueForPlan(
+    planEntryId: string
+  ): Promise<ReturnType<TestContext["server"]["inject"]>> {
+    return context.server.inject({
+      method: "GET",
+      url: `/api/recitation/plans/${planEntryId}/passages/due`
+    });
+  }
+
+  // Introduce a one-passage learning plan on its own Work at the current clock, returning the plan and
+  // its now-due passage id — so several plans can be made due at different clocks.
+  async function introducedPlanOnWork(
+    workEntryId: string,
+    blockId: string,
+    text: string
+  ): Promise<{ passageEntryId: string; planEntryId: string }> {
+    await seedWorkWithBlocks(workEntryId, [{ id: blockId, text }]);
+    const planEntryId = await adopt(workEntryId);
+    const seeded = await seedPassages(planEntryId);
+    expect(seeded.code).toBe(201);
+    const introduced = await introduceNext(planEntryId);
+    expect(introduced.statusCode).toBe(200);
+    return { passageEntryId: seeded.body.passages[0]!.entryId, planEntryId };
+  }
+
+  it("scopes the due passage to the requested plan even when another plan is due earlier", async () => {
+    // Plan B is introduced at an EARLIER clock, so it is due earlier and the cross-plan Today queue would
+    // surface it first.
+    context.setNow("2026-07-01T08:00:00.000Z");
+    const planB = await introducedPlanOnWork("work-b", "block-b", "Plan B opening line.");
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const planA = await introducedPlanOnWork("work-a", "block-a2", "Plan A opening line.");
+
+    // The cross-plan due selection returns the earlier plan B — the conflict the hub must not inherit.
+    expect((await loadDue()).passage?.passageEntryId).toBe(planB.passageEntryId);
+
+    // The plan-scoped endpoint returns the SAME plan the hub projects (plan A), never the earlier plan B.
+    const scoped = await loadDueForPlan(planA.planEntryId);
+    expect(scoped.statusCode).toBe(200);
+    expect((scoped.json() as DueRecitationPassageResponse).passage).toMatchObject({
+      passageEntryId: planA.passageEntryId,
+      planEntryId: planA.planEntryId,
+      targetText: "Plan A opening line."
+    });
+  });
+
+  it("is null when the requested plan is caught up", async () => {
+    const { planEntryId, passageEntryId } = await introducedPlanOnWork(
+      "work-c",
+      "block-c2",
+      "Only line."
+    );
+    // Practise it into the future so this plan has nothing due right now.
+    await review(passageEntryId);
+
+    const scoped = await loadDueForPlan(planEntryId);
+    expect(scoped.statusCode).toBe(200);
+    expect((scoped.json() as DueRecitationPassageResponse).passage).toBeNull();
+  });
+
+  it("is 404 for a plan the learner does not own", async () => {
+    const { planEntryId } = await introducedPlanOnWork("work-d", "block-d", "Owned line.");
+
+    context.setUser(OTHER_USER_ID);
+    const scoped = await loadDueForPlan(planEntryId);
+
+    expect(scoped.statusCode).toBe(404);
+  });
+});
+
 describe("PUT /api/recitation/passages/:id/support-level", () => {
   it("remembers the chosen level so the due passage opens at it", async () => {
     const { passages } = await seededTwoPassagePlanFirstIntroduced();

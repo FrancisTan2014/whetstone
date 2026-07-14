@@ -125,7 +125,29 @@ export async function setRecitationPhase(
   return { plan: toRecitationPlanDto({ ...owned, phase, updatedAt: now }), status: "updated" };
 }
 
-// Record one reading session: bump the session count and stamp `last_session_at`. This is the lightweight
+// Pause or resume a plan (#608). Pausing stamps `paused_at` (`now`); resuming clears it. Paused is a
+// single nullable column — it removes the plan's cards from ALL cross-plan due/Today selection without
+// deleting any progress, schedule, support levels, chains, or history, so resuming restores everything
+// untouched. Owner-scoped via `loadOwnedRecitationPlan` (a forged or cross-user id is `not_found`).
+// Idempotent: pausing an already-paused plan (or resuming an active one) simply re-writes the same state.
+export async function setRecitationPlanPaused(
+  dependencies: RecitationDependencies,
+  planEntryId: EntryId,
+  paused: boolean,
+  userId: string
+): Promise<"not_found" | "updated"> {
+  const owned = await loadOwnedRecitationPlan(dependencies.db, planEntryId, userId);
+  if (owned === undefined) {
+    return "not_found";
+  }
+
+  await dependencies.db
+    .update(recitationPlans)
+    .set({ pausedAt: paused ? dependencies.now() : null })
+    .where(eq(recitationPlans.entryId, planEntryId));
+
+  return "updated";
+}
 // routine state (#577) — it deliberately does NOT touch `personal_entries`, so a familiarizing session
 // never creates a Timeline row and never feeds FSRS. Owner-scoped (a forged/cross-user id is `not_found`).
 export async function recordRecitationSession(

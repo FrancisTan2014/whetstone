@@ -456,6 +456,10 @@ describe("TodayPage", () => {
 
     const card = screen.getByRole("region", { name: "Continue recitation" });
     expect(within(card).getByText("Finding your recitation routine…")).toBeDefined();
+    // A quiet secondary entry into the recitation routine hub (#608), independent of routine state.
+    expect(
+      within(card).getByRole("link", { name: "Open recitation hub" }).getAttribute("href")
+    ).toBe("#/recitation");
   });
 
   it("offers Continue recitation from the latest routine, recording a session and deep-linking to the reader", async () => {

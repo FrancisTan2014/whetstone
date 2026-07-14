@@ -5,7 +5,7 @@ import {
   type EntryId,
   type RecitationIntroductionReason
 } from "@whetstone/domain";
-import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -317,7 +317,8 @@ export async function loadBlockTextByIds(
 export async function loadNextDuePassage(
   db: DbClient,
   userId: string,
-  now: Date
+  now: Date,
+  planEntryId?: string
 ): Promise<OwnedPassage | undefined> {
   const [row] = await db
     .select({
@@ -334,10 +335,15 @@ export async function loadNextDuePassage(
     .where(
       and(
         eq(personalEntries.userId, userId),
+        // A paused plan (#608) never surfaces a due passage in cross-plan Today selection.
+        isNull(recitationPlans.pausedAt),
         eq(recitationPlans.phase, "learning"),
         isNotNull(recitationPassages.introducedAt),
         eq(reviewCards.status, "active"),
-        lte(reviewCards.dueAt, now)
+        lte(reviewCards.dueAt, now),
+        // Optional plan scope (#608): the hub reviews the due passage of the SAME plan it projects, not
+        // the earliest-due passage across all plans. Omitted for the cross-plan Today selection.
+        planEntryId === undefined ? undefined : eq(recitationPassages.planEntryId, planEntryId)
       )
     )
     .orderBy(

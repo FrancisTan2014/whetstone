@@ -296,6 +296,9 @@ export const recitationPlans = pgTable(
       .primaryKey()
       .references(() => entries.id),
     lastSessionAt: timestamp("last_session_at", { mode: "date", withTimezone: true }),
+    // Plan-level pause (#608): non-null removes the plan's cards from ALL cross-plan due/Today selection
+    // without deleting any progress, schedule, support levels, chains, or history; resuming clears it.
+    pausedAt: timestamp("paused_at", { mode: "date", withTimezone: true }),
     phase: text("phase", {
       enum: ["familiarizing", "learning", "maintenance"] as const
     }).notNull(),
