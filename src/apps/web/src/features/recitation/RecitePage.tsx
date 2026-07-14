@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
 
-import type { RecitationPassageDto } from "@whetstone/contracts";
+import type { RecitationIntroductionStatusDto, RecitationPassageDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { listPassages, mergeNextPassage, seedPassages, splitPassage } from "./recitationPassageApi";
+import {
+  getIntroductionStatus,
+  introduceNextPassage,
+  listPassages,
+  mergeNextPassage,
+  seedPassages,
+  splitPassage
+} from "./recitationPassageApi";
 import { RecitationChainingPanel } from "./RecitationChainingPanel";
 
 type PassagesState =
@@ -17,7 +24,7 @@ type PassagesState =
 // position, or merge one with the next — without ever changing the canonical Work text. Each passage's
 // review progress is shown here (the plan's practice history); the actual due practice happens on Today.
 // Boundary edits reset that passage's schedule, so this is a Learning-phase setup activity, kept calm and
-// off the reader.
+// off the reader. Introduction of new passages is explicit and paced by the introduction panel (#607).
 export function RecitePage({
   planEntryId
 }: Readonly<{ planEntryId?: string | undefined }>): React.JSX.Element {
@@ -25,6 +32,8 @@ export function RecitePage({
     planEntryId === undefined ? { passages: [], status: "ready" } : { status: "loading" }
   );
   const [actionFailed, setActionFailed] = useState(false);
+  // Bumped whenever an introduction activates a passage, so the list re-fetches to show the new card.
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     if (planEntryId === undefined) {
@@ -34,7 +43,7 @@ export function RecitePage({
       (list) => setState({ passages: list.passages, status: "ready" }),
       () => setState({ status: "error" })
     );
-  }, [planEntryId]);
+  }, [planEntryId, reloadToken]);
 
   function runAction(action: Promise<ReadonlyArray<RecitationPassageDto>>): void {
     setActionFailed(false);
@@ -59,6 +68,14 @@ export function RecitePage({
           Could not update the passages. Please try again.
         </p>
       ) : null}
+      {state.status === "ready" && state.passages.length > 0 ? (
+        <div className="mt-6">
+          <PassageIntroductionPanel
+            onIntroduced={() => setReloadToken((token) => token + 1)}
+            planEntryId={planEntryId}
+          />
+        </div>
+      ) : null}
       <div className="mt-6">
         {renderBody(
           state,
@@ -74,6 +91,112 @@ export function RecitePage({
         </div>
       ) : null}
     </PageFrame>
+  );
+}
+
+type IntroductionState =
+  | Readonly<{ status: "error" }>
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ introduction: RecitationIntroductionStatusDto; status: "ready" }>;
+
+// The paced new-passage introduction (#607). Introduction is explicit: the learner starts the first
+// passage, then introduces the next one at a time — capped per local day, and never while a passage is
+// still due. This panel fetches the server-computed status and renders the exact calm state (due work
+// remains, cap reached, all introduced) or the primary action ("Start first passage" for the first,
+// "New passage" thereafter), enabled only when the server says it is available. Introducing refreshes
+// both this status (from the response) and the passage list (via `onIntroduced`).
+function PassageIntroductionPanel({
+  onIntroduced,
+  planEntryId
+}: Readonly<{ onIntroduced: () => void; planEntryId: string }>): React.JSX.Element | null {
+  const [state, setState] = useState<IntroductionState>({ status: "loading" });
+  const [actionFailed, setActionFailed] = useState(false);
+
+  useEffect(() => {
+    getIntroductionStatus(planEntryId).then(
+      (introduction) => setState({ introduction, status: "ready" }),
+      () => setState({ status: "error" })
+    );
+  }, [planEntryId]);
+
+  if (state.status === "loading") {
+    return <LoadingIndicator label="Loading introduction…" />;
+  }
+  if (state.status === "error") {
+    return (
+      <p className="text-danger" role="alert">
+        Could not load the introduction. Please try again.
+      </p>
+    );
+  }
+
+  const introduction = state.introduction;
+  // A non-learning plan (e.g. maintenance) never introduces new passages, so the invitation is silent.
+  if (introduction.reason === "not_learning") {
+    return null;
+  }
+
+  function introduce(): void {
+    setActionFailed(false);
+    introduceNextPassage(planEntryId).then(
+      (response) => {
+        setState({ introduction: response.status, status: "ready" });
+        onIntroduced();
+      },
+      () => setActionFailed(true)
+    );
+  }
+
+  return (
+    <section aria-label="New passage" className="rounded border border-border bg-surface p-4">
+      {actionFailed ? (
+        <p className="mb-3 text-danger" role="alert">
+          Could not introduce the next passage. Please try again.
+        </p>
+      ) : null}
+      {renderIntroductionBody(introduction, introduce)}
+    </section>
+  );
+}
+
+// The calm, reason-specific introduction copy. Due work is always presented before the optional "New
+// passage" invitation, and the cap is a resting state ("3 of 3 introduced today"), never a failure.
+function renderIntroductionBody(
+  introduction: RecitationIntroductionStatusDto,
+  introduce: () => void
+): React.JSX.Element {
+  if (introduction.reason === "due_work_remains") {
+    return (
+      <p className="text-text-muted">
+        You have {introduction.dueCount} passage
+        {introduction.dueCount === 1 ? "" : "s"} to practise. Recite{" "}
+        {introduction.dueCount === 1 ? "it" : "them"} on Today before introducing a new one.
+      </p>
+    );
+  }
+  if (introduction.reason === "cap_reached") {
+    return (
+      <p className="text-text-muted">
+        {introduction.introducedToday} of {introduction.dailyCap} introduced today. Come back
+        tomorrow for the next passage.
+      </p>
+    );
+  }
+  if (introduction.reason === "all_introduced") {
+    return <p className="text-text-muted">Every passage has been introduced.</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Button onClick={introduce} variant="primary">
+        {introduction.anyIntroduced ? "New passage" : "Start first passage"}
+      </Button>
+      <p className="text-text-muted">
+        {introduction.anyIntroduced
+          ? `${introduction.introducedToday} of ${introduction.dailyCap} introduced today.`
+          : "Start reciting your first passage when you are ready."}
+      </p>
+    </div>
   );
 }
 

@@ -1,5 +1,10 @@
 import type { RecitationPassageDto } from "@whetstone/contracts";
-import type { EntryId } from "@whetstone/domain";
+import {
+  evaluateRecitationIntroduction,
+  localDayBoundary,
+  type EntryId,
+  type RecitationIntroductionReason
+} from "@whetstone/domain";
 import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -178,6 +183,100 @@ export async function listPassageRowsForPlan(
     .from(recitationPassages)
     .where(eq(recitationPassages.planEntryId, planEntryId))
     .orderBy(asc(recitationPassages.orderIndex), asc(recitationPassages.entryId));
+}
+
+// A preview of the lowest-order queued passage awaiting introduction (#607): just enough to show the
+// learner what "New passage" would introduce, without exposing the whole row.
+export type RecitationNextQueuedPreview = Readonly<{
+  entryId: string;
+  orderIndex: number;
+  sourceText: string;
+}>;
+
+// The server-computed new-passage introduction status for one plan (#607), the single source the
+// introduction route and the activate command both read. `dueCount` counts only ACTIVE, introduced
+// passages whose shared card is due at/-before `now` — queued passages have no card and never count.
+// `introducedToday` counts passages introduced within the learner's LOCAL day (#606), so the cap resets
+// at the learner's midnight, not the server's. `nextQueued` is the lowest-order not-yet-introduced
+// passage (the ordered rows make the first queued row the next to introduce). Undefined when the plan is
+// not owned (the route maps that to 404).
+export type RecitationIntroductionStatus = Readonly<{
+  anyIntroduced: boolean;
+  dailyCap: number;
+  dueCount: number;
+  introducedToday: number;
+  newPassageAvailable: boolean;
+  nextQueued: RecitationNextQueuedPreview | null;
+  phase: typeof recitationPlans.$inferSelect.phase;
+  planEntryId: string;
+  reason: RecitationIntroductionReason;
+  remainingCapacity: number;
+}>;
+
+export async function loadRecitationIntroductionStatus(
+  db: DbClient,
+  planEntryId: EntryId,
+  userId: string,
+  now: Date,
+  timeZone: string
+): Promise<RecitationIntroductionStatus | undefined> {
+  const owned = await loadOwnedPlanForPassages(db, planEntryId, userId);
+  if (owned === undefined) {
+    return undefined;
+  }
+
+  const passages = await listPassageRowsForPlan(db, planEntryId);
+  const cards = await loadReviewCardsForTargets(
+    db,
+    passages.map((passage) => passage.entryId)
+  );
+
+  const dueCount = passages.filter((passage) => {
+    if (passage.introducedAt === null) {
+      return false;
+    }
+    const card = cards.get(passage.entryId);
+    return card !== undefined && card.status === "active" && card.dueAt.getTime() <= now.getTime();
+  }).length;
+
+  const { utcEnd, utcStart } = localDayBoundary(now, timeZone);
+  const introducedToday = passages.filter(
+    (passage) =>
+      passage.introducedAt !== null &&
+      passage.introducedAt.getTime() >= utcStart.getTime() &&
+      passage.introducedAt.getTime() < utcEnd.getTime()
+  ).length;
+
+  // The rows are ordered by orderIndex, so the first queued row is always the next passage to introduce.
+  const nextQueuedRow = passages.find((passage) => passage.introducedAt === null);
+  const nextQueued: RecitationNextQueuedPreview | null =
+    nextQueuedRow === undefined
+      ? null
+      : {
+          entryId: nextQueuedRow.entryId,
+          orderIndex: nextQueuedRow.orderIndex,
+          sourceText: nextQueuedRow.sourceText
+        };
+
+  const availability = evaluateRecitationIntroduction({
+    dueCount,
+    hasQueued: nextQueued !== null,
+    introducedToday,
+    isLearning: owned.phase === "learning"
+  });
+
+  return {
+    anyIntroduced: passages.some((passage) => passage.introducedAt !== null),
+    dailyCap: availability.dailyCap,
+    dueCount,
+    introducedToday,
+    newPassageAvailable: availability.newPassageAvailable,
+    nextQueued,
+    phase: owned.phase,
+    planEntryId,
+    reason: availability.reason,
+    remainingCapacity: availability.remainingCapacity
+  };
 }
 
 // The Work's text blocks in true source order (reading-unit order, then block order), as the seed

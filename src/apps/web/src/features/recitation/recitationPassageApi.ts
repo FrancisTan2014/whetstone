@@ -1,13 +1,17 @@
 import type {
+  ActivateNextRecitationPassageResponse,
   DueRecitationPassageDto,
   RecitationCueStrengthDto,
+  RecitationIntroductionStatusDto,
   RecitationPassageDto,
   RecitationPassageListDto,
   RecitationReviewRating,
   RecitationSupportLevelDto
 } from "@whetstone/contracts";
 import {
+  parseActivateNextRecitationPassageResponse,
   parseDueRecitationPassageResponse,
+  parseRecitationIntroductionStatusDto,
   parseRecitationPassageListDto,
   parseRecordRecitationReviewResponse,
   parseSetRecitationSupportLevelResponse
@@ -47,6 +51,30 @@ export async function seedPassages(planEntryId: string): Promise<RecitationPassa
 export async function listPassages(planEntryId: string): Promise<RecitationPassageListDto> {
   return parseRecitationPassageListDto(
     await requestJson(apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/passages`))
+  );
+}
+
+// The paced new-passage introduction status for a plan (#607): due count, how many passages were
+// introduced on the learner's local day out of the cap, the next queued passage preview, and whether
+// "New passage" (or "Start first passage") is currently available.
+export async function getIntroductionStatus(
+  planEntryId: string
+): Promise<RecitationIntroductionStatusDto> {
+  return parseRecitationIntroductionStatusDto(
+    await requestJson(apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/introduction`))
+  );
+}
+
+// Introduce the next queued passage of a Learning plan (#607); resolves with the newly-activated passage
+// and the fresh introduction status so the caller updates the action and pacing state in one round-trip.
+export async function introduceNextPassage(
+  planEntryId: string
+): Promise<ActivateNextRecitationPassageResponse> {
+  return parseActivateNextRecitationPassageResponse(
+    await requestJson(
+      apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/introduce-next`),
+      { method: "POST" }
+    )
   );
 }
 

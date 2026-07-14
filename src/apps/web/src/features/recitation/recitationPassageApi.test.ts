@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   fetchDuePassage,
+  getIntroductionStatus,
+  introduceNextPassage,
   listPassages,
   mergeNextPassage,
   reviewPassage,
@@ -40,6 +42,19 @@ const dueDto = {
   workTitle: "The Recitation"
 } as const;
 
+const introductionStatus = {
+  anyIntroduced: false,
+  dailyCap: 3,
+  dueCount: 0,
+  introducedToday: 0,
+  newPassageAvailable: true,
+  nextQueued: { entryId: "passage-1", orderIndex: 0, sourceText: "The quick brown fox." },
+  phase: "learning",
+  planEntryId: "plan-1",
+  reason: "available",
+  remainingCapacity: 3
+} as const;
+
 function mockFetchOnce(body: unknown, ok = true, status = 200): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn().mockResolvedValue({
     json: async () => body,
@@ -75,6 +90,37 @@ describe("recitationPassageApi", () => {
     expect(result.passages[0]?.entryId).toBe("passage-1");
     const [path] = fetchMock.mock.calls[0] as [string];
     expect(path).toBe("/api/recitation/plans/plan-1/passages");
+  });
+
+  it("fetches the introduction status for a plan", async () => {
+    const fetchMock = mockFetchOnce(introductionStatus);
+
+    const result = await getIntroductionStatus("plan/1");
+
+    expect(result.reason).toBe("available");
+    expect(result.nextQueued?.entryId).toBe("passage-1");
+    const [path] = fetchMock.mock.calls[0] as [string];
+    expect(path).toBe("/api/recitation/plans/plan%2F1/introduction");
+  });
+
+  it("introduces the next passage with a POST, returning the passage and fresh status", async () => {
+    const fetchMock = mockFetchOnce({
+      passage: passageDto,
+      status: {
+        ...introductionStatus,
+        anyIntroduced: true,
+        introducedToday: 1,
+        remainingCapacity: 2
+      }
+    });
+
+    const result = await introduceNextPassage("plan/1");
+
+    expect(result.passage.entryId).toBe("passage-1");
+    expect(result.status.introducedToday).toBe(1);
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/recitation/plans/plan%2F1/introduce-next");
+    expect(init.method).toBe("POST");
   });
 
   it("fetches the due passage, tolerating a null", async () => {

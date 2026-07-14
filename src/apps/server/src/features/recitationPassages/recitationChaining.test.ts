@@ -201,6 +201,16 @@ async function ownPassage(passageEntryId: string, count = 2): Promise<void> {
   }
 }
 
+// Explicitly introduce the next queued passage of a Learning plan (#607) — stamps `introduced_at` and
+// seeds its active review card so it is due immediately.
+async function introduceNext(planEntryId: string): Promise<void> {
+  const response = await context.server.inject({
+    method: "POST",
+    url: `/api/recitation/plans/${planEntryId}/introduce-next`
+  });
+  expect(response.statusCode).toBe(200);
+}
+
 async function getChaining(planEntryId: string): Promise<RecitationChainingResponse["chaining"]> {
   const response = await context.server.inject({
     method: "GET",
@@ -747,6 +757,7 @@ describe("maintenance whole-work upkeep (#605)", () => {
 describe("GET /api/recitation/today", () => {
   it("selects a due passage first", async () => {
     const { planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
+    await introduceNext(planEntryId);
 
     const today = await getToday();
     expect(today.action).toBe("due_passage");

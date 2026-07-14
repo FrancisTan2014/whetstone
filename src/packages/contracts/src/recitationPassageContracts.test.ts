@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  activateNextRecitationPassageResponseSchema,
   dueRecitationPassageResponseSchema,
+  parseActivateNextRecitationPassageResponse,
   parseDueRecitationPassageResponse,
+  parseRecitationIntroductionStatusDto,
   parseRecitationPassageListDto,
   parseRecordRecitationReviewRequest,
   parseRecordRecitationReviewResponse,
   parseSetRecitationSupportLevelRequest,
   parseSetRecitationSupportLevelResponse,
   parseSplitRecitationPassageRequest,
+  recitationIntroductionStatusDtoSchema,
   recitationPassageDtoSchema,
   recordRecitationReviewRequestSchema,
   setRecitationSupportLevelRequestSchema,
@@ -180,6 +184,72 @@ describe("parseRecordRecitationReviewRequest", () => {
   it("rejects an unknown cue strength", () => {
     expect(
       recordRecitationReviewRequestSchema.safeParse({ cueStrength: "full", rating: "good" }).success
+    ).toBe(false);
+  });
+});
+
+const introductionStatus = {
+  anyIntroduced: true,
+  dailyCap: 3,
+  dueCount: 0,
+  introducedToday: 1,
+  newPassageAvailable: true,
+  nextQueued: { entryId: "passage-2", orderIndex: 1, sourceText: "Gamma delta" },
+  phase: "learning" as const,
+  planEntryId: "plan-1",
+  reason: "available" as const,
+  remainingCapacity: 2
+};
+
+describe("recitationIntroductionStatusDtoSchema", () => {
+  it("accepts a well-formed introduction status", () => {
+    expect(parseRecitationIntroductionStatusDto(introductionStatus)).toEqual(introductionStatus);
+  });
+
+  it("accepts a status with no queued passage remaining", () => {
+    const allIntroduced = {
+      ...introductionStatus,
+      newPassageAvailable: false,
+      nextQueued: null,
+      reason: "all_introduced" as const
+    };
+    expect(parseRecitationIntroductionStatusDto(allIntroduced)).toEqual(allIntroduced);
+  });
+
+  it("rejects an unknown reason", () => {
+    expect(
+      recitationIntroductionStatusDtoSchema.safeParse({ ...introductionStatus, reason: "nope" })
+        .success
+    ).toBe(false);
+  });
+
+  it("rejects an unknown phase", () => {
+    expect(
+      recitationIntroductionStatusDtoSchema.safeParse({ ...introductionStatus, phase: "paused" })
+        .success
+    ).toBe(false);
+  });
+
+  it("rejects unknown keys", () => {
+    expect(
+      recitationIntroductionStatusDtoSchema.safeParse({ ...introductionStatus, extra: 1 }).success
+    ).toBe(false);
+  });
+});
+
+describe("parseActivateNextRecitationPassageResponse", () => {
+  it("accepts the activated passage plus the fresh introduction status", () => {
+    const response = { passage, status: introductionStatus };
+    expect(parseActivateNextRecitationPassageResponse(response)).toEqual(response);
+  });
+
+  it("rejects unknown keys", () => {
+    expect(
+      activateNextRecitationPassageResponseSchema.safeParse({
+        extra: 1,
+        passage,
+        status: introductionStatus
+      }).success
     ).toBe(false);
   });
 });

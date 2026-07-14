@@ -128,6 +128,15 @@ export type {
   SplitPassageResult
 } from "./recitationPassage.js";
 export {
+  evaluateRecitationIntroduction,
+  RECITATION_DAILY_INTRODUCTION_CAP,
+  recitationIntroductionReasons
+} from "./recitationIntroduction.js";
+export type {
+  RecitationIntroductionAvailability,
+  RecitationIntroductionReason
+} from "./recitationIntroduction.js";
+export {
   DEFAULT_RECITATION_SUPPORT_LEVEL,
   isRecitationSupportLevel,
   projectRecitationSupport,

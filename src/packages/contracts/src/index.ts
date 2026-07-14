@@ -48,10 +48,13 @@ export type {
   SetRecitationPhaseRequest
 } from "./recitationContracts.js";
 export {
+  activateNextRecitationPassageResponseSchema,
   activeRecitationPassageDtoSchema,
   dueRecitationPassageDtoSchema,
   dueRecitationPassageResponseSchema,
+  parseActivateNextRecitationPassageResponse,
   parseDueRecitationPassageResponse,
+  parseRecitationIntroductionStatusDto,
   parseRecitationPassageListDto,
   parseRecordRecitationReviewRequest,
   parseRecordRecitationReviewResponse,
@@ -61,6 +64,8 @@ export {
   queuedRecitationPassageDtoSchema,
   recitationAnchorStatusDtoSchema,
   recitationCueStrengthDtoSchema,
+  recitationIntroductionNextQueuedSchema,
+  recitationIntroductionStatusDtoSchema,
   recitationPassageDtoSchema,
   recitationPassageListDtoSchema,
   recitationReviewRatingSchema,
@@ -72,12 +77,15 @@ export {
   splitRecitationPassageRequestSchema
 } from "./recitationPassageContracts.js";
 export type {
+  ActivateNextRecitationPassageResponse,
   ActiveRecitationPassageDto,
   DueRecitationPassageDto,
   DueRecitationPassageResponse,
   QueuedRecitationPassageDto,
   RecitationAnchorStatusDto,
   RecitationCueStrengthDto,
+  RecitationIntroductionNextQueued,
+  RecitationIntroductionStatusDto,
   RecitationPassageDto,
   RecitationPassageListDto,
   RecitationReviewRating,
