@@ -5,12 +5,15 @@ import {
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
+import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
   createRecitationPlan,
   recordRecitationSession,
   setRecitationPhase,
+  setRecitationPlanPaused,
   type RecitationDependencies
 } from "./recitationCommands.js";
+import { loadRecitationHub } from "./recitationHubQueries.js";
 import { getContinueRecitation, listRecitationPlans } from "./recitationQueries.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
@@ -74,6 +77,56 @@ export function registerRecitationRoutes(
     );
     return { plan };
   });
+
+  // The recitation routine hub (#608): one calm projection of the learner's most-recently-touched plan —
+  // what needs attention now, where they are in this Work, and the next due-first action — derived purely
+  // from canonical rows joined to shared card state. Static path, so registered before the `:id` routes.
+  server.get("/api/recitation/hub", async (request) => {
+    const userId = request.server.currentUser.getCurrentUserId();
+    const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+    const hub = await loadRecitationHub(dependencies, userId, dependencies.now(), timeZone);
+    return { hub };
+  });
+
+  // Pause a plan (#608): remove its cards from all due/Today selection without deleting progress,
+  // schedule, support levels, chains, or history. Owner-scoped (404 otherwise); idempotent. Returns the
+  // refreshed hub so the client updates in one round-trip.
+  server.post<{ Params: PlanParams }>("/api/recitation/plans/:id/pause", async (request, reply) => {
+    const userId = request.server.currentUser.getCurrentUserId();
+    const result = await setRecitationPlanPaused(
+      dependencies,
+      toEntryId(request.params.id),
+      true,
+      userId
+    );
+    if (result === "not_found") {
+      return reply.code(404).send(notFound);
+    }
+    const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+    const hub = await loadRecitationHub(dependencies, userId, dependencies.now(), timeZone);
+    return reply.code(200).send({ hub });
+  });
+
+  // Resume a paused plan (#608): clear its pause so its preserved cards re-enter selection. Owner-scoped
+  // (404 otherwise); idempotent. Returns the refreshed hub.
+  server.post<{ Params: PlanParams }>(
+    "/api/recitation/plans/:id/resume",
+    async (request, reply) => {
+      const userId = request.server.currentUser.getCurrentUserId();
+      const result = await setRecitationPlanPaused(
+        dependencies,
+        toEntryId(request.params.id),
+        false,
+        userId
+      );
+      if (result === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+      const hub = await loadRecitationHub(dependencies, userId, dependencies.now(), timeZone);
+      return reply.code(200).send({ hub });
+    }
+  );
 
   // The explicit learner-driven phase transition (e.g. "Start reciting"). Owner-scoped (404 otherwise); a
   // malformed phase is rejected at the boundary (400).
