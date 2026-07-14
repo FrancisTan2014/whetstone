@@ -337,6 +337,13 @@
       "when": 1783995836211,
       "tag": "0047_silent_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1784060000000,
+      "tag": "0048_shared_review_cards",
+      "breakpoints": true
     }
   ]
 }
