@@ -18,7 +18,7 @@ export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timel
 export { isDayKey, monthBounds, monthGrid, shiftMonth, toMonthKey } from "./diaryTimeline.js";
 export { isTimeZone, localDayBoundary, localDayKey } from "./localDay.js";
 export type { LocalDayBoundary } from "./localDay.js";
-export { composeTodayBoard } from "./todayBoard.js";
+export { composeTodayBoard, recitationTodayRoutineSummary } from "./todayBoard.js";
 export type {
   ComposeTodayBoardInput,
   TodayBoard,
@@ -191,7 +191,11 @@ export type {
   RecitationTodayAction,
   SessionRecallOutcome
 } from "./recitationChaining.js";
-export { recitationSessionSteps, selectRecitationSessionStep } from "./recitationSession.js";
+export {
+  isRequiredRecitationStep,
+  recitationSessionSteps,
+  selectRecitationSessionStep
+} from "./recitationSession.js";
 export type { RecitationSessionStep } from "./recitationSession.js";
 export {
   isWorkLanguage,

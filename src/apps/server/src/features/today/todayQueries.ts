@@ -2,6 +2,7 @@ import type { AuthoredWorkSummaryDto, LatestReadingPositionDto } from "@whetston
 import {
   composeTodayBoard,
   localDayKey,
+  recitationTodayRoutineSummary,
   type TodayBoard,
   type TodayInvitationSource,
   type TodayNewPassageSource,
@@ -48,7 +49,17 @@ async function loadRecitationSources(
         planEntryId: session.newPassage.available ? session.planEntryId : null,
         status: "ok"
       },
-      routine: { status: "ok", summary: session.due }
+      routine: {
+        status: "ok",
+        // A required non-card step (unstarted whole-Work / eligible chain) has no due card, so fold the
+        // session step into the summary here — a card-only view would let Today falsely report clear
+        // while a real recitation obligation is pending (#610).
+        summary: recitationTodayRoutineSummary({
+          due: session.due,
+          nowIso: now.toISOString(),
+          step: session.step
+        })
+      }
     };
   } catch {
     return { newPassage: { status: "failed" }, routine: { status: "failed" } };

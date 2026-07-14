@@ -210,6 +210,15 @@ async function pausePlan(planEntryId: string): Promise<void> {
   expect(response.statusCode).toBe(200);
 }
 
+async function reviewWholeWork(planEntryId: string): Promise<void> {
+  const response = await context.server.inject({
+    method: "POST",
+    payload: { outcome: { status: "held" }, rating: "good" },
+    url: `/api/recitation/plans/${planEntryId}/whole-work/review`
+  });
+  expect(response.statusCode).toBe(200);
+}
+
 // --- Memory seeding ---------------------------------------------------------------------------
 
 async function seedMemoryPrompt(now: Date): Promise<string> {
@@ -360,6 +369,31 @@ describe("GET /api/today", () => {
     expect(board.clear).toBe(true);
     expect(board.dueNow).toEqual([]);
     expect(board.newPassage).toEqual({ planEntryId, status: "available" });
+  });
+
+  it("keeps Recitation due when a required chain step has no due card, never a false clear", async () => {
+    // Own both passages and retire the whole-Work prompt, leaving an eligible owned-prefix chain with no
+    // active chain and no due review card: the session sits on the `chain` step while `due.nextDueAt` is
+    // null. A card-only Today would drop the row and falsely report clear; Today must keep it due (#610).
+    const { passageIds, planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
+    await introduceNext(planEntryId);
+    await ownPassage(passageIds[0]!);
+    await introduceNext(planEntryId);
+    await ownPassage(passageIds[1]!);
+    await reviewWholeWork(planEntryId);
+
+    const board = await getBoard();
+
+    expect(board.clear).toBe(false);
+    expect(board.dueNow).toEqual([
+      {
+        dueCount: 1,
+        kind: "recitation",
+        nextDueAt: START,
+        overdue: false,
+        overdueCount: 0
+      }
+    ]);
   });
 
   it("applies the learner's local-day boundary when classifying overdue", async () => {

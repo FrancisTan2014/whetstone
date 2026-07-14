@@ -8,6 +8,8 @@
 // server instantiates the payloads with their DTO types, then validates the whole board at the API
 // boundary. The routine obligations are fully concrete here — their shape is the product logic Today owns.
 
+import { isRequiredRecitationStep, type RecitationSessionStep } from "./recitationSession.js";
+
 // The deterministic-obligation sources Today groups into one row each (#609 Recitation, Memory review).
 export type TodayRoutineKind = "recitation" | "memory";
 
@@ -19,6 +21,25 @@ export type TodayRoutineSummary = Readonly<{
   nextDueAt: string | null;
   overdueCount: number;
 }>;
+
+// Project a Recitation session (#609) into its Today routine summary (#610). The session's card-based
+// `due` summary is authoritative whenever a review card is actually due, but a required non-card step —
+// an unstarted whole-Work maintenance step or an eligible owned-prefix chain — carries no due card, so
+// `due.nextDueAt` is null even though the routine holds a real obligation. Today must never report clear
+// while the session sits before `new_passage`/`clear`, so a required step with no due card is surfaced as
+// one obligation due at `nowIso`; a due card keeps its real earliest instant and count untouched.
+export function recitationTodayRoutineSummary(
+  input: Readonly<{ due: TodayRoutineSummary; nowIso: string; step: RecitationSessionStep }>
+): TodayRoutineSummary {
+  if (input.due.nextDueAt !== null || !isRequiredRecitationStep(input.step)) {
+    return input.due;
+  }
+  return {
+    dueCount: Math.max(input.due.dueCount, 1),
+    nextDueAt: input.nowIso,
+    overdueCount: input.due.overdueCount
+  };
+}
 
 // A routine source result: its summary, or a failed load. A failed routine never yields a due row and
 // always lands in `routineFailures`, so it can never contribute to a false clear state.
