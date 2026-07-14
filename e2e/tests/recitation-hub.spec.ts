@@ -75,10 +75,10 @@ test.describe("recitation routine hub (#608)", () => {
 
     const dueReview = hub.getByRole("group", { name: "Due review" });
     await expect(dueReview.getByText("1 due")).toBeVisible();
-    await expect(dueReview.getByRole("link", { name: "Start review" })).toHaveAttribute(
-      "href",
-      `#/recite?plan=${planEntryId}`
-    );
+    // The due-first action runs the real review session INLINE on the hub — a control, not a link to the
+    // passage-segmentation surface (the bug this spec guards).
+    await expect(dueReview.getByRole("button", { name: "Start review" })).toBeVisible();
+    await expect(hub.getByRole("link", { name: "Start review" })).toHaveCount(0);
 
     // Pausing removes the plan's due work and action WITHOUT deleting anything — the calm paused banner
     // replaces the obligation.
@@ -90,7 +90,7 @@ test.describe("recitation routine hub (#608)", () => {
     ]);
     await expect(hub.getByText(/this routine is paused/i)).toBeVisible();
     await expect(hub.getByRole("group", { name: "Due review" })).toHaveCount(0);
-    await expect(hub.getByRole("link", { name: "Start review" })).toHaveCount(0);
+    await expect(hub.getByRole("button", { name: "Start review" })).toHaveCount(0);
 
     // A paused plan also drops out of the cross-plan Today action (the same predicate the due scans use).
     await page.goto(`${setup.baseURL}#/`);
@@ -109,9 +109,13 @@ test.describe("recitation routine hub (#608)", () => {
     ]);
     await expect(hub.getByText(/this routine is paused/i)).toHaveCount(0);
     await expect(hub.getByRole("group", { name: "Due review" }).getByText("1 due")).toBeVisible();
-    await expect(hub.getByRole("link", { name: "Start review" })).toHaveAttribute(
-      "href",
-      `#/recite?plan=${planEntryId}`
-    );
+
+    // The due primary action actually reviews the due passage: start the inline session, reveal the
+    // target, then self-assess. Completing it clears the obligation, so the hub re-decides and no longer
+    // surfaces a due review — proving the action ran the real due-session flow, not a dead link.
+    await hub.getByRole("button", { name: "Start review" }).click();
+    await hub.getByRole("button", { name: "Reveal" }).click();
+    await hub.getByRole("button", { name: "Complete, with effort" }).click();
+    await expect(hub.getByRole("group", { name: "Due review" })).toHaveCount(0);
   });
 });

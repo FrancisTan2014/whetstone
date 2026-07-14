@@ -10,7 +10,29 @@ vi.mock("./recitationHubApi", () => ({
   resumePlan: vi.fn()
 }));
 
+vi.mock("./recitationPassageApi", () => ({
+  fetchDuePassage: vi.fn()
+}));
+
+// The real due-review card is exercised by RecitationReviewCard.test.tsx and the hub E2E; here it is
+// stubbed to a minimal control so these tests assert the HUB's wiring — that it launches the session with
+// the fetched passage and refreshes on completion — not the card's internals.
+vi.mock("./RecitationReviewCard", () => ({
+  RecitationReviewCard: ({
+    onReviewed,
+    passage
+  }: {
+    onReviewed: () => void;
+    passage: { passageEntryId: string };
+  }) => (
+    <button onClick={onReviewed} type="button">
+      complete review {passage.passageEntryId}
+    </button>
+  )
+}));
+
 import type {
+  DueRecitationPassageDto,
   RecitationHubDto,
   RecitationIntroductionStatusDto,
   RecitationTodayActionDto,
@@ -19,10 +41,27 @@ import type {
 
 import { RecitationHubPage } from "./RecitationHubPage";
 import { getRecitationHub, pausePlan, resumePlan } from "./recitationHubApi";
+import { fetchDuePassage } from "./recitationPassageApi";
 
 const mockedGet = vi.mocked(getRecitationHub);
 const mockedPause = vi.mocked(pausePlan);
 const mockedResume = vi.mocked(resumePlan);
+const mockedDue = vi.mocked(fetchDuePassage);
+
+function makeDuePassage(overrides: Partial<DueRecitationPassageDto> = {}): DueRecitationPassageDto {
+  return {
+    anchorStatus: "anchored",
+    context: "Chapter 1",
+    defaultCueStrength: "opening",
+    passageEntryId: "passage-1",
+    planEntryId: "plan-1",
+    precedingText: null,
+    supportLevel: "full",
+    targetText: "To be, or not to be.",
+    workTitle: "Meditations",
+    ...overrides
+  };
+}
 
 function makeIntro(
   overrides: Partial<RecitationIntroductionStatusDto> = {}
@@ -117,9 +156,10 @@ describe("RecitationHubPage", () => {
 
     const due = screen.getByLabelText("Due review");
     expect(within(due).getByText("2 due · 1 overdue")).toBeDefined();
-    expect(within(due).getByRole("link", { name: "Start review" }).getAttribute("href")).toBe(
-      "#/recite?plan=plan-1"
-    );
+    // The due action launches the real review session inline — it is a control, not a link to the
+    // segmentation surface.
+    expect(within(due).getByRole("button", { name: "Start review" })).toBeDefined();
+    expect(within(due).queryByRole("link")).toBeNull();
   });
 
   it("shows a due count without the overdue clause when nothing is overdue", async () => {
@@ -132,13 +172,75 @@ describe("RecitationHubPage", () => {
     expect(within(due).queryByText(/overdue/)).toBeNull();
   });
 
+  it("runs the due review session inline and refreshes the hub when a review completes", async () => {
+    mockedGet
+      .mockResolvedValueOnce(
+        makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
+      )
+      .mockResolvedValueOnce(makeHub({ primaryAction: "none" }));
+    mockedDue.mockResolvedValue(makeDuePassage({ passageEntryId: "passage-7" }));
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
+
+    // The fetched due passage is handed to the shared review card (stubbed here).
+    const complete = await screen.findByRole("button", { name: "complete review passage-7" });
+    expect(mockedDue).toHaveBeenCalledTimes(1);
+
+    // Completing the review refreshes the hub, which re-decides the next action (now caught up).
+    await userEvent.click(complete);
+    expect(await screen.findByLabelText("Caught up")).toBeDefined();
+    expect(mockedGet).toHaveBeenCalledTimes(2);
+    expect(screen.queryByLabelText("Due review")).toBeNull();
+  });
+
+  it("resolves to a calm caught-up line when the due passage cleared before it was fetched", async () => {
+    mockedGet.mockResolvedValue(
+      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
+    );
+    mockedDue.mockResolvedValue(null);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
+    const due = screen.getByLabelText("Due review");
+    expect(await within(due).findByText(/Nothing to recite/i)).toBeDefined();
+    expect(within(due).queryByRole("button", { name: "Start review" })).toBeNull();
+  });
+
+  it("surfaces an inline error when the due passage fails to load, keeping the hub", async () => {
+    mockedGet.mockResolvedValue(
+      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
+    );
+    mockedDue.mockRejectedValue(new Error("network"));
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
+    const due = screen.getByLabelText("Due review");
+    expect(await within(due).findByRole("alert")).toBeDefined();
+    // The session can be retried; the hub itself is intact.
+    expect(within(due).getByRole("button", { name: "Start review" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Meditations" })).toBeDefined();
+  });
+
+  it("shows a quiet loading line while the due passage resolves", async () => {
+    mockedGet.mockResolvedValue(
+      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "due_passage" })
+    );
+    mockedDue.mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start review" }));
+    expect(screen.getByText(/Finding your next passage/i)).toBeDefined();
+  });
+
   it("labels the chain and whole-work primary actions from the stage", async () => {
     mockedGet.mockResolvedValue(
-      makeHub({ due: { dueCount: 1, overdueCount: 0 }, primaryAction: "chain", stage: "chain" })
+      makeHub({ due: { dueCount: 3, overdueCount: 1 }, primaryAction: "chain", stage: "chain" })
     );
     renderPage();
     expect(await screen.findByRole("link", { name: "Continue chain" })).toBeDefined();
     expect(screen.getByText("Stage: Chaining passages")).toBeDefined();
+    expect(screen.getByText("3 due · 1 overdue")).toBeDefined();
 
     cleanup();
     mockedGet.mockResolvedValue(
