@@ -107,7 +107,7 @@ export function RecitationChainingPanel({
 // Offer to start a contiguous chain when adjacent owned passages exist. The learner chooses the end
 // boundary (a 0-based passage index within the owned prefix); the start is always the first passage and
 // nothing inside can be skipped, so a chain is at least two passages.
-function ChainStart({
+export function ChainStart({
   eligibility,
   onStart
 }: Readonly<{
@@ -147,7 +147,7 @@ function ChainStart({
 
 // An in-progress chain: the contiguous passages in fixed order. After reciting, the learner reports the
 // recall either held throughout, or broke at one identified passage — only that passage is failed.
-function ActiveChain({
+export function ActiveChain({
   chain,
   onComplete
 }: Readonly<{
@@ -188,7 +188,7 @@ function ActiveChain({
 // The whole-work maintenance prompt: a single aggregate recall over the entire work, scheduled by its own
 // FSRS state. Rating it Again reschedules only this prompt; a passage is reset only if the learner
 // identifies it as the break point.
-function WholeWork({
+export function WholeWork({
   due,
   exists,
   onReview,

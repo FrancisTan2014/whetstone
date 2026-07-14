@@ -177,6 +177,8 @@ export type {
   RecitationTodayAction,
   SessionRecallOutcome
 } from "./recitationChaining.js";
+export { recitationSessionSteps, selectRecitationSessionStep } from "./recitationSession.js";
+export type { RecitationSessionStep } from "./recitationSession.js";
 export {
   isWorkLanguage,
   normalizeWorkLanguage,

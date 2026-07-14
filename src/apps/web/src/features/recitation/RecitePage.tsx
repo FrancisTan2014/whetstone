@@ -105,7 +105,7 @@ type IntroductionState =
 // remains, cap reached, all introduced) or the primary action ("Start first passage" for the first,
 // "New passage" thereafter), enabled only when the server says it is available. Introducing refreshes
 // both this status (from the response) and the passage list (via `onIntroduced`).
-function PassageIntroductionPanel({
+export function PassageIntroductionPanel({
   onIntroduced,
   planEntryId
 }: Readonly<{ onIntroduced: () => void; planEntryId: string }>): React.JSX.Element | null {
