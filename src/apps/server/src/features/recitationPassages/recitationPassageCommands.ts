@@ -6,13 +6,11 @@ import type {
   RecitationSupportLevelDto
 } from "@whetstone/contracts";
 import {
-  applyRating,
   coveredPassageText,
   DEFAULT_RECITATION_SUPPORT_LEVEL,
   mergePassageRanges,
-  newReviewState,
   reanchorPassageRange,
-  RECALL_REQUEST_RETENTION,
+  RECITATION_REQUEST_RETENTION,
   seedPassageRanges,
   splitPassageRange,
   toEntryId,
@@ -22,7 +20,13 @@ import {
 import { and, eq, gt, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, recitationPassages, recitationReviews } from "../../db/schema.js";
+import { entries, recitationPassages } from "../../db/schema.js";
+import { applyRatingToCardInTx, seedReviewCard } from "../review/reviewCardCommands.js";
+import {
+  ensurePassageCardInTx,
+  writeCueStrengthEvidence,
+  type Transaction
+} from "./recitationCardActivation.js";
 import {
   countReviewsByPassage,
   loadBlockTextByIds,
@@ -31,17 +35,17 @@ import {
   loadOwnedPlanForPassages,
   loadPlanPassageAtOrder,
   loadPrecedingPassage,
+  loadReviewCardsForTargets,
   loadWorkTextBlocks,
   listPassageRowsForPlan,
-  passageReviewStateColumns,
-  passageRowToReviewStateOrNull,
-  queuedPassageLifecycleColumns,
   toRecitationPassageDto,
   type RecitationPassageRow
 } from "./recitationPassageQueries.js";
+import { deleteRecitationReviewData } from "./recitationReviewData.js";
 
 // Real infrastructure boundaries (db, id generation, the clock) are injected so the passage commands stay
-// deterministic and testable; the pure segmentation and FSRS logic live in `@whetstone/domain`.
+// deterministic and testable; the pure segmentation logic lives in `@whetstone/domain` and all FSRS
+// scheduling goes through the shared review-card substrate (#618).
 export type RecitationPassageDependencies = Readonly<{
   createEntryId: () => string;
   createId: () => string;
@@ -85,51 +89,25 @@ function rowToRange(row: RecitationPassageRow): PassageRange {
   };
 }
 
-// The FSRS + lifecycle columns for a newly seeded/edited passage (#605). A `scheduled` passage is active
-// immediately (introduced now, a fresh FSRS card due now) — the Learning-phase behavior. A queued
-// passage is introduced but unscheduled (every FSRS field null), so a maintenance plan can lay out its
-// boundaries without adding passage due work; the passage activates only when a whole-work break
-// identifies it. Every lifecycle column is present (not optional) so the result completes a full
-// `RecitationPassageRow`.
-type PassageLifecycleColumns = Readonly<{
-  difficulty: number | null;
-  dueAt: Date | null;
-  elapsedDays: number | null;
-  introducedAt: Date | null;
-  lapses: number | null;
-  lastReviewedAt: Date | null;
-  learningSteps: number | null;
-  reps: number | null;
-  scheduledDays: number | null;
-  stability: number | null;
-  state: "new" | "learning" | "review" | "relearning" | null;
-}>;
-
-function newPassageLifecycleColumns(scheduled: boolean, now: Date): PassageLifecycleColumns {
-  return scheduled
-    ? { introducedAt: now, ...passageReviewStateColumns(newReviewState(now)) }
-    : queuedPassageLifecycleColumns();
-}
-
 async function dtosWithCounts(
   db: DbClient,
   rows: ReadonlyArray<RecitationPassageRow>
 ): Promise<ReadonlyArray<RecitationPassageDto>> {
-  const counts = await countReviewsByPassage(
-    db,
-    rows.map((row) => row.entryId)
+  const ids = rows.map((row) => row.entryId);
+  const counts = await countReviewsByPassage(db, ids);
+  const cards = await loadReviewCardsForTargets(db, ids);
+  return rows.map((row) =>
+    toRecitationPassageDto(row, cards.get(row.entryId) ?? null, counts.get(row.entryId) ?? 0)
   );
-  return rows.map((row) => toRecitationPassageDto(row, counts.get(row.entryId) ?? 0));
 }
 
 // Seed one passage per non-empty source text block of the plan's Work, in source order, each an
-// addressable Entry. In `learning` the passages are active (a fresh FSRS card due immediately) — the
-// opt-in Learning-phase engine (#578). In `maintenance` the passages are queued (no schedule, no due
-// work): a learner who already knows the Work only needs its boundaries laid out so whole-work upkeep
-// can start, without earning every passage through Learning first (#605). Idempotent: a plan already
-// divided returns its current passages as `already_seeded` (never a second set). A plan still
-// `familiarizing` is rejected as `wrong_phase` (the learner reaches Learning via Today's "Start
-// reciting"). Owner-scoped (`not_found` otherwise).
+// addressable Entry. In `learning` the passages are active — introduced now, and each seeds a fresh
+// shared review card due immediately (the opt-in Learning-phase engine, #578). In `maintenance` the
+// passages are queued (introduced_at null, no card, no due work): a learner who already knows the Work
+// only needs its boundaries laid out so whole-work upkeep can start (#605). Idempotent: a plan already
+// divided returns its current passages as `already_seeded`. A plan still `familiarizing` is
+// `wrong_phase`. Owner-scoped (`not_found` otherwise).
 export async function seedRecitationPassages(
   dependencies: RecitationPassageDependencies,
   planEntryId: EntryId,
@@ -159,23 +137,31 @@ export async function seedRecitationPassages(
     contextSnapshot: owned.workTitle,
     createdAt: now,
     entryId: dependencies.createEntryId(),
+    introducedAt: scheduled ? now : null,
     orderIndex: index,
     planEntryId,
     // Each seed range spans a block just loaded into `blockText`, so the covered text is always present.
     sourceText: coveredPassageText(range, blockText)!,
     supportLevel: DEFAULT_RECITATION_SUPPORT_LEVEL,
-    ...range,
-    ...newPassageLifecycleColumns(scheduled, now)
+    ...range
   }));
 
   await dependencies.db.transaction(async (tx) => {
     for (const row of rows) {
       await tx.insert(entries).values({ id: row.entryId, type: "recitation_passage" });
       await tx.insert(recitationPassages).values(row);
+      if (scheduled) {
+        await seedReviewCard(tx, {
+          targetEntryId: row.entryId,
+          userId,
+          requestedRetention: RECITATION_REQUEST_RETENTION,
+          now
+        });
+      }
     }
   });
 
-  return { passages: rows.map((row) => toRecitationPassageDto(row, 0)), status: "seeded" };
+  return { passages: await dtosWithCounts(dependencies.db, rows), status: "seeded" };
 }
 
 // The plan's passages, in reciting order, with each one's review count. Owner-scoped (`not_found`).
@@ -210,19 +196,40 @@ function newPassageRow(
     contextSnapshot,
     createdAt: now,
     entryId: dependencies.createEntryId(),
+    introducedAt: scheduled ? now : null,
     orderIndex,
     planEntryId,
     sourceText,
     supportLevel: DEFAULT_RECITATION_SUPPORT_LEVEL,
-    ...range,
-    ...newPassageLifecycleColumns(scheduled, now)
+    ...range
   };
 }
 
+// Persist a fresh passage (its Entry + row) inside the seed/split/merge transaction, seeding a shared
+// review card for an active passage (FSRS reset — the fresh boundaries have no earned schedule). A queued
+// passage gets no card.
+async function insertFreshPassage(
+  tx: Transaction,
+  row: RecitationPassageRow,
+  userId: string,
+  now: Date
+): Promise<void> {
+  await tx.insert(entries).values({ id: row.entryId, type: "recitation_passage" });
+  await tx.insert(recitationPassages).values(row);
+  if (row.introducedAt !== null) {
+    await seedReviewCard(tx, {
+      targetEntryId: row.entryId,
+      userId,
+      requestedRetention: RECITATION_REQUEST_RETENTION,
+      now
+    });
+  }
+}
+
 // Split a passage at a text position into two contiguous passages, editing boundaries only — the Work
-// text never changes. Both halves become fresh passages (new Entries, FSRS reset, prior review history of
-// the split passage dropped since its boundaries changed). Rejects a split outside the passage or on a
-// boundary (`invalid`). Owner-scoped (`not_found`).
+// text never changes. Both halves become fresh passages (new Entries, FSRS reset via new cards, and the
+// split passage's old card + events + evidence dropped since its boundaries changed). Rejects a split
+// outside the passage or on a boundary (`invalid`). Owner-scoped (`not_found`).
 export async function splitRecitationPassage(
   dependencies: RecitationPassageDependencies,
   passageEntryId: EntryId,
@@ -271,7 +278,7 @@ export async function splitRecitationPassage(
   );
 
   await dependencies.db.transaction(async (tx) => {
-    await tx.delete(recitationReviews).where(eq(recitationReviews.passageEntryId, passageEntryId));
+    await deleteRecitationReviewData(tx, [passageEntryId]);
     await tx.delete(recitationPassages).where(eq(recitationPassages.entryId, passageEntryId));
     await tx.delete(entries).where(eq(entries.id, passageEntryId));
     // Removing 1 passage and inserting 2 nets +1 slot: shift every later passage up by one, freeing the
@@ -282,10 +289,8 @@ export async function splitRecitationPassage(
       .where(
         and(eq(recitationPassages.planEntryId, planEntryId), gt(recitationPassages.orderIndex, at0))
       );
-    await tx.insert(entries).values({ id: first.entryId, type: "recitation_passage" });
-    await tx.insert(recitationPassages).values(first);
-    await tx.insert(entries).values({ id: second.entryId, type: "recitation_passage" });
-    await tx.insert(recitationPassages).values(second);
+    await insertFreshPassage(tx, first, userId, now);
+    await insertFreshPassage(tx, second, userId, now);
   });
 
   const rows = await listPassageRowsForPlan(dependencies.db, toEntryId(planEntryId));
@@ -293,8 +298,8 @@ export async function splitRecitationPassage(
 }
 
 // Merge a passage with the next one in reciting order into a single passage, editing boundaries only. The
-// merged passage is a fresh Entry (FSRS reset, the two source passages' review history dropped). Returns
-// `no_adjacent_passage` when the passage is last. Owner-scoped (`not_found`).
+// merged passage is a fresh Entry (FSRS reset, the two source passages' cards + events + evidence
+// dropped). Returns `no_adjacent_passage` when the passage is last. Owner-scoped (`not_found`).
 export async function mergeNextRecitationPassage(
   dependencies: RecitationPassageDependencies,
   passageEntryId: EntryId,
@@ -333,8 +338,8 @@ export async function mergeNextRecitationPassage(
   );
 
   await dependencies.db.transaction(async (tx) => {
+    await deleteRecitationReviewData(tx, [passageEntryId, next.entryId]);
     for (const id of [passageEntryId, next.entryId]) {
-      await tx.delete(recitationReviews).where(eq(recitationReviews.passageEntryId, id));
       await tx.delete(recitationPassages).where(eq(recitationPassages.entryId, id));
       await tx.delete(entries).where(eq(entries.id, id));
     }
@@ -349,8 +354,7 @@ export async function mergeNextRecitationPassage(
           gt(recitationPassages.orderIndex, next.orderIndex)
         )
       );
-    await tx.insert(entries).values({ id: merged.entryId, type: "recitation_passage" });
-    await tx.insert(recitationPassages).values(merged);
+    await insertFreshPassage(tx, merged, userId, now);
   });
 
   const rows = await listPassageRowsForPlan(dependencies.db, toEntryId(planEntryId));
@@ -449,12 +453,13 @@ export async function setRecitationPassageSupportLevel(
   return { status: "set", supportLevel };
 }
 
-// Record a self-assessment of a passage: apply FSRS (#572), overwrite the passage's card, and append a
-// review-history row (rating + the cue strength attempted from) — atomically. Owner-scoped (`not_found`).
-// Revealing without rating never calls this, so an un-rated reveal leaves the schedule unchanged. When
-// the learner practised with the predecessor as a lead-in and marks it failed (`leadInFailed`), the
-// immediately-preceding passage also receives an Again — the only passage other than the target ever
-// touched, and never on a clean lead-in (#580: lead-in grading stays isolated to what the learner marks).
+// Record a self-assessment of a passage (#572): apply FSRS through the shared review card, append the
+// review event, and write its cue-strength evidence — atomically, in one transaction. Revealing without
+// rating never calls this, so an un-rated reveal leaves the schedule unchanged. A queued passage rated
+// here is activated first (introduced + card seeded). When the learner practised with the predecessor as
+// a lead-in and marks it failed (`leadInFailed`), the immediately-preceding passage also receives an
+// Again — the only passage other than the target ever touched, and never on a clean lead-in (#580).
+// Owner-scoped (`not_found`).
 export async function recordRecitationPassageReview(
   dependencies: RecitationPassageDependencies,
   passageEntryId: EntryId,
@@ -469,54 +474,42 @@ export async function recordRecitationPassageReview(
   }
 
   const now = dependencies.now();
-  const introducedAt = owned.row.introducedAt ?? now;
-  const priorState = passageRowToReviewStateOrNull(owned.row) ?? newReviewState(now);
-  const nextState = applyRating(priorState, rating, now, RECALL_REQUEST_RETENTION);
-  const columns = passageReviewStateColumns(nextState);
-  const reviewId = dependencies.createId();
   const preceding = leadInFailed
     ? await loadPrecedingPassage(dependencies.db, owned.row.planEntryId, owned.row.orderIndex)
     : undefined;
 
   await dependencies.db.transaction(async (tx) => {
-    await tx
-      .update(recitationPassages)
-      .set({ ...columns, introducedAt })
-      .where(eq(recitationPassages.entryId, passageEntryId));
-    await tx.insert(recitationReviews).values({
-      cueStrength,
-      id: reviewId,
-      passageEntryId,
+    const targetCard = await ensurePassageCardInTx(tx, owned.row, userId, now);
+    await applyRatingToCardInTx(
+      tx,
+      targetCard,
       rating,
-      reviewedAt: now
-    });
+      now,
+      dependencies.createId(),
+      (t, eventId) => writeCueStrengthEvidence(t, eventId, cueStrength)
+    );
     // A failed lead-in fails only the immediate predecessor, and only when one exists (never the target
     // twice, never an unmarked passage). The target's own rating above is unaffected.
     if (preceding !== undefined) {
-      const precedingPrior = passageRowToReviewStateOrNull(preceding) ?? newReviewState(now);
-      const precedingState = applyRating(precedingPrior, "again", now, RECALL_REQUEST_RETENTION);
-      await tx
-        .update(recitationPassages)
-        .set({
-          ...passageReviewStateColumns(precedingState),
-          introducedAt: preceding.introducedAt ?? now
-        })
-        .where(eq(recitationPassages.entryId, preceding.entryId));
-      await tx.insert(recitationReviews).values({
-        cueStrength: "preceding_line",
-        id: dependencies.createId(),
-        passageEntryId: preceding.entryId,
-        rating: "again",
-        reviewedAt: now
-      });
+      const precedingCard = await ensurePassageCardInTx(tx, preceding, userId, now);
+      await applyRatingToCardInTx(
+        tx,
+        precedingCard,
+        "again",
+        now,
+        dependencies.createId(),
+        (t, id) => writeCueStrengthEvidence(t, id, "preceding_line")
+      );
     }
   });
 
   const counts = await countReviewsByPassage(dependencies.db, [passageEntryId]);
+  const cards = await loadReviewCardsForTargets(dependencies.db, [passageEntryId]);
   return {
-    // The review just inserted guarantees a count row for this passage.
+    // The review just inserted guarantees a count row and an active card for this passage.
     passage: toRecitationPassageDto(
-      { ...owned.row, ...columns, introducedAt },
+      { ...owned.row, introducedAt: owned.row.introducedAt ?? now },
+      cards.get(passageEntryId)!,
       counts.get(passageEntryId)!
     ),
     status: "recorded"

@@ -21,13 +21,15 @@ import {
   personalEntries,
   readingPositions,
   readingUnits,
+  recitationChains,
   recitationPassages,
   recitationPlans,
-  recitationReviews,
+  recitationWholeWork,
   tocEntries,
   workMeta,
   workSources
 } from "../../db/schema.js";
+import { deleteRecitationReviewData } from "../recitationPassages/recitationReviewData.js";
 
 // Real infrastructure boundaries (database client and id generation) are passed
 // in so commands stay deterministic and testable.
@@ -232,10 +234,12 @@ export async function deleteWork(
         .where(eq(recitationPlans.workEntryId, workEntryId))
     ).map((row) => row.id);
     if (recitationPlanIds.length > 0) {
-      // Each plan may have been divided into scheduled recitation passages (#578): passage rows FK the
-      // plan AND the Work's block Entries, and review-history rows FK the passages. Tear them down —
-      // reviews, then passages, then the passages' own `entries` rows — before the plans and blocks, or
-      // the FKs block the Work delete.
+      // Each plan may have been divided into recitation passages (#578) and may own a whole-Work
+      // aggregate target (#605). All scheduling now lives on the shared review-card substrate (#618):
+      // passages and the whole-Work target are review-card targets, and the cue-strength evidence keys to
+      // their events. Tear down, referentially safe: each target's cards + events + evidence, then the
+      // passage rows + their `entries`, the whole-Work target rows + `contains` links + `entries`, and any
+      // active/completed chains — all before the plans and blocks, or the FKs block the Work delete.
       const passageIds = (
         await tx
           .select({ id: recitationPassages.entryId })
@@ -243,12 +247,34 @@ export async function deleteWork(
           .where(inArray(recitationPassages.planEntryId, recitationPlanIds))
       ).map((row) => row.id);
       if (passageIds.length > 0) {
-        await tx
-          .delete(recitationReviews)
-          .where(inArray(recitationReviews.passageEntryId, passageIds));
+        await deleteRecitationReviewData(tx, passageIds);
         await tx.delete(recitationPassages).where(inArray(recitationPassages.entryId, passageIds));
         await tx.delete(entries).where(inArray(entries.id, passageIds));
       }
+
+      // The whole-Work aggregate is its own target Entry (type `recitation_whole_work`), linked to its
+      // plan by a `contains` entry-link (#618). Remove its shared card/event/evidence, the link, the
+      // facet row, then the target `entries` row.
+      const wholeWorkTargetIds = (
+        await tx
+          .select({ id: recitationWholeWork.entryId })
+          .from(recitationWholeWork)
+          .where(inArray(recitationWholeWork.planEntryId, recitationPlanIds))
+      ).map((row) => row.id);
+      if (wholeWorkTargetIds.length > 0) {
+        await deleteRecitationReviewData(tx, wholeWorkTargetIds);
+        await tx.delete(entryLinks).where(inArray(entryLinks.toEntryId, wholeWorkTargetIds));
+        await tx
+          .delete(recitationWholeWork)
+          .where(inArray(recitationWholeWork.entryId, wholeWorkTargetIds));
+        await tx.delete(entries).where(inArray(entries.id, wholeWorkTargetIds));
+      }
+
+      // Any open or completed chain FKs the plan; drop them before the plans.
+      await tx
+        .delete(recitationChains)
+        .where(inArray(recitationChains.planEntryId, recitationPlanIds));
+
       await tx.delete(recitationPlans).where(inArray(recitationPlans.entryId, recitationPlanIds));
       await tx.delete(personalEntries).where(inArray(personalEntries.entryId, recitationPlanIds));
       await tx.delete(entries).where(inArray(entries.id, recitationPlanIds));

@@ -20,9 +20,13 @@ import {
   personalEntries,
   readingPositions,
   readingUnits,
+  recitationChains,
   recitationPassages,
   recitationPlans,
-  recitationReviews,
+  recitationReviewEvidence,
+  recitationWholeWork,
+  reviewCards,
+  reviewEvents,
   tocEntries,
   workMeta,
   workSources
@@ -447,48 +451,105 @@ describe("DELETE /api/works/:workEntryId", () => {
       workEntryId: "work-1"
     });
 
-    // Divide the plan into a scheduled passage with a recorded review: the passage FKs the plan AND the
-    // Work's block Entry, and the review FKs the passage — every edge the delete cascade must unwind.
+    // Divide the plan into an active passage whose scheduling lives on the shared review-card substrate
+    // (#618): the passage FKs the plan AND the Work's block Entry; its review card + append-only event +
+    // cue-strength evidence FK the passage's target Entry — every edge the delete cascade must unwind.
     await context.db.insert(entries).values({ id: "passage-1", type: "recitation_passage" });
     await context.db.insert(recitationPassages).values({
       anchorStatus: "anchored",
       contextSnapshot: "Doomed",
-      difficulty: 0,
-      dueAt: new Date("2026-02-01T00:00:00.000Z"),
-      elapsedDays: 0,
       endBlockEntryId: "pmblock-1",
       endOffset: 2,
       entryId: "passage-1",
       introducedAt: new Date("2026-02-01T00:00:00.000Z"),
+      orderIndex: 0,
+      planEntryId: "recite-1",
+      sourceText: "pm",
+      startBlockEntryId: "pmblock-1",
+      startOffset: 0
+    });
+    await context.db.insert(reviewCards).values({
+      difficulty: 5,
+      dueAt: new Date("2026-02-01T00:00:00.000Z"),
+      elapsedDays: 0,
       lapses: 0,
       lastReviewedAt: null,
       learningSteps: 0,
-      orderIndex: 0,
-      planEntryId: "recite-1",
-      reps: 0,
+      reps: 1,
+      requestedRetention: 0.95,
       scheduledDays: 0,
-      sourceText: "pm",
-      stability: 0,
-      startBlockEntryId: "pmblock-1",
-      startOffset: 0,
-      state: "new"
+      stability: 1,
+      state: "learning",
+      status: "active",
+      targetEntryId: "passage-1",
+      userId: "user-a"
     });
-    await context.db.insert(recitationReviews).values({
-      cueStrength: "opening",
+    await context.db.insert(reviewEvents).values({
       id: "prev-1",
-      passageEntryId: "passage-1",
+      occurredAt: new Date("2026-02-01T00:00:00.000Z"),
       rating: "good",
-      reviewedAt: new Date("2026-02-01T00:00:00.000Z")
+      targetEntryId: "passage-1",
+      type: "rating"
+    });
+    await context.db.insert(recitationReviewEvidence).values({
+      cueStrength: "opening",
+      reviewEventId: "prev-1"
+    });
+
+    // The plan also owns a whole-Work aggregate: a separate target Entry linked to the plan by a
+    // `contains` edge, recorded in recitation_whole_work, with its own card + event (no evidence — the
+    // aggregate rating is passage-independent). And an open chain FKs the plan. All must unwind.
+    await context.db.insert(entries).values({ id: "whole-1", type: "recitation_whole_work" });
+    await context.db
+      .insert(recitationWholeWork)
+      .values({ entryId: "whole-1", planEntryId: "recite-1" });
+    await context.db
+      .insert(entryLinks)
+      .values({ fromEntryId: "recite-1", toEntryId: "whole-1", type: "contains" });
+    await context.db.insert(reviewCards).values({
+      difficulty: 5,
+      dueAt: new Date("2026-02-01T00:00:00.000Z"),
+      elapsedDays: 0,
+      lapses: 0,
+      lastReviewedAt: null,
+      learningSteps: 0,
+      reps: 1,
+      requestedRetention: 0.95,
+      scheduledDays: 0,
+      stability: 1,
+      state: "learning",
+      status: "active",
+      targetEntryId: "whole-1",
+      userId: "user-a"
+    });
+    await context.db.insert(reviewEvents).values({
+      id: "whole-ev-1",
+      occurredAt: new Date("2026-02-01T00:00:00.000Z"),
+      rating: "good",
+      targetEntryId: "whole-1",
+      type: "rating"
+    });
+    await context.db.insert(recitationChains).values({
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      endOrderIndex: 0,
+      id: "chain-1",
+      planEntryId: "recite-1",
+      status: "active"
     });
 
     // Without the cascade this FK violates and the delete fails, stranding the Work in the Library.
     const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
     expect(response.statusCode).toBe(204);
 
-    // The plan, its passages, and their reviews are all gone, with both plan facets; work-2 remains.
+    // The plan, its passages, the whole-Work target, chains, and all shared cards/events/evidence are
+    // gone — with both plan facets and no orphaned entries; work-2 remains.
     expect(await context.db.select().from(recitationPlans)).toHaveLength(0);
     expect(await context.db.select().from(recitationPassages)).toHaveLength(0);
-    expect(await context.db.select().from(recitationReviews)).toHaveLength(0);
+    expect(await context.db.select().from(recitationWholeWork)).toHaveLength(0);
+    expect(await context.db.select().from(recitationChains)).toHaveLength(0);
+    expect(await context.db.select().from(reviewCards)).toHaveLength(0);
+    expect(await context.db.select().from(reviewEvents)).toHaveLength(0);
+    expect(await context.db.select().from(recitationReviewEvidence)).toHaveLength(0);
     expect(
       await context.db.select().from(personalEntries).where(eq(personalEntries.entryId, "recite-1"))
     ).toHaveLength(0);

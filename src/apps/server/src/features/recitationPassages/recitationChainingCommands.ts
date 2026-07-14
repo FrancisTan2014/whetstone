@@ -7,42 +7,39 @@ import type {
   WholeWorkStateDto
 } from "@whetstone/contracts";
 import {
-  applyRating,
   chainEligibility,
   computeOwnedPrefix,
   isOutcomePassageInSession,
   isUnstartedWholeWorkEligible,
   isWholeWorkOwned,
-  newReviewState,
   passagesToFailFromOutcome,
-  RECALL_REQUEST_RETENTION,
+  RECITATION_REQUEST_RETENTION,
   resolveChainBoundary,
   selectRecitationTodayAction,
   toEntryId,
   type EntryId,
+  type ReviewState,
   type SessionRecallOutcome
 } from "@whetstone/domain";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-
-// The transaction handle drizzle passes to a `db.transaction` callback: the same query builder as
-// `DbClient`, so a helper can run scoped writes inside an open transaction.
-type DbTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
-
 import {
+  entries,
+  entryLinks,
   recitationChains,
   recitationPassages,
-  recitationReviews,
   recitationWholeWork
 } from "../../db/schema.js";
+import { applyRatingToCardInTx, seedReviewCard } from "../review/reviewCardCommands.js";
+import { type ReviewCardRow } from "../review/reviewCardQueries.js";
 import {
-  loadOwnedPlanForPassages,
-  loadNextDuePassage,
-  passageReviewStateColumns,
-  passageRowToReviewState,
-  passageRowToReviewStateOrNull
-} from "./recitationPassageQueries.js";
+  ensurePassageCardInTx,
+  selectCardInTx,
+  writeCueStrengthEvidence,
+  type Transaction
+} from "./recitationCardActivation.js";
+import { loadOwnedPlanForPassages, loadNextDuePassage } from "./recitationPassageQueries.js";
 import {
   loadActiveChainForPlan,
   loadChainPassages,
@@ -55,9 +52,12 @@ import {
   type RecitationWholeWorkRow
 } from "./recitationChainingQueries.js";
 
-// The chaining commands need only id generation, the db, and the clock — every scheduling and ownership
-// decision is delegated to the pure `@whetstone/domain` logic, keeping these thin and deterministic.
+// The chaining commands need id generation (both a plain id for chains/events and an Entry id for the
+// lazily-created whole-work target), the db, and the clock — every scheduling and ownership decision is
+// delegated to the pure `@whetstone/domain` logic and the shared review-card substrate, keeping these
+// thin and deterministic (#618).
 export type RecitationChainingDependencies = Readonly<{
+  createEntryId: () => string;
   createId: () => string;
   db: DbClient;
   now: () => Date;
@@ -73,6 +73,9 @@ async function chainRowToDto(db: DbClient, row: RecitationChainRow): Promise<Rec
   };
 }
 
+// Project a whole-work state into its DTO. The schedule now lives in the target's shared review card
+// (#618): an unstarted plan has no card and is due only when its phase makes whole-work review eligible;
+// a started plan reads its due instant from the card.
 function wholeWorkDto(
   row: RecitationWholeWorkRow | undefined,
   unstartedEligible: boolean,
@@ -85,8 +88,18 @@ function wholeWorkDto(
   }
   // Once started the aggregate prompt runs on its own FSRS schedule, independent of later passage decay.
   return {
-    due: row.dueAt.getTime() <= now.getTime(),
-    dueAt: row.dueAt.toISOString(),
+    due: row.card.dueAt.getTime() <= now.getTime(),
+    dueAt: row.card.dueAt.toISOString(),
+    exists: true
+  };
+}
+
+// Project a freshly-applied review state into the whole-work DTO (the rating just moved the aggregate
+// card, so it exists and is due exactly when its next instant is not in the future).
+function ratedWholeWorkDto(state: ReviewState, now: Date): WholeWorkStateDto {
+  return {
+    due: new Date(state.due).getTime() <= now.getTime(),
+    dueAt: state.due,
     exists: true
   };
 }
@@ -182,16 +195,17 @@ export async function startRecitationChain(
   return { chain: await chainRowToDto(dependencies.db, row!), status: "started" };
 }
 
-// Apply a targeted Again to a single passage inside a transaction: overwrite its FSRS card and append an
-// Again review row. The caller always passes an id drawn from the session's own passages (a chain's
+// Apply a targeted Again to a single passage inside a transaction, through the shared review-card
+// substrate: rate its card `again`, appending the review event and its `preceding_line` cue-strength
+// evidence (#618). The caller always passes an id drawn from the session's own passages (a chain's
 // rendered sequence or the plan's full passage set), so the row is present. A queued (maintenance)
-// passage identified as the break is activated here: it starts from a fresh card, takes the Again, and is
-// stamped `introducedAt` so it becomes live passage-review work (#605) — the whole-work break is exactly
-// the moment such a passage needs targeted practice.
+// passage identified as the break is activated first (introduced + card seeded): the whole-work break is
+// exactly the moment such a passage needs targeted practice (#605).
 async function applyTargetedAgain(
-  tx: DbTransaction,
-  createId: () => string,
+  tx: Transaction,
+  dependencies: RecitationChainingDependencies,
   passageEntryId: string,
+  userId: string,
   now: Date
 ): Promise<void> {
   const [row] = await tx
@@ -199,19 +213,10 @@ async function applyTargetedAgain(
     .from(recitationPassages)
     .where(eq(recitationPassages.entryId, passageEntryId))
     .limit(1);
-  const priorState = passageRowToReviewStateOrNull(row!) ?? newReviewState(now);
-  const nextState = applyRating(priorState, "again", now, RECALL_REQUEST_RETENTION);
-  await tx
-    .update(recitationPassages)
-    .set({ ...passageReviewStateColumns(nextState), introducedAt: row!.introducedAt ?? now })
-    .where(eq(recitationPassages.entryId, passageEntryId));
-  await tx.insert(recitationReviews).values({
-    cueStrength: "preceding_line",
-    id: createId(),
-    passageEntryId,
-    rating: "again",
-    reviewedAt: now
-  });
+  const card = await ensurePassageCardInTx(tx, row!, userId, now);
+  await applyRatingToCardInTx(tx, card, "again", now, dependencies.createId(), (t, eventId) =>
+    writeCueStrengthEvidence(t, eventId, "preceding_line")
+  );
 }
 
 function toDomainOutcome(outcome: SessionRecallOutcomeDto): SessionRecallOutcome {
@@ -258,7 +263,7 @@ export async function completeRecitationChain(
   const now = dependencies.now();
   await dependencies.db.transaction(async (tx) => {
     for (const passageEntryId of passagesToFailFromOutcome(domainOutcome)) {
-      await applyTargetedAgain(tx, dependencies.createId, passageEntryId, now);
+      await applyTargetedAgain(tx, dependencies, passageEntryId, userId, now);
     }
     await tx
       .update(recitationChains)
@@ -280,12 +285,49 @@ export type ReviewWholeWorkResult =
   | Readonly<{ status: "not_eligible" }>
   | Readonly<{ status: "not_found" }>;
 
+// Get-or-create the plan's whole-work target and its shared review card inside the transaction, then
+// return the card to rate. On first review the aggregate target Entry (type `recitation_whole_work`) is
+// created, linked to its plan by a `contains` entry-link, recorded in `recitation_whole_work`, and seeded
+// a fresh 0.95 card (#618). The target carries NO `personal_entries` facet, so it never surfaces on the
+// learner's Timeline. On a later review the existing card is read back for rating.
+async function ensureWholeWorkCardInTx(
+  tx: Transaction,
+  dependencies: RecitationChainingDependencies,
+  planEntryId: string,
+  existing: RecitationWholeWorkRow | undefined,
+  userId: string,
+  now: Date
+): Promise<ReviewCardRow> {
+  if (existing !== undefined) {
+    return existing.card;
+  }
+  const targetEntryId = dependencies.createEntryId();
+  await tx.insert(entries).values({ id: targetEntryId, type: "recitation_whole_work" });
+  await tx
+    .insert(recitationWholeWork)
+    .values({ createdAt: now, entryId: targetEntryId, planEntryId });
+  await tx.insert(entryLinks).values({
+    fromEntryId: planEntryId,
+    toEntryId: targetEntryId,
+    type: "contains"
+  });
+  await seedReviewCard(tx, {
+    targetEntryId,
+    userId,
+    requestedRetention: RECITATION_REQUEST_RETENTION,
+    now
+  });
+  // Just seeded in this tx, so the card is present.
+  return (await selectCardInTx(tx, targetEntryId))!;
+}
+
 // Review the whole-work maintenance prompt: apply the aggregate FSRS rating to the plan's separate
 // whole-work card (created lazily on first review), and — via the targeted-lapse rule — apply an Again
 // to a single identified broken passage without resetting any other. The two FSRS states never merge: a
-// whole-work lapse reschedules only the aggregate. Eligible while unstarted only when the plan's phase
-// allows it (whole Work owned in Learning, or ≥1 anchored passage in Maintenance — #605); afterwards it
-// runs on its own schedule. Owner-scoped (`not_found`).
+// whole-work lapse reschedules only the aggregate, and the aggregate rating writes no cue-strength
+// evidence (evidence is passage-level only). Eligible while unstarted only when the plan's phase allows
+// it (whole Work owned in Learning, or ≥1 anchored passage in Maintenance — #605); afterwards it runs on
+// its own schedule. Owner-scoped (`not_found`).
 export async function reviewWholeWork(
   dependencies: RecitationChainingDependencies,
   planEntryId: EntryId,
@@ -311,33 +353,25 @@ export async function reviewWholeWork(
     return { reason: "passage_not_in_session", status: "invalid" };
   }
 
-  const priorState =
-    existing === undefined ? newReviewState(now) : passageRowToReviewState(existing);
-  const nextState = applyRating(priorState, rating, now, RECALL_REQUEST_RETENTION);
-  const columns = passageReviewStateColumns(nextState);
-
-  await dependencies.db.transaction(async (tx) => {
-    if (existing === undefined) {
-      await tx.insert(recitationWholeWork).values({ createdAt: now, planEntryId, ...columns });
-    } else {
-      await tx
-        .update(recitationWholeWork)
-        .set(columns)
-        .where(eq(recitationWholeWork.planEntryId, planEntryId));
-    }
+  const rated = await dependencies.db.transaction(async (tx) => {
+    // The aggregate rating and the targeted passage Again land in one transaction so a whole-work review
+    // is atomic: either both FSRS states move or neither does.
+    const card = await ensureWholeWorkCardInTx(
+      tx,
+      dependencies,
+      planEntryId,
+      existing,
+      userId,
+      now
+    );
+    const applied = await applyRatingToCardInTx(tx, card!, rating, now, dependencies.createId());
     for (const passageEntryId of passagesToFailFromOutcome(domainOutcome)) {
-      await applyTargetedAgain(tx, dependencies.createId, passageEntryId, now);
+      await applyTargetedAgain(tx, dependencies, passageEntryId, userId, now);
     }
+    return applied.state;
   });
 
-  return {
-    status: "reviewed",
-    wholeWork: {
-      due: new Date(nextState.due).getTime() <= now.getTime(),
-      dueAt: nextState.due,
-      exists: true
-    }
-  };
+  return { status: "reviewed", wholeWork: ratedWholeWorkDto(rated, now) };
 }
 
 // Today's single recitation action across all the learner's plans, chosen by the fixed domain priority

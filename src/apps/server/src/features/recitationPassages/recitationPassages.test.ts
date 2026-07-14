@@ -9,6 +9,12 @@ import type {
   RecitationPhaseDto,
   RecordRecitationReviewResponse
 } from "@whetstone/contracts";
+import {
+  applyRating,
+  newReviewState,
+  RECALL_REQUEST_RETENTION,
+  RECITATION_REQUEST_RETENTION
+} from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -18,6 +24,7 @@ import {
   entries,
   readingUnits,
   recitationPassages,
+  reviewCards,
   workMeta
 } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
@@ -506,6 +513,38 @@ describe("POST /api/recitation/passages/:id/review", () => {
     expect((second.json() as RecordRecitationReviewResponse).passage.reviewCount).toBe(2);
   });
 
+  it("schedules a passage review at the 0.95 recitation retention, not the recall default", async () => {
+    const { passages } = await seededTwoPassagePlan();
+    // The passage card was seeded fresh at `now`; rating it advances from that exact state, so the
+    // schedule is deterministic and we can pin it to applyRating at the recitation retention.
+    const seededAt = new Date("2026-07-01T09:00:00.000Z");
+    const expected = applyRating(
+      newReviewState(seededAt),
+      "easy",
+      seededAt,
+      RECITATION_REQUEST_RETENTION
+    );
+    // The recall default (0.90) would schedule the same rating differently — proving 0.95 is actually
+    // fed into the scheduler here, not merely stored on the card.
+    const recallBaseline = applyRating(
+      newReviewState(seededAt),
+      "easy",
+      seededAt,
+      RECALL_REQUEST_RETENTION
+    );
+    expect(expected.due).not.toBe(recallBaseline.due);
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { cueStrength: "opening", rating: "easy" },
+      url: `/api/recitation/passages/${passages[0]!.entryId}/review`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as RecordRecitationReviewResponse;
+    expect(body.passage.dueAt).toBe(expected.due);
+  });
+
   it("is 400 for a malformed body", async () => {
     const { passages } = await seededTwoPassagePlan();
 
@@ -776,8 +815,8 @@ describe("PUT /api/recitation/passages/:id/support-level", () => {
     expect(after.passage?.passageEntryId).toBe(passages[0]!.entryId);
     const [row] = await context.db
       .select()
-      .from(recitationPassages)
-      .where(eq(recitationPassages.entryId, passages[0]!.entryId));
+      .from(reviewCards)
+      .where(eq(reviewCards.targetEntryId, passages[0]!.entryId));
     expect(row?.reps).toBe(0);
     expect(row?.lastReviewedAt).toBeNull();
     // Seeding set the card due at the frozen clock; setting support level leaves that untouched.

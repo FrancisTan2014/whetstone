@@ -228,6 +228,7 @@ const server = createServer({
     now: () => new Date()
   },
   recitationChaining: {
+    createEntryId: () => randomUUID(),
     createId: () => randomUUID(),
     db,
     now: () => new Date()

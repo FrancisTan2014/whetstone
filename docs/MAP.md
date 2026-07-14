@@ -133,10 +133,13 @@ can navigate them from another package.
   a `type` check discriminates `rating`/`reset`). `reviewCardCommands.ts` is the write/transition boundary
   (`seedReviewCard`/`rateReviewCard`/`restartReviewCard`/`snoozeReviewCard`/`pauseReviewCard`/
   `resumeReviewCard`/`deleteReviewCard`/`deleteReviewCardsAndEvents`); rate/restart append exactly one
-  event, snooze/pause/resume append none. `reviewCardQueries.ts` maps a card row → domain `ReviewState`
+  event, snooze/pause/resume append none. `applyRatingToCardInTx` is the transaction-composing primitive
+  (advance card + append the rating event + run a caller `afterEvent` hook in one tx) that lets a consumer
+  atomically attach its own write — e.g. Recitation's cue-strength evidence — to the same transaction;
+  `rateReviewCard` is a thin wrapper over it. `reviewCardQueries.ts` maps a card row → domain `ReviewState`
   (`reviewStateFromCard`, `reviewStateColumns`, owner-scoped `getReviewCardForUser`). Consumers read schedule
   through these and never re-implement `applyRating`/`newReviewState` (guarded by
-  `memory/memoryReviewOwnership.test.ts`).
+  `memory/memoryReviewOwnership.test.ts` and `recitationPassages/recitationReviewOwnership.test.ts`).
 - Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
   recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
   <->row mapping) over Entry-backed rows: a `memory_notes` note (a first-class owned Entry — ownership +
@@ -194,32 +197,45 @@ can navigate them from another package.
   `PUT /api/recitation/plans/:id/phase`, `POST /api/recitation/plans/:id/session`; wired in
   `createServer.ts`/`index.ts`. `diaryQueries.ts` joins `recitation_plans` into the Timeline as the
   `recitation` kind. DTOs in `@whetstone/contracts` (`recitationContracts.ts`).
-- Recitation passage practice (owned) (#578): `src/apps/server/src/features/recitationPassages/` — the
-  Learning-phase passage engine over a plan's Work. `recitationPassageCommands.ts`
-  (`seedRecitationPassages` one passage per non-empty source block, idempotent; `splitRecitationPassage`/
-  `mergeNextRecitationPassage` edit boundaries only + reindex `order_index` in a transaction, FSRS reset;
-  `loadDueRecitationPassage` re-anchors against live block text before serving — unchanged/relocated/
-  `needs_repair` — and derives the cue material + `defaultCueStrength` + the remembered `supportLevel`;
-  `recordRecitationPassageReview`
-  applies FSRS (#572) and appends a `recitation_reviews` history row; `setRecitationPassageSupportLevel`
-  (#579) persists the per-passage support-level preference only — never FSRS). `recitationPassageQueries.ts`
-  (owner-scoped loaders via the plan's `personal_entries` facet, source-order block load, next-due lookup,
-  review counts, FSRS↔column mapping). `recitationPassageRoutes.ts` (current-user scoped, Zod-validated,
-  `now`/`createEntryId`/`createId` injected): `POST /api/recitation/plans/:id/passages/seed`,
-  `GET /api/recitation/plans/:id/passages`, `GET /api/recitation/passages/due` (registered before the
-  parametric route), `POST /api/recitation/passages/:id/split|merge-next|review`,
-  `PUT /api/recitation/passages/:id/support-level` (#579); the review route also accepts the #580
-  `leadInFailed` flag (applies Again to the immediate predecessor when a lead-in failed); wired in
-  `createServer.ts`/`index.ts`. `library/libraryCommands.ts` `deleteWork` cascades passages + reviews.
-  DTOs in `@whetstone/contracts` (`recitationPassageContracts.ts`).
-- Recitation chaining + whole-work maintenance (owned) (#580): same
+- Recitation passage practice (owned) (#578, #618): `src/apps/server/src/features/recitationPassages/` — the
+  Learning-phase passage engine over a plan's Work. A passage no longer carries inline FSRS: its schedule
+  lives in a shared `review_cards` row keyed by the passage's `entry_id` (#618). A passage is active iff
+  `introduced_at` is non-null AND it owns a review card; otherwise queued (no card). `recitationPassageCommands.ts`
+  (`seedRecitationPassages` one passage per non-empty source block, idempotent — learning seeds active passages
+  and `seedReviewCard`s each, maintenance seeds queued; `splitRecitationPassage`/
+  `mergeNextRecitationPassage` edit boundaries only + reindex `order_index` in a transaction, reseeding fresh
+  cards + `deleteRecitationReviewData` for the old ones (FSRS reset); `loadDueRecitationPassage` re-anchors
+  against live block text before serving — unchanged/relocated/`needs_repair` — and derives the cue material +
+  `defaultCueStrength` + the remembered `supportLevel`; `recordRecitationPassageReview` activates a queued
+  passage if needed then rates the shared card via `applyRatingToCardInTx`, appending one `review_events` row
+  - a `recitation_review_evidence` cue-strength row atomically (and, on `leadInFailed`, an Again to the
+    predecessor's card in the same tx); `setRecitationPassageSupportLevel` (#579) persists the per-passage
+    support-level preference only — never FSRS). `recitationCardActivation.ts` holds the shared in-tx helpers
+    (`ensurePassageCardInTx`/`activatePassageInTx`/`writeCueStrengthEvidence`); `recitationReviewData.ts`
+    (`deleteRecitationReviewData`) tears down a target's cards+events+evidence referentially safely.
+    `recitationPassageQueries.ts` (owner-scoped loaders via the plan's `personal_entries` facet, source-order
+    block load, next-due lookup joining `review_cards`, review counts from `review_events`, reading schedule via
+    the substrate's `reviewStateFromCard` — never a local card mapper). `recitationPassageRoutes.ts` (current-user scoped, Zod-validated,
+    `now`/`createEntryId`/`createId` injected): `POST /api/recitation/plans/:id/passages/seed`,
+    `GET /api/recitation/plans/:id/passages`, `GET /api/recitation/passages/due` (registered before the
+    parametric route), `POST /api/recitation/passages/:id/split|merge-next|review`,
+    `PUT /api/recitation/passages/:id/support-level` (#579); the review route also accepts the #580
+    `leadInFailed` flag (applies Again to the immediate predecessor when a lead-in failed); wired in
+    `createServer.ts`/`index.ts`. `library/libraryCommands.ts` `deleteWork` cascades passages + whole-work
+    targets + their shared cards/events/evidence.
+    DTOs in `@whetstone/contracts` (`recitationPassageContracts.ts`).
+- Recitation chaining + whole-work maintenance (owned) (#580, #618): same
   `src/apps/server/src/features/recitationPassages/` slice. `recitationChainingQueries.ts` (owner-scoped
-  loaders for passage masteries, the active chain, and the whole-work card; reuses the passage FSRS↔column
-  mappers). `recitationChainingCommands.ts` (`loadRecitationChaining` derives owned prefix + eligibility +
+  loaders for passage masteries, the active chain, and the whole-work card; reads every `ReviewState` by
+  joining `review_cards` and mapping via the substrate's `reviewStateFromCard`). `recitationChainingCommands.ts`
+  (`loadRecitationChaining` derives owned prefix + eligibility +
   active chain + whole-work state live; `startRecitationChain`/`completeRecitationChain` over the contiguous
-  owned prefix, failing only an identified broken passage; `reviewWholeWork` schedules a separate lazily-created
-  whole-work FSRS card; `loadRecitationToday` applies the bounded `selectRecitationTodayAction` priority).
-  `recitationChainingRoutes.ts` (current-user scoped, Zod-validated): `GET /api/recitation/plans/:id/chaining`,
+  owned prefix, failing only an identified broken passage via the substrate; `reviewWholeWork` get-or-creates a
+  separate whole-work target Entry (type `recitation_whole_work`, linked to the plan by a `contains`
+  `entry_links` row, no `personal_entries` facet so it never surfaces on the Timeline) owning its own shared
+  review card, then rates that card — the aggregate and passage FSRS states never merge, and the aggregate
+  rating writes no cue-strength evidence; `loadRecitationToday` applies the bounded `selectRecitationTodayAction`
+  priority). `recitationChainingRoutes.ts` (current-user scoped, Zod-validated): `GET /api/recitation/plans/:id/chaining`,
   `POST /api/recitation/plans/:id/chain` (201/400/404/422), `POST /api/recitation/chains/:id/complete`
   (200/400/404/409/422), `POST /api/recitation/plans/:id/whole-work/review` (200/400/404/409/422),
   `GET /api/recitation/today`; wired in `createServer.ts`/`index.ts`. DTOs in
@@ -304,12 +320,14 @@ can navigate them from another package.
   index, `phase` enum, `session_count`, nullable `last_session_at`),
   `recitation_passages` (#578 `entry_id` PK/FK, `plan_entry_id` FK + index, `order_index`, start/end
   `block_entry_id` + offsets, `source_text`, `context_snapshot`, `anchor_status` enum, `support_level` enum
-  (#579, default `full`), per-passage FSRS
-  card columns incl. `due_at`), `recitation_reviews` (append-only history: `id` PK, `passage_entry_id`
-  FK + index, `rating`, `cue_strength`, `reviewed_at`), `recitation_chains` (#580 `id` PK, `plan_entry_id`
+  (#579, default `full`), nullable `introduced_at` lifecycle marker — active iff non-null AND it owns a
+  shared `review_cards` row, else queued; #618 moved scheduling off the row),
+  `recitation_review_evidence` (#618 Recitation-owned cue strength keyed 1:1 to a shared `review_events`
+  row: `review_event_id` PK/FK, `cue_strength`), `recitation_chains` (#580 `id` PK, `plan_entry_id`
   FK + `(plan, status)` index, `end_order_index`, `status` active/completed, timestamps) and
-  `recitation_whole_work` (#580 `plan_entry_id` PK/FK — one aggregate FSRS card per plan, created lazily on
-  first whole-work review), links/templates, `reading_positions`, search indexes, and
+  `recitation_whole_work` (#580/#618 `entry_id` PK/FK to a `recitation_whole_work` target Entry, `plan_entry_id`
+  UNIQUE/FK — the aggregate's schedule is a shared `review_cards` row keyed by `entry_id`, target created
+  lazily on first whole-work review), links/templates, `reading_positions`, search indexes, and
   `toc_entries` (a work's authored nav-derived TOC: `entry_id` PK + `work_entry_id` FK to `entries`,
   `parent_entry_id`, `order_index`, `depth`, `label`, nullable `target_source_file`/`target_anchor`,
   indexed by work; #379). The `timeline_entries`, `proposal_candidates`, and `proposal_reviews` tables were
@@ -489,7 +507,7 @@ can navigate them from another package.
   and `restore.ts` (orchestrators with injectable I/O), and `cli.ts` (arg parse + output/error mapping).
   The thin, coverage-excluded `backupCli.ts`/`restoreCli.ts` wire real PGlite (`dumpDataDir`/`loadDataDir`)
   and fs for `pnpm data:backup -- --output <artifact>` / `pnpm data:restore -- --input <artifact>
-  --target <empty-dir>`. Backup refuses an in-memory `DATABASE_DIR` and an existing output; restore
+--target <empty-dir>`. Backup refuses an in-memory `DATABASE_DIR` and an existing output; restore
   verifies before writing, refuses a non-empty target, runs migrations, and integrity-probes the restored
   database. Operator guide: `docs/BACKUP.md`.
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.

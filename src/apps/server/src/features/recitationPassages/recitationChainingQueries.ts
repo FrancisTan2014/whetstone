@@ -8,17 +8,24 @@ import {
   recitationChains,
   recitationPassages,
   recitationPlans,
-  recitationReviews,
   recitationWholeWork,
+  reviewCards,
+  reviewEvents,
   workMeta
 } from "../../db/schema.js";
-import {
-  listPassageRowsForPlan,
-  passageRowToReviewStateOrNull
-} from "./recitationPassageQueries.js";
+import { reviewStateFromCard, type ReviewCardRow } from "../review/reviewCardQueries.js";
+import { listPassageRowsForPlan, loadReviewCardsForTargets } from "./recitationPassageQueries.js";
 
 export type RecitationChainRow = typeof recitationChains.$inferSelect;
-export type RecitationWholeWorkRow = typeof recitationWholeWork.$inferSelect;
+
+// A plan's whole-Work target resolved together with its shared review card (#618): the target Entry id,
+// the plan relationship, and the card that holds the aggregate FSRS schedule. A whole-Work row always
+// owns a card (they are created together), so this is never a partial shape.
+export type RecitationWholeWorkRow = Readonly<{
+  entryId: string;
+  planEntryId: string;
+  card: ReviewCardRow;
+}>;
 
 // A plan for the Today whole-work scan: its Work title plus the phase, so the scan can apply the
 // phase-aware unstarted eligibility rule (Learning needs the whole Work owned; Maintenance needs ≥1
@@ -31,7 +38,8 @@ export type WholeWorkScanPlan = Readonly<{
 
 // The successful-review count (Good/Easy only) for each of the given passages, keyed by passage id
 // (absent = 0). Ownership is earned by clean recalls, so a Hard or Again never advances it — unlike the
-// raw review count used for progress display.
+// raw review count used for progress display. Reviews are now shared `review_events` (`rating` events)
+// keyed by the passage's target Entry id (#618).
 export async function countSuccessfulReviewsByPassage(
   db: DbClient,
   passageEntryIds: readonly string[]
@@ -42,39 +50,43 @@ export async function countSuccessfulReviewsByPassage(
   const rows = await db
     .select({
       count: sql<number>`count(*)::int`,
-      passageEntryId: recitationReviews.passageEntryId
+      targetEntryId: reviewEvents.targetEntryId
     })
-    .from(recitationReviews)
+    .from(reviewEvents)
     .where(
       and(
-        inArray(recitationReviews.passageEntryId, [...passageEntryIds]),
-        inArray(recitationReviews.rating, ["good", "easy"])
+        inArray(reviewEvents.targetEntryId, [...passageEntryIds]),
+        eq(reviewEvents.type, "rating"),
+        inArray(reviewEvents.rating, ["good", "easy"])
       )
     )
-    .groupBy(recitationReviews.passageEntryId);
+    .groupBy(reviewEvents.targetEntryId);
 
-  return new Map(rows.map((row) => [row.passageEntryId, row.count]));
+  return new Map(rows.map((row) => [row.targetEntryId, row.count]));
 }
 
 // Each passage of a plan as a domain `PassageMastery` (id + successful-review count + FSRS state +
 // anchor validity), in reciting order — the exact input the pure chaining/ownership logic consumes. A
-// queued (maintenance) passage has a null FSRS state; `anchored` reflects whether its range still
-// resolves, which whole-work maintenance eligibility depends on (#605).
+// queued (maintenance) passage has no card and a null FSRS state; an active passage's state is mapped
+// from its shared review card (#618). `anchored` reflects whether its range still resolves, which
+// whole-work maintenance eligibility depends on (#605).
 export async function loadPassageMasteries(
   db: DbClient,
   planEntryId: EntryId
 ): Promise<ReadonlyArray<PassageMastery>> {
   const rows = await listPassageRowsForPlan(db, planEntryId);
-  const successful = await countSuccessfulReviewsByPassage(
-    db,
-    rows.map((row) => row.entryId)
-  );
-  return rows.map((row) => ({
-    anchored: row.anchorStatus === "anchored",
-    passageEntryId: row.entryId,
-    state: passageRowToReviewStateOrNull(row),
-    successfulReviews: successful.get(row.entryId) ?? 0
-  }));
+  const ids = rows.map((row) => row.entryId);
+  const successful = await countSuccessfulReviewsByPassage(db, ids);
+  const cards = await loadReviewCardsForTargets(db, ids);
+  return rows.map((row) => {
+    const card = cards.get(row.entryId);
+    return {
+      anchored: row.anchorStatus === "anchored",
+      passageEntryId: row.entryId,
+      state: card === undefined ? null : reviewStateFromCard(card),
+      successfulReviews: successful.get(row.entryId) ?? 0
+    };
+  });
 }
 
 // The plan's passages up to and including `endOrderIndex`, in reciting order, as the chain's rendered
@@ -135,17 +147,22 @@ export async function loadOwnedChain(
   return row?.chain;
 }
 
-// The plan's whole-work aggregate FSRS row, or undefined until the learner first reviews it.
+// The plan's whole-work target + its shared review card, or undefined until the learner first reviews it
+// (the target and card are created together on first review). Recitation joins its feature target to the
+// shared card through the target Entry id — it never reimplements the schedule (#618).
 export async function loadWholeWorkForPlan(
   db: DbClient,
   planEntryId: string
 ): Promise<RecitationWholeWorkRow | undefined> {
   const [row] = await db
-    .select()
+    .select({ wholeWork: recitationWholeWork, card: reviewCards })
     .from(recitationWholeWork)
+    .innerJoin(reviewCards, eq(reviewCards.targetEntryId, recitationWholeWork.entryId))
     .where(eq(recitationWholeWork.planEntryId, planEntryId))
     .limit(1);
-  return row;
+  return row === undefined
+    ? undefined
+    : { entryId: row.wholeWork.entryId, planEntryId: row.wholeWork.planEntryId, card: row.card };
 }
 
 // The user's earliest-opened active chain across all their plans, with the Work title, for Today's
