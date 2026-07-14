@@ -65,7 +65,10 @@ vocabulary), `recitationFading.ts` (#579 the pure render-time support-level proj
 `recitationChaining.ts` (#580 the pure chaining/ownership engine: `isPassageOwned`/`computeOwnedPrefix`/
 `isWholeWorkOwned`/`chainEligibility`/`resolveChainBoundary` over the contiguous owned prefix,
 `selectRecitationTodayAction` bounded priority `due_passage`>`chain`>`whole_work`>`none`, and the
-`SessionRecallOutcome` held/broke logic `passagesToFailFromOutcome`/`isOutcomePassageInSession`) and
+`SessionRecallOutcome` held/broke logic `passagesToFailFromOutcome`/`isOutcomePassageInSession`),
+`recitationIntroduction.ts` (#607 the pure paced-introduction evaluator: `RECITATION_DAILY_INTRODUCTION_CAP`
++ `evaluateRecitationIntroduction` deciding new-passage availability + a machine reason with fixed
+precedence `not_learning`>`due_work_remains`>`all_introduced`>`cap_reached`) and
 `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
@@ -87,7 +90,9 @@ carrying the Work title + phase),
 `recitationPassageContracts.ts` (#578 passage practice: `RecitationPassageDto`/list, the
 `DueRecitationPassageDto` (context + cue material + `defaultCueStrength` + `anchorStatus` + `supportLevel`),
 the split/merge/record-review request schemas (record-review carries the #580 `leadInFailed` flag), the
-#579 `recitationSupportLevelDtoSchema` + set-support-level request/response schemas, and `parse*` boundary
+#579 `recitationSupportLevelDtoSchema` + set-support-level request/response schemas, the #607
+`recitationIntroductionStatusDtoSchema` (paced introduction status: due count, local-day introductions out
+of the cap, next-queued preview, availability + reason) + `activateNextRecitationPassageResponseSchema`, and `parse*` boundary
 helpers),
 `recitationChainingContracts.ts` (#580 contiguous chaining + whole-work maintenance: `RecitationChainingDto`
 (owned prefix, `chainEligibility` union, active chain, whole-work state), `RecitationChainDto`,
@@ -201,8 +206,14 @@ can navigate them from another package.
   Learning-phase passage engine over a plan's Work. A passage no longer carries inline FSRS: its schedule
   lives in a shared `review_cards` row keyed by the passage's `entry_id` (#618). A passage is active iff
   `introduced_at` is non-null AND it owns a review card; otherwise queued (no card). `recitationPassageCommands.ts`
-  (`seedRecitationPassages` one passage per non-empty source block, idempotent — learning seeds active passages
-  and `seedReviewCard`s each, maintenance seeds queued; `splitRecitationPassage`/
+  (`seedRecitationPassages` one passage per non-empty source block, idempotent — seeds all passages queued
+  (`introduced_at` null, no card) in BOTH learning and maintenance (#607): Learning introduction is now
+  explicit and paced, so seeding never hands out an accidental backlog of due items; `activateNextRecitationPassage`
+  (#607) is the paced "Start first passage"/"New passage" action — in one FOR-UPDATE transaction it re-checks
+  the gates (learning phase, no introduced passage due, `< 3` introduced this learner-LOCAL day via
+  `localDayBoundary`, a queued passage remains), then stamps `introduced_at` and `seedReviewCard`s ONE active
+  card at the 0.95 recitation retention for the lowest-order queued passage (double-submit safe — the second
+  sees due work and is rejected); `splitRecitationPassage`/
   `mergeNextRecitationPassage` edit boundaries only + reindex `order_index` in a transaction, reseeding fresh
   cards + `deleteRecitationReviewData` for the old ones (FSRS reset); `loadDueRecitationPassage` re-anchors
   against live block text before serving — unchanged/relocated/`needs_repair` — and derives the cue material +
@@ -214,10 +225,16 @@ can navigate them from another package.
     (`ensurePassageCardInTx`/`activatePassageInTx`/`writeCueStrengthEvidence`); `recitationReviewData.ts`
     (`deleteRecitationReviewData`) tears down a target's cards+events+evidence referentially safely.
     `recitationPassageQueries.ts` (owner-scoped loaders via the plan's `personal_entries` facet, source-order
-    block load, next-due lookup joining `review_cards`, review counts from `review_events`, reading schedule via
+    block load, next-due lookup joining `review_cards`, review counts from `review_events`, the paced
+    introduction status via `loadRecitationIntroductionStatus` (due count, introductions on the learner's local
+    day out of the cap of 3, next queued preview, availability from the pure `evaluateRecitationIntroduction`
+    in `@whetstone/domain`), reading schedule via
     the substrate's `reviewStateFromCard` — never a local card mapper). `recitationPassageRoutes.ts` (current-user scoped, Zod-validated,
     `now`/`createEntryId`/`createId` injected): `POST /api/recitation/plans/:id/passages/seed`,
-    `GET /api/recitation/plans/:id/passages`, `GET /api/recitation/passages/due` (registered before the
+    `GET /api/recitation/plans/:id/passages`,
+    `GET /api/recitation/plans/:id/introduction` + `POST /api/recitation/plans/:id/introduce-next` (#607,
+    paced introduction status + activation; the zone resolves via `getLearnerTimeZone`),
+    `GET /api/recitation/passages/due` (registered before the
     parametric route), `POST /api/recitation/passages/:id/split|merge-next|review`,
     `PUT /api/recitation/passages/:id/support-level` (#579); the review route also accepts the #580
     `leadInFailed` flag (applies Again to the immediate predecessor when a lead-in failed); wired in
@@ -848,7 +865,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   "Reciting · ‹phase›" status instead; the Today Continue-recitation card is described above.
 - Recitation passage practice (#578): `src/apps/web/src/features/recitation/` (same slice) —
   `recitationPassageApi.ts` (client for the passage endpoints — seed/list/due/split/merge-next/review/
-  set-support-level (#579) — every response parsed through `recitationPassageContracts`),
+  set-support-level (#579)/introduction-status + introduce-next (#607) — every response parsed through `recitationPassageContracts`),
   `RecitationReviewCard.tsx` (one due passage
   as a two-phase attempt: a #579 support-level ladder (**Full**/**Reduced**/**First characters**/**Hidden**,
   rendering the pure `projectRecitationSupport` projection with masked runs announced as "hidden text";
@@ -857,7 +874,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   exists, so a missed lead-in also lapses the predecessor); a
   `needs_repair` passage shows a repair notice instead of stale text; only the final rating posts), and
   `RecitePage.tsx` — the `/recite?plan=<id>` segmentation surface (seed, then split/merge passage
-  boundaries with per-passage review progress; canonical Work text untouched), routed in `app/AppRoutes.tsx`.
+  boundaries with per-passage review progress; canonical Work text untouched), routed in `app/AppRoutes.tsx`;
+  above the list it renders the #607 `PassageIntroductionPanel` — the paced new-passage invitation that fetches
+  the introduction status and shows the exact calm state (due-work-first, "N of 3 introduced today" cap, all
+  introduced) or the primary **Start first passage**/**New passage** action (enabled only when the server says
+  it is available), refreshing both the status and the passage list on activation.
   Support-level and cue-strength labels live in `recitationLabels.ts`; the Today **Recite** card composes `RecitationReviewCard`.
 - Recitation chaining + whole-work maintenance (#580): `src/apps/web/src/features/recitation/` (same slice) —
   `recitationChainingApi.ts` (client for the chaining endpoints — `fetchChaining`/`startChain`/`completeChain`/
