@@ -344,6 +344,13 @@
       "when": 1784060000000,
       "tag": "0048_shared_review_cards",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1784120000000,
+      "tag": "0049_recitation_shared_cards",
+      "breakpoints": true
     }
   ]
 }

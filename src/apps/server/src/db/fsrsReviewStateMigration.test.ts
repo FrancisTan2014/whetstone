@@ -94,6 +94,17 @@ describe("0037 FSRS review-state migration", () => {
       return result.rows[0]?.exists ?? false;
     };
 
+    const columnExists = async (table: string, column: string): Promise<boolean> => {
+      const result = await pglite.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = $1 AND column_name = $2
+         ) AS exists`,
+        [table, column]
+      );
+      return result.rows[0]?.exists ?? false;
+    };
+
     expect(await tableExists("proposal_candidates")).toBe(false);
     expect(await tableExists("recall_items")).toBe(false);
     expect(await tableExists("recall_reviews")).toBe(false);
@@ -102,5 +113,14 @@ describe("0037 FSRS review-state migration", () => {
     expect(await tableExists("memory_prompt_reviews")).toBe(false);
     expect(await tableExists("review_cards")).toBe(true);
     expect(await tableExists("review_events")).toBe(true);
+
+    // #618 (0049) then moves Recitation onto the same substrate: its inline FSRS log is gone and
+    // passages/whole-Work no longer carry scheduling columns; cue strength lives in evidence.
+    expect(await tableExists("recitation_reviews")).toBe(false);
+    expect(await tableExists("recitation_review_evidence")).toBe(true);
+    expect(await columnExists("recitation_passages", "stability")).toBe(false);
+    expect(await columnExists("recitation_passages", "due_at")).toBe(false);
+    expect(await columnExists("recitation_whole_work", "stability")).toBe(false);
+    expect(await columnExists("recitation_whole_work", "entry_id")).toBe(true);
   });
 });

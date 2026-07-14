@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -10,6 +10,12 @@ import type {
   SessionRecallOutcomeDto,
   WholeWorkResponse
 } from "@whetstone/contracts";
+import {
+  applyRating,
+  newReviewState,
+  RECALL_REQUEST_RETENTION,
+  RECITATION_REQUEST_RETENTION
+} from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -17,14 +23,18 @@ import {
   authors,
   docBlocks,
   entries,
+  personalEntries,
   readingUnits,
   recitationChains,
   recitationPassages,
-  recitationReviews,
+  recitationReviewEvidence,
+  reviewCards,
+  reviewEvents,
   workMeta
 } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
+import { listTimelinePage } from "../diary/diaryQueries.js";
 import type { RecitationRouteDependencies } from "../recitation/recitationRoutes.js";
 import type { RecitationChainingRouteDependencies } from "./recitationChainingRoutes.js";
 import type { RecitationPassageRouteDependencies } from "./recitationPassageRoutes.js";
@@ -61,6 +71,7 @@ async function buildContext(): Promise<TestContext> {
     now: () => now
   };
   const recitationChaining: RecitationChainingRouteDependencies = {
+    createEntryId: () => `whole-work-${(sequence += 1)}`,
     createId: () => `chain-${(sequence += 1)}`,
     db,
     now: () => now
@@ -248,6 +259,17 @@ async function passageRow(passageEntryId: string): Promise<typeof recitationPass
   return row!;
 }
 
+// A recitation target's shared review card (passage or whole-Work Entry id), or null when the target is
+// still queued (no card). Scheduling truth now lives here, not on the passage/whole-Work row (#618).
+async function cardFor(targetEntryId: string): Promise<typeof reviewCards.$inferSelect | null> {
+  const [row] = await context.db
+    .select()
+    .from(reviewCards)
+    .where(eq(reviewCards.targetEntryId, targetEntryId))
+    .limit(1);
+  return row ?? null;
+}
+
 beforeEach(async () => {
   context = await buildContext();
 });
@@ -421,20 +443,20 @@ describe("POST /api/recitation/chains/:id/complete", () => {
 
   it("completes a held run without rating any passage", async () => {
     const { chainId, passageIds } = await startedChain();
-    const before = await passageRow(passageIds[1]!);
+    const before = await cardFor(passageIds[1]!);
 
     const response = await completeChain(chainId, { status: "held" });
     expect(response.statusCode).toBe(200);
     expect((response.json() as RecitationChainResponse).chain.status).toBe("completed");
 
-    const after = await passageRow(passageIds[1]!);
-    expect(after.reps).toBe(before.reps);
-    expect(after.dueAt.toISOString()).toBe(before.dueAt.toISOString());
+    const after = await cardFor(passageIds[1]!);
+    expect(after!.reps).toBe(before!.reps);
+    expect(after!.dueAt.toISOString()).toBe(before!.dueAt.toISOString());
   });
 
   it("applies an Again only to the explicitly identified broken passage", async () => {
     const { chainId, passageIds } = await startedChain();
-    const untouchedBefore = await passageRow(passageIds[0]!);
+    const untouchedBefore = await cardFor(passageIds[0]!);
 
     const response = await completeChain(chainId, {
       passageEntryId: passageIds[1]!,
@@ -442,22 +464,29 @@ describe("POST /api/recitation/chains/:id/complete", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    const broken = await passageRow(passageIds[1]!);
-    expect(broken.lapses).toBe(1);
+    const broken = await cardFor(passageIds[1]!);
+    expect(broken!.lapses).toBe(1);
+    // The Again is recorded as a shared `rating` review event with `preceding_line` cue-strength evidence.
     const againRows = await context.db
-      .select()
-      .from(recitationReviews)
+      .select({ cueStrength: recitationReviewEvidence.cueStrength })
+      .from(reviewEvents)
+      .innerJoin(
+        recitationReviewEvidence,
+        eq(recitationReviewEvidence.reviewEventId, reviewEvents.id)
+      )
       .where(
         and(
-          eq(recitationReviews.passageEntryId, passageIds[1]!),
-          eq(recitationReviews.rating, "again")
+          eq(reviewEvents.targetEntryId, passageIds[1]!),
+          eq(reviewEvents.type, "rating"),
+          eq(reviewEvents.rating, "again")
         )
       );
     expect(againRows).toHaveLength(1);
+    expect(againRows[0]!.cueStrength).toBe("preceding_line");
 
-    const untouched = await passageRow(passageIds[0]!);
-    expect(untouched.reps).toBe(untouchedBefore.reps);
-    expect(untouched.lapses).toBe(untouchedBefore.lapses);
+    const untouched = await cardFor(passageIds[0]!);
+    expect(untouched!.reps).toBe(untouchedBefore!.reps);
+    expect(untouched!.lapses).toBe(untouchedBefore!.lapses);
   });
 
   it("rejects an outcome naming a passage outside the chain", async () => {
@@ -532,23 +561,77 @@ describe("POST /api/recitation/plans/:id/whole-work/review", () => {
     expect((await getChaining(planEntryId)).wholeWork.exists).toBe(true);
   });
 
+  it("schedules the aggregate card at the 0.95 recitation retention, not the recall default", async () => {
+    const { planEntryId } = await fullyOwnedPlan();
+    // The aggregate card is created fresh at `now` on first review, so its advance is deterministic.
+    const seededAt = new Date(START);
+    const expected = applyRating(
+      newReviewState(seededAt),
+      "easy",
+      seededAt,
+      RECITATION_REQUEST_RETENTION
+    );
+    const recallBaseline = applyRating(
+      newReviewState(seededAt),
+      "easy",
+      seededAt,
+      RECALL_REQUEST_RETENTION
+    );
+    // The recall default would land a different due — so matching `expected` proves 0.95 drives the
+    // aggregate schedule, not just that it is stored on the card.
+    expect(expected.due).not.toBe(recallBaseline.due);
+
+    const response = await reviewWholeWork(planEntryId, "easy", { status: "held" });
+    expect(response.statusCode).toBe(200);
+    const { wholeWork } = response.json() as WholeWorkResponse;
+    expect(new Date(wholeWork.dueAt!).toISOString()).toBe(expected.due);
+  });
+
+  it("keeps passage and whole-work Entries off the Timeline and out of personal_entries", async () => {
+    const { planEntryId, passageIds } = await fullyOwnedPlan();
+    await reviewWholeWork(planEntryId, "good", { status: "held" });
+
+    const wholeWorkTargets = await context.db
+      .select({ entryId: entries.id })
+      .from(entries)
+      .where(eq(entries.type, "recitation_whole_work"));
+    expect(wholeWorkTargets).toHaveLength(1);
+    const schedulingTargets = [...passageIds, wholeWorkTargets[0]!.entryId];
+
+    // Passage and whole-work Entries are scheduling targets, not personal artifacts: they carry no
+    // `personal_entries` facet, so the Timeline (which draws every row from that facet) cannot show them.
+    const facets = await context.db
+      .select({ entryId: personalEntries.entryId })
+      .from(personalEntries)
+      .where(inArray(personalEntries.entryId, schedulingTargets));
+    expect(facets).toHaveLength(0);
+
+    const timeline = await listTimelinePage(context.db, DEFAULT_USER_ID, undefined, 30, "UTC");
+    const timelineIds = timeline.flatMap((day) => day.entries.map((entry) => entry.entryId));
+    // The adopted plan surfaces once; none of its scheduling targets ever do.
+    expect(timelineIds).toContain(planEntryId);
+    for (const targetId of schedulingTargets) {
+      expect(timelineIds).not.toContain(targetId);
+    }
+  });
+
   it("reschedules only the aggregate prompt on a lapse — passages are never reset", async () => {
     const { planEntryId, passageIds } = await fullyOwnedPlan();
     await reviewWholeWork(planEntryId, "good", { status: "held" });
-    const passageBefore = await passageRow(passageIds[0]!);
+    const passageBefore = await cardFor(passageIds[0]!);
 
     const response = await reviewWholeWork(planEntryId, "again", { status: "held" });
     expect(response.statusCode).toBe(200);
 
-    const passageAfter = await passageRow(passageIds[0]!);
-    expect(passageAfter.reps).toBe(passageBefore.reps);
-    expect(passageAfter.lapses).toBe(passageBefore.lapses);
-    expect(passageAfter.dueAt.toISOString()).toBe(passageBefore.dueAt.toISOString());
+    const passageAfter = await cardFor(passageIds[0]!);
+    expect(passageAfter!.reps).toBe(passageBefore!.reps);
+    expect(passageAfter!.lapses).toBe(passageBefore!.lapses);
+    expect(passageAfter!.dueAt.toISOString()).toBe(passageBefore!.dueAt.toISOString());
   });
 
   it("applies an Again only to the identified broken passage during a whole-work reveal", async () => {
     const { planEntryId, passageIds } = await fullyOwnedPlan();
-    const untouchedBefore = await passageRow(passageIds[1]!);
+    const untouchedBefore = await cardFor(passageIds[1]!);
 
     const response = await reviewWholeWork(planEntryId, "good", {
       passageEntryId: passageIds[0]!,
@@ -556,8 +639,8 @@ describe("POST /api/recitation/plans/:id/whole-work/review", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    expect((await passageRow(passageIds[0]!)).lapses).toBe(1);
-    expect((await passageRow(passageIds[1]!)).lapses).toBe(untouchedBefore.lapses);
+    expect((await cardFor(passageIds[0]!))!.lapses).toBe(1);
+    expect((await cardFor(passageIds[1]!))!.lapses).toBe(untouchedBefore!.lapses);
   });
 
   it("rejects an outcome naming a passage outside the Work", async () => {
@@ -619,11 +702,11 @@ describe("maintenance whole-work upkeep (#605)", () => {
     expect(response.statusCode).toBe(200);
     expect((response.json() as WholeWorkResponse).wholeWork.exists).toBe(true);
 
-    // A clean whole-work run rates nothing, so the passages are still queued (no schedule, no reviews).
+    // A clean whole-work run rates nothing, so the passages are still queued (no schedule, no card).
     for (const passageEntryId of passageIds) {
       const row = await passageRow(passageEntryId);
       expect(row.introducedAt).toBeNull();
-      expect(row.dueAt).toBeNull();
+      expect(await cardFor(passageEntryId)).toBeNull();
     }
   });
 
@@ -640,13 +723,14 @@ describe("maintenance whole-work upkeep (#605)", () => {
     // A fresh card taking Again enters learning without a lapse (a lapse needs a prior review card).
     const activated = await passageRow(passageIds[0]!);
     expect(activated.introducedAt).not.toBeNull();
-    expect(activated.dueAt).not.toBeNull();
-    expect(activated.reps).toBe(1);
-    expect(activated.lapses).toBe(0);
+    const activatedCard = await cardFor(passageIds[0]!);
+    expect(activatedCard).not.toBeNull();
+    expect(activatedCard!.reps).toBe(1);
+    expect(activatedCard!.lapses).toBe(0);
     // Its sibling stays queued — a break never activates a passage the learner did not identify.
     const sibling = await passageRow(passageIds[1]!);
     expect(sibling.introducedAt).toBeNull();
-    expect(sibling.dueAt).toBeNull();
+    expect(await cardFor(passageIds[1]!)).toBeNull();
   });
 
   it("surfaces whole-work upkeep on Today for a maintenance plan with only queued passages", async () => {

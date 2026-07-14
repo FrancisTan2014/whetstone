@@ -103,14 +103,17 @@ describe("0046 recitation passage lifecycle migration", () => {
     ).rejects.toThrow();
   });
 
-  it("applies the whole chain against a fresh database, ending with the lifecycle constraint present", async () => {
+  it("applies the whole chain against a fresh database, ending with 0049 having superseded the inline lifecycle constraint", async () => {
     const pglite = new PGlite();
     await expect(runMigrations(pglite)).resolves.toBeUndefined();
 
+    // 0046 added the inline-FSRS lifecycle check, but #618 (0049) moves scheduling onto the shared
+    // review-card substrate and strips the inline FSRS columns — so the constraint no longer exists at
+    // the end of the chain.
     const result = await pglite.query<{ exists: boolean }>(
       `SELECT count(*) > 0 AS exists FROM pg_constraint
          WHERE conname = 'recitation_passages_lifecycle_ck'`
     );
-    expect(result.rows[0]?.exists).toBe(true);
+    expect(result.rows[0]?.exists).toBe(false);
   });
 });

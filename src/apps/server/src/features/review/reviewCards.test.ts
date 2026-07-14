@@ -8,6 +8,7 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { entries, reviewCards, reviewEvents } from "../../db/schema.js";
 import {
+  applyRatingToCardInTx,
   deleteReviewCard,
   deleteReviewCardsAndEvents,
   pauseReviewCard,
@@ -167,6 +168,31 @@ describe("rateReviewCard", () => {
     expect(await eventsFor("t1")).toHaveLength(0);
     // The other user's rating left the card untouched.
     expect((await getReviewCardForUser(context.db, "t1", userA))?.reps).toBe(0);
+  });
+});
+
+describe("applyRatingToCardInTx", () => {
+  // The composing primitive is what lets a caller (e.g. Recitation) attach its own write to the same
+  // transaction as the card advance + rating event. Its whole contract is atomicity: if the caller's
+  // `afterEvent` hook throws, the card advance and the rating event must both roll back with it.
+  it("rolls back the card advance and the rating event when the afterEvent hook fails", async () => {
+    await seedCard("t1", userA, t0);
+    const before = await getReviewCardForUser(context.db, "t1", userA);
+
+    await expect(
+      context.db.transaction(async (tx) => {
+        await applyRatingToCardInTx(tx, before!, "good", at(1), "event-x", async () => {
+          throw new Error("evidence write failed");
+        });
+      })
+    ).rejects.toThrow(/evidence write failed/);
+
+    // All three writes (card advance, rating event, evidence) are gone: the card is untouched...
+    const after = await getReviewCardForUser(context.db, "t1", userA);
+    expect(after?.reps).toBe(0);
+    expect(reviewStateFromCard(after!)).toEqual(reviewStateFromCard(before!));
+    // ...and no rating event was left behind.
+    expect(await eventsFor("t1")).toHaveLength(0);
   });
 });
 

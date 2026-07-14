@@ -30,6 +30,7 @@ export const entries = pgTable("entries", {
       "diary_entry",
       "recitation_plan",
       "recitation_passage",
+      "recitation_whole_work",
       "memory_note",
       "memory_prompt"
     ] as const
@@ -309,12 +310,13 @@ export const recitationPlans = pgTable(
 // A recitation passage (#578): a contiguous, learner-editable source range of a recitation Work that is
 // practised and scheduled as one unit. Each passage is an addressable Entry linked to its plan and to
 // its exact source range (mirroring `note_anchors`: start offset on the start block, end offset on the
-// end block; equal block ids for a single-block passage). It carries an inlined FSRS card (like
-// `recall_items`) so every passage is scheduled independently. A passage has NO `personal_entries` row
-// of its own — it is owned transitively through its plan's `personal_entries` row, so passages and their
-// reviews never surface on the Timeline. `source_text` is the exact anchored snapshot used for the
-// hidden target, cue derivation, and re-anchoring; `anchor_status` flips to `needs_repair` when the
-// source drifts beyond a safe relocate, so stale text is never silently practised.
+// end block; equal block ids for a single-block passage). A passage has NO `personal_entries` row of its
+// own — it is owned transitively through its plan's `personal_entries` row, so passages never surface on
+// the Timeline. Scheduling truth is NOT stored here (#618): a passage is *active* iff `introduced_at` is
+// non-null AND it owns a `review_cards` row keyed by its `entry_id` (the shared substrate holds its FSRS
+// state); it is *queued* otherwise (introduced_at null, no card). `source_text` is the exact anchored
+// snapshot used for the hidden target, cue derivation, and re-anchoring; `anchor_status` flips to
+// `needs_repair` when the source drifts beyond a safe relocate, so stale text is never silently practised.
 export const recitationPassages = pgTable(
   "recitation_passages",
   {
@@ -347,71 +349,28 @@ export const recitationPassages = pgTable(
       .notNull()
       .default("full"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
-    // The passage lifecycle (#605): `introduced_at` is null while the passage is *queued* (introduced,
-    // awaiting activation) and non-null once it is *active* (has a scheduled FSRS card). The inlined FSRS
-    // columns below are therefore nullable — all null while queued, all non-null once active — enforced
-    // by `recitation_passages_lifecycle_ck`. Maintenance seeding creates queued passages so a plan the
-    // learner already knows can start whole-work upkeep without earning every passage through Learning.
-    introducedAt: timestamp("introduced_at", { mode: "date", withTimezone: true }),
-    // Inlined FSRS card state (@whetstone/domain `ReviewState`, #572), mirroring `recall_items`. Nullable
-    // as a set: present exactly when the passage is active (see `introduced_at`).
-    stability: doublePrecision("stability"),
-    difficulty: doublePrecision("difficulty"),
-    elapsedDays: integer("elapsed_days"),
-    scheduledDays: integer("scheduled_days"),
-    learningSteps: integer("learning_steps"),
-    reps: integer("reps"),
-    lapses: integer("lapses"),
-    state: text("state", {
-      enum: ["new", "learning", "review", "relearning"] as const
-    }),
-    lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
-    dueAt: timestamp("due_at", { mode: "date", withTimezone: true })
+    // The passage lifecycle (#605/#618): `introduced_at` is null while the passage is *queued*
+    // (introduced, awaiting activation) and non-null once it is *active*. An active passage owns a
+    // `review_cards` row keyed by its `entry_id`; a queued passage owns none. The FSRS state itself lives
+    // in the shared substrate, never inlined here.
+    introducedAt: timestamp("introduced_at", { mode: "date", withTimezone: true })
   },
-  (table) => [
-    index("recitation_passages_plan_order_idx").on(table.planEntryId, table.orderIndex),
-    index("recitation_passages_plan_due_idx").on(table.planEntryId, table.dueAt),
-    // A passage is either fully queued (introduced_at + every FSRS field null) or fully active
-    // (introduced_at + every schedule field non-null); `last_reviewed_at` stays free (null until the
-    // first review even when active). This makes an unscheduled passage impossible to treat as a card.
-    check(
-      "recitation_passages_lifecycle_ck",
-      sql`(
-        ${table.introducedAt} is null and ${table.stability} is null and ${table.difficulty} is null
-        and ${table.elapsedDays} is null and ${table.scheduledDays} is null
-        and ${table.learningSteps} is null and ${table.reps} is null and ${table.lapses} is null
-        and ${table.state} is null and ${table.dueAt} is null and ${table.lastReviewedAt} is null
-      ) or (
-        ${table.introducedAt} is not null and ${table.stability} is not null
-        and ${table.difficulty} is not null and ${table.elapsedDays} is not null
-        and ${table.scheduledDays} is not null and ${table.learningSteps} is not null
-        and ${table.reps} is not null and ${table.lapses} is not null and ${table.state} is not null
-        and ${table.dueAt} is not null
-      )`
-    )
-  ]
+  (table) => [index("recitation_passages_plan_order_idx").on(table.planEntryId, table.orderIndex)]
 );
 
-// The append-only recitation review log (#578): one row per recorded self-assessment — the FSRS rating,
-// the cue strength the learner attempted from, and when — so a passage's practice history is auditable
-// independently of its current (overwritten) FSRS card. Revealing without rating writes no row.
-export const recitationReviews = pgTable(
-  "recitation_reviews",
-  {
-    id: text("id").primaryKey(),
-    passageEntryId: text("passage_entry_id")
-      .notNull()
-      .references(() => recitationPassages.entryId),
-    rating: text("rating", {
-      enum: ["again", "hard", "good", "easy"] as const
-    }).notNull(),
-    cueStrength: text("cue_strength", {
-      enum: ["preceding_line", "opening"] as const
-    }).notNull(),
-    reviewedAt: timestamp("reviewed_at", { mode: "date", withTimezone: true }).notNull()
-  },
-  (table) => [index("recitation_reviews_passage_idx").on(table.passageEntryId)]
-);
+// Recitation-owned review evidence (#618): keyed one-to-one to a shared `review_events` row, it preserves
+// the `cue_strength` the learner attempted a passage from (the preceding line, or a cold opening). Only
+// Recitation writes and reads it — chaining/eligibility queries consult cue strength here; the generic
+// scheduler never interprets it. A whole-Work aggregate rating writes no evidence (cue strength is a
+// passage-level notion). It references `review_events`, so it is torn down with a passage's events.
+export const recitationReviewEvidence = pgTable("recitation_review_evidence", {
+  reviewEventId: text("review_event_id")
+    .primaryKey()
+    .references(() => reviewEvents.id),
+  cueStrength: text("cue_strength", {
+    enum: ["preceding_line", "opening"] as const
+  }).notNull()
+});
 
 // A contiguous chain session (#580): a rehearsal of the transitions across the owned prefix's passages
 // [0..end_order_index], in fixed source order with none skipped. It is NOT an Entry — it has no
@@ -433,28 +392,23 @@ export const recitationChains = pgTable(
   (table) => [index("recitation_chains_plan_idx").on(table.planEntryId, table.status)]
 );
 
-// The whole-work maintenance prompt for a plan (#580): a single aggregate FSRS card measuring the
-// learner's upkeep of the entire Work, kept SEPARATE from every passage card (they measure different
-// retrieval tasks). At most one row per plan (plan id is the key). A whole-work lapse reschedules only
-// this aggregate; it never resets the passages. NOT an Entry — owned transitively through its plan, so
-// it never surfaces on the Timeline. FSRS columns mirror `recitation_passages` / `recall_items`.
+// The whole-Work maintenance target for a plan (#580/#618): a dedicated `recitation_whole_work` Entry
+// (`entry_id`) that measures the learner's upkeep of the entire Work, SEPARATE from every passage target
+// (they measure different retrieval tasks). Its schedule lives in the shared substrate — a `review_cards`
+// row keyed by this `entry_id` — never inlined here. `plan_entry_id` is the unique plan relationship; the
+// plan links to this target with the existing `contains` relation in `entry_links`. At most one row per
+// plan. The target Entry is owned transitively through its plan and has NO `personal_entries` row, so it
+// never surfaces on the Timeline. A whole-Work lapse reschedules only this aggregate card; it never
+// resets the passage cards.
 export const recitationWholeWork = pgTable("recitation_whole_work", {
-  planEntryId: text("plan_entry_id")
+  entryId: text("entry_id")
     .primaryKey()
+    .references(() => entries.id),
+  planEntryId: text("plan_entry_id")
+    .notNull()
+    .unique()
     .references(() => recitationPlans.entryId),
-  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
-  stability: doublePrecision("stability").notNull(),
-  difficulty: doublePrecision("difficulty").notNull(),
-  elapsedDays: integer("elapsed_days").notNull(),
-  scheduledDays: integer("scheduled_days").notNull(),
-  learningSteps: integer("learning_steps").notNull(),
-  reps: integer("reps").notNull(),
-  lapses: integer("lapses").notNull(),
-  state: text("state", {
-    enum: ["new", "learning", "review", "relearning"] as const
-  }).notNull(),
-  lastReviewedAt: timestamp("last_reviewed_at", { mode: "date", withTimezone: true }),
-  dueAt: timestamp("due_at", { mode: "date", withTimezone: true }).notNull()
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
 });
 
 // Per-user reader preferences (work-independent): text size and Day/Night theme, server-owned so they
