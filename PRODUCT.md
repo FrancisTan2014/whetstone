@@ -43,6 +43,10 @@ These invariants outrank individual features:
    artificially growing backlog, or engagement feed.
 8. **Private by default.** Personal data stays on the learner's server and is reachable through a
    private network until authentication and access control exist.
+9. **Material, retrieval, and scheduling are separate.** A note or canonical Work records what the
+   learner cares about; a feature-owned review target defines one retrieval task against that
+   material; a review card stores only scheduling policy/state and points to that target. Material
+   never carries FSRS state, and pausing or removing a schedule never rewrites the material.
 
 ## v0 scope
 
@@ -51,9 +55,9 @@ The usable personal-learning cycle contains:
 - **Library and ingestion:** create or upload Works (`.epub`, `.pdf`, `.md`) and retain the source for
   provenance.
 - **Reader and Notes:** read one unit at a time; select source text; look it up; save, revisit, edit,
-  and delete source-linked notes.
-- **Memory:** deliberately create durable notes and independently scheduled prompts; review due
-  prompts with FSRS and a learner-supplied rating.
+  and delete rich notes with optional source anchors.
+- **Memory:** deliberately add retrieval prompts to notes; review due prompts with FSRS and a
+  learner-supplied rating.
 - **Recitation:** adopt a Work, familiarize, divide it into passages, learn with progressive fading,
   chain passages, and maintain the whole Work with recitation-specific FSRS.
 - **Diary:** type or speak; persist raw input first; optionally transcribe and tidy; edit and revisit
@@ -73,7 +77,7 @@ Primary navigation has **four** destinations:
 
 1. **Today** — due work, active routines, and capture.
 2. **Library** — source and authored Works.
-3. **Memory** — durable notes, prompts, and review history.
+3. **Memory** — due review, retrieval prompts, and review history.
 4. **Search** — block-level retrieval across the library.
 
 The Reader is an immersive destination opened from context. Recitation, Diary/Timeline, Writing,
@@ -167,10 +171,10 @@ A passage is a contiguous, addressable range over canonical Work blocks.
 Passages have two practice states:
 
 - **Queued:** segmented and visible, but not introduced. It has no due obligation and is excluded from
-  due counts and sessions. Its FSRS card fields are absent until activation; queued state cannot become
-  due through a forgotten query predicate.
-- **Active:** explicitly introduced or activated by a targeted maintenance lapse. It owns an FSRS card
-  and enters due selection.
+  due counts and sessions. It has no review card, so queued state cannot become due through a forgotten
+  query predicate.
+- **Active:** explicitly introduced or activated by a targeted maintenance lapse. It has one
+  associated review card and enters due selection.
 
 Existing reviewed passages migrate as active. New segmentation does not create a wall of immediately
 due cards.
@@ -188,9 +192,10 @@ New material is never mixed invisibly into the due count. **At most one new pass
 local day** is offered in v0, and the learner must choose **Learn next passage**. Declining it still
 counts as caught up. There is no setting for unlimited new passages in v0.
 
-Each active passage and each whole-Work card uses maintained `ts-fsrs` (FSRS v6) with requested
-retention **0.95**. Ordinary Memory prompts retain their separate v0 target of **0.90**. Whetstone
-passes these policies to the library; it does not implement its own scheduling formula.
+Each active passage and each whole-Work target has a shared review card using maintained `ts-fsrs`
+(FSRS v6) with requested retention **0.95**. Memory prompt cards use **0.90**. Retention is review-card
+policy, never material metadata. Whetstone passes these policies to the library; it does not implement
+its own scheduling formula.
 
 ### Progressive support and review
 
@@ -225,8 +230,8 @@ There is no speech-to-text requirement, exactness score, or model grade.
 - A Work adopted directly in `maintenance` does **not** relearn every passage first. After its passage
   boundaries are confirmed, a whole-Work card is due immediately. Its queued passages serve as
   break-point targets; an identified break activates and rates only that passage.
-- The whole-Work card has an independent 0.95 FSRS schedule. A whole-Work lapse does not reset every
-  passage.
+- The whole-Work target's card has an independent 0.95 FSRS schedule. A whole-Work lapse does not reset
+  every passage.
 
 ### Recitation hub and session
 
@@ -249,23 +254,28 @@ reschedule → chain → whole-Work maintenance → targeted repair.
 
 ## Memory
 
-Memory is the deterministic retention system for ideas, vocabulary, expressions, and other material
-the learner deliberately chooses.
+Memory is the deterministic review system over material the learner deliberately chooses; it is not a
+second content store.
 
-- A `memory_note` is the durable, owned understanding target with a rich document body and provenance.
-- A `memory_prompt` is a child retrieval direction with a cue, an answer, lifecycle state, and its own
-  FSRS card when scheduled. It is not a second Timeline item.
-- Creating Memory is always deliberate. Reader selections and other sources may prefill context, but
-  do not silently enroll a card.
-- Each scheduled prompt reveals a real back (`answer`, `gloss`, or source context) and receives one
-  learner rating: Again, Hard, Good, or Easy.
+- A `note` is the single durable, owned note model: one canonical rich document body, timestamps, and
+  optional source anchor/provenance. Reader notes, manually added words/phrases, and free-form thoughts
+  use this same model.
+- A note contains no template answers, derived Markdown body, review lifecycle, or FSRS fields.
+- A feature-owned review prompt references a note and defines one cue/reveal pair. One note may have
+  zero, one, or several prompts; prompts are not Timeline items.
+- A shared review card references one prompt and contains only active/paused state, requested retention,
+  and complete FSRS state. An append-only review event records each rating or explicit schedule reset.
+  A draft prompt has no card.
+- **Add to review** is an explicit per-note action. It opens the cue/reveal editor with useful source
+  context prefilled, but the learner confirms the retrieval pair before a card is created.
+- Each due prompt reveals a real back and receives one learner rating: Again, Hard, Good, or Easy.
 - Due review is earliest-first, bounded, pausable, and requested retention 0.90.
 - Snoozing changes availability explicitly; it is not a model decision.
 - FSRS history and provenance remain auditable.
 
-Reader-to-Memory capture should preserve the exact selection, Work, block anchor, and source context,
-then let the learner write or confirm the durable note and prompts. A saved Reader note and a Memory
-note are related but distinct choices; one never silently creates the other.
+Reader capture creates the note first and preserves the exact selection, Work, block anchor, and source
+context. It never creates a separate Memory note or silently enrolls review. Removing or pausing a
+prompt/card leaves the note untouched; editing a note does not silently reset a card.
 
 ## Library, ingestion, and Reader
 
@@ -312,22 +322,17 @@ states. Target body size is about 18px, line height at least 1.5, and Latin meas
 - The anchor stores block id, character offsets, exact quote, and surrounding context.
 - The editor opens as a side panel on wide screens and a bottom sheet on narrow screens without
   covering the selected text.
+- The note body uses the shared rich-text editor. There is no template selector, automatic
+  classification, structured answer form, or generated Markdown copy.
 - Saved text remains visibly underlined but is not itself an undersized button. Every annotated block
-  exposes an always-visible **44×44 edge affordance** with a quiet template-colored glyph; one note
+  exposes an always-visible **44×44 edge affordance** with one quiet note glyph; one note
   opens directly, while multiple notes open a compact anchored-text chooser. The affordance sits in
   the page margin/edge and does not alter the text's line box or cover prose.
-- Notes can be listed by Work, edited, and deleted.
+- Notes can be listed by Work, edited, deleted, and deliberately added to review.
 - Keyboard focus and touch target the edge affordance. The underline remains semantic annotation
   styling, so accessibility is not achieved by inflating inline text to a 44px line height.
-
-Seeded note templates:
-
-1. **Vocabulary:** meaning in context; my explanation/translation; memory hook; example I might use.
-2. **Expression / phrase:** what it is doing; why useful; my imitation sentence.
-3. **Thought / question:** what I noticed; why it matters; question or connection.
-
-Preselection is deterministic: one word → Vocabulary; 2–6 words → Expression; more than six →
-Thought/question. The learner may change it before saving.
+- The existing one-tap **Mark** remains a bodyless highlight, not a note template. It enters review only
+  after the learner converts it to a note and confirms a retrieval prompt.
 
 ### v0 vocabulary lookup
 
@@ -400,8 +405,9 @@ The feel is **calm, focused, and scholarly**:
 - Warm paper reading surface, quiet shell, ink-indigo interaction accent.
 - Source Serif/CJK Song stacks for reading; Inter for UI.
 - Day and Night are token variants over the same components.
-- Annotation channels remain distinct: vocabulary amber, expression teal, thought violet, Memory
-  rose, and source links blue.
+- Source-linked notes use one muted amber annotation channel; bodyless Marks use a lighter variant,
+  and source links remain blue. Review enrollment never recolors source prose because schedule state
+  is not annotation meaning.
 - Motion is purposeful in navigation and annotation, restrained in reading, and disabled by reduced
   motion.
 - Layout is safe-area and `dvh` aware. Touch, mouse, pen, and keyboard all work.
@@ -411,7 +417,7 @@ The feel is **calm, focused, and scholarly**:
 ## v0 content model
 
 `Entry` is the durable identity shared by Works, ReadingUnits, blocks, TOC entries, notes, diary
-entries, recitation plans/passages, and Memory notes/prompts.
+entries, recitation plans/passages, and review targets.
 
 - Hierarchy: `Author → Work → ReadingUnit → Block`.
 - Work types: `book`, `essay`, `blog_post`, `classical_text`.
@@ -424,15 +430,20 @@ entries, recitation plans/passages, and Memory notes/prompts.
 - An ingested Work is shared library content. An authored Work is owned canonical content.
 - Recitation passages are Entries owned transitively through their plan and do not get their own
   `personal_entries` row.
-- Memory prompts are Entries owned transitively through their Memory note and do not duplicate the
-  note on Timeline.
+- Review targets are Entries owned transitively through their material/plan and do not duplicate it on
+  Timeline.
+- Review cards are scheduling facets over review-target Entries, not Entries or content. One shared
+  card shape owns FSRS state and policy for Memory and Recitation; feature tables retain cueing,
+  anchoring, support, chaining, and other domain semantics.
+- Review events are append-only scheduler transitions. Feature-owned evidence such as Recitation cue
+  strength may reference an event without entering the shared scheduler vocabulary.
 
 ## Identity & ownership (v0)
 
 v0 has one `DEFAULT_USER_ID` behind a current-user provider and no login:
 
 - Shared library Works/units/blocks have no owner.
-- Notes, diary entries, authored Works, Memory notes, recitation plans, reading positions, and
+- Notes, diary entries, authored Works, recitation plans, review cards, reading positions, and
   preferences are user-scoped.
 - Owned Entries carry `user_id`, `occurred_at`, `created_at`, and `updated_at` in the shared
   `personal_entries` facet instead of duplicating them in each feature.
@@ -528,11 +539,14 @@ The pivot is usable only when all are true:
 2. Remove reading nudge, live Practice, Progress Map, and their shipped proposal paths while
    preserving optional diary/Reader utilities.
 3. Repair recitation maintenance bootstrap and passage activation.
-4. Add controlled new material, recitation-specific retention, pause/resume, the hub, and a complete
+4. Establish the learner-local day and shared review-card/history substrate; migrate Memory and
+   Recitation without resetting schedules.
+5. Add controlled new material, recitation-specific retention, pause/resume, the hub, and a complete
    due-first session.
-5. Recompose Today around deterministic status and that session.
-6. Complete deliberate Reader-to-Memory capture and its accessible Reader controls.
-7. Use the recitation routine in real daily practice before extracting shared reading/writing/diary
+6. Recompose Today around deterministic status and that session.
+7. Replace note templates with one rich note model, unify Reader/manual notes, add accessible Reader
+   controls, and make review an explicit per-note action.
+8. Use the recitation routine in real daily practice before extracting shared reading/writing/diary
    routine infrastructure.
 
 ## Deferred scope and non-goals
@@ -555,8 +569,11 @@ The pivot is usable only when all are true:
 - **ReadingUnit:** one ordered chapter/section/essay inside a Work.
 - **Block:** the stable, addressable content unit notes, search, and passages reference.
 - **Personal Entry:** an owned artifact with chronology through `personal_entries`.
-- **Memory note:** the durable understanding target.
-- **Memory prompt:** one independently scheduled retrieval direction under a Memory note.
+- **Note:** one owned rich artifact, optionally anchored to source material.
+- **Review target:** one feature-owned retrieval task that references durable material.
+- **Review card:** scheduler policy/state for one review target; it contains no learning material.
+- **Review event:** one append-only learner rating or explicit schedule reset for a review card.
+- **Memory prompt:** one cue/reveal review target that references a note.
 - **Recitation plan:** the learner's routine linked to a canonical Work.
 - **Passage:** a learner-shaped source range used for recitation practice.
 - **Due:** an action whose deterministic schedule/cadence has arrived.
