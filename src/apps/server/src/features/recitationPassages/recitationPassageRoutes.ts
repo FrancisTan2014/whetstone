@@ -6,9 +6,12 @@ import {
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
+import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
+  activateNextRecitationPassage,
   loadDueRecitationPassage,
   listRecitationPassages,
+  loadRecitationIntroductionStatusForPlan,
   mergeNextRecitationPassage,
   recordRecitationPassageReview,
   seedRecitationPassages,
@@ -64,6 +67,51 @@ export function registerRecitationPassageRoutes(
         return reply.code(404).send(notFound);
       }
       return reply.code(200).send({ passages: result.passages, planEntryId: request.params.id });
+    }
+  );
+
+  // The paced new-passage introduction status for a plan (#607): due count, how many passages were
+  // introduced on the learner's local day out of the cap, the next queued passage preview, and whether
+  // "New passage" is available. Owner-scoped (404 otherwise).
+  server.get<{ Params: PlanParams }>(
+    "/api/recitation/plans/:id/introduction",
+    async (request, reply) => {
+      const userId = request.server.currentUser.getCurrentUserId();
+      const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+      const status = await loadRecitationIntroductionStatusForPlan(
+        dependencies,
+        toEntryId(request.params.id),
+        userId,
+        timeZone
+      );
+      if (status === undefined) {
+        return reply.code(404).send(notFound);
+      }
+      return reply.code(200).send(status);
+    }
+  );
+
+  // Introduce the next queued passage of a Learning plan (#607): stamp it introduced and seed one active
+  // review card at the 0.95 recitation retention. Owner-scoped (404); 409 `introduction_unavailable` with
+  // a machine reason when pacing forbids it (not learning, due work remains, cap reached, all introduced).
+  server.post<{ Params: PlanParams }>(
+    "/api/recitation/plans/:id/introduce-next",
+    async (request, reply) => {
+      const userId = request.server.currentUser.getCurrentUserId();
+      const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+      const result = await activateNextRecitationPassage(
+        dependencies,
+        toEntryId(request.params.id),
+        userId,
+        timeZone
+      );
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      if (result.status === "unavailable") {
+        return reply.code(409).send({ error: "introduction_unavailable", reason: result.reason });
+      }
+      return reply.code(200).send({ passage: result.passage, status: result.introduction });
     }
   );
 

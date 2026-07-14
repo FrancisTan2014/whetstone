@@ -8,19 +8,22 @@ import type {
 import {
   coveredPassageText,
   DEFAULT_RECITATION_SUPPORT_LEVEL,
+  localDayBoundary,
   mergePassageRanges,
   reanchorPassageRange,
+  RECITATION_DAILY_INTRODUCTION_CAP,
   RECITATION_REQUEST_RETENTION,
   seedPassageRanges,
   splitPassageRange,
   toEntryId,
   type EntryId,
-  type PassageRange
+  type PassageRange,
+  type RecitationIntroductionReason
 } from "@whetstone/domain";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, recitationPassages } from "../../db/schema.js";
+import { entries, recitationPassages, reviewCards } from "../../db/schema.js";
 import { applyRatingToCardInTx, seedReviewCard } from "../review/reviewCardCommands.js";
 import {
   ensurePassageCardInTx,
@@ -35,10 +38,12 @@ import {
   loadOwnedPlanForPassages,
   loadPlanPassageAtOrder,
   loadPrecedingPassage,
+  loadRecitationIntroductionStatus,
   loadReviewCardsForTargets,
   loadWorkTextBlocks,
   listPassageRowsForPlan,
   toRecitationPassageDto,
+  type RecitationIntroductionStatus,
   type RecitationPassageRow
 } from "./recitationPassageQueries.js";
 import { deleteRecitationReviewData } from "./recitationReviewData.js";
@@ -56,6 +61,15 @@ export type RecitationPassageDependencies = Readonly<{
 export type SeedPassagesResult =
   | Readonly<{ status: "seeded" | "already_seeded"; passages: ReadonlyArray<RecitationPassageDto> }>
   | Readonly<{ status: "wrong_phase" }>
+  | Readonly<{ status: "not_found" }>;
+
+export type ActivateNextPassageResult =
+  | Readonly<{
+      status: "activated";
+      passage: RecitationPassageDto;
+      introduction: RecitationIntroductionStatus;
+    }>
+  | Readonly<{ status: "unavailable"; reason: RecitationIntroductionReason }>
   | Readonly<{ status: "not_found" }>;
 
 export type SplitPassageResultOut =
@@ -102,12 +116,12 @@ async function dtosWithCounts(
 }
 
 // Seed one passage per non-empty source text block of the plan's Work, in source order, each an
-// addressable Entry. In `learning` the passages are active — introduced now, and each seeds a fresh
-// shared review card due immediately (the opt-in Learning-phase engine, #578). In `maintenance` the
-// passages are queued (introduced_at null, no card, no due work): a learner who already knows the Work
-// only needs its boundaries laid out so whole-work upkeep can start (#605). Idempotent: a plan already
-// divided returns its current passages as `already_seeded`. A plan still `familiarizing` is
-// `wrong_phase`. Owner-scoped (`not_found` otherwise).
+// addressable Entry. Every passage seeds QUEUED (introduced_at null, no review card, no due work) in BOTH
+// `learning` and `maintenance` (#607): Learning introduction is now explicit and paced — the learner
+// introduces the first passage with "Start first passage" and each next one deliberately, so seeding
+// never hands out an accidental backlog of due items. Idempotent: a plan already divided returns its
+// current passages as `already_seeded`. A plan still `familiarizing` is `wrong_phase`. Owner-scoped
+// (`not_found` otherwise).
 export async function seedRecitationPassages(
   dependencies: RecitationPassageDependencies,
   planEntryId: EntryId,
@@ -130,14 +144,13 @@ export async function seedRecitationPassages(
   const ranges = seedPassageRanges(blocks);
   const blockText = new Map(blocks.map((block) => [block.blockEntryId, block.text] as const));
   const now = dependencies.now();
-  const scheduled = owned.phase === "learning";
 
   const rows: RecitationPassageRow[] = ranges.map((range, index) => ({
     anchorStatus: "anchored",
     contextSnapshot: owned.workTitle,
     createdAt: now,
     entryId: dependencies.createEntryId(),
-    introducedAt: scheduled ? now : null,
+    introducedAt: null,
     orderIndex: index,
     planEntryId,
     // Each seed range spans a block just loaded into `blockText`, so the covered text is always present.
@@ -150,14 +163,6 @@ export async function seedRecitationPassages(
     for (const row of rows) {
       await tx.insert(entries).values({ id: row.entryId, type: "recitation_passage" });
       await tx.insert(recitationPassages).values(row);
-      if (scheduled) {
-        await seedReviewCard(tx, {
-          targetEntryId: row.entryId,
-          userId,
-          requestedRetention: RECITATION_REQUEST_RETENTION,
-          now
-        });
-      }
     }
   });
 
@@ -179,6 +184,153 @@ export async function listRecitationPassages(
   }
   const rows = await listPassageRowsForPlan(dependencies.db, planEntryId);
   return { passages: await dtosWithCounts(dependencies.db, rows), status: "loaded" };
+}
+
+// The introduction status for a plan (#607): the paced new-passage decision the introduction route
+// serves. A thin owner-scoped wrapper over the query, so the route stays trivial. `undefined` (404) for a
+// plan the user does not own.
+export async function loadRecitationIntroductionStatusForPlan(
+  dependencies: RecitationPassageDependencies,
+  planEntryId: EntryId,
+  userId: string,
+  timeZone: string
+): Promise<RecitationIntroductionStatus | undefined> {
+  return loadRecitationIntroductionStatus(
+    dependencies.db,
+    planEntryId,
+    userId,
+    dependencies.now(),
+    timeZone
+  );
+}
+
+// The introduced passages that are currently due at `now` (active card due at/-before now). Queued
+// passages have no card and never count, so this is the "no due work" gate for introducing another.
+function countDuePassages(
+  passages: ReadonlyArray<RecitationPassageRow>,
+  cards: Map<string, { status: string; dueAt: Date }>,
+  now: Date
+): number {
+  return passages.filter((passage) => {
+    if (passage.introducedAt === null) {
+      return false;
+    }
+    const card = cards.get(passage.entryId);
+    return card !== undefined && card.status === "active" && card.dueAt.getTime() <= now.getTime();
+  }).length;
+}
+
+// Introduce the next queued passage of a Learning plan (#607): the explicit, paced "Start first passage"
+// / "New passage" action. The read-check-write is one transaction that locks the plan's passages
+// (`FOR UPDATE`) so two concurrent submits serialize — the second sees the first's freshly-introduced
+// passage as due work and is rejected, so introduction can never skip order, exceed the daily cap, or
+// create a duplicate card. Activating stamps `introduced_at` and seeds ONE active review card at the 0.95
+// recitation retention through the shared scheduler boundary. The LOWEST-order queued passage is always
+// the one introduced (the ordered rows never skip). Gates in fixed order (not_learning → due_work_remains
+// → cap_reached → all_introduced) via the learner's LOCAL day for the cap (#606). Owner-scoped
+// (`not_found`).
+export async function activateNextRecitationPassage(
+  dependencies: RecitationPassageDependencies,
+  planEntryId: EntryId,
+  userId: string,
+  timeZone: string
+): Promise<ActivateNextPassageResult> {
+  const owned = await loadOwnedPlanForPassages(dependencies.db, planEntryId, userId);
+  if (owned === undefined) {
+    return { status: "not_found" };
+  }
+
+  const now = dependencies.now();
+  const outcome = await dependencies.db.transaction(
+    async (
+      tx
+    ): Promise<
+      | Readonly<{ status: "activated"; passageEntryId: string }>
+      | Readonly<{ status: "unavailable"; reason: RecitationIntroductionReason }>
+    > => {
+      // Lock the plan's passage rows for the transaction so a concurrent activate on the same plan
+      // serializes behind this one and re-reads its introduced passage as due work.
+      const passages = await tx
+        .select()
+        .from(recitationPassages)
+        .where(eq(recitationPassages.planEntryId, planEntryId))
+        .orderBy(asc(recitationPassages.orderIndex), asc(recitationPassages.entryId))
+        .for("update");
+      const cardRows =
+        passages.length === 0
+          ? []
+          : await tx
+              .select()
+              .from(reviewCards)
+              .where(
+                inArray(
+                  reviewCards.targetEntryId,
+                  passages.map((passage) => passage.entryId)
+                )
+              );
+      const cards = new Map(cardRows.map((card) => [card.targetEntryId, card] as const));
+
+      if (owned.phase !== "learning") {
+        return { reason: "not_learning", status: "unavailable" };
+      }
+      if (countDuePassages(passages, cards, now) > 0) {
+        return { reason: "due_work_remains", status: "unavailable" };
+      }
+      const { utcEnd, utcStart } = localDayBoundary(now, timeZone);
+      const introducedToday = passages.filter(
+        (passage) =>
+          passage.introducedAt !== null &&
+          passage.introducedAt.getTime() >= utcStart.getTime() &&
+          passage.introducedAt.getTime() < utcEnd.getTime()
+      ).length;
+      if (introducedToday >= RECITATION_DAILY_INTRODUCTION_CAP) {
+        return { reason: "cap_reached", status: "unavailable" };
+      }
+      const nextQueued = passages.find((passage) => passage.introducedAt === null);
+      if (nextQueued === undefined) {
+        return { reason: "all_introduced", status: "unavailable" };
+      }
+
+      await tx
+        .update(recitationPassages)
+        .set({ introducedAt: now })
+        .where(eq(recitationPassages.entryId, nextQueued.entryId));
+      await seedReviewCard(tx, {
+        now,
+        requestedRetention: RECITATION_REQUEST_RETENTION,
+        targetEntryId: nextQueued.entryId,
+        userId
+      });
+      return { passageEntryId: nextQueued.entryId, status: "activated" };
+    }
+  );
+
+  if (outcome.status === "unavailable") {
+    return { reason: outcome.reason, status: "unavailable" };
+  }
+
+  const [row] = await listPassageRowsForPlan(dependencies.db, planEntryId).then((rows) =>
+    rows.filter((passage) => passage.entryId === outcome.passageEntryId)
+  );
+  const counts = await countReviewsByPassage(dependencies.db, [outcome.passageEntryId]);
+  const cards = await loadReviewCardsForTargets(dependencies.db, [outcome.passageEntryId]);
+  const introduction = await loadRecitationIntroductionStatus(
+    dependencies.db,
+    planEntryId,
+    userId,
+    now,
+    timeZone
+  );
+  return {
+    introduction: introduction!,
+    // The row was just introduced with a seeded active card, so both are present.
+    passage: toRecitationPassageDto(
+      row!,
+      cards.get(outcome.passageEntryId)!,
+      counts.get(outcome.passageEntryId) ?? 0
+    ),
+    status: "activated"
+  };
 }
 
 function newPassageRow(
