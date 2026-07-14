@@ -12,13 +12,22 @@ import {
   recitationWholeWork,
   workMeta
 } from "../../db/schema.js";
-import { listPassageRowsForPlan, passageRowToReviewState } from "./recitationPassageQueries.js";
+import {
+  listPassageRowsForPlan,
+  passageRowToReviewStateOrNull
+} from "./recitationPassageQueries.js";
 
 export type RecitationChainRow = typeof recitationChains.$inferSelect;
 export type RecitationWholeWorkRow = typeof recitationWholeWork.$inferSelect;
 
-// A plan resolved together with its Work title for the Today surface; the plan id is the chaining scope.
-export type PlanWithWork = Readonly<{ planEntryId: string; workTitle: string }>;
+// A plan for the Today whole-work scan: its Work title plus the phase, so the scan can apply the
+// phase-aware unstarted eligibility rule (Learning needs the whole Work owned; Maintenance needs ≥1
+// anchored passage — #605).
+export type WholeWorkScanPlan = Readonly<{
+  phase: "familiarizing" | "learning" | "maintenance";
+  planEntryId: string;
+  workTitle: string;
+}>;
 
 // The successful-review count (Good/Easy only) for each of the given passages, keyed by passage id
 // (absent = 0). Ownership is earned by clean recalls, so a Hard or Again never advances it — unlike the
@@ -47,8 +56,10 @@ export async function countSuccessfulReviewsByPassage(
   return new Map(rows.map((row) => [row.passageEntryId, row.count]));
 }
 
-// Each passage of a plan as a domain `PassageMastery` (id + successful-review count + FSRS state), in
-// reciting order — the exact input the pure chaining/ownership logic consumes.
+// Each passage of a plan as a domain `PassageMastery` (id + successful-review count + FSRS state +
+// anchor validity), in reciting order — the exact input the pure chaining/ownership logic consumes. A
+// queued (maintenance) passage has a null FSRS state; `anchored` reflects whether its range still
+// resolves, which whole-work maintenance eligibility depends on (#605).
 export async function loadPassageMasteries(
   db: DbClient,
   planEntryId: EntryId
@@ -59,8 +70,9 @@ export async function loadPassageMasteries(
     rows.map((row) => row.entryId)
   );
   return rows.map((row) => ({
+    anchored: row.anchorStatus === "anchored",
     passageEntryId: row.entryId,
-    state: passageRowToReviewState(row),
+    state: passageRowToReviewStateOrNull(row),
     successfulReviews: successful.get(row.entryId) ?? 0
   }));
 }
@@ -155,17 +167,27 @@ export async function loadEarliestActiveChainForUser(
   return row === undefined ? undefined : { row: row.chain, workTitle: row.workTitle };
 }
 
-// The user's `learning`-phase plans with their Work titles, in a stable order (title, then id), so
-// Today can scan them for whole-work eligibility deterministically.
-export async function listLearningPlansForUser(
+// The user's plans eligible for a whole-work maintenance prompt — both `learning` and `maintenance`
+// phases (a `familiarizing` plan has no passages yet) — with their Work titles and phase, in a stable
+// order (title, then id), so Today can scan them for whole-work eligibility deterministically (#605).
+export async function listWholeWorkScanPlansForUser(
   db: DbClient,
   userId: string
-): Promise<ReadonlyArray<PlanWithWork>> {
+): Promise<ReadonlyArray<WholeWorkScanPlan>> {
   return db
-    .select({ planEntryId: recitationPlans.entryId, workTitle: workMeta.title })
+    .select({
+      phase: recitationPlans.phase,
+      planEntryId: recitationPlans.entryId,
+      workTitle: workMeta.title
+    })
     .from(recitationPlans)
     .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
-    .where(and(eq(personalEntries.userId, userId), eq(recitationPlans.phase, "learning")))
+    .where(
+      and(
+        eq(personalEntries.userId, userId),
+        inArray(recitationPlans.phase, ["learning", "maintenance"])
+      )
+    )
     .orderBy(asc(workMeta.title), asc(recitationPlans.entryId));
 }

@@ -58,6 +58,7 @@ function makePassage(overrides: Partial<RecitationPassageDto> = {}): RecitationP
     sourceText: "First line.",
     startBlockEntryId: "block-a",
     startOffset: 0,
+    status: "active",
     ...overrides
   };
 }

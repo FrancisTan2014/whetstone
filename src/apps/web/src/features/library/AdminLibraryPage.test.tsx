@@ -1119,6 +1119,27 @@ describe("AdminLibraryPage", () => {
     );
   });
 
+  it("offers a maintenance plan a Set up passages link into the same segmentation surface (#605)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    mockedListRecitationPlans.mockResolvedValue({
+      plans: [
+        {
+          ...recitationPlanFor("work-1", "Politics and the English Language"),
+          phase: "maintenance"
+        }
+      ]
+    });
+    await renderReady();
+
+    expect(await screen.findByText("Reciting · Maintenance")).toBeDefined();
+    // A learner who already knows the Work still gets into the segmentation surface — but as "Set up
+    // passages", not "Divide into passages" — so whole-work upkeep can start (#605).
+    expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Set up passages" }).getAttribute("href")).toBe(
+      "#/recite?plan=plan-work-1"
+    );
+  });
+
   it("surfaces an error when adopting a recitation routine fails, keeping the sheet open (#577)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     mockedCreateRecitationPlan.mockRejectedValue(new Error("boom"));

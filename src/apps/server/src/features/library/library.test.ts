@@ -459,6 +459,7 @@ describe("DELETE /api/works/:workEntryId", () => {
       endBlockEntryId: "pmblock-1",
       endOffset: 2,
       entryId: "passage-1",
+      introducedAt: new Date("2026-02-01T00:00:00.000Z"),
       lapses: 0,
       lastReviewedAt: null,
       learningSteps: 0,

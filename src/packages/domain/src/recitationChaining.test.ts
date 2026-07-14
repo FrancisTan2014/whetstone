@@ -4,8 +4,10 @@ import { applyRating, newReviewState, retrievability, type ReviewState } from ".
 import {
   chainEligibility,
   computeOwnedPrefix,
+  hasValidAnchoredPassage,
   isOutcomePassageInSession,
   isPassageOwned,
+  isUnstartedWholeWorkEligible,
   isWholeWorkOwned,
   MIN_CHAIN_LENGTH,
   OWNERSHIP_MIN_SUCCESSFUL_REVIEWS,
@@ -31,7 +33,12 @@ function reviewedTwice(t0: Date): ReviewState {
 
 // A passage-mastery fixture with the given successful-review count and a state reviewed twice at `t0`.
 function ownedMastery(id: string, t0: Date, successfulReviews = 2): PassageMastery {
-  return { passageEntryId: id, state: reviewedTwice(t0), successfulReviews };
+  return { anchored: true, passageEntryId: id, state: reviewedTwice(t0), successfulReviews };
+}
+
+// A queued passage: introduced but never activated, so it has no FSRS card and no reviews (#605).
+function queuedMastery(id: string, anchored = true): PassageMastery {
+  return { anchored, passageEntryId: id, state: null, successfulReviews: 0 };
 }
 
 const T0 = new Date("2026-01-01T00:00:00.000Z");
@@ -64,8 +71,12 @@ describe("isPassageOwned", () => {
     const passage = ownedMastery("p1", T0);
     // Far in the future the card is well past due; retrievability falls under the target.
     const faded = new Date(T0.getTime() + 400 * DAY_MS);
-    expect(retrievability(passage.state, faded)).toBeLessThan(OWNERSHIP_RETENTION_TARGET);
+    expect(retrievability(passage.state!, faded)).toBeLessThan(OWNERSHIP_RETENTION_TARGET);
     expect(isPassageOwned(passage, faded)).toBe(false);
+  });
+
+  it("never owns a queued passage, which has no schedule or reviews", () => {
+    expect(isPassageOwned(queuedMastery("p1"), JUST_AFTER)).toBe(false);
   });
 });
 
@@ -111,6 +122,60 @@ describe("isWholeWorkOwned", () => {
 
   it("is false for a plan with no passages", () => {
     expect(isWholeWorkOwned([], JUST_AFTER)).toBe(false);
+  });
+
+  it("is false when passages are only queued", () => {
+    expect(isWholeWorkOwned([queuedMastery("p1"), queuedMastery("p2")], JUST_AFTER)).toBe(false);
+  });
+});
+
+describe("hasValidAnchoredPassage", () => {
+  it("is true when at least one passage is anchored", () => {
+    expect(hasValidAnchoredPassage([queuedMastery("p1", false), queuedMastery("p2", true)])).toBe(
+      true
+    );
+  });
+
+  it("is false when every passage needs repair", () => {
+    expect(hasValidAnchoredPassage([queuedMastery("p1", false), queuedMastery("p2", false)])).toBe(
+      false
+    );
+  });
+
+  it("is false for a plan with no passages", () => {
+    expect(hasValidAnchoredPassage([])).toBe(false);
+  });
+});
+
+describe("isUnstartedWholeWorkEligible", () => {
+  it("offers maintenance upkeep as soon as one anchored passage exists, without ownership", () => {
+    expect(isUnstartedWholeWorkEligible("maintenance", [queuedMastery("p1")], JUST_AFTER)).toBe(
+      true
+    );
+  });
+
+  it("does not offer maintenance upkeep when the only passage needs repair", () => {
+    expect(
+      isUnstartedWholeWorkEligible("maintenance", [queuedMastery("p1", false)], JUST_AFTER)
+    ).toBe(false);
+  });
+
+  it("requires full ownership for a learning plan, not mere anchoring", () => {
+    const notOwned: PassageMastery = { ...ownedMastery("p2", T0), successfulReviews: 0 };
+    expect(
+      isUnstartedWholeWorkEligible("learning", [ownedMastery("p1", T0), notOwned], JUST_AFTER)
+    ).toBe(false);
+    expect(
+      isUnstartedWholeWorkEligible(
+        "learning",
+        [ownedMastery("p1", T0), ownedMastery("p2", T0)],
+        JUST_AFTER
+      )
+    ).toBe(true);
+  });
+
+  it("is never eligible for a familiarizing plan with no passages", () => {
+    expect(isUnstartedWholeWorkEligible("familiarizing", [], JUST_AFTER)).toBe(false);
   });
 });
 

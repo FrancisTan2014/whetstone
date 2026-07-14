@@ -45,6 +45,7 @@ function makePassage(overrides: Partial<RecitationPassageDto> = {}): RecitationP
     sourceText: "The quick brown fox.",
     startBlockEntryId: "block-a",
     startOffset: 0,
+    status: "active",
     ...overrides
   };
 }

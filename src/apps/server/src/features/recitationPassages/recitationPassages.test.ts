@@ -194,6 +194,22 @@ async function seededTwoPassagePlan(): Promise<{
   return { passages: seeded.body.passages, planEntryId, workEntryId };
 }
 
+// A maintenance plan whose Work has two recitable blocks; its passages seed as queued (#605).
+async function seededMaintenancePlan(): Promise<{
+  planEntryId: string;
+  passages: ReadonlyArray<RecitationPassageDto>;
+}> {
+  const workEntryId = "work-maint";
+  await seedWorkWithBlocks(workEntryId, [
+    { id: "maint-a", text: "The quick brown fox." },
+    { id: "maint-c", text: "Jumps over the lazy dog." }
+  ]);
+  const planEntryId = await adopt(workEntryId, "maintenance");
+  const seeded = await seedPassages(planEntryId);
+  expect(seeded.code).toBe(201);
+  return { passages: seeded.body.passages, planEntryId };
+}
+
 beforeEach(async () => {
   context = await buildContext();
 });
@@ -255,22 +271,37 @@ describe("POST /api/recitation/plans/:id/passages/seed", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("rejects seeding a plan that is not in the learning phase (passage practice is Learning-only)", async () => {
-    for (const phase of ["familiarizing", "maintenance"] as const) {
-      const workEntryId = `work-${phase}`;
-      await seedWorkWithBlocks(workEntryId, [{ id: `${phase}-b1`, text: "One line." }]);
-      const planEntryId = await adopt(workEntryId, phase);
+  it("rejects seeding a familiarizing plan (the learner reaches Learning first via Today)", async () => {
+    await seedWorkWithBlocks("work-fam", [{ id: "fam-b1", text: "One line." }]);
+    const planEntryId = await adopt("work-fam", "familiarizing");
 
-      const response = await context.server.inject({
-        method: "POST",
-        url: `/api/recitation/plans/${planEntryId}/passages/seed`
-      });
+    const response = await context.server.inject({
+      method: "POST",
+      url: `/api/recitation/plans/${planEntryId}/passages/seed`
+    });
 
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ error: "wrong_phase" });
-      // Nothing was divided — a non-learning plan never gains passages.
-      expect((await listPassages(planEntryId)).passages).toEqual([]);
-    }
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "wrong_phase" });
+    // Nothing was divided — a familiarizing plan never gains passages.
+    expect((await listPassages(planEntryId)).passages).toEqual([]);
+  });
+
+  it("seeds a maintenance plan's passages as queued (no schedule until a whole-work break)", async () => {
+    await seedWorkWithBlocks("work-maint", [
+      { id: "maint-b1", text: "First line." },
+      { id: "maint-b2", text: "Second line." }
+    ]);
+    const planEntryId = await adopt("work-maint", "maintenance");
+
+    const seeded = await seedPassages(planEntryId);
+
+    expect(seeded.code).toBe(201);
+    // A learner who already knows the Work gets its boundaries laid out, but every passage is queued: no
+    // FSRS card, so it adds no passage due work (#605).
+    expect(seeded.body.passages.map((passage) => passage.status)).toEqual(["queued", "queued"]);
+    expect(seeded.body.passages.every((passage) => passage.reviewCount === 0)).toBe(true);
+    const listed = await listPassages(planEntryId);
+    expect(listed.passages.map((passage) => passage.status)).toEqual(["queued", "queued"]);
   });
 });
 
@@ -549,6 +580,87 @@ describe("POST /api/recitation/passages/:id/review", () => {
     const listed = await listPassages(planEntryId);
     // The first passage has no predecessor, so only the target is graded and nothing else is touched.
     expect(listed.passages.map((passage) => passage.reviewCount)).toEqual([1, 0]);
+  });
+});
+
+describe("queued maintenance passages (#605)", () => {
+  it("splits a queued passage into two queued halves (no schedule is created)", async () => {
+    const { passages } = await seededMaintenancePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { atBlockEntryId: "maint-a", atOffset: 4 },
+      url: `/api/recitation/passages/${passages[0]!.entryId}/split`
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json() as { passages: RecitationPassageDto[] };
+    expect(body.passages.map((passage) => passage.sourceText)).toEqual([
+      "The ",
+      "quick brown fox.",
+      "Jumps over the lazy dog."
+    ]);
+    // Editing a queued plan's boundaries never activates a passage — all halves stay queued.
+    expect(body.passages.every((passage) => passage.status === "queued")).toBe(true);
+  });
+
+  it("merges two queued passages into a single queued passage", async () => {
+    const { passages } = await seededMaintenancePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      url: `/api/recitation/passages/${passages[0]!.entryId}/merge-next`
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json() as { passages: RecitationPassageDto[] };
+    expect(body.passages).toHaveLength(1);
+    expect(body.passages[0]!.status).toBe("queued");
+  });
+
+  it("activates a queued passage when it is practised directly, starting a fresh schedule", async () => {
+    const { passages } = await seededMaintenancePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { cueStrength: "opening", rating: "good" },
+      url: `/api/recitation/passages/${passages[0]!.entryId}/review`
+    });
+    expect(response.statusCode).toBe(200);
+
+    const reviewed = (response.json() as RecordRecitationReviewResponse).passage;
+    // The queued passage is now a live, scheduled card: an active status, a review count, an FSRS rep.
+    expect(reviewed.status).toBe("active");
+    expect(reviewed.reviewCount).toBe(1);
+    const [row] = await context.db
+      .select()
+      .from(recitationPassages)
+      .where(eq(recitationPassages.entryId, passages[0]!.entryId))
+      .limit(1);
+    expect(row!.introducedAt).not.toBeNull();
+    // Its sibling was not touched, so it stays queued.
+    const [sibling] = await context.db
+      .select()
+      .from(recitationPassages)
+      .where(eq(recitationPassages.entryId, passages[1]!.entryId))
+      .limit(1);
+    expect(sibling!.introducedAt).toBeNull();
+  });
+
+  it("activates both the target and a queued predecessor on a failed lead-in", async () => {
+    const { planEntryId, passages } = await seededMaintenancePlan();
+
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { cueStrength: "preceding_line", leadInFailed: true, rating: "good" },
+      url: `/api/recitation/passages/${passages[1]!.entryId}/review`
+    });
+    expect(response.statusCode).toBe(200);
+
+    // The reviewed passage and its previously-queued predecessor are both now active with a review each.
+    const listed = await listPassages(planEntryId);
+    expect(listed.passages.map((passage) => passage.status)).toEqual(["active", "active"]);
+    expect(listed.passages.map((passage) => passage.reviewCount)).toEqual([1, 1]);
   });
 });
 

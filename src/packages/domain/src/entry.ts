@@ -20,6 +20,13 @@ export const entryTypes = [
   // owner-scoped) and references the source Work, whose content stays canonical (never copied). Its
   // lightweight per-session routine state lives on the `recitation_plans` facet, NOT as Entries.
   "recitation_plan",
+  // `recitation_passage` (#578, #605): a contiguous, learner-editable source range of a recitation Work
+  // that is practised and scheduled as one unit. It is a first-class addressable Entry (so a passage
+  // range FKs its block ids and it can join the typed link graph), but it carries NO `personal_entries`
+  // row — ownership is transitive through its plan, so passages and their reviews never surface a second
+  // Timeline row. A passage is either queued (introduced, awaiting activation) or active (a scheduled
+  // FSRS card); the lifecycle lives on the `recitation_passages` facet, not on the Entry.
+  "recitation_passage",
   // `memory_note` (#595): a Memory note is a first-class owned Entry — the durable retention target. It
   // carries a `personal_entries` facet (so it appears once on the logical Timeline and is owner-scoped),
   // a canonical rich document body, and a structured capture source. Provenance is a `derived_from`

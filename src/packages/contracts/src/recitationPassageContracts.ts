@@ -36,28 +36,49 @@ export const recitationSupportLevelDtoSchema = z.enum(recitationSupportLevels);
 
 export type RecitationSupportLevelDto = z.infer<typeof recitationSupportLevelDtoSchema>;
 
-// A persisted passage with its source range and its scheduling progress, for the segmentation view and
-// the plan's progress list. Offsets index a block's plaintext; equal block ids mean a single-block
-// passage. `reviewCount` is how many self-assessments have been recorded; `dueAt`/`lastReviewedAt`
-// summarize the FSRS schedule (`lastReviewedAt` null until the first review).
-export const recitationPassageDtoSchema = z
+// A persisted passage with its source range and its lifecycle (#605). A passage is either **queued**
+// (introduced, awaiting activation: no schedule yet) or **active** (a scheduled FSRS card), modelled as
+// a discriminated union on `status` so an unscheduled passage can never be mistaken for a card. The
+// shared fields (source range, order, review count) are on both; the FSRS summary (`dueAt`, `reps`,
+// `lapses`, `lastReviewedAt`) exists only on the active variant. Offsets index a block's plaintext;
+// equal block ids mean a single-block passage. `reviewCount` is how many self-assessments have been
+// recorded (always 0 while queued).
+const recitationPassageBaseShape = {
+  anchorStatus: recitationAnchorStatusDtoSchema,
+  endBlockEntryId: z.string(),
+  endOffset: z.number().int().nonnegative(),
+  entryId: z.string(),
+  orderIndex: z.number().int().nonnegative(),
+  planEntryId: z.string(),
+  reviewCount: z.number().int().nonnegative(),
+  sourceText: z.string(),
+  startBlockEntryId: z.string(),
+  startOffset: z.number().int().nonnegative()
+} as const;
+
+export const queuedRecitationPassageDtoSchema = z
+  .object({ ...recitationPassageBaseShape, status: z.literal("queued") })
+  .strict();
+
+export type QueuedRecitationPassageDto = z.infer<typeof queuedRecitationPassageDtoSchema>;
+
+export const activeRecitationPassageDtoSchema = z
   .object({
-    anchorStatus: recitationAnchorStatusDtoSchema,
+    ...recitationPassageBaseShape,
     dueAt: z.string(),
-    endBlockEntryId: z.string(),
-    endOffset: z.number().int().nonnegative(),
-    entryId: z.string(),
     lapses: z.number().int().nonnegative(),
     lastReviewedAt: z.string().nullable(),
-    orderIndex: z.number().int().nonnegative(),
-    planEntryId: z.string(),
     reps: z.number().int().nonnegative(),
-    reviewCount: z.number().int().nonnegative(),
-    sourceText: z.string(),
-    startBlockEntryId: z.string(),
-    startOffset: z.number().int().nonnegative()
+    status: z.literal("active")
   })
   .strict();
+
+export type ActiveRecitationPassageDto = z.infer<typeof activeRecitationPassageDtoSchema>;
+
+export const recitationPassageDtoSchema = z.discriminatedUnion("status", [
+  queuedRecitationPassageDtoSchema,
+  activeRecitationPassageDtoSchema
+]);
 
 export type RecitationPassageDto = z.infer<typeof recitationPassageDtoSchema>;
 

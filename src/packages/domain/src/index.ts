@@ -147,8 +147,10 @@ export type {
 export {
   chainEligibility,
   computeOwnedPrefix,
+  hasValidAnchoredPassage,
   isOutcomePassageInSession,
   isPassageOwned,
+  isUnstartedWholeWorkEligible,
   isWholeWorkOwned,
   MIN_CHAIN_LENGTH,
   OWNERSHIP_MIN_SUCCESSFUL_REVIEWS,

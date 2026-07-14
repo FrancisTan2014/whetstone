@@ -1,6 +1,6 @@
 import type { RecitationPassageDto } from "@whetstone/contracts";
 import type { EntryId, ReviewState } from "@whetstone/domain";
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -16,22 +16,22 @@ import {
 // One persisted passage row.
 export type RecitationPassageRow = typeof recitationPassages.$inferSelect;
 
-// The inlined FSRS card columns shared by every table that schedules with `@whetstone/domain`
-// (`recitation_passages`, `recitation_whole_work`): a structural subset so one pair of mappers converts
-// any such row to/from a domain `ReviewState`.
-export type InlineFsrsCard = Pick<
-  RecitationPassageRow,
-  | "difficulty"
-  | "dueAt"
-  | "elapsedDays"
-  | "lapses"
-  | "lastReviewedAt"
-  | "learningSteps"
-  | "reps"
-  | "scheduledDays"
-  | "stability"
-  | "state"
->;
+// The inlined FSRS card columns shared by every scheduled row (`recitation_whole_work`, and an *active*
+// `recitation_passages` row): a non-null structural shape so one pair of mappers converts any such card
+// to/from a domain `ReviewState`. A queued passage has no card (all FSRS columns null); use
+// `passageRowToReviewStateOrNull` for a passage row that may still be queued.
+export type InlineFsrsCard = Readonly<{
+  difficulty: number;
+  dueAt: Date;
+  elapsedDays: number;
+  lapses: number;
+  lastReviewedAt: Date | null;
+  learningSteps: number;
+  reps: number;
+  scheduledDays: number;
+  stability: number;
+  state: "new" | "learning" | "review" | "relearning";
+}>;
 
 // A passage (or plan) resolved together with the source Work it belongs to, for the review context.
 export type OwnedPassage = Readonly<{
@@ -73,25 +73,82 @@ export function passageReviewStateColumns(state: ReviewState): InlineFsrsCard {
   };
 }
 
+// The full FSRS + lifecycle column set for a *queued* passage (#605): introduced but unscheduled, so
+// `introduced_at` and every FSRS field are null (satisfying `recitation_passages_lifecycle_ck`).
+export function queuedPassageLifecycleColumns(): Readonly<{
+  difficulty: null;
+  dueAt: null;
+  elapsedDays: null;
+  introducedAt: null;
+  lapses: null;
+  lastReviewedAt: null;
+  learningSteps: null;
+  reps: null;
+  scheduledDays: null;
+  stability: null;
+  state: null;
+}> {
+  return {
+    difficulty: null,
+    dueAt: null,
+    elapsedDays: null,
+    introducedAt: null,
+    lapses: null,
+    lastReviewedAt: null,
+    learningSteps: null,
+    reps: null,
+    scheduledDays: null,
+    stability: null,
+    state: null
+  };
+}
+
+// Reconstruct a passage's domain ReviewState, or `null` when the passage is still queued (introduced but
+// never activated). Active passages have every schedule field non-null by the lifecycle check constraint.
+export function passageRowToReviewStateOrNull(row: RecitationPassageRow): ReviewState | null {
+  if (row.introducedAt === null) {
+    return null;
+  }
+  return passageRowToReviewState({
+    difficulty: row.difficulty!,
+    dueAt: row.dueAt!,
+    elapsedDays: row.elapsedDays!,
+    lapses: row.lapses!,
+    lastReviewedAt: row.lastReviewedAt,
+    learningSteps: row.learningSteps!,
+    reps: row.reps!,
+    scheduledDays: row.scheduledDays!,
+    stability: row.stability!,
+    state: row.state!
+  });
+}
+
 export function toRecitationPassageDto(
   row: RecitationPassageRow,
   reviewCount: number
 ): RecitationPassageDto {
-  return {
+  const base = {
     anchorStatus: row.anchorStatus,
-    dueAt: row.dueAt.toISOString(),
     endBlockEntryId: row.endBlockEntryId,
     endOffset: row.endOffset,
     entryId: row.entryId,
-    lapses: row.lapses,
-    lastReviewedAt: row.lastReviewedAt === null ? null : row.lastReviewedAt.toISOString(),
     orderIndex: row.orderIndex,
     planEntryId: row.planEntryId,
-    reps: row.reps,
     reviewCount,
     sourceText: row.sourceText,
     startBlockEntryId: row.startBlockEntryId,
     startOffset: row.startOffset
+  } as const;
+  if (row.introducedAt === null) {
+    return { ...base, status: "queued" };
+  }
+  return {
+    ...base,
+    dueAt: row.dueAt!.toISOString(),
+    lapses: row.lapses!,
+    lastReviewedAt: row.lastReviewedAt === null ? null : row.lastReviewedAt.toISOString(),
+    reps: row.reps!,
+    status: "active"
   };
 }
 
@@ -214,8 +271,9 @@ export async function loadBlockTextByIds(
 
 // The user's single next-due passage across all their recitation plans (due_at <= now), soonest first,
 // with the Work it belongs to; undefined when nothing is due (Today then shows no overdue wall). Only
-// `learning`-phase plans surface here: passage practice is the Learning-phase engine, so a plan moved on
-// to `maintenance` (or never started) never enters the due queue (#578).
+// active (scheduled) passages in `learning`-phase plans surface here: passage practice is the
+// Learning-phase engine, and a queued passage has no schedule, so a plan on `maintenance` (or a
+// not-yet-activated passage) never enters the due queue (#578, #605).
 export async function loadNextDuePassage(
   db: DbClient,
   userId: string,
@@ -235,6 +293,7 @@ export async function loadNextDuePassage(
       and(
         eq(personalEntries.userId, userId),
         eq(recitationPlans.phase, "learning"),
+        isNotNull(recitationPassages.introducedAt),
         lte(recitationPassages.dueAt, now)
       )
     )

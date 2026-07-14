@@ -48,6 +48,7 @@ export type {
   SetRecitationPhaseRequest
 } from "./recitationContracts.js";
 export {
+  activeRecitationPassageDtoSchema,
   dueRecitationPassageDtoSchema,
   dueRecitationPassageResponseSchema,
   parseDueRecitationPassageResponse,
@@ -57,6 +58,7 @@ export {
   parseSetRecitationSupportLevelRequest,
   parseSetRecitationSupportLevelResponse,
   parseSplitRecitationPassageRequest,
+  queuedRecitationPassageDtoSchema,
   recitationAnchorStatusDtoSchema,
   recitationCueStrengthDtoSchema,
   recitationPassageDtoSchema,
@@ -70,8 +72,10 @@ export {
   splitRecitationPassageRequestSchema
 } from "./recitationPassageContracts.js";
 export type {
+  ActiveRecitationPassageDto,
   DueRecitationPassageDto,
   DueRecitationPassageResponse,
+  QueuedRecitationPassageDto,
   RecitationAnchorStatusDto,
   RecitationCueStrengthDto,
   RecitationPassageDto,
