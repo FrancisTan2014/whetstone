@@ -15,7 +15,6 @@ import { createImageResourceStore } from "./files/imageResourceStore.js";
 import { composePdfToMarkdown, createDoclingPdfToMarkdown } from "./files/pdfToMarkdown.js";
 import { createOcrmypdfPreprocess } from "./files/pdfOcr.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
-import { seedNoteTemplates } from "./features/notes/noteCommands.js";
 import { createCedictProvider, parseCedict } from "./lookup/cedict.js";
 import { createWiktionaryEntryLookup, createWordNetEntryLookup } from "./lookup/englishLookup.js";
 import { createFreeDictionaryProvider } from "./lookup/freeDictionaryProvider.js";
@@ -47,7 +46,6 @@ const config = readServerConfig();
 const pglite = new PGlite(config.databaseDir);
 await runMigrations(pglite);
 const db = createDbClient(pglite);
-await seedNoteTemplates(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
 const epubParser = createEpubParser(
   join(config.sourceFilesDir, "epub-resources"),

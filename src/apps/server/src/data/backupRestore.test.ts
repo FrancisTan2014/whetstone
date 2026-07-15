@@ -40,8 +40,8 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
     INSERT INTO work_sources (id, file_name, file_path, kind, sha256, source_text, work_entry_id)
       VALUES ('src1', 'my.pdf', 'w1source.pdf', 'upload', '${sourceSha}', NULL, 'w1');
     INSERT INTO entries (id, type) VALUES ('n1', 'note');
-    INSERT INTO notes (answers_json, entry_id, markdown_body, template_id)
-      VALUES ('{}', 'n1', 'a note body', NULL);
+    INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind)
+      VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a note body"}]}]}', 'a note body', 'reader', 'n1', 'note');
   `);
 }
 
@@ -129,13 +129,11 @@ describe("backup/restore round-trip", () => {
     await verifyPglite.waitReady;
     const authors = await verifyPglite.query<{ name: string }>("select name from authors");
     const work = await verifyPglite.query<{ title: string }>("select title from work_meta");
-    const note = await verifyPglite.query<{ markdown_body: string }>(
-      "select markdown_body from notes"
-    );
+    const note = await verifyPglite.query<{ body_text: string }>("select body_text from notes");
     await verifyPglite.close();
 
     expect(authors.rows).toEqual([{ name: "Author One" }]);
     expect(work.rows).toEqual([{ title: "My Work" }]);
-    expect(note.rows).toEqual([{ markdown_body: "a note body" }]);
+    expect(note.rows).toEqual([{ body_text: "a note body" }]);
   }, 60000);
 });

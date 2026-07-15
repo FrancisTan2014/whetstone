@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CreateNoteRequest, UpdateNoteRequest } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 import {
@@ -8,7 +9,6 @@ import {
   createNote,
   deleteNote,
   fetchAllNotes,
-  fetchNoteTemplates,
   fetchNotes,
   updateNote
 } from "./notesApi";
@@ -33,13 +33,6 @@ afterEach(() => {
 });
 
 describe("notesApi", () => {
-  it("fetches note templates from the templates endpoint", async () => {
-    const fetchMock = stubFetch({ body: { templates: [] }, ok: true });
-
-    await expect(fetchNoteTemplates()).resolves.toEqual({ templates: [] });
-    expect(fetchMock).toHaveBeenCalledWith("/api/note-templates", undefined);
-  });
-
   it("fetches all of the user's notes from the cross-work notes endpoint", async () => {
     const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
 
@@ -51,14 +44,13 @@ describe("notesApi", () => {
     const note = { entryId: "note-1" };
     const fetchMock = stubFetch({ body: note, ok: true });
     const request: CreateNoteRequest = {
-      answers: { meaning: "to surrender" },
       anchor: {
         blockEntryId: toEntryId("block 1"),
         contextSnapshot: "capitulate",
         endBlockEntryId: toEntryId("block 1"),
         selectedTextSnapshot: "capitulate"
       },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("to surrender")
     };
 
     await expect(createNote("work 1", request)).resolves.toEqual(note);
@@ -70,7 +62,7 @@ describe("notesApi", () => {
   });
 
   it("posts a mark to the work's marks endpoint with only the anchor", async () => {
-    const note = { entryId: "mark-1", templateId: null };
+    const note = { entryId: "mark-1", kind: "mark" };
     const fetchMock = stubFetch({ body: note, ok: true });
     const request = {
       anchor: {
@@ -92,7 +84,7 @@ describe("notesApi", () => {
   it("throws when the server responds with a non-ok status", async () => {
     stubFetch({ ok: false, status: 400 });
 
-    await expect(fetchNoteTemplates()).rejects.toThrow("failed with status 400");
+    await expect(fetchAllNotes()).rejects.toThrow("failed with status 400");
   });
 
   it("fetches the notes for a work", async () => {
@@ -106,8 +98,7 @@ describe("notesApi", () => {
     const note = { entryId: "note-1" };
     const fetchMock = stubFetch({ body: note, ok: true });
     const request: UpdateNoteRequest = {
-      answers: { meaning: "to give in" },
-      templateId: "vocabulary"
+      bodyDoc: createTextDocument("to give in")
     };
 
     await expect(updateNote("work 1", "note 1", request)).resolves.toEqual(note);

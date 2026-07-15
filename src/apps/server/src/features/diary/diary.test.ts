@@ -85,10 +85,11 @@ async function seedNote(
       userId: row.userId
     });
     await tx.insert(notes).values({
-      answersJson: {},
+      bodyDoc: createTextDocument(row.markdown),
+      bodyText: row.markdown,
+      captureSource: "reader",
       entryId: row.id,
-      markdownBody: row.markdown,
-      templateId: null
+      kind: "note"
     });
   });
 }

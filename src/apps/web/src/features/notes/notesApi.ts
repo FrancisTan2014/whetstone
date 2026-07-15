@@ -4,7 +4,6 @@ import type {
   NoteDto,
   NoteListDto,
   NotesOverviewListDto,
-  NoteTemplateListDto,
   UpdateNoteRequest
 } from "@whetstone/contracts";
 
@@ -22,10 +21,6 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
-}
-
-export async function fetchNoteTemplates(): Promise<NoteTemplateListDto> {
-  return requestJson<NoteTemplateListDto>(apiUrl("/note-templates"));
 }
 
 export async function fetchNotes(workEntryId: string): Promise<NoteListDto> {

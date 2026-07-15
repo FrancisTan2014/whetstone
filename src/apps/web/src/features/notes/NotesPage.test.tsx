@@ -9,6 +9,7 @@ vi.mock("./notesApi", () => ({
 import { fetchAllNotes } from "./notesApi";
 import { NotesPage } from "./NotesPage";
 import type { NoteOverviewDto } from "@whetstone/contracts";
+import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 const mockedFetchAllNotes = vi.mocked(fetchAllNotes);
@@ -29,14 +30,30 @@ function note(
       endBlockEntryId: toEntryId(blockEntryId),
       selectedTextSnapshot: selected
     },
-    answers: {},
     authorName,
     blockEntryId: toEntryId(blockEntryId),
+    bodyDoc: createTextDocument(markdown),
+    bodyText: markdown,
     entryId: toEntryId(entryId),
-    markdown,
-    templateId: "thought",
+    kind: "note",
     workEntryId: toEntryId(workEntryId),
     workTitle
+  };
+}
+
+function mark(
+  entryId: string,
+  blockEntryId: string,
+  workEntryId: string,
+  workTitle: string,
+  authorName: string,
+  selected: string
+): NoteOverviewDto {
+  return {
+    ...note(entryId, blockEntryId, workEntryId, workTitle, authorName, selected, ""),
+    bodyDoc: null,
+    bodyText: null,
+    kind: "mark"
   };
 }
 
@@ -53,6 +70,7 @@ describe("NotesPage", () => {
     mockedFetchAllNotes.mockResolvedValue({
       notes: [
         note("note-1", "block-1", "work-a", "Aesop Fables", "Aesop", "brown fox", "to outwit"),
+        mark("mark-1", "block-3", "work-a", "Aesop Fables", "Aesop", "sly"),
         note("note-2", "block-2", "work-b", "Zen Mind", "Suzuki", "beginner mind", "stay open")
       ]
     });
@@ -63,10 +81,13 @@ describe("NotesPage", () => {
     expect(screen.getByRole("heading", { level: 2, name: /Zen Mind/ })).toBeDefined();
     expect(screen.getByText("“brown fox”")).toBeDefined();
     expect(screen.getByText("to outwit")).toBeDefined();
+    // A bodyless mark still lists its anchored snippet but renders no body paragraph.
+    expect(screen.getByText("“sly”")).toBeDefined();
 
     const links = screen.getAllByRole("link", { name: "Open in Reader" });
     expect(links[0]?.getAttribute("href")).toBe("#/reader?work=work-a&block=block-1");
-    expect(links[1]?.getAttribute("href")).toBe("#/reader?work=work-b&block=block-2");
+    expect(links[1]?.getAttribute("href")).toBe("#/reader?work=work-a&block=block-3");
+    expect(links[2]?.getAttribute("href")).toBe("#/reader?work=work-b&block=block-2");
     // Each action is a >=44px hit target in both dimensions (#475). jsdom has no layout, so assert the
     // sizing utilities (min-h-11 = min-w-11 = 44px); dropping min-h-11 fails here.
     for (const link of links) {

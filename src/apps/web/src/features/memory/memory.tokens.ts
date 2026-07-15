@@ -2,7 +2,7 @@ import type { CaptureSource, MemoryStateTone } from "./memoryLabels";
 
 // Presentational token maps for the Memory surface: the capture-source badge tint and the
 // jargon-free state chip tint. Static enum->class maps with no product logic, so — like the other
-// `*.tokens` modules (e.g. templateHue.tokens.ts) — they are excluded from coverage. The rendered
+// `*.tokens` modules (e.g. annotationHue.tokens.ts) — they are excluded from coverage. The rendered
 // label text they sit beside is the tested part; these only decide the tint.
 
 // The badge tint for how a fragment was captured. Learner-added memories get the accent tint so a

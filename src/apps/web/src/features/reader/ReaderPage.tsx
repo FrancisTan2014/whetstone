@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
-import type { NoteDto, NoteTemplateDto, WorkListItemDto } from "@whetstone/contracts";
+import type { NoteDto, WorkListItemDto } from "@whetstone/contracts";
 import { lookupSourceLabel, lookupSourcesForLanguage } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
@@ -12,7 +12,7 @@ import { apiUrl } from "../../shared/runtime";
 import { NoteEditor } from "../notes/NoteEditor";
 import { NoteList } from "../notes/NoteList";
 import { draftToAnchor, type NoteDraft } from "../notes/noteCapture";
-import { createMark, deleteNote, fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
+import { createMark, deleteNote, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass } from "./annotationHue.tokens";
 import { ChapterPager } from "./ChapterPager";
@@ -341,7 +341,6 @@ type ReaderHandlers = Readonly<{
   canResolve: (anchor: string, targetSourceFile?: string) => boolean;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
-  templates: ReadonlyArray<NoteTemplateDto>;
 }>;
 
 function notesForBlock(
@@ -382,7 +381,6 @@ export function ReaderPage({
   initialWorkEntryId
 }: ReaderPageProps): React.JSX.Element {
   const [state, setState] = useState<ReaderState>({ status: "loadingWorks" });
-  const [templates, setTemplates] = useState<ReadonlyArray<NoteTemplateDto>>([]);
   const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
   const [panel, setPanel] = useState<NotePanel | undefined>(undefined);
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
@@ -654,12 +652,6 @@ export function ReaderPage({
       active = false;
     };
   }, [initialBlockEntryId, initialWorkEntryId]);
-
-  useEffect(() => {
-    fetchNoteTemplates()
-      .then((list) => setTemplates(list.templates))
-      .catch(() => setTemplates([]));
-  }, []);
 
   async function refreshNotes(workEntryId: string): Promise<void> {
     const list = await fetchNotes(workEntryId);
@@ -1110,8 +1102,7 @@ export function ReaderPage({
     anchorsForBlock,
     canResolve: canResolveAnchor,
     onOpenBlockNotes,
-    prefersReducedMotion,
-    templates
+    prefersReducedMotion
   };
 
   return (
@@ -1186,7 +1177,7 @@ export function ReaderPage({
         />
       )}
 
-      {renderPanel(panel, notes, templates, {
+      {renderPanel(panel, notes, {
         onClose: () => setPanel(undefined),
         onDeleteNote: handleDelete,
         onEditNote,
@@ -1388,7 +1379,6 @@ function renderViewing(
             onDelete={(note) => handlers.onDeleteNote(workEntryId, note)}
             onEdit={(note) => handlers.onEditNote(workEntryId, note)}
             onJump={(note) => handlers.onJumpToBlock(note)}
-            templates={handlers.templates}
           />
         </div>
       </Sheet>
@@ -1580,7 +1570,7 @@ function FigureCaption({
 
 // One rendered block. Memoized so it re-renders only when its own data/state changes: with
 // stable props (memoized handlers, a stable notes array, a per-block `born` flag), opening the
-// selection toolbar / lookup / a notes panel or switching a template no longer re-runs the mdast
+// selection toolbar / lookup / a notes panel or editing a note no longer re-runs the mdast
 // rendering for every block in the unit — the cause of the ~500ms handlers. Only the
 // born/animating block pays for framer-motion; every other block is a plain element.
 const ReaderBlockView = memo(function ReaderBlockView({
@@ -1614,7 +1604,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
   const className =
     wholeBlockNote === undefined
       ? "readerBlock"
-      : `readerBlock readerBlock--annotated ${blockGutterHueClass(wholeBlockNote.templateId)}`;
+      : `readerBlock readerBlock--annotated ${blockGutterHueClass(wholeBlockNote.kind)}`;
 
   const body = (
     <>
@@ -1690,7 +1680,6 @@ type PanelHandlers = Readonly<{
 function renderPanel(
   panel: NotePanel | undefined,
   notes: ReadonlyArray<NoteDto>,
-  templates: ReadonlyArray<NoteTemplateDto>,
   handlers: PanelHandlers
 ): React.JSX.Element | null {
   if (panel === undefined) {
@@ -1709,7 +1698,6 @@ function renderPanel(
           onDelete={(note) => handlers.onDeleteNote(panel.workEntryId, note)}
           onEdit={(note) => handlers.onEditNote(panel.workEntryId, note)}
           onJump={(note) => handlers.onJumpToBlock(note)}
-          templates={templates}
         />
         <button className="readerBlockNotesClose" onClick={handlers.onClose} type="button">
           Close
@@ -1732,7 +1720,6 @@ function renderPanel(
           ? { draft: panel.draft, kind: "create" }
           : { kind: "edit", note: panel.note }
       }
-      templates={templates}
       workEntryId={panel.workEntryId}
     />
   );

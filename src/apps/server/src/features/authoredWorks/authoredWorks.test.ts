@@ -7,7 +7,7 @@ import type {
   ContinueWritingDto,
   TimelineDto
 } from "@whetstone/contracts";
-import { type DocumentNodeJSON } from "@whetstone/document";
+import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -135,9 +135,13 @@ async function seedNoteOnBlock(blockEntryId: string, noteId: string): Promise<vo
       updatedAt: new Date("2026-07-01T09:00:00.000Z"),
       userId: DEFAULT_USER_ID
     });
-    await tx
-      .insert(notes)
-      .values({ answersJson: {}, entryId: noteId, markdownBody: "a note", templateId: null });
+    await tx.insert(notes).values({
+      bodyDoc: createTextDocument("a note"),
+      bodyText: "a note",
+      captureSource: "reader",
+      entryId: noteId,
+      kind: "note"
+    });
     await tx.insert(noteAnchors).values({
       blockEntryId,
       contextSnapshot: "context",

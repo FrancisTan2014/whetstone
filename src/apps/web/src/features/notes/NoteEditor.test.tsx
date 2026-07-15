@@ -5,61 +5,83 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./notesApi", () => ({
   createNote: vi.fn(),
-  fetchNoteTemplates: vi.fn(),
   updateNote: vi.fn()
 }));
+
+// The shared rich editor (#570) is exercised in its own suite; here it stands in as a plain textarea so
+// the note editor's behaviour (which document is saved, blank rejection) is asserted without driving
+// Tiptap in jsdom. Ctrl/Cmd+S forwards to the editor's `onSave` so the blank-save path is reachable.
+vi.mock("../../shared/editor/index.js", async () => {
+  const { createTextDocument, documentText } = await import("@whetstone/document");
+  const React = await import("react");
+  return {
+    RichContentEditor: ({
+      ariaLabel,
+      document,
+      onChange,
+      onSave
+    }: {
+      ariaLabel?: string;
+      document: unknown;
+      onChange: (document: unknown) => void;
+      onSave?: () => void;
+    }) => {
+      // Model the real editor's contract: `document` is authoritative, so the surface re-syncs to it
+      // whenever the prop's content changes (RichContentEditor.tsx resets via `setContent`). A stable
+      // initial document therefore preserves typed input; a fresh document identity per render wipes it.
+      const [value, setValue] = React.useState(() => documentText(document as never));
+      React.useEffect(() => {
+        const incoming = documentText(document as never);
+        setValue((current) => (current === incoming ? current : incoming));
+      }, [document]);
+      return React.createElement("textarea", {
+        "aria-label": ariaLabel,
+        onChange: (event: { target: { value: string } }) => {
+          setValue(event.target.value);
+          onChange(createTextDocument(event.target.value));
+        },
+        onKeyDown: (event: {
+          ctrlKey: boolean;
+          key: string;
+          metaKey: boolean;
+          preventDefault: () => void;
+        }) => {
+          if ((event.ctrlKey || event.metaKey) && event.key === "s") {
+            event.preventDefault();
+            onSave?.();
+          }
+        },
+        value
+      });
+    }
+  };
+});
 
 import { createNote, updateNote } from "./notesApi";
 import { NoteEditor, type NoteEditorTarget } from "./NoteEditor";
 import type { NoteDraft } from "./noteCapture";
-import type { NoteDto, NoteTemplateDto } from "@whetstone/contracts";
+import type { NoteDto } from "@whetstone/contracts";
+import { createTextDocument, documentText } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 const mockedCreateNote = vi.mocked(createNote);
 const mockedUpdateNote = vi.mocked(updateNote);
 
-function templateButton(name: string): HTMLButtonElement {
-  return screen.getByRole("button", { name }) as HTMLButtonElement;
-}
-
-function selectedTemplate(): string | null {
-  const pressed = screen
-    .getByRole("group", { name: "Template" })
-    .querySelector('[aria-pressed="true"]');
-
-  return pressed === null ? null : pressed.textContent;
-}
-
-const templates: ReadonlyArray<NoteTemplateDto> = [
-  {
-    fields: [
-      { id: "meaning", label: "Meaning in this context", type: "long_text" },
-      { id: "memory_hook", label: "Memory hook", type: "short_text" }
-    ],
-    id: "vocabulary",
-    name: "Vocabulary"
-  },
-  {
-    fields: [{ id: "noticed", label: "What I noticed", type: "long_text" }],
-    id: "thought",
-    name: "Thought / question"
-  }
-];
-
 const subBlockDraft: NoteDraft = {
   blockEntryId: "block-1",
   contextSnapshot: "The quick brown fox.",
   endOffset: 19,
-  preselectedTemplateId: "vocabulary",
   selectedText: "fox",
   startOffset: 16
 };
 
-const wholeBlockDraft: NoteDraft = {
+const subBlockAnchor = {
   blockEntryId: "block-1",
   contextSnapshot: "The quick brown fox.",
-  preselectedTemplateId: "thought",
-  selectedText: "The quick brown fox."
+  endBlockEntryId: "block-1",
+  endOffset: 19,
+  selectedTextSnapshot: "fox",
+  startOffset: 16
 };
 
 const existingNote: NoteDto = {
@@ -71,21 +93,24 @@ const existingNote: NoteDto = {
     selectedTextSnapshot: "fox",
     startOffset: 16
   },
-  answers: { meaning: "a sly animal", memory_hook: "fox = sly" },
   blockEntryId: toEntryId("block-1"),
+  bodyDoc: createTextDocument("a sly animal"),
+  bodyText: "a sly animal",
   entryId: toEntryId("note-7"),
-  markdown: "**Meaning in this context**\n\na sly animal",
-  templateId: "vocabulary"
+  kind: "note"
 };
 
-const savedNote = { entryId: "note-1" } as unknown as NoteDto;
+const savedNote = { entryId: toEntryId("note-1"), kind: "note" } as NoteDto;
+
+function noteBody(): HTMLTextAreaElement {
+  return screen.getByLabelText("Note body") as HTMLTextAreaElement;
+}
 
 function renderEditor(
   overrides: {
     onClose?: () => void;
     onSaved?: (note: NoteDto) => void;
     target?: NoteEditorTarget;
-    templates?: ReadonlyArray<NoteTemplateDto>;
   } = {}
 ): {
   onClose: () => void;
@@ -100,7 +125,6 @@ function renderEditor(
       onClose={onClose}
       onSaved={onSaved}
       target={overrides.target ?? { draft: subBlockDraft, kind: "create" }}
-      templates={overrides.templates ?? templates}
       workEntryId="work-1"
     />
   );
@@ -117,103 +141,80 @@ afterEach(() => {
 });
 
 describe("NoteEditor create mode", () => {
-  it("preselects the size-based template and renders its fields by type", () => {
+  it("opens straight to one focused body with the source shown as read-only context", () => {
     renderEditor();
 
     expect(screen.getByRole("heading", { name: "New note" })).toBeDefined();
-    expect(selectedTemplate()).toBe("Vocabulary");
-    expect(screen.getByLabelText("Meaning in this context").tagName).toBe("TEXTAREA");
-    expect(screen.getByLabelText("Memory hook").tagName).toBe("INPUT");
-    expect(screen.getByText(/Selected: fox/)).toBeDefined();
+    expect(screen.getByText("Selected: fox")).toBeDefined();
+    expect(noteBody().tagName).toBe("TEXTAREA");
+    // No template choice is offered.
+    expect(screen.queryByRole("button", { name: "Vocabulary" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Template" })).toBeNull();
+    // Save is disabled while the body is blank.
+    expect((screen.getByRole("button", { name: "Save note" }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
   });
 
-  it("saves a sub-block note with structured answers and an offset anchor", async () => {
+  it("saves the authored document with the capture anchor and no client plaintext", async () => {
     mockedCreateNote.mockResolvedValue(savedNote);
     const { onSaved, user } = renderEditor();
 
-    await user.type(screen.getByLabelText("Meaning in this context"), "to outwit");
-    await user.type(screen.getByLabelText("Memory hook"), "fox = sly");
+    await user.type(noteBody(), "to outwit");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     await waitFor(() =>
       expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
-        answers: { meaning: "to outwit", memory_hook: "fox = sly" },
-        anchor: {
-          blockEntryId: "block-1",
-          contextSnapshot: "The quick brown fox.",
-          endBlockEntryId: "block-1",
-          endOffset: 19,
-          selectedTextSnapshot: "fox",
-          startOffset: 16
-        },
-        templateId: "vocabulary"
+        anchor: subBlockAnchor,
+        bodyDoc: createTextDocument("to outwit")
       })
     );
     expect(onSaved).toHaveBeenCalledWith(savedNote);
   });
 
-  it("saves a whole-block note without an offset range", async () => {
-    mockedCreateNote.mockResolvedValue(savedNote);
-    const { user } = renderEditor({ target: { draft: wholeBlockDraft, kind: "create" } });
-
-    await user.type(screen.getByLabelText("What I noticed"), "tidy");
-    await user.click(screen.getByRole("button", { name: "Save note" }));
-
-    await waitFor(() =>
-      expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
-        answers: { noticed: "tidy" },
-        anchor: {
-          blockEntryId: "block-1",
-          contextSnapshot: "The quick brown fox.",
-          endBlockEntryId: "block-1",
-          selectedTextSnapshot: "The quick brown fox."
-        },
-        templateId: "thought"
-      })
-    );
-  });
-
-  it("lets the reader switch templates before saving", async () => {
+  it("keeps the typed body across the re-renders that typing triggers", async () => {
+    // Regression (#619): each keystroke re-renders NoteEditor. The editor's initial document must stay
+    // stable for the target's lifetime, or the authoritative-document reset wipes the text mid-typing.
     mockedCreateNote.mockResolvedValue(savedNote);
     const { user } = renderEditor();
 
-    await user.click(templateButton("Thought / question"));
-    await user.type(screen.getByLabelText("What I noticed"), "clever");
+    await user.type(noteBody(), "a whole sentence of authored content");
+
+    expect(noteBody().value).toBe("a whole sentence of authored content");
+
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    await waitFor(() =>
-      expect(mockedCreateNote).toHaveBeenCalledWith("work-1", {
-        answers: { noticed: "clever" },
-        anchor: expect.objectContaining({ blockEntryId: "block-1" }),
-        templateId: "thought"
-      })
-    );
+    await waitFor(() => expect(mockedCreateNote).toHaveBeenCalledTimes(1));
+    const request = mockedCreateNote.mock.calls[0]?.[1];
+    expect(documentText(request?.bodyDoc as never)).toBe("a whole sentence of authored content");
   });
 
-  it("requires at least one answer before saving", async () => {
+  it("announces a blank save attempt and does not call the API", async () => {
     const { user } = renderEditor();
 
-    await user.click(screen.getByRole("button", { name: "Save note" }));
+    await user.click(noteBody());
+    await user.keyboard("{Control>}s{/Control}");
 
-    expect(screen.getByText("Add at least one answer before saving.")).toBeDefined();
+    expect(screen.getByRole("alert").textContent).toBe("Write something before saving the note.");
     expect(mockedCreateNote).not.toHaveBeenCalled();
   });
 
   it("shows an error when saving fails", async () => {
     mockedCreateNote.mockRejectedValue(new Error("boom"));
-    const { user } = renderEditor();
+    const { onSaved, user } = renderEditor();
 
-    await user.type(screen.getByLabelText("Meaning in this context"), "to outwit");
+    await user.type(noteBody(), "to outwit");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     expect(await screen.findByText("Could not save the note. Please try again.")).toBeDefined();
+    expect(onSaved).not.toHaveBeenCalled();
   });
 
   it("recovers when a retried save succeeds after a failure", async () => {
     mockedCreateNote.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(savedNote);
     const { onSaved, user } = renderEditor();
 
-    await user.type(screen.getByLabelText("Meaning in this context"), "to outwit");
+    await user.type(noteBody(), "to outwit");
     await user.click(screen.getByRole("button", { name: "Save note" }));
     expect(await screen.findByText("Could not save the note. Please try again.")).toBeDefined();
     expect(onSaved).not.toHaveBeenCalled();
@@ -237,7 +238,7 @@ describe("NoteEditor create mode", () => {
     );
     const { user } = renderEditor();
 
-    await user.type(screen.getByLabelText("Meaning in this context"), "to outwit");
+    await user.type(noteBody(), "to outwit");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     const saveButton = screen.getByRole("button", { name: "Save note" }) as HTMLButtonElement;
@@ -259,91 +260,30 @@ describe("NoteEditor create mode", () => {
 
     expect(onClose).toHaveBeenCalled();
   });
-
-  it("falls back to the first template when the preselection is unknown", () => {
-    renderEditor({
-      target: { draft: { ...subBlockDraft, preselectedTemplateId: "missing" }, kind: "create" }
-    });
-
-    expect(selectedTemplate()).toBe("Vocabulary");
-  });
-
-  it("reports and closes when no templates are available", async () => {
-    const { onClose, user } = renderEditor({ templates: [] });
-
-    expect(screen.getByText("Note templates are unavailable. Please try again.")).toBeDefined();
-
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("recovers when templates load after the editor opens", () => {
-    const { rerender } = render(
-      <NoteEditor
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        target={{ draft: subBlockDraft, kind: "create" }}
-        templates={[]}
-        workEntryId="work-1"
-      />
-    );
-
-    expect(screen.getByText("Note templates are unavailable. Please try again.")).toBeDefined();
-
-    rerender(
-      <NoteEditor
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-        target={{ draft: subBlockDraft, kind: "create" }}
-        templates={templates}
-        workEntryId="work-1"
-      />
-    );
-
-    expect(selectedTemplate()).toBe("Vocabulary");
-    expect(screen.queryByText("Note templates are unavailable. Please try again.")).toBeNull();
-  });
 });
 
 describe("NoteEditor edit mode", () => {
-  it("prefills the note's template, answers, and snippet", () => {
+  it("prefills the canonical body and the anchor snippet", () => {
     renderEditor({ target: { kind: "edit", note: existingNote } });
 
     expect(screen.getByRole("heading", { name: "Edit note" })).toBeDefined();
-    expect(screen.getByText(/Selected: fox/)).toBeDefined();
-    expect(selectedTemplate()).toBe("Vocabulary");
-    expect((screen.getByLabelText("Meaning in this context") as HTMLTextAreaElement).value).toBe(
-      "a sly animal"
-    );
-    expect((screen.getByLabelText("Memory hook") as HTMLInputElement).value).toBe("fox = sly");
+    expect(screen.getByText("Selected: fox")).toBeDefined();
+    expect(noteBody().value).toBe("a sly animal");
   });
 
-  it("falls back to the size-based template when editing a mark with no template (#255)", () => {
-    renderEditor({
-      target: {
-        kind: "edit",
-        note: { ...existingNote, answers: {}, markdown: "", templateId: null }
-      }
-    });
-
-    // A mark stores no template; the editor preselects from the selected text ("fox" → Vocabulary).
-    expect(selectedTemplate()).toBe("Vocabulary");
-  });
-
-  it("saves edited answers through the update endpoint", async () => {
-    const updated = { ...existingNote, answers: { meaning: "a cunning animal" } } as NoteDto;
+  it("saves the replaced document through the update endpoint", async () => {
+    const updated = { ...existingNote, bodyText: "a cunning animal" } as NoteDto;
     mockedUpdateNote.mockResolvedValue(updated);
     const { onSaved, user } = renderEditor({ target: { kind: "edit", note: existingNote } });
 
-    const field = screen.getByLabelText("Meaning in this context");
+    const field = noteBody();
     await user.clear(field);
     await user.type(field, "a cunning animal");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     await waitFor(() =>
       expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-7", {
-        answers: { meaning: "a cunning animal", memory_hook: "fox = sly" },
-        templateId: "vocabulary"
+        bodyDoc: createTextDocument("a cunning animal")
       })
     );
     expect(onSaved).toHaveBeenCalledWith(updated);
@@ -354,6 +294,9 @@ describe("NoteEditor edit mode", () => {
     mockedUpdateNote.mockRejectedValue(new Error("boom"));
     const { user } = renderEditor({ target: { kind: "edit", note: existingNote } });
 
+    const field = noteBody();
+    await user.clear(field);
+    await user.type(field, "changed");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
     expect(await screen.findByText("Could not save the note. Please try again.")).toBeDefined();

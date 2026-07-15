@@ -1,16 +1,7 @@
-import Markdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
-
-import type { NoteDto, NoteTemplateDto } from "@whetstone/contracts";
+import type { NoteDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
-import { templateSwatchClass } from "./templateHue.tokens";
-
-// remark-gfm mirrors the ingestion parser; rehype-sanitize strips unsafe HTML so a rendered
-// note body never executes raw markup.
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeSanitize];
+import { noteChipSwatchClass } from "./noteChip.tokens";
 
 type NoteListProps = Readonly<{
   emptyLabel: string;
@@ -18,24 +9,18 @@ type NoteListProps = Readonly<{
   onDelete: (note: NoteDto) => void;
   onEdit: (note: NoteDto) => void;
   onJump: (note: NoteDto) => void;
-  templates: ReadonlyArray<NoteTemplateDto>;
 }>;
 
-function templateName(templates: ReadonlyArray<NoteTemplateDto>, templateId: string): string {
-  return templates.find((template) => template.id === templateId)?.name ?? templateId;
-}
-
-// Presentational list of note cards: each shows a hued template chip, the anchored
-// selected-text snapshot, the rendered answers, and jump/edit/delete controls. Reused for
-// the per-work note list and the per-block reopen panel; it holds no state so its parent
-// owns jumping, editing, and deletion.
+// Presentational list of note cards: each shows the note/mark chip, the anchored selected-text
+// snapshot, a preview of the note's rich body (the server-derived readable projection — a Mark shows
+// no body), and jump/edit/delete controls. Reused for the per-work note list and the per-block reopen
+// panel; it holds no state so its parent owns jumping, editing, and deletion.
 export function NoteList({
   emptyLabel,
   notes,
   onDelete,
   onEdit,
-  onJump,
-  templates
+  onJump
 }: NoteListProps): React.JSX.Element {
   if (notes.length === 0) {
     return <p className="noteListEmpty">{emptyLabel}</p>;
@@ -44,24 +29,17 @@ export function NoteList({
   return (
     <ul className="noteList">
       {notes.map((note) => {
-        const templateId = note.templateId;
-        const isMark = templateId === null;
+        const isMark = note.kind === "mark";
 
         return (
           <li className="noteCard" key={note.entryId}>
             <div className="noteCardHeader">
-              <span className={`noteCardChip ${templateSwatchClass(templateId)}`}>
-                {isMark ? "Gem" : templateName(templates, templateId)}
+              <span className={`noteCardChip ${noteChipSwatchClass(note.kind)}`}>
+                {isMark ? "Gem" : "Note"}
               </span>
             </div>
             <p className="noteCardSnippet">“{note.anchor.selectedTextSnapshot}”</p>
-            {isMark ? null : (
-              <div className="noteCardBody">
-                <Markdown rehypePlugins={rehypePlugins} remarkPlugins={remarkPlugins}>
-                  {note.markdown}
-                </Markdown>
-              </div>
-            )}
+            {isMark ? null : <p className="noteCardBody">{note.bodyText}</p>}
             <div className="noteCardActions">
               <Button
                 aria-label={`Jump to text: ${note.anchor.selectedTextSnapshot}`}

@@ -57,7 +57,6 @@ vi.mock("./readerApi", () => ({
 vi.mock("../notes/notesApi", () => ({
   createNote: vi.fn(),
   deleteNote: vi.fn(),
-  fetchNoteTemplates: vi.fn(),
   fetchNotes: vi.fn(),
   updateNote: vi.fn()
 }));
@@ -67,7 +66,7 @@ vi.mock("./readingPositionApi", () => ({
   saveReadingPosition: vi.fn()
 }));
 
-import { fetchNoteTemplates, fetchNotes } from "../notes/notesApi";
+import { fetchNotes } from "../notes/notesApi";
 import { lookupTerm } from "../lookup/lookupApi";
 import {
   fetchUnitContent,
@@ -86,7 +85,6 @@ const mockedFetchWorkStructure = vi.mocked(fetchWorkStructure);
 const mockedFetchWorkAnchorIndex = vi.mocked(fetchWorkAnchorIndex);
 const mockedFetchUnitContent = vi.mocked(fetchUnitContent);
 const mockedLocateBlockUnit = vi.mocked(locateBlockUnit);
-const mockedFetchNoteTemplates = vi.mocked(fetchNoteTemplates);
 const mockedFetchNotes = vi.mocked(fetchNotes);
 const mockedLookupTerm = vi.mocked(lookupTerm);
 const mockedFetchReadingPosition = vi.mocked(fetchReadingPosition);
@@ -156,7 +154,6 @@ beforeEach(() => {
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
   mockedFetchWorks.mockResolvedValue({ works: [work] });
   mockedLocateBlockUnit.mockResolvedValue(undefined);
-  mockedFetchNoteTemplates.mockResolvedValue({ templates: [] });
   mockedFetchNotes.mockResolvedValue({ notes: [] });
   mockedLookupTerm.mockResolvedValue({ found: false });
   mockedFetchReadingPosition.mockResolvedValue(undefined);

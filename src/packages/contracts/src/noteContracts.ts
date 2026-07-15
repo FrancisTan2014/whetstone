@@ -1,54 +1,32 @@
-import {
-  noteFieldTypes,
-  type EntryId,
-  type NoteTemplate,
-  type NoteTemplateField
-} from "@whetstone/domain";
+import { type DocumentNodeJSON, documentText, isValidDocument } from "@whetstone/document";
+import type { EntryId } from "@whetstone/domain";
 import { z } from "zod";
 
 import { noteAnchorDtoSchema, type NoteAnchorDto } from "./entryContracts.js";
 
-function isNonBlank(value: string): boolean {
-  return value.trim().length > 0;
-}
+// A note's canonical body is a ProseMirror/Tiptap document, validated against the shared document
+// schema AND required to be non-blank: a note is authored content, so an empty document is not a note.
+// The plaintext projection is derived on the server, never supplied by the client — this schema is the
+// only body a create/update request may carry.
+export const noteBodyDocSchema = z.custom<DocumentNodeJSON>(
+  (value) => isValidDocument(value) && documentText(value as DocumentNodeJSON).trim().length > 0,
+  { message: "must be a valid, non-blank document." }
+);
 
-export type NoteTemplateFieldDto = NoteTemplateField;
-export type NoteTemplateDto = NoteTemplate;
-
-export const noteFieldTypeDtoSchema = z.enum(noteFieldTypes);
-
-const noteTemplateFieldDtoSchema = z
-  .object({
-    id: z.string().refine(isNonBlank, { message: "field id must be non-empty." }),
-    label: z.string().refine(isNonBlank, { message: "field label must be non-empty." }),
-    type: noteFieldTypeDtoSchema
-  })
-  .strict();
-
-export const noteTemplateDtoSchema = z
-  .object({
-    fields: z.array(noteTemplateFieldDtoSchema).min(1),
-    id: z.string().refine(isNonBlank, { message: "template id must be non-empty." }),
-    name: z.string().refine(isNonBlank, { message: "template name must be non-empty." })
-  })
-  .strict();
-
-// Answers arrive as a string map keyed by template field id; which keys are allowed
-// depends on the chosen template, so that check happens in the server command against
-// the seeded template, not here at the shape boundary.
+// Creating a note carries the reader anchor (which block and where) plus the canonical rich body.
+// There is no template choice and no client-supplied plaintext: `body_text` is derived on the server.
 export const createNoteRequestSchema = z
   .object({
-    answers: z.record(z.string(), z.string()),
     anchor: noteAnchorDtoSchema,
-    templateId: z.string().refine(isNonBlank, { message: "templateId must be non-empty." })
+    bodyDoc: noteBodyDocSchema
   })
   .strict();
 
 export type CreateNoteRequest = z.infer<typeof createNoteRequestSchema>;
 
-// A mark-only highlight (a "Gem", #255): one tap saves a highlight with no template or body, so the
-// request carries only the anchor. The mark reuses the note anchor + overlap + delete model; it is
-// stored as a note with a null template and empty body.
+// A mark-only highlight (a "Gem", #255): one tap saves a highlight with no body, so the request
+// carries only the anchor. The mark reuses the note anchor + overlap + delete model; it is stored as a
+// bodyless note (`kind = "mark"`).
 export const createMarkRequestSchema = z
   .object({
     anchor: noteAnchorDtoSchema
@@ -57,26 +35,26 @@ export const createMarkRequestSchema = z
 
 export type CreateMarkRequest = z.infer<typeof createMarkRequestSchema>;
 
-// Editing a note changes its template and answers; the anchor (which block and where) is
-// fixed at capture time, so it is not part of the update.
+// Editing a note replaces its canonical rich body. The anchor (which block and where) is fixed at
+// capture time, so it is not part of the update; the server re-derives `body_text` from the new body.
 export const updateNoteRequestSchema = z
   .object({
-    answers: z.record(z.string(), z.string()),
-    templateId: z.string().refine(isNonBlank, { message: "templateId must be non-empty." })
+    bodyDoc: noteBodyDocSchema
   })
   .strict();
 
 export type UpdateNoteRequest = z.infer<typeof updateNoteRequestSchema>;
 
+// A persisted note or mark. `kind` discriminates the two: a `note` carries a canonical `bodyDoc` and
+// its server-derived `bodyText`; a `mark` has neither (both null). The reader picks the annotation
+// channel from `kind`, never from the body content.
 export type NoteDto = Readonly<{
   anchor: NoteAnchorDto;
-  answers: Readonly<Record<string, string>>;
   blockEntryId: EntryId;
+  bodyDoc: DocumentNodeJSON | null;
+  bodyText: string | null;
   entryId: EntryId;
-  markdown: string;
-  // Null for a mark-only highlight (a "Gem", #255), which has no template or body; a string for a
-  // templated note. The reader picks the gem hue for a null template.
-  templateId: string | null;
+  kind: "note" | "mark";
 }>;
 
 export type NoteListDto = Readonly<{
@@ -97,10 +75,6 @@ export type NotesOverviewListDto = Readonly<{
   notes: ReadonlyArray<NoteOverviewDto>;
 }>;
 
-export type NoteTemplateListDto = Readonly<{
-  templates: ReadonlyArray<NoteTemplateDto>;
-}>;
-
 export function parseCreateNoteRequest(value: unknown): CreateNoteRequest {
   return createNoteRequestSchema.parse(value);
 }
@@ -111,8 +85,4 @@ export function parseCreateMarkRequest(value: unknown): CreateMarkRequest {
 
 export function parseUpdateNoteRequest(value: unknown): UpdateNoteRequest {
   return updateNoteRequestSchema.parse(value);
-}
-
-export function parseNoteTemplateDto(value: unknown): NoteTemplateDto {
-  return noteTemplateDtoSchema.parse(value);
 }

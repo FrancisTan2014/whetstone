@@ -13,10 +13,9 @@ export type SelectionToolbarProps = Readonly<{
 }>;
 
 // A floating toolbar anchored to the current selection. It offers three primary actions — "Add
-// note" (opens the editor, where the size-preselected template is chosen or confirmed), "Mark" (a
-// one-tap highlight with no note body, a "Gem" #255), and "Look up" (opens the view-only definition
-// panel) — plus a dismiss control; the template choice lives in the note editor, not here.
-// Positioned from a rect captured off the selection Range; springs in and honors reduced motion.
+// note" (opens the focused rich note editor), "Mark" (a one-tap highlight with no note body, a "Gem"
+// #255), and "Look up" (opens the view-only definition panel) — plus a dismiss control. Positioned
+// from a rect captured off the selection Range; springs in and honors reduced motion.
 //
 // When `disabledHint` is set the selection overlaps an existing annotation: annotations are disjoint
 // (#163), so "Add note" and "Mark" are disabled and the hint explains why, while "Look up" stays

@@ -2,17 +2,16 @@ import { toEntryId } from "@whetstone/domain";
 import type { NoteAnchorDto } from "@whetstone/contracts";
 
 // A draft captured from a reader selection: which block was selected (and, for a cross-block span,
-// the end block), the selected text and surrounding block context for the anchor, the offset range
-// (startOffset within the start block, endOffset within the end block; omitted for a whole single
-// block), and the size-based template preselection. The reader captures drafts straight from the
-// rendered DOM (`features/reader/selectionCapture`), so its offsets index the same text the
-// annotation re-anchor reads back.
+// the end block), the selected text and surrounding block context for the anchor, and the offset
+// range (startOffset within the start block, endOffset within the end block; omitted for a whole
+// single block). The reader captures drafts straight from the rendered DOM
+// (`features/reader/selectionCapture`), so its offsets index the same text the annotation re-anchor
+// reads back.
 export type NoteDraft = Readonly<{
   blockEntryId: string;
   contextSnapshot: string;
   endBlockEntryId?: string;
   endOffset?: number;
-  preselectedTemplateId: string;
   selectedText: string;
   startOffset?: number;
 }>;
