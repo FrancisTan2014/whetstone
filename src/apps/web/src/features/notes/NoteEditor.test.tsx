@@ -25,12 +25,21 @@ vi.mock("../../shared/editor/index.js", async () => {
       document: unknown;
       onChange: (document: unknown) => void;
       onSave?: () => void;
-    }) =>
-      React.createElement("textarea", {
+    }) => {
+      // Model the real editor's contract: `document` is authoritative, so the surface re-syncs to it
+      // whenever the prop's content changes (RichContentEditor.tsx resets via `setContent`). A stable
+      // initial document therefore preserves typed input; a fresh document identity per render wipes it.
+      const [value, setValue] = React.useState(() => documentText(document as never));
+      React.useEffect(() => {
+        const incoming = documentText(document as never);
+        setValue((current) => (current === incoming ? current : incoming));
+      }, [document]);
+      return React.createElement("textarea", {
         "aria-label": ariaLabel,
-        defaultValue: documentText(document as never),
-        onChange: (event: { target: { value: string } }) =>
-          onChange(createTextDocument(event.target.value)),
+        onChange: (event: { target: { value: string } }) => {
+          setValue(event.target.value);
+          onChange(createTextDocument(event.target.value));
+        },
         onKeyDown: (event: {
           ctrlKey: boolean;
           key: string;
@@ -41,8 +50,10 @@ vi.mock("../../shared/editor/index.js", async () => {
             event.preventDefault();
             onSave?.();
           }
-        }
-      })
+        },
+        value
+      });
+    }
   };
 });
 
@@ -50,7 +61,7 @@ import { createNote, updateNote } from "./notesApi";
 import { NoteEditor, type NoteEditorTarget } from "./NoteEditor";
 import type { NoteDraft } from "./noteCapture";
 import type { NoteDto } from "@whetstone/contracts";
-import { createTextDocument } from "@whetstone/document";
+import { createTextDocument, documentText } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
 const mockedCreateNote = vi.mocked(createNote);
@@ -159,6 +170,23 @@ describe("NoteEditor create mode", () => {
       })
     );
     expect(onSaved).toHaveBeenCalledWith(savedNote);
+  });
+
+  it("keeps the typed body across the re-renders that typing triggers", async () => {
+    // Regression (#619): each keystroke re-renders NoteEditor. The editor's initial document must stay
+    // stable for the target's lifetime, or the authoritative-document reset wipes the text mid-typing.
+    mockedCreateNote.mockResolvedValue(savedNote);
+    const { user } = renderEditor();
+
+    await user.type(noteBody(), "a whole sentence of authored content");
+
+    expect(noteBody().value).toBe("a whole sentence of authored content");
+
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    await waitFor(() => expect(mockedCreateNote).toHaveBeenCalledTimes(1));
+    const request = mockedCreateNote.mock.calls[0]?.[1];
+    expect(documentText(request?.bodyDoc as never)).toBe("a whole sentence of authored content");
   });
 
   it("announces a blank save attempt and does not call the API", async () => {

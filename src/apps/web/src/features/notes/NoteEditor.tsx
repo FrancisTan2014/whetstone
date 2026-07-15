@@ -49,7 +49,13 @@ export function NoteEditor({
   target,
   workEntryId
 }: NoteEditorProps): React.JSX.Element {
-  const initialBody = initialBodyFor(target);
+  // The editor's initial document must stay stable for the lifetime of this target: the shared
+  // `RichContentEditor` treats `document` as authoritative and resets its content whenever the prop
+  // changes identity. In create mode `initialBodyFor` mints a fresh empty document on every render, so
+  // recomputing it inline would wipe the user's text on each keystroke. Compute it once (lazily) and
+  // keep sending the live `draft` to save. The parent remounts `NoteEditor` per target (keyed), so a
+  // new target gets a fresh initial document.
+  const [initialBody] = useState<DocumentNodeJSON>(() => initialBodyFor(target));
   const [draft, setDraft] = useState<DocumentNodeJSON>(initialBody);
   const [error, setError] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);

@@ -127,6 +127,8 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
       switch (result.status) {
         case "note_not_found":
           return reply.code(404).send({ error: "note_not_found" });
+        case "note_not_editable":
+          return reply.code(409).send({ error: "note_not_editable" });
         case "updated":
           request.log.info(
             {

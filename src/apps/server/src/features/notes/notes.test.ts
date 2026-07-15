@@ -630,6 +630,34 @@ describe("create mark route", () => {
     expect(((await listNotes(workEntryId)).json() as NoteListDto).notes).toEqual([]);
   });
 
+  it("rejects a PATCH that would edit a bodyless mark instead of hitting the DB CHECK", async () => {
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+
+    const created = await postMark(workEntryId, {
+      anchor: {
+        blockEntryId,
+        contextSnapshot: plaintext,
+        endOffset: 19,
+        selectedTextSnapshot: "brown fox",
+        startOffset: 10
+      }
+    });
+    const mark = created.json() as NoteDto;
+
+    const response = await patchNote(workEntryId, mark.entryId, {
+      bodyDoc: createTextDocument("trying to give a mark a body")
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "note_not_editable" });
+
+    // The row stays a bodyless mark: the controlled rejection never wrote body columns.
+    const rows = await context.db.select().from(notes).where(eq(notes.entryId, mark.entryId));
+    expect(rows[0]?.kind).toBe("mark");
+    expect(rows[0]?.bodyDoc).toBeNull();
+    expect(rows[0]?.bodyText).toBeNull();
+  });
+
   it("returns 404 when the marked block does not belong to the work", async () => {
     const { workEntryId } = await createWorkWithBlock();
 

@@ -32,7 +32,8 @@ export type CreateMarkResult = CreateNoteResult;
 
 export type UpdateNoteResult =
   | Readonly<{ note: NoteDto; status: "updated" }>
-  | Readonly<{ status: "note_not_found" }>;
+  | Readonly<{ status: "note_not_found" }>
+  | Readonly<{ status: "note_not_editable" }>;
 
 export type DeleteNoteResult =
   | Readonly<{ status: "deleted" }>
@@ -187,6 +188,14 @@ export async function updateNote(
 
   if (existing === undefined) {
     return { status: "note_not_found" };
+  }
+
+  // A Mark (#255) is a bodyless annotation: the `notes_kind_body_ck` constraint forbids it from
+  // carrying a body doc/text. Reject the edit as a controlled boundary error here rather than writing
+  // body columns onto a `kind='mark'` row and letting the DB CHECK turn a valid public request into an
+  // internal failure. Only a `note` has an editable body.
+  if (existing.kind !== "note") {
+    return { status: "note_not_editable" };
   }
 
   const bodyDoc = request.bodyDoc;
