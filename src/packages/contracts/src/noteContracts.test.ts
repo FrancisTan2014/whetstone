@@ -60,7 +60,9 @@ describe("createStandaloneNoteRequestSchema", () => {
   });
 
   it("rejects a blank body and unexpected keys", () => {
-    expect(() => parseCreateStandaloneNoteRequest({ bodyDoc: createTextDocument("   ") })).toThrow();
+    expect(() =>
+      parseCreateStandaloneNoteRequest({ bodyDoc: createTextDocument("   ") })
+    ).toThrow();
     expect(createStandaloneNoteRequestSchema.safeParse({ bodyDoc, anchor }).success).toBe(false);
   });
 });

@@ -179,9 +179,7 @@ describe("enrollNote (#575)", () => {
       .select()
       .from(entryLinks)
       .where(eq(entryLinks.toEntryId, prompt.promptId));
-    expect(links).toEqual([
-      { fromEntryId: noteId, toEntryId: prompt.promptId, type: "contains" }
-    ]);
+    expect(links).toEqual([{ fromEntryId: noteId, toEntryId: prompt.promptId, type: "contains" }]);
 
     // Enrolling bumps the note's chronology.
     const owner = await context.db
