@@ -81,8 +81,9 @@ describe("0037 FSRS review-state migration", () => {
   // Memory model: the legacy `recall_items`/`recall_reviews` tables are dropped (migrations 0042/0043)
   // and replaced by the Entry-backed `memory_notes` / `memory_prompts` tables, and #617 (0048) then
   // lifts the inline FSRS schedule out of `memory_prompts` into the shared `review_cards` /
-  // `review_events` substrate, dropping `memory_prompt_reviews`. (proposal_candidates was already
-  // dropped by 0035.) This guards that the whole chain applies cleanly against a fresh database.
+  // `review_events` substrate, dropping `memory_prompt_reviews`; #620 (0052) then folds `memory_notes`
+  // into the unified `notes` facet and drops it. (proposal_candidates was already dropped by 0035.) This
+  // guards that the whole chain applies cleanly against a fresh database.
   it("applies the whole chain and lands the #617 review-substrate end-state", async () => {
     const pglite = new PGlite();
     await expect(runMigrations(pglite)).resolves.toBeUndefined();
@@ -108,7 +109,7 @@ describe("0037 FSRS review-state migration", () => {
     expect(await tableExists("proposal_candidates")).toBe(false);
     expect(await tableExists("recall_items")).toBe(false);
     expect(await tableExists("recall_reviews")).toBe(false);
-    expect(await tableExists("memory_notes")).toBe(true);
+    expect(await tableExists("memory_notes")).toBe(false);
     expect(await tableExists("memory_prompts")).toBe(true);
     expect(await tableExists("memory_prompt_reviews")).toBe(false);
     expect(await tableExists("review_cards")).toBe(true);

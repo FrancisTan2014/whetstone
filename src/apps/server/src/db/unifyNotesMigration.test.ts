@@ -153,7 +153,11 @@ async function seedMemoryNote(
   );
 }
 
-async function seedAnchor(pglite: PGlite, noteEntryId: string, blockEntryId: string): Promise<void> {
+async function seedAnchor(
+  pglite: PGlite,
+  noteEntryId: string,
+  blockEntryId: string
+): Promise<void> {
   await pglite.query(
     `INSERT INTO note_anchors
        (block_entry_id, context_snapshot, end_block_entry_id, end_offset, note_entry_id, selected_text, start_offset)
@@ -175,12 +179,7 @@ async function seedPersonalEntry(
   );
 }
 
-async function seedLink(
-  pglite: PGlite,
-  from: string,
-  to: string,
-  type: string
-): Promise<void> {
+async function seedLink(pglite: PGlite, from: string, to: string, type: string): Promise<void> {
   await pglite.query(
     "INSERT INTO entry_links (from_entry_id, to_entry_id, type) VALUES ($1, $2, $3)",
     [from, to, type]
@@ -281,14 +280,19 @@ describe("0052 unify-notes migration", () => {
     await seedLink(pglite, "mem-source", "prompt-c", "contains");
 
     // Scheduling substrate: an active+reviewed (snoozed to the future) card, and a paused card.
-    await seedCard(pglite, "prompt-a", "user-1", "active", "2026-03-01T00:00:00.000Z", "2026-02-10T00:00:00.000Z");
+    await seedCard(
+      pglite,
+      "prompt-a",
+      "user-1",
+      "active",
+      "2026-03-01T00:00:00.000Z",
+      "2026-02-10T00:00:00.000Z"
+    );
     await seedCard(pglite, "prompt-b", "user-2", "paused", "2026-02-20T00:00:00.000Z", null);
     await seedEvent(pglite, "event-a1", "prompt-a", "good", "2026-02-10T00:00:00.000Z");
     await seedEvent(pglite, "event-a2", "prompt-a", "easy", "2026-02-11T00:00:00.000Z");
 
-    const cardsBefore = await pglite.query(
-      "SELECT * FROM review_cards ORDER BY target_entry_id"
-    );
+    const cardsBefore = await pglite.query("SELECT * FROM review_cards ORDER BY target_entry_id");
     const eventsBefore = await pglite.query("SELECT * FROM review_events ORDER BY id");
 
     await expect(applyMigrationFile(pglite)).resolves.toBeUndefined();
@@ -334,7 +338,9 @@ describe("0052 unify-notes migration", () => {
     ]);
 
     // No duplication: exactly five note rows total (2 reader + 3 memory), each once.
-    const noteCount = await pglite.query<{ count: string }>("SELECT count(*)::text AS count FROM notes");
+    const noteCount = await pglite.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM notes"
+    );
     expect(noteCount.rows[0]?.count).toBe("5");
 
     // Entry types flipped memory_note → note; nothing left typed memory_note.
@@ -357,9 +363,21 @@ describe("0052 unify-notes migration", () => {
       "SELECT entry_id, user_id, occurred_at FROM personal_entries WHERE entry_id LIKE 'mem-%' ORDER BY entry_id"
     );
     expect(owners.rows).toEqual([
-      { entry_id: "mem-import", user_id: "user-1", occurred_at: new Date("2026-02-04T00:00:00.000Z") },
-      { entry_id: "mem-manual", user_id: "user-1", occurred_at: new Date("2026-02-03T00:00:00.000Z") },
-      { entry_id: "mem-source", user_id: "user-2", occurred_at: new Date("2026-02-05T00:00:00.000Z") }
+      {
+        entry_id: "mem-import",
+        user_id: "user-1",
+        occurred_at: new Date("2026-02-04T00:00:00.000Z")
+      },
+      {
+        entry_id: "mem-manual",
+        user_id: "user-1",
+        occurred_at: new Date("2026-02-03T00:00:00.000Z")
+      },
+      {
+        entry_id: "mem-source",
+        user_id: "user-2",
+        occurred_at: new Date("2026-02-05T00:00:00.000Z")
+      }
     ]);
 
     // Provenance (derived_from) and prompt edges (contains) intact.
@@ -408,7 +426,9 @@ describe("0052 unify-notes migration", () => {
     await createPreMigrationSchema(pglite);
     await seedEntry(pglite, "ghost", "memory_note");
 
-    await expect(applyMigrationFile(pglite)).rejects.toThrow(/entries\.type and memory_notes are out of sync/u);
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(
+      /entries\.type and memory_notes are out of sync/u
+    );
   });
 
   it("aborts (guard A) when a memory_notes row's entry is not typed memory_note", async () => {
@@ -417,7 +437,9 @@ describe("0052 unify-notes migration", () => {
     await seedEntry(pglite, "mislabelled", "note");
     await seedMemoryNote(pglite, "mislabelled", "manual", "body");
 
-    await expect(applyMigrationFile(pglite)).rejects.toThrow(/entries\.type and memory_notes are out of sync/u);
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(
+      /entries\.type and memory_notes are out of sync/u
+    );
   });
 
   it("aborts (guard B) when a memory_notes.entry_id already exists in notes", async () => {
@@ -447,7 +469,9 @@ describe("0052 unify-notes migration", () => {
     await seedMemoryNote(pglite, "malformed", "manual", "body", ["not", "an", "object"]);
     await seedPersonalEntry(pglite, "malformed", "user-1", "2026-02-01T00:00:00.000Z");
 
-    await expect(applyMigrationFile(pglite)).rejects.toThrow(/malformed body_doc.*or a blank body_text/u);
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(
+      /malformed body_doc.*or a blank body_text/u
+    );
   });
 
   it("aborts (guard D) when a memory note's body_text is blank", async () => {
@@ -457,7 +481,9 @@ describe("0052 unify-notes migration", () => {
     await seedMemoryNote(pglite, "blank", "manual", "   ", doc("has doc"));
     await seedPersonalEntry(pglite, "blank", "user-1", "2026-02-01T00:00:00.000Z");
 
-    await expect(applyMigrationFile(pglite)).rejects.toThrow(/malformed body_doc.*or a blank body_text/u);
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(
+      /malformed body_doc.*or a blank body_text/u
+    );
   });
 
   it("aborts (guard E) when a memory note has an invalid capture_source", async () => {
@@ -479,7 +505,9 @@ describe("0052 unify-notes migration", () => {
     await seedEntry(pglite, "orphan-prompt", "memory_prompt");
     await seedPrompt(pglite, "orphan-prompt", "reader-note", "ready");
 
-    await expect(applyMigrationFile(pglite)).rejects.toThrow(/references a missing memory_notes owner/u);
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(
+      /references a missing memory_notes owner/u
+    );
   });
 
   it("aborts (guard G) when a derived_from provenance link points to a missing entry", async () => {
@@ -490,7 +518,9 @@ describe("0052 unify-notes migration", () => {
     await seedPersonalEntry(pglite, "mem-source", "user-1", "2026-02-01T00:00:00.000Z");
     await seedLink(pglite, "mem-source", "ghost-work", "derived_from");
 
-    await expect(applyMigrationFile(pglite)).rejects.toThrow(/provenance link.*points to a missing entry/u);
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(
+      /provenance link.*points to a missing entry/u
+    );
   });
 
   it("applies the whole forward chain and drops memory_notes at the #620 end-state", async () => {

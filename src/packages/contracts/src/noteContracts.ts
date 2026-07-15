@@ -103,7 +103,12 @@ export type NotesOverviewListDto = Readonly<{
 // context (title + id) the Notes overview deep-links into. `authorName` stays nullable because a work may
 // have no recorded author even when the note is anchored.
 export type AnchoredNoteOverviewDto = NoteOverviewDto &
-  Readonly<{ anchor: NoteAnchorDto; blockEntryId: EntryId; workEntryId: EntryId; workTitle: string }>;
+  Readonly<{
+    anchor: NoteAnchorDto;
+    blockEntryId: EntryId;
+    workEntryId: EntryId;
+    workTitle: string;
+  }>;
 
 // Narrow an overview note to its anchored shape. As with `isAnchoredNote`, a non-null anchor is the sound
 // witness — the anchor, block, and work context are supplied together by the same source join.
