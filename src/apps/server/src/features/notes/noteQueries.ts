@@ -202,27 +202,6 @@ export async function listNotesForUser(
   return rows.map(toNoteOverviewDto);
 }
 
-// A single note scoped to its owner, for Memory and Timeline to read a unified note by id with its
-// `anchor | null`, capture source, body, and chronology instants. Owner-scoped via `personal_entries` so
-// another user's note id resolves to nothing; the anchor is LEFT-joined because a Memory or manual note is
-// unanchored.
-export async function getNoteById(
-  db: DbClient,
-  noteEntryId: EntryId,
-  userId: string
-): Promise<NoteDto | undefined> {
-  const rows = await db
-    .select(noteColumns)
-    .from(notes)
-    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
-    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
-    .where(and(eq(notes.entryId, noteEntryId), eq(personalEntries.userId, userId)))
-    .limit(1);
-  const row = rows[0];
-
-  return row === undefined ? undefined : toNoteDto(row);
-}
-
 // A single note scoped to the work AND the current user, used to authorize edits and deletes
 // against a forged or cross-work note id, or another user's note. Scoped through the block's
 // `work_entry_id` (resolved over both legacy and PM blocks) so a note on a soft-deleted block stays
