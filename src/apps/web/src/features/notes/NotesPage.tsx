@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { NoteOverviewDto } from "@whetstone/contracts";
+import { isAnchoredNoteOverview, type NoteOverviewDto } from "@whetstone/contracts";
 
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { fetchAllNotes } from "./notesApi";
@@ -73,25 +73,41 @@ function renderState(state: NotesState, focusWorkEntryId: string | undefined): R
 
   return (
     <div className="flex flex-col gap-8">
-      {groups.map((group) => (
-        <section aria-labelledby={`notes-work-${group.workEntryId}`} key={group.workEntryId}>
-          <h2
-            className="mb-3 text-xl font-semibold text-text"
-            id={`notes-work-${group.workEntryId}`}
-          >
-            {group.workTitle}
-            <span className="ml-2 text-sm font-normal text-text-muted">{group.authorName}</span>
-          </h2>
-          <ul aria-label={`Notes in ${group.workTitle}`} className="flex flex-col gap-3">
-            {group.notes.map((note) => renderNote(note))}
-          </ul>
-        </section>
-      ))}
+      {groups.map((group) => {
+        const groupKey = group.workEntryId ?? "unanchored";
+
+        return (
+          <section aria-labelledby={`notes-work-${groupKey}`} key={groupKey}>
+            <h2 className="mb-3 text-xl font-semibold text-text" id={`notes-work-${groupKey}`}>
+              {group.workTitle ?? "Notes without a source"}
+              {group.authorName !== null ? (
+                <span className="ml-2 text-sm font-normal text-text-muted">{group.authorName}</span>
+              ) : null}
+            </h2>
+            <ul
+              aria-label={`Notes in ${group.workTitle ?? "no source"}`}
+              className="flex flex-col gap-3"
+            >
+              {group.notes.map((note) => renderNote(note))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }
 
 function renderNote(note: NoteOverviewDto): React.JSX.Element {
+  // An unanchored manual or Memory note has no source anchor and no work to open in the Reader, so it
+  // renders its body only — the absence of source context is a normal state, not an error.
+  if (!isAnchoredNoteOverview(note)) {
+    return (
+      <li className="rounded border border-border bg-surface p-4" key={note.entryId}>
+        <p className="whitespace-pre-wrap text-text">{note.bodyText}</p>
+      </li>
+    );
+  }
+
   return (
     <li className="rounded border border-border bg-surface p-4" key={note.entryId}>
       <p className="text-sm text-text-muted">“{note.anchor.selectedTextSnapshot}”</p>

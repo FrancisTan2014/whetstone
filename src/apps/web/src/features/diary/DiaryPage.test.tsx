@@ -101,7 +101,14 @@ function tEntry(id: string, occurredAt: string, text: string): TimelineEntryDto 
 
 // A note timeline row — the Timeline is a mixed logical view; the Diary filters these out.
 function tNote(id: string, occurredAt: string, text: string): TimelineEntryDto {
-  return { entryId: id, kind: "note", occurredAt, text };
+  return {
+    captureSource: "reader",
+    entryId: id,
+    kind: "note",
+    occurredAt,
+    promptCount: 0,
+    text
+  };
 }
 
 function tDay(date: string, entries: TimelineEntryDto[]): TimelineDayDto {

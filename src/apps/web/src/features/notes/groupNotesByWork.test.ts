@@ -23,10 +23,33 @@ function note(
     blockEntryId: toEntryId(`${entryId}-block`),
     bodyDoc: createTextDocument(`body ${entryId}`),
     bodyText: `body ${entryId}`,
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId(entryId),
     kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
     workEntryId: toEntryId(workEntryId),
     workTitle
+  };
+}
+
+// An unanchored manual or Memory note: no source anchor, so no work context (all three work fields null).
+function unanchoredNote(entryId: string): NoteOverviewDto {
+  return {
+    anchor: null,
+    authorName: null,
+    blockEntryId: null,
+    bodyDoc: createTextDocument(`body ${entryId}`),
+    bodyText: `body ${entryId}`,
+    captureSource: "manual",
+    createdAt: "2024-01-01T00:00:00.000Z",
+    entryId: toEntryId(entryId),
+    kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+    workEntryId: null,
+    workTitle: null
   };
 }
 
@@ -53,5 +76,21 @@ describe("groupNotesByWork", () => {
       workTitle: "Aesop Fables"
     });
     expect(groups[1]?.notes.map((item) => item.entryId)).toEqual(["note-3"]);
+  });
+
+  it("collects unanchored notes into a single null-keyed group", () => {
+    const groups = groupNotesByWork([
+      note("note-1", "work-a", "Aesop Fables", "Aesop"),
+      unanchoredNote("note-2"),
+      unanchoredNote("note-3")
+    ]);
+
+    expect(groups.map((group) => group.workEntryId)).toEqual(["work-a", null]);
+    expect(groups[1]).toEqual({
+      authorName: null,
+      notes: [unanchoredNote("note-2"), unanchoredNote("note-3")],
+      workEntryId: null,
+      workTitle: null
+    });
   });
 });

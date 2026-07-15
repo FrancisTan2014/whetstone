@@ -2,7 +2,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
@@ -13,7 +13,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function note(): NoteDto {
+function note(): AnchoredNoteDto {
   return {
     anchor: {
       blockEntryId: toEntryId("b1"),
@@ -26,8 +26,12 @@ function note(): NoteDto {
     blockEntryId: toEntryId("b1"),
     bodyDoc: createTextDocument("a note"),
     bodyText: "a note",
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId("n1"),
-    kind: "note"
+    kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z"
   };
 }
 
@@ -36,7 +40,7 @@ function Reader({
   onActivate,
   renderKey = "k1"
 }: {
-  notes: ReadonlyArray<NoteDto>;
+  notes: ReadonlyArray<AnchoredNoteDto>;
   onActivate: (noteId: string) => void;
   renderKey?: string;
 }): React.JSX.Element {

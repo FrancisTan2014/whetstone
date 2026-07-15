@@ -4,11 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NoteList } from "./NoteList";
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
-function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
+function makeNote(overrides: Partial<AnchoredNoteDto> = {}): AnchoredNoteDto {
   return {
     anchor: {
       blockEntryId: toEntryId("block-1"),
@@ -19,13 +19,17 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
     blockEntryId: toEntryId("block-1"),
     bodyDoc: createTextDocument("a sly animal"),
     bodyText: "a sly animal",
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId("note-1"),
     kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
     ...overrides
   };
 }
 
-function makeMark(overrides: Partial<NoteDto> = {}): NoteDto {
+function makeMark(overrides: Partial<AnchoredNoteDto> = {}): AnchoredNoteDto {
   return makeNote({
     bodyDoc: null,
     bodyText: null,
@@ -36,11 +40,11 @@ function makeMark(overrides: Partial<NoteDto> = {}): NoteDto {
 }
 
 function renderList(
-  notes: ReadonlyArray<NoteDto>,
+  notes: ReadonlyArray<AnchoredNoteDto>,
   handlers: Partial<{
-    onDelete: (note: NoteDto) => void;
-    onEdit: (note: NoteDto) => void;
-    onJump: (note: NoteDto) => void;
+    onDelete: (note: AnchoredNoteDto) => void;
+    onEdit: (note: AnchoredNoteDto) => void;
+    onJump: (note: AnchoredNoteDto) => void;
   }> = {}
 ): void {
   render(

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
-import type { NoteDto, WorkListItemDto } from "@whetstone/contracts";
+import { isAnchoredNote, type AnchoredNoteDto, type WorkListItemDto } from "@whetstone/contracts";
 import { lookupSourceLabel, lookupSourcesForLanguage } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
@@ -306,7 +306,7 @@ export function viewingPosition(
 // affordance).
 type NotePanel =
   | Readonly<{ draft: NoteDraft; kind: "create"; workEntryId: string }>
-  | Readonly<{ kind: "edit"; note: NoteDto; workEntryId: string }>
+  | Readonly<{ kind: "edit"; note: AnchoredNoteDto; workEntryId: string }>
   | Readonly<{
       blockEntryId: string;
       kind: "block";
@@ -326,10 +326,10 @@ type SelectionCapture = Readonly<{
 
 type ReaderHandlers = Readonly<{
   bornBlockEntryId?: string | undefined;
-  notes: ReadonlyArray<NoteDto>;
-  onDeleteNote: (workEntryId: string, note: NoteDto) => void;
-  onEditNote: (workEntryId: string, note: NoteDto) => void;
-  onJumpToBlock: (note: NoteDto) => void;
+  notes: ReadonlyArray<AnchoredNoteDto>;
+  onDeleteNote: (workEntryId: string, note: AnchoredNoteDto) => void;
+  onEditNote: (workEntryId: string, note: AnchoredNoteDto) => void;
+  onJumpToBlock: (note: AnchoredNoteDto) => void;
   // Activate a same-work internal cross-reference: jump to the block whose anchor id matches (#252).
   // The optional second argument is the reference's target source file, so a cross-file endnote
   // resolves against that file, not the current unit (#366).
@@ -344,9 +344,9 @@ type ReaderHandlers = Readonly<{
 }>;
 
 function notesForBlock(
-  notes: ReadonlyArray<NoteDto>,
+  notes: ReadonlyArray<AnchoredNoteDto>,
   blockEntryId: string
-): ReadonlyArray<NoteDto> {
+): ReadonlyArray<AnchoredNoteDto> {
   return notes.filter((note) => note.blockEntryId === blockEntryId);
 }
 
@@ -381,7 +381,7 @@ export function ReaderPage({
   initialWorkEntryId
 }: ReaderPageProps): React.JSX.Element {
   const [state, setState] = useState<ReaderState>({ status: "loadingWorks" });
-  const [notes, setNotes] = useState<ReadonlyArray<NoteDto>>([]);
+  const [notes, setNotes] = useState<ReadonlyArray<AnchoredNoteDto>>([]);
   const [panel, setPanel] = useState<NotePanel | undefined>(undefined);
   const [capture, setCapture] = useState<SelectionCapture | undefined>(undefined);
   const [lookup, setLookup] = useState<LookupView | undefined>(undefined);
@@ -594,7 +594,7 @@ export function ReaderPage({
           return;
         }
 
-        setNotes(noteList.notes);
+        setNotes(noteList.notes.filter(isAnchoredNote));
         setState({
           reading: {
             activeUnit: { status: "loading" },
@@ -655,7 +655,7 @@ export function ReaderPage({
 
   async function refreshNotes(workEntryId: string): Promise<void> {
     const list = await fetchNotes(workEntryId);
-    setNotes(list.notes);
+    setNotes(list.notes.filter(isAnchoredNote));
   }
 
   // Open a reading unit from the 目录: switch the active unit and close any open overlays so
@@ -972,7 +972,7 @@ export function ReaderPage({
   async function markSelection(active: SelectionCapture): Promise<void> {
     setCapture(undefined);
 
-    let note: NoteDto;
+    let note: AnchoredNoteDto;
     try {
       note = await createMark(active.workEntryId, { anchor: draftToAnchor(active.draft) });
     } catch {
@@ -1028,7 +1028,7 @@ export function ReaderPage({
     setPanel({ blockEntryId, kind: "block", workEntryId });
   }, []);
 
-  function onEditNote(workEntryId: string, note: NoteDto): void {
+  function onEditNote(workEntryId: string, note: AnchoredNoteDto): void {
     // Editing opens its own Sheet; close the notes panel so the two do not stack.
     setNotesOpen(false);
     setPanel({ kind: "edit", note, workEntryId });
@@ -1036,13 +1036,13 @@ export function ReaderPage({
 
   // On a successful save the rebuilt highlight's born underline animation is the only confirmation —
   // no success toast (#300). A save failure still surfaces an error toast from the editor.
-  async function onSavedNote(workEntryId: string, note: NoteDto): Promise<void> {
+  async function onSavedNote(workEntryId: string, note: AnchoredNoteDto): Promise<void> {
     setPanel(undefined);
     setBornBlockEntryId(note.blockEntryId);
     await refreshNotes(workEntryId);
   }
 
-  async function onDeleteNote(workEntryId: string, note: NoteDto): Promise<void> {
+  async function onDeleteNote(workEntryId: string, note: AnchoredNoteDto): Promise<void> {
     try {
       await deleteNote(workEntryId, note.entryId);
     } catch {
@@ -1055,9 +1055,9 @@ export function ReaderPage({
     await refreshNotes(workEntryId);
   }
 
-  const handleDelete = (workEntryId: string, note: NoteDto): void =>
+  const handleDelete = (workEntryId: string, note: AnchoredNoteDto): void =>
     void onDeleteNote(workEntryId, note);
-  const handleSaved = (workEntryId: string, note: NoteDto): void =>
+  const handleSaved = (workEntryId: string, note: AnchoredNoteDto): void =>
     void onSavedNote(workEntryId, note);
 
   // Open the note behind a highlight the reader clicked or pressed Enter on (#313): resolve the
@@ -1478,7 +1478,7 @@ type ReaderBlockViewProps = Readonly<{
   block: ReaderBlock;
   born: boolean;
   canResolve: (anchor: string, targetSourceFile?: string) => boolean;
-  notes: ReadonlyArray<NoteDto>;
+  notes: ReadonlyArray<AnchoredNoteDto>;
   onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
   prefersReducedMotion: boolean;
@@ -1671,15 +1671,15 @@ const ReaderBlockView = memo(function ReaderBlockView({
 
 type PanelHandlers = Readonly<{
   onClose: () => void;
-  onDeleteNote: (workEntryId: string, note: NoteDto) => void;
-  onEditNote: (workEntryId: string, note: NoteDto) => void;
-  onJumpToBlock: (note: NoteDto) => void;
-  onSavedNote: (workEntryId: string, note: NoteDto) => void;
+  onDeleteNote: (workEntryId: string, note: AnchoredNoteDto) => void;
+  onEditNote: (workEntryId: string, note: AnchoredNoteDto) => void;
+  onJumpToBlock: (note: AnchoredNoteDto) => void;
+  onSavedNote: (workEntryId: string, note: AnchoredNoteDto) => void;
 }>;
 
 function renderPanel(
   panel: NotePanel | undefined,
-  notes: ReadonlyArray<NoteDto>,
+  notes: ReadonlyArray<AnchoredNoteDto>,
   handlers: PanelHandlers
 ): React.JSX.Element | null {
   if (panel === undefined) {

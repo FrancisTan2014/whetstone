@@ -1,5 +1,5 @@
 import { splitSpanIntoBlockRanges } from "@whetstone/domain";
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 
 import { noteMarkHueClass } from "./annotationHue.tokens";
 import { blockTextContent, rangeWithinElement } from "./blockText";
@@ -40,7 +40,7 @@ export type NoteHighlightDescriptor = Readonly<{
 // mapping is tested in isolation; the prefix/suffix are derived from the stored context snapshot so a
 // re-anchor stays pinned to the right occurrence even after the block's offsets shift.
 export function noteHighlightDescriptors(
-  notes: ReadonlyArray<NoteDto>
+  notes: ReadonlyArray<AnchoredNoteDto>
 ): ReadonlyArray<NoteHighlightDescriptor> {
   const descriptors: NoteHighlightDescriptor[] = [];
 
@@ -165,7 +165,10 @@ function rangesByQuote(
 // them. Each note resolves by block id + offset first, then by TextQuote; the resolved range(s) are
 // wrapped in an external `noteMark` span carrying the hue, the note id, and the accessible label.
 // Wrapping preserves the rendered text, so later notes still resolve against unchanged offsets.
-export function applyNoteHighlights(container: Element, notes: ReadonlyArray<NoteDto>): () => void {
+export function applyNoteHighlights(
+  container: Element,
+  notes: ReadonlyArray<AnchoredNoteDto>
+): () => void {
   const descriptors = noteHighlightDescriptors(notes);
   const removers: Array<() => void> = [];
 

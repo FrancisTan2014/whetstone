@@ -34,10 +34,34 @@ function note(
     blockEntryId: toEntryId(blockEntryId),
     bodyDoc: createTextDocument(markdown),
     bodyText: markdown,
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId(entryId),
     kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
     workEntryId: toEntryId(workEntryId),
     workTitle
+  };
+}
+
+// An unanchored manual or Memory note: no source anchor, so it lists under the "Notes without a source"
+// group with its body only — no snippet and no Open-in-Reader link.
+function unanchoredNote(entryId: string, body: string): NoteOverviewDto {
+  return {
+    anchor: null,
+    authorName: null,
+    blockEntryId: null,
+    bodyDoc: createTextDocument(body),
+    bodyText: body,
+    captureSource: "manual",
+    createdAt: "2024-01-01T00:00:00.000Z",
+    entryId: toEntryId(entryId),
+    kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+    workEntryId: null,
+    workTitle: null
   };
 }
 
@@ -146,5 +170,25 @@ describe("NotesPage", () => {
     render(<NotesPage />);
 
     expect(await screen.findByText("Could not load your notes. Please try again.")).toBeDefined();
+  });
+
+  it("lists unanchored notes body-only under a source-less group with no reader link", async () => {
+    mockedFetchAllNotes.mockResolvedValue({
+      notes: [
+        note("note-1", "block-1", "work-a", "Aesop Fables", "Aesop", "brown fox", "to outwit"),
+        unanchoredNote("mem-1", "a memory without a source")
+      ]
+    });
+
+    render(<NotesPage />);
+
+    // The unanchored note groups under a generic header, shows its body, and offers no snippet/link.
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Notes without a source" })
+    ).toBeDefined();
+    expect(screen.getByText("a memory without a source")).toBeDefined();
+    // Only the anchored note contributes a snippet and an Open-in-Reader link.
+    expect(screen.getByText("“brown fox”")).toBeDefined();
+    expect(screen.getAllByRole("link", { name: "Open in Reader" })).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 
 import { applyNoteHighlights } from "./applyNoteHighlights";
 import { eventTargetClosest } from "./selectionCapture";
@@ -11,7 +11,7 @@ import { eventTargetClosest } from "./selectionCapture";
 // content change — `renderKey` changes when the active unit or the briefly-remounted born block
 // changes, restoring a highlight that a remount would otherwise drop.
 export function useNoteHighlights(
-  notes: ReadonlyArray<NoteDto>,
+  notes: ReadonlyArray<AnchoredNoteDto>,
   onActivateNote: (noteId: string) => void,
   renderKey: string
 ): void {

@@ -70,6 +70,19 @@ export type NoteListDto = Readonly<{
   notes: ReadonlyArray<NoteDto>;
 }>;
 
+// A note known to be anchored — the Reader's shape, where the source anchor and its block are always
+// present (the work-scoped note reads return only anchored notes/marks). Narrowing to this at the Reader
+// boundary lets reader code render highlights and jump to blocks without re-checking the shared nullable
+// anchor on every access.
+export type AnchoredNoteDto = NoteDto & Readonly<{ anchor: NoteAnchorDto; blockEntryId: EntryId }>;
+
+// Narrow a note to its anchored shape. `anchor` and `blockEntryId` are all-or-nothing (an anchored note
+// carries both, an unanchored one neither), so a non-null anchor is a sound witness that the note is
+// anchored.
+export function isAnchoredNote(note: NoteDto): note is AnchoredNoteDto {
+  return note.anchor !== null;
+}
+
 // A saved note enriched with the work it belongs to, for the cross-work Notes mode. An anchored note
 // carries its `blockEntryId` (from `NoteDto`) plus the work title/author and `workEntryId` so the list can
 // group by work and deep-link the reader to the anchored block. An unanchored note (a manual or Memory
@@ -85,6 +98,18 @@ export type NoteOverviewDto = NoteDto &
 export type NotesOverviewListDto = Readonly<{
   notes: ReadonlyArray<NoteOverviewDto>;
 }>;
+
+// An overview note known to be anchored — it carries its source anchor, the anchored block, and the work
+// context (title + id) the Notes overview deep-links into. `authorName` stays nullable because a work may
+// have no recorded author even when the note is anchored.
+export type AnchoredNoteOverviewDto = NoteOverviewDto &
+  Readonly<{ anchor: NoteAnchorDto; blockEntryId: EntryId; workEntryId: EntryId; workTitle: string }>;
+
+// Narrow an overview note to its anchored shape. As with `isAnchoredNote`, a non-null anchor is the sound
+// witness — the anchor, block, and work context are supplied together by the same source join.
+export function isAnchoredNoteOverview(note: NoteOverviewDto): note is AnchoredNoteOverviewDto {
+  return note.anchor !== null;
+}
 
 export function parseCreateNoteRequest(value: unknown): CreateNoteRequest {
   return createNoteRequestSchema.parse(value);

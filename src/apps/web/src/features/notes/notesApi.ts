@@ -1,7 +1,7 @@
 import type {
+  AnchoredNoteDto,
   CreateMarkRequest,
   CreateNoteRequest,
-  NoteDto,
   NoteListDto,
   NotesOverviewListDto,
   UpdateNoteRequest
@@ -35,8 +35,8 @@ export async function fetchAllNotes(): Promise<NotesOverviewListDto> {
 export async function createNote(
   workEntryId: string,
   request: CreateNoteRequest
-): Promise<NoteDto> {
-  return requestJson<NoteDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/notes`), {
+): Promise<AnchoredNoteDto> {
+  return requestJson<AnchoredNoteDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/notes`), {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "POST"
@@ -47,8 +47,8 @@ export async function createNote(
 export async function createMark(
   workEntryId: string,
   request: CreateMarkRequest
-): Promise<NoteDto> {
-  return requestJson<NoteDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/marks`), {
+): Promise<AnchoredNoteDto> {
+  return requestJson<AnchoredNoteDto>(apiUrl(`/works/${encodeURIComponent(workEntryId)}/marks`), {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "POST"
@@ -59,12 +59,12 @@ export async function updateNote(
   workEntryId: string,
   noteEntryId: string,
   request: UpdateNoteRequest
-): Promise<NoteDto> {
+): Promise<AnchoredNoteDto> {
   const path = apiUrl(
     `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}`
   );
 
-  return requestJson<NoteDto>(path, {
+  return requestJson<AnchoredNoteDto>(path, {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "PATCH"

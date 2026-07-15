@@ -1,5 +1,5 @@
 import { splitSpanIntoBlockRanges } from "@whetstone/domain";
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 
 import type { NoteDraft } from "../notes/noteCapture";
 import { blockRangesOverlap, type BlockRange } from "./noteOverlap";
@@ -53,7 +53,7 @@ function anchorBlockRanges(anchor: AnchorLike, index: UnitBlockIndex): ReadonlyA
 // so the toolbar can disable "Add note"/"Mark" while keeping the annotations disjoint (#163/#257).
 export function draftOverlapsNotes(
   draft: NoteDraft,
-  notes: ReadonlyArray<NoteDto>,
+  notes: ReadonlyArray<AnchoredNoteDto>,
   index: UnitBlockIndex
 ): boolean {
   const draftRanges = anchorBlockRanges(
