@@ -15,6 +15,8 @@ import { draftToAnchor, type NoteDraft } from "../notes/noteCapture";
 import { createMark, deleteNote, fetchNotes } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { blockGutterHueClass } from "./annotationHue.tokens";
+import { blockOpenerAction, blockOpenerLabel } from "./blockAnnotationOpener";
+import { blockOpenerHueClass } from "./blockOpener.tokens";
 import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
@@ -340,6 +342,10 @@ type ReaderHandlers = Readonly<{
   anchorsForBlock: (blockEntryId: string) => ReadonlyArray<BlockAnchor>;
   canResolve: (anchor: string, targetSourceFile?: string) => boolean;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
+  // Open one rich note's editor straight from the block's edge opener (#555), bypassing the chooser
+  // when the block holds a single note. Reuses the edit panel, so it is `onEditNote` under a name that
+  // states the opener's intent.
+  onOpenNoteDirect: (workEntryId: string, note: AnchoredNoteDto) => void;
   prefersReducedMotion: boolean;
 }>;
 
@@ -1028,11 +1034,11 @@ export function ReaderPage({
     setPanel({ blockEntryId, kind: "block", workEntryId });
   }, []);
 
-  function onEditNote(workEntryId: string, note: AnchoredNoteDto): void {
+  const onEditNote = useCallback((workEntryId: string, note: AnchoredNoteDto): void => {
     // Editing opens its own Sheet; close the notes panel so the two do not stack.
     setNotesOpen(false);
     setPanel({ kind: "edit", note, workEntryId });
-  }
+  }, []);
 
   // On a successful save the rebuilt highlight's born underline animation is the only confirmation —
   // no success toast (#300). A save failure still surfaces an error toast from the editor.
@@ -1060,25 +1066,6 @@ export function ReaderPage({
   const handleSaved = (workEntryId: string, note: AnchoredNoteDto): void =>
     void onSavedNote(workEntryId, note);
 
-  // Open the note behind a highlight the reader clicked or pressed Enter on (#313): resolve the
-  // note from its id and reuse the per-block notes panel. No open work, or an unknown id, does
-  // nothing.
-  const activeWorkEntryId = selectionContext?.workEntryId;
-  const onActivateNote = useCallback(
-    (noteId: string): void => {
-      const note = notes.find((candidate) => candidate.entryId === noteId);
-
-      /* v8 ignore next 3 -- a highlight only exists while a work is open and its note is in `notes`,
-         so this narrows away the stale-id / no-open-work cases the UI cannot produce. */
-      if (note === undefined || activeWorkEntryId === undefined) {
-        return;
-      }
-
-      onOpenBlockNotes(note.blockEntryId, activeWorkEntryId);
-    },
-    [notes, activeWorkEntryId, onOpenBlockNotes]
-  );
-
   // Re-apply the highlights when the rendered blocks change, not only when the notes do: the active
   // unit's block ids (a unit switch) and the briefly-remounted born block both change this key, so a
   // remount that drops a block's injected highlight spans is immediately restored.
@@ -1090,7 +1077,7 @@ export function ReaderPage({
     [bornBlockEntryId, selectionContext]
   );
 
-  useNoteHighlights(notes, onActivateNote, highlightRenderKey);
+  useNoteHighlights(notes, highlightRenderKey);
 
   const handlers: ReaderHandlers = {
     bornBlockEntryId,
@@ -1102,6 +1089,7 @@ export function ReaderPage({
     anchorsForBlock,
     canResolve: canResolveAnchor,
     onOpenBlockNotes,
+    onOpenNoteDirect: onEditNote,
     prefersReducedMotion
   };
 
@@ -1464,6 +1452,7 @@ function renderUnit(
             notes={handlers.notes}
             onActivateAnchor={handlers.onActivateAnchor}
             onOpenBlockNotes={handlers.onOpenBlockNotes}
+            onOpenNoteDirect={handlers.onOpenNoteDirect}
             prefersReducedMotion={handlers.prefersReducedMotion}
             workEntryId={workEntryId}
           />
@@ -1481,6 +1470,7 @@ type ReaderBlockViewProps = Readonly<{
   notes: ReadonlyArray<AnchoredNoteDto>;
   onActivateAnchor: (anchor: string, targetSourceFile?: string) => void;
   onOpenBlockNotes: (blockEntryId: string, workEntryId: string) => void;
+  onOpenNoteDirect: (workEntryId: string, note: AnchoredNoteDto) => void;
   prefersReducedMotion: boolean;
   workEntryId: string;
 }>;
@@ -1581,6 +1571,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
   notes,
   onActivateAnchor,
   onOpenBlockNotes,
+  onOpenNoteDirect,
   prefersReducedMotion,
   workEntryId
 }: ReaderBlockViewProps): React.JSX.Element {
@@ -1606,8 +1597,44 @@ const ReaderBlockView = memo(function ReaderBlockView({
       ? "readerBlock"
       : `readerBlock readerBlock--annotated ${blockGutterHueClass(wholeBlockNote.kind)}`;
 
+  // The block's single edge opener (#555): one always-visible >=44px control for ALL of a block's
+  // annotations, replacing the inline underline-as-button. Its hue reads the block's representative
+  // kind (a note wins over a bodyless mark); activating it routes to the note editor for a lone note,
+  // else to the chooser (`blockOpenerAction`). Rendered as the FIRST child so keyboard order reaches
+  // the opener, then the prose.
+  const openerKind = blockNotes.some((note) => note.kind === "note") ? "note" : "mark";
+  function openBlockAnnotations(): void {
+    const action = blockOpenerAction(blockNotes);
+
+    if (action.kind === "note") {
+      onOpenNoteDirect(workEntryId, action.note);
+      return;
+    }
+
+    onOpenBlockNotes(block.entryId, workEntryId);
+  }
+
   const body = (
     <>
+      {annotated ? (
+        <button
+          aria-label={blockOpenerLabel(blockNotes)}
+          className={`readerBlockOpener ${blockOpenerHueClass(openerKind)}`}
+          onClick={openBlockAnnotations}
+          onMouseUp={(event) => event.stopPropagation()}
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            className="readerBlockOpenerGlyph"
+            fill="currentColor"
+            focusable="false"
+            viewBox="0 0 16 16"
+          >
+            <path d="M12.146 1.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708l-9 9a.5.5 0 0 1-.168.11l-4 1.5a.5.5 0 0 1-.65-.65l1.5-4a.5.5 0 0 1 .11-.168zM11.5 3 13 4.5 4.793 12.707l-1.5-1.5zM3.5 12l.646.646-2 .75.75-2z" />
+          </svg>
+        </button>
+      ) : null}
       {block.blockType === "figure" ? (
         <ReaderFigure
           anchorByNodeId={anchorByNodeId}
@@ -1634,16 +1661,6 @@ const ReaderBlockView = memo(function ReaderBlockView({
           type="button"
         >
           ↩
-        </button>
-      )}
-      {wholeBlockNote === undefined ? null : (
-        <button
-          className="readerBlockNotes"
-          onClick={() => onOpenBlockNotes(block.entryId, workEntryId)}
-          onMouseUp={(event) => event.stopPropagation()}
-          type="button"
-        >
-          View note
         </button>
       )}
     </>

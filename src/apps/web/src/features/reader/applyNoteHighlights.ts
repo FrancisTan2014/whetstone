@@ -23,7 +23,6 @@ const CONTEXT_CHARS = 32;
 // offsets) for the primary resolution, plus the TextQuote (exact + bounded prefix/suffix) for the
 // fallback, and the presentation (hue class via note kind, accessible label, note id).
 export type NoteHighlightDescriptor = Readonly<{
-  ariaLabel: string;
   endBlockEntryId: string;
   endOffset: number;
   exact: string;
@@ -55,7 +54,6 @@ export function noteHighlightDescriptors(
     const sameBlock = endBlockEntryId === anchor.blockEntryId;
 
     descriptors.push({
-      ariaLabel: `Note on '${anchor.selectedTextSnapshot}'`,
       endBlockEntryId,
       endOffset: anchor.endOffset,
       exact: anchor.selectedTextSnapshot,
@@ -89,12 +87,12 @@ function blockIdOf(block: HTMLElement): string {
 }
 
 function highlightAttributes(descriptor: NoteHighlightDescriptor): Record<string, string> {
+  // Inert semantic decoration only (#555): the span underlines its anchored words and carries the note
+  // id (so the applied highlight can be located/unwrapped), but is NOT an interactive control — the
+  // block's always-visible >=44px edge opener is the accessible tap/keyboard target.
   return {
-    "aria-label": descriptor.ariaLabel,
     class: `noteMark ${noteMarkHueClass(descriptor.kind)}`,
-    "data-note-id": descriptor.noteId,
-    role: "button",
-    tabindex: "0"
+    "data-note-id": descriptor.noteId
   };
 }
 
@@ -163,7 +161,8 @@ function rangesByQuote(
 
 // Apply every note's highlight over the reader's rendered blocks and return a cleanup that removes
 // them. Each note resolves by block id + offset first, then by TextQuote; the resolved range(s) are
-// wrapped in an external `noteMark` span carrying the hue, the note id, and the accessible label.
+// wrapped in an external, inert `noteMark` span carrying the hue and the note id (#555 — the span is
+// semantic decoration, not a control; the block's edge opener is the accessible target).
 // Wrapping preserves the rendered text, so later notes still resolve against unchanged offsets.
 export function applyNoteHighlights(
   container: Element,

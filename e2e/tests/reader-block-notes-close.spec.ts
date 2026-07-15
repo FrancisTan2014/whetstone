@@ -6,11 +6,14 @@ import { expect, test } from "../fixtures";
 // mobile viewport — and the shared geometry probe flagged it `tooSmall`. This asserts the real rendered
 // rect in a browser, where the CSS actually applies (jsdom cannot lay out or evaluate box geometry).
 //
-// The work and note are seeded through the API on a dedicated work, so the panel opens deterministically
+// The work and mark are seeded through the API on a dedicated work, so the panel opens deterministically
 // regardless of spec order — the shared seeded work accumulates notes from other specs, and reusing it
 // here would let an overlapping annotation disable the UI note flow (annotations are disjoint, #163).
+// A single bodyless mark routes the edge opener (#555) to the chooser aside (only a lone rich note opens
+// the editor directly), which is the panel whose Close button this test measures.
 
 const anyBlock = 'article[aria-label="Reading"] [data-block-id]';
+const OPENER = 'article[aria-label="Reading"] .readerBlockOpener';
 const CLOSE = 'aside[aria-label="Block notes"] button.readerBlockNotesClose';
 const MOBILE = { height: 844, width: 390 } as const;
 
@@ -66,31 +69,27 @@ test("mobile: the block-notes panel Close button is a >=44px hit target (#413)",
   expect(anchor).not.toBeNull();
 
   const noteResponse = await page.request.post(
-    `${setup.baseURL}api/works/${encodeURIComponent(work.entryId)}/notes`,
+    `${setup.baseURL}api/works/${encodeURIComponent(work.entryId)}/marks`,
     {
       data: {
         anchor: {
           blockEntryId: anchor!.blockEntryId,
           contextSnapshot: anchor!.word,
           selectedTextSnapshot: anchor!.word
-        },
-        bodyDoc: {
-          content: [{ content: [{ text: "Touch-target note.", type: "text" }], type: "paragraph" }],
-          type: "doc"
         }
       }
     }
   );
   expect(noteResponse.status()).toBe(201);
 
-  // Reload so the reader fetches the seeded note into the document (a same-hash goto would not remount
-  // the hash-routed reader), then open the block-notes panel via the annotated block's "View note".
+  // Reload so the reader fetches the seeded mark into the document (a same-hash goto would not remount
+  // the hash-routed reader), then open the block-notes chooser via the annotated block's edge opener.
   await page.goto("about:blank");
   await page.goto(readerUrl);
   await expect(page.locator(anyBlock).first()).toBeVisible();
-  const viewNote = page.getByRole("button", { name: "View note" }).first();
-  await expect(viewNote).toBeVisible();
-  await viewNote.click();
+  const opener = page.locator(OPENER).first();
+  await expect(opener).toBeVisible();
+  await opener.click();
 
   const closeButton = page.locator(CLOSE);
   await expect(closeButton).toBeVisible();

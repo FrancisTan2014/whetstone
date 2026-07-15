@@ -918,6 +918,93 @@
 
 .readerBlock {
   margin-block: 1.25rem;
+  /* The block is the positioning context for its edge opener (#555), which is absolutely positioned so
+     it never enters the text flow or changes the paragraph's line boxes / reading measure. */
+  position: relative;
+}
+
+/*
+ * The block's single always-visible edge opener (#555): ONE >=44px WCAG hit target per annotated
+ * block that opens its annotation(s), replacing the inert inline underline as a control. It is
+ * absolutely positioned out of the text flow so it never shifts the prose. Narrow (mobile-first)
+ * default: the reader fills the width with no outside gutter, so an annotated block reserves a small
+ * inline-start rail and the opener sits at the block's inline-start, clearing the prose. On a wide
+ * viewport (below) the opener instead translates into the ample page margin, leaving the full measure.
+ * The hue reuses the single amber annotation channel and carries only the note/mark distinction.
+ */
+.readerBlockOpener {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 46px, not 44px: Chromium can resolve a 44px min box to a fractional 43.9999… that dips just
+     under the WCAG 2.5.5 target, so the measured hit target (and its geometry regression) is unstable.
+     A small buffer keeps the rendered opener safely >=44px in both dimensions (cf. selectionToolbar). */
+  min-inline-size: 46px;
+  min-block-size: 46px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: var(--color-anno-note);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.readerBlockOpener--note {
+  color: var(--color-anno-note);
+}
+
+.readerBlockOpener--mark {
+  color: var(--color-anno-mark);
+}
+
+.readerBlockOpener:hover {
+  background: var(--color-anno-note-wash);
+  border-color: var(--color-anno-note);
+}
+
+.readerBlockOpener--mark:hover {
+  background: var(--color-anno-mark-wash);
+  border-color: var(--color-anno-mark);
+}
+
+.readerBlockOpener:focus-visible {
+  outline: 2px solid var(--color-focus, currentColor);
+  outline-offset: 2px;
+}
+
+.readerBlockOpenerGlyph {
+  inline-size: 1.15rem;
+  block-size: 1.15rem;
+  pointer-events: none;
+}
+
+/* Narrow (default) layout: reserve an inline-start rail on every annotated block so the opener, sitting
+   at the block's inline-start, clears the prose text box. The rail overrides the whole-block gutter's
+   smaller padding; the gutter hue bar still shows at the very edge. */
+.readerBlock[data-has-notes="true"] {
+  padding-inline-start: 3.5rem;
+}
+
+/* Wide layout: an ample page margin exists on both sides of the reading column, so the opener translates
+   fully into that left margin — the annotated block keeps the full reading measure (no rail), and the
+   whole-block gutter's own padding is restored. */
+@media (min-width: 60rem) {
+  .readerBlock[data-has-notes="true"] {
+    padding-inline-start: 0;
+  }
+
+  .readerBlock--annotated[data-has-notes="true"] {
+    padding-inline-start: 0.75rem;
+  }
+
+  .readerBlockOpener {
+    transform: translateX(calc(-100% - 0.5rem));
+  }
 }
 
 /*
@@ -944,14 +1031,14 @@
  * A sub-block note marks exactly its anchored characters with a delicate underline in the single
  * amber annotation channel — the colour carries only the note/mark distinction, never the note's
  * content. `text-decoration: underline` follows wrapped lines (unlike a border); `from-font`
- * thickness tracks the reading size; the offset gives the text air. The underlined span is the
- * tap/keyboard target that opens the note, legible in Day and Night.
+ * thickness tracks the reading size; the offset gives the text air. The span is inert semantic
+ * decoration (#555) — not a control — so it takes no cursor or focus ring; the block's edge opener
+ * is the accessible tap/keyboard target. Legible in Day and Night.
  */
 .noteMark {
   text-decoration-line: underline;
   text-decoration-thickness: from-font;
   text-underline-offset: 0.15em;
-  cursor: pointer;
 }
 
 .noteMark--note {
@@ -960,12 +1047,6 @@
 
 .noteMark--mark {
   text-decoration-color: var(--color-anno-mark);
-}
-
-.noteMark:focus-visible {
-  outline: 2px solid var(--color-focus, currentColor);
-  outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /*

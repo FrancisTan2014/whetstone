@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
@@ -37,14 +37,12 @@ function note(): AnchoredNoteDto {
 
 function Reader({
   notes,
-  onActivate,
   renderKey = "k1"
 }: {
   notes: ReadonlyArray<AnchoredNoteDto>;
-  onActivate: (noteId: string) => void;
   renderKey?: string;
 }): React.JSX.Element {
-  useNoteHighlights(notes, onActivate, renderKey);
+  useNoteHighlights(notes, renderKey);
 
   return (
     <div className="reader">
@@ -53,8 +51,8 @@ function Reader({
   );
 }
 
-function Bare({ onActivate }: { onActivate: (noteId: string) => void }): React.JSX.Element {
-  useNoteHighlights([], onActivate, "k1");
+function Bare(): React.JSX.Element {
+  useNoteHighlights([], "k1");
 
   return <div>no reader here</div>;
 }
@@ -66,74 +64,27 @@ async function flush(): Promise<void> {
 }
 
 describe("useNoteHighlights", () => {
-  it("applies the highlights and opens a note when its highlight is clicked", async () => {
-    const onActivate = vi.fn();
-    const { container } = render(<Reader notes={[note()]} onActivate={onActivate} />);
+  it("applies an inert decoration span carrying the note id but no interactive attributes (#555)", async () => {
+    const { container } = render(<Reader notes={[note()]} />);
     await flush();
 
     const mark = container.querySelector(".noteMark") as HTMLElement;
     expect(mark.textContent).toBe("block");
-
-    act(() => {
-      mark.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(onActivate).toHaveBeenCalledWith("n1");
-  });
-
-  it("opens a note on Enter and prevents the default key action", async () => {
-    const onActivate = vi.fn();
-    const { container } = render(<Reader notes={[note()]} onActivate={onActivate} />);
-    await flush();
-
-    const mark = container.querySelector(".noteMark") as HTMLElement;
-    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" });
-
-    act(() => {
-      mark.dispatchEvent(event);
-    });
-
-    expect(onActivate).toHaveBeenCalledWith("n1");
-    expect(event.defaultPrevented).toBe(true);
-  });
-
-  it("ignores a non-Enter key on a highlight", async () => {
-    const onActivate = vi.fn();
-    const { container } = render(<Reader notes={[note()]} onActivate={onActivate} />);
-    await flush();
-
-    const mark = container.querySelector(".noteMark") as HTMLElement;
-
-    act(() => {
-      mark.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a" }));
-    });
-
-    expect(onActivate).not.toHaveBeenCalled();
-  });
-
-  it("ignores a click that is not on a highlight", async () => {
-    const onActivate = vi.fn();
-    render(<Reader notes={[note()]} onActivate={onActivate} />);
-    await flush();
-
-    act(() => {
-      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(onActivate).not.toHaveBeenCalled();
+    expect(mark.getAttribute("data-note-id")).toBe("n1");
+    expect(mark.getAttribute("role")).toBeNull();
+    expect(mark.getAttribute("tabindex")).toBeNull();
+    expect(mark.getAttribute("aria-label")).toBeNull();
   });
 
   it("does nothing when there is no reader container to decorate", async () => {
-    const onActivate = vi.fn();
-    expect(() => render(<Bare onActivate={onActivate} />)).not.toThrow();
+    expect(() => render(<Bare />)).not.toThrow();
     await flush();
 
     expect(document.querySelector(".noteMark")).toBeNull();
   });
 
   it("removes the highlights it applied when the effect is torn down", async () => {
-    const onActivate = vi.fn();
-    const { container, unmount } = render(<Reader notes={[note()]} onActivate={onActivate} />);
+    const { container, unmount } = render(<Reader notes={[note()]} />);
     await flush();
     expect(container.querySelector(".noteMark")).not.toBeNull();
 

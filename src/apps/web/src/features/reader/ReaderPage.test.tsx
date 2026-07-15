@@ -2213,6 +2213,18 @@ function subBlockNote(overrides: Partial<AnchoredNoteDto> = {}): AnchoredNoteDto
   });
 }
 
+// A bodyless whole-block mark (#255): no rich body, so its edge opener has no editor to open and must
+// route to the chooser.
+function wholeBlockMark(overrides: Partial<AnchoredNoteDto> = {}): AnchoredNoteDto {
+  return makeNote({
+    bodyDoc: null,
+    bodyText: null,
+    entryId: toEntryId("mark-1"),
+    kind: "mark",
+    ...overrides
+  });
+}
+
 async function openWorkWithNotes(notes: ReadonlyArray<AnchoredNoteDto>): Promise<HTMLElement> {
   seedWorkContent(multiUnitContent);
   mockedFetchNotes.mockResolvedValue({ notes });
@@ -2238,14 +2250,14 @@ async function openWorkWithSubBlockNotes(
 }
 
 describe("ReaderPage note management", () => {
-  it("marks a whole-block note with a hue gutter bar and a view affordance", async () => {
+  it("marks a whole-block note with a hue gutter bar and an edge opener", async () => {
     const container = await openWorkWithNotes([makeNote()]);
     const user = userEvent.setup();
 
     const annotated = blockElement(container, "b-1");
     expect(annotated.getAttribute("data-has-notes")).toBe("true");
     expect(annotated.className).toContain("readerBlock--annotated");
-    expect(screen.getByRole("button", { name: "View note" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Open note on 'Intro'" })).toBeDefined();
 
     // A block in another unit, with no note, renders plain once that unit is opened.
     const toc = await openTocDrawer(user);
@@ -2254,22 +2266,39 @@ describe("ReaderPage note management", () => {
     const plain = blockElement(container, "b-2");
     expect(plain.getAttribute("data-has-notes")).toBeNull();
     expect(plain.className).not.toContain("readerBlock--annotated");
+    expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
   });
 
   it("highlights a sub-block note as a render-time decoration and flags the block (#313)", async () => {
     const container = await openWorkWithSubBlockNotes([subBlockNote()]);
 
     // The note's anchored span ("Intro" [0,5)) is highlighted as an external `.noteMark` decoration.
-    // The block still carries the has-notes flag, but a sub-block note shows no whole-block gutter or
-    // "View note" affordance — those belong to whole-block notes.
+    // The block still carries the has-notes flag and its always-visible edge opener, but a sub-block
+    // note shows no whole-block gutter — that belongs to whole-block notes.
     const block = blockElement(container, "b-1");
     await waitFor(() => expect(block.querySelector(".noteMark")?.textContent).toBe("Intro"));
     expect(block.getAttribute("data-has-notes")).toBe("true");
     expect(block.className).not.toContain("readerBlock--annotated");
-    expect(screen.queryByRole("button", { name: "View note" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open note on 'Intro'" })).toBeDefined();
   });
 
-  it("opens the note behind a highlight when its decoration is clicked (#313)", async () => {
+  it("renders the inline note decoration as inert — not a role/tabbable/labelled control (#555)", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+
+    const block = blockElement(container, "b-1");
+    const mark = await waitFor(() => {
+      const found = block.querySelector(".noteMark");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+
+    expect(mark.getAttribute("role")).toBeNull();
+    expect(mark.getAttribute("tabindex")).toBeNull();
+    expect(mark.getAttribute("aria-label")).toBeNull();
+    expect(mark.getAttribute("data-note-id")).toBe("note-1");
+  });
+
+  it("the inline decoration is inert: clicking it opens nothing (#555)", async () => {
     const container = await openWorkWithSubBlockNotes([subBlockNote()]);
     const user = userEvent.setup();
 
@@ -2282,8 +2311,24 @@ describe("ReaderPage note management", () => {
 
     await user.click(mark);
 
-    // Clicking the render-time highlight resolves the note from its id and opens its block panel.
-    expect(await screen.findByRole("complementary", { name: "Block notes" })).toBeDefined();
+    expect(screen.queryByRole("complementary", { name: "Block notes" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull();
+  });
+
+  it("opens a single rich note's editor directly from the edge opener (#555)", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+    const user = userEvent.setup();
+
+    await waitFor(() =>
+      expect(blockElement(container, "b-1").querySelector(".noteMark")).not.toBeNull()
+    );
+
+    // A lone rich note routes straight to its editor — never the chooser.
+    await user.click(screen.getByRole("button", { name: "Open note on 'Intro'" }));
+
+    expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+    expect((screen.getByLabelText("Note body") as HTMLTextAreaElement).value).toBe("the beginning");
+    expect(screen.queryByRole("complementary", { name: "Block notes" })).toBeNull();
   });
 
   it("disables Add note when the selection overlaps an existing annotation", async () => {
@@ -2325,7 +2370,7 @@ describe("ReaderPage note management", () => {
     expect(within(panel).getByText("the beginning")).toBeDefined();
   });
 
-  it("reopens a block's notes from its highlight and edits one", async () => {
+  it("opens a single note's editor from its edge opener and saves an edit (#555)", async () => {
     seedWorkContent(multiUnitContent);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [makeNote()] });
     const updated = makeNote({
@@ -2338,10 +2383,9 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    await user.click(screen.getByRole("button", { name: "View note" }));
-
-    const panel = await screen.findByRole("complementary", { name: "Block notes" });
-    await user.click(within(panel).getByRole("button", { name: "Edit note: Intro" }));
+    // A lone rich note's opener goes straight to its editor — no chooser step.
+    await user.click(screen.getByRole("button", { name: "Open note on 'Intro'" }));
+    expect(screen.queryByRole("complementary", { name: "Block notes" })).toBeNull();
 
     expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
     const field = screen.getByLabelText("Note body") as HTMLTextAreaElement;
@@ -2377,7 +2421,8 @@ describe("ReaderPage note management", () => {
     render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
 
-    await user.click(screen.getByRole("button", { name: "View note" }));
+    // Two annotations on the block route the opener to the chooser, not a direct editor.
+    await user.click(screen.getByRole("button", { name: "Open 2 annotations in this passage" }));
 
     const panel = await screen.findByRole("complementary", { name: "Block notes" });
     expect(within(panel).getAllByRole("button", { name: /^Edit note:/ })).toHaveLength(2);
@@ -2388,12 +2433,44 @@ describe("ReaderPage note management", () => {
     expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "note-1");
   });
 
-  it("closes the block notes panel", async () => {
-    await openWorkWithNotes([makeNote()]);
+  it("edits the correct note from the block chooser, targeting by entryId (#555)", async () => {
+    seedWorkContent(multiUnitContent);
+    const first = makeNote({ entryId: toEntryId("note-1") });
+    const second = makeNote({
+      anchor: {
+        blockEntryId: toEntryId("b-1"),
+        contextSnapshot: "Intro paragraph.",
+        endBlockEntryId: toEntryId("b-1"),
+        selectedTextSnapshot: "paragraph"
+      },
+      bodyDoc: createTextDocument("second body"),
+      bodyText: "second body",
+      entryId: toEntryId("note-2")
+    });
+    mockedFetchNotes.mockResolvedValue({ notes: [first, second] });
+    const user = userEvent.setup();
+    render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    await user.click(screen.getByRole("button", { name: "Open 2 annotations in this passage" }));
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+
+    // Editing the second row opens that exact note's editor (by entryId) — never the first note's,
+    // so a re-anchored / repeated annotation can never open the wrong item.
+    await user.click(within(panel).getByRole("button", { name: "Edit note: paragraph" }));
+
+    expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+    expect((screen.getByLabelText("Note body") as HTMLTextAreaElement).value).toBe("second body");
+  });
+
+  it("opens a single bodyless mark's chooser from its opener and closes it (#555)", async () => {
+    await openWorkWithNotes([wholeBlockMark()]);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: "View note" }));
-    await screen.findByRole("complementary", { name: "Block notes" });
+    // A lone bodyless mark has no editor, so its opener routes to the chooser.
+    await user.click(screen.getByRole("button", { name: "Open mark on 'Intro'" }));
+    const panel = await screen.findByRole("complementary", { name: "Block notes" });
+    expect(within(panel).getByText("Mark")).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "Close" }));
 
@@ -2470,10 +2547,10 @@ describe("ReaderPage note management", () => {
   });
 
   it("jumps back to the block from the block-notes panel", async () => {
-    const container = await openWorkWithNotes([makeNote()]);
+    const container = await openWorkWithNotes([wholeBlockMark()]);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: "View note" }));
+    await user.click(screen.getByRole("button", { name: "Open mark on 'Intro'" }));
     const panel = await screen.findByRole("complementary", { name: "Block notes" });
     await user.click(within(panel).getByRole("button", { name: "Jump to text: Intro" }));
 

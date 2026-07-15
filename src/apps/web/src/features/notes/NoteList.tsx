@@ -35,7 +35,7 @@ export function NoteList({
           <li className="noteCard" key={note.entryId}>
             <div className="noteCardHeader">
               <span className={`noteCardChip ${noteChipSwatchClass(note.kind)}`}>
-                {isMark ? "Gem" : "Note"}
+                {isMark ? "Mark" : "Note"}
               </span>
             </div>
             <p className="noteCardSnippet">“{note.anchor.selectedTextSnapshot}”</p>

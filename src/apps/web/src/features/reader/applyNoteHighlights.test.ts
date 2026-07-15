@@ -110,7 +110,7 @@ describe("applyNoteHighlights", () => {
     '<div data-block-id="b1">First block text.</div>' +
     '<div data-block-id="b2">Second block text.</div>';
 
-  it("wraps exactly the anchored text in an interactive highlight span (block-id + offset)", () => {
+  it("wraps exactly the anchored text in an inert decoration span (block-id + offset)", () => {
     const container = reader(twoBlocks);
 
     const cleanup = applyNoteHighlights(container, [
@@ -128,10 +128,12 @@ describe("applyNoteHighlights", () => {
 
     const [mark] = marks(container);
     expect(mark?.textContent).toBe("block");
+    expect(mark?.className).toBe("noteMark noteMark--note");
     expect(mark?.getAttribute("data-note-id")).toBe("n1");
-    expect(mark?.getAttribute("aria-label")).toBe("Note on 'block'");
-    expect(mark?.getAttribute("role")).toBe("button");
-    expect(mark?.getAttribute("tabindex")).toBe("0");
+    // The span is semantic decoration only (#555) — never an interactive control.
+    expect(mark?.getAttribute("role")).toBeNull();
+    expect(mark?.getAttribute("tabindex")).toBeNull();
+    expect(mark?.getAttribute("aria-label")).toBeNull();
 
     cleanup();
     expect(marks(container)).toHaveLength(0);
