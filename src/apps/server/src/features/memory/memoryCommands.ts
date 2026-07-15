@@ -16,19 +16,13 @@ import {
   type ReviewState
 } from "@whetstone/domain";
 import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
-import { eq, inArray, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import {
-  entries,
-  entryLinks,
-  memoryNotes,
-  memoryPrompts,
-  personalEntries
-} from "../../db/schema.js";
+import { entries, entryLinks, memoryPrompts, notes, personalEntries } from "../../db/schema.js";
+import { deleteNoteInTx, insertNoteInTx } from "../notes/noteCommands.js";
 import {
   deleteReviewCard,
-  deleteReviewCardsAndEvents,
   rateReviewCard,
   seedReviewCard,
   snoozeReviewCard
@@ -121,10 +115,12 @@ async function resolveAnswer(
 // caller's transaction — and card seeding can compose in the same atomic write as the note/prompts.
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
-// Atomically insert a memory note (its Entry + ownership facet + row), its optional `derived_from`
-// provenance link, and each prompt (Entry + row + `contains` link), seeding a shared review card for each
-// ready prompt in the same transaction. Returns the seeded review states keyed by prompt id (absent for a
-// draft) so the caller can project each prompt's schedule without a re-read. Shared by every deposit path.
+// Atomically insert a memory note (through the shared Notes boundary: its Entry + ownership facet + unified
+// `notes` row + optional `derived_from` provenance link), and each prompt (Entry + row + `contains` link),
+// seeding a shared review card for each ready prompt in the same transaction. A memory note is unanchored,
+// so it passes `anchor: null`; its capture source and body flow straight into the one note facet. Returns
+// the seeded review states keyed by prompt id (absent for a draft) so the caller can project each prompt's
+// schedule without a re-read. Shared by every deposit path.
 async function writeMemory(
   tx: Transaction,
   params: Readonly<{
@@ -136,22 +132,17 @@ async function writeMemory(
   }>
 ): Promise<Map<string, ReviewState>> {
   const { noteRow, derivedFromEntryId, promptRows, userId, now } = params;
-  await tx.insert(entries).values({ id: noteRow.entryId, type: "memory_note" });
-  await tx.insert(personalEntries).values({
-    createdAt: now,
-    entryId: noteRow.entryId,
-    occurredAt: now,
-    updatedAt: now,
+  await insertNoteInTx(tx, {
+    anchor: null,
+    bodyDoc: noteRow.bodyDoc,
+    bodyText: noteRow.bodyText,
+    captureSource: noteRow.captureSource,
+    derivedFromEntryId,
+    kind: "note",
+    noteEntryId: toEntryId(noteRow.entryId),
+    now,
     userId
   });
-  await tx.insert(memoryNotes).values(noteRow);
-  if (derivedFromEntryId !== null) {
-    await tx.insert(entryLinks).values({
-      fromEntryId: noteRow.entryId,
-      toEntryId: derivedFromEntryId,
-      type: "derived_from"
-    });
-  }
   const reviews = new Map<string, ReviewState>();
   for (const promptRow of promptRows) {
     await tx.insert(entries).values({ id: promptRow.entryId, type: "memory_prompt" });
@@ -357,9 +348,9 @@ export async function editMemoryNote(
   }
   await dependencies.db.transaction(async (tx) => {
     await tx
-      .update(memoryNotes)
+      .update(notes)
       .set({ bodyDoc: createTextDocument(noteText), bodyText: noteText })
-      .where(eq(memoryNotes.entryId, noteId));
+      .where(eq(notes.entryId, noteId));
     await tx
       .update(personalEntries)
       .set({ updatedAt: now })
@@ -473,10 +464,10 @@ export async function addPromptToNote(
   return { detail: detail as MemoryNoteDetailDto, status: "added" };
 }
 
-// Delete a memory note and everything under it (#573), atomically and FK-safe (children first): every
-// prompt's shared review card + append-only events, then the note/prompt `entry_links`, then the prompt
-// rows, then the prompt Entries, then the note row, its personal-entry facet, and finally the note Entry.
-// A missing or non-owned note is `not_found` — one user can never delete another's note.
+// Delete a memory note and everything under it (#573, #620), atomically, through the single Notes-owned
+// cascade `deleteNoteInTx`: every prompt's shared review card + append-only events, the note/prompt
+// `entry_links`, the prompt rows and Entries, then the note's row, its personal-entry facet, and the note
+// Entry. A missing or non-owned note is `not_found` — one user can never delete another's note.
 export async function deleteMemoryNote(
   dependencies: MemoryDependencies,
   noteId: string,
@@ -486,31 +477,8 @@ export async function deleteMemoryNote(
   if (note === undefined) {
     return { status: "not_found" };
   }
-  const promptRows = await dependencies.db
-    .select({ entryId: memoryPrompts.entryId })
-    .from(memoryPrompts)
-    .where(eq(memoryPrompts.noteEntryId, noteId));
-  const promptIds = promptRows.map((row) => row.entryId);
-  const linkEntryIds = [noteId, ...promptIds];
 
-  await dependencies.db.transaction(async (tx) => {
-    await deleteReviewCardsAndEvents(tx, promptIds);
-    await tx
-      .delete(entryLinks)
-      .where(
-        or(
-          inArray(entryLinks.fromEntryId, linkEntryIds),
-          inArray(entryLinks.toEntryId, linkEntryIds)
-        )
-      );
-    await tx.delete(memoryPrompts).where(eq(memoryPrompts.noteEntryId, noteId));
-    if (promptIds.length > 0) {
-      await tx.delete(entries).where(inArray(entries.id, promptIds));
-    }
-    await tx.delete(memoryNotes).where(eq(memoryNotes.entryId, noteId));
-    await tx.delete(personalEntries).where(eq(personalEntries.entryId, noteId));
-    await tx.delete(entries).where(eq(entries.id, noteId));
-  });
+  await dependencies.db.transaction((tx) => deleteNoteInTx(tx, noteId));
 
   return { status: "deleted" };
 }
