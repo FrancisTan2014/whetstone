@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { isValidDocument } from "@whetstone/document";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -484,6 +485,94 @@ describe("0052 unify-notes migration", () => {
     await expect(applyMigrationFile(pglite)).rejects.toThrow(
       /malformed body_doc.*or a blank body_text/u
     );
+  });
+
+  // The tightened Guard D rejects a `doc`-typed object whose STRUCTURE fails the shared document schema,
+  // not just a non-`doc` shape — after #620 a copied body becomes a canonical note validated by
+  // `isValidDocument`. Each case below is a top-level `doc` that `isValidDocument` rejects (asserted), so
+  // the migration must abort rather than seed an invalid canonical note.
+  it("aborts (guard D) when a doc's content is not an array", async () => {
+    const badDoc = { type: "doc", content: "not-an-array" };
+    expect(isValidDocument(badDoc)).toBe(false);
+
+    const pglite = new PGlite();
+    await createPreMigrationSchema(pglite);
+    await seedEntry(pglite, "bad-content", "memory_note");
+    await seedMemoryNote(pglite, "bad-content", "manual", "present", badDoc);
+    await seedPersonalEntry(pglite, "bad-content", "user-1", "2026-02-01T00:00:00.000Z");
+
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(/structurally invalid body_doc/u);
+  });
+
+  it("aborts (guard D) when a doc contains an unsupported child node type", async () => {
+    const badDoc = { type: "doc", content: [{ type: "bogusNode", content: [] }] };
+    expect(isValidDocument(badDoc)).toBe(false);
+
+    const pglite = new PGlite();
+    await createPreMigrationSchema(pglite);
+    await seedEntry(pglite, "bad-node", "memory_note");
+    await seedMemoryNote(pglite, "bad-node", "manual", "present", badDoc);
+    await seedPersonalEntry(pglite, "bad-node", "user-1", "2026-02-01T00:00:00.000Z");
+
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(/structurally invalid body_doc/u);
+  });
+
+  it("aborts (guard D) when a text run carries an unsupported mark type", async () => {
+    const badDoc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "blink" }] }] }
+      ]
+    };
+    expect(isValidDocument(badDoc)).toBe(false);
+
+    const pglite = new PGlite();
+    await createPreMigrationSchema(pglite);
+    await seedEntry(pglite, "bad-mark", "memory_note");
+    await seedMemoryNote(pglite, "bad-mark", "manual", "present", badDoc);
+    await seedPersonalEntry(pglite, "bad-mark", "user-1", "2026-02-01T00:00:00.000Z");
+
+    await expect(applyMigrationFile(pglite)).rejects.toThrow(/structurally invalid body_doc/u);
+  });
+
+  it("migrates a valid RICH body (heading, nested blockquote, bold mark) untouched", async () => {
+    const richDoc = {
+      type: "doc",
+      content: [
+        { type: "heading", content: [{ type: "text", text: "Heading" }] },
+        {
+          type: "blockquote",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "bold", marks: [{ type: "bold" }] }]
+            }
+          ]
+        }
+      ]
+    };
+    expect(isValidDocument(richDoc)).toBe(true);
+
+    const pglite = new PGlite();
+    await createPreMigrationSchema(pglite);
+    await seedEntry(pglite, "rich", "memory_note");
+    await seedMemoryNote(pglite, "rich", "manual", "rich body", richDoc);
+    await seedPersonalEntry(pglite, "rich", "user-1", "2026-02-01T00:00:00.000Z");
+
+    await expect(applyMigrationFile(pglite)).resolves.toBeUndefined();
+
+    const row = await pglite.query<{
+      body_doc: unknown;
+      body_text: string;
+      capture_source: string;
+      kind: string;
+    }>("SELECT body_doc, body_text, capture_source, kind FROM notes WHERE entry_id = 'rich'");
+    expect(row.rows[0]).toEqual({
+      body_doc: richDoc,
+      body_text: "rich body",
+      capture_source: "manual",
+      kind: "note"
+    });
   });
 
   it("aborts (guard E) when a memory note has an invalid capture_source", async () => {

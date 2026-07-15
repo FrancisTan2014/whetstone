@@ -60,6 +60,55 @@ BEGIN
 		RAISE EXCEPTION 'Migration 0052 aborted: a memory_notes row has a malformed body_doc (not a doc object) or a blank body_text. Repair before migrating.';
 	END IF;
 END $$;--> statement-breakpoint
+-- Guard D (structure): a copied `body_doc` becomes a canonical note body, so it must satisfy the shared
+-- document schema (`isValidDocument`, ProseMirror/Tiptap) — not merely be a `doc`-typed object with
+-- non-blank text. SQL cannot run the schema's content expressions, but it CAN reject the structural
+-- corruption that makes a row fail `isValidDocument`: walk every node and refuse an unknown node or mark
+-- type, a non-array `content`, a text/leaf shape violation, or a malformed `marks` list. The node and mark
+-- vocabularies are inlined FROZEN at this migration's point in time (they mirror
+-- `documentNodeNames`/`documentMarkNames` in packages/document/src/nodes.ts as of #620); a migration is
+-- immutable history validating the data that existed then, so freezing the vocabulary here is correct, not
+-- drift. The authoritative runtime validator stays `isValidDocument`.
+DO $$
+BEGIN
+	IF EXISTS (
+		WITH RECURSIVE walk(node) AS (
+			SELECT mn."body_doc" FROM "memory_notes" mn
+			UNION ALL
+			SELECT child.value
+			FROM walk w
+			CROSS JOIN LATERAL jsonb_array_elements(w.node -> 'content') AS child(value)
+			WHERE jsonb_typeof(w.node) = 'object' AND jsonb_typeof(w.node -> 'content') = 'array'
+		)
+		SELECT 1 FROM walk w
+		WHERE jsonb_typeof(w.node) IS DISTINCT FROM 'object'
+			OR jsonb_typeof(w.node -> 'type') IS DISTINCT FROM 'string'
+			OR (w.node ->> 'type') NOT IN (
+				'doc', 'text', 'paragraph', 'heading', 'blockquote', 'codeBlock', 'listItem', 'bulletList',
+				'orderedList', 'tableCell', 'tableHeader', 'tableRow', 'table', 'image', 'figureCaption',
+				'figure', 'definitionTerm', 'definitionDescription', 'definitionList', 'callout',
+				'footnoteMarker', 'footnoteTarget', 'unknown'
+			)
+			OR ((w.node -> 'content') IS NOT NULL AND jsonb_typeof(w.node -> 'content') IS DISTINCT FROM 'array')
+			OR ((w.node -> 'text') IS NOT NULL AND jsonb_typeof(w.node -> 'text') IS DISTINCT FROM 'string')
+			OR ((w.node ->> 'type') = 'text'
+				AND (jsonb_typeof(w.node -> 'text') IS DISTINCT FROM 'string' OR (w.node -> 'content') IS NOT NULL))
+			OR ((w.node ->> 'type') IS DISTINCT FROM 'text' AND (w.node -> 'text') IS NOT NULL)
+			OR ((w.node -> 'marks') IS NOT NULL AND (
+				jsonb_typeof(w.node -> 'marks') IS DISTINCT FROM 'array'
+				OR EXISTS (
+					SELECT 1 FROM jsonb_array_elements(
+						CASE WHEN jsonb_typeof(w.node -> 'marks') = 'array' THEN w.node -> 'marks' ELSE '[]'::jsonb END
+					) AS m(value)
+					WHERE jsonb_typeof(m.value) IS DISTINCT FROM 'object'
+						OR jsonb_typeof(m.value -> 'type') IS DISTINCT FROM 'string'
+						OR (m.value ->> 'type') NOT IN ('bold', 'italic', 'code', 'link')
+				)
+			))
+	) THEN
+		RAISE EXCEPTION 'Migration 0052 aborted: a memory_notes row has a structurally invalid body_doc (an unknown node or mark type, non-array content, or a malformed node) that would fail the shared document schema. Repair before migrating.';
+	END IF;
+END $$;--> statement-breakpoint
 -- Guard E) Capture source: must be one of the unified note capture sources.
 DO $$
 BEGIN
