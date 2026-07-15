@@ -939,8 +939,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-inline-size: 44px;
-  min-block-size: 44px;
+  /* 46px, not 44px: Chromium can resolve a 44px min box to a fractional 43.9999… that dips just
+     under the WCAG 2.5.5 target, so the measured hit target (and its geometry regression) is unstable.
+     A small buffer keeps the rendered opener safely >=44px in both dimensions (cf. selectionToolbar). */
+  min-inline-size: 46px;
+  min-block-size: 46px;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
