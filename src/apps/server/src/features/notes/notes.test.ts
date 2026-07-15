@@ -580,6 +580,67 @@ describe("create note route", () => {
   });
 });
 
+describe("create standalone note route (#575)", () => {
+  function postStandaloneNote(payload: unknown): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "POST", payload, url: "/api/notes" });
+  }
+
+  it("creates an anchorless note carrying only a body, deriving its readable text", async () => {
+    const response = await postStandaloneNote({ bodyDoc: createTextDocument("a loose thought") });
+
+    expect(response.statusCode).toBe(201);
+    const note = response.json() as NoteDto;
+    expect(note.kind).toBe("note");
+    expect(note.anchor).toBeNull();
+    expect(note.blockEntryId).toBeNull();
+    expect(note.bodyDoc).toEqual(createTextDocument("a loose thought"));
+    // The readable text is derived on the server, never trusted from the client.
+    expect(note.bodyText).toBe("a loose thought");
+
+    const noteRows = await context.db.select().from(notes).where(eq(notes.entryId, note.entryId));
+    expect(noteRows[0]?.kind).toBe("note");
+    expect(noteRows[0]?.captureSource).toBe("manual");
+    expect(noteRows[0]?.bodyText).toBe("a loose thought");
+
+    // A standalone note has no source anchor and no annotates link.
+    const anchorRows = await context.db
+      .select()
+      .from(noteAnchors)
+      .where(eq(noteAnchors.noteEntryId, note.entryId));
+    expect(anchorRows).toEqual([]);
+    const links = await context.db
+      .select()
+      .from(entryLinks)
+      .where(eq(entryLinks.fromEntryId, note.entryId));
+    expect(links).toEqual([]);
+
+    // It surfaces on the cross-work overview as an unanchored, owned note.
+    const overview = await context.server.inject({ method: "GET", url: "/api/notes" });
+    const listed = (overview.json() as NotesOverviewListDto).notes.find(
+      (candidate) => candidate.entryId === note.entryId
+    );
+    expect(listed?.anchor).toBeNull();
+    expect(listed?.workEntryId).toBeNull();
+  });
+
+  it("rejects a blank body at the boundary", async () => {
+    const response = await postStandaloneNote({ bodyDoc: createTextDocument("   ") });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects an anchor smuggled into a standalone note request", async () => {
+    const response = await postStandaloneNote({
+      anchor: { blockEntryId: "b", contextSnapshot: "c", selectedTextSnapshot: "c" },
+      bodyDoc: createTextDocument("x")
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+});
+
 describe("create mark route", () => {
   function postMark(
     workEntryId: string,

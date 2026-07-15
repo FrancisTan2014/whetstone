@@ -4,14 +4,17 @@ import { createTextDocument } from "@whetstone/document";
 
 import {
   depositMemoryRequestSchema,
+  enrollNoteRequestSchema,
   getMemoryPromptToolInputSchema,
   importMemoryRequestSchema,
   listDuePromptsToolInputSchema,
   memoryPromptCardDtoSchema,
+  memoryPromptDtoSchema,
   parseAddMemoryPromptRequest,
   parseDepositMemoryRequest,
   parseEditMemoryNoteRequest,
   parseEditMemoryPromptRequest,
+  parseEnrollNoteRequest,
   parseImportMemoryRequest,
   parseImportMemoryResultDto,
   parseMemoryDepositDto,
@@ -21,7 +24,9 @@ import {
   parseMemoryNoteSummaryDto,
   parseMemoryPromptCardDto,
   parseMemoryPromptCardListDto,
+  parseNoteReviewDto,
   parseRecordMemoryReviewRequest,
+  promptCardStatusSchema,
   recordReviewToolInputSchema,
   searchMemoryToolInputSchema
 } from "./memoryContracts.js";
@@ -190,6 +195,7 @@ describe("memoryDepositDtoSchema", () => {
           cueText: "when holding back",
           answerText: "遠慮",
           chunkId: "chunk-1",
+          cardStatus: "active",
           review
         }
       ]
@@ -265,6 +271,7 @@ describe("Memory note list/detail DTOs (#573)", () => {
           cueText: "cue",
           answerText: null,
           chunkId: null,
+          cardStatus: null,
           review: null
         }
       ]
@@ -351,6 +358,7 @@ describe("import batch contracts (#574)", () => {
               cueText: "per",
               answerText: null,
               chunkId: null,
+              cardStatus: null,
               review
             }
           ]
@@ -359,5 +367,77 @@ describe("import batch contracts (#574)", () => {
     });
     expect(result.imported).toHaveLength(1);
     expect(result.imported[0]?.prompts[0]?.lifecycle).toBe("draft");
+  });
+});
+
+describe("deliberate review enrollment contracts (#575)", () => {
+  it("parses a cue/reveal enrollment, deriving docs when omitted and keeping them when supplied", () => {
+    const plain = parseEnrollNoteRequest({
+      cueText: "spill the beans",
+      answerText: "to reveal a secret"
+    });
+    expect(plain.cueText).toBe("spill the beans");
+    expect(plain.answerText).toBe("to reveal a secret");
+    expect(plain.cueDoc).toBeUndefined();
+
+    const rich = parseEnrollNoteRequest({
+      cueText: "spill the beans",
+      answerText: "to reveal a secret",
+      cueDoc: createTextDocument("spill the beans"),
+      answerDoc: createTextDocument("to reveal a secret")
+    });
+    expect(rich.cueDoc).toEqual(createTextDocument("spill the beans"));
+  });
+
+  it("requires both a non-blank cue and a non-blank answer, and rejects extra keys", () => {
+    expect(() => enrollNoteRequestSchema.parse({ cueText: "cue" })).toThrow();
+    expect(() => enrollNoteRequestSchema.parse({ cueText: "  ", answerText: "a" })).toThrow();
+    expect(() => enrollNoteRequestSchema.parse({ cueText: "c", answerText: "  " })).toThrow();
+    expect(() =>
+      enrollNoteRequestSchema.parse({ cueText: "c", answerText: "a", extra: true })
+    ).toThrow();
+  });
+
+  it("accepts the two card statuses and rejects anything else", () => {
+    expect(promptCardStatusSchema.parse("active")).toBe("active");
+    expect(promptCardStatusSchema.parse("paused")).toBe("paused");
+    expect(() => promptCardStatusSchema.parse("archived")).toThrow();
+  });
+
+  it("requires cardStatus on a prompt DTO (nullable), rejecting a missing field", () => {
+    const base = {
+      promptId: "p1",
+      noteId: "note-1",
+      lifecycle: "ready",
+      cueText: "cue",
+      answerText: "ans",
+      chunkId: null,
+      review
+    } as const;
+    expect(memoryPromptDtoSchema.parse({ ...base, cardStatus: "paused" }).cardStatus).toBe(
+      "paused"
+    );
+    expect(memoryPromptDtoSchema.parse({ ...base, cardStatus: null }).cardStatus).toBeNull();
+    expect(() => memoryPromptDtoSchema.parse(base)).toThrow();
+  });
+
+  it("parses a note-review DTO of a note and its prompts", () => {
+    const dto = parseNoteReviewDto({
+      noteId: "note-1",
+      prompts: [
+        {
+          promptId: "p1",
+          noteId: "note-1",
+          lifecycle: "ready",
+          cueText: "cue",
+          answerText: "ans",
+          chunkId: null,
+          cardStatus: "active",
+          review
+        }
+      ]
+    });
+    expect(dto.noteId).toBe("note-1");
+    expect(dto.prompts[0]?.cardStatus).toBe("active");
   });
 });

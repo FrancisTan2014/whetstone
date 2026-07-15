@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
   createMarkRequestSchema,
   createNoteRequestSchema,
+  createStandaloneNoteRequestSchema,
   parseCreateMarkRequest,
   parseCreateNoteRequest,
+  parseCreateStandaloneNoteRequest,
   parseUpdateNoteRequest,
   updateNoteRequestSchema
 } from "./noteContracts.js";
@@ -47,6 +49,19 @@ describe("createNoteRequestSchema", () => {
     // A malformed document fails the shared document validation.
     expect(() => parseCreateNoteRequest({ anchor, bodyDoc: { type: "not-a-doc" } })).toThrow();
     expect(createNoteRequestSchema.safeParse({ anchor, bodyDoc, extra: true }).success).toBe(false);
+  });
+});
+
+describe("createStandaloneNoteRequestSchema", () => {
+  it("parses an anchorless note carrying only a non-blank body", () => {
+    const parsed = parseCreateStandaloneNoteRequest({ bodyDoc });
+
+    expect(parsed.bodyDoc).toEqual(bodyDoc);
+  });
+
+  it("rejects a blank body and unexpected keys", () => {
+    expect(() => parseCreateStandaloneNoteRequest({ bodyDoc: createTextDocument("   ") })).toThrow();
+    expect(createStandaloneNoteRequestSchema.safeParse({ bodyDoc, anchor }).success).toBe(false);
   });
 });
 
