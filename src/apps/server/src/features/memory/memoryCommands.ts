@@ -129,9 +129,15 @@ async function writeMemory(
     promptRows: ReadonlyArray<MemoryPromptRow>;
     userId: string;
     now: Date;
+    // Whether a ready prompt is enrolled in review on write (its card seeded). A deliberate deposit
+    // enrolls (`true`); a pasted import lands ready but CARDLESS (#575) — the learner enrolls each note
+    // later via "Add to review" — so it passes `false` and no card is seeded, leaving the reviews map
+    // empty. A cardless prompt is never due (the due query inner-joins active cards), so an import never
+    // surfaces for review before the learner deliberately enrolls it.
+    seedCards: boolean;
   }>
 ): Promise<Map<string, ReviewState>> {
-  const { noteRow, derivedFromEntryId, promptRows, userId, now } = params;
+  const { noteRow, derivedFromEntryId, promptRows, userId, now, seedCards } = params;
   await insertNoteInTx(tx, {
     anchor: null,
     bodyDoc: noteRow.bodyDoc,
@@ -152,7 +158,7 @@ async function writeMemory(
       toEntryId: promptRow.entryId,
       type: "contains"
     });
-    if (promptRow.lifecycle === "ready") {
+    if (seedCards && promptRow.lifecycle === "ready") {
       const state = await seedReviewCard(tx, {
         targetEntryId: promptRow.entryId,
         userId,
@@ -174,7 +180,7 @@ export async function depositMemory(
   const prepared = await prepareDeposit(dependencies, request, now);
 
   const reviews = await dependencies.db.transaction((tx) =>
-    writeMemory(tx, { ...prepared, userId, now })
+    writeMemory(tx, { ...prepared, userId, now, seedCards: true })
   );
 
   return toMemoryDepositDto(
@@ -244,7 +250,7 @@ export async function importMemoryBatch(
   const results: MemoryDepositDto[] = [];
   await dependencies.db.transaction(async (tx) => {
     for (const deposit of prepared) {
-      const reviews = await writeMemory(tx, { ...deposit, userId, now });
+      const reviews = await writeMemory(tx, { ...deposit, userId, now, seedCards: false });
       results.push(
         toMemoryDepositDto(deposit.noteRow, deposit.derivedFromEntryId, deposit.promptRows, reviews)
       );
@@ -305,7 +311,7 @@ export async function recordPromptReview(
   if (result.status === "not_found") {
     return { status: "not_scheduled" };
   }
-  return { prompt: toMemoryPromptDto(existing, result.state), status: "recorded" };
+  return { prompt: toMemoryPromptDto(existing, result.state, "active"), status: "recorded" };
 }
 
 // Snooze defers a prompt OUT of today's batch by moving ONLY its shared card's `due_at` forward one day.
@@ -326,7 +332,7 @@ export async function snoozePrompt(
     return { status: "not_scheduled" };
   }
   return {
-    prompt: toMemoryPromptDto(existing, reviewStateFromCard(result.card)),
+    prompt: toMemoryPromptDto(existing, reviewStateFromCard(result.card), result.card.status),
     status: "snoozed"
   };
 }
@@ -398,7 +404,8 @@ export async function editMemoryPrompt(
   return {
     prompt: toMemoryPromptDto(
       updated as MemoryPromptRow,
-      card === undefined ? null : reviewStateFromCard(card)
+      card === undefined ? null : reviewStateFromCard(card),
+      card === undefined ? null : card.status
     ),
     status: "updated"
   };

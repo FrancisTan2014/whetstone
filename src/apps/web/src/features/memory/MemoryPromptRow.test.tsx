@@ -17,6 +17,7 @@ const mockedEdit = vi.mocked(editMemoryPrompt);
 function makePrompt(overrides: Partial<MemoryPromptDto> = {}): MemoryPromptDto {
   return {
     answerText: null,
+    cardStatus: null,
     chunkId: null,
     cueText: "spill the beans",
     lifecycle: "draft",

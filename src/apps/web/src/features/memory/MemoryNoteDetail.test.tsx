@@ -48,6 +48,7 @@ function makeDetail(bodyText = "spill the beans"): MemoryNoteDetailDto {
     prompts: [
       {
         answerText: null,
+        cardStatus: null,
         chunkId: null,
         cueText: "spill the beans",
         lifecycle: "draft",

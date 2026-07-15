@@ -1,6 +1,7 @@
 import {
   createMarkRequestSchema,
   createNoteRequestSchema,
+  createStandaloneNoteRequestSchema,
   updateNoteRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
@@ -9,6 +10,7 @@ import type { FastifyInstance } from "fastify";
 import {
   createMark,
   createNote,
+  createStandaloneNote,
   deleteNote,
   updateNote,
   type NotesDependencies
@@ -26,6 +28,29 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
   server.get("/api/notes", async (request) => ({
     notes: await listNotesForUser(dependencies.db, request.server.currentUser.getCurrentUserId())
   }));
+
+  // Create a manual note from the Notes overview (#575): an unanchored note with `capture_source =
+  // 'manual'` and no prompt/card. Review enrollment is always a separate, explicit action.
+  server.post("/api/notes", async (request, reply) => {
+    const parsed = createStandaloneNoteRequestSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequestBody);
+    }
+
+    const note = await createStandaloneNote(
+      dependencies,
+      parsed.data,
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    request.log.info(
+      { noteEntryId: note.entryId, route: "POST /api/notes" },
+      "standalone_note_created"
+    );
+
+    return reply.code(201).send(note);
+  });
 
   server.get<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request) => ({
     notes: await listNotesForWork(

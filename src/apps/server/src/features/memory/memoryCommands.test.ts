@@ -322,11 +322,17 @@ describe("importMemoryBatch (#574)", () => {
       "push back\n\npushback",
       "diem"
     ]);
-    // Answerless terms save as unscheduled drafts; the one with an answer is scheduled.
+    // Answerless terms save as unscheduled drafts; the one with an answer lands READY but CARDLESS (#575)
+    // — an import never enrolls a prompt in review, so no card is seeded and it is not yet due.
     expect(imported[0]?.prompts[0]?.lifecycle).toBe("draft");
     expect(imported[1]?.prompts[0]?.lifecycle).toBe("ready");
     expect(imported[1]?.prompts[0]?.answerText).toBe("pushback");
+    expect(imported[1]?.prompts[0]?.review).toBeNull();
+    expect(imported[1]?.prompts[0]?.cardStatus).toBeNull();
     expect(imported[2]?.prompts[0]?.lifecycle).toBe("draft");
+
+    // No import seeds a review card — the whole batch is cardless until the learner deliberately enrolls.
+    expect(await context.db.select().from(reviewCards)).toHaveLength(0);
 
     // Every note is a first-class owned Entry in the unified `notes` facet with a personal_entries facet.
     const noteRows = await context.db.select().from(notes);

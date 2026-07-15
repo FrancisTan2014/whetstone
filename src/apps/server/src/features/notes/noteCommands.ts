@@ -3,6 +3,7 @@ import { documentReadableText, type DocumentNodeJSON } from "@whetstone/document
 import type {
   CreateMarkRequest,
   CreateNoteRequest,
+  CreateStandaloneNoteRequest,
   NoteDto,
   UpdateNoteRequest
 } from "@whetstone/contracts";
@@ -211,6 +212,48 @@ export async function createNote(
   return {
     note: readerNoteDto({ anchor, bodyDoc, bodyText, kind: "note", noteEntryId, now }),
     status: "created"
+  };
+}
+
+// Create a manual note from the Notes overview (#575): a deliberate "New note" with no source anchor.
+// Persist an unanchored `note` (its body + `capture_source = 'manual'`, no anchor, no prompt/card) through
+// the shared Notes boundary — review enrollment is always a later, explicit step. The readable `body_text`
+// is derived here from the canonical document, never trusted from the client.
+export async function createStandaloneNote(
+  dependencies: NotesDependencies,
+  request: CreateStandaloneNoteRequest,
+  userId: string
+): Promise<NoteDto> {
+  const noteEntryId = toEntryId(dependencies.createEntryId());
+  const bodyDoc = request.bodyDoc;
+  const bodyText = documentReadableText(bodyDoc);
+  const now = dependencies.now();
+
+  await dependencies.db.transaction((tx) =>
+    insertNoteInTx(tx, {
+      anchor: null,
+      bodyDoc,
+      bodyText,
+      captureSource: "manual",
+      kind: "note",
+      noteEntryId,
+      now,
+      userId
+    })
+  );
+
+  const iso = now.toISOString();
+  return {
+    anchor: null,
+    blockEntryId: null,
+    bodyDoc,
+    bodyText,
+    captureSource: "manual",
+    createdAt: iso,
+    entryId: noteEntryId,
+    kind: "note",
+    occurredAt: iso,
+    updatedAt: iso
   };
 }
 

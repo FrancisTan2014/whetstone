@@ -42,6 +42,7 @@ import {
   registerMemoryReviewRoutes,
   registerMemoryRoutes
 } from "../features/memory/memoryRoutes.js";
+import { registerMemoryEnrollmentRoutes } from "../features/memory/memoryEnrollmentRoutes.js";
 import type { MemoryRouteDependencies } from "../features/memory/memoryRoutes.js";
 import { registerTodayRoutes } from "../features/today/todayRoutes.js";
 import type { TodayRouteDependencies } from "../features/today/todayRoutes.js";
@@ -161,6 +162,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   if (options.recall !== undefined) {
     registerMemoryReviewRoutes(server, options.recall);
     registerMemoryRoutes(server, options.recall);
+    registerMemoryEnrollmentRoutes(server, options.recall);
   }
 
   if (options.today !== undefined) {

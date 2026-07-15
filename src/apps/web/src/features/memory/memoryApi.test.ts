@@ -48,6 +48,7 @@ function makeNote(overrides: Partial<MemoryNoteDto> = {}): MemoryNoteDto {
 function makePrompt(overrides: Partial<MemoryPromptDto> = {}): MemoryPromptDto {
   return {
     answerText: null,
+    cardStatus: null,
     chunkId: null,
     cueText: "spill the beans",
     lifecycle: "draft",

@@ -78,8 +78,14 @@ export const memoryNoteListDtoSchema = z
 export type MemoryNoteListDto = z.infer<typeof memoryNoteListDtoSchema>;
 
 // A Memory prompt DTO in full (used by the MCP get/search/deposit surfaces): it may be a `draft`
-// (no reveal, no enrolled card) or `ready` (a revealable answer; `review` carries the card's FSRS state
-// when the prompt is enrolled, null otherwise).
+// (no reveal, no enrolled card) or `ready` (a revealable answer). `review` carries the card's FSRS state
+// when the prompt is enrolled, null otherwise; `cardStatus` is the card's lifecycle — `active` (in due
+// selection) or `paused` (withheld) — and is null exactly when the prompt has no card (a draft, or a
+// ready-but-unenrolled prompt awaiting an explicit Add to review).
+export const promptCardStatusSchema = z.enum(["active", "paused"]);
+
+export type PromptCardStatus = z.infer<typeof promptCardStatusSchema>;
+
 export const memoryPromptDtoSchema = z
   .object({
     promptId: z.string(),
@@ -88,7 +94,8 @@ export const memoryPromptDtoSchema = z
     cueText: z.string(),
     answerText: z.string().nullable(),
     chunkId: z.string().nullable(),
-    review: reviewStateDtoSchema.nullable()
+    review: reviewStateDtoSchema.nullable(),
+    cardStatus: promptCardStatusSchema.nullable()
   })
   .strict();
 
@@ -204,6 +211,38 @@ export type MemoryPromptInput = z.infer<typeof memoryPromptInputSchema>;
 export const addMemoryPromptRequestSchema = memoryPromptInputSchema;
 
 export type AddMemoryPromptRequest = z.infer<typeof addMemoryPromptRequestSchema>;
+
+// Enroll a note in review via the explicit "Add to review" cue/reveal confirmation (#575). Unlike a raw
+// deposit prompt, BOTH faces are required and non-blank — the learner has confirmed a real retrieval
+// pair — so the server always creates a ready prompt and one active card. `cueDoc`/`answerDoc` optionally
+// carry the rich documents the compact editor produced; absent, the server derives them from the text.
+export const enrollNoteRequestSchema = z
+  .object({
+    cueText: z.string().refine(isNonBlank, { message: "cueText must be non-empty." }),
+    answerText: z.string().refine(isNonBlank, { message: "answerText must be non-empty." }),
+    cueDoc: memoryDocumentSchema.nullish(),
+    answerDoc: memoryDocumentSchema.nullish()
+  })
+  .strict();
+
+export type EnrollNoteRequest = z.infer<typeof enrollNoteRequestSchema>;
+
+// A note's review settings (#575): the note it belongs to and every prompt hanging off it (each with its
+// card state + status), so the Reader panel / Notes overview can list prompts, pause/resume/restart, and
+// add another prompt. The same shape is returned after enrolling, so the client refreshes in one round-trip.
+export const noteReviewDtoSchema = z
+  .object({ noteId: z.string(), prompts: z.array(memoryPromptDtoSchema) })
+  .strict();
+
+export type NoteReviewDto = z.infer<typeof noteReviewDtoSchema>;
+
+export function parseEnrollNoteRequest(value: unknown): EnrollNoteRequest {
+  return enrollNoteRequestSchema.parse(value);
+}
+
+export function parseNoteReviewDto(value: unknown): NoteReviewDto {
+  return noteReviewDtoSchema.parse(value);
+}
 
 // Deposit a Memory: one note (its durable body + capture source + optional provenance) and at least one
 // retrieval prompt. The owning user is resolved by the server, never supplied here.

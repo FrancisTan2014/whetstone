@@ -4,7 +4,8 @@ import type {
   MemoryNoteDto,
   MemoryNoteSummaryDto,
   MemoryPromptCardDto,
-  MemoryPromptDto
+  MemoryPromptDto,
+  PromptCardStatus
 } from "@whetstone/contracts";
 import type { CaptureSource, ReviewState } from "@whetstone/domain";
 import type { DocumentNodeJSON } from "@whetstone/document";
@@ -73,10 +74,12 @@ function isReadyRow(row: MemoryPromptRow): row is ReadyPromptRow {
 }
 
 // Project a prompt row plus its review state (from the shared card, or null when the prompt is not
-// enrolled) into the full prompt DTO.
+// enrolled) into the full prompt DTO. `cardStatus` is the card's lifecycle (`active`/`paused`), null when
+// the prompt has no card — so the review surface can offer Pause/Resume without a second read.
 export function toMemoryPromptDto(
   row: MemoryPromptRow,
-  review: ReviewState | null
+  review: ReviewState | null,
+  cardStatus: PromptCardStatus | null
 ): MemoryPromptDto {
   return {
     promptId: row.entryId,
@@ -85,7 +88,8 @@ export function toMemoryPromptDto(
     cueText: row.cueText,
     answerText: row.answerText,
     chunkId: row.chunkId,
-    review
+    review,
+    cardStatus
   };
 }
 
@@ -105,9 +109,14 @@ export function toMemoryPromptCardDto(
   };
 }
 
-// Map a prompt row and its optional shared card into the prompt DTO (card -> review state, or null).
+// Map a prompt row and its optional shared card into the prompt DTO (card -> review state + status, or
+// null/null when the prompt has no card).
 function promptRowWithCardToDto(row: MemoryPromptRow, card: ReviewCardRow | null): MemoryPromptDto {
-  return toMemoryPromptDto(row, card === null ? null : reviewStateFromCard(card));
+  return toMemoryPromptDto(
+    row,
+    card === null ? null : reviewStateFromCard(card),
+    card === null ? null : card.status
+  );
 }
 
 export function toMemoryNoteDto(
@@ -300,6 +309,67 @@ export async function getMemoryNoteRowForUser(
   return row === undefined ? undefined : toMemoryNoteRow(row);
 }
 
+// One owned note scoped to its owner for review ENROLLMENT (#575), ANCHORED or unanchored: unlike the
+// Memory-management read above, an anchored Reader note is a valid enrollment target (its exact quote
+// prefills the cue), so this drops the unanchored-only filter. Still restricted to `kind = 'note'` — a
+// bodyless Mark is never enrollable; the learner converts it to a note first. Undefined when the note
+// does not exist, is a mark, or is not owned.
+export async function getOwnedNoteRowForUser(
+  db: DbClient,
+  userId: string,
+  noteId: string
+): Promise<MemoryNoteRow | undefined> {
+  const rows = await db
+    .select(memoryNoteColumns)
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .where(
+      and(eq(notes.entryId, noteId), eq(personalEntries.userId, userId), eq(notes.kind, "note"))
+    )
+    .limit(1);
+  const row = rows[0];
+  return row === undefined ? undefined : toMemoryNoteRow(row);
+}
+
+// A note's prompts (each with its shared card -> review state + status), oldest first, for the review
+// settings surface (#575). Reads the prompts of ANY owned note (anchored or unanchored). The caller has
+// already authorized ownership via `getOwnedNoteRowForUser`.
+export async function listNoteReviewPrompts(
+  db: DbClient,
+  noteId: string
+): Promise<ReadonlyArray<MemoryPromptDto>> {
+  const promptRows = await db
+    .select({ prompt: memoryPrompts, card: reviewCards })
+    .from(memoryPrompts)
+    .leftJoin(reviewCards, eq(reviewCards.targetEntryId, memoryPrompts.entryId))
+    .where(eq(memoryPrompts.noteEntryId, noteId))
+    .orderBy(asc(memoryPrompts.createdAt), asc(memoryPrompts.entryId));
+  return promptRows.map((row) => promptRowWithCardToDto(row.prompt, row.card));
+}
+
+// The note's existing prompt whose cue AND answer text match a submitted cue/reveal pair exactly, if any
+// (#575 idempotency). A repeated "Add to review" of the same pair finds this row and enrolls it rather
+// than creating a duplicate prompt/card. A cue-only match with a different answer is a distinct direction.
+export async function findMatchingPromptRow(
+  db: DbClient,
+  noteId: string,
+  cueText: string,
+  answerText: string
+): Promise<MemoryPromptRow | undefined> {
+  const rows = await db
+    .select({ prompt: memoryPrompts })
+    .from(memoryPrompts)
+    .where(
+      and(
+        eq(memoryPrompts.noteEntryId, noteId),
+        eq(memoryPrompts.cueText, cueText),
+        eq(memoryPrompts.answerText, answerText)
+      )
+    )
+    .limit(1);
+  return rows[0]?.prompt;
+}
+
 // A prompt paired with its shared review card (null when the prompt is an unenrolled draft), used to roll
 // a note's prompts up for the summary and to project detail.
 type PromptWithCard = Readonly<{ prompt: MemoryPromptRow; card: ReviewCardRow | null }>;
@@ -468,7 +538,8 @@ export async function getMemoryNoteDetail(
 }
 
 // Assemble a full deposit DTO (the note plus every prompt under it) from persisted rows and the review
-// states seeded for the ready prompts (keyed by prompt id; absent for a draft).
+// states seeded for the ready prompts (keyed by prompt id; absent for a draft). A seeded card is always
+// `active`, so a prompt with a review state projects `cardStatus: "active"`; a draft projects null/null.
 export function toMemoryDepositDto(
   note: MemoryNoteRow,
   derivedFromEntryId: string | null,
@@ -477,7 +548,10 @@ export function toMemoryDepositDto(
 ): MemoryDepositDto {
   return {
     note: toMemoryNoteDto(note, derivedFromEntryId),
-    prompts: prompts.map((row) => toMemoryPromptDto(row, reviews.get(row.entryId) ?? null))
+    prompts: prompts.map((row) => {
+      const review = reviews.get(row.entryId) ?? null;
+      return toMemoryPromptDto(row, review, review === null ? null : "active");
+    })
   };
 }
 

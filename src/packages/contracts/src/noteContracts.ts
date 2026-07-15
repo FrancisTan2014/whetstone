@@ -24,6 +24,18 @@ export const createNoteRequestSchema = z
 
 export type CreateNoteRequest = z.infer<typeof createNoteRequestSchema>;
 
+// Creating a manual note from the Notes overview (#575): a deliberate "New note" with no source anchor,
+// carrying only the canonical rich body. The server persists it as an unanchored `note` with
+// `capture_source = 'manual'` and no prompt/card — review enrollment is always a separate, explicit step.
+// As with anchored capture there is no client-supplied plaintext: `body_text` is derived on the server.
+export const createStandaloneNoteRequestSchema = z
+  .object({
+    bodyDoc: noteBodyDocSchema
+  })
+  .strict();
+
+export type CreateStandaloneNoteRequest = z.infer<typeof createStandaloneNoteRequestSchema>;
+
 // A mark-only highlight (a "Gem", #255): one tap saves a highlight with no body, so the request
 // carries only the anchor. The mark reuses the note anchor + overlap + delete model; it is stored as a
 // bodyless note (`kind = "mark"`).
@@ -118,6 +130,10 @@ export function isAnchoredNoteOverview(note: NoteOverviewDto): note is AnchoredN
 
 export function parseCreateNoteRequest(value: unknown): CreateNoteRequest {
   return createNoteRequestSchema.parse(value);
+}
+
+export function parseCreateStandaloneNoteRequest(value: unknown): CreateStandaloneNoteRequest {
+  return createStandaloneNoteRequestSchema.parse(value);
 }
 
 export function parseCreateMarkRequest(value: unknown): CreateMarkRequest {

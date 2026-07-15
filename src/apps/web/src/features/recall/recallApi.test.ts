@@ -32,6 +32,7 @@ function makeCard(overrides: Partial<MemoryPromptCardDto> = {}): MemoryPromptCar
 function makePrompt(overrides: Partial<MemoryPromptDto> = {}): MemoryPromptDto {
   return {
     answerText: "fast",
+    cardStatus: "active",
     chunkId: null,
     cueText: "quick",
     lifecycle: "ready",
