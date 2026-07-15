@@ -16,7 +16,6 @@ import { runMigrations } from "../../db/migrate.js";
 import {
   diaryEntries,
   entries,
-  memoryNotes,
   memoryPrompts,
   notes,
   personalEntries,
@@ -94,8 +93,9 @@ async function seedNote(
   });
 }
 
-// Seed a Memory note (its facets) directly, optionally with one prompt, so the Timeline projection of a
-// memory_note (fragment, capture source, and prompt count) can be asserted without the capture command.
+// Seed a Memory note (its unified `notes` facets) directly, optionally with one prompt, so the Timeline
+// projection of a Memory note (fragment, capture source, and prompt count) can be asserted without the
+// capture command. A Memory note is an unanchored `notes` row (kind='note'), like any manual note.
 async function seedMemoryNote(
   db: DbClient,
   row: Readonly<{
@@ -117,14 +117,15 @@ async function seedMemoryNote(
       updatedAt: at,
       userId: row.userId
     });
-    await tx.insert(memoryNotes).values({
+    await tx.insert(notes).values({
       bodyDoc: createTextDocument(row.bodyText),
       bodyText: row.bodyText,
       captureSource: row.captureSource,
-      entryId: row.id
+      entryId: row.id,
+      kind: "note"
     });
     if (row.withPrompt === true) {
-      await tx.insert(entries).values({ id: `${row.id}-prompt`, type: "note" });
+      await tx.insert(entries).values({ id: `${row.id}-prompt`, type: "memory_prompt" });
       await tx.insert(memoryPrompts).values({
         cueDoc: createTextDocument("cue"),
         cueText: "cue",
@@ -324,11 +325,11 @@ describe("GET /api/diary/timeline (the logical Timeline)", () => {
 
     const entry = (await timeline()).days[0]?.entries[0];
     expect(entry).toMatchObject({
-      bodyText: "kanmusu",
       captureSource: "reader",
       entryId: "mem-1",
-      kind: "memory_note",
-      promptCount: 1
+      kind: "note",
+      promptCount: 1,
+      text: "kanmusu"
     });
   });
 
@@ -342,7 +343,12 @@ describe("GET /api/diary/timeline (the logical Timeline)", () => {
     });
 
     const entry = (await timeline()).days[0]?.entries[0];
-    expect(entry).toMatchObject({ entryId: "mem-2", kind: "memory_note", promptCount: 0 });
+    expect(entry).toMatchObject({
+      captureSource: "manual",
+      entryId: "mem-2",
+      kind: "note",
+      promptCount: 0
+    });
   });
 
   it("hides an in-flight or failed voice capture until it is ready", async () => {

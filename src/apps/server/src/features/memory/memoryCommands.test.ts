@@ -13,8 +13,9 @@ import {
   domains,
   entries,
   entryLinks,
-  memoryNotes,
   memoryPrompts,
+  noteAnchors,
+  notes,
   personalEntries,
   reviewCards,
   reviewEvents
@@ -127,16 +128,26 @@ describe("depositMemory", () => {
     expect(ownership[0]?.userId).toBe(userA);
     expect(ownership[0]?.occurredAt).toEqual(t0);
 
+    // The Memory note now lives in the unified `notes` facet (kind='note'), unanchored (no source
+    // anchor), carrying the body + capture source that used to live in the dropped `memory_notes` table.
     const noteRows = await context.db
       .select()
-      .from(memoryNotes)
-      .where(eq(memoryNotes.entryId, deposit.note.noteId));
+      .from(notes)
+      .where(eq(notes.entryId, deposit.note.noteId));
     expect(noteRows).toHaveLength(1);
+    expect(noteRows[0]?.kind).toBe("note");
+    expect(noteRows[0]?.captureSource).toBe("reader");
+    expect(noteRows[0]?.bodyText).toBe("spill the beans means to reveal a secret");
+    const anchorRows = await context.db
+      .select()
+      .from(noteAnchors)
+      .where(eq(noteAnchors.noteEntryId, deposit.note.noteId));
+    expect(anchorRows).toHaveLength(0);
 
-    // entries: one memory_note + two memory_prompt rows.
+    // entries: the note is a unified `note` + two memory_prompt rows.
     const entryRows = await context.db.select().from(entries);
     const byId = new Map(entryRows.map((row) => [row.id, row.type]));
-    expect(byId.get(deposit.note.noteId)).toBe("memory_note");
+    expect(byId.get(deposit.note.noteId)).toBe("note");
     expect(byId.get(deposit.prompts[0]!.promptId)).toBe("memory_prompt");
     expect(byId.get(deposit.prompts[1]!.promptId)).toBe("memory_prompt");
 
@@ -317,8 +328,8 @@ describe("importMemoryBatch (#574)", () => {
     expect(imported[1]?.prompts[0]?.answerText).toBe("pushback");
     expect(imported[2]?.prompts[0]?.lifecycle).toBe("draft");
 
-    // Every note is a first-class owned Entry with a personal_entries facet under this user.
-    const noteRows = await context.db.select().from(memoryNotes);
+    // Every note is a first-class owned Entry in the unified `notes` facet with a personal_entries facet.
+    const noteRows = await context.db.select().from(notes);
     expect(noteRows).toHaveLength(3);
     const ownership = await context.db.select().from(personalEntries);
     expect(ownership).toHaveLength(3);
@@ -326,7 +337,7 @@ describe("importMemoryBatch (#574)", () => {
     expect(ownership.every((row) => row.occurredAt.getTime() === t0.getTime())).toBe(true);
 
     const noteEntries = (await context.db.select().from(entries)).filter(
-      (row) => row.type === "memory_note"
+      (row) => row.type === "note"
     );
     expect(noteEntries).toHaveLength(3);
   });
@@ -411,11 +422,11 @@ describe("importMemoryBatch (#574)", () => {
     ).rejects.toThrow();
 
     // Atomic: the first item must not have leaked — nothing is saved, so the client keeps the whole paste.
-    expect(await context.db.select().from(memoryNotes)).toHaveLength(0);
+    expect(await context.db.select().from(notes)).toHaveLength(0);
     expect(await context.db.select().from(personalEntries)).toHaveLength(0);
     expect(await context.db.select().from(memoryPrompts)).toHaveLength(0);
     const noteEntries = (await context.db.select().from(entries)).filter(
-      (row) => row.type === "memory_note"
+      (row) => row.type === "note"
     );
     expect(noteEntries).toHaveLength(0);
   });

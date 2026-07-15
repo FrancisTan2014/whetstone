@@ -14,7 +14,6 @@ import {
   domains,
   entries,
   entryLinks,
-  memoryNotes,
   memoryPrompts,
   noteAnchors,
   notes,
@@ -595,7 +594,9 @@ describe("DELETE /api/works/:workEntryId", () => {
 
     await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
 
-    expect(await context.db.select().from(memoryNotes)).toHaveLength(3);
+    // The 3 Memory notes (unanchored, in the unified `notes` facet) survive the work deletion; the
+    // work's own anchored reader note (`note-1`) is the only note the cascade removes.
+    expect(await context.db.select().from(notes)).toHaveLength(3);
     expect(await context.db.select().from(memoryPrompts)).toHaveLength(3);
     for (const noteId of noteIds) {
       expect(await noteProvenanceEntryId(context.db, noteId)).toBeNull();

@@ -7,8 +7,8 @@ import { runMigrations } from "../../db/migrate.js";
 import {
   entries,
   entryLinks,
-  memoryNotes,
   memoryPrompts,
+  notes,
   personalEntries,
   reviewCards,
   reviewEvents
@@ -154,11 +154,12 @@ describe("listMemoryNotes", () => {
       updatedAt: at(1),
       userId: userA
     });
-    await context.db.insert(memoryNotes).values({
+    await context.db.insert(notes).values({
       bodyDoc: { type: "doc", content: [] },
       bodyText: "lonely fragment",
       captureSource: "manual",
-      entryId: "bare-list"
+      entryId: "bare-list",
+      kind: "note"
     });
 
     const items = await listMemoryNotes(context.db, userA, at(5));
@@ -584,7 +585,7 @@ describe("deleteMemoryNote", () => {
 
     // Everything under the target note is gone.
     expect(
-      await context.db.select().from(memoryNotes).where(eq(memoryNotes.entryId, target.note.noteId))
+      await context.db.select().from(notes).where(eq(notes.entryId, target.note.noteId))
     ).toHaveLength(0);
     expect(
       await context.db
@@ -640,17 +641,18 @@ describe("deleteMemoryNote", () => {
       updatedAt: at(1),
       userId: userA
     });
-    await context.db.insert(memoryNotes).values({
+    await context.db.insert(notes).values({
       bodyDoc: { type: "doc", content: [] },
       bodyText: "no prompts",
       captureSource: "manual",
-      entryId: "bare-note"
+      entryId: "bare-note",
+      kind: "note"
     });
 
     const result = await deleteMemoryNote(context.deps, "bare-note", userA);
     expect(result.status).toBe("deleted");
     expect(
-      await context.db.select().from(memoryNotes).where(eq(memoryNotes.entryId, "bare-note"))
+      await context.db.select().from(notes).where(eq(notes.entryId, "bare-note"))
     ).toHaveLength(0);
     expect(await context.db.select().from(entries).where(eq(entries.id, "bare-note"))).toHaveLength(
       0
