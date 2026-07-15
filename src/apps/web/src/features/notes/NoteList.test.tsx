@@ -96,14 +96,14 @@ describe("NoteList", () => {
     expect(onDelete).toHaveBeenCalledWith(note);
   });
 
-  it("renders a bodyless mark as a Gem card with no body or edit, still removable", async () => {
+  it("renders a bodyless mark as a Mark card with no body or edit, still removable", async () => {
     const onDelete = vi.fn();
     const onEdit = vi.fn();
     const mark = makeMark();
     const user = userEvent.setup();
     renderList([mark], { onDelete, onEdit });
 
-    const chip = screen.getByText("Gem");
+    const chip = screen.getByText("Mark");
     expect(chip.className).toContain("noteCardChip--mark");
     expect(screen.getByText(/fox/)).toBeDefined();
     expect(screen.queryByText("a sly animal")).toBeNull();
