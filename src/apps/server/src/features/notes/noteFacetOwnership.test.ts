@@ -39,13 +39,18 @@ describe("one unified note facet (#620)", () => {
 
   it("Memory composes the Notes boundary instead of writing note facets itself", () => {
     const memoryCommands = code("../memory/memoryCommands.ts");
-    // Memory must go through the single note writer/cascade…
+    // Memory must go through the single note writer/cascade/body-updater…
     expect(memoryCommands).toContain("insertNoteInTx");
     expect(memoryCommands).toContain("deleteNoteInTx");
-    // …and must NOT duplicate a note's ownership/anchor inserts (that is the boundary's job). A second
-    // writer here would be a parallel note facet. (Memory still inserts its own `memory_prompt` Entries.)
+    expect(memoryCommands).toContain("updateNoteBodyInTx");
+    // …and must NOT duplicate a note's ownership/anchor inserts, write its body columns directly, or
+    // re-derive its readable projection (that is the boundary's job). Any of these would be a parallel
+    // note-body writer/facet — the regression the reviewer flagged on the edit path. (Memory still inserts
+    // its own `memory_prompt` Entries and bumps the note's chronology when it adds a prompt.)
     expect(memoryCommands).not.toMatch(/insert\(personalEntries/u);
     expect(memoryCommands).not.toMatch(/insert\(noteAnchors/u);
+    expect(memoryCommands).not.toMatch(/update\(notes/u);
+    expect(memoryCommands).not.toContain("documentReadableText");
   });
 
   it("the Note boundary is the single note-row inserter", () => {
@@ -54,6 +59,14 @@ describe("one unified note facet (#620)", () => {
     const noteCommands = code("./noteCommands.ts");
     expect(noteCommands).toContain("insertNoteInTx");
     expect(noteCommands).toContain("tx.insert(notes)");
+  });
+
+  it("the Note boundary is the single note-body updater", () => {
+    // Exactly one module updates a `notes` body: the Notes boundary's `updateNoteBodyInTx`. Reader edits
+    // and Memory edits both compose it, so note-body derivation + persistence live in one place.
+    const noteCommands = code("./noteCommands.ts");
+    expect(noteCommands).toContain("updateNoteBodyInTx");
+    expect(noteCommands).toMatch(/update\(notes/u);
   });
 });
 

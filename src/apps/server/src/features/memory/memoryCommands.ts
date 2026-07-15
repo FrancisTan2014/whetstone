@@ -19,8 +19,8 @@ import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, entryLinks, memoryPrompts, notes, personalEntries } from "../../db/schema.js";
-import { deleteNoteInTx, insertNoteInTx } from "../notes/noteCommands.js";
+import { entries, entryLinks, memoryPrompts, personalEntries } from "../../db/schema.js";
+import { deleteNoteInTx, insertNoteInTx, updateNoteBodyInTx } from "../notes/noteCommands.js";
 import {
   deleteReviewCard,
   rateReviewCard,
@@ -346,16 +346,9 @@ export async function editMemoryNote(
   if (existing === undefined) {
     return { status: "not_found" };
   }
-  await dependencies.db.transaction(async (tx) => {
-    await tx
-      .update(notes)
-      .set({ bodyDoc: createTextDocument(noteText), bodyText: noteText })
-      .where(eq(notes.entryId, noteId));
-    await tx
-      .update(personalEntries)
-      .set({ updatedAt: now })
-      .where(eq(personalEntries.entryId, noteId));
-  });
+  await dependencies.db.transaction((tx) =>
+    updateNoteBodyInTx(tx, { bodyDoc: createTextDocument(noteText), noteEntryId: noteId, now })
+  );
   const detail = await getMemoryNoteDetail(dependencies.db, userId, noteId);
   // The note exists and is owned (just re-read under the same user scope), so detail is always present.
   return { detail: detail as MemoryNoteDetailDto, status: "updated" };

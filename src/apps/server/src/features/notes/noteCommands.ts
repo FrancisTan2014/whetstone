@@ -149,6 +149,30 @@ export async function deleteNoteInTx(tx: Transaction, noteEntryId: string): Prom
   await tx.delete(entries).where(eq(entries.id, noteEntryId));
 }
 
+// Update a note's canonical body inside the caller's transaction — the SINGLE writer of a note's body
+// columns (#620). It replaces `body_doc` with the supplied validated document, re-derives the readable
+// `body_text` from that document HERE (never trusting a caller-supplied projection), and bumps the shared
+// `personal_entries` `updated_at` chronology in the SAME atomic write. Reader edits compose it with the
+// client's rich doc; Memory composes it with its plain-text note lifted to a document — so note-body
+// derivation and persistence live in exactly one place instead of a parallel body writer per surface.
+// Returns the derived `body_text` so the caller can project the updated row without a re-read. The caller
+// authorizes ownership (work- or user-scoped) before composing this.
+export async function updateNoteBodyInTx(
+  tx: Transaction,
+  params: Readonly<{ bodyDoc: DocumentNodeJSON; noteEntryId: string; now: Date }>
+): Promise<string> {
+  const bodyText = documentReadableText(params.bodyDoc);
+  await tx
+    .update(notes)
+    .set({ bodyDoc: params.bodyDoc, bodyText })
+    .where(eq(notes.entryId, params.noteEntryId));
+  await tx
+    .update(personalEntries)
+    .set({ updatedAt: params.now })
+    .where(eq(personalEntries.entryId, params.noteEntryId));
+  return bodyText;
+}
+
 // Capture a note from a reader selection (#619): the client supplies the anchor and the canonical rich
 // `bodyDoc`; the readable `body_text` is ALWAYS derived here from that document, never trusted from the
 // client. After the shared anchor checks pass, persist a `note` row (its body + `capture_source =
@@ -281,18 +305,11 @@ export async function updateNote(
   }
 
   const bodyDoc = request.bodyDoc;
-  const bodyText = documentReadableText(bodyDoc);
   const now = dependencies.now();
 
-  await dependencies.db.transaction(async (tx) => {
-    await tx.update(notes).set({ bodyDoc, bodyText }).where(eq(notes.entryId, noteEntryId));
-    // The note's owner/chronology lives in the shared `personal_entries` facet (#571); an edit is a
-    // change to this Timeline-backed personal Entry, so bump `updated_at` in the same write.
-    await tx
-      .update(personalEntries)
-      .set({ updatedAt: now })
-      .where(eq(personalEntries.entryId, noteEntryId));
-  });
+  const bodyText = await dependencies.db.transaction((tx) =>
+    updateNoteBodyInTx(tx, { bodyDoc, noteEntryId, now })
+  );
 
   return {
     note: { ...existing, bodyDoc, bodyText, kind: "note", updatedAt: now.toISOString() },
