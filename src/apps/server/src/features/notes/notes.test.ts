@@ -978,6 +978,42 @@ describe("cross-work notes overview", () => {
     expect((first?.bodyText ?? "").length).toBeGreaterThan(0);
   });
 
+  it("lists an unanchored note (a manual/Memory note) with null anchor and work context", async () => {
+    // A manual or Memory note is a unified `note` with no source anchor. It is still owned and listed on
+    // the cross-work overview, but with null anchor/block and null work fields — the client shows its body
+    // only. Routes only create anchored reader notes, so seed the unanchored note directly.
+    await context.db.insert(entries).values({ id: "loose-note", type: "note" });
+    await context.db.insert(personalEntries).values({
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      entryId: "loose-note",
+      occurredAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      userId: DEFAULT_USER_ID
+    });
+    await context.db.insert(notes).values({
+      bodyDoc: createTextDocument("a loose thought"),
+      bodyText: "a loose thought",
+      captureSource: "manual",
+      entryId: "loose-note",
+      kind: "note"
+    });
+
+    const response = await context.server.inject({ method: "GET", url: "/api/notes" });
+
+    expect(response.statusCode).toBe(200);
+    const note = (response.json() as NotesOverviewListDto).notes.find(
+      (candidate) => candidate.entryId === "loose-note"
+    );
+    expect(note).toBeDefined();
+    expect(note?.anchor).toBeNull();
+    expect(note?.blockEntryId).toBeNull();
+    expect(note?.workEntryId).toBeNull();
+    expect(note?.workTitle).toBeNull();
+    expect(note?.authorName).toBeNull();
+    expect(note?.captureSource).toBe("manual");
+    expect(note?.bodyText).toBe("a loose thought");
+  });
+
   it("returns an empty list when the user has no notes", async () => {
     await createWorkTitled("Aesop Fables", "Aesop");
 
