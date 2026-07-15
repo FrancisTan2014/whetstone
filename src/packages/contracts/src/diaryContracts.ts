@@ -91,11 +91,19 @@ export const timelineDiaryEntryDtoSchema = z
 
 export type TimelineDiaryEntryDto = z.infer<typeof timelineDiaryEntryDtoSchema>;
 
+// A note in the logical Timeline (#571, #620): the `note` row IS a real `note` Entry — the learner's one
+// durable Note, anchored or not. It carries the note's readable body (`text`), how it was captured
+// (`captureSource`), and how many retrieval prompts depend on it (`promptCount`, 0 for a note with no
+// Memory prompts) — so a former Memory note and a Reader note appear the same way, ONCE, via the shared
+// personal-entry chronology. Its prompts, cards, and reviews are deliberately absent here; only the note
+// is a Timeline row.
 export const timelineNoteEntryDtoSchema = z
   .object({
+    captureSource: captureSourceSchema,
     entryId: z.string(),
     kind: z.literal("note"),
     occurredAt: z.string(),
+    promptCount: z.number().int().nonnegative(),
     text: z.string()
   })
   .strict();
@@ -135,29 +143,11 @@ export const timelineRecitationEntryDtoSchema = z
 
 export type TimelineRecitationEntryDto = z.infer<typeof timelineRecitationEntryDtoSchema>;
 
-// A Memory note in the logical Timeline (#573): the `memory_note` row IS a real `memory_note` Entry the
-// learner captured, carrying its readable body fragment, capture source, and how many retrieval prompts
-// hang off it — so it appears ONCE via the shared personal-entry chronology. Its prompts, autosaves, and
-// reviews are deliberately absent here; only the note is a Timeline row.
-export const timelineMemoryNoteEntryDtoSchema = z
-  .object({
-    bodyText: z.string(),
-    captureSource: captureSourceSchema,
-    entryId: z.string(),
-    kind: z.literal("memory_note"),
-    occurredAt: z.string(),
-    promptCount: z.number().int().nonnegative()
-  })
-  .strict();
-
-export type TimelineMemoryNoteEntryDto = z.infer<typeof timelineMemoryNoteEntryDtoSchema>;
-
 export const timelineEntryDtoSchema = z.discriminatedUnion("kind", [
   timelineDiaryEntryDtoSchema,
   timelineNoteEntryDtoSchema,
   timelineWorkEntryDtoSchema,
-  timelineRecitationEntryDtoSchema,
-  timelineMemoryNoteEntryDtoSchema
+  timelineRecitationEntryDtoSchema
 ]);
 
 export type TimelineEntryDto = z.infer<typeof timelineEntryDtoSchema>;

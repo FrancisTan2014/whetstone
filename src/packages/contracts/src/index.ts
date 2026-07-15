@@ -195,7 +195,6 @@ export type {
   TimelineDiaryEntryDto,
   TimelineDto,
   TimelineEntryDto,
-  TimelineMemoryNoteEntryDto,
   TimelineNoteEntryDto,
   TimelineQuery,
   TimelineRecitationEntryDto,

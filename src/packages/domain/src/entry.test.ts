@@ -26,7 +26,6 @@ describe("entry/link vocabulary", () => {
       "diary_entry",
       "recitation_plan",
       "recitation_passage",
-      "memory_note",
       "memory_prompt"
     ]);
     expect(linkTypes).toEqual([
