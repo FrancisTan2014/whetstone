@@ -191,6 +191,22 @@ can navigate them from another package.
   `reconcilePromptEdit` (`@whetstone/domain`) — keep the card, seed a new one, or revert to a draft — so it
   never silently resets review history. The parsing/edit logic for a pasted list is pure `@whetstone/domain`
   (`notebookImport.ts`: `parseNotebookList` + undo-split/merge/split-context ops, #574).
+- Deliberate review enrollment (#575): review is never automatic — a note is durable material and enters
+  review only through an explicit learner-confirmed cue/reveal. `writeMemory` takes a `seedCards` flag:
+  the deposit path passes `true` (a deliberate Quick-Add still seeds cards), but `importMemoryBatch` passes
+  `false`, so a pasted notebook lands as `ready`-but-**cardless** prompts that never surface as due until
+  enrolled. `memoryEnrollment.ts` (commands) + `memoryEnrollmentRoutes.ts` (`registerMemoryEnrollmentRoutes`,
+  wired in `http/createServer.ts`) own the enrollment surface, all current-user scoped (missing/other-user →
+  404): `GET /api/memory/notes/:id/review` (the note + every prompt under it with card state/status, a
+  `NoteReviewDto`), `POST /api/memory/notes/:id/review` (enroll from the `EnrollNoteRequest` cue/reveal —
+  idempotent on an exact cue+answer match via `findMatchingPromptRow`, so a double-submit never duplicates a
+  prompt/card), `POST /api/memory/prompts/:id/enroll` (seed a card for an imported cardless prompt; 409
+  `not_ready`/`already_enrolled`), and `POST /api/memory/prompts/:id/{pause,resume,restart}` (per-prompt
+  schedule control over the shared `review_cards`; 409 `not_scheduled`). Enrollment queries
+  (`getOwnedNoteRowForUser` — owned note of any anchor, so an anchored Reader note is enrollable —
+  `listNoteReviewPrompts`, `findMatchingPromptRow`) live in `memoryQueries.ts`; a `MemoryPromptDto` now carries
+  `cardStatus` (active/paused/null). Anchorless manual notes are created through the Notes boundary
+  (`POST /api/notes`, below), never here.
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -467,6 +483,9 @@ can navigate them from another package.
   through `blocks.work_entry_id`; a Memory/manual note is unanchored — `note_anchors` LEFT-joined),
   and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →
   `listNotesForUser`, joined to work + author, ordered by work title then note id);
+  `POST /api/notes` (`createStandaloneNote`, #575) creates ONE unanchored `kind='note'` note with
+  `capture_source: manual` and no prompt/card — the manual "New note" path — validated once at the boundary
+  by `createStandaloneNoteRequestSchema` (body only, no anchor);
   templates are seeded from the domain on boot
   (`seedNoteTemplates`). `readingPosition/` durably stores each reader's position per (user, work) —
   the last open reading unit + an optional block anchor — in `reading_positions` (composite
