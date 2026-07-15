@@ -139,9 +139,9 @@ can navigate them from another package.
   `request.server.currentUser` and source ownership + chronology from the shared `personal_entries` facet
   (a `note` Entry gets a `personal_entries` row on create — `user_id`/`occurred_at`/`created_at`/`updated_at`;
   reads filter by `personal_entries.user_id`) rather than a `user_id`/`created_at` on `notes` itself
-  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; the Memory notes
-  - (via the shared `personal_entries` facet, below) are user-owned the same way; shared
-    content tables stay unowned.
+  (`noteCommands.ts`/`noteQueries.ts`); `reading_positions` is user-owned the same way; Memory notes are
+  - the SAME `notes` facet (#620 — one note type; a Memory note is an unanchored `kind='note'` row),
+    user-owned via `personal_entries`; shared content tables stay unowned.
 - Review substrate (shared FSRS cards) (#617): `src/apps/server/src/features/review/` is the single owner
   of spaced-repetition scheduler mechanics, extracted out of Memory so Recitation (and future recall
   surfaces) share it. `review_cards` holds one card per learnable target (keyed by the target's `entries.id`
@@ -159,8 +159,9 @@ can navigate them from another package.
   `memory/memoryReviewOwnership.test.ts` and `recitationPassages/recitationReviewOwnership.test.ts`).
 - Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
   recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
-  <->row mapping) over Entry-backed rows: a `memory_notes` note (a first-class owned Entry — ownership +
-  chronology in the shared `personal_entries` facet; provenance to its source is a `derived_from`
+  <->row mapping) over Entry-backed rows: a unified `notes` note (#620 — a `kind='note'` row in the single
+  notes facet, unanchored; a first-class owned Entry — ownership + chronology in the shared
+  `personal_entries` facet; provenance to its source is a `derived_from`
   `entry_links` row, not a column) and one-or-more `memory_prompts` (each a child Entry linked by
   `contains`; `cue`/`answer` docs + text, a `lifecycle` of `draft` — captured but no revealable answer, so
   no card — or `ready` with an optional `chunk_id` link to a practice chunk (#205)). FSRS state and history
@@ -457,8 +458,13 @@ can navigate them from another package.
   union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
   resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
   way per unit (its rendered substrate; see `search/`). (The whole-work `GET …/content` route was removed; admin composes
-  structure + per-unit client-side.) `notes/` serves note templates and creates, lists, edits,
-  and deletes notes (block-anchored, `annotates` link; scoped to a work through `blocks.work_entry_id`),
+  structure + per-unit client-side.) `notes/` is the single Notes-owned boundary for the ONE unified note
+  facet (#620): `insertNoteInTx`/`deleteNoteInTx` are transaction-composing primitives (Reader captures its
+  own; Memory composes a note write/delete inside its prompt+card transaction), so there is exactly one
+  note writer and one owner-scoped delete cascade (a Memory note's delete tears down its prompts + shared
+  review cards/events through the same cascade). It serves note templates and creates, lists, edits,
+  and deletes notes (a Reader note/mark is block-anchored via an `annotates` link and scoped to a work
+  through `blocks.work_entry_id`; a Memory/manual note is unanchored — `note_anchors` LEFT-joined),
   and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →
   `listNotesForUser`, joined to work + author, ordered by work title then note id);
   templates are seeded from the domain on boot

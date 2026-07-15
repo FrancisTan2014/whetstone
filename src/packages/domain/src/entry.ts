@@ -8,6 +8,12 @@ export const entryTypes = [
   "work",
   "reading_unit",
   "block",
+  // `note` (#571, #620): the learner's one durable Note — a first-class owned Entry carrying a canonical
+  // rich body and a structured capture source, owner-scoped and dated through the shared `personal_entries`
+  // facet. It takes zero or one source anchor: an anchored Reader note keeps block/range/quote/context
+  // provenance; an unanchored manual/Memory note keeps its capture source and any `derived_from` link.
+  // Memory is behavior applied to a note through dependent `memory_prompt` children; a note NEVER stores
+  // scheduler state. (A bodyless `mark` is the same `note` Entry type with `kind='mark'` and an anchor.)
   "note",
   "toc_entry",
   // `diary_entry` (#571): a personal diary artifact is a first-class addressable Entry, so a Memory note
@@ -27,11 +33,6 @@ export const entryTypes = [
   // Timeline row. A passage is either queued (introduced, awaiting activation) or active (a scheduled
   // FSRS card); the lifecycle lives on the `recitation_passages` facet, not on the Entry.
   "recitation_passage",
-  // `memory_note` (#595): a Memory note is a first-class owned Entry — the durable retention target. It
-  // carries a `personal_entries` facet (so it appears once on the logical Timeline and is owner-scoped),
-  // a canonical rich document body, and a structured capture source. Provenance is a `derived_from`
-  // Entry link to the source it came from.
-  "memory_note",
   // `memory_prompt` (#595): a Memory prompt is a child Entry owning one independently scheduled retrieval
   // direction (rich cue + answer, lifecycle, and the FSRS card only when scheduled). It is linked from
   // its note with `contains`, inherits ownership transitively through that note, and NEVER carries a

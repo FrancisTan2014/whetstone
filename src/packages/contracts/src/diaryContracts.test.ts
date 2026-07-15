@@ -155,12 +155,26 @@ describe("parseTimelineEntryDto", () => {
     expect(parseTimelineEntryDto(dto)).toEqual(dto);
   });
 
-  it("accepts a note entry", () => {
+  it("accepts a note entry with its capture source and prompt count", () => {
     const dto = {
+      captureSource: "reader" as const,
       entryId: "note-1",
       kind: "note" as const,
       occurredAt: "2026-06-29T10:00:00.000Z",
+      promptCount: 0,
       text: "a note body"
+    };
+    expect(parseTimelineEntryDto(dto)).toEqual(dto);
+  });
+
+  it("accepts a former Memory note as a note entry carrying its capture source and prompt count", () => {
+    const dto = {
+      captureSource: "manual" as const,
+      entryId: "mem-1",
+      kind: "note" as const,
+      occurredAt: "2026-06-28T10:00:00.000Z",
+      promptCount: 2,
+      text: "遠慮 — to hold back out of consideration"
     };
     expect(parseTimelineEntryDto(dto)).toEqual(dto);
   });
@@ -176,18 +190,6 @@ describe("parseTimelineEntryDto", () => {
     expect(parseTimelineEntryDto(dto)).toEqual(dto);
   });
 
-  it("accepts a memory-note entry", () => {
-    const dto = {
-      bodyText: "遠慮 — to hold back out of consideration",
-      captureSource: "manual" as const,
-      entryId: "mem-1",
-      kind: "memory_note" as const,
-      occurredAt: "2026-06-28T10:00:00.000Z",
-      promptCount: 2
-    };
-    expect(parseTimelineEntryDto(dto)).toEqual(dto);
-  });
-
   it("rejects an unknown kind", () => {
     expect(() =>
       parseTimelineEntryDto({ entryId: "x", kind: "highlight", occurredAt: "x", text: "y" })
@@ -196,8 +198,8 @@ describe("parseTimelineEntryDto", () => {
 });
 
 describe("timelineEntryDtoKinds", () => {
-  it("matches the diary, note, work, recitation, and memory_note discriminants", () => {
-    expect(timelineEntryDtoKinds).toEqual(["diary", "note", "work", "recitation", "memory_note"]);
+  it("matches the diary, note, work, and recitation discriminants", () => {
+    expect(timelineEntryDtoKinds).toEqual(["diary", "note", "work", "recitation"]);
   });
 });
 
@@ -217,9 +219,11 @@ describe("parseTimelineDto", () => {
               occurredAt: "2026-06-30T20:38:00.000Z"
             },
             {
+              captureSource: "reader" as const,
               entryId: "note-1",
               kind: "note" as const,
               occurredAt: "2026-06-30T09:00:00.000Z",
+              promptCount: 0,
               text: "a note"
             }
           ]

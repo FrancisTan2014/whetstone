@@ -31,7 +31,6 @@ export const entries = pgTable("entries", {
       "recitation_plan",
       "recitation_passage",
       "recitation_whole_work",
-      "memory_note",
       "memory_prompt"
     ] as const
   }).notNull()
@@ -514,27 +513,11 @@ export const chunks = pgTable(
   (table) => [index("chunks_case_idx").on(table.caseId)]
 );
 
-// A Memory note (#595): the durable retention target as a first-class owned Entry. `body_doc` is the
-// canonical rich ProseMirror/Tiptap document; `body_text` is its readable plaintext projection
-// (`documentReadableText`) kept for preview/search. `capture_source` records how it was captured.
-// Ownership + chronology live in the shared `personal_entries` facet (like notes/diary), so the note
-// appears exactly once on the logical Timeline; provenance to the source it came from is a
-// `derived_from` row in `entry_links` (not a column). Keyed by the owning Entry.
-export const memoryNotes = pgTable("memory_notes", {
-  entryId: text("entry_id")
-    .primaryKey()
-    .references(() => entries.id),
-  bodyDoc: jsonb("body_doc").notNull(),
-  bodyText: text("body_text").notNull(),
-  captureSource: text("capture_source", {
-    enum: ["manual", "reader", "import", "practice", "tool"] as const
-  }).notNull()
-});
-
-// A Memory prompt (#595, #617): one independently reviewable retrieval direction under a note.
-// `note_entry_id` is its owning note (the note carries the `personal_entries` row, so the prompt inherits
-// ownership transitively and never gets a Timeline row of its own — the note→prompt edge is also recorded
-// in `entry_links` as `contains`). `cue_doc`/`answer_doc` are the rich bodies, with `cue_text`/`answer_text`
+// A Memory prompt (#595, #617, #620): one independently reviewable retrieval direction under a note.
+// `note_entry_id` is its owning note in the unified `notes` facet (the note carries the `personal_entries`
+// row, so the prompt inherits ownership transitively and never gets a Timeline row of its own — the
+// note→prompt edge is also recorded in `entry_links` as `contains`). Referencing `notes.entry_id` makes an
+// orphan prompt structurally invalid. `cue_doc`/`answer_doc` are the rich bodies, with `cue_text`/`answer_text`
 // their readable projections. `lifecycle` records content completeness: `draft` (no revealable answer, so
 // `answer_doc`/`answer_text` are NULL) or `ready` (a revealable answer). Scheduling state is NOT stored
 // here anymore — enrollment and FSRS state live in the shared `review_cards` substrate keyed by this
@@ -548,7 +531,7 @@ export const memoryPrompts = pgTable(
       .references(() => entries.id),
     noteEntryId: text("note_entry_id")
       .notNull()
-      .references(() => entries.id),
+      .references(() => notes.entryId),
     cueDoc: jsonb("cue_doc").notNull(),
     cueText: text("cue_text").notNull(),
     answerDoc: jsonb("answer_doc"),

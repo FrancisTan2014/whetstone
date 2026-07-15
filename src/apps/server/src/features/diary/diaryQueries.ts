@@ -6,7 +6,6 @@ import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import {
   diaryEntries,
-  memoryNotes,
   memoryPrompts,
   notes,
   personalEntries,
@@ -26,10 +25,11 @@ function readyDiary() {
   return or(isNull(diaryEntries.processingStatus), eq(diaryEntries.processingStatus, "ready"));
 }
 
-// The current user's personal Entries as discriminated Timeline rows (diary + note): a `diary` row
-// carries its rich body, a `note` row its markdown text. Both draw chronology from the shared
-// `personal_entries` facet. Combined here (unordered); the pure domain `groupTimelineEntriesByDay`
-// orders and buckets them deterministically, so no Timeline-only entity exists.
+// The current user's personal Entries as discriminated Timeline rows (diary + note + work + recitation): a
+// `diary` row carries its rich body, a `note` row its readable body plus how it was captured and how many
+// Memory prompts depend on it (a Reader note and a former Memory note are the same `note` row, #620). All
+// draw chronology from the shared `personal_entries` facet. Combined here (unordered); the pure domain
+// `groupTimelineEntriesByDay` orders and buckets them deterministically, so no Timeline-only entity exists.
 async function loadPersonalTimelineEntries(
   db: DbClient,
   userId: string
@@ -48,6 +48,7 @@ async function loadPersonalTimelineEntries(
 
   const noteRows = await db
     .select({
+      captureSource: notes.captureSource,
       entryId: notes.entryId,
       occurredAt: personalEntries.occurredAt,
       text: notes.bodyText
@@ -55,6 +56,22 @@ async function loadPersonalTimelineEntries(
     .from(notes)
     .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
     .where(and(eq(personalEntries.userId, userId), eq(notes.kind, "note")));
+  // A note's Memory prompts are dependent behavior, not Timeline rows (#620): count them per note so the
+  // row shows how many retrieval prompts depend on it (0 for a Reader note or an unprompted Memory note).
+  // One grouped read over all the user's notes; each note itself already appears once via personal_entries,
+  // so a former Memory note and a Reader note surface the same way — a single `note` row.
+  const noteIds = noteRows.map((row) => row.entryId);
+  const promptCounts =
+    noteIds.length === 0
+      ? []
+      : await db
+          .select({ noteEntryId: memoryPrompts.noteEntryId, total: count() })
+          .from(memoryPrompts)
+          .where(inArray(memoryPrompts.noteEntryId, noteIds))
+          .groupBy(memoryPrompts.noteEntryId);
+  const promptCountByNote = new Map(
+    promptCounts.map((row) => [row.noteEntryId, Number(row.total)])
+  );
 
   // An authored (owned) Work is a personal Entry too (#576): it draws chronology from the same
   // `personal_entries` facet, so it surfaces on the learner's Timeline alongside diary entries and notes.
@@ -84,32 +101,6 @@ async function loadPersonalTimelineEntries(
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
     .where(eq(personalEntries.userId, userId));
 
-  // A Memory note is a personal Entry too (#573): it draws chronology from the same `personal_entries`
-  // facet, so it appears ONCE on the Timeline. Its prompts, autosaves, and reviews are deliberately NOT
-  // joined — they are not Timeline rows; only the note is, carrying its fragment and a prompt count.
-  const memoryNoteRows = await db
-    .select({
-      bodyText: memoryNotes.bodyText,
-      captureSource: memoryNotes.captureSource,
-      entryId: memoryNotes.entryId,
-      occurredAt: personalEntries.occurredAt
-    })
-    .from(memoryNotes)
-    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
-    .where(eq(personalEntries.userId, userId));
-  const memoryNoteIds = memoryNoteRows.map((row) => row.entryId);
-  const promptCounts =
-    memoryNoteIds.length === 0
-      ? []
-      : await db
-          .select({ noteEntryId: memoryPrompts.noteEntryId, total: count() })
-          .from(memoryPrompts)
-          .where(inArray(memoryPrompts.noteEntryId, memoryNoteIds))
-          .groupBy(memoryPrompts.noteEntryId);
-  const promptCountByNote = new Map(
-    promptCounts.map((row) => [row.noteEntryId, Number(row.total)])
-  );
-
   const diaryTimeline: ReadonlyArray<TimelineEntryDto> = diaryRows.map((row) => ({
     bodyDoc: row.bodyDoc as DocumentNodeJSON,
     bodyText: row.bodyText,
@@ -119,9 +110,11 @@ async function loadPersonalTimelineEntries(
     occurredAt: row.occurredAt.toISOString()
   }));
   const noteTimeline: ReadonlyArray<TimelineEntryDto> = noteRows.map((row) => ({
+    captureSource: row.captureSource,
     entryId: row.entryId,
     kind: "note",
     occurredAt: row.occurredAt.toISOString(),
+    promptCount: promptCountByNote.get(row.entryId) ?? 0,
     // `body_text` is non-null for a `kind = 'note'` row (the DB check constraint guarantees it), and the
     // query filters to notes, so the readable body is always present here.
     text: row.text as string
@@ -141,22 +134,8 @@ async function loadPersonalTimelineEntries(
     title: row.title,
     workEntryId: row.workEntryId
   }));
-  const memoryTimeline: ReadonlyArray<TimelineEntryDto> = memoryNoteRows.map((row) => ({
-    bodyText: row.bodyText,
-    captureSource: row.captureSource,
-    entryId: row.entryId,
-    kind: "memory_note",
-    occurredAt: row.occurredAt.toISOString(),
-    promptCount: promptCountByNote.get(row.entryId) ?? 0
-  }));
 
-  return [
-    ...diaryTimeline,
-    ...noteTimeline,
-    ...workTimeline,
-    ...recitationTimeline,
-    ...memoryTimeline
-  ];
+  return [...diaryTimeline, ...noteTimeline, ...workTimeline, ...recitationTimeline];
 }
 
 // One lazy-loaded Timeline page: the `limitDays` most recent days (strictly before `before`, when given),

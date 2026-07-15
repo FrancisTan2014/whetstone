@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { CreateNoteRequest, NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto, CreateNoteRequest } from "@whetstone/contracts";
 import { documentText, type DocumentNodeJSON } from "@whetstone/document";
 
 import { RichContentEditor } from "../../shared/editor/index.js";
@@ -15,11 +15,11 @@ import { draftToAnchor, type NoteDraft } from "./noteCapture";
 // template choice and no classification; a bodyless Mark (#255) is never routed here.
 export type NoteEditorTarget =
   | Readonly<{ draft: NoteDraft; kind: "create" }>
-  | Readonly<{ kind: "edit"; note: NoteDto }>;
+  | Readonly<{ kind: "edit"; note: AnchoredNoteDto }>;
 
 type NoteEditorProps = Readonly<{
   onClose: () => void;
-  onSaved: (note: NoteDto) => void;
+  onSaved: (note: AnchoredNoteDto) => void;
   target: NoteEditorTarget;
   workEntryId: string;
 }>;
@@ -63,7 +63,7 @@ export function NoteEditor({
   const heading = target.kind === "create" ? "New note" : "Edit note";
   const blank = documentText(draft).trim().length === 0;
 
-  async function persist(): Promise<NoteDto> {
+  async function persist(): Promise<AnchoredNoteDto> {
     if (target.kind === "create") {
       const request: CreateNoteRequest = { anchor: draftToAnchor(target.draft), bodyDoc: draft };
       return createNote(workEntryId, request);
@@ -78,7 +78,7 @@ export function NoteEditor({
       return;
     }
 
-    let saved: NoteDto;
+    let saved: AnchoredNoteDto;
 
     setError(undefined);
     setSaving(true);

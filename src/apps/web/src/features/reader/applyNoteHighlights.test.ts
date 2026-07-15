@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
@@ -20,13 +20,20 @@ function reader(html: string): HTMLElement {
   return container;
 }
 
-function note(anchor: NoteDto["anchor"], overrides: Partial<NoteDto> = {}): NoteDto {
+function note(
+  anchor: AnchoredNoteDto["anchor"],
+  overrides: Partial<AnchoredNoteDto> = {}
+): AnchoredNoteDto {
   return {
     blockEntryId: anchor.blockEntryId,
     bodyDoc: createTextDocument("a note"),
     bodyText: "a note",
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId("note-1"),
     kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
     ...overrides,
     anchor
   };
@@ -89,7 +96,7 @@ describe("noteHighlightDescriptors", () => {
         endOffset: 11,
         selectedTextSnapshot: "block",
         startOffset: 6
-      } as NoteDto["anchor"])
+      } as AnchoredNoteDto["anchor"])
     ]);
 
     expect(crossBlock?.suffix).toBe("");
@@ -114,7 +121,7 @@ describe("applyNoteHighlights", () => {
           endOffset: 11,
           selectedTextSnapshot: "block",
           startOffset: 6
-        } as NoteDto["anchor"],
+        } as AnchoredNoteDto["anchor"],
         { entryId: toEntryId("n1") }
       )
     ]);

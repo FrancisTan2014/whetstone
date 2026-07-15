@@ -1,20 +1,29 @@
 import type { NoteOverviewDto } from "@whetstone/contracts";
 
+// A group of a user's notes. An anchored group carries the work it belongs to (title/author/id); the
+// unanchored group (manual or Memory notes with no source, keyed by a `null` work) has all three
+// `null` and renders body-only, without a work header or reader deep-link.
 export type WorkNotes = Readonly<{
-  authorName: string;
+  authorName: string | null;
   notes: ReadonlyArray<NoteOverviewDto>;
-  workEntryId: string;
-  workTitle: string;
+  workEntryId: string | null;
+  workTitle: string | null;
 }>;
 
 // Group the flat cross-work notes list by work for the Notes mode, preserving the order in which
-// each work first appears (the server orders by work title then note id) and the note order within
-// each work.
+// each work first appears (the server orders anchored notes by work title then note id, with
+// unanchored notes last) and the note order within each group. Unanchored notes (no `workEntryId`)
+// collect into a single `null`-keyed group.
 export function groupNotesByWork(notes: ReadonlyArray<NoteOverviewDto>): ReadonlyArray<WorkNotes> {
-  const order: string[] = [];
+  const order: Array<string | null> = [];
   const groups = new Map<
-    string,
-    { authorName: string; notes: NoteOverviewDto[]; workEntryId: string; workTitle: string }
+    string | null,
+    {
+      authorName: string | null;
+      notes: NoteOverviewDto[];
+      workEntryId: string | null;
+      workTitle: string | null;
+    }
   >();
 
   for (const note of notes) {
@@ -35,10 +44,10 @@ export function groupNotesByWork(notes: ReadonlyArray<NoteOverviewDto>): Readonl
 
   return order.map((id) => {
     const group = groups.get(id) as {
-      authorName: string;
+      authorName: string | null;
       notes: NoteOverviewDto[];
-      workEntryId: string;
-      workTitle: string;
+      workEntryId: string | null;
+      workTitle: string | null;
     };
 
     return {

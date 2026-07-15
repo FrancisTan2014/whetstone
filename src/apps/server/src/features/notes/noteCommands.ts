@@ -1,4 +1,4 @@
-import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
+import { toEntryId, type CaptureSource, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { documentReadableText, type DocumentNodeJSON } from "@whetstone/document";
 import type {
   CreateMarkRequest,
@@ -6,11 +6,24 @@ import type {
   NoteDto,
   UpdateNoteRequest
 } from "@whetstone/contracts";
-import { and, eq } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, entryLinks, noteAnchors, notes, personalEntries } from "../../db/schema.js";
+import {
+  entries,
+  entryLinks,
+  memoryPrompts,
+  noteAnchors,
+  notes,
+  personalEntries
+} from "../../db/schema.js";
+import { deleteReviewCardsAndEvents } from "../review/reviewCardCommands.js";
 import { findBlockInWork, getNoteForWork, type BlockInWork } from "./noteQueries.js";
+
+// The transaction handle drizzle passes into `db.transaction`, so the note insert/delete primitives can
+// compose inside a caller's transaction — Reader capture opens its own, and Memory composes a note write
+// (or delete) inside the SAME atomic write as its prompts and shared review cards.
+type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 // Real infrastructure boundaries (database client, id generation, the clock) are passed in so
 // commands stay deterministic and testable. `now` stamps the shared `personal_entries` chronology
@@ -39,10 +52,131 @@ export type DeleteNoteResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "note_not_found" }>;
 
+// Everything the Notes boundary needs to persist one unified note (#620), whatever captured it. A note
+// carries its validated `bodyDoc` + server-derived `bodyText`; a mark carries neither (both null).
+// `captureSource` is the structured provenance the caller supplies (Reader passes "reader"; Memory passes
+// its own). `anchor` is the zero-or-one source anchor — a Reader note/Mark anchors to a block; a Memory or
+// manual note passes `null`. `derivedFromEntryId` optionally records provenance to the source the note was
+// derived from (a Memory deposit's source), written as a `derived_from` link.
+export type InsertNoteParams = Readonly<{
+  anchor: NoteAnchor | null;
+  bodyDoc: DocumentNodeJSON | null;
+  bodyText: string | null;
+  captureSource: CaptureSource;
+  derivedFromEntryId?: string | null;
+  kind: "note" | "mark";
+  noteEntryId: EntryId;
+  now: Date;
+  userId: string;
+}>;
+
+// Insert one unified note inside the caller's transaction: its Entry (`type: "note"`), the shared
+// `personal_entries` ownership + chronology facet (occurredAt = createdAt at capture), and its `notes` row
+// with the CALLER'S capture source. An anchored note additionally gets its `note_anchors` row and an
+// `annotates` link to the block; an unanchored note gets neither. A supplied `derivedFromEntryId` records
+// a `derived_from` provenance link. This is the single writer of a note's rows — Reader and Memory both
+// compose it, so there is exactly one note facet and one body writer.
+export async function insertNoteInTx(tx: Transaction, params: InsertNoteParams): Promise<void> {
+  await tx.insert(entries).values({ id: params.noteEntryId, type: "note" });
+  await tx.insert(personalEntries).values({
+    createdAt: params.now,
+    entryId: params.noteEntryId,
+    occurredAt: params.now,
+    updatedAt: params.now,
+    userId: params.userId
+  });
+  await tx.insert(notes).values({
+    bodyDoc: params.bodyDoc,
+    bodyText: params.bodyText,
+    captureSource: params.captureSource,
+    entryId: params.noteEntryId,
+    kind: params.kind
+  });
+  if (params.anchor !== null) {
+    await tx.insert(noteAnchors).values({
+      blockEntryId: params.anchor.blockEntryId,
+      contextSnapshot: params.anchor.contextSnapshot,
+      endBlockEntryId: params.anchor.endBlockEntryId,
+      endOffset: params.anchor.endOffset ?? null,
+      noteEntryId: params.noteEntryId,
+      selectedText: params.anchor.selectedTextSnapshot,
+      startOffset: params.anchor.startOffset ?? null
+    });
+    await tx.insert(entryLinks).values({
+      fromEntryId: params.noteEntryId,
+      toEntryId: params.anchor.blockEntryId,
+      type: "annotates"
+    });
+  }
+  const derivedFromEntryId = params.derivedFromEntryId ?? null;
+  if (derivedFromEntryId !== null) {
+    await tx.insert(entryLinks).values({
+      fromEntryId: params.noteEntryId,
+      toEntryId: derivedFromEntryId,
+      type: "derived_from"
+    });
+  }
+}
+
+// Delete a note and EVERYTHING bound to it inside the caller's transaction — the single owner-scoped
+// cascade both Reader and Memory delete through (#620). It first tears down each Memory prompt the note
+// `contains` (its shared review card + append-only events, via the review substrate), then the note's and
+// prompts' `entry_links` (contains / derived_from / annotates), the prompt rows, the prompt Entries, the
+// note's anchor row (if any), the note row, its personal-entry facet, and finally the note Entry. Children
+// are removed before parents so every FK holds; a failed dependent delete rolls the whole transaction back,
+// leaving the note and its review state intact. The caller authorizes ownership before composing this.
+export async function deleteNoteInTx(tx: Transaction, noteEntryId: string): Promise<void> {
+  const promptRows = await tx
+    .select({ entryId: memoryPrompts.entryId })
+    .from(memoryPrompts)
+    .where(eq(memoryPrompts.noteEntryId, noteEntryId));
+  const promptIds = promptRows.map((row) => row.entryId);
+  const linkEntryIds = [noteEntryId, ...promptIds];
+
+  await deleteReviewCardsAndEvents(tx, promptIds);
+  await tx
+    .delete(entryLinks)
+    .where(
+      or(inArray(entryLinks.fromEntryId, linkEntryIds), inArray(entryLinks.toEntryId, linkEntryIds))
+    );
+  await tx.delete(memoryPrompts).where(eq(memoryPrompts.noteEntryId, noteEntryId));
+  if (promptIds.length > 0) {
+    await tx.delete(entries).where(inArray(entries.id, promptIds));
+  }
+  await tx.delete(noteAnchors).where(eq(noteAnchors.noteEntryId, noteEntryId));
+  await tx.delete(notes).where(eq(notes.entryId, noteEntryId));
+  await tx.delete(personalEntries).where(eq(personalEntries.entryId, noteEntryId));
+  await tx.delete(entries).where(eq(entries.id, noteEntryId));
+}
+
+// Update a note's canonical body inside the caller's transaction — the SINGLE writer of a note's body
+// columns (#620). It replaces `body_doc` with the supplied validated document, re-derives the readable
+// `body_text` from that document HERE (never trusting a caller-supplied projection), and bumps the shared
+// `personal_entries` `updated_at` chronology in the SAME atomic write. Reader edits compose it with the
+// client's rich doc; Memory composes it with its plain-text note lifted to a document — so note-body
+// derivation and persistence live in exactly one place instead of a parallel body writer per surface.
+// Returns the derived `body_text` so the caller can project the updated row without a re-read. The caller
+// authorizes ownership (work- or user-scoped) before composing this.
+export async function updateNoteBodyInTx(
+  tx: Transaction,
+  params: Readonly<{ bodyDoc: DocumentNodeJSON; noteEntryId: string; now: Date }>
+): Promise<string> {
+  const bodyText = documentReadableText(params.bodyDoc);
+  await tx
+    .update(notes)
+    .set({ bodyDoc: params.bodyDoc, bodyText })
+    .where(eq(notes.entryId, params.noteEntryId));
+  await tx
+    .update(personalEntries)
+    .set({ updatedAt: params.now })
+    .where(eq(personalEntries.entryId, params.noteEntryId));
+  return bodyText;
+}
+
 // Capture a note from a reader selection (#619): the client supplies the anchor and the canonical rich
 // `bodyDoc`; the readable `body_text` is ALWAYS derived here from that document, never trusted from the
 // client. After the shared anchor checks pass, persist a `note` row (its body + `capture_source =
-// 'reader'`) with its anchor and `annotates` link.
+// 'reader'`) with its anchor and `annotates` link through the shared Notes boundary.
 export async function createNote(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
@@ -59,82 +193,30 @@ export async function createNote(
   const anchor = request.anchor;
   const bodyDoc = request.bodyDoc;
   const bodyText = documentReadableText(bodyDoc);
+  const now = dependencies.now();
 
-  await persistNoteWithAnchor(dependencies.db, {
-    anchor,
-    bodyDoc,
-    bodyText,
-    kind: "note",
-    noteEntryId,
-    now: dependencies.now(),
-    userId
-  });
-
-  return {
-    note: {
+  await dependencies.db.transaction((tx) =>
+    insertNoteInTx(tx, {
       anchor,
-      blockEntryId: anchor.blockEntryId,
       bodyDoc,
       bodyText,
-      entryId: noteEntryId,
-      kind: "note"
-    },
+      captureSource: "reader",
+      kind: "note",
+      noteEntryId,
+      now,
+      userId
+    })
+  );
+
+  return {
+    note: readerNoteDto({ anchor, bodyDoc, bodyText, kind: "note", noteEntryId, now }),
     status: "created"
   };
 }
 
-// Insert a note (a rich body) or a mark (no body) with its anchor and `annotates` link in one
-// transaction. `body_doc`/`body_text` are null for a mark (#255); a note carries its validated document
-// and server-derived text. Single owner of note row + its `personal_entries` chronology facet (owner +
-// timestamps; occurredAt = createdAt at capture) + anchor + link creation.
-async function persistNoteWithAnchor(
-  db: DbClient,
-  params: Readonly<{
-    anchor: NoteAnchor;
-    bodyDoc: DocumentNodeJSON | null;
-    bodyText: string | null;
-    kind: "note" | "mark";
-    noteEntryId: EntryId;
-    now: Date;
-    userId: string;
-  }>
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.insert(entries).values({ id: params.noteEntryId, type: "note" });
-    await tx.insert(personalEntries).values({
-      createdAt: params.now,
-      entryId: params.noteEntryId,
-      occurredAt: params.now,
-      updatedAt: params.now,
-      userId: params.userId
-    });
-    await tx.insert(notes).values({
-      bodyDoc: params.bodyDoc,
-      bodyText: params.bodyText,
-      captureSource: "reader",
-      entryId: params.noteEntryId,
-      kind: params.kind
-    });
-    await tx.insert(noteAnchors).values({
-      blockEntryId: params.anchor.blockEntryId,
-      contextSnapshot: params.anchor.contextSnapshot,
-      endBlockEntryId: params.anchor.endBlockEntryId,
-      endOffset: params.anchor.endOffset ?? null,
-      noteEntryId: params.noteEntryId,
-      selectedText: params.anchor.selectedTextSnapshot,
-      startOffset: params.anchor.startOffset ?? null
-    });
-    await tx.insert(entryLinks).values({
-      fromEntryId: params.noteEntryId,
-      toEntryId: params.anchor.blockEntryId,
-      type: "annotates"
-    });
-  });
-}
-
 // Create a mark (#255): a one-tap highlight with no body. Runs the same block + anchor checks a note
-// does, then persists a bodyless `mark` row, so it reuses the anchor, overlap, list, and delete model
-// with no new entity.
+// does, then persists a bodyless `mark` row through the shared Notes boundary, so it reuses the anchor,
+// overlap, list, and delete model with no new entity.
 export async function createMark(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
@@ -149,27 +231,51 @@ export async function createMark(
 
   const noteEntryId = toEntryId(dependencies.createEntryId());
   const anchor = request.anchor;
+  const now = dependencies.now();
 
-  await persistNoteWithAnchor(dependencies.db, {
-    anchor,
-    bodyDoc: null,
-    bodyText: null,
-    kind: "mark",
-    noteEntryId,
-    now: dependencies.now(),
-    userId
-  });
-
-  return {
-    note: {
+  await dependencies.db.transaction((tx) =>
+    insertNoteInTx(tx, {
       anchor,
-      blockEntryId: anchor.blockEntryId,
       bodyDoc: null,
       bodyText: null,
-      entryId: noteEntryId,
-      kind: "mark"
-    },
+      captureSource: "reader",
+      kind: "mark",
+      noteEntryId,
+      now,
+      userId
+    })
+  );
+
+  return {
+    note: readerNoteDto({ anchor, bodyDoc: null, bodyText: null, kind: "mark", noteEntryId, now }),
     status: "created"
+  };
+}
+
+// Project a just-captured Reader note/mark into its DTO: the capture is always anchored and its three
+// chronology instants equal the capture `now`, so the client renders the row without a re-read.
+function readerNoteDto(
+  params: Readonly<{
+    anchor: NoteAnchor;
+    bodyDoc: DocumentNodeJSON | null;
+    bodyText: string | null;
+    kind: "note" | "mark";
+    noteEntryId: EntryId;
+    now: Date;
+  }>
+): NoteDto {
+  const iso = params.now.toISOString();
+  return {
+    anchor: params.anchor,
+    blockEntryId: params.anchor.blockEntryId,
+    bodyDoc: params.bodyDoc,
+    bodyText: params.bodyText,
+    captureSource: "reader",
+    createdAt: iso,
+    entryId: params.noteEntryId,
+    kind: params.kind,
+    occurredAt: iso,
+    updatedAt: iso
   };
 }
 
@@ -199,26 +305,21 @@ export async function updateNote(
   }
 
   const bodyDoc = request.bodyDoc;
-  const bodyText = documentReadableText(bodyDoc);
+  const now = dependencies.now();
 
-  await dependencies.db.transaction(async (tx) => {
-    await tx.update(notes).set({ bodyDoc, bodyText }).where(eq(notes.entryId, noteEntryId));
-    // The note's owner/chronology lives in the shared `personal_entries` facet (#571); an edit is a
-    // change to this Timeline-backed personal Entry, so bump `updated_at` in the same write.
-    await tx
-      .update(personalEntries)
-      .set({ updatedAt: dependencies.now() })
-      .where(eq(personalEntries.entryId, noteEntryId));
-  });
+  const bodyText = await dependencies.db.transaction((tx) =>
+    updateNoteBodyInTx(tx, { bodyDoc, noteEntryId, now })
+  );
 
   return {
-    note: { ...existing, bodyDoc, bodyText, kind: "note" },
+    note: { ...existing, bodyDoc, bodyText, kind: "note", updatedAt: now.toISOString() },
     status: "updated"
   };
 }
 
-// Delete a note and everything bound to it: its anchor, its `annotates` link, and the note
-// Entry itself. Scoped to the work so a cross-work id cannot delete another work's note.
+// Delete a note and everything bound to it through the single owner-scoped cascade (its anchor, links,
+// and any Memory prompts/cards/events it owns). Scoped to the work so a cross-work id cannot delete
+// another work's note.
 export async function deleteNote(
   dependencies: NotesDependencies,
   workEntryId: EntryId,
@@ -231,15 +332,7 @@ export async function deleteNote(
     return { status: "note_not_found" };
   }
 
-  await dependencies.db.transaction(async (tx) => {
-    await tx
-      .delete(entryLinks)
-      .where(and(eq(entryLinks.fromEntryId, noteEntryId), eq(entryLinks.type, "annotates")));
-    await tx.delete(noteAnchors).where(eq(noteAnchors.noteEntryId, noteEntryId));
-    await tx.delete(notes).where(eq(notes.entryId, noteEntryId));
-    await tx.delete(personalEntries).where(eq(personalEntries.entryId, noteEntryId));
-    await tx.delete(entries).where(eq(entries.id, noteEntryId));
-  });
+  await dependencies.db.transaction((tx) => deleteNoteInTx(tx, noteEntryId));
 
   return { status: "deleted" };
 }

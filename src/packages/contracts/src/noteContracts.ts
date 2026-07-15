@@ -1,5 +1,5 @@
 import { type DocumentNodeJSON, documentText, isValidDocument } from "@whetstone/document";
-import type { EntryId } from "@whetstone/domain";
+import type { CaptureSource, EntryId } from "@whetstone/domain";
 import { z } from "zod";
 
 import { noteAnchorDtoSchema, type NoteAnchorDto } from "./entryContracts.js";
@@ -45,35 +45,76 @@ export const updateNoteRequestSchema = z
 
 export type UpdateNoteRequest = z.infer<typeof updateNoteRequestSchema>;
 
-// A persisted note or mark. `kind` discriminates the two: a `note` carries a canonical `bodyDoc` and
-// its server-derived `bodyText`; a `mark` has neither (both null). The reader picks the annotation
-// channel from `kind`, never from the body content.
+// A persisted note or mark — the learner's one durable Note type (#620). `kind` discriminates the two
+// content shapes: a `note` carries a canonical `bodyDoc` and its server-derived `bodyText`; a `mark` has
+// neither (both null). `captureSource` is how it was captured (structured provenance). `anchor` is its
+// zero-or-one source anchor — present for an anchored Reader note/Mark, `null` for an unanchored manual or
+// Memory note (whose absence is a normal state, not an error); `blockEntryId` mirrors the anchor's block
+// (null when unanchored). `createdAt`/`updatedAt`/`occurredAt` are ISO instants from the shared
+// personal-entry chronology facet. Scheduler fields and prompt lifecycle NEVER appear here — Memory is
+// behavior applied to a note, not part of it.
 export type NoteDto = Readonly<{
-  anchor: NoteAnchorDto;
-  blockEntryId: EntryId;
+  anchor: NoteAnchorDto | null;
+  blockEntryId: EntryId | null;
   bodyDoc: DocumentNodeJSON | null;
   bodyText: string | null;
+  captureSource: CaptureSource;
+  createdAt: string;
   entryId: EntryId;
   kind: "note" | "mark";
+  occurredAt: string;
+  updatedAt: string;
 }>;
 
 export type NoteListDto = Readonly<{
   notes: ReadonlyArray<NoteDto>;
 }>;
 
-// A saved note enriched with the work it belongs to, for the cross-work Notes mode. Carries the
-// note's `blockEntryId` (from `NoteDto`) plus the work title/author and `workEntryId` so the list
-// can group by work and deep-link the reader to the anchored block.
+// A note known to be anchored — the Reader's shape, where the source anchor and its block are always
+// present (the work-scoped note reads return only anchored notes/marks). Narrowing to this at the Reader
+// boundary lets reader code render highlights and jump to blocks without re-checking the shared nullable
+// anchor on every access.
+export type AnchoredNoteDto = NoteDto & Readonly<{ anchor: NoteAnchorDto; blockEntryId: EntryId }>;
+
+// Narrow a note to its anchored shape. `anchor` and `blockEntryId` are all-or-nothing (an anchored note
+// carries both, an unanchored one neither), so a non-null anchor is a sound witness that the note is
+// anchored.
+export function isAnchoredNote(note: NoteDto): note is AnchoredNoteDto {
+  return note.anchor !== null;
+}
+
+// A saved note enriched with the work it belongs to, for the cross-work Notes mode. An anchored note
+// carries its `blockEntryId` (from `NoteDto`) plus the work title/author and `workEntryId` so the list can
+// group by work and deep-link the reader to the anchored block. An unanchored note (a manual or Memory
+// note with no source) has no work context, so those three fields are `null` and the row shows its body
+// only.
 export type NoteOverviewDto = NoteDto &
   Readonly<{
-    authorName: string;
-    workEntryId: EntryId;
-    workTitle: string;
+    authorName: string | null;
+    workEntryId: EntryId | null;
+    workTitle: string | null;
   }>;
 
 export type NotesOverviewListDto = Readonly<{
   notes: ReadonlyArray<NoteOverviewDto>;
 }>;
+
+// An overview note known to be anchored — it carries its source anchor, the anchored block, and the work
+// context (title + id) the Notes overview deep-links into. `authorName` stays nullable because a work may
+// have no recorded author even when the note is anchored.
+export type AnchoredNoteOverviewDto = NoteOverviewDto &
+  Readonly<{
+    anchor: NoteAnchorDto;
+    blockEntryId: EntryId;
+    workEntryId: EntryId;
+    workTitle: string;
+  }>;
+
+// Narrow an overview note to its anchored shape. As with `isAnchoredNote`, a non-null anchor is the sound
+// witness — the anchor, block, and work context are supplied together by the same source join.
+export function isAnchoredNoteOverview(note: NoteOverviewDto): note is AnchoredNoteOverviewDto {
+  return note.anchor !== null;
+}
 
 export function parseCreateNoteRequest(value: unknown): CreateNoteRequest {
   return createNoteRequestSchema.parse(value);

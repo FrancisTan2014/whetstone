@@ -6,24 +6,60 @@ import type {
   MemoryPromptCardDto,
   MemoryPromptDto
 } from "@whetstone/contracts";
-import type { ReviewState } from "@whetstone/domain";
+import type { CaptureSource, ReviewState } from "@whetstone/domain";
+import type { DocumentNodeJSON } from "@whetstone/document";
 import { localDayBoundary } from "@whetstone/domain";
-import { and, asc, desc, eq, inArray, lte, or, ilike } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
   entryLinks,
-  memoryNotes,
   memoryPrompts,
+  noteAnchors,
+  notes,
   personalEntries,
   reviewCards
 } from "../../db/schema.js";
 import { reviewStateFromCard, type ReviewCardRow } from "../review/reviewCardQueries.js";
 
-// One persisted memory-note / memory-prompt row, as selected from its table. A prompt row no longer holds
-// any scheduling state — the FSRS card lives in the shared `review_cards` substrate (#617).
-export type MemoryNoteRow = typeof memoryNotes.$inferSelect;
+// A memory note's content as the Memory feature reads/builds it (#620): the unified note's id, its rich
+// body + readable projection, and its capture source. A memory note lives in the one `notes` facet as an
+// UNANCHORED `kind = 'note'` row (a reader note/mark is the anchored shape), so Memory reads it from that
+// store — there is no second note table or body mapper. A prompt row no longer holds any scheduling state
+// — the FSRS card lives in the shared `review_cards` substrate (#617).
+export type MemoryNoteRow = Readonly<{
+  entryId: string;
+  bodyDoc: DocumentNodeJSON;
+  bodyText: string;
+  captureSource: CaptureSource;
+}>;
 export type MemoryPromptRow = typeof memoryPrompts.$inferSelect;
+
+// The unified-note columns a memory note projects from, and the drizzle predicate that scopes the `notes`
+// facet to memory notes: a `kind = 'note'` row with NO anchor (the reader shape is always anchored). Every
+// Memory read of the note store composes these so reader notes never leak into a Memory surface.
+const memoryNoteColumns = {
+  entryId: notes.entryId,
+  bodyDoc: notes.bodyDoc,
+  bodyText: notes.bodyText,
+  captureSource: notes.captureSource
+} as const;
+
+function toMemoryNoteRow(
+  row: Readonly<{
+    entryId: string;
+    bodyDoc: unknown;
+    bodyText: string | null;
+    captureSource: CaptureSource;
+  }>
+): MemoryNoteRow {
+  return {
+    entryId: row.entryId,
+    bodyDoc: row.bodyDoc as DocumentNodeJSON,
+    bodyText: row.bodyText as string,
+    captureSource: row.captureSource
+  };
+}
 
 // A ready prompt row narrowed so its answer is present. `ready` means "revealable answer" by construction
 // (the domain lifecycle gate), so a ready row's `answerText` is never null — this makes the card
@@ -247,12 +283,21 @@ export async function getMemoryNoteRowForUser(
   noteId: string
 ): Promise<MemoryNoteRow | undefined> {
   const rows = await db
-    .select({ note: memoryNotes })
-    .from(memoryNotes)
-    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
-    .where(and(eq(memoryNotes.entryId, noteId), eq(personalEntries.userId, userId)))
+    .select(memoryNoteColumns)
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .where(
+      and(
+        eq(notes.entryId, noteId),
+        eq(personalEntries.userId, userId),
+        eq(notes.kind, "note"),
+        isNull(noteAnchors.noteEntryId)
+      )
+    )
     .limit(1);
-  return rows[0]?.note;
+  const row = rows[0];
+  return row === undefined ? undefined : toMemoryNoteRow(row);
 }
 
 // A prompt paired with its shared review card (null when the prompt is an unenrolled draft), used to roll
@@ -309,21 +354,25 @@ async function loadNoteSummaries(
   if (restrictNoteIds !== null && restrictNoteIds.length === 0) {
     return [];
   }
-  const ownerFilter = eq(personalEntries.userId, userId);
-  const where =
-    restrictNoteIds === null
-      ? ownerFilter
-      : and(ownerFilter, inArray(memoryNotes.entryId, [...restrictNoteIds]));
+  const conditions = [
+    eq(personalEntries.userId, userId),
+    eq(notes.kind, "note"),
+    isNull(noteAnchors.noteEntryId)
+  ];
+  if (restrictNoteIds !== null) {
+    conditions.push(inArray(notes.entryId, [...restrictNoteIds]));
+  }
   const noteRows = await db
-    .select({ note: memoryNotes, occurredAt: personalEntries.occurredAt })
-    .from(memoryNotes)
-    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
-    .where(where)
-    .orderBy(desc(personalEntries.occurredAt), asc(memoryNotes.entryId));
+    .select({ ...memoryNoteColumns, occurredAt: personalEntries.occurredAt })
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .where(and(...conditions))
+    .orderBy(desc(personalEntries.occurredAt), asc(notes.entryId));
   if (noteRows.length === 0) {
     return [];
   }
-  const noteIds = noteRows.map((row) => row.note.entryId);
+  const noteIds = noteRows.map((row) => row.entryId);
   const promptRows = await db
     .select({ prompt: memoryPrompts, card: reviewCards })
     .from(memoryPrompts)
@@ -335,7 +384,9 @@ async function loadNoteSummaries(
     bucket.push({ prompt, card });
     byNote.set(prompt.noteEntryId, bucket);
   }
-  return noteRows.map((row) => summarizeNote(row.note, byNote.get(row.note.entryId) ?? [], now));
+  return noteRows.map((row) =>
+    summarizeNote(toMemoryNoteRow(row), byNote.get(row.entryId) ?? [], now)
+  );
 }
 
 // Every memory note the user owns, as list-row summaries (newest first) — learner-created notes AND
@@ -359,10 +410,18 @@ export async function searchMemoryNotes(
 ): Promise<ReadonlyArray<MemoryNoteSummaryDto>> {
   const pattern = `%${escapeLike(query)}%`;
   const bodyMatches = await db
-    .select({ entryId: memoryNotes.entryId })
-    .from(memoryNotes)
-    .innerJoin(personalEntries, eq(personalEntries.entryId, memoryNotes.entryId))
-    .where(and(eq(personalEntries.userId, userId), ilike(memoryNotes.bodyText, pattern)));
+    .select({ entryId: notes.entryId })
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .where(
+      and(
+        eq(personalEntries.userId, userId),
+        eq(notes.kind, "note"),
+        isNull(noteAnchors.noteEntryId),
+        ilike(notes.bodyText, pattern)
+      )
+    );
   const promptMatches = await db
     .select({ noteEntryId: memoryPrompts.noteEntryId })
     .from(memoryPrompts)

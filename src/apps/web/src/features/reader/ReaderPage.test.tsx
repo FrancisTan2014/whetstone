@@ -100,7 +100,7 @@ import {
 import { buildAnchorIndex } from "./referenceResolver";
 import type { ReaderBlock, ReaderStructure } from "./readerModel";
 import type {
-  NoteDto,
+  AnchoredNoteDto,
   WorkContentDto,
   WorkListDto,
   WorkListItemDto,
@@ -1834,7 +1834,7 @@ describe("ReaderPage", () => {
       bodyText: null,
       entryId: toEntryId("span-1"),
       kind: "mark"
-    } as NoteDto;
+    } as AnchoredNoteDto;
     mockedCreateMark.mockResolvedValue(spanNote);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [spanNote] });
@@ -1885,7 +1885,7 @@ describe("ReaderPage", () => {
       bodyText: null,
       entryId: toEntryId("span-1"),
       kind: "mark"
-    } as NoteDto;
+    } as AnchoredNoteDto;
     seedWorkContent(crossBlockContent);
     mockedFetchNotes.mockResolvedValue({ notes: [spanNote] });
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -1925,7 +1925,7 @@ describe("ReaderPage", () => {
 
   it("anchors a note to the selected occurrence of repeated text", async () => {
     seedWorkContent(repeatedContent);
-    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
+    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as AnchoredNoteDto);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     const block = await screen.findByText("the cat sat on the mat");
@@ -1975,7 +1975,7 @@ describe("ReaderPage", () => {
 
   it("confirms and closes the editor after a note is saved", async () => {
     seedWorkContent(multiUnitContent);
-    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as NoteDto);
+    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as AnchoredNoteDto);
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -2007,7 +2007,7 @@ describe("ReaderPage", () => {
       bodyText: null,
       entryId: toEntryId("mark-1"),
       kind: "mark"
-    } as NoteDto;
+    } as AnchoredNoteDto;
     mockedCreateMark.mockResolvedValue(mark);
     mockedFetchNotes.mockResolvedValueOnce({ notes: [] });
     mockedFetchNotes.mockResolvedValueOnce({ notes: [mark] });
@@ -2176,7 +2176,7 @@ describe("ReaderPage selection toolbar", () => {
   });
 });
 
-function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
+function makeNote(overrides: Partial<AnchoredNoteDto> = {}): AnchoredNoteDto {
   return {
     anchor: {
       blockEntryId: toEntryId("b-1"),
@@ -2187,15 +2187,19 @@ function makeNote(overrides: Partial<NoteDto> = {}): NoteDto {
     bodyDoc: createTextDocument("the beginning"),
     blockEntryId: toEntryId("b-1"),
     bodyText: "the beginning",
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId("note-1"),
     kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
     ...overrides
   };
 }
 
 // A note anchored to a sub-block range ("Intro" = [0,5) of "Intro paragraph.") — the case that
 // renders an underline rather than a whole-block gutter.
-function subBlockNote(overrides: Partial<NoteDto> = {}): NoteDto {
+function subBlockNote(overrides: Partial<AnchoredNoteDto> = {}): AnchoredNoteDto {
   return makeNote({
     anchor: {
       blockEntryId: toEntryId("b-1"),
@@ -2209,7 +2213,7 @@ function subBlockNote(overrides: Partial<NoteDto> = {}): NoteDto {
   });
 }
 
-async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
+async function openWorkWithNotes(notes: ReadonlyArray<AnchoredNoteDto>): Promise<HTMLElement> {
   seedWorkContent(multiUnitContent);
   mockedFetchNotes.mockResolvedValue({ notes });
   const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
@@ -2221,7 +2225,9 @@ async function openWorkWithNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLEle
 
 // A sub-block note splits the block text across nodes (the anchored span + the remainder), so the
 // "Intro paragraph." text no longer matches as a single node; wait for the block element instead.
-async function openWorkWithSubBlockNotes(notes: ReadonlyArray<NoteDto>): Promise<HTMLElement> {
+async function openWorkWithSubBlockNotes(
+  notes: ReadonlyArray<AnchoredNoteDto>
+): Promise<HTMLElement> {
   seedWorkContent(multiUnitContent);
   mockedFetchNotes.mockResolvedValue({ notes });
   const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);

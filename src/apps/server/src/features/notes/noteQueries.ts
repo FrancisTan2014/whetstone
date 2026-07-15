@@ -1,6 +1,6 @@
 import type { NoteDto, NoteOverviewDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
-import { toEntryId, type EntryId, type NoteAnchor } from "@whetstone/domain";
+import { toEntryId, type CaptureSource, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -58,38 +58,59 @@ export async function findBlockInWork(
     : { orderIndex: row.orderIndex, plaintext: row.plaintext, unitOrderIndex: row.unitOrderIndex };
 }
 
+// A note row joined to its optional anchor and its owning personal-entry chronology facet. The anchor
+// columns are nullable because a note may be unanchored (a manual or Memory note has no source anchor):
+// they are all-or-nothing — a `note_anchors` row supplies all four together, or there is no row and all
+// four are null. `captureSource` and the `created/occurred/updated` instants come from the unified
+// `notes` + `personal_entries` facets every note owns.
 type NoteRow = Readonly<{
-  blockEntryId: string;
+  blockEntryId: string | null;
   bodyDoc: unknown;
   bodyText: string | null;
-  contextSnapshot: string;
-  endBlockEntryId: string;
+  captureSource: CaptureSource;
+  contextSnapshot: string | null;
+  createdAt: Date;
+  endBlockEntryId: string | null;
   endOffset: number | null;
   entryId: string;
   kind: "note" | "mark";
-  selectedText: string;
+  occurredAt: Date;
+  selectedText: string | null;
   startOffset: number | null;
+  updatedAt: Date;
 }>;
 
 const noteColumns = {
   blockEntryId: noteAnchors.blockEntryId,
   bodyDoc: notes.bodyDoc,
   bodyText: notes.bodyText,
+  captureSource: notes.captureSource,
   contextSnapshot: noteAnchors.contextSnapshot,
+  createdAt: personalEntries.createdAt,
   endBlockEntryId: noteAnchors.endBlockEntryId,
   endOffset: noteAnchors.endOffset,
   entryId: notes.entryId,
   kind: notes.kind,
+  occurredAt: personalEntries.occurredAt,
   selectedText: noteAnchors.selectedText,
-  startOffset: noteAnchors.startOffset
+  startOffset: noteAnchors.startOffset,
+  updatedAt: personalEntries.updatedAt
 } as const;
 
-function toNoteAnchor(row: NoteRow): NoteAnchor {
+// Build the note's zero-or-one source anchor. `note_anchors` supplies its NOT NULL columns
+// (block/end-block/context/selected-text) as an all-or-nothing group, so a null `blockEntryId` means the
+// LEFT JOIN found no anchor row and the note is unanchored; the sibling columns are then null too and the
+// non-null assertions below hold. Offsets remain independently optional (a whole-block selection has none).
+function toNoteAnchor(row: NoteRow): NoteAnchor | null {
+  if (row.blockEntryId === null) {
+    return null;
+  }
+
   const base = {
     blockEntryId: toEntryId(row.blockEntryId),
-    contextSnapshot: row.contextSnapshot,
-    endBlockEntryId: toEntryId(row.endBlockEntryId),
-    selectedTextSnapshot: row.selectedText
+    contextSnapshot: row.contextSnapshot as string,
+    endBlockEntryId: toEntryId(row.endBlockEntryId as string),
+    selectedTextSnapshot: row.selectedText as string
   };
 
   if (row.startOffset === null || row.endOffset === null) {
@@ -102,11 +123,15 @@ function toNoteAnchor(row: NoteRow): NoteAnchor {
 function toNoteDto(row: NoteRow): NoteDto {
   return {
     anchor: toNoteAnchor(row),
-    blockEntryId: toEntryId(row.blockEntryId),
+    blockEntryId: row.blockEntryId === null ? null : toEntryId(row.blockEntryId),
     bodyDoc: row.bodyDoc as DocumentNodeJSON | null,
     bodyText: row.bodyText,
+    captureSource: row.captureSource,
+    createdAt: row.createdAt.toISOString(),
     entryId: toEntryId(row.entryId),
-    kind: row.kind
+    kind: row.kind,
+    occurredAt: row.occurredAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
   };
 }
 
@@ -133,25 +158,26 @@ export async function listNotesForWork(
 
 type NoteOverviewRow = NoteRow &
   Readonly<{
-    authorName: string;
-    workEntryId: string;
-    workTitle: string;
+    authorName: string | null;
+    workEntryId: string | null;
+    workTitle: string | null;
   }>;
 
 function toNoteOverviewDto(row: NoteOverviewRow): NoteOverviewDto {
   return {
     ...toNoteDto(row),
     authorName: row.authorName,
-    workEntryId: toEntryId(row.workEntryId),
+    workEntryId: row.workEntryId === null ? null : toEntryId(row.workEntryId),
     workTitle: row.workTitle
   };
 }
 
-// Every note the user owns, across all works, for the Notes mode. Joined to the anchor for the
-// snapshot and to the work + author for grouping and deep-linking. Scoped through the block's
-// `work_entry_id` (resolved over both legacy and PM blocks; notes on soft-deleted blocks stay listed,
-// matching `listNotesForWork`) and filtered to the user. Ordered by work title then note id so the
-// client can group by work.
+// Every note the user owns, across all works, for the Notes mode. The anchor, its block's work, and the
+// work's author are LEFT-joined because an unanchored note (a manual or Memory note with no source) has
+// no anchor and therefore no work context — it is still listed, with null work fields, and the client
+// shows its body only. Anchored notes carry their work title/author and `workEntryId` (resolved over both
+// legacy and PM blocks; notes on soft-deleted blocks stay listed). Ordered by work title then note id so
+// the client can group by work.
 export async function listNotesForUser(
   db: DbClient,
   userId: string
@@ -165,11 +191,11 @@ export async function listNotesForUser(
       workTitle: workMeta.title
     })
     .from(notes)
-    .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
     .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
-    .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
-    .innerJoin(workMeta, eq(workMeta.entryId, addressable.workEntryId))
-    .innerJoin(authors, eq(authors.id, workMeta.authorId))
+    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .leftJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
+    .leftJoin(workMeta, eq(workMeta.entryId, addressable.workEntryId))
+    .leftJoin(authors, eq(authors.id, workMeta.authorId))
     .where(eq(personalEntries.userId, userId))
     .orderBy(asc(workMeta.title), asc(notes.entryId));
 

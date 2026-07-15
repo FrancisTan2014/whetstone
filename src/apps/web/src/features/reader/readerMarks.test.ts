@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
@@ -12,13 +12,19 @@ function block(entryId: string, plaintext: string): ReaderBlock {
   return { blockType: "paragraph", entryId, isHeading: false, mdast: {}, plaintext };
 }
 
-function note(overrides: Partial<NoteDto> & { anchor: NoteDto["anchor"] }): NoteDto {
+function note(
+  overrides: Partial<AnchoredNoteDto> & { anchor: AnchoredNoteDto["anchor"] }
+): AnchoredNoteDto {
   return {
     blockEntryId: overrides.anchor.blockEntryId,
     bodyDoc: createTextDocument("a note"),
     bodyText: "a note",
+    captureSource: "reader",
+    createdAt: "2024-01-01T00:00:00.000Z",
     entryId: toEntryId("note-1"),
     kind: "note",
+    occurredAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
     ...overrides
   };
 }

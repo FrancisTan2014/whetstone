@@ -60,7 +60,7 @@ vi.mock("../../shared/editor/index.js", async () => {
 import { createNote, updateNote } from "./notesApi";
 import { NoteEditor, type NoteEditorTarget } from "./NoteEditor";
 import type { NoteDraft } from "./noteCapture";
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument, documentText } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
@@ -84,7 +84,7 @@ const subBlockAnchor = {
   startOffset: 16
 };
 
-const existingNote: NoteDto = {
+const existingNote: AnchoredNoteDto = {
   anchor: {
     blockEntryId: toEntryId("block-1"),
     contextSnapshot: "The quick brown fox.",
@@ -96,11 +96,15 @@ const existingNote: NoteDto = {
   blockEntryId: toEntryId("block-1"),
   bodyDoc: createTextDocument("a sly animal"),
   bodyText: "a sly animal",
+  captureSource: "reader",
+  createdAt: "2024-01-01T00:00:00.000Z",
   entryId: toEntryId("note-7"),
-  kind: "note"
+  kind: "note",
+  occurredAt: "2024-01-01T00:00:00.000Z",
+  updatedAt: "2024-01-01T00:00:00.000Z"
 };
 
-const savedNote = { entryId: toEntryId("note-1"), kind: "note" } as NoteDto;
+const savedNote = { entryId: toEntryId("note-1"), kind: "note" } as AnchoredNoteDto;
 
 function noteBody(): HTMLTextAreaElement {
   return screen.getByLabelText("Note body") as HTMLTextAreaElement;
@@ -109,12 +113,12 @@ function noteBody(): HTMLTextAreaElement {
 function renderEditor(
   overrides: {
     onClose?: () => void;
-    onSaved?: (note: NoteDto) => void;
+    onSaved?: (note: AnchoredNoteDto) => void;
     target?: NoteEditorTarget;
   } = {}
 ): {
   onClose: () => void;
-  onSaved: (note: NoteDto) => void;
+  onSaved: (note: AnchoredNoteDto) => void;
   user: ReturnType<typeof userEvent.setup>;
 } {
   const onClose = overrides.onClose ?? vi.fn();
@@ -229,10 +233,10 @@ describe("NoteEditor create mode", () => {
   });
 
   it("disables the save button while the note is being saved", async () => {
-    let resolveSave: (note: NoteDto) => void = () => {};
+    let resolveSave: (note: AnchoredNoteDto) => void = () => {};
     mockedCreateNote.mockImplementation(
       () =>
-        new Promise<NoteDto>((resolve) => {
+        new Promise<AnchoredNoteDto>((resolve) => {
           resolveSave = resolve;
         })
     );
@@ -272,7 +276,7 @@ describe("NoteEditor edit mode", () => {
   });
 
   it("saves the replaced document through the update endpoint", async () => {
-    const updated = { ...existingNote, bodyText: "a cunning animal" } as NoteDto;
+    const updated = { ...existingNote, bodyText: "a cunning animal" } as AnchoredNoteDto;
     mockedUpdateNote.mockResolvedValue(updated);
     const { onSaved, user } = renderEditor({ target: { kind: "edit", note: existingNote } });
 

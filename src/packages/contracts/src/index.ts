@@ -195,7 +195,6 @@ export type {
   TimelineDiaryEntryDto,
   TimelineDto,
   TimelineEntryDto,
-  TimelineMemoryNoteEntryDto,
   TimelineNoteEntryDto,
   TimelineQuery,
   TimelineRecitationEntryDto,
@@ -335,6 +334,8 @@ export type {
 export {
   createMarkRequestSchema,
   createNoteRequestSchema,
+  isAnchoredNote,
+  isAnchoredNoteOverview,
   noteBodyDocSchema,
   parseCreateMarkRequest,
   parseCreateNoteRequest,
@@ -342,6 +343,8 @@ export {
   updateNoteRequestSchema
 } from "./noteContracts.js";
 export type {
+  AnchoredNoteDto,
+  AnchoredNoteOverviewDto,
   CreateMarkRequest,
   CreateNoteRequest,
   NoteDto,

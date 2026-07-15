@@ -1,14 +1,14 @@
-import type { NoteDto } from "@whetstone/contracts";
+import type { AnchoredNoteDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
 import { noteChipSwatchClass } from "./noteChip.tokens";
 
 type NoteListProps = Readonly<{
   emptyLabel: string;
-  notes: ReadonlyArray<NoteDto>;
-  onDelete: (note: NoteDto) => void;
-  onEdit: (note: NoteDto) => void;
-  onJump: (note: NoteDto) => void;
+  notes: ReadonlyArray<AnchoredNoteDto>;
+  onDelete: (note: AnchoredNoteDto) => void;
+  onEdit: (note: AnchoredNoteDto) => void;
+  onJump: (note: AnchoredNoteDto) => void;
 }>;
 
 // Presentational list of note cards: each shows the note/mark chip, the anchored selected-text
