@@ -512,6 +512,10 @@ The pivot is usable only when all are true:
 - Day/Night and desktop/mobile retain readable hierarchy, focus, contrast, and 44px controls except
   for the deliberate inline-text target exception.
 - The primary bundle does not eagerly ship retired Practice/Map experiences.
+- After the current daily-loop work lands, one `main` commit passes a maintainer-clicked manual
+  end-to-end walkthrough and seven consecutive local-calendar days of normal use. A loop-breaking
+  defect or runtime change restarts the window; cosmetic findings and documentation/test-only changes
+  do not. Broader feature work resumes only after this gate passes.
 
 ## Delivery order
 
@@ -525,14 +529,16 @@ The pivot is usable only when all are true:
 5. Remove manual speech-language configuration and reduce Diary to capture plus its paginated
    timeline.
 6. Recompose navigation around Today, Library, Recite, Notes, and Diary, with Search as a utility.
-7. Use the consolidated daily loop in real practice before adding scope or extracting shared routine
-   infrastructure.
+7. Manually click through the integrated product, then use that same runtime build normally for seven
+   consecutive days before adding scope or extracting shared routine infrastructure.
 
 ## Deferred scope and non-goals
 
 - No autonomous arranger, coach, generated case library, Progress Map, proposal inbox, or AI grading.
 - No generic habit framework, arbitrary recurrence builder, timers, quotas, or notification system in
   the recitation-first release.
+- No in-app dogfood tracker, release dashboard, telemetry, streak, or quota for the manual release
+  gate.
 - No in-app Recitation acquisition curriculum, phase progression, passage fading, chaining, or
   targeted repair before whole-Work maintenance is dogfooded.
 - No social reading, public profiles, shared highlights, rankings, streaks, or gamification.
