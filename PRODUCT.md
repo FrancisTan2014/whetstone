@@ -3,14 +3,14 @@
 ## Product promise
 
 Whetstone is a **private, deterministic personal learning assistant** for sustained reading,
-recitation, memory, diary, and writing practice.
+note review, recitation, diary, and writing practice.
 
 > **You choose; Whetstone remembers, schedules, presents, and records.**
 
 The product does not decide what the learner should care about. The learner deliberately adopts a
-Work, creates a Memory item, starts a routine, or records a diary entry. Whetstone then makes that
-intent durable: it keeps the source, restores context, schedules reviews, resumes progress, and
-records what happened.
+Work, adds a note to review, enrolls known material for maintenance, or records a diary entry.
+Whetstone then makes that intent durable: it keeps the source, restores context, schedules reviews,
+resumes progress, and records what happened.
 
 The current priority is not broader intelligence. It is a daily loop trustworthy enough to use for
 years:
@@ -18,7 +18,7 @@ years:
 1. Choose meaningful material or a practice.
 2. Do one clear next action.
 3. Record the result without losing the source or raw input.
-4. Return when the deterministic schedule or routine says it is time.
+4. Return when the deterministic schedule says it is time.
 5. See a truthful completion state and leave without guilt.
 
 ## Product contract
@@ -26,17 +26,18 @@ years:
 These invariants outrank individual features:
 
 1. **Complete with AI off.** With no model, API key, or model server, the learner can use Today,
-   Library, Reader, Notes, Memory, Recitation, Diary, Writing, Timeline, and Search. No critical path
-   waits for generated content or a model decision.
+   Library, Reader, Notes and Review, Recitation, Diary, Writing, and Search. No critical path waits
+   for generated content or a model decision.
 2. **Explicit intent before automation.** Whetstone may schedule something the learner enrolled, but
-   it never invents a goal, silently creates practice, changes a routine phase, or grades recall.
-3. **Deterministic obligations; optional invitations.** Due work comes from FSRS or an explicit
-   routine rule. Continue-reading, continue-writing, lookup, and new material are invitations and do
-   not block completion.
+   it never invents a goal, silently creates practice, changes enrollment/card state, or grades
+   recall.
+3. **Deterministic obligations; optional invitations.** Due work comes from FSRS over material the
+   learner explicitly enrolled. Continue-reading, continue-writing, lookup, and capture are
+   invitations and do not block completion.
 4. **Save first.** User-authored content and raw capture are persisted before optional processing.
    Model, network, and worker failures must never erase or delay the base artifact.
-5. **One source of truth.** Recitation references canonical Work text; notes and Memory retain
-   provenance; derived displays never become a second authoritative copy.
+5. **One source of truth.** Recitation references canonical Work text; review prompts reference
+   canonical notes; provenance and derived displays never become a second authoritative copy.
 6. **Self-assessment is final.** The learner supplies FSRS ratings. Reveal, speech recognition, and
    model output never become an implicit grade.
 7. **Small, finishable days.** Today is bounded, clearable, and calm. No streak loss, shame,
@@ -56,16 +57,16 @@ The usable personal-learning cycle contains:
   provenance.
 - **Reader and Notes:** read one unit at a time; select source text; look it up; save, revisit, edit,
   and delete rich notes with optional source anchors.
-- **Memory:** deliberately add retrieval prompts to notes; review due prompts with FSRS and a
-  learner-supplied rating.
-- **Recitation:** adopt a Work, familiarize, divide it into passages, learn with progressive fading,
-  chain passages, and maintain the whole Work with recitation-specific FSRS.
+- **Notes and Review:** keep anchored and standalone notes in one surface; deliberately add a
+  retrieval question to a note; review the current note body with FSRS and a learner-supplied rating.
+- **Recitation:** enroll a Work the learner can already recite, reveal and self-rate whole-Work
+  recall, and maintain it with recitation-specific FSRS.
 - **Diary:** type or speak; persist raw input first; optionally transcribe and tidy; edit and revisit
-  the durable entry.
+  the durable entry in a reverse-chronological timeline.
 - **Writing:** create an owned Work, autosave it in the shared rich editor, and read it through the
   same Reader.
-- **Today:** show deterministic due work and explicit routine state, then a truthful completion.
-- **Timeline and Search:** recover personal artifacts chronologically and source content by text.
+- **Today:** show deterministic due work and optional continuations, then a truthful completion.
+- **Search:** recover source content by text; Diary owns the chronological journal view.
 
 The former Practice, Progress Map, generated-case, and reading-nudge surfaces were legacy
 experiments, not part of this contract. They have been retired, so the shipped product no longer
@@ -73,19 +74,21 @@ contains a coach-led Practice experience or a deterministic fake standing in for
 
 ## Information architecture
 
-Primary navigation has **four** destinations:
+Primary navigation has **five** destinations:
 
-1. **Today** — due work, active routines, and capture.
+1. **Today** — due work, optional continuations, and capture.
 2. **Library** — source and authored Works.
-3. **Memory** — due review, retrieval prompts, and review history.
-4. **Search** — block-level retrieval across the library.
+3. **Recite** — enrolled Works, due maintenance, and next review dates.
+4. **Notes** — anchored and standalone notes, review enrollment, and due Review.
+5. **Diary** — typed/voice capture and the chronological journal.
 
-The Reader is an immersive destination opened from context. Recitation, Diary/Timeline, Writing,
-Notes, and settings are secondary destinations reached from the primary surface that owns the task.
-There is no primary Practice or Progress Map destination.
+Search is a persistent one-action shell utility, not a primary destination. Reader and Writing belong
+to Library; note Review belongs to Notes; Recitation review belongs to Recite. Every secondary surface
+keeps its parent visibly active and provides one explicit return path. Old Memory and Recall links
+redirect into Notes and its Review session. There is no primary Practice or Progress Map destination.
 
-Desktop/tablet uses a left sidebar. Mobile uses one non-wrapping bottom bar with four targets. Every
-interactive target is at least 44px in both dimensions.
+Desktop/tablet uses a left sidebar. Mobile uses one non-wrapping bottom bar with five targets at
+320px and above. Every navigation target is at least 44px in both dimensions.
 
 ## v0 assistant home (Today)
 
@@ -93,14 +96,12 @@ Today is a **routine board**, not a dashboard, recommendation feed, or place whe
 for attention. It has three restrained groups:
 
 1. **Due**
-   - Recitation: aggregate due count/status and one **Start** or **Continue** action into the dedicated
-     session.
-   - Memory: aggregate due count and one action into due review.
+   - Recitation: aggregate every unpaused Work's due state and provide one action into direct review.
+   - Review: aggregate due note prompts and provide one action into Notes-owned Review.
 2. **Continue**
-   - An active familiarization routine that has not recorded today's session.
    - The most recently read Work.
    - The most recently edited unfinished Work.
-   - These rows are explicit invitations unless a routine contract says otherwise.
+   - These rows are explicit invitations.
 3. **Capture**
    - One compact typed/voice diary entry point.
 
@@ -110,10 +111,9 @@ item-by-item work live in the destination session.
 
 **Completion rules:**
 
-- "Done for today" appears only after all currently due Memory and Recitation work, plus any active
-  daily familiarization action, are complete.
-- Optional new passages, reading, writing, lookup, and diary invitations do not block completion.
-- A paused routine creates no Today row and no obligation.
+- "Done for today" appears only after all currently due note Review and Recitation work is complete.
+- Reading, writing, lookup, and diary invitations do not block completion.
+- Paused review or Recitation maintenance creates no obligation.
 - A missed day creates no penalty or catch-up counter. FSRS items simply remain due.
 - The completion state reports the next known due time when one exists.
 
@@ -123,159 +123,97 @@ request.
 
 ## Routine model
 
-A routine is an **explicitly enrolled practice with its own truthful state**, not a generic habit
-tracker.
+v0 keeps routine state narrow:
 
-- Routines are `active` or `paused`. Pausing preserves content, schedule, and history but removes the
-  routine from Today and from due selection. Resuming does not reset anything.
-- Phase changes and daily completion are explicit events. The app does not infer completion from time
-  spent, scrolling, speech, or model output.
-- A "day" uses the learner's local calendar date, not a rolling 24-hour window.
-- Recitation is the reference routine. Shared routine infrastructure is extracted only after reading,
-  writing, or diary proves that it needs the same behavior; v0 does not begin with a speculative habit
-  framework or recurrence-rule builder.
+- Recitation maintenance and note Review are `active` or `paused`. Pausing preserves material,
+  schedule, and history but removes the card from Today and due selection. Resuming resets nothing.
+- FSRS determines due obligations. Whetstone has no phase progression, daily familiarization
+  completion, arbitrary recurrence rule, or inferred completion from time, scrolling, speech, or
+  model output.
+- A "day" uses the learner's local calendar date for grouping and display, not as a second scheduler.
+- Shared routine infrastructure is extracted only after another concrete practice proves it needs the
+  same invariant; v0 has no speculative habit framework.
 
-## Recitation routines
+## Recitation maintenance
 
-Recitation is a first-class daily practice for classical Chinese prose and poetry, English articles,
-and any other Work worth retaining verbatim.
+Recitation maintains classical Chinese prose and poetry, English articles, and any other canonical
+Work the learner can already recite. Acquisition may happen anywhere; Whetstone begins at durable
+maintenance.
 
-### Adoption and phases
+### Enrollment and ownership
 
-- **Adopt, do not copy.** `Practise recitation` creates one owned `recitation_plan` Entry per learner
-  and source Work. The Work remains canonical.
-- **Status:** every plan is active by default and can be paused/resumed.
-- **Learner-controlled phases:**
-  - `familiarizing` — read for wording, sound, rhythm, and structure; no FSRS cards.
-  - `learning` — learn learner-defined passages with progressive support and FSRS.
-  - `maintenance` — recite the whole Work on its own FSRS schedule, with targeted passage repair.
-- The learner chooses the initial phase. A new Work may start in familiarizing; a Work already known
-  by heart may start directly in maintenance.
-- Whetstone never infers readiness or auto-advances phase.
+- Library and Reader expose **I can recite this** for an eligible Work.
+- Enrollment creates or reuses one owner-scoped `recitation_plan`, one Work-level Recitation target,
+  and one active shared review card at requested retention **0.95**. The Work remains the only source
+  text.
+- The card is due immediately. Enrollment persists before review opens, creates no rating event, and
+  is idempotent across retries. An existing plan without an active target retains its identity and
+  gains this direct maintenance target.
+- Pausing or removing maintenance preserves the Work, schedule history, and review events.
+- The plan is only enrollment and active/paused state. There is no phase picker, familiarization,
+  passage division, daily introduction, progressive fading, chaining, ownership count, or targeted
+  repair in v0.
+- Legacy passage/card/event history remains auditable but creates no future obligation. Retired routes
+  recover to the exact Work's direct maintenance state or Library rather than opening dead curriculum
+  screens.
 
-An active familiarizing plan is a daily routine. Opening it resumes the Reader; explicitly ending the
-session records that local day as complete. `last_session_at` and `session_count` remain lightweight
-plan state, not Timeline Entries and not FSRS input.
+### Due aggregation and ordering
 
-### Passage boundaries and lifecycle
+- Today aggregates every due card from every unpaused, owner-scoped Recitation plan. A partial load
+  cannot produce a false all-clear state.
+- Global review opens the Work with the earliest due card. A Work-specific entry always opens that
+  exact Work; recency never hides another Work's obligation.
+- The session is a transient projection over canonical targets and cards. It persists no cross-Work
+  queue, completion cursor, or duplicate schedule.
 
-A passage is a contiguous, addressable range over canonical Work blocks.
+### Review
 
-- Initial boundaries are seeded from non-empty top-level text blocks in source order.
-- The learner may split or merge adjacent passages. This changes boundaries only; it never edits or
-  copies the Work.
-- A split or merge resets only the affected practice card(s), because the retrieval target changed.
-- Source edits re-anchor safely or mark a passage `needs_repair`; stale text is never practised.
-- Passage reviews and schedule changes remain plan history, not Timeline Entries.
+The learner opens a due Work, recites from memory, chooses **Reveal source**, and rates the attempt
+Again, Hard, Good, or Easy.
 
-Passages have two practice states:
+- Before reveal, source text is neither visually nor accessibly exposed.
+- Reveal uses the current canonical Work. Leaving before rating writes no event and keeps the card due.
+- One rating appends one review event, reschedules only that Work-level card through maintained
+  `ts-fsrs` (FSRS v6), and shows the next scheduled date.
+- If another Work is due, **Review next** is optional; nothing opens automatically. Otherwise the
+  session reports **Due complete**.
+- Loading, reveal, and rating failures stay on the current Work with a specific retry and never
+  fabricate completion.
+- There is no notification, speech grade, exactness score, timer, streak, or automatic repair task.
 
-- **Queued:** segmented and visible, but not introduced. It has no due obligation and is excluded from
-  due counts and sessions. It has no review card, so queued state cannot become due through a forgotten
-  query predicate.
-- **Active:** explicitly introduced or activated by a targeted maintenance lapse. It has one
-  associated review card and enters due selection.
+This closes the cycle: **I can recite this → recite → reveal source → self-rate → FSRS next date**.
 
-Existing reviewed passages migrate as active. New segmentation does not create a wall of immediately
-due cards.
+## Notes and Review
 
-### Due-first learning and controlled new material
-
-The learning loop is intentionally conservative:
-
-1. Review active passages that are due, earliest due first.
-2. Finish an already-started chain.
-3. Review a due whole-Work card.
-4. When due work is clear, optionally introduce the next queued passage in source order.
-
-New material is never mixed invisibly into the due count. **At most one new passage per active plan per
-local day** is offered in v0, and the learner must choose **Learn next passage**. Declining it still
-counts as caught up. There is no setting for unlimited new passages in v0.
-
-Each active passage and each whole-Work target has a shared review card using maintained `ts-fsrs`
-(FSRS v6) with requested retention **0.95**. Memory prompt cards use **0.90**. Retention is review-card
-policy, never material metadata. Whetstone passes these policies to the library; it does not implement
-its own scheduling formula.
-
-### Progressive support and review
-
-The learner chooses and stores one support level per passage:
-
-- **Full** — exact passage.
-- **Reduced** — first half of each clause.
-- **First characters/words** — the first character for CJK clauses or first word otherwise.
-- **Hidden** — only a restrained opening or preceding-line cue.
-
-Fading is a render-time projection. Hidden text is not exposed visually or to assistive technology,
-and Reveal always shows the exact source.
-
-After attempting aloud, the learner reveals and rates:
-
-- **Couldn't continue** → Again
-- **Needed cues** → Hard
-- **Complete, with effort** → Good
-- **Clean and natural** → Easy
-
-Only the rating updates FSRS. Revealing, changing support, listening, or leaving writes no review.
-There is no speech-to-text requirement, exactness score, or model grade.
-
-### Chaining and whole-Work maintenance
-
-- A passage is owned after at least two Good/Easy reviews and current retrievability at or above the
-  recitation target (0.95). Ownership is derived, not stored.
-- The owned prefix is the longest contiguous owned range from passage 0. Chains cannot skip.
-- A chain contains at least two passages and rehearses their transitions. A clean run rates nothing;
-  if recall broke, only the learner-identified passage receives Again.
-- A Work learned inside Whetstone offers whole-Work maintenance when every passage is owned.
-- A Work adopted directly in `maintenance` does **not** relearn every passage first. After its passage
-  boundaries are confirmed, a whole-Work card is due immediately. Its queued passages serve as
-  break-point targets; an identified break activates and rates only that passage.
-- The whole-Work target's card has an independent 0.95 FSRS schedule. A whole-Work lapse does not reset
-  every passage.
-
-### Recitation hub and session
-
-The secondary **Recitation** destination lists active and paused plans with title, phase, due status,
-owned/total passage progress, and one next action. It owns pause/resume, phase changes, boundary
-editing, and plan history. Library remains the adoption point.
-
-Today and the hub open the same due-first session:
-
-- one prompt at a time;
-- active plans only;
-- due passage → active chain → due whole Work → optional new passage;
-- a visible **Stop for now** after every completed item;
-- no automatic introduction of new material;
-- completion reports **Due complete**, the next due time, and an optional next-passage action when
-  allowed.
-
-This closes the cycle: adopt → familiarize → divide → introduce → recall/fade → self-rate → FSRS
-reschedule → chain → whole-Work maintenance → targeted repair.
-
-## Memory
-
-Memory is the deterministic review system over material the learner deliberately chooses; it is not a
-second content store.
+Notes and Review are one user-facing system over material the learner deliberately chooses, not
+competing content stores.
 
 - A `note` is the single durable, owned note model: one canonical rich document body, timestamps, and
-  optional source anchor/provenance. Reader notes, manually added words/phrases, and free-form thoughts
-  use this same model.
-- A note contains no template answers, derived Markdown body, review lifecycle, or FSRS fields.
-- A feature-owned review prompt references a note and defines one cue/reveal pair. One note may have
-  zero, one, or several prompts; prompts are not Timeline items.
-- A shared review card references one prompt and contains only active/paused state, requested retention,
-  and complete FSRS state. An append-only review event records each rating or explicit schedule reset.
-  A draft prompt has no card.
-- **Add to review** is an explicit per-note action. It opens the cue/reveal editor with useful source
-  context prefilled, but the learner confirms the retrieval pair before a card is created.
-- Each due prompt reveals a real back and receives one learner rating: Again, Hard, Good, or Easy.
-- Due review is earliest-first, bounded, pausable, and requested retention 0.90.
-- Snoozing changes availability explicitly; it is not a model decision.
-- FSRS history and provenance remain auditable.
+  optional source anchor/provenance. Reader notes, manually added words/phrases, imported answers, and
+  free-form thoughts use this same model.
+- A note contains no copied answer, review lifecycle, or FSRS fields.
+- A feature-owned review prompt references a note and owns only the retrieval question. One note may
+  have zero, one, or several prompts; the v0 UI creates at most one active prompt while preserving
+  legacy multiple prompts.
+- **Add to review** uses the exact selected source text automatically for a Reader note. For a
+  standalone note it asks **What should Whetstone ask you?** The UI never calls this question a
+  "cue."
+- A new prompt reveals the current canonical note body; it never copies that body into prompt answer
+  fields. Editing the note changes future reveals without resetting the prompt, card, or history.
+  Legacy prompt-specific reveals remain readable and reviewable without silent conversion.
+- Confirmation creates one active shared review card at requested retention **0.90**, due immediately.
+  It is idempotent and is not itself a review event.
+- Review shows one question, keeps the note hidden until reveal, then shows the current note body and
+  accepts Again, Hard, Good, or Easy. A rating appends one event, reschedules only that card, and shows
+  the next date.
+- The learner may stop after any item. Review settings own question editing, pause/resume, restart,
+  removal, due state, and auditable history. Removing review never deletes the note.
+- Notes lists anchored and standalone notes together, supports search and editing, and owns paste-list
+  import. Import creates standalone notes plus referencing prompts, never a second content row.
+- Old `/memory` and `/recall` links redirect to Notes and Notes-owned Review without losing due state.
 
-Reader capture creates the note first and preserves the exact selection, Work, block anchor, and source
-context. It never creates a separate Memory note or silently enrolls review. Removing or pausing a
-prompt/card leaves the note untouched; editing a note does not silently reset a card.
+Reader capture always creates and saves the note first, with exact selection and provenance. It never
+silently enrolls review.
 
 ## Library, ingestion, and Reader
 
@@ -310,7 +248,7 @@ The Reader is reading-unit scoped and TOC driven:
 
 Every rendered addressable block carries its stable block id. Reader text and stored plaintext remain
 byte-aligned so note offsets are trustworthy. Links use a dedicated blue channel without underline;
-underline and the gutter indicator are reserved for personal note marks.
+underline is reserved for personal note marks.
 
 Reader readability is book-like: language-aware serif body, clear headings, lists with markers,
 cohesive code blocks, readable tables, blockquotes, footnotes, and explicit empty/loading/error
@@ -320,19 +258,25 @@ states. Target body size is about 18px, line height at least 1.5, and Latin meas
 
 - A selection within one block can create a source-linked note.
 - The anchor stores block id, character offsets, exact quote, and surrounding context.
-- The editor opens as a side panel on wide screens and a bottom sheet on narrow screens without
-  covering the selected text.
+- The editor opens as a comfortable wide side panel on desktop
+  (`clamp(28rem, 46vw, 36rem)`, viewport-capped) and a full-width bottom sheet on narrow screens
+  without covering the selected text.
 - The note body uses the shared rich-text editor. There is no template selector, automatic
   classification, structured answer form, or generated Markdown copy.
-- Saved text remains visibly underlined but is not itself an undersized button. Every annotated block
-  exposes an always-visible **44×44 edge affordance** with one quiet note glyph; one note
-  opens directly, while multiple notes open a compact anchored-text chooser. The affordance sits in
-  the page margin/edge and does not alter the text's line box or cover prose.
+- Activating underlined text by mouse, touch, or keyboard opens that exact note. A chooser appears only
+  where annotations genuinely overlap; several non-overlapping notes in one paragraph never create a
+  paragraph-level chooser.
+- A bodyless Mark opens its own compact actions directly. Activating an existing annotation never
+  starts a new selection flow.
 - Notes can be listed by Work, edited, deleted, and deliberately added to review.
-- Keyboard focus and touch target the edge affordance. The underline remains semantic annotation
-  styling, so accessibility is not achieved by inflating inline text to a 44px line height.
+- Inline annotations have clear hover/focus treatment and accessible names. They use the WCAG
+  inline-text target exception rather than inflating line height; the 44px Notes tool/list remains an
+  alternate target. There is no permanent paragraph pencil, reserved annotation gutter, or
+  block-level routing.
+- Formatting, link, block, and slash-command menus render above the modal sheet and remain keyboard
+  operable in Day and Night.
 - The existing one-tap **Mark** remains a bodyless highlight, not a note template. It enters review only
-  after the learner converts it to a note and confirms a retrieval prompt.
+  after the learner converts it to a note and confirms a review question.
 
 ### v0 vocabulary lookup
 
@@ -356,11 +300,14 @@ Typed and voice capture create the same owned `diary_entry`:
 
 - Typed text is persisted immediately.
 - Voice persists raw audio and a queued entry before transcription.
-- The worker transcribes, optionally tidies, and produces the editable rich body.
+- The worker transcribes with automatic language detection, optionally tidies, and produces the
+  editable rich body. There is no capture language switch or forced-language configuration.
+- Detected language is nullable observed metadata. Detection failure never fails capture, and existing
+  stored language values remain valid.
 - Raw input, verbatim transcript, processing state, and retry state remain available.
 - A failed model tidy falls back to the transcript. A failed transcription remains retryable and
   never masquerades as success.
-- Diary capture journals only. It creates no proposal, Memory item, case, or next action.
+- Diary capture journals only. It creates no proposal, review prompt, case, or next action.
 
 ### Tidy, not polish
 
@@ -371,9 +318,15 @@ is the safe fallback.
 
 ### Timeline
 
-Timeline is a logical chronological view over owned Entries through `personal_entries`; it is not a
-second store. Diary is a filter over that view. Per-review events and per-session routine counters are
-history, not Timeline Entries.
+Diary opens directly to a reverse-chronological timeline grouped by the learner's local day. It loads
+older day pages automatically from a bounded cursor, stops at the terminal page, and offers a clear
+retry after failure. Clicking an entry opens its rich editor; edits and deletions update the visible
+timeline. Leaving and returning during one app session restores scroll position. There is no month
+calendar, date-jump mode, or separate calendar API.
+
+The timeline is a logical chronological view over owned Entries through `personal_entries`; it is not
+a second store. Diary filters that view to journal entries. Review events are history, not Timeline
+Entries.
 
 ### Writing
 
@@ -417,7 +370,7 @@ The feel is **calm, focused, and scholarly**:
 ## v0 content model
 
 `Entry` is the durable identity shared by Works, ReadingUnits, blocks, TOC entries, notes, diary
-entries, recitation plans/passages, and review targets.
+entries, Recitation plans, and review targets.
 
 - Hierarchy: `Author → Work → ReadingUnit → Block`.
 - Work types: `book`, `essay`, `blog_post`, `classical_text`.
@@ -428,22 +381,21 @@ entries, recitation plans/passages, and review targets.
 - Stable block ids survive light edits/re-ingestion where matching is safe; removed blocks are
   retained or represented so anchors fail visibly rather than drifting.
 - An ingested Work is shared library content. An authored Work is owned canonical content.
-- Recitation passages are Entries owned transitively through their plan and do not get their own
-  `personal_entries` row.
+- A Recitation plan is one owner-scoped enrollment referencing a canonical Work. Its Work-level review
+  target owns no source copy. Legacy passage Entries may remain for audit but are not active targets.
 - Review targets are Entries owned transitively through their material/plan and do not duplicate it on
   Timeline.
 - Review cards are scheduling facets over review-target Entries, not Entries or content. One shared
-  card shape owns FSRS state and policy for Memory and Recitation; feature tables retain cueing,
-  anchoring, support, chaining, and other domain semantics.
-- Review events are append-only scheduler transitions. Feature-owned evidence such as Recitation cue
-  strength may reference an event without entering the shared scheduler vocabulary.
+  card shape owns FSRS state and policy for note Review and Recitation; feature tables retain only
+  their retrieval question, material reference, and lifecycle semantics.
+- Review events are append-only scheduler transitions. No feature duplicates card due state.
 
 ## Identity & ownership (v0)
 
 v0 has one `DEFAULT_USER_ID` behind a current-user provider and no login:
 
 - Shared library Works/units/blocks have no owner.
-- Notes, diary entries, authored Works, recitation plans, review cards, reading positions, and
+- Notes, diary entries, authored Works, Recitation plans, review cards, reading positions, and
   preferences are user-scoped.
 - Owned Entries carry `user_id`, `occurred_at`, `created_at`, and `updated_at` in the shared
   `personal_entries` facet instead of duplicating them in each feature.
@@ -468,7 +420,7 @@ Reader/Search still contain a legacy mdast fallback for units not yet represente
 That fallback is **migration debt**: preserve it until old content is safely migrated, but do not add
 new feature behavior to it or claim it has already disappeared.
 
-Personal overlays—notes, comments, Memory provenance—stay outside shared content and render as
+Personal overlays—notes, comments, and review provenance—stay outside shared content and render as
 decorations or linked Entries. Intrinsic source links may be ProseMirror marks; personal annotations
 must not mutate shared Work content.
 
@@ -507,7 +459,7 @@ Deferred intelligence includes:
 - Progress Map/fog-of-war personalization;
 - reading-to-Practice nudges;
 - unsolicited next actions, "Make Durable" proposals, and history mining;
-- autonomous phase changes, routine planning, or card creation.
+- autonomous enrollment, routine planning, or card creation.
 
 Future intelligence earns a product surface only after:
 
@@ -521,16 +473,23 @@ Future intelligence earns a product surface only after:
 
 The pivot is usable only when all are true:
 
-- With model configuration absent, a learner can ingest/read, annotate, review Memory, complete a
-  recitation session, capture/edit a diary entry, write, search, and clear Today.
-- A new recitation Work can move from familiarizing through one introduced passage without a due wall.
-- An already-known Work can start in maintenance and schedule whole-Work recall without relearning
-  every passage.
-- Pause/resume preserves every routine schedule and history.
+- With model configuration absent, a learner can ingest/read, annotate, review notes, complete a
+  Recitation review, type/edit a diary entry, write, search, and clear Today.
+- An already-known Work can enter maintenance in one action, remain due if the learner leaves before
+  rating, and later resurface from its whole-Work FSRS schedule.
+- Today includes every unpaused due Recitation Work and every due note prompt; neither recency nor a
+  currently open Work can create a false all-clear state.
+- The five primary destinations remain truthful on desktop/mobile, and Search stays one action away.
+- Reader annotations open their exact note; rich-editor floating controls stay usable above the wide
+  desktop note sheet.
+- Diary capture requires no language choice, and Diary history is a paginated chronological timeline
+  without calendar chrome.
+- Pause/resume preserves every review schedule and history.
 - A session ends with an honest due-complete state and next due time.
-- Backup and restore round-trip representative Works, annotations, Memory, recitation history,
+- Backup and restore round-trip representative Works, annotations, note-review and Recitation history,
   diary/writing content, source files, and images.
-- Day/Night and desktop/mobile retain readable hierarchy, focus, contrast, and 44px controls.
+- Day/Night and desktop/mobile retain readable hierarchy, focus, contrast, and 44px controls except
+  for the deliberate inline-text target exception.
 - The primary bundle does not eagerly ship retired Practice/Map experiences.
 
 ## Delivery order
@@ -538,22 +497,23 @@ The pivot is usable only when all are true:
 1. Establish recoverable private data.
 2. Remove reading nudge, live Practice, Progress Map, and their shipped proposal paths while
    preserving optional diary/Reader utilities.
-3. Repair recitation maintenance bootstrap and passage activation.
-4. Establish the learner-local day and shared review-card/history substrate; migrate Memory and
-   Recitation without resetting schedules.
-5. Add controlled new material, recitation-specific retention, pause/resume, the hub, and a complete
-   due-first session.
-6. Recompose Today around deterministic status and that session.
-7. Replace note templates with one rich note model, unify Reader/manual notes, add accessible Reader
-   controls, and make review an explicit per-note action.
-8. Use the recitation routine in real daily practice before extracting shared reading/writing/diary
-   routine infrastructure.
+3. Replace the Recitation curriculum with direct whole-Work maintenance, truthful cross-Work due
+   aggregation, and the direct reveal/rate session.
+4. Restore direct annotation editing and reliable rich-editor surfaces, then consolidate Notes and
+   Review without resetting schedules or history.
+5. Remove manual speech-language configuration and reduce Diary to capture plus its paginated
+   timeline.
+6. Recompose navigation around Today, Library, Recite, Notes, and Diary, with Search as a utility.
+7. Use the consolidated daily loop in real practice before adding scope or extracting shared routine
+   infrastructure.
 
 ## Deferred scope and non-goals
 
 - No autonomous arranger, coach, generated case library, Progress Map, proposal inbox, or AI grading.
 - No generic habit framework, arbitrary recurrence builder, timers, quotas, or notification system in
   the recitation-first release.
+- No in-app Recitation acquisition curriculum, phase progression, passage fading, chaining, or
+  targeted repair before whole-Work maintenance is dogfooded.
 - No social reading, public profiles, shared highlights, rankings, streaks, or gamification.
 - No public deployment or multi-user behavior before authentication and authorization.
 - No model-drafted notes, diary rewrites, essays, or recitation assessments.
@@ -567,14 +527,14 @@ The pivot is usable only when all are true:
 
 - **Work:** an ingested or authored readable source.
 - **ReadingUnit:** one ordered chapter/section/essay inside a Work.
-- **Block:** the stable, addressable content unit notes, search, and passages reference.
+- **Block:** the stable, addressable content unit notes and search deep links reference.
 - **Personal Entry:** an owned artifact with chronology through `personal_entries`.
 - **Note:** one owned rich artifact, optionally anchored to source material.
 - **Review target:** one feature-owned retrieval task that references durable material.
 - **Review card:** scheduler policy/state for one review target; it contains no learning material.
 - **Review event:** one append-only learner rating or explicit schedule reset for a review card.
-- **Memory prompt:** one cue/reveal review target that references a note.
-- **Recitation plan:** the learner's routine linked to a canonical Work.
-- **Passage:** a learner-shaped source range used for recitation practice.
-- **Due:** an action whose deterministic schedule/cadence has arrived.
+- **Note review prompt:** one learner-confirmed question that references a canonical note.
+- **Recitation plan:** one active/paused maintenance enrollment linked to a canonical Work.
+- **Recitation target:** the whole-Work retrieval task owned by a Recitation plan.
+- **Due:** an action whose deterministic schedule has arrived.
 - **Invitation:** an optional next action that never blocks Today completion.
