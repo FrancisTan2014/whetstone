@@ -97,13 +97,16 @@ for attention. It has three restrained groups:
 
 1. **Due**
    - Recitation: aggregate every unpaused Work's due state and provide one action into direct review.
-   - Review: aggregate due note prompts and provide one action into Notes-owned Review.
+   - Notes review: aggregate due note prompts and provide one action into Notes-owned Review.
+   - These remain separate rows and separate review modes; Today never creates a mixed queue.
 2. **Continue**
    - The most recently read Work.
    - The most recently edited unfinished Work.
-   - These rows are explicit invitations.
+   - These rows are explicit invitations and render only when a resumable item exists. Empty
+     placeholders do not appear.
 3. **Capture**
-   - One compact typed/voice diary entry point.
+   - One compact **New diary entry** control that opens the shared typed/voice capture only after
+     activation, then returns to its compact state after saving.
 
 Today renders **one summary row per capability**, not one large card per item and not an overdue wall.
 Each row has a plain-language status, the minimum useful context, and one primary action. Detail and
@@ -219,8 +222,8 @@ silently enrolls review.
 
 ### v0 content ingestion
 
-Library has one **Upload** action for `.epub`, `.pdf`, and `.md`, plus **Add work** and **New
-document**:
+Library has one **Add** menu with **Upload file** (`.epub`, `.pdf`, `.md`), **New document**, and
+**Add work manually**. Each option enters its existing owning flow:
 
 - EPUB reads OPF metadata and authored navigation, then creates a Work and ordered ReadingUnits.
 - Markdown uses confirmed title, author, and language and enters through the same block pipeline.
@@ -229,6 +232,16 @@ document**:
 - The original uploaded file and sha256 are retained for provenance.
 - Ingestion is transactional and fail-loud: unknown source structures are preserved conservatively and
   emit evidence rather than disappearing silently.
+
+The Library is a read-first shelf:
+
+- Every Work exposes exactly one persistent **Read** or **Continue** action.
+- One Work-specific overflow contains valid setup/management actions: Recitation enrollment/open,
+  Work-scoped Notes, edit/manage content, and confirmed deletion. Authored Works do not expose a
+  second persistent Edit action.
+- Ongoing Recitation phase/due/progress state belongs in Recite, not on Library cards.
+- Markdown import remains supported, but reconstructed **Export Markdown** is not a trustworthy
+  portable copy and is not a product capability. Backup/restore remains the recovery path.
 
 ### v0 reader
 
@@ -358,9 +371,17 @@ The feel is **calm, focused, and scholarly**:
 - Warm paper reading surface, quiet shell, ink-indigo interaction accent.
 - Source Serif/CJK Song stacks for reading; Inter for UI.
 - Day and Night are token variants over the same components.
-- Source-linked notes use one muted amber annotation channel; bodyless Marks use a lighter variant,
-  and source links remain blue. Review enrollment never recolors source prose because schedule state
-  is not annotation meaning.
+- Global meaning channels are restrained: indigo for interaction/selection, blue for intrinsic links,
+  amber for personal annotations, and red for destructive/error states. Retired
+  Vocabulary/Expression/Thought/Gem categories own no global tokens. Review enrollment never recolors
+  source prose because schedule state is not annotation meaning.
+- Standard pages share one frame: 16px mobile/24px desktop gutters, a 42rem focused or 64rem
+  collection width, a 28px/34px semibold title, optional parent link, and at most one persistent
+  primary header action. Reader keeps its immersive 66ch frame while sharing the same semantics.
+- General UI iconography comes from tree-shaken Lucide icons: 20px with a 1.75 stroke (16px only in
+  dense editor controls). Text glyphs such as arrows, crosses, returns, and ellipses are not controls.
+  Icon-only controls retain a specific accessible name, tooltip, visible focus, and 44px target;
+  ambiguous or consequential actions keep visible labels.
 - Motion is purposeful in navigation and annotation, restrained in reading, and disabled by reduced
   motion.
 - Layout is safe-area and `dvh` aware. Touch, mouse, pen, and keyboard all work.
