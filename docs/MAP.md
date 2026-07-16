@@ -280,7 +280,10 @@ can navigate them from another package.
   persists NO parallel counter, stage flag, or copied due date). `recitationCommands.ts` adds
   `setRecitationPlanPaused` (owner-scoped → `not_found`, idempotent UPDATE of `paused_at`).
   `recitationSessionQueries.ts` (#609 `loadRecitationSession` — the transient due-first session projection
-  over the same canonical rows, ordered due passage → whole-work → active chain → optional new passage → clear).
+  over the same canonical rows, ordered due passage → whole-work → active chain → optional new passage → clear;
+  #633 aggregates it across EVERY active Work: it sums obligations, selects the one Work to present (an optional
+  `?work=` pin, else earliest-due, else stable id order) and suppresses optional new material while any Work
+  still holds required work, so Today can never report clear while a Work has due/chain/whole-work work).
   `recitationRoutes.ts` adds `GET /api/recitation/hub`, `GET /api/recitation/session`, and
   `POST /api/recitation/plans/:id/pause|resume` (404 when not owned, else 200 with the refreshed hub DTO;
   the zone resolves via `getLearnerTimeZone`).
@@ -940,7 +943,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `recitationHubContracts`), `recitationSessionApi.ts` (`getRecitationSession`, parsed through
   `recitationSessionContracts`), `RecitationSessionPanel.tsx` (the inline due-first stepper that reuses
   `RecitationReviewCard`, `WholeWork`, `ChainStart`/`ActiveChain`, and `PassageIntroductionPanel`, with only
-  transient chain-dismiss/new-passage-skip state) and
+  transient chain-dismiss/new-passage-skip state held in a per-Work `ActiveSessionPanel` keyed by the presented
+  `planEntryId` so advancing to another Work resets it; a `?work=` query pins which Work the aggregate presents) and
   `RecitationHubPage.tsx` — the calm single-column `#/recitation` hub (a SECONDARY route in `app/AppRoutes.tsx`,
   deliberately NOT in `navigation.ts`) rendering explicit states with no dashboard grid/streak/score/chart:
   loading, error, the restrained `no_plan` empty state (link to Library), and the active projection — Work
