@@ -22,12 +22,14 @@ export type TodayRoutineSummary = Readonly<{
   overdueCount: number;
 }>;
 
-// Project a Recitation session (#609) into its Today routine summary (#610). The session's card-based
-// `due` summary is authoritative whenever a review card is actually due, but a required non-card step —
-// an unstarted whole-Work maintenance step or an eligible owned-prefix chain — carries no due card, so
-// `due.nextDueAt` is null even though the routine holds a real obligation. Today must never report clear
-// while the session sits before `new_passage`/`clear`, so a required step with no due card is surfaced as
-// one obligation due at `nowIso`; a due card keeps its real earliest instant and count untouched.
+// Project a Recitation session (#609) into its Today routine summary (#610). The session's `due` summary
+// already counts every plan's due review cards AND its required non-card steps across all active Works
+// (#633), so `due.dueCount` is the truthful total. But when the whole routine is cardless required work —
+// only unstarted whole-Work maintenance and/or eligible owned-prefix chains — no card carries a due
+// instant, so `due.nextDueAt` is null even though `due.dueCount` is positive. Today keys due-ness off a
+// non-null `nextDueAt` and must never report clear while the session sits before `new_passage`/`clear`,
+// so that cardless case is surfaced at `nowIso` with the aggregate count preserved (floored at 1 as a
+// defensive guard against a step/obligation mismatch); a due card keeps its real earliest instant.
 export function recitationTodayRoutineSummary(
   input: Readonly<{ due: TodayRoutineSummary; nowIso: string; step: RecitationSessionStep }>
 ): TodayRoutineSummary {

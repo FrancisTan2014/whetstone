@@ -62,7 +62,11 @@ export type RecitationPlanObligation = Readonly<{
 }>;
 
 // The aggregate due summary across every unpaused plan: the truthful global counts Today reports, plus
-// the earliest due instant for ordering. `nextDueAtMs` is null exactly when no review card is due.
+// the earliest due instant for ordering. `dueCount` sums each plan's due review cards AND its required
+// non-card steps (an eligible chain / unstarted whole-Work counts as one untimed obligation), so a Work
+// holding only cardless required work is never lost from the total (#633 AC1). `nextDueAtMs` is null
+// exactly when no review card is due — a routine of only cardless required work has a positive
+// `dueCount` yet a null `nextDueAtMs` (its obligations carry no timestamped instant).
 export type RecitationAggregateDue = Readonly<{
   dueCount: number;
   nextDueAtMs: number | null;
@@ -108,8 +112,10 @@ export function compareRecitationObligations(
 
 // Select the single Work the global routine works now, and the aggregate due summary, from every
 // unpaused plan's obligation (#633). Recitation obligations are a read-time projection: this owns no
-// durable queue and persists nothing. The aggregate counts sum across all plans and `nextDueAtMs` is the
-// earliest due instant, so a false all-clear is impossible while any card is due.
+// durable queue and persists nothing. `due.dueCount` sums every plan's due review cards plus its
+// required non-card steps (an eligible chain / unstarted whole-Work each count as one), and
+// `nextDueAtMs` is the earliest due card instant, so a false all-clear is impossible while any Work
+// holds required work — carded or not.
 //
 // `pinnedPlanEntryId` is the Work the caller is currently working. While that plan still holds required
 // work it stays selected, so completing its required items never context-switches mid-Work after a
@@ -120,7 +126,10 @@ export function selectRecitationWork(
   pinnedPlanEntryId: string | null
 ): RecitationWorkSelection {
   const due: RecitationAggregateDue = {
-    dueCount: plans.reduce((total, plan) => total + plan.dueCount, 0),
+    dueCount: plans.reduce(
+      (total, plan) => total + plan.dueCount + (plan.hasRequiredNonCardStep ? 1 : 0),
+      0
+    ),
     nextDueAtMs: plans.reduce<number | null>((earliest, plan) => {
       if (plan.earliestDueAtMs === null) {
         return earliest;

@@ -115,6 +115,35 @@ describe("selectRecitationWork", () => {
     expect(selection.hasRequiredWork).toBe(true);
   });
 
+  it("counts every cardless required Work in the aggregate due total, never just one (#633 AC1)", () => {
+    // Two active Works each hold only a required non-card step (an eligible chain or unstarted whole-Work):
+    // no review card is due anywhere, so `nextDueAtMs` is null, yet both obligations must be counted or
+    // Today under-reports the routine as a single due item.
+    const selection = selectRecitationWork(
+      [
+        obligation({ hasRequiredNonCardStep: true, planEntryId: "chain-a" }),
+        obligation({ hasRequiredNonCardStep: true, planEntryId: "whole-work-b" })
+      ],
+      null
+    );
+    expect(selection.due).toEqual({ dueCount: 2, nextDueAtMs: null, overdueCount: 0 });
+    expect(selection.hasRequiredWork).toBe(true);
+  });
+
+  it("adds cardless required steps on top of due-card counts across mixed Works", () => {
+    // A Work with due cards and a Work whose only obligation is a cardless required step must both count:
+    // the total is the summed cards plus one per cardless required Work, and the earliest card instant
+    // still orders the routine.
+    const selection = selectRecitationWork(
+      [
+        obligation({ dueCount: 2, earliestDueAtMs: 400, overdueCount: 1, planEntryId: "cards" }),
+        obligation({ hasRequiredNonCardStep: true, planEntryId: "chain-only" })
+      ],
+      null
+    );
+    expect(selection.due).toEqual({ dueCount: 3, nextDueAtMs: 400, overdueCount: 1 });
+  });
+
   it("selects the Work whose earliest due card is soonest, so overdue work leads", () => {
     const selection = selectRecitationWork(
       [

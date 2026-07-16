@@ -422,6 +422,36 @@ describe("GET /api/recitation/session", () => {
     expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
   });
 
+  it("counts every active Work's cardless required step in the session due total (#633 AC1)", async () => {
+    // Two Works, each fully owning its two passages so it holds an unstarted whole-Work maintenance step —
+    // a required obligation carrying no due review card — with both passage cards pushed far past due.
+    // Neither Work has a due card, yet each holds a required step. The aggregate must count both untimed
+    // obligations, not collapse them to a single due item, or Today under-reports the routine as one due
+    // when two Works still need work (#633 AC1).
+    const a = await seedPlan("work-a", ["A one.", "A two."]);
+    await introduceNext(a.planEntryId);
+    await ownPassage(a.passageIds[0]!);
+    await introduceNext(a.planEntryId);
+    await ownPassage(a.passageIds[1]!);
+    await setDueAt(a.passageIds[0]!, "2999-01-01T00:00:00.000Z");
+    await setDueAt(a.passageIds[1]!, "2999-01-01T00:00:00.000Z");
+
+    const b = await seedPlan("work-b", ["B one.", "B two."]);
+    await introduceNext(b.planEntryId);
+    await ownPassage(b.passageIds[0]!);
+    await introduceNext(b.planEntryId);
+    await ownPassage(b.passageIds[1]!);
+    await setDueAt(b.passageIds[0]!, "2999-01-01T00:00:00.000Z");
+    await setDueAt(b.passageIds[1]!, "2999-01-01T00:00:00.000Z");
+
+    const session = activeSession(await getSession());
+    // The selected Work sits on a required whole-Work step with no due card, so nextDueAt is null; both
+    // Works' cardless obligations are still counted in the aggregate total.
+    expect(session.step).toBe("whole_work");
+    expect(session.hasDuePassage).toBe(false);
+    expect(session.due).toEqual({ dueCount: 2, nextDueAt: null, overdueCount: 0 });
+  });
+
   it("treats an empty pinned query the same as no pin", async () => {
     const first = await seedPlan("work-1", ["One."]);
     await introduceNext(first.planEntryId);
