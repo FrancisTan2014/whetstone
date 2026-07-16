@@ -1,7 +1,22 @@
-import { type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
 
 import { type SetupData } from "../stack";
 import { expect, test } from "../fixtures";
+
+// Open the slash menu deterministically. A fast keyboard sequence (`Ctrl+A → ArrowRight → Enter →
+// "/"`) races ProseMirror's async transactions: on a slow CI worker the trigger could be typed before
+// the new paragraph committed, dropping "/" after a non-space character where the suggestion's prefix
+// rule never fires and the menu never opens (#645). Instead focus the editor, clear it to a single
+// empty paragraph, and wait for that settled empty state before typing the trigger — so "/" always
+// lands at the start of a plain paragraph where the menu opens.
+async function openSlashMenu(page: Page, editor: Locator): Promise<void> {
+  await editor.click();
+  await expect(editor).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await expect(editor).toHaveText("");
+  await page.keyboard.type("/");
+}
 
 // The shared rich editor's four floating surfaces — the formatting toolbar, the link form, the
 // slash-command menu, and the block-actions menu — must stay VISIBLE and INTERACTIVE when the editor
@@ -140,11 +155,7 @@ for (const theme of ["day", "night"] as const) {
     // 2) Slash menu — in a fresh empty paragraph it opens above the sheet, filters, navigates, and
     //    selects; then Escape closes it leaving the slash literal. Runs before the link is applied so
     //    the host paragraph is a plain (non-link) context where `/` is allowed.
-    await editor.click();
-    await page.keyboard.press("ControlOrMeta+a");
-    await page.keyboard.press("ArrowRight"); // collapse the selection to the end of the document
-    await page.keyboard.press("Enter"); // a new, empty, plain paragraph hosts the menu
-    await page.keyboard.type("/");
+    await openSlashMenu(page, editor);
     const slashMenu = dialog.getByRole("listbox", { name: "Block commands" });
     await expect(slashMenu).toBeVisible();
 
@@ -156,10 +167,7 @@ for (const theme of ["day", "night"] as const) {
     await expect(editor.locator("blockquote")).toHaveCount(1);
 
     // Escape closes the menu and leaves the typed slash as literal text.
-    await page.keyboard.press("ControlOrMeta+a");
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("Enter");
-    await page.keyboard.type("/");
+    await openSlashMenu(page, editor);
     await expect(slashMenu).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(slashMenu).toBeHidden();
