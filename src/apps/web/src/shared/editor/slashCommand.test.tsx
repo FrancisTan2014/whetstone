@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { DocumentNodeJSON } from "@whetstone/document";
+import type { Extensions } from "@tiptap/core";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { type DocumentNodeJSON, documentExtensions } from "@whetstone/document";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { RichContentEditor } from "./RichContentEditor.js";
+import { SlashCommand } from "./slashCommand.js";
 
 // jsdom lacks the layout primitives Tiptap's suggestion decoration and floating-ui positioning read;
 // stub the few used so the managed menu mounts without throwing during measurement.
@@ -210,5 +213,40 @@ describe("slash command menu integration", () => {
     const { textbox } = await mountEditor(emptyHeading);
 
     expect(textbox.querySelector("h2")?.getAttribute("data-placeholder") ?? "").toBe("");
+  });
+});
+
+// A bare `SlashCommand` (no `.configure({ container })`) falls back to its default `document.body`
+// getter — the standalone behavior any consumer gets without threading a Sheet host. This proves the
+// default option resolves to the body (so no dialog guard is attached) and the menu still works.
+function BareSlashEditor(): React.JSX.Element | null {
+  const editor = useEditor({
+    content: emptyParagraph,
+    editorProps: { attributes: { "aria-label": "Bare editor", role: "textbox" } },
+    extensions: [...(documentExtensions as unknown as Extensions), SlashCommand],
+    immediatelyRender: false
+  });
+
+  if (editor === null) {
+    return null;
+  }
+
+  return <EditorContent editor={editor} />;
+}
+
+describe("slash command default container", () => {
+  it("defaults to the document body and stays keyboard-dismissable without a configured host", async () => {
+    const user = userEvent.setup();
+    render(<BareSlashEditor />);
+    const textbox = await screen.findByRole("textbox", { name: "Bare editor" });
+    await user.click(textbox);
+
+    await user.type(textbox, "/");
+    const listbox = await screen.findByRole("listbox");
+    expect(document.body.contains(listbox)).toBe(true);
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(textbox.textContent).toBe("/");
   });
 });

@@ -25,6 +25,11 @@ export interface EditorFormattingMenuProps {
   readonly editor: Editor;
   /** Close the toolbar and return focus to the selected text (Escape). */
   readonly onEscape: () => void;
+  /**
+   * Shared floating-layer container getter (#645). Defaults to `document.body` outside a Sheet; inside
+   * a Sheet it returns the un-clipped host inside the Dialog so the link form portals above the overlay.
+   */
+  readonly container?: () => HTMLElement;
 }
 
 // The contextual formatting toolbar rendered inside Tiptap's BubbleMenu. It exposes toolbar semantics
@@ -34,7 +39,8 @@ export interface EditorFormattingMenuProps {
 // form is closed — Radix owns Escape while the form is open.
 export function EditorFormattingMenu({
   editor,
-  onEscape
+  onEscape,
+  container
 }: EditorFormattingMenuProps): React.JSX.Element {
   const [activeIndex, setActiveIndex] = useState(0);
   const [linkOpen, setLinkOpen] = useState(false);
@@ -108,6 +114,7 @@ export function EditorFormattingMenu({
         );
       })}
       <LinkControl
+        {...(container === undefined ? {} : { container })}
         editor={editor}
         onFocus={() => setActiveIndex(MARKS.length)}
         onOpenChange={setLinkOpen}
@@ -124,18 +131,25 @@ interface LinkControlProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   readonly tabIndex: number;
+  readonly container?: () => HTMLElement;
 }
 
-// The Link control: a toolbar toggle that opens a compact anchored form (Radix Popover, no portal so
-// focus stays within the BubbleMenu element). The form prefills from the active link and applies or
-// removes it through the shared safe-link normalization; an unsafe or malformed URL surfaces an error
-// without closing the form or losing the selection.
+// The Link control: a toolbar toggle that opens a compact anchored form (Radix Popover). Outside a
+// Sheet it renders inline within the BubbleMenu element (no portal, so the bubble's focus containment
+// is unchanged). Inside a Sheet the shared floating-layer host is provided, and the form portals into
+// it (#645): nesting the Popover directly under a modal Dialog without a portal leaves the trigger and
+// content in separate dismissable-layer branches, so the Dialog reads the open as a focus-outside and
+// closes the form immediately; portaling into the host registers them as one branch above the overlay.
+// The form prefills from the active link and applies or removes it through the shared safe-link
+// normalization; an unsafe or malformed URL surfaces an error without closing the form or losing the
+// selection.
 function LinkControl({
   editor,
   onFocus,
   onOpenChange,
   open,
-  tabIndex
+  tabIndex,
+  container
 }: LinkControlProps): React.JSX.Element {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string>();
@@ -176,6 +190,70 @@ function LinkControl({
     onOpenChange(false);
   };
 
+  const host = container?.();
+  const portalHost = host !== undefined && host !== window.document.body ? host : undefined;
+
+  // Inside a Sheet, the Dialog's focus trap briefly moves focus to its content root as the editor
+  // blurs on open; a non-modal Popover reads that as focus-outside and self-dismisses. Ignore
+  // focus-driven dismissal only when portaled into a Sheet so the form stays open above it — genuine
+  // outside-pointer dismissal is unaffected (#645). Conditional spread keeps the prop absent (not
+  // `undefined`) standalone, satisfying `exactOptionalPropertyTypes`.
+  const focusOutsideGuard: Pick<
+    React.ComponentProps<typeof Popover.Content>,
+    "onFocusOutside"
+  > = portalHost === undefined
+    ? {}
+    : {
+        onFocusOutside: (event) => {
+          event.preventDefault();
+        }
+      };
+
+  const linkContent = (
+    <Popover.Content
+      aria-label="Link URL"
+      className={formattingMenuClassNames.linkForm}
+      {...focusOutsideGuard}
+      side="bottom"
+      sideOffset={8}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          applyLink();
+        }}
+      >
+        <label className={formattingMenuClassNames.linkField}>
+          <span className="sr-only">Link URL</span>
+          <input
+            aria-describedby={error === undefined ? undefined : errorId}
+            aria-invalid={error === undefined ? undefined : true}
+            aria-label="Link URL"
+            className={formattingMenuClassNames.linkInput}
+            inputMode="url"
+            onChange={(event) => setValue(event.currentTarget.value)}
+            placeholder="https://example.com"
+            type="text"
+            value={value}
+          />
+        </label>
+        {error === undefined ? null : (
+          <p className={formattingMenuClassNames.linkError} id={errorId} role="alert">
+            {error}
+          </p>
+        )}
+        <div className={formattingMenuClassNames.linkActions}>
+          <Button size="sm" type="submit" variant="secondary">
+            Apply link
+          </Button>
+          <Button onClick={removeLink} size="sm" type="button" variant="ghost">
+            Remove link
+          </Button>
+        </div>
+      </form>
+    </Popover.Content>
+  );
+
   return (
     <Popover.Root onOpenChange={handleOpenChange} open={open}>
       <Popover.Trigger asChild>
@@ -193,47 +271,11 @@ function LinkControl({
           Link
         </Button>
       </Popover.Trigger>
-      <Popover.Content
-        aria-label="Link URL"
-        className={formattingMenuClassNames.linkForm}
-        side="bottom"
-        sideOffset={8}
-      >
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            applyLink();
-          }}
-        >
-          <label className={formattingMenuClassNames.linkField}>
-            <span className="sr-only">Link URL</span>
-            <input
-              aria-describedby={error === undefined ? undefined : errorId}
-              aria-invalid={error === undefined ? undefined : true}
-              aria-label="Link URL"
-              className={formattingMenuClassNames.linkInput}
-              inputMode="url"
-              onChange={(event) => setValue(event.currentTarget.value)}
-              placeholder="https://example.com"
-              type="text"
-              value={value}
-            />
-          </label>
-          {error === undefined ? null : (
-            <p className={formattingMenuClassNames.linkError} id={errorId} role="alert">
-              {error}
-            </p>
-          )}
-          <div className={formattingMenuClassNames.linkActions}>
-            <Button size="sm" type="submit" variant="secondary">
-              Apply link
-            </Button>
-            <Button onClick={removeLink} size="sm" type="button" variant="ghost">
-              Remove link
-            </Button>
-          </div>
-        </form>
-      </Popover.Content>
+      {portalHost === undefined ? (
+        linkContent
+      ) : (
+        <Popover.Portal container={portalHost}>{linkContent}</Popover.Portal>
+      )}
     </Popover.Root>
   );
 }

@@ -22,6 +22,9 @@ function GripIcon(): React.JSX.Element {
 
 export interface BlockGutterHandleProps {
   readonly editor: Editor;
+  /** Portals the grip's block-actions menu into the shared floating layer so it stays above a Sheet's
+   * overlay (#645); unset, Radix defaults the portal to `document.body` (the standalone behavior). */
+  readonly container?: () => HTMLElement;
   /** The top-level block position the pointer is currently over, or null when the gutter is idle. */
   readonly gutterPos: number | null;
   /**
@@ -46,6 +49,7 @@ export interface BlockGutterHandleProps {
 // unit-tested through the always-available "More block actions" trigger and Shift+F10.
 export function BlockGutterHandle({
   editor,
+  container,
   gutterPos,
   openMenu,
   onGutterPosChange,
@@ -62,6 +66,7 @@ export function BlockGutterHandle({
       onNodeChange={({ node, pos }) => onGutterPosChange(node === null ? null : pos)}
     >
       <BlockActionsMenu
+        {...(container === undefined ? {} : { container })}
         editor={editor}
         onOpenChange={(next) =>
           onMenuChange(next && gutterPos !== null ? { pos: gutterPos, source: "gutter" } : null)

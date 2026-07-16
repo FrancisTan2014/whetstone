@@ -535,7 +535,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `100vh`), `Button` (token variants via `cva`; a `pending` prop shows a `Spinner`, sets `aria-busy`,
   and disables so an in-flight action cannot double-submit), `Sheet` (Radix Dialog: focus trap +
   dismissal; right side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer
-  spring honoring reduced motion). Loading/pending state has two shared pieces: `Spinner.tsx` (CSS
+  spring honoring reduced motion; splits its `Dialog.Content` into an un-transformed, un-clipped
+  `.sheet-content-root` holding both the animated `.sheet-panel` and a sibling `.sheet-floating-layer`
+  host, and wraps `children` in a `FloatingLayerProvider` pointing at that host so editor menus portal
+  above the overlay from inside the dialog's stacking + focus scope, #645). `FloatingLayer.tsx` is that
+  shared boundary: a context whose value is a `() => HTMLElement` container getter (default
+  `document.body`) with a `useFloatingLayerContainer()` hook — the one seam a Sheet threads into every
+  floating surface so no per-menu z-index patching is needed. Loading/pending state has two shared pieces: `Spinner.tsx` (CSS
   spin under normal motion; under reduced motion the global animation freeze stops the rotation and
   the `loadingSpinner` class keeps it active with a reduced-motion-safe opacity pulse so it never
   freezes into a static icon) and `LoadingIndicator.tsx` (spinner + label as a polite
@@ -558,7 +564,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   creation, validation/cloning, equality, and safe authored-link normalization. Inline formatting is
   contextual (#589): a Tiptap `BubbleMenu` shows `EditorFormattingMenu.tsx` (Bold/Italic/inline-code +
   a Radix link form, toolbar roving focus, Escape-to-dismiss) beside a live text selection; its
-  visibility gate is the pure `bubbleFormatting.ts`. The keyboard-first slash menu (#588) is one shared
+  visibility gate is the pure `bubbleFormatting.ts`. All four floating surfaces (formatting toolbar,
+  link form, slash menu, block-actions menu) read `useFloatingLayerContainer()` and portal into that
+  shared container — `document.body` by default, or a Sheet's above-overlay host when hosted in one
+  (#645). The keyboard-first slash menu (#588) is one shared
   seam: `blockCommands.ts` is the single block-command catalog (id/label/aliases/`isAvailable`/`appendTo`)
   that later block menus reuse, `slashCommandContext.ts` gates where `/` may open, `SlashCommandMenu.tsx`
   is the ARIA listbox, and `slashCommand.ts` wires `@tiptap/suggestion` (trigger, positioning, dismissal)

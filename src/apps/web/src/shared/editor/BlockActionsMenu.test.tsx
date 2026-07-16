@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Editor, Extensions } from "@tiptap/core";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
@@ -98,10 +98,12 @@ function topIds(editor: Editor): Array<string | undefined> {
 function Harness({
   document: doc,
   blockIndex,
+  container,
   onReady
 }: {
   document: DocumentNodeJSON;
   blockIndex: number;
+  container?: () => HTMLElement;
   onReady?: (editor: Editor) => void;
 }): React.JSX.Element | null {
   const readyRef = useRef(false);
@@ -137,6 +139,7 @@ function Harness({
         open={open}
         pos={blockStart(editor, blockIndex)}
         trigger={<Button aria-label="Block actions">Grip</Button>}
+        {...(container === undefined ? {} : { container })}
       />
       <EditorContent editor={editor} />
     </>
@@ -317,5 +320,40 @@ describe("BlockActionsMenu focus", () => {
     await user.keyboard("{Escape}");
 
     await waitFor(() => expect(editor.view.hasFocus()).toBe(true));
+  });
+});
+
+describe("BlockActionsMenu inside a Sheet's floating layer", () => {
+  it("portals into the provided container and ignores focus-outside so a dialog's focus trap cannot dismiss it", async () => {
+    const host = window.document.createElement("div");
+    window.document.body.appendChild(host);
+    const outside = window.document.createElement("button");
+    window.document.body.appendChild(outside);
+    let editor: Editor | undefined;
+    const user = userEvent.setup();
+    render(
+      <Harness
+        blockIndex={0}
+        container={() => host}
+        document={paragraphs({ id: "a", text: "One" })}
+        onReady={(e) => (editor = e)}
+      />
+    );
+    await waitFor(() => expect(editor).toBeDefined());
+
+    await user.click(screen.getByRole("button", { name: "Block actions" }));
+    const menu = await screen.findByRole("menu", { name: "Block actions" });
+    // The menu portals into the provided host node (inside the Dialog), not document.body.
+    expect(host.contains(menu)).toBe(true);
+
+    // A modal Sheet's focus trap nudges focus outside the non-modal menu as it opens; the portaled
+    // guard must ignore that focus-outside so the menu survives instead of self-dismissing.
+    await act(async () => {
+      outside.focus();
+    });
+    expect(screen.queryByRole("menu", { name: "Block actions" })).not.toBeNull();
+
+    host.remove();
+    outside.remove();
   });
 });

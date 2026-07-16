@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Editor, Extensions } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -50,10 +50,12 @@ const codeBlockDocument: DocumentNodeJSON = {
 
 function Harness({
   document,
+  container,
   onEscape = () => {},
   onReady
 }: {
   document: DocumentNodeJSON;
+  container?: () => HTMLElement;
   onEscape?: () => void;
   onReady?: (editor: Editor) => void;
 }): React.JSX.Element | null {
@@ -84,7 +86,11 @@ function Harness({
 
   return (
     <>
-      <EditorFormattingMenu editor={editor} onEscape={onEscape} />
+      <EditorFormattingMenu
+        editor={editor}
+        onEscape={onEscape}
+        {...(container === undefined ? {} : { container })}
+      />
       <EditorContent editor={editor} />
     </>
   );
@@ -92,12 +98,19 @@ function Harness({
 
 async function renderMenu(
   document: DocumentNodeJSON,
-  options: { onEscape?: () => void } = {}
+  options: { container?: () => HTMLElement; onEscape?: () => void } = {}
 ): Promise<{ editor: Editor; toolbar: HTMLElement; user: ReturnType<typeof userEvent.setup> }> {
   let editor: Editor | undefined;
   const user = userEvent.setup();
   const onEscape = options.onEscape ?? (() => {});
-  render(<Harness document={document} onEscape={onEscape} onReady={(e) => (editor = e)} />);
+  render(
+    <Harness
+      document={document}
+      onEscape={onEscape}
+      onReady={(e) => (editor = e)}
+      {...(options.container === undefined ? {} : { container: options.container })}
+    />
+  );
   const toolbar = await screen.findByRole("toolbar", { name: "Text formatting" });
   await waitFor(() => expect(editor).toBeDefined());
   return { editor: editor as Editor, toolbar, user };
@@ -250,5 +263,37 @@ describe("EditorFormattingMenu link form", () => {
     await user.click(screen.getByRole("button", { name: "Apply link" }));
 
     await waitFor(() => expect(editor.isActive("link")).toBe(false));
+  });
+
+  it("inside a Sheet, portals the form into the container and ignores focus-outside so the dialog's focus trap cannot dismiss it", async () => {
+    const host = window.document.createElement("div");
+    window.document.body.appendChild(host);
+    const outside = window.document.createElement("button");
+    window.document.body.appendChild(outside);
+    const { toolbar, user } = await renderMenu(linkedDocument, { container: () => host });
+
+    await user.click(within(toolbar).getByRole("button", { name: "Link" }));
+    const form = await screen.findByRole("dialog", { name: "Link URL" });
+    // The link form portals into the provided host node (inside the Dialog), not document.body.
+    expect(host.contains(form)).toBe(true);
+
+    // The Dialog's focus trap moves focus outside the non-modal Popover as it opens; the portaled
+    // guard must ignore that focus-outside so the form survives instead of self-dismissing.
+    await act(async () => {
+      outside.focus();
+    });
+    expect(screen.queryByRole("dialog", { name: "Link URL" })).not.toBeNull();
+
+    host.remove();
+    outside.remove();
+  });
+
+  it("standalone, keeps the link form inline in the bubble rather than portaling it elsewhere", async () => {
+    const { toolbar, user } = await renderMenu(linkedDocument);
+
+    await user.click(within(toolbar).getByRole("button", { name: "Link" }));
+    const form = await screen.findByRole("dialog", { name: "Link URL" });
+    // With no Sheet container the form stays inline next to the toolbar (no portal), unchanged.
+    expect(form.closest('[role="toolbar"]')).not.toBeNull();
   });
 });
