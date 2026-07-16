@@ -107,36 +107,15 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
     expect(screen.queryByText("Make this durable?")).toBeNull();
   });
 
-  it("renders a compact bilingual selector with English as the first-use default", () => {
-    render(<CaptureCard />);
-
-    expect(screen.getByRole("button", { name: "中文" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByRole("button", { name: "EN" }).getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("uses a stored English language default", () => {
-    window.localStorage.setItem("whetstone.capture.language", "en");
+  it("offers no capture-language switch or stored preference (#647)", () => {
+    window.localStorage.setItem("whetstone.capture.language", "zh");
 
     render(<CaptureCard />);
 
-    expect(screen.getByRole("button", { name: "EN" }).getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("remembers the selected language and threads it into typed captures", async () => {
-    mockedSubmit.mockResolvedValue(diaryEntry("今天我读了一本书"));
-    render(<CaptureCard />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "中文" }));
-    await user.type(screen.getByLabelText("Capture text"), "今天我读了一本书");
-    await user.click(screen.getByRole("button", { name: "Capture" }));
-
-    expect(window.localStorage.getItem("whetstone.capture.language")).toBe("zh");
-    expect(mockedSubmit).toHaveBeenCalledWith("今天我读了一本书", "typed", "zh");
-
-    cleanup();
-    render(<CaptureCard />);
-    expect(screen.getByRole("button", { name: "中文" }).getAttribute("aria-pressed")).toBe("true");
+    // The 中文/EN toggle and its local-storage preference are gone: Whisper auto-detects speech and typed
+    // capture needs no language choice.
+    expect(screen.queryByRole("button", { name: "中文" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "EN" })).toBeNull();
   });
 
   it("saves a typed capture and hands the diary Entry to the parent (#571)", async () => {
@@ -147,7 +126,7 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
 
     await typeCapture("I couldn't say it");
 
-    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed", "en");
+    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed");
     expect(onCaptured).toHaveBeenCalledWith(entry);
   });
 
@@ -201,21 +180,8 @@ describe("CaptureCard voice capture (saved-first, #566)", () => {
     await user.click(screen.getByRole("button", { name: "Tap to talk" }));
     await user.click(await screen.findByRole("button", { name: "Stop & save" }));
 
-    expect(mockedVoiceSubmit).toHaveBeenCalledWith(expect.any(Blob), "en");
+    expect(mockedVoiceSubmit).toHaveBeenCalledWith(expect.any(Blob));
     expect(await screen.findByText("Saved — waiting to transcribe…")).toBeTruthy();
-  });
-
-  it("threads the selected language into the saved audio", async () => {
-    mockedVoiceSubmit.mockResolvedValue({ id: "vc-1", status: "queued" });
-    render(<CaptureCard capture={fakeVoice()} />);
-    await waitFor(() => expect(mockedVoiceActive).toHaveBeenCalled());
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "中文" }));
-    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
-    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
-
-    expect(mockedVoiceSubmit).toHaveBeenCalledWith(expect.any(Blob), "zh");
   });
 
   it("shows a calm retry and saves nothing when no speech is caught", async () => {

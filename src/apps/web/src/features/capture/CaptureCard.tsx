@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 
 import {
   type DiaryEntryDto,
-  type CaptureLanguage,
   type CaptureInputMode,
   type VoiceCaptureStatusDto
 } from "@whetstone/contracts";
@@ -25,18 +24,6 @@ export type CaptureVoiceDependencies = Readonly<{
   // the record button is hidden and capture falls back to the always-present typed box — never a dead end.
   supported: boolean;
 }>;
-
-const captureLanguageStorageKey = "whetstone.capture.language";
-
-const captureLanguageOptions: ReadonlyArray<Readonly<{ label: string; value: CaptureLanguage }>> = [
-  { label: "中文", value: "zh" },
-  { label: "EN", value: "en" }
-];
-
-function readInitialCaptureLanguage(): CaptureLanguage {
-  const stored = window.localStorage.getItem(captureLanguageStorageKey);
-  return stored === "zh" || stored === "en" ? stored : "en";
-}
 
 // Build the DiaryEntryDto a just-ready voice capture becomes, so the Timeline can insert it in place
 // without a refetch (#566). The status carries the tidied text + occurred instant; the durable body is
@@ -73,7 +60,6 @@ export function CaptureCard({
   const [savingVoice, setSavingVoice] = useState(false);
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [language, setLanguage] = useState<CaptureLanguage>(readInitialCaptureLanguage);
 
   // A background voice capture just became ready (#566): it now has its tidied text and is a real diary
   // Entry, so hand it to the Timeline (Diary inserts it in capture order). The hook drops it from the
@@ -102,11 +88,6 @@ export function CaptureCard({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [guardNavigation]);
 
-  function chooseLanguage(nextLanguage: CaptureLanguage): void {
-    setLanguage(nextLanguage);
-    window.localStorage.setItem(captureLanguageStorageKey, nextLanguage);
-  }
-
   // The single path both typed and voice capture funnel through: save the diary Entry, then hand it to
   // the Timeline. Returns whether the submit succeeded so the caller can clear its input only on success.
   async function runCapture(rawText: string, inputMode: CaptureInputMode): Promise<boolean> {
@@ -118,7 +99,7 @@ export function CaptureCard({
     setBusy(true);
     setError(null);
     try {
-      const entry = await submitDiaryCapture(trimmed, inputMode, language);
+      const entry = await submitDiaryCapture(trimmed, inputMode);
       onCaptured?.(entry);
       return true;
     } catch {
@@ -159,7 +140,7 @@ export function CaptureCard({
         setError("Didn't catch any speech — try again.");
         return;
       }
-      const saved = await voice.submit(audio, language);
+      const saved = await voice.submit(audio);
       if (!saved) {
         setError("Couldn't save your capture. Please try again.");
       }
@@ -188,32 +169,6 @@ export function CaptureCard({
       <p className="mt-1 text-text-muted">
         Tap and talk — or write it down. It lands in your diary.
       </p>
-
-      <div className="mt-3" role="group" aria-labelledby="capture-language-label">
-        <p className="text-sm font-medium text-text" id="capture-language-label">
-          Capture language
-        </p>
-        <div className="mt-1 inline-flex rounded border border-border bg-bg p-1">
-          {captureLanguageOptions.map((option) => {
-            const selected = option.value === language;
-            return (
-              <button
-                aria-pressed={selected}
-                className={
-                  selected
-                    ? "min-h-11 min-w-11 rounded bg-accent px-3 text-sm font-medium text-accent-fg"
-                    : "min-h-11 min-w-11 rounded px-3 text-sm font-medium text-text-muted hover:bg-surface hover:text-text"
-                }
-                key={option.value}
-                onClick={() => chooseLanguage(option.value)}
-                type="button"
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       {capture.supported ? (
         <div className="mt-3 flex flex-col gap-2">

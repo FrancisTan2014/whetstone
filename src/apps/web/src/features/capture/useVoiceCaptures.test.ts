@@ -106,11 +106,11 @@ describe("useVoiceCaptures", () => {
 
     let ok = false;
     await act(async () => {
-      ok = await result.current.submit(new Blob(["clip"]), "en");
+      ok = await result.current.submit(new Blob(["clip"]));
     });
 
     expect(ok).toBe(true);
-    expect(api.submit).toHaveBeenCalledWith(expect.any(Blob), "en");
+    expect(api.submit).toHaveBeenCalledWith(expect.any(Blob));
     expect(result.current.captures.map((c) => c.id)).toEqual(["cap-new"]);
     expect(result.current.submitting).toBe(false);
   });
@@ -126,7 +126,7 @@ describe("useVoiceCaptures", () => {
 
     let ok = true;
     await act(async () => {
-      ok = await result.current.submit(new Blob(["clip"]), "en");
+      ok = await result.current.submit(new Blob(["clip"]));
     });
 
     expect(ok).toBe(false);

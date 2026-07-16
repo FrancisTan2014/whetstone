@@ -49,11 +49,10 @@ describe("diaryApi", () => {
   it("posts the transcript and input mode to create a diary Entry and parses it (#571)", async () => {
     const fetchMock = stubFetch({ body: entry, ok: true });
 
-    await expect(submitDiaryCapture("today I read a book", "typed", "en")).resolves.toEqual(entry);
+    await expect(submitDiaryCapture("today I read a book", "typed")).resolves.toEqual(entry);
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries", {
       body: JSON.stringify({
         inputMode: "typed",
-        language: "en",
         transcript: "today I read a book"
       }),
       headers: { "content-type": "application/json" },
@@ -64,9 +63,9 @@ describe("diaryApi", () => {
   it("threads a voice input mode through to the capture request (#560)", async () => {
     const fetchMock = stubFetch({ body: entry, ok: true });
 
-    await submitDiaryCapture("spoken out loud", "voice", "zh");
+    await submitDiaryCapture("spoken out loud", "voice");
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries", {
-      body: JSON.stringify({ inputMode: "voice", language: "zh", transcript: "spoken out loud" }),
+      body: JSON.stringify({ inputMode: "voice", transcript: "spoken out loud" }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });

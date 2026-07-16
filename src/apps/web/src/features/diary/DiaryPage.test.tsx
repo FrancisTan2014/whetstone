@@ -406,7 +406,7 @@ describe("DiaryPage capture", () => {
 
     await screen.findByText("Saved — waiting to transcribe…");
     expect(stop).toHaveBeenCalledOnce();
-    expect(mockedVoiceSubmit).toHaveBeenCalledWith(expect.any(Blob), "en");
+    expect(mockedVoiceSubmit).toHaveBeenCalledWith(expect.any(Blob));
     // Saved-first: the audio is filed immediately; no synchronous diary text is written on stop.
     expect(mockedSubmit).not.toHaveBeenCalled();
   });
@@ -460,7 +460,7 @@ describe("DiaryPage capture", () => {
     act(() => resolveCreate(entryDto("typed-1", d(30), "a typed thought")));
 
     await screen.findByText("a typed thought");
-    expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed", "en");
+    expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed");
   });
 
   it("scrolls a newly added entry into view so its actions clear the bottom nav (#506)", async () => {

@@ -2,7 +2,6 @@ import {
   parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
-  type CaptureLanguage,
   type CaptureInputMode,
   type DiaryCalendarDto,
   type DiaryEntryDto,
@@ -29,15 +28,15 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
 
 // Capture: post the transcript and how it was entered (`inputMode`: typed box vs tap-and-talk voice).
 // A diary capture journals only (#571) — the server saves it as a rich diary Entry immediately (no
-// proposal step) and returns that Entry.
+// proposal step) and returns that Entry. No capture language is sent: a typed capture needs none and a
+// voice capture auto-detects it (#647).
 export async function submitDiaryCapture(
   transcript: string,
-  inputMode: CaptureInputMode,
-  language: CaptureLanguage
+  inputMode: CaptureInputMode
 ): Promise<DiaryEntryDto> {
   return parseDiaryEntryDto(
     await requestJson(apiUrl("/diary/entries"), {
-      body: JSON.stringify({ inputMode, language, transcript }),
+      body: JSON.stringify({ inputMode, transcript }),
       headers: jsonHeaders,
       method: "POST"
     })
