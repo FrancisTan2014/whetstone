@@ -31,12 +31,13 @@ export const diaryProcessingStatusSchema = z.enum(processingStatuses);
 export type DiaryProcessingStatus = z.infer<typeof diaryProcessingStatusSchema>;
 
 // Capture: the web posts the transcript (typed text or STT transcript) plus how it was entered
-// (`inputMode`) and the manual capture language. The server saves the Diary Entry FIRST (before any async
-// tidy/transcription), stamps occurredAt/createdAt/updatedAt, and builds the initial body from the text.
+// (`inputMode`). No capture language is chosen — typed capture needs no language metadata and voice
+// capture auto-detects it during transcription (#647). The server saves the Diary Entry FIRST (before any
+// async tidy/transcription), stamps occurredAt/createdAt/updatedAt, and builds the initial body from the
+// text.
 export const createDiaryEntryRequestSchema = z
   .object({
     inputMode: captureInputModeSchema,
-    language: captureLanguageSchema,
     transcript: z.string().refine(isNonBlank, { message: "transcript must be non-empty." })
   })
   .strict();

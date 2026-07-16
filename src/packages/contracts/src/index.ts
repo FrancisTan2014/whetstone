@@ -100,7 +100,6 @@ export {
   parseVoiceCaptureAcceptedDto,
   parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto,
-  submitVoiceCaptureQuerySchema,
   audioContentType,
   voiceCaptureAcceptedDtoSchema,
   voiceCaptureListDtoSchema,
@@ -109,7 +108,6 @@ export {
   voiceCaptureStatusSchema
 } from "./voiceCaptureContracts.js";
 export type {
-  SubmitVoiceCaptureQuery,
   VoiceCaptureAcceptedDto,
   VoiceCaptureListDto,
   VoiceCaptureStatus,

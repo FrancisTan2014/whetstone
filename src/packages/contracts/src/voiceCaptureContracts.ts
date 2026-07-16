@@ -2,6 +2,9 @@ import { z } from "zod";
 
 import { captureLanguageSchema } from "./captureContracts.js";
 
+// (No submit query schema: a voice capture no longer carries a manual capture language — Whisper
+// auto-detects the language during transcription, #647.)
+
 // The content type for raw recorded-audio uploads: a voice clip's bytes travel as an octet-stream
 // request body (not multipart), so the server registers a matching body parser once and the client
 // sets this as the upload's `content-type`.
@@ -29,12 +32,6 @@ export const voiceCaptureStatusSchema = z.enum(voiceCaptureStatuses);
 
 export type VoiceCaptureStatus = z.infer<typeof voiceCaptureStatusSchema>;
 
-// Submit query: the manual capture language (#561) — no auto-detection in v0. The audio bytes travel as
-// the request body (an octet-stream), not in this query.
-export const submitVoiceCaptureQuerySchema = z.object({ language: captureLanguageSchema }).strict();
-
-export type SubmitVoiceCaptureQuery = z.infer<typeof submitVoiceCaptureQuerySchema>;
-
 // The prompt acceptance response: the pending capture's id and status (always `queued` on submit), so
 // the client can start polling immediately without waiting for STT.
 export const voiceCaptureAcceptedDtoSchema = z
@@ -47,9 +44,11 @@ export const voiceCaptureAcceptedDtoSchema = z
 export type VoiceCaptureAcceptedDto = z.infer<typeof voiceCaptureAcceptedDtoSchema>;
 
 // The pollable status of one voice capture. `text` is the tidied entry once ready (null while pending or
-// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language`/`occurredAt`
-// mirror the persisted capture so the client can render the pending row in place and, once ready, build
-// the Timeline entry from it (its day is derived from `occurredAt`).
+// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language` is the
+// language Whisper auto-detected once transcription runs (null while queued, or when detection produced
+// no supported value, #647); `occurredAt` mirrors the persisted capture so the client can render the
+// pending row in place and, once ready, build the Timeline entry from it (its day is derived from
+// `occurredAt`).
 export const voiceCaptureStatusDtoSchema = z
   .object({
     failureReason: z.string().nullable(),
