@@ -23,7 +23,9 @@ type ActiveHub = Extract<RecitationHubDto, { status: "active" }>;
 // loading, error, no-plan, active (with paused/caught-up variants) — and never flashes a contradictory
 // action while data resolves. It owns no progress: everything shown comes from the server projection,
 // and pause/resume simply refresh it. There is NO dashboard grid, streak, score, heatmap, or chart.
-export function RecitationHubPage(): React.JSX.Element {
+export function RecitationHubPage({
+  workEntryId
+}: Readonly<{ workEntryId?: string | undefined }> = {}): React.JSX.Element {
   const [state, setState] = useState<HubState>({ status: "loading" });
   // A transient failure of a pause/resume action, surfaced inline without blanking the resolved hub.
   const [mutationFailed, setMutationFailed] = useState(false);
@@ -31,11 +33,11 @@ export function RecitationHubPage(): React.JSX.Element {
   const [sessionOpen, setSessionOpen] = useState(false);
 
   useEffect(() => {
-    getRecitationHub().then(
+    getRecitationHub(workEntryId).then(
       (hub) => setState({ hub, status: "ready" }),
       () => setState({ status: "error" })
     );
-  }, []);
+  }, [workEntryId]);
 
   function runMutation(action: Promise<RecitationHubDto>): void {
     setMutationFailed(false);
@@ -59,7 +61,15 @@ export function RecitationHubPage(): React.JSX.Element {
         Recitation
       </h1>
       <div className="mt-4">
-        {renderState(state, mutationFailed, pending, runMutation, sessionOpen, setSessionOpen)}
+        {renderState(
+          state,
+          workEntryId,
+          mutationFailed,
+          pending,
+          runMutation,
+          sessionOpen,
+          setSessionOpen
+        )}
       </div>
     </section>
   );
@@ -67,6 +77,7 @@ export function RecitationHubPage(): React.JSX.Element {
 
 function renderState(
   state: HubState,
+  workEntryId: string | undefined,
   mutationFailed: boolean,
   pending: boolean,
   runMutation: (action: Promise<RecitationHubDto>) => void,
@@ -86,6 +97,9 @@ function renderState(
   if (state.hub.status === "no_plan") {
     return <NoPlanState />;
   }
+  if (state.hub.status === "unadopted_work") {
+    return <UnadoptedWorkState workTitle={state.hub.workTitle} />;
+  }
   return (
     <ActivePlanView
       hub={state.hub}
@@ -94,7 +108,25 @@ function renderState(
       runMutation={runMutation}
       sessionOpen={sessionOpen}
       setSessionOpen={setSessionOpen}
+      workEntryId={workEntryId}
     />
+  );
+}
+
+// A Work reached by a contextual link (#633 AC7) that the learner has not adopted for recitation: a
+// restrained, Work-scoped adoption prompt that names the Work and routes to the Library to adopt it. The
+// hub deliberately never falls back to another plan here, so a contextual entry can only open its Work.
+function UnadoptedWorkState({ workTitle }: Readonly<{ workTitle: string }>): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-text-muted">
+        You haven&rsquo;t started reciting <span className="text-text">{workTitle}</span> yet. Open it
+        in your Library to adopt it as a recitation routine.
+      </p>
+      <Link className={buttonVariants({ variant: "secondary" })} to="/library">
+        Go to Library
+      </Link>
+    </div>
   );
 }
 
@@ -120,7 +152,8 @@ function ActivePlanView({
   pending,
   runMutation,
   sessionOpen,
-  setSessionOpen
+  setSessionOpen,
+  workEntryId
 }: Readonly<{
   hub: ActiveHub;
   mutationFailed: boolean;
@@ -128,6 +161,7 @@ function ActivePlanView({
   runMutation: (action: Promise<RecitationHubDto>) => void;
   sessionOpen: boolean;
   setSessionOpen: (open: boolean) => void;
+  workEntryId?: string | undefined;
 }>): React.JSX.Element {
   // A `familiarizing` plan is calm daily reading with no due work yet; its only forward step is the
   // explicit learner-driven transition into Learning (#577). This lives on the hub — the recitation home
@@ -186,7 +220,9 @@ function ActivePlanView({
             disabled={pending}
             onClick={() =>
               runMutation(
-                setRecitationPhase(hub.planEntryId, "learning").then(() => getRecitationHub())
+                setRecitationPhase(hub.planEntryId, "learning").then(() =>
+                  getRecitationHub(workEntryId)
+                )
               )
             }
             variant="primary"
@@ -200,7 +236,7 @@ function ActivePlanView({
         <RecitationSessionPanel
           onExit={() => {
             setSessionOpen(false);
-            runMutation(getRecitationHub());
+            runMutation(getRecitationHub(workEntryId));
           }}
           planEntryId={hub.planEntryId}
         />

@@ -10,7 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { recitationPlans } from "../../db/schema.js";
+import { recitationPlans, workMeta } from "../../db/schema.js";
 import type { ReviewCardRow } from "../review/reviewCardQueries.js";
 import {
   loadActiveChainForPlan,
@@ -22,7 +22,11 @@ import {
   loadRecitationIntroductionStatus,
   loadReviewCardsForTargets
 } from "../recitationPassages/recitationPassageQueries.js";
-import { getContinueRecitation } from "./recitationQueries.js";
+import {
+  findRecitationPlanForWork,
+  getContinueRecitation,
+  type RecitationPlanRow
+} from "./recitationQueries.js";
 
 export type RecitationHubDependencies = Readonly<{ db: DbClient }>;
 
@@ -37,10 +41,27 @@ async function loadPlanPausedAt(db: DbClient, planEntryId: string): Promise<Date
   return row?.pausedAt ?? null;
 }
 
-// The recitation routine hub (#608): one calm projection of the learner's most-recently-touched plan,
-// composed PURELY from canonical rows joined to the shared card state — it persists no parallel progress,
-// stage flag, or copied due date. No adopted plan → the restrained `no_plan` empty state. Otherwise the
-// active projection: passage progress, due/overdue obligations over the plan's active passage + whole-Work
+// The title of one source Work, or undefined when no such Work exists — the read the contextual hub uses
+// to present a requested-but-unadopted Work's adoption state without needing a plan (#633 AC7).
+async function loadWorkTitle(db: DbClient, workEntryId: string): Promise<string | undefined> {
+  const [row] = await db
+    .select({ title: workMeta.title })
+    .from(workMeta)
+    .where(eq(workMeta.entryId, workEntryId))
+    .limit(1);
+  return row?.title;
+}
+
+// The shape the hub projection needs from a resolved plan, satisfied by both the most-recent read and the
+// work-scoped read.
+type HubPlan = Readonly<{ entryId: string; phase: RecitationPlanRow["phase"]; workTitle: string }>;
+
+// The recitation routine hub (#608): one calm projection of the learner's most-recently-touched plan —
+// or, when a `?work=` deep-link is given, THAT exact owner-scoped plan (#633 AC7) — composed PURELY from
+// canonical rows joined to the shared card state; it persists no parallel progress, stage flag, or copied
+// due date. No adopted plan → the restrained `no_plan` empty state; a requested-but-unadopted Work →
+// `unadopted_work` (that Work's adoption state, never a fallback to another plan). Otherwise the active
+// projection: passage progress, due/overdue obligations over the plan's active passage + whole-Work
 // cards, the paced-introduction status (#607), the derived routine stage, and the single due-first action.
 //
 // A PAUSED plan is still shown (with all its progress) but surfaces no obligation or action: its due
@@ -50,13 +71,37 @@ export async function loadRecitationHub(
   dependencies: RecitationHubDependencies,
   userId: string,
   now: Date,
-  timeZone: string
+  timeZone: string,
+  workEntryId?: string
 ): Promise<RecitationHubDto> {
   const { db } = dependencies;
-  const plan = await getContinueRecitation(db, userId);
-  if (plan === null) {
-    return { status: "no_plan" };
+
+  // Contextual entry (#633 AC7): a `?work=` deep-link opens THAT exact owner-scoped plan, never the
+  // most-recently-touched one. When the learner has not adopted the requested Work, present that Work's
+  // adoption state (its title) so the hub routes back toward adoption — it never falls back to any plan.
+  if (workEntryId !== undefined) {
+    const scopedPlan = await findRecitationPlanForWork(db, toEntryId(workEntryId), userId);
+    if (scopedPlan === undefined) {
+      const workTitle = await loadWorkTitle(db, workEntryId);
+      return workTitle === undefined
+        ? { status: "no_plan" }
+        : { status: "unadopted_work", workEntryId, workTitle };
+    }
+    return projectHubPlan(db, scopedPlan, userId, now, timeZone);
   }
+
+  // Default entry: the learner's most-recently-touched plan (#608), or the restrained no-plan state.
+  const plan = await getContinueRecitation(db, userId);
+  return plan === null ? { status: "no_plan" } : projectHubPlan(db, plan, userId, now, timeZone);
+}
+
+async function projectHubPlan(
+  db: DbClient,
+  plan: HubPlan,
+  userId: string,
+  now: Date,
+  timeZone: string
+): Promise<RecitationHubDto> {
   const planEntryId = toEntryId(plan.entryId);
 
   const passages = await listPassageRowsForPlan(db, planEntryId);
@@ -73,7 +118,7 @@ export async function loadRecitationHub(
   const masteries = await loadPassageMasteries(db, planEntryId);
   const activeChain = await loadActiveChainForPlan(db, plan.entryId);
 
-  // Ownership was already proven by `getContinueRecitation`, so the introduction status is always present.
+  // Ownership was already proven while resolving the plan, so the introduction status is always present.
   const introduction = (await loadRecitationIntroductionStatus(
     db,
     planEntryId,

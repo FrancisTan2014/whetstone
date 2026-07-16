@@ -18,6 +18,7 @@ function renderHeader(overrides: Partial<ReadingHeaderProps> = {}): ReadingHeade
     size: "md",
     title: "Politics and the English Language",
     tocOpen: false,
+    workEntryId: "work-1",
     ...overrides
   };
 

@@ -35,11 +35,20 @@ const hubDueSchema = z
   })
   .strict();
 
-// The hub view: either the learner has adopted no plan yet (`no_plan` → a restrained empty state), or an
-// active plan projection. When active, `paused` reflects the plan-level pause; a paused plan surfaces no
-// due obligation or primary action (its cards are removed from selection) but keeps all progress.
+// The hub view: the learner has adopted no plan yet (`no_plan` → a restrained empty state), navigated to
+// a specific Work they have not adopted (`unadopted_work` → that Work's adoption state, carrying its
+// title so the hub never falls back to the most-recent plan — #633 AC7), or an active plan projection.
+// When active, `paused` reflects the plan-level pause; a paused plan surfaces no due obligation or
+// primary action (its cards are removed from selection) but keeps all progress.
 export const recitationHubDtoSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("no_plan") }).strict(),
+  z
+    .object({
+      status: z.literal("unadopted_work"),
+      workEntryId: z.string(),
+      workTitle: z.string()
+    })
+    .strict(),
   z
     .object({
       due: hubDueSchema,

@@ -57,6 +57,16 @@ function ReciteRoute(): React.JSX.Element {
   return <RecitePage planEntryId={searchParams.get("plan") ?? undefined} />;
 }
 
+// A contextual Recitation entry (Reader header, Library card) routes to `#/recitation?work=<entryId>`;
+// the route reads that param so the hub opens THAT exact Work's plan — or its adoption state when the
+// Work is not adopted — and never falls back to the most-recent plan (#633 AC7). Without it, the hub
+// shows the learner's most-recently-touched plan.
+function RecitationRoute(): React.JSX.Element {
+  const [searchParams] = useSearchParams();
+
+  return <RecitationHubPage workEntryId={searchParams.get("work") ?? undefined} />;
+}
+
 // Routes for the four navigation modes, all nested under the shell layout. Hash/memory
 // routing is provided by the composition root so this works under file/Capacitor/Tauri.
 export function AppRoutes(): React.JSX.Element {
@@ -70,7 +80,7 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<MemoryPage />} path="memory" />
         <Route element={<RecallPage />} path="recall" />
         <Route element={<ReciteRoute />} path="recite" />
-        <Route element={<RecitationHubPage />} path="recitation" />
+        <Route element={<RecitationRoute />} path="recitation" />
         <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />
         <Route element={<SearchPage />} path="search" />

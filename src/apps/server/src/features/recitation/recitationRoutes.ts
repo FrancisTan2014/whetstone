@@ -81,12 +81,22 @@ export function registerRecitationRoutes(
   });
 
   // The recitation routine hub (#608): one calm projection of the learner's most-recently-touched plan —
-  // what needs attention now, where they are in this Work, and the next due-first action — derived purely
-  // from canonical rows joined to shared card state. Static path, so registered before the `:id` routes.
-  server.get("/api/recitation/hub", async (request) => {
+  // or, with `?work=<id>`, THAT exact owner-scoped plan (#633 AC7) — derived purely from canonical rows
+  // joined to shared card state. Static path, so registered before the `:id` routes.
+  server.get<{ Querystring: { work?: string } }>("/api/recitation/hub", async (request) => {
     const userId = request.server.currentUser.getCurrentUserId();
     const timeZone = await getLearnerTimeZone(dependencies.db, userId);
-    const hub = await loadRecitationHub(dependencies, userId, dependencies.now(), timeZone);
+    const workEntryId =
+      typeof request.query.work === "string" && request.query.work.length > 0
+        ? request.query.work
+        : undefined;
+    const hub = await loadRecitationHub(
+      dependencies,
+      userId,
+      dependencies.now(),
+      timeZone,
+      workEntryId
+    );
     return { hub };
   });
 
