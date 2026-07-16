@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createPortal } from "react-dom";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { useFloatingLayerContainer } from "./FloatingLayer";
 import { Sheet } from "./Sheet";
 
 function mockMatchMedia(matchers: Record<string, boolean>): void {
@@ -205,5 +207,47 @@ describe("Sheet", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(document.activeElement).toBe(opener);
     });
+  });
+
+  it("hosts an above-overlay floating layer inside the dialog for editor menus (#645)", () => {
+    mockMatchMedia({});
+    render(
+      <Sheet onOpenChange={vi.fn()} open title="Note">
+        <p>panel body</p>
+      </Sheet>
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Note" });
+    const host = dialog.querySelector(".sheet-floating-layer");
+
+    // The host lives INSIDE Dialog.Content, so Radix keeps it out of the aria-hidden sweep and inside
+    // the focus scope — the load-bearing property that lets menus stay visible and interactive (#645).
+    expect(host).not.toBeNull();
+    expect(dialog.contains(host)).toBe(true);
+    expect((host as HTMLElement).closest("[aria-hidden='true']")).toBeNull();
+  });
+
+  it("renders a child's floating surface into the sheet host, inside the dialog subtree (#645)", () => {
+    mockMatchMedia({});
+
+    // Mirrors how the editor's surfaces mount: a descendant reads the shared container and portals its
+    // floating surface into it, so it must land inside the dialog (above the overlay, not aria-hidden).
+    function PortalledSurface(): React.JSX.Element {
+      const container = useFloatingLayerContainer();
+      return createPortal(<div data-testid="floating-surface">toolbar</div>, container());
+    }
+
+    render(
+      <Sheet onOpenChange={vi.fn()} open title="Note">
+        <PortalledSurface />
+      </Sheet>
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Note" });
+    const surface = screen.getByTestId("floating-surface");
+
+    expect(dialog.contains(surface)).toBe(true);
+    expect(surface.closest(".sheet-floating-layer")).not.toBeNull();
+    expect(surface.closest("[aria-hidden='true']")).toBeNull();
   });
 });

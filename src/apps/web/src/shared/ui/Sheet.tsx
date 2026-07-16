@@ -1,8 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion, useReducedMotion } from "framer-motion";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { motionSprings, withReducedMotion } from "../motion/motion.js";
+import { FloatingLayerProvider } from "./FloatingLayer.js";
 import { useMediaQuery } from "./useMediaQuery.js";
 
 type SheetSide = "right" | "bottom";
@@ -47,6 +48,33 @@ export function Sheet({
   };
   useEffect(() => restoreFocus, []);
 
+  // The above-overlay host every editor floating surface portals into (#645). It lives INSIDE
+  // `Dialog.Content`, so Radix keeps it out of the `aria-hidden` sweep and inside the FocusScope (menus
+  // stay reachable), while its un-transformed, un-clipped coordinate space lets floating-ui position a
+  // BubbleMenu against viewport-space selection rects without the panel's transform/`overflow: hidden`
+  // mispositioning or clipping it. The node is created once by a lazy state initializer (never touching
+  // a ref during render) so it is a stable, non-null container from the very first render: the slash
+  // menu resolves its container once, when the editor is created — earlier than a ref callback would
+  // publish the node — so an eager host is what makes the slash menu (and every surface) land inside the
+  // dialog rather than the body.
+  const [floatingHost] = useState<HTMLDivElement>(() => {
+    const host = document.createElement("div");
+    host.className = "sheet-floating-layer";
+    return host;
+  });
+
+  // Attach the eager host as the last child of the (un-transformed, un-clipped) content root, so its
+  // surfaces paint above the panel with no explicit z-index. A callback ref re-attaches it whenever the
+  // content root mounts (e.g. the sheet reopens); the node itself persists across those remounts.
+  const attachContentRoot = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node !== null) {
+        node.appendChild(floatingHost);
+      }
+    },
+    [floatingHost]
+  );
+
   return (
     <Dialog.Root onOpenChange={onOpenChange} open={open}>
       <Dialog.Portal>
@@ -54,7 +82,6 @@ export function Sheet({
         <Dialog.Content
           aria-describedby={undefined}
           asChild
-          className={isRight ? "sheet-panel sheet-panel-right" : "sheet-panel sheet-panel-bottom"}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             restoreFocus();
@@ -63,23 +90,33 @@ export function Sheet({
             openerRef.current = document.activeElement as HTMLElement | null;
           }}
         >
-          <motion.div
-            animate={isRight ? { x: 0 } : { y: 0 }}
-            data-side={resolvedSide}
-            initial={isRight ? { x: "100%" } : { y: "100%" }}
-            transition={transition}
-          >
-            <header className="sheet-header flex items-center justify-between gap-4">
-              <Dialog.Title className="text-lg font-semibold text-text">{title}</Dialog.Title>
-              <Dialog.Close
-                aria-label="Close"
-                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text"
-              >
-                ✕
-              </Dialog.Close>
-            </header>
-            <div className="sheet-body">{children}</div>
-          </motion.div>
+          {/* The outer content root is un-transformed, un-clipped, and click-through: it sits above the
+              overlay (its own stacking context) so both the panel and the floating host paint above the
+              scrim, but pointer events fall through its empty area to the overlay so outside-click
+              dismissal still works. The visible panel and the floating host re-enable pointer events. */}
+          <div className="sheet-content-root" data-side={resolvedSide} ref={attachContentRoot}>
+            <motion.div
+              animate={isRight ? { x: 0 } : { y: 0 }}
+              className={
+                isRight ? "sheet-panel sheet-panel-right" : "sheet-panel sheet-panel-bottom"
+              }
+              initial={isRight ? { x: "100%" } : { y: "100%" }}
+              transition={transition}
+            >
+              <header className="sheet-header flex items-center justify-between gap-4">
+                <Dialog.Title className="text-lg font-semibold text-text">{title}</Dialog.Title>
+                <Dialog.Close
+                  aria-label="Close"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text"
+                >
+                  ✕
+                </Dialog.Close>
+              </header>
+              <div className="sheet-body">
+                <FloatingLayerProvider container={floatingHost}>{children}</FloatingLayerProvider>
+              </div>
+            </motion.div>
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

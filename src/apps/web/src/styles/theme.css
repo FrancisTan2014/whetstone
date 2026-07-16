@@ -664,9 +664,23 @@
   background-color: rgb(0 0 0 / 0.4);
 }
 
+/* The outer Dialog.Content wrapper (#645): a click-through, un-transformed, un-clipped layer above the
+   overlay. It owns the "above the scrim" z-index and a stacking context, so both the visible panel and
+   the floating host paint above the overlay without any per-menu z-index. `pointer-events: none` lets a
+   click on its empty area fall through to the overlay so outside-click dismissal still works; the panel
+   and the floating host children re-enable pointer events. It sets no transform, so it never becomes a
+   containing block for the editor's fixed/absolute floating surfaces, and no `overflow`, so it never
+   clips them. */
+.sheet-content-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
 .sheet-panel {
   position: fixed;
-  z-index: 50;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -677,6 +691,21 @@
   background-color: var(--color-surface);
   color: var(--color-text);
   box-shadow: 0 10px 40px rgb(0 0 0 / 0.2);
+}
+
+/* The un-transformed, un-clipped host the editor's floating surfaces portal into (#645). It spans the
+   viewport at the untransformed origin so floating-ui resolves selection rects in viewport space, and
+   is click-through so it never swallows clicks meant for the panel or the overlay — the portalled
+   surfaces (its direct children) re-enable their own pointer events. Being placed after the panel in
+   the DOM, its surfaces paint above the panel with no explicit z-index. */
+.sheet-floating-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sheet-floating-layer > * {
+  pointer-events: auto;
 }
 
 /* The title/close row is fixed; only the body scrolls. */

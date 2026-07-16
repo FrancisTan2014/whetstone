@@ -30,6 +30,12 @@ export interface BlockActionsMenuProps {
   readonly onOpenChange: (open: boolean) => void;
   /** The gutter grip or compact "More block actions" button, anchored as the menu trigger. */
   readonly trigger: ReactNode;
+  /**
+   * Returns the element the menu (and its "Turn into" submenu) portal into; defaults to the body. A
+   * `Sheet` threads its above-overlay floating host through here so the menu stays visible and
+   * interactive above the modal (#645).
+   */
+  readonly container?: () => HTMLElement;
 }
 
 // The block-actions menu opened from the gutter grip (or the compact/touch trigger). It exposes real
@@ -44,7 +50,8 @@ export function BlockActionsMenu({
   pos,
   open,
   onOpenChange,
-  trigger
+  trigger,
+  container
 }: BlockActionsMenuProps): React.JSX.Element {
   const run = (action: (editor: Editor, pos: number) => boolean): void => {
     // Defer past Radix's own close/focus handling for this selection: the command focuses the editor
@@ -67,11 +74,31 @@ export function BlockActionsMenu({
   const canTurn = canTurnBlockInto(editor, pos);
   const canUp = canMoveBlockUp(editor, pos);
   const canDown = canMoveBlockDown(editor, pos);
+  const portalContainer = container?.();
+  // Inside a modal Sheet the menu portals into the dialog's floating host (a non-body node). The menu
+  // is deliberately non-modal (`modal={false}`) so it never traps focus, but a non-modal Radix
+  // DismissableLayer self-dismisses on focus-outside — and the Dialog's focus trap nudges focus as the
+  // menu opens, which would slam it shut. Ignore focus-driven dismissal only when portaled into a
+  // Sheet (standalone/body keeps the default behaviour); pointer-outside and Escape still dismiss.
+  const portaledIntoSheet =
+    portalContainer !== undefined && portalContainer !== window.document.body;
+  // Conditional spread keeps `onFocusOutside` absent (not `undefined`) standalone, satisfying
+  // `exactOptionalPropertyTypes`.
+  const focusOutsideGuard: Pick<
+    React.ComponentProps<typeof DropdownMenu.Content>,
+    "onFocusOutside"
+  > = portaledIntoSheet
+    ? {
+        onFocusOutside: (event) => {
+          event.preventDefault();
+        }
+      }
+    : {};
 
   return (
     <DropdownMenu.Root modal={false} onOpenChange={onOpenChange} open={open}>
       <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
+      <DropdownMenu.Portal container={portalContainer}>
         <DropdownMenu.Content
           align="start"
           aria-label="Block actions"
@@ -87,13 +114,14 @@ export function BlockActionsMenu({
               }
             });
           }}
+          {...focusOutsideGuard}
           side="bottom"
           sideOffset={4}
         >
           {canTurn ? (
             <DropdownMenu.Sub>
               <DropdownMenu.SubTrigger className={cx.subTrigger}>Turn into</DropdownMenu.SubTrigger>
-              <DropdownMenu.Portal>
+              <DropdownMenu.Portal container={portalContainer}>
                 <DropdownMenu.SubContent
                   aria-label="Turn into"
                   className={cx.subContent}

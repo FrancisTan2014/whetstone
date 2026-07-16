@@ -13,6 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "../ui/Button.js";
+import { useFloatingLayerContainer } from "../ui/FloatingLayer.js";
 import { useMediaQuery } from "../ui/useMediaQuery.js";
 import { BlockActionsMenu } from "./BlockActionsMenu.js";
 import { blockActionsMenuClassNames } from "./BlockActionsMenu.tokens.js";
@@ -31,10 +32,11 @@ import { SlashCommand } from "./slashCommand.js";
 // pnpm exposes the same Tiptap runtime through the document and web workspace package boundaries,
 // but TypeScript treats Tiptap's privately-branded extension classes as nominal across their emitted
 // declarations. Narrow once at this integration seam; the runtime objects are the shared instances.
-const editorExtensions: Extensions = [
+// The slash extension is added per-instance in the component so its portal container can be threaded
+// from the shared floating layer (#645); everything here is stateless and container-agnostic.
+const baseExtensions: Extensions = [
   ...(documentExtensions as unknown as Extensions),
   UndoRedo,
-  SlashCommand,
   // The transient gutter wash — an editing-only decoration the static reader never mounts (#590).
   BlockGutterHighlight as unknown as Extensions[number],
   // A restrained, decoration-only hint on a focused empty paragraph — never stored, copied, or read
@@ -113,12 +115,21 @@ export function RichContentEditor({
   const initialDocument = useMemo(() => validateEditorDocument(document), [document]);
   const visibility = useMemo(() => createFormattingMenuVisibility(), []);
   const showPointerGutter = useMediaQuery(POINTER_GUTTER_QUERY);
+  // The shared floating-layer boundary (#645): where the toolbar, link form, slash menu, and
+  // block-actions menu portal. Outside a `Sheet` it resolves to `document.body`; inside one the Sheet
+  // hands down an above-overlay host so every surface stays visible and interactive over the modal.
+  const container = useFloatingLayerContainer();
+  const editorExtensions = useMemo<Extensions>(
+    () => [...baseExtensions, SlashCommand.configure({ container })],
+    [container]
+  );
   // The block whose grip is currently hovered/focused (pointer gutter), and the open menu, if any.
   const [gutterPos, setGutterPos] = useState<number | null>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenu | null>(null);
   // The BubbleMenu re-dispatches an `updateOptions` transaction whenever these props change identity;
-  // with `shouldRerenderOnTransaction` that would loop, so keep them referentially stable.
-  const bubbleAppendTo = useCallback(() => window.document.body, []);
+  // with `shouldRerenderOnTransaction` that would loop, so keep them referentially stable. The
+  // container getter is itself stable (a module constant outside a provider, a memoized getter inside).
+  const bubbleAppendTo = useCallback(() => container(), [container]);
   const bubbleOptions = useMemo<NonNullable<BubbleMenuProps["options"]>>(
     () => ({ flip: {}, offset: 8, placement: "top", shift: { padding: 8 } }),
     []
@@ -206,11 +217,16 @@ export function RichContentEditor({
         shouldShow={bubbleShouldShow}
         updateDelay={0}
       >
-        <EditorFormattingMenu editor={editor} onEscape={dismissFormattingMenu} />
+        <EditorFormattingMenu
+          container={container}
+          editor={editor}
+          onEscape={dismissFormattingMenu}
+        />
       </BubbleMenu>
 
       {showPointerGutter ? (
         <BlockGutterHandle
+          container={container}
           editor={editor}
           gutterPos={gutterPos}
           onGutterPosChange={setGutterPos}
@@ -221,6 +237,7 @@ export function RichContentEditor({
 
       <div className={editorClassNames.moreActions}>
         <BlockActionsMenu
+          container={container}
           editor={editor}
           onOpenChange={(open) =>
             setOpenMenu(open ? { pos: activeBlockStart(editor.state), source: "more" } : null)
