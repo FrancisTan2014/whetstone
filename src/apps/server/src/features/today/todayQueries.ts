@@ -34,7 +34,10 @@ async function loadRecitationSource(
   timeZone: string
 ): Promise<TodayRoutineSource> {
   try {
-    return { status: "ok", summary: await loadRecitationRoutineSummary({ db }, userId, now, timeZone) };
+    return {
+      status: "ok",
+      summary: await loadRecitationRoutineSummary({ db }, userId, now, timeZone)
+    };
   } catch {
     return { status: "failed" };
   }

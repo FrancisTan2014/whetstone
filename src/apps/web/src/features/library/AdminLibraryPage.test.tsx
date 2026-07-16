@@ -8,6 +8,7 @@ import {
   within
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type * as ReactRouterDom from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./libraryApi", () => ({
@@ -37,7 +38,7 @@ vi.mock("../recitation/recitationApi", () => ({
 const navigateSpy = vi.fn();
 
 vi.mock("react-router-dom", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react-router-dom")>()),
+  ...(await importOriginal<typeof ReactRouterDom>()),
   useNavigate: () => navigateSpy
 }));
 

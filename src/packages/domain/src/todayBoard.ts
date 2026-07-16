@@ -8,7 +8,6 @@
 // server instantiates the payloads with their DTO types, then validates the whole board at the API
 // boundary. The routine obligations are fully concrete here — their shape is the product logic Today owns.
 
-
 // The deterministic-obligation sources Today groups into one row each (#609 Recitation, Memory review).
 export type TodayRoutineKind = "recitation" | "memory";
 

@@ -188,7 +188,9 @@ describe("App shell and routes", () => {
     expect(container.innerHTML).toContain(">Library<");
     // None of the retired segmentation copy survives on the recovery landing.
     expect(container.innerHTML).not.toContain("Loading passages…");
-    expect(container.innerHTML).not.toContain("Open a recitation routine from your Library to divide it.");
+    expect(container.innerHTML).not.toContain(
+      "Open a recitation routine from your Library to divide it."
+    );
   });
 
   it("resolves the recitation route to the direct whole-Work review, framed by the shell (#643)", () => {

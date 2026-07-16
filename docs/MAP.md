@@ -54,26 +54,14 @@ vocabulary, each kind
 mapped to a real Entry type — there is no `timeline_entry`; the deterministic order `occurredAt` DESC with a
 stable `entryId` ASC tie-break; and day-grouping/`timelineDays`/`groupTimelineEntriesByDay` (each taking the
 learner's `timeZone` via `localDay.ts`) so the Timeline
-is a derived view, never a store), `recitation.ts` (#577 the learner-controlled recitation-plan phase
-vocabulary `familiarizing`/`learning`/`maintenance` + `isRecitationPhase`), `recitationPassage.ts` (#578
-the pure passage engine: `seedPassageRanges`/`splitPassageRange`/`mergePassageRanges` for boundary edits
-over blocks, `coveredPassageText`, `reanchorPassageRange` (unchanged/relocated/needs_repair), the
-`passageCueText` cue builder + `recitationRatingChoices`/`recitationCueStrengths`/`passageAnchorStatuses`
-vocabulary), `recitationFading.ts` (#579 the pure render-time support-level projection:
-`recitationSupportLevels` `full`/`reduced`/`first`/`hidden` + `projectRecitationSupport`/
-`supportLevelShowsTarget`/`DEFAULT_RECITATION_SUPPORT_LEVEL`, masked runs carry a length only),
-`recitationChaining.ts` (#580 the pure chaining/ownership engine: `isPassageOwned`/`computeOwnedPrefix`/
-`isWholeWorkOwned`/`chainEligibility`/`resolveChainBoundary` over the contiguous owned prefix,
-`selectRecitationTodayAction` bounded priority `due_passage`>`chain`>`whole_work`>`none`, and the
-`SessionRecallOutcome` held/broke logic `passagesToFailFromOutcome`/`isOutcomePassageInSession`),
-`recitationIntroduction.ts` (#607 the pure paced-introduction evaluator: `RECITATION_DAILY_INTRODUCTION_CAP`
-and `evaluateRecitationIntroduction` deciding new-passage availability + a machine reason with fixed
-precedence `not_learning`>`due_work_remains`>`all_introduced`>`cap_reached`),
-`recitationHub.ts` (#608 the pure routine-stage derivation: `recitationRoutineStages`
-`familiarize`/`learn_passage`/`chain`/`whole_work_maintenance` + `deriveRecitationStage` mapping plan
-phase + chain eligibility/active-chain to the hub's "where am I" stage), `recitationSession.ts`
-(#609 the pure transient session step selector `due_passage`>`whole_work`>`chain`>`new_passage`>`clear`,
-kept separate from Today's #580 chain-before-whole-work selector) and
+is a derived view, never a store), `recitation.ts` (#577/#643 the recitation-plan phase vocabulary
+`familiarizing`/`learning`/`maintenance` + `isRecitationPhase`, retained only so legacy rows stay readable
+— direct enrolment always lands `maintenance`; plus the #643 `recitationRatingChoices` worst→best labels
+mapping one-to-one onto the shared FSRS ratings for the whole-Work review), `recitationSession.ts`
+(#633/#643 the pure global recitation aggregate: `RecitationPlanObligation`/`RecitationAggregateDue`,
+`selectRecitationWork` + `compareRecitationObligations` folding every unpaused plan's Work-level
+maintenance card into one truthful due summary and the single Work to work now — no persisted queue,
+passage, chain, or introduction state) and
 `diaryTidy.ts` (the "tidy not polish" prompt builder + the invariant instruction text). Tests
 are colocated `*.test.ts`. Invariant: depends on nothing outward.
 
@@ -89,27 +77,14 @@ diary create/update + logical-Timeline DTOs: `DiaryEntryDto` carries the rich `b
 `createdAt`/`updatedAt`, `language`, `inputMode`, nullable `processingStatus`/`failureReason`; the
 Timeline is a `kind`-discriminated union DTO (`diary` | `note` | `work` | `recitation`) grouped into day/page DTOs, and Diary is
 the `kind === "diary"` filter — update edits the rich `bodyDoc`),
-`recitationContracts.ts` (#577 recitation routines: `recitationPhaseDtoSchema`, the adopt/set-phase
-request schemas, `RecitationPlanDto`/list/continue DTOs; the Timeline union gains a `recitation` member
-carrying the Work title + phase),
-`recitationPassageContracts.ts` (#578 passage practice: `RecitationPassageDto`/list, the
-`DueRecitationPassageDto` (context + cue material + `defaultCueStrength` + `anchorStatus` + `supportLevel`),
-the split/merge/record-review request schemas (record-review carries the #580 `leadInFailed` flag), the
-#579 `recitationSupportLevelDtoSchema` + set-support-level request/response schemas, the #607
-`recitationIntroductionStatusDtoSchema` (paced introduction status: due count, local-day introductions out
-of the cap, next-queued preview, availability + reason) + `activateNextRecitationPassageResponseSchema`, and `parse*` boundary
-helpers),
-`recitationChainingContracts.ts` (#580 contiguous chaining + whole-work maintenance: `RecitationChainingDto`
-(owned prefix, `chainEligibility` union, active chain, whole-work state), `RecitationChainDto`,
-`SessionRecallOutcomeDto` held/broke union, `RecitationTodayDto`, the start-chain/complete-chain/
-review-whole-work request schemas, and their `parse*` boundary helpers),
-`recitationHubContracts.ts` (#608 the routine-hub projection DTO: `recitationRoutineStageDtoSchema` +
-`recitationHubDtoSchema` — a `status` discriminated union of `no_plan` and the strict `active` shape
-(plan/title/phase/paused, `passages` introduced-of-total, `due` due/overdue counts, the reused #607
-`recitationIntroductionStatusDtoSchema`, the derived `stage`, and the reused #580
-`recitationTodayActionDtoSchema` primary action) — `recitationHubResponseSchema` + `parseRecitationHubResponse`),
-`recitationSessionContracts.ts` (#609 transient session projection DTO: server-selected step plus raw
-availability booleans/due/new-passage hints so the web session can recompute after local dismissals),
+`recitationContracts.ts` (#577/#643 direct Work-level maintenance: `recitationPhaseDtoSchema` (legacy,
+readable-only), `enrollRecitationRequestSchema` (just a Work entry id — no phase choice),
+`RecitationPlanDto`/list (the durable plan identity: Work + phase + session bookkeeping),
+`recitationReviewDtoSchema` (the whole-Work review — plan/Work identity, the canonical source read live,
+the card's `dueAt` + FSRS `state`) + `recitationReviewResponseSchema` (review-or-null),
+`recordRecitationReviewRequestSchema` (one of `again`/`hard`/`good`/`easy`) + non-null response, and
+their `parse*` boundary helpers; the Timeline union keeps a `recitation` member carrying the Work title +
+phase),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
 `queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
@@ -156,7 +131,7 @@ can navigate them from another package.
   `rateReviewCard` is a thin wrapper over it. `reviewCardQueries.ts` maps a card row → domain `ReviewState`
   (`reviewStateFromCard`, `reviewStateColumns`, owner-scoped `getReviewCardForUser`). Consumers read schedule
   through these and never re-implement `applyRating`/`newReviewState` (guarded by
-  `memory/memoryReviewOwnership.test.ts` and `recitationPassages/recitationReviewOwnership.test.ts`).
+  `memory/memoryReviewOwnership.test.ts` and `recitation/recitation.test.ts`).
 - Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
   recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
   <->row mapping) over Entry-backed rows: a unified `notes` note (#620 — a `kind='note'` row in the single
@@ -202,96 +177,34 @@ can navigate them from another package.
   `POST /api/nudge/:chunkId/dismiss` routes, the `NudgeDto` contracts, and the `nudge_state` cooldown
   table are gone. The reading→speaking harvest on-ramp that once consumed its recent-reading-capture
   selection retired with the coach-led Practice (#603).
-- Recitation routines (owned) (#577): `src/apps/server/src/features/recitation/` — adopt any Work
-  (imported or authored) as a recitation plan. `recitationCommands.ts` (`createRecitationPlan` writes a
-  `recitation_plan` `entries` row + shared `personal_entries` facet + `recitation_plans` row in one
-  transaction; guards one-plan-per-(user,work) via `findRecitationPlanForWork` → `already_exists`; source
-  Work is never copied. `setRecitationPhase`/`recordRecitationSession` are owner-scoped → `not_found`; a
-  session bumps `session_count`/`last_session_at` only and never touches `personal_entries`, so it feeds
-  no Timeline row or FSRS). `recitationQueries.ts` (`listRecitationPlans`, `getContinueRecitation` orders
-  by `coalesce(last_session_at, created_at)` DESC). `recitationRoutes.ts` (current-user scoped,
-  Zod-validated, `now`/`createEntryId` injected): `POST /api/recitation/plans` (201/400 work_not_found/409
-  already_exists), `GET /api/recitation/plans`, `GET /api/recitation/continue`,
-  `PUT /api/recitation/plans/:id/phase`, `POST /api/recitation/plans/:id/session`; wired in
-  `createServer.ts`/`index.ts`. `diaryQueries.ts` joins `recitation_plans` into the Timeline as the
-  `recitation` kind. DTOs in `@whetstone/contracts` (`recitationContracts.ts`).
-- Recitation passage practice (owned) (#578, #618): `src/apps/server/src/features/recitationPassages/` — the
-  Learning-phase passage engine over a plan's Work. A passage no longer carries inline FSRS: its schedule
-  lives in a shared `review_cards` row keyed by the passage's `entry_id` (#618). A passage is active iff
-  `introduced_at` is non-null AND it owns a review card; otherwise queued (no card). `recitationPassageCommands.ts`
-  (`seedRecitationPassages` one passage per non-empty source block, idempotent — seeds all passages queued
-  (`introduced_at` null, no card) in BOTH learning and maintenance (#607): Learning introduction is now
-  explicit and paced, so seeding never hands out an accidental backlog of due items; `activateNextRecitationPassage`
-  (#607) is the paced "Start first passage"/"New passage" action — in one FOR-UPDATE transaction it re-checks
-  the gates (learning phase, no introduced passage due, `< 3` introduced this learner-LOCAL day via
-  `localDayBoundary`, a queued passage remains), then stamps `introduced_at` and `seedReviewCard`s ONE active
-  card at the 0.95 recitation retention for the lowest-order queued passage (double-submit safe — the second
-  sees due work and is rejected); `splitRecitationPassage`/
-  `mergeNextRecitationPassage` edit boundaries only + reindex `order_index` in a transaction, reseeding fresh
-  cards + `deleteRecitationReviewData` for the old ones (FSRS reset); `loadDueRecitationPassage` re-anchors
-  against live block text before serving — unchanged/relocated/`needs_repair` — and derives the cue material +
-  `defaultCueStrength` + the remembered `supportLevel`; `recordRecitationPassageReview` activates a queued
-  passage if needed then rates the shared card via `applyRatingToCardInTx`, appending one `review_events` row
-  - a `recitation_review_evidence` cue-strength row atomically (and, on `leadInFailed`, an Again to the
-    predecessor's card in the same tx); `setRecitationPassageSupportLevel` (#579) persists the per-passage
-    support-level preference only — never FSRS). `recitationCardActivation.ts` holds the shared in-tx helpers
-    (`ensurePassageCardInTx`/`activatePassageInTx`/`writeCueStrengthEvidence`); `recitationReviewData.ts`
-    (`deleteRecitationReviewData`) tears down a target's cards+events+evidence referentially safely.
-    `recitationPassageQueries.ts` (owner-scoped loaders via the plan's `personal_entries` facet, source-order
-    block load, next-due lookup joining `review_cards`, review counts from `review_events`, the paced
-    introduction status via `loadRecitationIntroductionStatus` (due count, introductions on the learner's local
-    day out of the cap of 3, next queued preview, availability from the pure `evaluateRecitationIntroduction`
-    in `@whetstone/domain`), reading schedule via
-    the substrate's `reviewStateFromCard` — never a local card mapper). `recitationPassageRoutes.ts` (current-user scoped, Zod-validated,
-    `now`/`createEntryId`/`createId` injected): `POST /api/recitation/plans/:id/passages/seed`,
-    `GET /api/recitation/plans/:id/passages`,
-    `GET /api/recitation/plans/:id/introduction` + `POST /api/recitation/plans/:id/introduce-next` (#607,
-    paced introduction status + activation; the zone resolves via `getLearnerTimeZone`),
-    `GET /api/recitation/passages/due` (registered before the
-    parametric route), `POST /api/recitation/passages/:id/split|merge-next|review`,
-    `PUT /api/recitation/passages/:id/support-level` (#579); the review route also accepts the #580
-    `leadInFailed` flag (applies Again to the immediate predecessor when a lead-in failed); wired in
-    `createServer.ts`/`index.ts`. `library/libraryCommands.ts` `deleteWork` cascades passages + whole-work
-    targets + their shared cards/events/evidence.
-    DTOs in `@whetstone/contracts` (`recitationPassageContracts.ts`).
-- Recitation chaining + whole-work maintenance (owned) (#580, #618): same
-  `src/apps/server/src/features/recitationPassages/` slice. `recitationChainingQueries.ts` (owner-scoped
-  loaders for passage masteries, the active chain, and the whole-work card; reads every `ReviewState` by
-  joining `review_cards` and mapping via the substrate's `reviewStateFromCard`). `recitationChainingCommands.ts`
-  (`loadRecitationChaining` derives owned prefix + eligibility +
-  active chain + whole-work state live; `startRecitationChain`/`completeRecitationChain` over the contiguous
-  owned prefix, failing only an identified broken passage via the substrate; `reviewWholeWork` get-or-creates a
-  separate whole-work target Entry (type `recitation_whole_work`, linked to the plan by a `contains`
-  `entry_links` row, no `personal_entries` facet so it never surfaces on the Timeline) owning its own shared
-  review card, then rates that card — the aggregate and passage FSRS states never merge, and the aggregate
-  rating writes no cue-strength evidence; `loadRecitationToday` applies the bounded `selectRecitationTodayAction`
-  priority). `recitationChainingRoutes.ts` (current-user scoped, Zod-validated): `GET /api/recitation/plans/:id/chaining`,
-  `POST /api/recitation/plans/:id/chain` (201/400/404/422), `POST /api/recitation/chains/:id/complete`
-  (200/400/404/409/422), `POST /api/recitation/plans/:id/whole-work/review` (200/400/404/409/422),
-  `GET /api/recitation/today`; wired in `createServer.ts`/`index.ts`. DTOs in
-  `@whetstone/contracts` (`recitationChainingContracts.ts`).
-- Recitation routine hub + plan pause (owned) (#608): back in `src/apps/server/src/features/recitation/`.
-  `recitationHubQueries.ts` (`loadRecitationHub` — a read-only PROJECTION over the learner's
-  most-recently-touched plan (via `getContinueRecitation`): `no_plan` when none, else composed PURELY from
-  canonical rows joined to shared card state — introduced-of-total passages, due/overdue over the plan's
-  ACTIVE passage + whole-work cards by `dueAt` vs `localDayBoundary`, the embedded #607 introduction status,
-  the pure `deriveRecitationStage`, and a `selectRecitationTodayAction` primary action scoped to THIS plan;
-  a paused plan is still shown with all progress but surfaces zeroed due counts and a `none` action — it
-  persists NO parallel counter, stage flag, or copied due date). `recitationCommands.ts` adds
-  `setRecitationPlanPaused` (owner-scoped → `not_found`, idempotent UPDATE of `paused_at`).
-  `recitationSessionQueries.ts` (#609 `loadRecitationSession` — the transient due-first session projection
-  over the same canonical rows, ordered due passage → whole-work → active chain → optional new passage → clear;
-  #633 aggregates it across EVERY active Work: it sums obligations, selects the one Work to present (an optional
-  `?work=` pin, else earliest-due, else stable id order) and suppresses optional new material while any Work
-  still holds required work, so Today can never report clear while a Work has due/chain/whole-work work).
-  `recitationRoutes.ts` adds `GET /api/recitation/hub`, `GET /api/recitation/session`, and
-  `POST /api/recitation/plans/:id/pause|resume` (404 when not owned, else 200 with the refreshed hub DTO;
-  the zone resolves via `getLearnerTimeZone`).
-  The load-bearing pause invariant: `isNull(recitation_plans.paused_at)` is added to the three cross-plan
-  due scans — `loadNextDuePassage` (`recitationPassageQueries.ts`), `loadEarliestActiveChainForUser` +
-  `listWholeWorkScanPlansForUser` (`recitationChainingQueries.ts`) — so a paused plan drops out of
-  `loadRecitationToday` and every due selection without deleting progress/schedule/support/chains/history.
-  DTOs in `@whetstone/contracts` (`recitationHubContracts.ts`, `recitationSessionContracts.ts`).
+- Recitation direct Work-level maintenance (owned) (#577/#633/#643): `src/apps/server/src/features/recitation/`
+  — a known Work enters FSRS maintenance directly; the retired passage/chaining/introduction/fading/hub
+  curriculum is gone (its durable rows survive read-only as legacy history, retired from scheduling by
+  migration `0053_retire_passage_scheduling.sql`). `recitationCommands.ts`: `enrollRecitation` (idempotent —
+  get-or-create ONE `recitation_plan` identity Entry + `personal_entries` facet, always `maintenance`, plus
+  ONE `recitation_whole_work` target Entry linked by a `contains` `entry_links` row (no facet, never on the
+  Timeline) owning ONE shared `review_cards` row `seedReviewCard`ed at requested retention 0.95, due now;
+  re-enrol reuses all three and re-activates a paused card; `400 work_not_found`); `recordRecitationReview`
+  (owner-scoped, rates ONLY that Work-level card via `applyRatingToCardInTx`, appending exactly one
+  `review_events` row, and returns the rescheduled review); `pauseRecitation`/`resumeRecitation`/
+  `removeRecitation` (owner-scoped -> `not_found`, preserve the Work + source content). `recitationQueries.ts`
+  (`toRecitationPlanDto`, `findRecitationPlanForWork`, `loadOwnedRecitationPlan`, `listRecitationPlans`,
+  `listActiveRecitationPlans` — unpaused only). `recitationReviewQueries.ts` (`loadWholeWorkTarget` joins
+  the plan's target Entry to its shared card; `loadWorkSourceText` reveals the canonical source live from
+  the Work's ordered non-deleted blocks — NEVER copied into recitation state; `loadRecitationReview` opens
+  THAT exact Work's review by `?work=` regardless of strict due-ness, else the earliest-due Work, else null
+  -> a calm Library recovery; `loadRecitationRoutineSummary` folds every unpaused plan's Work-level card
+  through the pure #633 `selectRecitationWork` so Today's Recitation-due derives ONLY from whole-Work cards —
+  passage/chain/introduction/ownership state never contributes). `recitationTeardown.ts`
+  (`deleteRecitationReviewData` tears down a target's cards+events+cue-strength evidence referentially safely,
+  including any legacy passage/whole-work targets, when its Work is deleted). `recitationRoutes.ts`
+  (current-user scoped, Zod-validated, `now`/`createEntryId` injected): `POST /api/recitation/enroll`
+  (200 plan, 400 work_not_found), `GET /api/recitation/plans`, `GET /api/recitation/review?work=`,
+  `POST /api/recitation/plans/:id/review`, `POST /api/recitation/plans/:id/pause|resume`,
+  `DELETE /api/recitation/plans/:id`; wired in `createServer.ts`/`index.ts`. `diaryQueries.ts` still joins
+  `recitation_plans` into the Timeline as the `recitation` kind; `library/libraryCommands.ts` `deleteWork`
+  cascades the plan's recitation targets + their shared cards/events/evidence. DTOs in `@whetstone/contracts`
+  (`recitationContracts.ts`).
 - Memory MCP server: `src/apps/server/src/mcp/` exposes the Memory store to any MCP client (a local/cloud LLM) —
   `recallTools.ts` (the Memory-op tools: `deposit_memory` (#458/#595): a production-style deposit of a
   memory note + one-or-more prompts — captureSource/noteText/prompts (each cue + optional answer/gloss/
@@ -491,7 +404,7 @@ can navigate them from another package.
   (PRODUCT.md "v0 search").
   `today/` composes the Today board (#610): `todayQueries.loadTodayBoard` fetches each source guarded by
   its own try/catch (so one throwing marks only that source failed, never blanking the board) — the
-  recitation routine + New-passage invitation from `loadRecitationSession`, the memory routine from
+  recitation routine from `recitationReviewQueries.loadRecitationRoutineSummary`, the memory routine from
   `memoryQueries.loadMemoryRoutineSummary`, Continue reading/writing from the readingPosition/authoredWorks
   queries — folds them through the pure `@whetstone/domain` `composeTodayBoard`, sets `date` =
   `localDayKey(now, timeZone)`, and `todayRoutes.registerTodayRoutes` serves `GET /api/today` (userId +
@@ -893,8 +806,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   clear** line ONLY when `board.clear`; a per-routine failure note with a Retry (a failed routine keeps the
   board un-clear — never a false clear); the always-present save-first quick-capture `CaptureCard` (`/diary`);
   a first-run on-ramp to the Library when nothing is due or continuable; and a visibly-secondary **Continue**
-  section of optional invitations (reading `#/reader?work=`, writing `#/write?work=`, recitation New passage
-  `#/recitation`, diary return) each with ready/empty/failed copy. It handles loading and offline/retry, and
+  section of optional invitations (reading `#/reader?work=`, writing `#/write?work=`, diary return) each with ready/empty/failed copy. It handles loading and offline/retry, and
   refetches the whole board on window focus so returning from a deep-linked feature shows a freshly recomputed
   board. Pure routine-kind → title/action/path maps live in `today.tokens.ts` (coverage-excluded). The board
   persists no Today state; it is a pure read/compose over feature-owned canonical state.
@@ -906,59 +818,21 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   latest-write-safe autosave hook (5-state `idle|unsaved|saving|saved|error`; `saveAuthoredWorkContent`
   → `PUT /api/authored-works/:id/content`); `useUnsavedChangesWarning.ts` guards navigation while a save
   is pending. `authoredWork.tokens.ts` holds the pure status→label/class maps (coverage-excluded).
-- Recitation routines (#577): `src/apps/web/src/features/recitation/` — `recitationApi.ts` (client for
-  `/api/recitation/*`, every response parsed through `recitationContracts`) and `recitationLabels.ts`
-  (learner-facing phase label + hint copy, exercised by the component tests). Adoption lives on the
-  Library page: `library/AdminLibraryPage.tsx` shows a **Practise recitation** action per Work that opens
-  an initial-phase picker Sheet (`createRecitationPlan`), and marks an already-adopted Work with a quiet
-  "Reciting · ‹phase›" status instead; the Today Continue-recitation card is described above.
-- Recitation passage practice (#578): `src/apps/web/src/features/recitation/` (same slice) —
-  `recitationPassageApi.ts` (client for the passage endpoints — seed/list/due/split/merge-next/review/
-  set-support-level (#579)/introduction-status + introduce-next (#607) — every response parsed through `recitationPassageContracts`),
-  `RecitationReviewCard.tsx` (one due passage
-  as a two-phase attempt: a #579 support-level ladder (**Full**/**Reduced**/**First characters**/**Hidden**,
-  rendering the pure `projectRecitationSupport` projection with masked runs announced as "hidden text";
-  remembered per passage via `setSupportLevel`, reduced-motion honored) → **Reveal** → the four FSRS-mapped
-  self-ratings (a #580 "lead-in failed" checkbox appears in the revealed phase when a preceding-line cue
-  exists, so a missed lead-in also lapses the predecessor); a
-  `needs_repair` passage shows a repair notice instead of stale text; only the final rating posts), and
-  `RecitePage.tsx` — the `/recite?plan=<id>` segmentation surface (seed, then split/merge passage
-  boundaries with per-passage review progress; canonical Work text untouched), routed in `app/AppRoutes.tsx`;
-  above the list it renders the #607 `PassageIntroductionPanel` — the paced new-passage invitation that fetches
-  the introduction status and shows the exact calm state (due-work-first, "N of 3 introduced today" cap, all
-  introduced) or the primary **Start first passage**/**New passage** action (enabled only when the server says
-  it is available), refreshing both the status and the passage list on activation.
-  Support-level and cue-strength labels live in `recitationLabels.ts`; the Today **Recite** card composes `RecitationReviewCard`.
-- Recitation chaining + whole-work maintenance (#580): `src/apps/web/src/features/recitation/` (same slice) —
-  `recitationChainingApi.ts` (client for the chaining endpoints — `fetchChaining`/`startChain`/`completeChain`/
-  `reviewWholeWork`/`fetchToday`, every response parsed through `recitationChainingContracts`) and
-  `RecitationChainingPanel.tsx` — the maintenance surface rendered below the passage list on `RecitePage`
-  when passages exist: the contiguous owned prefix, a **Start chain** boundary picker (eligible once the first
-  two passages are owned), an active chain (recite in order, then "Recall held throughout" or "Recall broke
-  here" on one identified passage), and, once every passage is owned, a **Whole-work maintenance** prompt with
-  the four ratings + an optional break-point `<select>`. Reloads live after each action; nothing is a Timeline
-  Entry. The E2E `e2e/tests/recitation-chaining.spec.ts` drives owned-prefix → chain → whole-work end to end.
-- Recitation routine hub + inline session (#608/#609): `src/apps/web/src/features/recitation/` (same slice) —
-  `recitationHubApi.ts` (`getRecitationHub`/`pausePlan`/`resumePlan`, every response parsed through
-  `recitationHubContracts`), `recitationSessionApi.ts` (`getRecitationSession`, parsed through
-  `recitationSessionContracts`), `RecitationSessionPanel.tsx` (the inline due-first stepper that reuses
-  `RecitationReviewCard`, `WholeWork`, `ChainStart`/`ActiveChain`, and `PassageIntroductionPanel`, with only
-  transient chain-dismiss/new-passage-skip state held in a per-Work `ActiveSessionPanel` keyed by the presented
-  `planEntryId` so advancing to another Work resets it; a `?work=` query pins which Work the aggregate presents) and
-  `RecitationHubPage.tsx` — the calm single-column `#/recitation` hub (a SECONDARY route in `app/AppRoutes.tsx`,
-  deliberately NOT in `navigation.ts`) rendering explicit states with no dashboard grid/streak/score/chart:
-  loading, error, the restrained `no_plan` empty state (link to Library), and the active projection — Work
-  title + phase, "{introducedCount} of {totalCount} passages introduced" human copy, the routine stage label,
-  due/overdue counts first, then a single **Start session** control that mounts the #609 session inline (no
-  hub action link to `#/recite`), then a caught-up state; a `familiarizing` plan instead shows a **Start
-  reciting** control that runs the explicit familiarizing→learning transition (#577, `setRecitationPhase`)
-  and refreshes — the hub is that transition's only home now that Today (#610) no longer hosts recitation
-  cards; a paused banner + **Resume routine** when
-  paused, else a **Pause routine** button (both call the api and refresh from the returned hub). Pure enum→label
-  maps live in the coverage-excluded `RecitationHubPage.tokens.ts`. Reached via quiet secondary links: Today's
-  **Due now** recitation row (deep-links to `#/recitation`) and the Library **Recitation** Work action (in
-  `AdminLibraryPage.tsx`, per adopted plan). The E2E `e2e/tests/recitation-hub.spec.ts` drives adopt → hub →
-  pause (due action disappears) → resume (state preserved).
+- Recitation direct Work-level maintenance (#577/#643): `src/apps/web/src/features/recitation/` — the
+  learner declares a known Work retrievable and it enters FSRS maintenance directly; the passage/phase/
+  chaining/fading/hub surface is retired (a repository-search guard, `retiredFlow.test.ts`, fails if any of
+  its labels or modules reappear). `recitationApi.ts` (`enrollRecitation`/`listRecitationPlans`/
+  `fetchRecitationReview`/`recordRecitationReview`, every response parsed through `recitationContracts`).
+  `RecitationReviewCard.tsx` is ONE whole-Work review — recite the Work from memory, **Reveal** the
+  canonical source (read live from the Work's blocks, never copied), then one of the four FSRS-mapped
+  self-ratings; only the rating posts, and it reschedules only that Work's card. `RecitationReviewPage.tsx`
+  is the `/recitation` route (reads `?work=<id>` to open THAT exact Work's review, else the earliest-due
+  Work) with loading/error/ready(review-or-calm Library recovery)/done(next-scheduled + Back to Today)
+  states. The **"I can recite this"** entry points live on `library/AdminLibraryPage.tsx` (per un-enrolled
+  Work; an enrolled Work shows a quiet "Reciting" status + a "Review" link) and `reader/ReadingHeader.tsx`
+  (`ReciteThisControl` enrols then navigates to the review); both enrol BEFORE opening the review and are
+  idempotent. Today's **Due now** Recitation row deep-links to `#/recitation`; the retired `/recite?plan=`
+  route redirects to the Library recovery path (`app/AppRoutes.tsx`).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

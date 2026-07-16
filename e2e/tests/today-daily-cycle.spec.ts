@@ -5,11 +5,10 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "../fixtures";
 import type { APIRequestContext } from "@playwright/test";
 
-// Passage seeding reads the ProseMirror `doc_blocks` that only EPUB ingestion writes, so a due
-// recitation needs an EPUB-backed Work. This spec uploads its OWN dedicated fixture
-// (`today-cycle.epub`, distinct bytes/sha256) rather than the shared `setup.epub`/`aesop-fables.epub`
-// (which `stack.ts` seeds and the passages spec adopts) — otherwise EPUB upload would dedupe to the same
-// Work and the two recitation plans would collide on the shared DEFAULT_USER_ID.
+// A due recitation needs an EPUB-backed Work whose blocks the whole-Work review reveals. This spec uploads
+// its OWN dedicated fixture (`today-cycle.epub`, distinct bytes/sha256) rather than the shared
+// `aesop-fables.epub` (which `stack.ts` seeds) — otherwise EPUB upload would dedupe to the same Work and
+// the recitation plans would collide on the shared DEFAULT_USER_ID.
 const todayEpubFixture = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -45,10 +44,10 @@ async function uploadTodayWork(
   return work;
 }
 
-// The Today daily cycle (#610): the server-composed board shows the learner's real obligations as two
-// grouped routine rows, each routine is completed inside its owning feature (the recitation hub, recall),
-// and returning to Today recomputes a truthful clear board with the optional Continue section still
-// present. The stack boots with models disabled, so this whole loop is deterministic.
+// The Today daily cycle (#610/#643): the server-composed board shows the learner's real obligations as two
+// grouped routine rows, each routine is completed inside its owning feature (direct whole-Work recitation,
+// recall), and returning to Today recomputes a truthful clear board with the optional Continue section
+// still present. The stack boots with models disabled, so this whole loop is deterministic.
 test.describe("Today daily cycle (#610)", () => {
   test("clears mixed due recitation and memory, then shows the truthful clear board", async ({
     page,
@@ -56,14 +55,10 @@ test.describe("Today daily cycle (#610)", () => {
   }) => {
     const { baseURL } = setup;
 
-    // A due recitation routine: adopt the EPUB Work and introduce its first passage so one card is due.
+    // A due recitation routine: enrol the EPUB Work directly into whole-Work maintenance (no passage
+    // setup, no phase choice) so its Work-level card is due immediately.
     const work = await uploadTodayWork(page.request, baseURL);
-    const plan = (await post(page.request, baseURL, "/recitation/plans", {
-      phase: "learning",
-      workEntryId: work.entryId
-    })) as { entryId: string };
-    await post(page.request, baseURL, `/recitation/plans/${plan.entryId}/passages/seed`);
-    await post(page.request, baseURL, `/recitation/plans/${plan.entryId}/introduce-next`);
+    await post(page.request, baseURL, "/recitation/enroll", { workEntryId: work.entryId });
 
     // A due memory routine: deposit one scheduled prompt (a cue with an answer is due immediately).
     await post(page.request, baseURL, "/memory/notes", {
@@ -79,21 +74,14 @@ test.describe("Today daily cycle (#610)", () => {
     await expect(page.getByText("Memory review")).toBeVisible();
     await expect(page.getByText("All due work is clear.")).toHaveCount(0);
 
-    // Complete the due recitation via the hub (the #609 session runs inline there).
+    // Complete the due recitation via the direct whole-Work review (reveal the canonical source, rate).
     await page.getByRole("link", { name: "Start", exact: true }).click();
-    const hub = page.getByRole("region", { name: "Recitation" });
-    await hub.getByRole("button", { name: "Start session" }).click();
-    const session = hub.getByRole("region", { name: "Recitation session" });
-    await session.getByRole("button", { name: "Reveal" }).click();
-    await session.getByRole("button", { name: "Complete, with effort" }).click();
-    // With the due passage cleared, the session offers to introduce another passage; skipping that
-    // optional new passage reaches the truthful completion state.
-    await session.getByRole("button", { name: "Skip new passage for now" }).click();
-    await expect(session.getByText("Due recitation clear")).toBeVisible();
-    await session.getByRole("button", { name: "Exit session" }).click();
+    await page.getByRole("button", { name: "Reveal" }).click();
+    await page.getByRole("button", { name: "Complete, with effort" }).click();
+    await expect(page.getByRole("status")).toContainText("Scheduled");
+    await page.getByRole("link", { name: "Back to Today" }).click();
 
     // Back on a freshly recomputed board the recitation row is gone; memory review is still due.
-    await page.goto(`${baseURL}#/`);
     await expect(page.getByText("Memory review")).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toHaveCount(0);
 

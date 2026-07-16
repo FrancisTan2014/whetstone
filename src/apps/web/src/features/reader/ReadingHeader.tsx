@@ -170,9 +170,7 @@ export function ReadingHeader({
   );
 }
 
-function ReciteThisControl({
-  workEntryId
-}: Readonly<{ workEntryId: string }>): React.JSX.Element {
+function ReciteThisControl({ workEntryId }: Readonly<{ workEntryId: string }>): React.JSX.Element {
   const navigate = useNavigate();
   const [pending, setPending] = useState(false);
 

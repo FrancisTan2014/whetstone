@@ -86,7 +86,9 @@ describe("recitationApi", () => {
   });
 
   it("records a review with a POST, encoding the plan id and carrying the rating", async () => {
-    const fetchMock = mockFetchOnce({ review: { ...reviewDto, dueAt: "2026-07-05T09:00:00.000Z" } });
+    const fetchMock = mockFetchOnce({
+      review: { ...reviewDto, dueAt: "2026-07-05T09:00:00.000Z" }
+    });
 
     const result = await recordRecitationReview("plan/1", "good");
 

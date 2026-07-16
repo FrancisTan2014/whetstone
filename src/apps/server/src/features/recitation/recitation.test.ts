@@ -197,7 +197,9 @@ describe("POST /api/recitation/enroll", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]!.status).toBe("active");
     expect(cards[0]!.requestedRetention).toBe(0.95);
-    expect(cards[0]!.dueAt.getTime()).toBeLessThanOrEqual(new Date("2026-07-01T09:00:00.000Z").getTime());
+    expect(cards[0]!.dueAt.getTime()).toBeLessThanOrEqual(
+      new Date("2026-07-01T09:00:00.000Z").getTime()
+    );
   });
 
   it("rejects an unknown Work with work_not_found", async () => {
@@ -445,9 +447,7 @@ describe("deleteRecitationReviewData (Work-deletion cascade)", () => {
     const target = await loadWholeWorkTarget(context.db, plan.entryId, DEFAULT_USER_ID);
     expect(await countRows(reviewEvents)).toBe(0);
 
-    await context.db.transaction((tx) =>
-      deleteRecitationReviewData(tx, [target!.targetEntryId])
-    );
+    await context.db.transaction((tx) => deleteRecitationReviewData(tx, [target!.targetEntryId]));
 
     expect(await countRows(reviewCards)).toBe(0);
   });
@@ -572,15 +572,15 @@ describe("pause, resume, and remove maintenance", () => {
       .insert(recitationPlans)
       .values({ entryId: "legacy-plan", phase: "maintenance", workEntryId });
 
-    expect(
-      await pauseRecitation(context.deps, toEntryId("legacy-plan"), DEFAULT_USER_ID)
-    ).toBe("updated");
-    expect(
-      await resumeRecitation(context.deps, toEntryId("legacy-plan"), DEFAULT_USER_ID)
-    ).toBe("updated");
-    expect(
-      await removeRecitation(context.deps, toEntryId("legacy-plan"), DEFAULT_USER_ID)
-    ).toBe("updated");
+    expect(await pauseRecitation(context.deps, toEntryId("legacy-plan"), DEFAULT_USER_ID)).toBe(
+      "updated"
+    );
+    expect(await resumeRecitation(context.deps, toEntryId("legacy-plan"), DEFAULT_USER_ID)).toBe(
+      "updated"
+    );
+    expect(await removeRecitation(context.deps, toEntryId("legacy-plan"), DEFAULT_USER_ID)).toBe(
+      "updated"
+    );
   });
 });
 

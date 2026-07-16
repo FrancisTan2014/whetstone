@@ -42,10 +42,7 @@ export function RecitationReviewPage({
   );
 }
 
-function renderState(
-  state: ReviewState,
-  setState: (next: ReviewState) => void
-): React.JSX.Element {
+function renderState(state: ReviewState, setState: (next: ReviewState) => void): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading your recitation…" />;
   }
