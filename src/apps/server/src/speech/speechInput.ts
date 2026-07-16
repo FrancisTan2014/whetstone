@@ -5,9 +5,9 @@ import type { Transcription } from "@whetstone/contracts";
 // a future prosody-enriched transcriber can all sit behind it without the loop changing.
 
 // A recorded utterance to transcribe: a path to an audio file already saved on the server. Audio
-// never leaves the machine — it is handed to a local transcriber by path.
+// never leaves the machine — it is handed to a local transcriber by path. No language is passed in:
+// Whisper always auto-detects the spoken language (#647).
 export type SpeechAudio = Readonly<{
-  language?: string;
   path: string;
 }>;
 

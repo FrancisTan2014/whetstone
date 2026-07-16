@@ -37,20 +37,20 @@ afterEach(() => {
 });
 
 describe("submitVoiceCapture", () => {
-  it("posts the audio bytes with the language and parses the acceptance", async () => {
+  it("posts the audio bytes and parses the acceptance (no language query — Whisper auto-detects)", async () => {
     const fetchMock = stubFetch({ body: { id: "cap-1", status: "queued" }, ok: true, status: 202 });
     const audio = new Blob(["clip"]);
 
-    expect(await submitVoiceCapture(audio, "zh")).toEqual({ id: "cap-1", status: "queued" });
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/diary/voice-captures?language=zh"),
-      expect.objectContaining({ body: audio, method: "POST" })
-    );
+    expect(await submitVoiceCapture(audio)).toEqual({ id: "cap-1", status: "queued" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/diary/voice-captures");
+    expect(url).not.toContain("language");
+    expect(init).toEqual(expect.objectContaining({ body: audio, method: "POST" }));
   });
 
   it("throws on a non-ok response", async () => {
     stubFetch({ ok: false, status: 400 });
-    await expect(submitVoiceCapture(new Blob(["x"]), "en")).rejects.toThrow();
+    await expect(submitVoiceCapture(new Blob(["x"]))).rejects.toThrow();
   });
 });
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
-  CaptureLanguage,
   VoiceCaptureAcceptedDto,
   VoiceCaptureStatus,
   VoiceCaptureStatusDto
@@ -57,7 +56,7 @@ function applyPolled(
 }
 
 export type VoiceCaptureApi = Readonly<{
-  submit: (audio: Blob, language: CaptureLanguage) => Promise<VoiceCaptureAcceptedDto>;
+  submit: (audio: Blob) => Promise<VoiceCaptureAcceptedDto>;
   fetchActive: () => Promise<ReadonlyArray<VoiceCaptureStatusDto>>;
   fetchStatus: (id: string) => Promise<VoiceCaptureStatusDto>;
   retry: (id: string) => Promise<VoiceCaptureStatusDto>;
@@ -83,7 +82,7 @@ export type UseVoiceCapturesOptions = Readonly<{
 export type UseVoiceCapturesResult = Readonly<{
   captures: ReadonlyArray<VoiceCaptureStatusDto>;
   submitting: boolean;
-  submit: (audio: Blob, language: CaptureLanguage) => Promise<boolean>;
+  submit: (audio: Blob) => Promise<boolean>;
   retry: (id: string) => Promise<boolean>;
 }>;
 
@@ -162,10 +161,10 @@ export function useVoiceCaptures(options: UseVoiceCapturesOptions = {}): UseVoic
   }, [hasPending, pollIntervalMs, pollOnce]);
 
   const submit = useCallback(
-    async (audio: Blob, language: CaptureLanguage): Promise<boolean> => {
+    async (audio: Blob): Promise<boolean> => {
       setSubmitting(true);
       try {
-        await apiRef.current.submit(audio, language);
+        await apiRef.current.submit(audio);
         await refresh();
         return true;
       } catch {

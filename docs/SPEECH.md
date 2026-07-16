@@ -7,10 +7,11 @@ scoring is out of scope; it plugs in later behind the same seam.
 
 ## Components
 
-- `SpeechInput` (`speechInput.ts`) — `transcribe({ path, language? }) -> { transcript, words:
-  [{ text, start, end }] }`. `language` is a per-request override (`zh`/`en` from capture today);
-  when omitted the adapter uses the configured default. Word `start`/`end` are integer
-  **milliseconds** from the start of the recording.
+- `SpeechInput` (`speechInput.ts`) — `transcribe({ path }) -> { transcript, words:
+  [{ text, start, end }], language }`. Whisper **always auto-detects** the spoken language (#647) —
+  there is no per-request or configured language override — and reports the detected code as
+  `language` (null when it detected none; informational only, it never rewrites or rejects the
+  transcript). Word `start`/`end` are integer **milliseconds** from the start of the recording.
 - `FakeSpeechInput` (`fakeSpeechInput.ts`) — deterministic; the `pnpm validate` gate has no mic, so
   the loop tests on the fake (inject a fixed transcription, or a function of the audio).
 - Local Whisper adapter (`whisperSpeechInput.ts`) — runs a configured Whisper CLI over the audio file
@@ -28,10 +29,10 @@ crashes for a missing model.
 | -------------------- | ---------------------------------------------------- | -------- |
 | `WHISPER_BINARY`     | Path to the Whisper CLI / wrapper                    | yes      |
 | `WHISPER_MODEL_PATH` | Path to the local model file                         | yes      |
-| `WHISPER_LANGUAGE`   | Fallback language code passed to the model when a request omits one (default `en`) | no       |
 
 A local Whisper is configured only when **both** `WHISPER_BINARY` and `WHISPER_MODEL_PATH` are
-present; otherwise resolution falls back to the fake.
+present; otherwise resolution falls back to the fake. There is no language variable — Whisper always
+auto-detects the spoken language.
 
 ## One-command setup (`pnpm setup:voice`)
 
@@ -44,7 +45,7 @@ pnpm setup:voice
 It installs `faster-whisper`, installs the bundled **`whetstone-whisper`** console-script wrapper
 (`scripts/setup/whisper-wrapper/`), pre-fetches the model (`WHISPER_MODEL`, default multilingual
 `small`; `base.en` for English-only), verifies the wrapper against a sample, and writes
-`WHISPER_BINARY` / `WHISPER_MODEL_PATH` / `WHISPER_LANGUAGE` to the root `.env`. `pnpm setup:doctor`
+`WHISPER_BINARY` / `WHISPER_MODEL_PATH` to the root `.env`. `pnpm setup:doctor`
 reports voice readiness; each failure prints an actionable remedy and the step is re-runnable. This
 is optional and excluded from the base `pnpm setup` — the `pnpm validate` gate never needs a model.
 
@@ -60,18 +61,22 @@ Use an OSS Whisper runtime, e.g.:
   (e.g. `ggml-base.en.bin`); CPU-only and fully offline.
 - **faster-whisper** — a small CLI wrapper around `WhisperModel` works too.
 
-The adapter invokes the binary as below. A request language overrides `WHISPER_LANGUAGE`; when the
-request omits language, the configured fallback is used.
+The adapter invokes the binary as below, always with `--language auto` — Whetstone never forces a
+language, so a multilingual model detects the spoken language and reports it back in the JSON (an
+English-only model stays constrained by the model itself).
 
 ```
-<WHISPER_BINARY> --model <WHISPER_MODEL_PATH> --language <lang> --output json --word-timestamps <audio>
+<WHISPER_BINARY> --model <WHISPER_MODEL_PATH> --language auto --output json --word-timestamps <audio>
 ```
 
-and expects **word-timestamped JSON on stdout** in this shape (faster-whisper style; seconds):
+and expects **word-timestamped JSON on stdout** in this shape (faster-whisper style; seconds; the
+optional `language` is the model's detected code, echoed back — omit or null it when none was
+detected):
 
 ```json
 {
   "text": "Help yourself now",
+  "language": "en",
   "segments": [
     { "words": [{ "word": "Help", "start": 0.0, "end": 0.4 }] }
   ]

@@ -23,9 +23,13 @@ export const transcribedWordSchema = z
 
 export type TranscribedWord = z.infer<typeof transcribedWordSchema>;
 
-// A transcription: the full transcript plus the per-word timings the Whisper seam returns.
+// A transcription: the full transcript, the per-word timings, and the language Whisper detected for the
+// utterance. `language` is the model's automatic detection (Whisper always auto-detects — there is no
+// forced-language override, #647); it is informational only and is null when the model reported none, so
+// a missing detection never fails or rewrites the transcript.
 export const transcriptionSchema = z
   .object({
+    language: z.string().nullable(),
     transcript: z.string(),
     words: z.array(transcribedWordSchema)
   })

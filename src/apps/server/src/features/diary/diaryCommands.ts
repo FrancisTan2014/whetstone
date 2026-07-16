@@ -28,7 +28,8 @@ export type DeleteDiaryEntryResult =
 
 // Capture a diary Entry, save-first (#571): the durable ProseMirror/Tiptap body is built from the typed
 // text and persisted BEFORE returning — a typed capture is ready immediately (`processing_status` null),
-// with no asynchronous tidy or transcription in the path. Three rows are written in one transaction so a
+// with no asynchronous tidy or transcription in the path. No capture language is chosen: a typed capture
+// needs no language metadata, so `language` is null (#647). Three rows are written in one transaction so a
 // capture never exists without its identity: the owning `entries` row (`type = "diary_entry"`), the
 // shared `personal_entries` ownership+chronology facet (owner + occurredAt/createdAt/updatedAt, all
 // `now`, server-owned so the client cannot backdate a day), and the diary-specific `diary_entries` facet
@@ -38,7 +39,6 @@ export async function createDiaryEntry(
   dependencies: DiaryDependencies,
   transcript: string,
   inputMode: CaptureInputMode,
-  language: CaptureLanguage,
   userId: string,
   now: Date
 ): Promise<DiaryEntryDto> {
@@ -57,7 +57,7 @@ export async function createDiaryEntry(
       entryId,
       failureReason: null,
       inputMode,
-      language,
+      language: null,
       processingStatus: null,
       rawAudioPath: null,
       rawTranscript: transcript,
@@ -73,7 +73,7 @@ export async function createDiaryEntry(
     failureReason: null,
     id: entryId,
     inputMode,
-    language,
+    language: null,
     occurredAt: iso,
     processingStatus: null,
     updatedAt: iso

@@ -96,7 +96,7 @@ async function seedVoiceCapture(
       entryId: row.id,
       failureReason: null,
       inputMode: "voice",
-      language: row.language === undefined ? "en" : row.language,
+      language: row.language === undefined ? null : row.language,
       processingStatus: row.processingStatus,
       rawAudioPath: row.rawAudioPath === undefined ? `audio-${row.id}` : row.rawAudioPath,
       rawTranscript: null,
@@ -142,10 +142,10 @@ async function buildRouteContext(): Promise<RouteContext> {
   return { db, server: createServer({ diary, logger: false }) };
 }
 
-async function submit(language = "en", body = "clip-bytes"): Promise<VoiceCaptureAcceptedDto> {
+async function submit(body = "clip-bytes"): Promise<VoiceCaptureAcceptedDto> {
   const response = await route.server.inject({
     method: "POST",
-    url: `/api/diary/voice-captures?language=${language}`,
+    url: `/api/diary/voice-captures`,
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(body)
   });
@@ -258,7 +258,45 @@ describe("processNextVoiceCapture", () => {
     expect((await readRow(db, "cap-str")).failureReason).toBe("stt offline");
   });
 
-  it("transcribes a capture with no language using only the audio path", async () => {
+  it("persists Whisper's auto-detected language when it is supported (zh/en)", async () => {
+    await seedVoiceCapture(db, {
+      id: "cap-zh",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "queued",
+      language: null
+    });
+    const speech = createFakeSpeechInput({
+      language: "zh",
+      transcript: "the deploy is green",
+      words: []
+    });
+
+    const result = await processNextVoiceCapture(buildWorker(db, { speech }));
+
+    expect(result).toMatchObject({ status: "processed", id: "cap-zh" });
+    expect((await readRow(db, "cap-zh")).language).toBe("zh");
+  });
+
+  it("stores a null language when the detected language is unsupported", async () => {
+    await seedVoiceCapture(db, {
+      id: "cap-fr",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "queued",
+      language: null
+    });
+    const speech = createFakeSpeechInput({
+      language: "fr",
+      transcript: "bonjour le monde",
+      words: []
+    });
+
+    const result = await processNextVoiceCapture(buildWorker(db, { speech }));
+
+    expect(result).toMatchObject({ status: "processed", id: "cap-fr" });
+    expect((await readRow(db, "cap-fr")).language).toBeNull();
+  });
+
+  it("transcribes a capture using only the audio path and stores a null language when none is detected", async () => {
     await seedVoiceCapture(db, {
       id: "cap-nolang",
       occurredAt: "2026-07-09T09:00:00.000Z",
@@ -269,7 +307,7 @@ describe("processNextVoiceCapture", () => {
     const speech: SpeechInput = {
       transcribe: (audio) => {
         seenAudio = audio;
-        return Promise.resolve({ transcript: "the deploy is green", words: [] });
+        return Promise.resolve({ language: null, transcript: "the deploy is green", words: [] });
       }
     };
 
@@ -411,34 +449,24 @@ describe("voice capture routes", () => {
   });
 
   it("accepts a submission and returns a queued capture id promptly", async () => {
-    const accepted = await submit("zh");
+    const accepted = await submit();
     expect(accepted).toEqual({ id: "vc-1", status: "queued" });
 
     const { code, body } = await getStatus(accepted.id);
     expect(code).toBe(200);
     expect(body).toMatchObject({
       id: "vc-1",
-      language: "zh",
+      language: null,
       status: "queued",
       text: null,
       failureReason: null
     });
   });
 
-  it("rejects an invalid language", async () => {
-    const response = await route.server.inject({
-      method: "POST",
-      url: "/api/diary/voice-captures?language=fr",
-      headers: { "content-type": "application/octet-stream" },
-      payload: Buffer.from("clip")
-    });
-    expect(response.statusCode).toBe(400);
-  });
-
   it("rejects an empty audio body", async () => {
     const response = await route.server.inject({
       method: "POST",
-      url: "/api/diary/voice-captures?language=en",
+      url: "/api/diary/voice-captures",
       headers: { "content-type": "application/octet-stream" },
       payload: Buffer.alloc(0)
     });
@@ -467,8 +495,8 @@ describe("voice capture routes", () => {
   });
 
   it("lists active captures for refresh recovery and drops them once ready", async () => {
-    const first = await submit("en", "clip-one");
-    const second = await submit("zh", "clip-two-longer");
+    const first = await submit("clip-one");
+    const second = await submit("clip-two-longer");
 
     const beforeReady = await listActive();
     expect(beforeReady.code).toBe(200);

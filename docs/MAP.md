@@ -220,10 +220,10 @@ can navigate them from another package.
   boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
   base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
 - Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
-  interface: `transcribe({ path, language? }) -> { transcript, words[] }`), `fakeSpeechInput.ts` (deterministic, for
+  interface: `transcribe({ path }) -> { transcript, words[], language }`), `fakeSpeechInput.ts` (deterministic, for
   the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
-  offline CLI args, using the per-request language before the `WHISPER_LANGUAGE` config fallback; validates
-  the word-timestamped JSON at the boundary; maps to a `Transcription`),
+  offline CLI args always with `--language auto` (Whisper auto-detects, no forced-language override, #647); validates
+  the word-timestamped JSON at the boundary and reads the detected `language`; maps to a `Transcription`),
   `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
   safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured).
   `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`) logs a

@@ -3,7 +3,6 @@ import {
   parseVoiceCaptureAcceptedDto,
   parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto,
-  type CaptureLanguage,
   type VoiceCaptureAcceptedDto,
   type VoiceCaptureStatusDto
 } from "@whetstone/contracts";
@@ -24,15 +23,12 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-// Save a recorded clip: POST the raw audio bytes (octet-stream) with the manual capture language; the
-// server files a pending diary capture and returns its id + `queued` status immediately, so the user can
-// record again without waiting for STT.
-export async function submitVoiceCapture(
-  audio: Blob,
-  language: CaptureLanguage
-): Promise<VoiceCaptureAcceptedDto> {
+// Save a recorded clip: POST the raw audio bytes (octet-stream); the server files a pending diary capture
+// and returns its id + `queued` status immediately, so the user can record again without waiting for STT.
+// No capture language is sent — the worker auto-detects the language during transcription (#647).
+export async function submitVoiceCapture(audio: Blob): Promise<VoiceCaptureAcceptedDto> {
   return parseVoiceCaptureAcceptedDto(
-    await requestJson(apiUrl(`/diary/voice-captures?language=${encodeURIComponent(language)}`), {
+    await requestJson(apiUrl("/diary/voice-captures"), {
       body: audio,
       headers: { "content-type": audioContentType },
       method: "POST"

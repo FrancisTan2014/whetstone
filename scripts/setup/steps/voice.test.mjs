@@ -51,7 +51,7 @@ describe("upsertEnvVars", () => {
   });
 
   it("skips undefined values", () => {
-    const out = upsertEnvVars("", { WHISPER_BINARY: "/bin/w", WHISPER_LANGUAGE: undefined });
+    const out = upsertEnvVars("", { WHISPER_BINARY: "/bin/w", WHISPER_MODEL_PATH: undefined });
     expect(out).toBe("WHISPER_BINARY=/bin/w\n");
   });
 });
@@ -277,17 +277,17 @@ describe("voiceStep.provision", () => {
     expect(result.remedy).toContain("smaller model");
   });
 
-  it("writes the resolved Whisper wiring into .env on success", () => {
+  it("writes the resolved Whisper wiring into .env on success (no language override)", () => {
     const { ctx, files } = createFakeContext({
       execHandler: happyExec,
-      env: { WHISPER_LANGUAGE: "zh" },
-      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n# WHISPER_LANGUAGE=\n" }
+      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n" }
     });
     expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
     const env = files.get(ENV_PATH);
     expect(env).toContain(`WHISPER_BINARY=${LAUNCHER}`);
     expect(env).toContain("WHISPER_MODEL_PATH=small");
-    expect(env).toContain("WHISPER_LANGUAGE=zh");
+    // Whisper always auto-detects the language (#647): no WHISPER_LANGUAGE is written.
+    expect(env).not.toContain("WHISPER_LANGUAGE");
   });
 
   it("scaffolds .env from scratch when it does not exist", () => {

@@ -1,7 +1,6 @@
 import {
   createDiaryEntryRequestSchema,
   diaryCalendarQuerySchema,
-  submitVoiceCaptureQuerySchema,
   timelineQuerySchema,
   updateDiaryEntryRequestSchema
 } from "@whetstone/contracts";
@@ -52,7 +51,6 @@ export function registerDiaryRoutes(
       dependencies,
       parsed.data.transcript,
       parsed.data.inputMode,
-      parsed.data.language,
       userId,
       now
     );
@@ -63,14 +61,10 @@ export function registerDiaryRoutes(
 
   // Async Tap-and-Talk (#565): save the raw audio and create a pending, diary-sourced voice capture
   // immediately, returning its id + `queued` status so the user can record again without waiting for STT.
-  // A background worker transcribes → tidies → makes it ready later. The audio bytes arrive as the raw
-  // octet-stream body (parsed to a Buffer in `createServer`); the manual language is a query param (#561).
+  // A background worker transcribes → tidies → makes it ready later, auto-detecting the language (#647).
+  // The audio bytes arrive as the raw octet-stream body (parsed to a Buffer in `createServer`); there is
+  // no capture-language query — the language is detected during transcription, not chosen up front.
   server.post("/api/diary/voice-captures", async (request, reply) => {
-    const parsed = submitVoiceCaptureQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send(invalidRequest);
-    }
-
     const body = request.body;
     if (!Buffer.isBuffer(body) || body.length === 0) {
       return reply.code(400).send(invalidRequest);
@@ -79,7 +73,6 @@ export function registerDiaryRoutes(
     const accepted = await submitVoiceCapture(
       dependencies,
       body,
-      parsed.data.language,
       request.server.currentUser.getCurrentUserId(),
       dependencies.now()
     );

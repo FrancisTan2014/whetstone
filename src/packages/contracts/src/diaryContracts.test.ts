@@ -28,33 +28,29 @@ describe("documentJsonSchema", () => {
 });
 
 describe("parseCreateDiaryEntryRequest", () => {
-  it("accepts a non-blank transcript with an input mode and language", () => {
+  it("accepts a non-blank transcript with an input mode (no capture language, #647)", () => {
     expect(
       parseCreateDiaryEntryRequest({
         inputMode: "typed",
-        language: "en",
         transcript: "today I read a book"
       })
-    ).toEqual({ inputMode: "typed", language: "en", transcript: "today I read a book" });
+    ).toEqual({ inputMode: "typed", transcript: "today I read a book" });
   });
 
   it("rejects a blank transcript", () => {
-    expect(() =>
-      parseCreateDiaryEntryRequest({ inputMode: "voice", language: "zh", transcript: "   " })
-    ).toThrow();
+    expect(() => parseCreateDiaryEntryRequest({ inputMode: "voice", transcript: "   " })).toThrow();
   });
 
   it("rejects a missing or invalid input mode", () => {
-    expect(() => parseCreateDiaryEntryRequest({ language: "en", transcript: "x" })).toThrow();
+    expect(() => parseCreateDiaryEntryRequest({ transcript: "x" })).toThrow();
     expect(() =>
-      parseCreateDiaryEntryRequest({ inputMode: "handwritten", language: "en", transcript: "x" })
+      parseCreateDiaryEntryRequest({ inputMode: "handwritten", transcript: "x" })
     ).toThrow();
   });
 
-  it("rejects a missing or unsupported capture language", () => {
-    expect(() => parseCreateDiaryEntryRequest({ inputMode: "typed", transcript: "x" })).toThrow();
+  it("no longer accepts a capture language: a language key is rejected (#647)", () => {
     expect(() =>
-      parseCreateDiaryEntryRequest({ inputMode: "typed", language: "fr", transcript: "x" })
+      parseCreateDiaryEntryRequest({ inputMode: "typed", language: "en", transcript: "x" })
     ).toThrow();
   });
 
@@ -63,7 +59,6 @@ describe("parseCreateDiaryEntryRequest", () => {
       parseCreateDiaryEntryRequest({
         extra: 1,
         inputMode: "typed",
-        language: "en",
         transcript: "x"
       })
     ).toThrow();

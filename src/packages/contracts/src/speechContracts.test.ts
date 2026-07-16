@@ -4,6 +4,7 @@ import { parseTranscription } from "./speechContracts.js";
 
 describe("parseTranscription", () => {
   const transcription = {
+    language: "en",
     transcript: "help yourself",
     words: [
       { end: 400, start: 0, text: "help" },
@@ -15,31 +16,61 @@ describe("parseTranscription", () => {
     expect(parseTranscription(transcription)).toEqual(transcription);
   });
 
+  it("accepts a null detected language (Whisper reported none)", () => {
+    expect(parseTranscription({ ...transcription, language: null }).language).toBeNull();
+  });
+
+  it("rejects a non-string, non-null language", () => {
+    expect(() => parseTranscription({ ...transcription, language: 7 })).toThrow();
+  });
+
+  it("rejects a missing language field", () => {
+    expect(() => parseTranscription({ transcript: "hi", words: [] })).toThrow();
+  });
+
   it("rejects a non-integer word offset", () => {
     expect(() =>
-      parseTranscription({ transcript: "hi", words: [{ end: 1, start: 0.5, text: "hi" }] })
+      parseTranscription({
+        language: null,
+        transcript: "hi",
+        words: [{ end: 1, start: 0.5, text: "hi" }]
+      })
     ).toThrow();
   });
 
   it("rejects a negative word offset", () => {
     expect(() =>
-      parseTranscription({ transcript: "hi", words: [{ end: 1, start: -1, text: "hi" }] })
+      parseTranscription({
+        language: null,
+        transcript: "hi",
+        words: [{ end: 1, start: -1, text: "hi" }]
+      })
     ).toThrow();
   });
 
   it("rejects a blank word text", () => {
     expect(() =>
-      parseTranscription({ transcript: "hi", words: [{ end: 1, start: 0, text: "  " }] })
+      parseTranscription({
+        language: null,
+        transcript: "hi",
+        words: [{ end: 1, start: 0, text: "  " }]
+      })
     ).toThrow();
   });
 
   it("rejects an end-before-start word", () => {
     expect(() =>
-      parseTranscription({ transcript: "hi", words: [{ end: 400, start: 900, text: "hi" }] })
+      parseTranscription({
+        language: null,
+        transcript: "hi",
+        words: [{ end: 400, start: 900, text: "hi" }]
+      })
     ).toThrow();
   });
 
   it("rejects unknown fields", () => {
-    expect(() => parseTranscription({ extra: true, transcript: "hi", words: [] })).toThrow();
+    expect(() =>
+      parseTranscription({ extra: true, language: null, transcript: "hi", words: [] })
+    ).toThrow();
   });
 });
