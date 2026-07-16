@@ -28,7 +28,6 @@ const board = {
   continueWriting: { status: "empty" },
   date: "2026-07-15",
   dueNow: [routine],
-  newPassage: { planEntryId: "plan-1", status: "available" },
   routineFailures: ["memory"]
 } as const;
 
@@ -55,21 +54,14 @@ describe("todayBoardDtoSchema", () => {
     expect(todayBoardDtoSchema.parse(board)).toEqual(board);
   });
 
-  it("accepts the failed and unavailable invitation variants", () => {
+  it("accepts the failed invitation variants", () => {
     const parsed = todayBoardDtoSchema.parse({
       ...board,
       continueReading: { status: "failed" },
-      continueWriting: { status: "failed" },
-      newPassage: { status: "unavailable" }
+      continueWriting: { status: "failed" }
     });
     expect(parsed.continueReading.status).toBe("failed");
-    expect(parsed.newPassage.status).toBe("unavailable");
-  });
-
-  it("rejects an available new passage missing its plan", () => {
-    expect(() =>
-      todayBoardDtoSchema.parse({ ...board, newPassage: { status: "available" } })
-    ).toThrow();
+    expect(parsed.continueWriting.status).toBe("failed");
   });
 
   it("rejects unknown extra keys", () => {
