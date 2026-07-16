@@ -1,0 +1,10 @@
+refactor(recitation): strip retired curriculum from domain layer
+
+Remove the passage/chaining/fading/introduction/hub domain modules and the
+session stepper, keeping the #633 aggregate (selectRecitationWork) fed by
+Work-level maintenance cards only. Drop the Today new-passage invitation and
+the cardless-required-step summary. Add recitationRatingChoices for the direct
+Work-level review.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+Copilot-Session: 27afb121-1273-4522-9113-c5bfd8150b54

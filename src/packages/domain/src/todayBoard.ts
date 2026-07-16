@@ -8,7 +8,6 @@
 // server instantiates the payloads with their DTO types, then validates the whole board at the API
 // boundary. The routine obligations are fully concrete here — their shape is the product logic Today owns.
 
-import { isRequiredRecitationStep, type RecitationSessionStep } from "./recitationSession.js";
 
 // The deterministic-obligation sources Today groups into one row each (#609 Recitation, Memory review).
 export type TodayRoutineKind = "recitation" | "memory";
@@ -22,27 +21,6 @@ export type TodayRoutineSummary = Readonly<{
   overdueCount: number;
 }>;
 
-// Project a Recitation session (#609) into its Today routine summary (#610). The session's `due` summary
-// already counts every plan's due review cards AND its required non-card steps across all active Works
-// (#633), so `due.dueCount` is the truthful total. But when the whole routine is cardless required work —
-// only unstarted whole-Work maintenance and/or eligible owned-prefix chains — no card carries a due
-// instant, so `due.nextDueAt` is null even though `due.dueCount` is positive. Today keys due-ness off a
-// non-null `nextDueAt` and must never report clear while the session sits before `new_passage`/`clear`,
-// so that cardless case is surfaced at `nowIso` with the aggregate count preserved (floored at 1 as a
-// defensive guard against a step/obligation mismatch); a due card keeps its real earliest instant.
-export function recitationTodayRoutineSummary(
-  input: Readonly<{ due: TodayRoutineSummary; nowIso: string; step: RecitationSessionStep }>
-): TodayRoutineSummary {
-  if (input.due.nextDueAt !== null || !isRequiredRecitationStep(input.step)) {
-    return input.due;
-  }
-  return {
-    dueCount: Math.max(input.due.dueCount, 1),
-    nextDueAt: input.nowIso,
-    overdueCount: input.due.overdueCount
-  };
-}
-
 // A routine source result: its summary, or a failed load. A failed routine never yields a due row and
 // always lands in `routineFailures`, so it can never contribute to a false clear state.
 export type TodayRoutineSource =
@@ -54,12 +32,6 @@ export type TodayRoutineSource =
 export type TodayInvitationSource<Payload> =
   | Readonly<{ status: "failed" }>
   | Readonly<{ status: "ok"; value: Payload | null }>;
-
-// The Recitation "New passage" source (#607): the plan to route into when a new passage is available,
-// null when it is not, or a failed load. `planEntryId` non-null is the availability discriminant.
-export type TodayNewPassageSource =
-  | Readonly<{ status: "failed" }>
-  | Readonly<{ status: "ok"; planEntryId: string | null }>;
 
 // One grouped Due-now routine row: a strictly-positive count, its overdue emphasis, and the instant the
 // board orders by.
@@ -81,25 +53,18 @@ export type TodayContinueWriting<Work> =
   | Readonly<{ status: "failed" }>
   | Readonly<{ status: "ready"; work: Work }>;
 
-export type TodayNewPassage =
-  | Readonly<{ planEntryId: string; status: "available" }>
-  | Readonly<{ status: "failed" }>
-  | Readonly<{ status: "unavailable" }>;
-
 export type TodayBoard<Position, Work> = Readonly<{
   clear: boolean;
   continueReading: TodayContinueReading<Position>;
   continueWriting: TodayContinueWriting<Work>;
   date: string;
   dueNow: ReadonlyArray<TodayRoutineComposition>;
-  newPassage: TodayNewPassage;
   routineFailures: ReadonlyArray<TodayRoutineKind>;
 }>;
 
 export type ComposeTodayBoardInput<Position, Work> = Readonly<{
   date: string;
   memory: TodayRoutineSource;
-  newPassage: TodayNewPassageSource;
   reading: TodayInvitationSource<Position>;
   recitation: TodayRoutineSource;
   writing: TodayInvitationSource<Work>;
@@ -133,15 +98,6 @@ function toContinueWriting<Work>(source: TodayInvitationSource<Work>): TodayCont
     return { status: "failed" };
   }
   return source.value === null ? { status: "empty" } : { status: "ready", work: source.value };
-}
-
-function toNewPassage(source: TodayNewPassageSource): TodayNewPassage {
-  if (source.status === "failed") {
-    return { status: "failed" };
-  }
-  return source.planEntryId === null
-    ? { status: "unavailable" }
-    : { planEntryId: source.planEntryId, status: "available" };
 }
 
 export function composeTodayBoard<Position, Work>(
@@ -185,7 +141,6 @@ export function composeTodayBoard<Position, Work>(
     continueWriting: toContinueWriting(input.writing),
     date: input.date,
     dueNow,
-    newPassage: toNewPassage(input.newPassage),
     routineFailures
   };
 }
