@@ -68,6 +68,30 @@ describe("Sheet", () => {
     expect(screen.getByRole("dialog", { name: "Note" })).toBeDefined();
   });
 
+  it("keeps the default panel width unless a wider size is requested (#646)", () => {
+    mockMatchMedia({ "(min-width: 768px)": true });
+    render(
+      <Sheet onOpenChange={vi.fn()} open title="Note">
+        <p>panel body</p>
+      </Sheet>
+    );
+
+    // `data-size` selects the panel width in CSS; jsdom has no layout, so assert the contract the
+    // stylesheet keys off. The absent prop must leave every existing Sheet consumer at "default".
+    expect(screen.getByRole("dialog", { name: "Note" }).getAttribute("data-size")).toBe("default");
+  });
+
+  it("opts a consumer into a wider panel when size is 'wide' (#646)", () => {
+    mockMatchMedia({ "(min-width: 768px)": true });
+    render(
+      <Sheet onOpenChange={vi.fn()} open size="wide" title="Note">
+        <p>panel body</p>
+      </Sheet>
+    );
+
+    expect(screen.getByRole("dialog", { name: "Note" }).getAttribute("data-size")).toBe("wide");
+  });
+
   it("is dismissible via its close control", async () => {
     const onOpenChange = vi.fn();
     const user = userEvent.setup();

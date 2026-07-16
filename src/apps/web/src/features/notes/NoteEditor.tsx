@@ -96,7 +96,7 @@ export function NoteEditor({
   }
 
   return (
-    <Sheet onOpenChange={onClose} open title={heading}>
+    <Sheet onOpenChange={onClose} open size="wide" title={heading}>
       <div className="noteEditor">
         <p className="noteEditorSelection">Selected: {selectionTextFor(target)}</p>
 

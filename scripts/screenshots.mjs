@@ -200,37 +200,78 @@ async function shot(page, name) {
   console.log(`captured ${name}.png`);
 }
 
-async function applyTheme(page, theme) {
-  const wantDark = theme === "night";
-  // Poll until the theme matches: read the CURRENT state each loop and click the correctly-labelled
-  // toggle, so a freshly loaded page that is still applying its persisted theme can't race us into
-  // clicking a button that just changed label. The reader's theme toggle now lives in the chrome,
-  // which is hidden on narrow screens until a center tap — reveal it by tapping the reading area.
-  const deadline = Date.now() + 15000;
-  while (Date.now() < deadline) {
-    const isDark = await page.evaluate(() =>
-      document.documentElement.classList.contains("dark")
-    );
-    if (isDark === wantDark) {
-      return;
+async function applyTheme(context, base, theme) {
+  // Set the server-owned theme preference (the source of truth, #234) directly rather than driving the
+  // in-app toggle. On a mobile reader the toggle is hidden behind a chrome reveal whose tap
+  // intermittently failed to flip the theme, aborting the whole run; and because the preference is
+  // shared across the ephemeral server, a prior Night capture would otherwise leave a later "day"
+  // capture rendering Night. Setting it server-side makes every page load the intended theme
+  // deterministically and keeps each capture's day/night label honest.
+  const endpoint = `${base}api/preferences`;
+  const read = await context.request.get(endpoint);
+  const stored = read.ok() ? ((await read.json()).preferences ?? {}) : {};
+  const response = await context.request.put(endpoint, {
+    data: {
+      readingSize: stored.readingSize ?? "md",
+      theme,
+      timeZone: stored.timeZone ?? "UTC"
     }
-    const toggle = page.getByRole("button", { name: isDark ? "Switch to Day" : "Switch to Night" });
-    if (await toggle.isVisible().catch(() => false)) {
-      await toggle.click().catch(() => {});
-    } else {
-      await page
-        .locator('article[aria-label="Reading"]')
-        .click({ position: { x: 8, y: 8 } })
-        .catch(() => {});
-    }
-    await page.waitForTimeout(150);
+  });
+  if (!response.ok()) {
+    fail(`Setting the ${theme} theme preference returned HTTP ${response.status()}.`);
   }
-  throw new Error(`Could not switch theme to ${theme}.`);
+}
+
+// Wait for the app to reconcile the (already persisted) server theme onto the root element after
+// `fetchPreferences` resolves on mount — no interaction, so no chrome-reveal race.
+async function waitForTheme(page, theme) {
+  const wantDark = theme === "night";
+  try {
+    await page.waitForFunction(
+      (dark) => document.documentElement.classList.contains("dark") === dark,
+      wantDark,
+      { timeout: 15000 }
+    );
+  } catch {
+    fail(`The ${theme} theme did not apply within 15000ms.`);
+  }
 }
 
 // Let the staggered card / entrance springs settle so a shot is not caught mid-fade.
 async function settle(page) {
   await page.waitForTimeout(600);
+}
+
+// Select the first real word inside the longest block and raise mouseup, so the reader's capture
+// handler opens the selection toolbar. Runs in the page; shared by the annotation walkthrough and the
+// note-editor width captures. Relies on the file-level `document`/`window`/`NodeFilter`/`MouseEvent`
+// globals declared for the page context.
+function selectFirstWord() {
+  const blocks = Array.from(document.querySelectorAll("[data-block-id]"));
+  if (blocks.length === 0) {
+    throw new Error("no rendered blocks to select");
+  }
+  const block = blocks.reduce((best, candidate) =>
+    (candidate.textContent ?? "").length > (best.textContent ?? "").length ? candidate : best
+  );
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node && (node.textContent ?? "").trim().length < 3) {
+    node = walker.nextNode();
+  }
+  if (node === null) {
+    throw new Error("no text node to select");
+  }
+  const text = node.textContent ?? "";
+  const match = text.match(/\S+/);
+  const start = text.indexOf(match[0]);
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, start + match[0].length);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  block.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 }
 
 // Wait for the locator that marks a route/stage as rendered, naming the route + stage on timeout so a
@@ -252,13 +293,17 @@ async function captureHomeAndReaders(browser, base, works) {
         viewport: { height: viewport.height, width: viewport.width }
       });
       try {
+        // Persist the theme server-side once for this context (the source of truth); every page below
+        // then loads it deterministically.
+        await applyTheme(context, base, theme);
+
         // A fresh page per capture avoids stale content from a prior work leaking into the
-        // shot; the chosen theme persists across pages via localStorage within the context.
+        // shot; the chosen theme is read from the shared server preference on each load.
 
         // Today is the app's landing page at the root route (#319), so root captures Today.
         const todayPage = await context.newPage();
         await todayPage.goto(base, { waitUntil: "load" });
-        await applyTheme(todayPage, theme);
+        await waitForTheme(todayPage, theme);
         await waitForStage(todayPage.getByRole("heading", { level: 1, name: "Today" }), {
           route: "/",
           stage: `Today (${theme}/${viewport.name})`
@@ -270,7 +315,7 @@ async function captureHomeAndReaders(browser, base, works) {
         // The Library moved off the root route to #/library when Today became the landing (#319).
         const libraryPage = await context.newPage();
         await libraryPage.goto(libraryUrl, { waitUntil: "load" });
-        await applyTheme(libraryPage, theme);
+        await waitForTheme(libraryPage, theme);
         for (const work of works) {
           await waitForStage(libraryPage.getByRole("heading", { name: work.title }).first(), {
             route: "#/library",
@@ -286,7 +331,7 @@ async function captureHomeAndReaders(browser, base, works) {
           await readerPage.goto(`${base}#/reader?work=${encodeURIComponent(work.entryId)}`, {
             waitUntil: "load"
           });
-          await applyTheme(readerPage, theme);
+          await waitForTheme(readerPage, theme);
           await waitForStage(
             readerPage.locator('article[aria-label="Reading"] [data-block-id]').first(),
             {
@@ -311,6 +356,7 @@ async function captureAnnotation(browser, base, work) {
     viewport: { height: 800, width: 1280 }
   });
   try {
+    await applyTheme(context, base, "day");
     const page = await context.newPage();
     await page.goto(`${base}#/reader?work=${encodeURIComponent(work.entryId)}`, {
       waitUntil: "load"
@@ -322,33 +368,7 @@ async function captureAnnotation(browser, base, work) {
 
     // Select a word inside the longest (paragraph) block and raise mouseup so the reader's
     // capture handler opens the selection toolbar.
-    await page.evaluate(() => {
-      const blocks = Array.from(document.querySelectorAll("[data-block-id]"));
-      if (blocks.length === 0) {
-        throw new Error("no rendered blocks to select");
-      }
-      const block = blocks.reduce((best, candidate) =>
-        (candidate.textContent ?? "").length > (best.textContent ?? "").length ? candidate : best
-      );
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-      let node = walker.nextNode();
-      while (node && (node.textContent ?? "").trim().length < 3) {
-        node = walker.nextNode();
-      }
-      if (node === null) {
-        throw new Error("no text node to select");
-      }
-      const text = node.textContent ?? "";
-      const match = text.match(/\S+/);
-      const start = text.indexOf(match[0]);
-      const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, start + match[0].length);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      block.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    });
+    await page.evaluate(selectFirstWord);
 
     await page.getByRole("toolbar", { name: "Annotate selection" }).waitFor({ timeout: 10000 });
     await settle(page);
@@ -362,8 +382,7 @@ async function captureAnnotation(browser, base, work) {
     await shot(page, "note-editor.day.desktop");
 
     await dialog
-      .locator("textarea, input[type=text]")
-      .first()
+      .getByRole("textbox", { name: "Note body" })
       .fill("A note captured by the screenshot harness.");
     await page.getByRole("button", { name: "Save note" }).click();
 
@@ -379,6 +398,49 @@ async function captureAnnotation(browser, base, work) {
     await shot(page, "note-saved.day.desktop");
   } finally {
     await context.close();
+  }
+}
+
+// The note editor's desktop working width (#646) and its mobile bottom sheet, captured at the
+// viewports the acceptance criteria call out (768/1280/1440 desktop + mobile) so the wide side panel
+// and the full-width mobile sheet are both eyeball-verifiable in the artifacts.
+const noteEditorViewports = [
+  { height: 900, name: "desktop-768", width: 768 },
+  { height: 800, name: "desktop-1280", width: 1280 },
+  { height: 900, name: "desktop-1440", width: 1440 },
+  { height: 844, name: "mobile", width: 390 }
+];
+
+async function captureNoteEditorWidths(browser, base, work) {
+  for (const viewport of noteEditorViewports) {
+    const context = await browser.newContext({
+      colorScheme: "light",
+      hasTouch: viewport.name === "mobile",
+      isMobile: viewport.name === "mobile",
+      viewport: { height: viewport.height, width: viewport.width }
+    });
+    try {
+      await applyTheme(context, base, "day");
+      const page = await context.newPage();
+      await page.goto(`${base}#/reader?work=${encodeURIComponent(work.entryId)}`, {
+        waitUntil: "load"
+      });
+      await waitForStage(page.locator('article[aria-label="Reading"] [data-block-id]').first(), {
+        route: `#/reader?work=${work.entryId}`,
+        stage: `Note editor width (${viewport.name}) reader`
+      });
+
+      await page.evaluate(selectFirstWord);
+      await page.getByRole("toolbar", { name: "Annotate selection" }).waitFor({ timeout: 10000 });
+      await page.getByRole("button", { name: "Add note" }).click();
+      const dialog = page.getByRole("dialog");
+      await dialog.waitFor({ timeout: 10000 });
+      await page.getByText("New note").first().waitFor({ timeout: 10000 });
+      await settle(page);
+      await shot(page, `note-editor.day.${viewport.name}`);
+    } finally {
+      await context.close();
+    }
   }
 }
 
@@ -407,6 +469,11 @@ async function main() {
 
   await captureHomeAndReaders(browser, base, works);
   const englishWork = works.find((work) => work.lang === "en");
+  // Capture the note-editor widths first: they only open the editor (never save), so they leave no
+  // annotation behind. The annotation walkthrough then saves onto the same first word cleanly — running
+  // it first would annotate that word and disable "Add note" for the width captures' overlapping
+  // selection (#163).
+  await captureNoteEditorWidths(browser, base, englishWork);
   await captureAnnotation(browser, base, englishWork);
 
   console.log(`\nAll screenshots written to ${path.relative(root, outDir)}`);
