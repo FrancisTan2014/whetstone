@@ -182,11 +182,18 @@ export type {
   SessionRecallOutcome
 } from "./recitationChaining.js";
 export {
+  compareRecitationObligations,
   isRequiredRecitationStep,
   recitationSessionSteps,
-  selectRecitationSessionStep
+  selectRecitationSessionStep,
+  selectRecitationWork
 } from "./recitationSession.js";
-export type { RecitationSessionStep } from "./recitationSession.js";
+export type {
+  RecitationAggregateDue,
+  RecitationPlanObligation,
+  RecitationSessionStep,
+  RecitationWorkSelection
+} from "./recitationSession.js";
 export {
   isWorkLanguage,
   normalizeWorkLanguage,
