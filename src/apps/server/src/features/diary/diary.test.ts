@@ -170,12 +170,11 @@ async function buildContext(): Promise<TestContext> {
 
 async function createEntry(
   transcript: string,
-  inputMode: CaptureInputMode = "typed",
-  language: "zh" | "en" = "en"
+  inputMode: CaptureInputMode = "typed"
 ): Promise<DiaryEntryDto> {
   const response = await context.server.inject({
     method: "POST",
-    payload: { inputMode, language, transcript },
+    payload: { inputMode, transcript },
     url: "/api/diary/entries"
   });
   expect(response.statusCode).toBe(201);
@@ -213,7 +212,7 @@ describe("POST /api/diary/entries", () => {
       failureReason: null,
       id: "diary-1",
       inputMode: "typed",
-      language: "en",
+      language: null,
       occurredAt: "2026-06-30T20:38:00.000Z",
       processingStatus: null,
       updatedAt: "2026-06-30T20:38:00.000Z"
@@ -224,18 +223,18 @@ describe("POST /api/diary/entries", () => {
     expect(await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID)).toEqual([entry]);
   });
 
-  it("stores the chosen language and never translates the body", async () => {
-    const entry = await createEntry("今天 我 去 了 公园", "voice", "zh");
+  it("persists a capture without language metadata and never translates the body", async () => {
+    const entry = await createEntry("今天 我 去 了 公园", "voice");
 
     expect(entry.bodyText).toBe("今天 我 去 了 公园");
-    expect(entry.language).toBe("zh");
+    expect(entry.language).toBeNull();
     expect(entry.inputMode).toBe("voice");
   });
 
   it("rejects a blank transcript", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "typed", language: "en", transcript: "   " },
+      payload: { inputMode: "typed", transcript: "   " },
       url: "/api/diary/entries"
     });
 
@@ -246,33 +245,31 @@ describe("POST /api/diary/entries", () => {
   it("rejects a missing or unsupported input mode", async () => {
     const missing = await context.server.inject({
       method: "POST",
-      payload: { language: "en", transcript: "a valid thought" },
+      payload: { transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
     expect(missing.statusCode).toBe(400);
 
     const invalid = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "handwritten", language: "en", transcript: "a valid thought" },
+      payload: { inputMode: "handwritten", transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
     expect(invalid.statusCode).toBe(400);
   });
 
-  it("rejects a missing or unsupported capture language", async () => {
-    const missing = await context.server.inject({
+  it("no longer accepts a capture language: a request that still sends one is rejected (#647)", async () => {
+    const response = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "typed", transcript: "a valid thought" },
+      payload: { inputMode: "typed", language: "zh", transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
-    expect(missing.statusCode).toBe(400);
+    expect(response.statusCode).toBe(400);
+  });
 
-    const unsupported = await context.server.inject({
-      method: "POST",
-      payload: { inputMode: "typed", language: "fr", transcript: "a valid thought" },
-      url: "/api/diary/entries"
-    });
-    expect(unsupported.statusCode).toBe(400);
+  it("persists a typed capture with no language when none is supplied", async () => {
+    const entry = await createEntry("a language-free thought", "typed");
+    expect(entry.language).toBeNull();
   });
 });
 
@@ -515,7 +512,7 @@ describe("PATCH /api/diary/entries/:id (rich editing)", () => {
     expect(updated.occurredAt).toBe(created.occurredAt);
     expect(updated.createdAt).toBe(created.createdAt);
     expect(updated.updatedAt).toBe("2026-07-01T08:00:00.000Z");
-    expect(updated.language).toBe("en");
+    expect(updated.language).toBeNull();
   });
 
   it("stores a readable body_text projection for a multi-block body (#571)", async () => {
@@ -548,7 +545,7 @@ describe("PATCH /api/diary/entries/:id (rich editing)", () => {
   });
 
   it("optionally updates the language alongside the body", async () => {
-    const created = await createEntry("original", "typed", "en");
+    const created = await createEntry("original", "typed");
 
     const response = await context.server.inject({
       method: "PATCH",

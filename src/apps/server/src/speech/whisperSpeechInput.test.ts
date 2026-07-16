@@ -10,11 +10,11 @@ import {
 
 const config: WhisperConfig = {
   binaryPath: "whisper-cli",
-  language: "en",
   modelPath: "/models/base.en.bin"
 };
 
 const rawOutput = JSON.stringify({
+  language: "en",
   segments: [
     {
       words: [
@@ -29,6 +29,7 @@ const rawOutput = JSON.stringify({
 });
 
 const mapped = {
+  language: "en",
   transcript: "Help yourself now",
   words: [
     { end: 400, start: 0, text: "Help" },
@@ -38,25 +39,12 @@ const mapped = {
 };
 
 describe("buildWhisperArgs", () => {
-  it("builds the documented offline CLI arguments", () => {
+  it("always requests automatic language detection (--language auto)", () => {
     expect(buildWhisperArgs(config, "recordings\\utterance.wav")).toEqual([
       "--model",
       "/models/base.en.bin",
       "--language",
-      "en",
-      "--output",
-      "json",
-      "--word-timestamps",
-      "recordings\\utterance.wav"
-    ]);
-  });
-
-  it("lets a per-request language override the config fallback", () => {
-    expect(buildWhisperArgs(config, "recordings\\utterance.wav", "zh")).toEqual([
-      "--model",
-      "/models/base.en.bin",
-      "--language",
-      "zh",
+      "auto",
       "--output",
       "json",
       "--word-timestamps",
@@ -66,8 +54,29 @@ describe("buildWhisperArgs", () => {
 });
 
 describe("parseWhisperOutput", () => {
-  it("maps seconds to ms, drops blank words, and clamps negatives", () => {
+  it("maps seconds to ms, drops blank words, clamps negatives, and reads the detected language", () => {
     expect(parseWhisperOutput(rawOutput)).toEqual(mapped);
+  });
+
+  it("reports a null language when the model detected none", () => {
+    const withoutLanguage = JSON.stringify({
+      segments: [{ words: [{ end: 0.4, start: 0, word: "Hi" }] }],
+      text: "Hi"
+    });
+    expect(parseWhisperOutput(withoutLanguage)).toEqual({
+      language: null,
+      transcript: "Hi",
+      words: [{ end: 400, start: 0, text: "Hi" }]
+    });
+  });
+
+  it("reports a null language when the reported language is not a string", () => {
+    const nonStringLanguage = JSON.stringify({
+      language: 7,
+      segments: [{ words: [{ end: 0.4, start: 0, word: "Hi" }] }],
+      text: "Hi"
+    });
+    expect(parseWhisperOutput(nonStringLanguage).language).toBeNull();
   });
 
   it("throws on output that is not JSON", () => {
@@ -113,16 +122,16 @@ describe("createWhisperSpeechInput", () => {
     };
 
     const speech = createWhisperSpeechInput({ config, run });
-    const result = await speech.transcribe({ language: "zh", path: "recordings\\utterance.wav" });
+    const result = await speech.transcribe({ path: "recordings\\utterance.wav" });
 
     expect(result).toEqual(mapped);
     expect(seen?.binaryPath).toBe("whisper-cli");
-    expect(seen?.args).toEqual(buildWhisperArgs(config, "recordings\\utterance.wav", "zh"));
+    expect(seen?.args).toEqual(buildWhisperArgs(config, "recordings\\utterance.wav"));
   });
 
   it("uses the real process runner by default", async () => {
     const speech = createWhisperSpeechInput({
-      config: { binaryPath: process.execPath, language: "en", modelPath: "m" }
+      config: { binaryPath: process.execPath, modelPath: "m" }
     });
     // Node rejects the Whisper-shaped args, exercising the default runner end-to-end.
     await expect(speech.transcribe({ path: "recordings\\a.wav" })).rejects.toThrow();

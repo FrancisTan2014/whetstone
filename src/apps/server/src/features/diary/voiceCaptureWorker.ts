@@ -1,3 +1,4 @@
+import { captureLanguageSchema } from "@whetstone/contracts";
 import { createTextDocument, documentReadableText } from "@whetstone/document";
 import { asc, eq, inArray } from "drizzle-orm";
 
@@ -31,12 +32,19 @@ const STALLED_STATES = ["transcribing", "tidying"] as const;
 
 type ClaimedCapture = Readonly<{
   entryId: string;
-  language: string | null;
   rawAudioPath: string | null;
 }>;
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Narrow Whisper's auto-detected language to a supported capture language (`zh`/`en`), or null when the
+// model reported none or an unsupported one (#647). A missing/unsupported detection is not a failure —
+// the stored language simply stays null.
+function toSupportedLanguage(detected: string | null): string | null {
+  const parsed = captureLanguageSchema.safeParse(detected);
+  return parsed.success ? parsed.data : null;
 }
 
 // Claim the oldest queued voice capture and move it to `transcribing` in one transaction, so a second
@@ -48,7 +56,6 @@ async function claimOldestQueued(db: DbClient): Promise<ClaimedCapture | undefin
     const [oldest] = await tx
       .select({
         entryId: diaryEntries.entryId,
-        language: diaryEntries.language,
         rawAudioPath: diaryEntries.rawAudioPath
       })
       .from(diaryEntries)
@@ -110,12 +117,11 @@ export async function processNextVoiceCapture(
   }
 
   let transcript: string;
+  let detectedLanguage: string | null;
   try {
-    const audio =
-      claimed.language === null
-        ? { path: claimed.rawAudioPath }
-        : { language: claimed.language, path: claimed.rawAudioPath };
-    transcript = (await dependencies.speech.transcribe(audio)).transcript.trim();
+    const transcription = await dependencies.speech.transcribe({ path: claimed.rawAudioPath });
+    transcript = transcription.transcript.trim();
+    detectedLanguage = toSupportedLanguage(transcription.language);
   } catch (error) {
     const reason = describeError(error);
     await failCapture(dependencies.db, claimed.entryId, reason);
@@ -144,7 +150,13 @@ export async function processNextVoiceCapture(
 
   await dependencies.db
     .update(diaryEntries)
-    .set({ bodyDoc, bodyText, processingStatus: "ready", tidiedText: tidied })
+    .set({
+      bodyDoc,
+      bodyText,
+      language: detectedLanguage,
+      processingStatus: "ready",
+      tidiedText: tidied
+    })
     .where(eq(diaryEntries.entryId, claimed.entryId));
 
   return { id: claimed.entryId, status: "processed" };

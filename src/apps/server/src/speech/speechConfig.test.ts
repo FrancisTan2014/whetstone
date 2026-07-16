@@ -20,27 +20,26 @@ describe("readSpeechConfig", () => {
     ).toBeUndefined();
   });
 
-  it("reads a full Whisper config, defaulting the language to en", () => {
+  it("reads a full Whisper config from the binary and model path", () => {
     expect(
       readSpeechConfig({ WHISPER_BINARY: "whisper-cli", WHISPER_MODEL_PATH: "/m/base.bin" }).whisper
-    ).toEqual({ binaryPath: "whisper-cli", language: "en", modelPath: "/m/base.bin" });
+    ).toEqual({ binaryPath: "whisper-cli", modelPath: "/m/base.bin" });
   });
 
-  it("honours an explicit language", () => {
+  it("ignores a retired WHISPER_LANGUAGE key (Whisper always auto-detects)", () => {
     expect(
       readSpeechConfig({
         WHISPER_BINARY: "whisper-cli",
         WHISPER_LANGUAGE: "zh",
         WHISPER_MODEL_PATH: "/m/base.bin"
-      }).whisper?.language
-    ).toBe("zh");
+      }).whisper
+    ).toEqual({ binaryPath: "whisper-cli", modelPath: "/m/base.bin" });
   });
 });
 
 describe("resolveSpeechInput", () => {
   const whisper: WhisperConfig = {
     binaryPath: "whisper-cli",
-    language: "en",
     modelPath: "/m/base.bin"
   };
 

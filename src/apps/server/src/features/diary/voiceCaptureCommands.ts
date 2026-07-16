@@ -65,15 +65,16 @@ function toVoiceCaptureStatusDto(row: VoiceCaptureRow): VoiceCaptureStatusDto {
 }
 
 // Submit a Tap-and-Talk clip, save-first (#571): store the raw audio under a server-owned path and create
-// a pending diary Entry immediately (`processing_status = "queued"`) with an empty placeholder body,
-// BEFORE any transcription — then return promptly with the capture id + status so the user can record
-// again without waiting for STT. Three rows are written in one transaction (owning Entry + the shared
-// `personal_entries` chronology facet + the `diary_entries` facet) so a capture never exists without its
-// identity; the server owns the id and the timestamps so the client cannot forge or backdate a capture.
+// a pending diary Entry immediately (`processing_status = "queued"`) with an empty placeholder body and
+// `language = null`, BEFORE any transcription — then return promptly with the capture id + status so the
+// user can record again without waiting for STT. No capture language is chosen: the worker fills the
+// detected language when transcription runs (#647). Three rows are written in one transaction (owning
+// Entry + the shared `personal_entries` chronology facet + the `diary_entries` facet) so a capture never
+// exists without its identity; the server owns the id and the timestamps so the client cannot forge or
+// backdate a capture.
 export async function submitVoiceCapture(
   dependencies: VoiceCaptureDependencies,
   audio: Buffer,
-  language: CaptureLanguage,
   userId: string,
   now: Date
 ): Promise<VoiceCaptureAcceptedDto> {
@@ -92,7 +93,7 @@ export async function submitVoiceCapture(
       entryId,
       failureReason: null,
       inputMode: "voice",
-      language,
+      language: null,
       processingStatus: "queued",
       rawAudioPath,
       rawTranscript: null,

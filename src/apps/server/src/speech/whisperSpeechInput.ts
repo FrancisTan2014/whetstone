@@ -11,23 +11,19 @@ import { runCommand, type CommandRunner } from "./whisperProcess.js";
 
 export type WhisperConfig = Readonly<{
   binaryPath: string;
-  // BCP-47-ish language code passed to the model (e.g. "en").
-  language: string;
   modelPath: string;
 }>;
 
 // The CLI arguments handed to the Whisper binary. The operator points `binaryPath` at a tool/wrapper
-// that honours these and emits the documented JSON contract on stdout.
-export function buildWhisperArgs(
-  config: WhisperConfig,
-  audioPath: string,
-  language?: string
-): ReadonlyArray<string> {
+// that honours these and emits the documented JSON contract on stdout. `--language auto` always requests
+// automatic language detection: Whetstone has no forced-language override (#647). An English-only model
+// stays constrained by the model itself; a multilingual model detects the spoken language.
+export function buildWhisperArgs(config: WhisperConfig, audioPath: string): ReadonlyArray<string> {
   return [
     "--model",
     config.modelPath,
     "--language",
-    language ?? config.language,
+    "auto",
     "--output",
     "json",
     "--word-timestamps",
@@ -81,8 +77,9 @@ function readWord(value: unknown): TranscribedWord | null {
 }
 
 // Parse + validate the Whisper stdout and map it to a Transcription (seconds -> integer ms; blank
-// words dropped). Throws a clear error on non-JSON or off-contract output so the caller never trusts
-// malformed process output.
+// words dropped). The detected `language` is read when the tool reports a string one and is null
+// otherwise — Whisper auto-detects it, and a missing detection never fails the transcript (#647).
+// Throws a clear error on non-JSON or off-contract output so the caller never trusts malformed output.
 export function parseWhisperOutput(stdout: string): Transcription {
   let parsed: unknown;
   try {
@@ -119,7 +116,8 @@ export function parseWhisperOutput(stdout: string): Transcription {
     }
   }
 
-  return { transcript: root.text.trim(), words };
+  const language = typeof root.language === "string" ? root.language : null;
+  return { language, transcript: root.text.trim(), words };
 }
 
 export type WhisperSpeechInputDependencies = Readonly<{
@@ -136,7 +134,7 @@ export function createWhisperSpeechInput(
     async transcribe(audio: SpeechAudio): Promise<Transcription> {
       const stdout = await run(
         dependencies.config.binaryPath,
-        buildWhisperArgs(dependencies.config, audio.path, audio.language)
+        buildWhisperArgs(dependencies.config, audio.path)
       );
       return parseWhisperOutput(stdout);
     }

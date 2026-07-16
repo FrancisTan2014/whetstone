@@ -15,7 +15,7 @@ describe("checkSpeechHealth", () => {
   it("reports configured when a Whisper config is present", () => {
     const report = checkSpeechHealth({
       config: {
-        whisper: { binaryPath: "/bin/whetstone-whisper", language: "en", modelPath: "small" }
+        whisper: { binaryPath: "/bin/whetstone-whisper", modelPath: "small" }
       }
     });
 
@@ -28,7 +28,7 @@ describe("checkSpeechHealth", () => {
       checkSpeechHealth({ config: { whisper: undefined } }).message,
       checkSpeechHealth({
         config: {
-          whisper: { binaryPath: "/bin/whetstone-whisper", language: "en", modelPath: "small" }
+          whisper: { binaryPath: "/bin/whetstone-whisper", modelPath: "small" }
         }
       }).message
     ];

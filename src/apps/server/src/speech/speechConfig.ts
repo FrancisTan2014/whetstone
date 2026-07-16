@@ -8,14 +8,13 @@ export type SpeechConfig = Readonly<{
   whisper: WhisperConfig | undefined;
 }>;
 
-const DEFAULT_LANGUAGE = "en";
-
 function trimmedOrUndefined(value: string | undefined): string | undefined {
   return value === undefined || value.trim().length === 0 ? undefined : value;
 }
 
 // A local Whisper is configured only when both the binary and the model path are present; either one
-// missing leaves `whisper` undefined (fall back to the fake).
+// missing leaves `whisper` undefined (fall back to the fake). There is no language override: Whisper
+// always auto-detects the spoken language (#647).
 export function readSpeechConfig(env: NodeJS.ProcessEnv = process.env): SpeechConfig {
   const binaryPath = trimmedOrUndefined(env.WHISPER_BINARY);
   const modelPath = trimmedOrUndefined(env.WHISPER_MODEL_PATH);
@@ -27,7 +26,6 @@ export function readSpeechConfig(env: NodeJS.ProcessEnv = process.env): SpeechCo
   return {
     whisper: {
       binaryPath,
-      language: trimmedOrUndefined(env.WHISPER_LANGUAGE) ?? DEFAULT_LANGUAGE,
       modelPath
     }
   };
