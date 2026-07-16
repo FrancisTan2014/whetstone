@@ -173,7 +173,7 @@ export async function loadRecitationSession(
   // With required work outstanding, present the selected required Work. Otherwise the routine is clear:
   // present the first Work (stable id order) still offering optional new material, else simply the first,
   // so the learner is invited to new material without any Work deferring required work behind it (AC5).
-  const byId = [...slices].sort((a, b) => (a.planEntryId < b.planEntryId ? -1 : 1));
+  const byId = [...slices].sort((a, b) => a.planEntryId.localeCompare(b.planEntryId));
   const activeSlice =
     selection.selectedPlanEntryId !== null
       ? slices.find((slice) => slice.planEntryId === selection.selectedPlanEntryId)!
