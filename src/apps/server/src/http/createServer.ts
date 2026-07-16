@@ -34,10 +34,6 @@ import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWo
 import type { AuthoredWorkRouteDependencies } from "../features/authoredWorks/authoredWorkRoutes.js";
 import { registerRecitationRoutes } from "../features/recitation/recitationRoutes.js";
 import type { RecitationRouteDependencies } from "../features/recitation/recitationRoutes.js";
-import { registerRecitationPassageRoutes } from "../features/recitationPassages/recitationPassageRoutes.js";
-import type { RecitationPassageRouteDependencies } from "../features/recitationPassages/recitationPassageRoutes.js";
-import { registerRecitationChainingRoutes } from "../features/recitationPassages/recitationChainingRoutes.js";
-import type { RecitationChainingRouteDependencies } from "../features/recitationPassages/recitationChainingRoutes.js";
 import {
   registerMemoryReviewRoutes,
   registerMemoryRoutes
@@ -75,8 +71,6 @@ export type CreateServerOptions = Readonly<{
   readingPosition?: ReadingPositionDependencies;
   recall?: MemoryRouteDependencies;
   recitation?: RecitationRouteDependencies;
-  recitationPassages?: RecitationPassageRouteDependencies;
-  recitationChaining?: RecitationChainingRouteDependencies;
   search?: SearchDependencies;
   today?: TodayRouteDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
@@ -148,14 +142,6 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.recitation !== undefined) {
     registerRecitationRoutes(server, options.recitation);
-  }
-
-  if (options.recitationPassages !== undefined) {
-    registerRecitationPassageRoutes(server, options.recitationPassages);
-  }
-
-  if (options.recitationChaining !== undefined) {
-    registerRecitationChainingRoutes(server, options.recitationChaining);
   }
 
   if (options.recall !== undefined) {

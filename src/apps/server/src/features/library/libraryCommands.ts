@@ -29,7 +29,7 @@ import {
   workMeta,
   workSources
 } from "../../db/schema.js";
-import { deleteRecitationReviewData } from "../recitationPassages/recitationReviewData.js";
+import { deleteRecitationReviewData } from "../recitation/recitationTeardown.js";
 
 // Real infrastructure boundaries (database client and id generation) are passed
 // in so commands stay deterministic and testable.

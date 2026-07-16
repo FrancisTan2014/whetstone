@@ -18,15 +18,13 @@ export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timel
 export { isDayKey, monthBounds, monthGrid, shiftMonth, toMonthKey } from "./diaryTimeline.js";
 export { isTimeZone, localDayBoundary, localDayKey } from "./localDay.js";
 export type { LocalDayBoundary } from "./localDay.js";
-export { composeTodayBoard, recitationTodayRoutineSummary } from "./todayBoard.js";
+export { composeTodayBoard } from "./todayBoard.js";
 export type {
   ComposeTodayBoardInput,
   TodayBoard,
   TodayContinueReading,
   TodayContinueWriting,
   TodayInvitationSource,
-  TodayNewPassage,
-  TodayNewPassageSource,
   TodayRoutineComposition,
   TodayRoutineKind,
   TodayRoutineSource,
