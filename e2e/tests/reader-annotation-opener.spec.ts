@@ -341,7 +341,7 @@ test("genuinely overlapping notes open a chooser scoped to exactly those annotat
   await reloadReader(page, work.readerUrl);
 
   // Click the innermost underline (the nested one), where both notes overlap.
-  await page.locator(`${NOTE_MARK} ${NOTE_MARK}`).first().click();
+  await page.locator(`${NOTE_MARK} span.noteMark`).first().click();
 
   const chooser = page.getByRole("complementary", CHOOSER);
   await expect(chooser).toBeVisible();
@@ -372,14 +372,20 @@ test("a note underline spanning two blocks opens that note from either block", a
   const second = await blockContaining(page, "Delta");
   // A single note anchored from a word in the first paragraph to a word in the second: it underlines
   // the first block's tail and the second block's head, both carrying the same note id.
-  await addNote(page, setup, work.workEntryId, {
-    blockEntryId: first.blockEntryId,
-    contextSnapshot: "charlie",
-    endBlockEntryId: second.blockEntryId,
-    endOffset: second.text.indexOf("Delta") + "Delta".length,
-    selectedTextSnapshot: "charlie",
-    startOffset: first.text.indexOf("charlie")
-  });
+  await addNote(
+    page,
+    setup,
+    work.workEntryId,
+    {
+      blockEntryId: first.blockEntryId,
+      contextSnapshot: "charlie",
+      endBlockEntryId: second.blockEntryId,
+      endOffset: second.text.indexOf("Delta") + "Delta".length,
+      selectedTextSnapshot: "charlie",
+      startOffset: first.text.indexOf("charlie")
+    },
+    "Cross-block note body."
+  );
   await reloadReader(page, work.readerUrl);
 
   // Two underline fragments render for the one note; activating the fragment in the SECOND block opens
