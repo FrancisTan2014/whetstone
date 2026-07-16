@@ -138,7 +138,9 @@ describe("applyNoteHighlights", () => {
   it("wraps the anchored text in an interactive underline naming the note it opens", () => {
     const container = reader(twoBlocks);
 
-    const cleanup = applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })]);
+    const cleanup = applyNoteHighlights(container, [
+      note(subBlockAnchor, { entryId: toEntryId("n1") })
+    ]);
 
     const [mark] = marks(container);
     expect(mark?.textContent).toBe("block");
@@ -174,7 +176,11 @@ describe("applyNoteHighlights", () => {
     const container = reader(twoBlocks);
     const onActivate = vi.fn();
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
     click(marks(container)[0] as HTMLElement);
 
     expect(onActivate).toHaveBeenCalledWith(["n1"]);
@@ -184,7 +190,11 @@ describe("applyNoteHighlights", () => {
     const container = reader(twoBlocks);
     const onActivate = vi.fn();
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
     const [mark] = marks(container);
 
     const enter = keydown(mark as HTMLElement, "Enter");
@@ -199,15 +209,21 @@ describe("applyNoteHighlights", () => {
 
   it("prevents default but does not swallow a keyboard activation on an id-less underline", () => {
     const container = reader(
-      '<div data-block-id="b1">First block text.</div>' +
-        '<p><span class="noteMark">x</span></p>'
+      '<div data-block-id="b1">First block text.</div>' + '<p><span class="noteMark">x</span></p>'
     );
     const onActivate = vi.fn();
     const bubbled = vi.fn();
     document.addEventListener("keydown", bubbled);
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
-    const enter = keydown(container.querySelector(".noteMark:not([data-note-id])") as HTMLElement, "Enter");
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const enter = keydown(
+      container.querySelector(".noteMark:not([data-note-id])") as HTMLElement,
+      "Enter"
+    );
 
     expect(onActivate).not.toHaveBeenCalled();
     expect(enter.defaultPrevented).toBe(true);
@@ -219,7 +235,11 @@ describe("applyNoteHighlights", () => {
     const container = reader(twoBlocks);
     const onActivate = vi.fn();
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
     const [mark] = marks(container);
 
     keydown(mark as HTMLElement, "a");
@@ -237,7 +257,11 @@ describe("applyNoteHighlights", () => {
     );
     const onActivate = vi.fn();
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
     const innermost = container.querySelector('[data-note-id="inner"] [data-note-id="inner"]');
     click(innermost as HTMLElement);
 
@@ -252,7 +276,11 @@ describe("applyNoteHighlights", () => {
     );
     const onActivate = vi.fn();
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
     click(container.querySelector(".noteMark .noteMark") as HTMLElement);
 
     expect(onActivate).toHaveBeenCalledWith(["real"]);
@@ -264,7 +292,11 @@ describe("applyNoteHighlights", () => {
     const bubbled = vi.fn();
     document.addEventListener("click", bubbled);
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
     click(container.querySelector('[data-block-id="b2"]') as HTMLElement);
 
     expect(onActivate).not.toHaveBeenCalled();
@@ -278,8 +310,13 @@ describe("applyNoteHighlights", () => {
     const bubbled = vi.fn();
     document.addEventListener("click", bubbled);
 
-    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], onActivate);
-    const textNode = (container.querySelector('[data-block-id="b2"]') as HTMLElement).firstChild as Text;
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const textNode = (container.querySelector('[data-block-id="b2"]') as HTMLElement)
+      .firstChild as Text;
     textNode.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(onActivate).not.toHaveBeenCalled();
@@ -467,7 +504,9 @@ describe("applyNoteHighlights", () => {
     const captured = vi.fn();
     document.addEventListener("mouseup", captured);
 
-    const cleanup = applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })]);
+    const cleanup = applyNoteHighlights(container, [
+      note(subBlockAnchor, { entryId: toEntryId("n1") })
+    ]);
     // With no handler there is no delegated listener, so a tap on the underline is left untouched.
     dispatch(marks(container)[0] as HTMLElement, new MouseEvent("mouseup", { bubbles: true }));
 

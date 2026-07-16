@@ -36,7 +36,7 @@ export type NoteHighlightDescriptor = Readonly<{
 }>;
 
 // The highlight descriptors for a set of notes, in note order. A whole-block note (no offsets) is
-// skipped — it shows a gutter bar, not an underline. Pure (no DOM), so the anchor-to-decoration
+// skipped — it draws no inline underline and stays reachable only through the Notes panel (#644). Pure (no DOM), so the anchor-to-decoration
 // mapping is tested in isolation; the prefix/suffix are derived from the stored context snapshot so a
 // re-anchor stays pinned to the right occurrence even after the block's offsets shift.
 export function noteHighlightDescriptors(
