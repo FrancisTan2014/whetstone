@@ -1,8 +1,9 @@
 // Optional setup step (first consumer of the #346 framework): enable local Whisper STT with one
 // command — `pnpm setup:voice`. It installs faster-whisper + the `whetstone-whisper` console-script
-// wrapper, pre-fetches the model, and writes WHISPER_BINARY / WHISPER_MODEL_PATH / WHISPER_LANGUAGE to
-// the root `.env` (which the server dev/start already load). Excluded from the base `pnpm setup`
-// (heavy/network); every failure mode returns an actionable { what, remedy }, never a raw crash.
+// wrapper, pre-fetches the model, and writes WHISPER_BINARY / WHISPER_MODEL_PATH to the root `.env`
+// (which the server dev/start already load). Whisper always auto-detects the spoken language, so there
+// is no WHISPER_LANGUAGE (#647). Excluded from the base `pnpm setup` (heavy/network); every failure mode
+// returns an actionable { what, remedy }, never a raw crash.
 
 import { fileURLToPath } from "node:url";
 
@@ -229,8 +230,7 @@ export const voiceStep = {
       path,
       upsertEnvVars(content, {
         WHISPER_BINARY: launcher,
-        WHISPER_MODEL_PATH: model,
-        WHISPER_LANGUAGE: ctx.env.WHISPER_LANGUAGE
+        WHISPER_MODEL_PATH: model
       })
     );
     return ok();
@@ -247,7 +247,7 @@ export const voiceStep = {
       "--model",
       env.WHISPER_MODEL_PATH,
       "--language",
-      env.WHISPER_LANGUAGE ?? "en",
+      "auto",
       "--output",
       "json",
       "--word-timestamps",
