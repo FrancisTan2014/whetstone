@@ -119,5 +119,11 @@ test.describe("recitation chaining and whole-work maintenance (#580)", () => {
     await expect(
       page.getByText("The whole work is scheduled; it is not due yet.")
     ).toBeVisible();
+
+    // Pause this plan so it leaves the shared single-user recitation routine, which is now a TRUE
+    // aggregate over every active plan (#633). Its fully-owned prefix keeps a chain-maintenance step
+    // permanently available — a required step — so leaving it active would carry required work into every
+    // later recitation spec's aggregate and mask their optional/clear states.
+    await page.request.post(`${setup.baseURL}api/recitation/plans/${planEntryId}/pause`);
   });
 });

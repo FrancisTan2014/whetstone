@@ -119,5 +119,10 @@ test.describe("recitation routine hub (#608)", () => {
     await session.getByRole("button", { name: "Complete, with effort" }).click();
     await session.getByRole("button", { name: "Skip new passage for now" }).click();
     await expect(session.getByText("Due recitation clear")).toBeVisible();
+
+    // Pause this plan so it leaves the shared single-user recitation routine, now a TRUE aggregate over
+    // every active plan (#633). A just-reviewed passage re-enters its learning step within minutes, so an
+    // active plan here would resurface as due work in every later recitation spec's aggregate.
+    await post(page.request, setup.baseURL, `/recitation/plans/${planEntryId}/pause`);
   });
 });

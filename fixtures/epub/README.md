@@ -20,6 +20,14 @@ separately via Playwright).
   the Today daily-cycle E2E (`e2e/tests/today-daily-cycle.spec.ts`) can adopt its own recitation
   Work without colliding with the shared `setup.epub`.
 
+- `recitation-aggregate-a.epub` / `recitation-aggregate-b.epub` — _Aesop's Fables (Aggregate A / B)_,
+  two disjoint fable pairs. Aesop's fables are ancient and in the public domain worldwide. Both are
+  generated deterministically by `scripts/make-aggregate-fixture-epubs.mjs`; regenerate with
+  `node scripts/make-aggregate-fixture-epubs.mjs`. Each has distinct bytes from every other fixture
+  and from each other so the recitation aggregate E2E
+  (`e2e/tests/recitation-aggregate.spec.ts`) can adopt **two separate** recitation Works without the
+  uploads deduping to the same Work.
+
 - `three-character-classic.epub` — _三字经_ (the Three Character Classic), a classical Chinese
   primer (~13th century). The text is in the public domain; this EPUB was produced by the
   公版书 (public-domain books) project at https://www.7sbook.com, whose notice explicitly

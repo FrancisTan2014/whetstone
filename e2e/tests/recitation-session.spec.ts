@@ -54,7 +54,7 @@ async function ownPassage(
 }
 
 test.describe("complete inline recitation session (#609)", () => {
-  test("runs chain, optional introduction, due passage, and completion without leaving the hub", async ({
+  test("runs a chain to the session's clear state without leaving the hub", async ({
     page,
     setup
   }) => {
@@ -92,15 +92,19 @@ test.describe("complete inline recitation session (#609)", () => {
     ).toHaveCount(2);
     await session.getByRole("button", { name: "Recall held throughout" }).click();
 
-    await expect(session.getByRole("button", { exact: true, name: "New passage" })).toBeVisible();
-    await session.getByRole("button", { exact: true, name: "New passage" }).click();
-
-    await expect(session.getByRole("button", { name: "Reveal" })).toBeVisible();
-    await session.getByRole("button", { name: "Reveal" }).click();
-    await session.getByRole("button", { name: "Complete, with effort" }).click();
-
+    // Completing the chain ends the chain step for this session pass. Under the true cross-Work aggregate
+    // (#633), the still-owned adjacent prefix keeps this Work chain-eligible — a required step — so the
+    // optional "new passage" invitation stays suppressed (#633 AC5) and the session lands on the clear
+    // state for this pass rather than offering new material. (Durably retiring a completed chain so the
+    // Work can advance past chain maintenance is the deferred #635.)
     await expect(session.getByText("Due recitation clear")).toBeVisible();
+    await expect(session.getByRole("button", { exact: true, name: "New passage" })).toHaveCount(0);
     await session.getByRole("button", { name: "Exit session" }).click();
-    await expect(hub.getByRole("group", { name: "Caught up" })).toBeVisible();
+
+    // Pause this plan so it leaves the shared single-user recitation routine, now a TRUE aggregate over
+    // every active plan (#633). Its owned adjacent prefix keeps a chain-maintenance step permanently
+    // available — a required step — so leaving it active would carry required work into the later specs'
+    // aggregate and mask their optional/clear states.
+    await page.request.post(`${setup.baseURL}api/recitation/plans/${planEntryId}/pause`);
   });
 });
