@@ -36,6 +36,7 @@ import {
   loadWholeWorkTarget,
   loadWorkSourceText
 } from "./recitationReviewQueries.js";
+import { deleteRecitationReviewData } from "./recitationTeardown.js";
 
 const OTHER_USER_ID = "00000000-0000-0000-0000-000000000002";
 
@@ -436,6 +437,22 @@ describe("scheduled resurfacing on Today", () => {
   });
 });
 
+describe("deleteRecitationReviewData (Work-deletion cascade)", () => {
+  it("tears down a target's card even when it has no review events", async () => {
+    // A learner enrolled a Work but never rated it: the Work-level target has a card and zero events.
+    // Deleting the Work must still remove the card, exercising the no-events branch of the teardown.
+    const plan = await enroll(await seedWork("work-1", "Fables"));
+    const target = await loadWholeWorkTarget(context.db, plan.entryId, DEFAULT_USER_ID);
+    expect(await countRows(reviewEvents)).toBe(0);
+
+    await context.db.transaction((tx) =>
+      deleteRecitationReviewData(tx, [target!.targetEntryId])
+    );
+
+    expect(await countRows(reviewCards)).toBe(0);
+  });
+});
+
 describe("GET /api/today", () => {
   it("surfaces a due Recitation row and clears once the Work is rated", async () => {
     context.setNow("2026-07-01T09:00:00.000Z");
@@ -592,5 +609,78 @@ describe("explicit zero-target conversion", () => {
     expect(await context.db.select().from(recitationPlans)).toHaveLength(1);
     const target = await loadWholeWorkTarget(context.db, "legacy-plan", DEFAULT_USER_ID);
     expect(target!.card.status).toBe("active");
+  });
+});
+
+describe("GET /api/recitation/plans", () => {
+  it("lists the learner's plans newest-first so the Library can mark enrolled Works", async () => {
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const first = await enroll(await seedWork("work-1", "One"));
+    context.setNow("2026-07-02T09:00:00.000Z");
+    const second = await enroll(await seedWork("work-2", "Two"));
+
+    const response = await context.server.inject({ method: "GET", url: "/api/recitation/plans" });
+    expect(response.statusCode).toBe(200);
+    const { plans } = response.json() as { plans: ReadonlyArray<RecitationPlanDto> };
+    expect(plans.map((plan) => plan.entryId)).toEqual([second.entryId, first.entryId]);
+    expect(plans.every((plan) => plan.phase === "maintenance")).toBe(true);
+  });
+
+  it("surfaces a legacy plan's last-session timestamp when present", async () => {
+    const plan = await enroll(await seedWork("work-1", "One"));
+    await context.db
+      .update(recitationPlans)
+      .set({ lastSessionAt: new Date("2026-06-15T08:00:00.000Z") })
+      .where(eq(recitationPlans.entryId, plan.entryId));
+
+    const response = await context.server.inject({ method: "GET", url: "/api/recitation/plans" });
+    const { plans } = response.json() as { plans: ReadonlyArray<RecitationPlanDto> };
+    expect(plans[0]!.lastSessionAt).toBe("2026-06-15T08:00:00.000Z");
+  });
+
+  it("excludes another learner's plans", async () => {
+    await enroll(await seedWork("work-1", "One"));
+    context.setUser(OTHER_USER_ID);
+
+    const response = await context.server.inject({ method: "GET", url: "/api/recitation/plans" });
+    expect((response.json() as { plans: ReadonlyArray<unknown> }).plans).toEqual([]);
+  });
+});
+
+describe("a removed plan never contributes due work", () => {
+  it("drops from the no-Work review selection and the routine summary though its plan stays active", async () => {
+    // Removal deletes the Work-level card but leaves the plan unpaused (its durable identity persists). The
+    // aggregate must treat that active-but-cardless plan as a zero obligation, never a false due row.
+    const plan = await enroll(await seedWork("work-1", "Fables"));
+    await removeRecitation(context.deps, toEntryId(plan.entryId), DEFAULT_USER_ID);
+
+    expect(await fetchReview()).toBeNull();
+    const summary = await loadRecitationRoutineSummary(
+      { db: context.db },
+      DEFAULT_USER_ID,
+      context.deps.now(),
+      "UTC"
+    );
+    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+  });
+
+  it("withholds a card that is paused out of lockstep with an active plan row", async () => {
+    // Defensive invariant: even if a Work-level card is paused while its plan row still reads active, the
+    // due scan must exclude it — a withheld card never contributes to due work or the no-Work selection.
+    const plan = await enroll(await seedWork("work-1", "Fables"));
+    const target = await loadWholeWorkTarget(context.db, plan.entryId, DEFAULT_USER_ID);
+    await context.db
+      .update(reviewCards)
+      .set({ status: "paused" })
+      .where(eq(reviewCards.targetEntryId, target!.targetEntryId));
+
+    expect(await fetchReview()).toBeNull();
+    const summary = await loadRecitationRoutineSummary(
+      { db: context.db },
+      DEFAULT_USER_ID,
+      context.deps.now(),
+      "UTC"
+    );
+    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
   });
 });
