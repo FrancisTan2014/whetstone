@@ -159,11 +159,12 @@ describe("ReadingHeader", () => {
     expect(screen.getByRole("button", { name: "Increase reading text size" })).toBeDefined();
   });
 
-  it("offers a contextual Recitation entry linking to the secondary hub", () => {
-    renderHeader();
+  it("offers a contextual Recitation entry scoped to the Work being read", () => {
+    renderHeader({ workEntryId: "work-42" });
 
-    // A Reader Work action reaches the Recitation hub (#608) without being a primary nav item.
+    // A Reader Work action reaches the Recitation hub (#608) scoped to THIS Work (`?work=`) so the hub
+    // opens this Work's plan rather than the most-recent one (#633 AC7), without being a primary nav item.
     const recitation = screen.getByRole("link", { name: "Recitation" });
-    expect(recitation.getAttribute("href")).toBe("#/recitation");
+    expect(recitation.getAttribute("href")).toBe("#/recitation?work=work-42");
   });
 });
