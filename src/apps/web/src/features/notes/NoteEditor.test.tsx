@@ -160,6 +160,12 @@ describe("NoteEditor create mode", () => {
     );
   });
 
+  it("hosts the editor in a wide sheet for comfortable working width (#646)", () => {
+    renderEditor();
+
+    expect(screen.getByRole("dialog", { name: "New note" }).getAttribute("data-size")).toBe("wide");
+  });
+
   it("saves the authored document with the capture anchor and no client plaintext", async () => {
     mockedCreateNote.mockResolvedValue(savedNote);
     const { onSaved, user } = renderEditor();

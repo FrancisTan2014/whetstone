@@ -729,6 +729,15 @@
   inline-size: min(28rem, 100%);
 }
 
+/* Note editing (and any future consumer that opts into `size="wide"`) needs more horizontal room for
+   sustained rich-text editing than the default 28rem side panel (#646). The clamp holds a comfortable
+   28–36rem band that grows with the viewport (46vw), and `min(…, 100%)` caps it to the viewport. Only
+   the desktop right panel widens — the mobile bottom sheet stays full-width and every other Sheet
+   consumer keeps the default width. */
+.sheet-content-root[data-size="wide"] .sheet-panel-right {
+  inline-size: min(clamp(28rem, 46vw, 36rem), 100%);
+}
+
 .sheet-panel-bottom {
   inset-inline: 0;
   inset-block-end: 0;

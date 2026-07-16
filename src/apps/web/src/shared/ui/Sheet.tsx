@@ -7,6 +7,7 @@ import { FloatingLayerProvider } from "./FloatingLayer.js";
 import { useMediaQuery } from "./useMediaQuery.js";
 
 type SheetSide = "right" | "bottom";
+type SheetSize = "default" | "wide";
 
 export type SheetProps = Readonly<{
   children: React.ReactNode;
@@ -14,6 +15,10 @@ export type SheetProps = Readonly<{
   open: boolean;
   // Overrides the responsive default (right on desktop, bottom on mobile).
   side?: SheetSide;
+  // Widens the desktop right panel for consumers that need more working width (e.g. rich-text
+  // editing). Only the desktop right panel changes; the mobile bottom sheet stays full-width. Defaults
+  // to the standard side-panel width.
+  size?: SheetSize;
   title: string;
 }>;
 
@@ -26,6 +31,7 @@ export function Sheet({
   onOpenChange,
   open,
   side,
+  size = "default",
   title
 }: SheetProps): React.JSX.Element {
   const isDesktop = useMediaQuery("(min-width: 768px)");
@@ -94,7 +100,12 @@ export function Sheet({
               overlay (its own stacking context) so both the panel and the floating host paint above the
               scrim, but pointer events fall through its empty area to the overlay so outside-click
               dismissal still works. The visible panel and the floating host re-enable pointer events. */}
-          <div className="sheet-content-root" data-side={resolvedSide} ref={attachContentRoot}>
+          <div
+            className="sheet-content-root"
+            data-side={resolvedSide}
+            data-size={size}
+            ref={attachContentRoot}
+          >
             <motion.div
               animate={isRight ? { x: 0 } : { y: 0 }}
               className={
