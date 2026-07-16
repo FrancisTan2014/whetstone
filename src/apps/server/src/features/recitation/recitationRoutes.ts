@@ -112,7 +112,9 @@ export function registerRecitationRoutes(
         { planEntryId: request.params.id, rating: parsed.data.rating, route: "POST review" },
         "recitation_reviewed"
       );
-      return reply.code(200).send(recordRecitationReviewResponseSchema.parse(result));
+      return reply
+        .code(200)
+        .send(recordRecitationReviewResponseSchema.parse({ review: result.review }));
     }
   );
 
