@@ -35,18 +35,10 @@ export function RecitationSessionPanel({
   planEntryId
 }: Readonly<{ onExit?: () => void; planEntryId: string }>): React.JSX.Element {
   const [state, setState] = useState<SessionState>({ status: "loading" });
-  const [chainDismissed, setChainDismissed] = useState(false);
-  const [newPassageIntroduced, setNewPassageIntroduced] = useState(false);
-  const [newPassageSkipped, setNewPassageSkipped] = useState(false);
   // Bumped on every canonical reload so the mounted step remounts and re-fetches its own step-local
   // data. Without it, a step that stays selected after an action (another due passage remains, or a
   // just-started chain) keeps its stale fetch and never drains — its effect keys only on planEntryId.
   const [reloadNonce, setReloadNonce] = useState(0);
-
-  const selectedPlanEntryId =
-    state.status === "ready" && state.session.status === "active"
-      ? state.session.planEntryId
-      : undefined;
 
   function load(pinnedPlanEntryId: string): void {
     getRecitationSession(pinnedPlanEntryId).then(
@@ -55,22 +47,7 @@ export function RecitationSessionPanel({
     );
   }
 
-  function reload(): void {
-    setReloadNonce((nonce) => nonce + 1);
-    // Pin the Work currently on screen so clearing its items advances within it, not to another Work,
-    // until it is fully clear — then the aggregate hands the routine to the next Work.
-    load(selectedPlanEntryId ?? planEntryId);
-  }
-
   useEffect(() => load(planEntryId), [planEntryId]);
-
-  // Reset transient per-Work presentation state whenever the routine advances to a different Work, so a
-  // chain dismissed or a new passage skipped on the previous Work does not suppress the next Work's steps.
-  useEffect(() => {
-    setChainDismissed(false);
-    setNewPassageIntroduced(false);
-    setNewPassageSkipped(false);
-  }, [selectedPlanEntryId]);
 
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading recitation session…" />;
@@ -86,51 +63,48 @@ export function RecitationSessionPanel({
     return <p className="text-text-muted">No recitation routine is ready.</p>;
   }
 
+  // The active session is now narrowed, so the pinned Work id is always concrete: a reload advances
+  // within the shown Work, not to another Work, until it is fully clear — then the aggregate hands the
+  // routine to the next Work.
+  const activeSession = state.session;
+  function reload(): void {
+    setReloadNonce((nonce) => nonce + 1);
+    load(activeSession.planEntryId);
+  }
+
   return (
+    // Keying by the selected Work resets the transient per-Work presentation state (a dismissed chain
+    // rehearsal, a skipped or introduced optional passage) by remounting whenever the aggregate advances
+    // to a different Work — no setState-in-effect. A same-Work reload keeps the same key, so that
+    // transient state correctly persists across it (#633).
     <ActiveSessionPanel
-      chainDismissed={chainDismissed}
-      newPassageIntroduced={newPassageIntroduced}
-      newPassageSkipped={newPassageSkipped}
-      onChainDismissed={() => setChainDismissed(true)}
+      key={activeSession.planEntryId}
       onExit={onExit}
       onReload={reload}
-      onSessionIntroducedNewPassage={() => setNewPassageIntroduced(true)}
-      onSkipNewPassage={() => setNewPassageSkipped(true)}
-      onUseNewPassage={() => setNewPassageSkipped(false)}
-      planEntryId={state.session.planEntryId}
+      planEntryId={activeSession.planEntryId}
       reloadNonce={reloadNonce}
-      session={state.session}
+      session={activeSession}
     />
   );
 }
 
 function ActiveSessionPanel({
-  chainDismissed,
-  newPassageIntroduced,
-  newPassageSkipped,
-  onChainDismissed,
   onExit,
   onReload,
-  onSessionIntroducedNewPassage,
-  onSkipNewPassage,
-  onUseNewPassage,
   planEntryId,
   reloadNonce,
   session
 }: Readonly<{
-  chainDismissed: boolean;
-  newPassageIntroduced: boolean;
-  newPassageSkipped: boolean;
-  onChainDismissed: () => void;
   onExit: (() => void) | undefined;
   onReload: () => void;
-  onSessionIntroducedNewPassage: () => void;
-  onSkipNewPassage: () => void;
-  onUseNewPassage: () => void;
   planEntryId: string;
   reloadNonce: number;
   session: ActiveSession;
 }>): React.JSX.Element {
+  const [chainDismissed, setChainDismissed] = useState(false);
+  const [newPassageIntroduced, setNewPassageIntroduced] = useState(false);
+  const [newPassageSkipped, setNewPassageSkipped] = useState(false);
+
   const displayedStep = selectRecitationSessionStep({
     chainAvailable: session.chainAvailable && !chainDismissed,
     hasDuePassage: session.hasDuePassage,
@@ -164,25 +138,25 @@ function ActiveSessionPanel({
           key={`chain-${reloadNonce}`}
           mode="chain"
           onAction={onReload}
-          onDismissChain={onChainDismissed}
+          onDismissChain={() => setChainDismissed(true)}
           planEntryId={planEntryId}
         />
       ) : displayedStep === "new_passage" ? (
         <NewPassageStep
           onIntroduced={() => {
-            onSessionIntroducedNewPassage();
-            onUseNewPassage();
+            setNewPassageIntroduced(true);
+            setNewPassageSkipped(false);
             onReload();
           }}
-          onSkip={onSkipNewPassage}
+          onSkip={() => setNewPassageSkipped(true)}
           planEntryId={planEntryId}
         />
       ) : (
         <CompletionStep
           newPassageAvailable={session.newPassage.available}
           onIntroduced={() => {
-            onSessionIntroducedNewPassage();
-            onUseNewPassage();
+            setNewPassageIntroduced(true);
+            setNewPassageSkipped(false);
             onReload();
           }}
           planEntryId={planEntryId}

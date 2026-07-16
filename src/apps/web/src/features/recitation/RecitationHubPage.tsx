@@ -120,8 +120,8 @@ function UnadoptedWorkState({ workTitle }: Readonly<{ workTitle: string }>): Rea
   return (
     <div className="flex flex-col gap-3">
       <p className="text-text-muted">
-        You haven&rsquo;t started reciting <span className="text-text">{workTitle}</span> yet. Open it
-        in your Library to adopt it as a recitation routine.
+        You haven&rsquo;t started reciting <span className="text-text">{workTitle}</span> yet. Open
+        it in your Library to adopt it as a recitation routine.
       </p>
       <Link className={buttonVariants({ variant: "secondary" })} to="/library">
         Go to Library

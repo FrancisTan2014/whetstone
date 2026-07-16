@@ -406,6 +406,22 @@ describe("GET /api/recitation/session", () => {
     expect(session.newPassage.available).toBe(false);
   });
 
+  it("presents the first Work on a clear routine when no Work offers new material", async () => {
+    // A single-passage plan, its only passage introduced then pushed past due: nothing is required (one
+    // passage is never chain-eligible and the whole Work is not owned) and no new material remains to
+    // introduce. With no required Work selected and no new-material Work, the routine falls back to the
+    // first Work by stable id so the clear session still names a concrete Work (#633 AC5).
+    const { passageIds, planEntryId } = await seedPlan("work-1", ["Only."]);
+    await introduceNext(planEntryId);
+    await setDueAt(passageIds[0]!, "2999-01-01T00:00:00.000Z");
+
+    const session = activeSession(await getSession());
+    expect(session.planEntryId).toBe(planEntryId);
+    expect(session.step).toBe("clear");
+    expect(session.newPassage.available).toBe(false);
+    expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+  });
+
   it("treats an empty pinned query the same as no pin", async () => {
     const first = await seedPlan("work-1", ["One."]);
     await introduceNext(first.planEntryId);

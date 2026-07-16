@@ -34,7 +34,11 @@ describe("recitationHubDtoSchema", () => {
   });
 
   it("accepts the unadopted_work state carrying the requested Work", () => {
-    const unadopted = { status: "unadopted_work", workEntryId: "work-9", workTitle: "Ode" } as const;
+    const unadopted = {
+      status: "unadopted_work",
+      workEntryId: "work-9",
+      workTitle: "Ode"
+    } as const;
     expect(recitationHubDtoSchema.parse(unadopted)).toEqual(unadopted);
   });
 
