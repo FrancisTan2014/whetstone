@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AnchoredNoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
@@ -43,6 +43,40 @@ function marks(container: Element): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(".noteMark"));
 }
 
+function dispatch(el: Element, event: Event): Event {
+  el.dispatchEvent(event);
+
+  return event;
+}
+
+function click(el: Element): void {
+  dispatch(el, new MouseEvent("click", { bubbles: true }));
+}
+
+function keydown(el: Element, key: string): KeyboardEvent {
+  return dispatch(
+    el,
+    new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key })
+  ) as KeyboardEvent;
+}
+
+function selectText(node: Node): void {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+const subBlockAnchor = {
+  blockEntryId: toEntryId("b1"),
+  contextSnapshot: "First block text.",
+  endBlockEntryId: toEntryId("b1"),
+  endOffset: 11,
+  selectedTextSnapshot: "block",
+  startOffset: 6
+} as AnchoredNoteDto["anchor"];
+
 describe("noteHighlightDescriptors", () => {
   it("skips a whole-block note that has no offsets", () => {
     expect(
@@ -58,16 +92,7 @@ describe("noteHighlightDescriptors", () => {
   });
 
   it("derives a bounded prefix/suffix from the context snapshot for a single-block note", () => {
-    const [descriptor] = noteHighlightDescriptors([
-      note({
-        blockEntryId: toEntryId("b1"),
-        contextSnapshot: "First block text.",
-        endBlockEntryId: toEntryId("b1"),
-        endOffset: 11,
-        selectedTextSnapshot: "block",
-        startOffset: 6
-      })
-    ]);
+    const [descriptor] = noteHighlightDescriptors([note(subBlockAnchor)]);
 
     expect(descriptor).toMatchObject({
       exact: "block",
@@ -110,34 +135,240 @@ describe("applyNoteHighlights", () => {
     '<div data-block-id="b1">First block text.</div>' +
     '<div data-block-id="b2">Second block text.</div>';
 
-  it("wraps exactly the anchored text in an inert decoration span (block-id + offset)", () => {
+  it("wraps the anchored text in an interactive underline naming the note it opens", () => {
     const container = reader(twoBlocks);
 
     const cleanup = applyNoteHighlights(container, [
-      note(
-        {
-          blockEntryId: toEntryId("b1"),
-          contextSnapshot: "First block text.",
-          endOffset: 11,
-          selectedTextSnapshot: "block",
-          startOffset: 6
-        } as AnchoredNoteDto["anchor"],
-        { entryId: toEntryId("n1") }
-      )
+      note(subBlockAnchor, { entryId: toEntryId("n1") })
     ]);
 
     const [mark] = marks(container);
     expect(mark?.textContent).toBe("block");
     expect(mark?.className).toBe("noteMark noteMark--note");
     expect(mark?.getAttribute("data-note-id")).toBe("n1");
-    // The span is semantic decoration only (#555) — never an interactive control.
-    expect(mark?.getAttribute("role")).toBeNull();
-    expect(mark?.getAttribute("tabindex")).toBeNull();
-    expect(mark?.getAttribute("aria-label")).toBeNull();
+    expect(mark?.getAttribute("role")).toBe("button");
+    expect(mark?.getAttribute("tabindex")).toBe("0");
+    expect(mark?.getAttribute("aria-label")).toBe("Open note on 'block'");
 
     cleanup();
     expect(marks(container)).toHaveLength(0);
     expect(container.querySelector('[data-block-id="b1"]')?.textContent).toBe("First block text.");
+  });
+
+  it("names a bodyless mark's underline as a mark", () => {
+    const container = reader(twoBlocks);
+
+    applyNoteHighlights(container, [
+      note(subBlockAnchor, {
+        bodyDoc: null,
+        bodyText: null,
+        entryId: toEntryId("m1"),
+        kind: "mark"
+      })
+    ]);
+
+    const [mark] = marks(container);
+    expect(mark?.className).toBe("noteMark noteMark--mark");
+    expect(mark?.getAttribute("aria-label")).toBe("Open mark on 'block'");
+  });
+
+  it("reports the covering note id when an underline is clicked", () => {
+    const container = reader(twoBlocks);
+    const onActivate = vi.fn();
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    click(marks(container)[0] as HTMLElement);
+
+    expect(onActivate).toHaveBeenCalledWith(["n1"]);
+  });
+
+  it("activates the underline from the keyboard and prevents Space from scrolling", () => {
+    const container = reader(twoBlocks);
+    const onActivate = vi.fn();
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const [mark] = marks(container);
+
+    const enter = keydown(mark as HTMLElement, "Enter");
+    const space = keydown(mark as HTMLElement, " ");
+
+    expect(onActivate).toHaveBeenCalledTimes(2);
+    expect(onActivate).toHaveBeenNthCalledWith(1, ["n1"]);
+    expect(space.defaultPrevented).toBe(true);
+    // Enter also activates (its default is not the scroll that Space is prevented for).
+    expect(enter.type).toBe("keydown");
+  });
+
+  it("prevents default but does not swallow a keyboard activation on an id-less underline", () => {
+    const container = reader(
+      '<div data-block-id="b1">First block text.</div>' + '<p><span class="noteMark">x</span></p>'
+    );
+    const onActivate = vi.fn();
+    const bubbled = vi.fn();
+    document.addEventListener("keydown", bubbled);
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const enter = keydown(
+      container.querySelector(".noteMark:not([data-note-id])") as HTMLElement,
+      "Enter"
+    );
+
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
+    expect(bubbled).toHaveBeenCalledTimes(1);
+    document.removeEventListener("keydown", bubbled);
+  });
+
+  it("ignores keys other than Enter/Space and keys pressed off any underline", () => {
+    const container = reader(twoBlocks);
+    const onActivate = vi.fn();
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const [mark] = marks(container);
+
+    keydown(mark as HTMLElement, "a");
+    keydown(container.querySelector('[data-block-id="b2"]') as HTMLElement, "Enter");
+
+    expect(onActivate).not.toHaveBeenCalled();
+  });
+
+  it("reports overlapping notes innermost-first and de-duplicates a repeated id", () => {
+    const container = reader(
+      '<div data-block-id="b1">First block text.</div>' +
+        '<p><span class="noteMark" data-note-id="outer">' +
+        '<span class="noteMark" data-note-id="inner">' +
+        '<span class="noteMark" data-note-id="inner">x</span></span></span></p>'
+    );
+    const onActivate = vi.fn();
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const innermost = container.querySelector('[data-note-id="inner"] [data-note-id="inner"]');
+    click(innermost as HTMLElement);
+
+    expect(onActivate).toHaveBeenCalledWith(["inner", "outer"]);
+  });
+
+  it("skips an enclosing element that is a noteMark without a note id", () => {
+    const container = reader(
+      '<div data-block-id="b1">First block text.</div>' +
+        '<p><span class="noteMark" data-note-id="real">' +
+        '<span class="noteMark">x</span></span></p>'
+    );
+    const onActivate = vi.fn();
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    click(container.querySelector(".noteMark .noteMark") as HTMLElement);
+
+    expect(onActivate).toHaveBeenCalledWith(["real"]);
+  });
+
+  it("does not report or swallow a click that misses every underline", () => {
+    const container = reader(twoBlocks);
+    const onActivate = vi.fn();
+    const bubbled = vi.fn();
+    document.addEventListener("click", bubbled);
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    click(container.querySelector('[data-block-id="b2"]') as HTMLElement);
+
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(bubbled).toHaveBeenCalledTimes(1);
+    document.removeEventListener("click", bubbled);
+  });
+
+  it("ignores an activation whose target is a bare text node, not an element", () => {
+    const container = reader(twoBlocks);
+    const onActivate = vi.fn();
+    const bubbled = vi.fn();
+    document.addEventListener("click", bubbled);
+
+    applyNoteHighlights(
+      container,
+      [note(subBlockAnchor, { entryId: toEntryId("n1") })],
+      onActivate
+    );
+    const textNode = (container.querySelector('[data-block-id="b2"]') as HTMLElement)
+      .firstChild as Text;
+    textNode.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(bubbled).toHaveBeenCalledTimes(1);
+    document.removeEventListener("click", bubbled);
+  });
+
+  it("stops a collapsed tap on an underline from reaching the reader's selection capture", () => {
+    const container = reader(twoBlocks);
+    const captured = vi.fn();
+    document.addEventListener("mouseup", captured);
+    document.addEventListener("touchend", captured);
+
+    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], vi.fn());
+    const [mark] = marks(container);
+
+    dispatch(mark as HTMLElement, new MouseEvent("mouseup", { bubbles: true }));
+    dispatch(mark as HTMLElement, new Event("touchend", { bubbles: true }));
+
+    expect(captured).not.toHaveBeenCalled();
+    document.removeEventListener("mouseup", captured);
+    document.removeEventListener("touchend", captured);
+  });
+
+  it("leaves a real drag that ends on an underline free to open capture", () => {
+    const container = reader(twoBlocks);
+    const captured = vi.fn();
+    document.addEventListener("mouseup", captured);
+
+    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], vi.fn());
+    const [mark] = marks(container);
+    selectText(mark as Node);
+
+    dispatch(mark as HTMLElement, new MouseEvent("mouseup", { bubbles: true }));
+
+    expect(captured).toHaveBeenCalledTimes(1);
+    document.removeEventListener("mouseup", captured);
+  });
+
+  it("ignores a release that lands off any underline", () => {
+    const container = reader(twoBlocks);
+    const captured = vi.fn();
+    document.addEventListener("mouseup", captured);
+
+    applyNoteHighlights(container, [note(subBlockAnchor, { entryId: toEntryId("n1") })], vi.fn());
+    dispatch(
+      container.querySelector('[data-block-id="b2"]') as HTMLElement,
+      new MouseEvent("mouseup", { bubbles: true })
+    );
+
+    expect(captured).toHaveBeenCalledTimes(1);
+    document.removeEventListener("mouseup", captured);
   });
 
   it("highlights a cross-block span: the start tail and the end head", () => {
@@ -247,19 +478,40 @@ describe("applyNoteHighlights", () => {
     expect(all[0]?.textContent).toBe("block");
   });
 
-  it("returns a no-op cleanup and adds nothing when every note is whole-block", () => {
+  it("returns a no-op cleanup and wires no activation when every note is whole-block", () => {
     const container = reader(twoBlocks);
+    const onActivate = vi.fn();
 
-    const cleanup = applyNoteHighlights(container, [
-      note({
-        blockEntryId: toEntryId("b1"),
-        contextSnapshot: "First block text.",
-        endBlockEntryId: toEntryId("b1"),
-        selectedTextSnapshot: "First block text."
-      })
-    ]);
+    const cleanup = applyNoteHighlights(
+      container,
+      [
+        note({
+          blockEntryId: toEntryId("b1"),
+          contextSnapshot: "First block text.",
+          endBlockEntryId: toEntryId("b1"),
+          selectedTextSnapshot: "First block text."
+        })
+      ],
+      onActivate
+    );
 
     expect(marks(container)).toHaveLength(0);
     expect(() => cleanup()).not.toThrow();
+  });
+
+  it("wires no activation when no handler is supplied", () => {
+    const container = reader(twoBlocks);
+    const captured = vi.fn();
+    document.addEventListener("mouseup", captured);
+
+    const cleanup = applyNoteHighlights(container, [
+      note(subBlockAnchor, { entryId: toEntryId("n1") })
+    ]);
+    // With no handler there is no delegated listener, so a tap on the underline is left untouched.
+    dispatch(marks(container)[0] as HTMLElement, new MouseEvent("mouseup", { bubbles: true }));
+
+    expect(captured).toHaveBeenCalledTimes(1);
+    expect(() => cleanup()).not.toThrow();
+    document.removeEventListener("mouseup", captured);
   });
 });

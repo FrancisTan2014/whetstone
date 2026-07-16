@@ -3,6 +3,7 @@ import type { AnchoredNoteDto } from "@whetstone/contracts";
 
 import { noteMarkHueClass } from "./annotationHue.tokens";
 import { blockTextContent, rangeWithinElement } from "./blockText";
+import { noteMarkLabel } from "./noteActivation";
 import { textQuoteRange, wrapRange } from "./textHighlight";
 
 // Render note annotations as render-time DOM decorations over the PM-rendered reader (#313),
@@ -35,7 +36,7 @@ export type NoteHighlightDescriptor = Readonly<{
 }>;
 
 // The highlight descriptors for a set of notes, in note order. A whole-block note (no offsets) is
-// skipped — it shows a gutter bar, not an underline. Pure (no DOM), so the anchor-to-decoration
+// skipped — it draws no inline underline and stays reachable only through the Notes panel (#644). Pure (no DOM), so the anchor-to-decoration
 // mapping is tested in isolation; the prefix/suffix are derived from the stored context snapshot so a
 // re-anchor stays pinned to the right occurrence even after the block's offsets shift.
 export function noteHighlightDescriptors(
@@ -87,12 +88,16 @@ function blockIdOf(block: HTMLElement): string {
 }
 
 function highlightAttributes(descriptor: NoteHighlightDescriptor): Record<string, string> {
-  // Inert semantic decoration only (#555): the span underlines its anchored words and carries the note
-  // id (so the applied highlight can be located/unwrapped), but is NOT an interactive control — the
-  // block's always-visible >=44px edge opener is the accessible tap/keyboard target.
+  // The inline underline IS the annotation's direct activation target (#644): a real focusable control
+  // (role=button, tab order, an accessible name naming the note kind + anchored text) that opens THAT
+  // note when activated by mouse, touch, or keyboard. It still carries the note id so the applied
+  // highlight can be located/unwrapped and so overlapping underlines resolve to a chooser.
   return {
+    "aria-label": noteMarkLabel(descriptor.kind, descriptor.exact),
     class: `noteMark ${noteMarkHueClass(descriptor.kind)}`,
-    "data-note-id": descriptor.noteId
+    "data-note-id": descriptor.noteId,
+    role: "button",
+    tabindex: "0"
   };
 }
 
@@ -159,14 +164,119 @@ function rangesByQuote(
   return range === undefined ? undefined : [range];
 }
 
+// The ordered note ids covering an activated underline, innermost first: the activated element and any
+// enclosing `noteMark` ancestors up to the reader container. Disjoint annotations (#163) wrap disjoint
+// text, so this is a single id in the common case; genuinely overlapping notes nest their spans, so the
+// chain carries every note the activated text belongs to — the signal to open a chooser, not one note.
+function activatedNoteIds(start: Element, container: Element): string[] {
+  const ids: string[] = [];
+  let mark = start.closest<HTMLElement>(".noteMark");
+
+  while (mark !== null && container.contains(mark)) {
+    const id = mark.dataset.noteId;
+
+    if (id !== undefined && !ids.includes(id)) {
+      ids.push(id);
+    }
+
+    mark = mark.parentElement?.closest<HTMLElement>(".noteMark") ?? null;
+  }
+
+  return ids;
+}
+
+// Wire direct activation of the inline underlines: a delegated click / Enter / Space on a `noteMark`
+// reports the covering note ids so the caller opens that note (or a chooser on genuine overlap), and a
+// collapsed tap on an underline is stopped from reaching the reader's document-level selection capture
+// (so activating an annotation never starts a new selection flow, #644). A real drag that merely ends on
+// an underline still has a live selection, so its release is left to open capture/lookup as usual.
+function attachActivation(
+  container: Element,
+  onActivate: (noteIds: ReadonlyArray<string>) => void
+): () => void {
+  const fire = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    const ids = activatedNoteIds(target, container);
+
+    if (ids.length === 0) {
+      return false;
+    }
+
+    onActivate(ids);
+
+    return true;
+  };
+
+  const onClick = (event: Event): void => {
+    if (fire(event.target)) {
+      event.stopPropagation();
+    }
+  };
+
+  const onKeyDown = (event: Event): void => {
+    const key = (event as KeyboardEvent).key;
+
+    if (key !== "Enter" && key !== " ") {
+      return;
+    }
+
+    const target = event.target;
+
+    if (!(target instanceof Element) || target.closest(".noteMark") === null) {
+      return;
+    }
+
+    // Space would otherwise scroll the reader; Enter/Space here activate the underline instead.
+    event.preventDefault();
+
+    if (fire(target)) {
+      event.stopPropagation();
+    }
+  };
+
+  const onRelease = (event: Event): void => {
+    const target = event.target;
+
+    if (!(target instanceof Element) || target.closest(".noteMark") === null) {
+      return;
+    }
+
+    const selection = window.getSelection();
+
+    if (selection !== null && !selection.isCollapsed) {
+      return;
+    }
+
+    event.stopPropagation();
+  };
+
+  container.addEventListener("click", onClick);
+  container.addEventListener("keydown", onKeyDown);
+  container.addEventListener("mouseup", onRelease);
+  container.addEventListener("touchend", onRelease);
+
+  return () => {
+    container.removeEventListener("click", onClick);
+    container.removeEventListener("keydown", onKeyDown);
+    container.removeEventListener("mouseup", onRelease);
+    container.removeEventListener("touchend", onRelease);
+  };
+}
+
 // Apply every note's highlight over the reader's rendered blocks and return a cleanup that removes
 // them. Each note resolves by block id + offset first, then by TextQuote; the resolved range(s) are
-// wrapped in an external, inert `noteMark` span carrying the hue and the note id (#555 — the span is
-// semantic decoration, not a control; the block's edge opener is the accessible target).
-// Wrapping preserves the rendered text, so later notes still resolve against unchanged offsets.
+// wrapped in an interactive `noteMark` underline carrying the hue, accessible name, and note id (#644 —
+// the underline itself is the annotation's direct activation target). Wrapping preserves the rendered
+// text, so later notes still resolve against unchanged offsets. `onActivate`, when given, is called
+// with the note ids covering an activated underline (innermost first) so the caller opens that note or,
+// on genuine overlap, a chooser.
 export function applyNoteHighlights(
   container: Element,
-  notes: ReadonlyArray<AnchoredNoteDto>
+  notes: ReadonlyArray<AnchoredNoteDto>,
+  onActivate?: (noteIds: ReadonlyArray<string>) => void
 ): () => void {
   const descriptors = noteHighlightDescriptors(notes);
   const removers: Array<() => void> = [];
@@ -196,7 +306,11 @@ export function applyNoteHighlights(
     }
   }
 
+  const detach = onActivate === undefined ? () => {} : attachActivation(container, onActivate);
+
   return () => {
+    detach();
+
     for (const remove of removers) {
       remove();
     }

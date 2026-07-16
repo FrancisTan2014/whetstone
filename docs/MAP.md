@@ -667,21 +667,25 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   change. **Note highlights are render-time DOM
   decorations from the external anchor store (#313), never marks in the stored document:** at load
   `useNoteHighlights.ts` resolves each note's anchor over the rendered `.reader` blocks and wraps the
-  matched range(s) in an external `noteMark` span (`applyNoteHighlights.ts`). The span is **inert
-  semantic decoration** (#555) — not a control; each annotated block instead carries ONE always-visible
-  `readerBlockOpener` (≥44×44, out of text flow in the page margin/edge) as the block's accessible
-  tap/keyboard target. `blockAnnotationOpener.ts` (pure, unit-tested) computes the opener's accessible
-  name and routes activation: a lone rich note opens its editor directly (targeting by `entryId`),
-  everything else (a bodyless mark, or multiple annotations) opens the block chooser aside;
-  `blockOpener.tokens.ts` (coverage-excluded) holds its hue-by-kind class. Resolution is block-id + offset first (`blockText.ts` maps the
+  matched range(s) in an external `noteMark` span (`applyNoteHighlights.ts`). The span **is the
+  annotation's direct activation target** (#644, restoring the #555 direct annotation↔editor tie): a
+  real focusable control (`role=button`, tab order, an accessible name naming the note kind + anchored
+  text, clear hover/focus) that opens THAT note when activated by mouse, touch, or keyboard — inline
+  prose uses the WCAG inline-text target exception (no line-height change), and the 44px Notes
+  tool/list is the alternate target. There is no paragraph pencil and no reserved gutter/rail.
+  `noteActivation.ts` (pure, unit-tested) holds the two product decisions: the underline's accessible
+  name, and how the note ids covering an activated position resolve — a lone rich note opens its editor
+  directly (targeting by `entryId`); a lone bodyless mark, or genuinely **overlapping** notes (nested
+  underlines, disjoint by design #163 so this is only true overlap), open the compact chooser aside
+  scoped to exactly those annotations, never the whole paragraph. Resolution is block-id + offset first (`blockText.ts` maps the
   shared character-offset model to/from DOM ranges, `spanMarks.ts` splits a span across blocks), then
   a W3C **TextQuote** re-anchor (`textHighlight.ts`, dependency-free) using the stored
   `selectedTextSnapshot` (+ `contextSnapshot` as prefix/suffix) when the offsets no longer fit (doc
   edit / re-ingest); `textHighlight.ts` also wraps a resolved range's text nodes in the highlight
   span(s).
   Cross-block notes are first-class — highlighted from the start block's tail through every middle
-  block to the end block's head. A whole-block note (no offsets) shows a restrained hue gutter bar
-  instead of an underline; its edge opener (above) still opens it. The reader opens the
+  block to the end block's head. A whole-block note (no offsets) draws no inline underline; it stays
+  reachable through the Notes tool/list. The reader opens the
   `?work=`/`?block=` target on arrival via `AppRoutes`' `ReaderRoute`. The reading `article` is whetstone's own
   selection surface: it prevents the right-click `contextmenu` and uses `-webkit-touch-callout: none`
   with `user-select: text` so the mobile/Capacitor long-press callout doesn't collide with the
@@ -710,9 +714,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   fold and are untappable — #511; `ReaderPage.tsx` owns the narrow-screen tap state). On mobile the
   whole chrome recedes as one through the `data-hidden` flag; on desktop only the title recedes on
   scroll-up (via `useReaderScroll.ts`) while the tool rail persists. `readingSize.ts` holds the
-  text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its hue key
-  for the highlight (`noteMark--<hue>`, applied by `applyNoteHighlights.ts`) and whole-block gutter
-  (`readerBlock--<hue>`) classes.
+  text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its inline
+  highlight hue key (`noteMark--<hue>`, applied by `applyNoteHighlights.ts`).
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability
   targets via the `.reader` rules in `styles/theme.css` (even rhythm owned by `.readerBlock`, restored
   list markers, monospace code surface, ~66ch measure); `readerHeadings.ts` decides when a unit's
