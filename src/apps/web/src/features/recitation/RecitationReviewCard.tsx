@@ -1,119 +1,41 @@
-import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-import type { DueRecitationPassageDto, RecitationSupportLevelDto } from "@whetstone/contracts";
-import type { SupportProjection } from "@whetstone/domain";
-import {
-  passageCueText,
-  projectRecitationSupport,
-  recitationRatingChoices,
-  recitationSupportLevels,
-  supportLevelShowsTarget
-} from "@whetstone/domain";
+import type { RecitationReviewDto } from "@whetstone/contracts";
+import { recitationRatingChoices } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
-import { useMediaQuery } from "../../shared/ui/useMediaQuery";
-import { supportFadeInitialOpacity, supportFadeTransition } from "./recitationFade.tokens";
-import { reviewPassage, setSupportLevel } from "./recitationPassageApi";
-import { recitationSupportLevelLabels } from "./recitationLabels";
+import { recordRecitationReview } from "./recitationApi";
 
-// A masked run of the target: the length is shown as neutral glyphs (never the hidden characters), and a
-// visually-hidden label announces it as "hidden text" so a screen reader hears an explicit gap rather
-// than a misleading partial sentence (#579).
-function MaskedRun({ length }: Readonly<{ length: number }>): React.JSX.Element {
-  return (
-    <span className="text-text-muted">
-      <span aria-hidden="true">{"·".repeat(length)}</span>
-      <span className="sr-only">hidden text</span>
-    </span>
-  );
-}
-
-// Render a faded projection of the passage: each source line becomes a block, each segment either the
-// shown source text or a masked run. `whitespace-pre-wrap` preserves the original spacing so reduced
-// levels keep the passage's shape.
-function SupportText({
-  projection
-}: Readonly<{ projection: SupportProjection }>): React.JSX.Element {
-  return (
-    <span className="whitespace-pre-wrap">
-      {projection.lines.map((line, lineIndex) => (
-        // Lines are derived positionally from the canonical text, so the index is a stable key.
-        <span className="block" key={lineIndex}>
-          {line.length === 0
-            ? "\u00a0"
-            : line.map((segment, segmentIndex) =>
-                segment.kind === "shown" ? (
-                  <span key={segmentIndex}>{segment.text}</span>
-                ) : (
-                  <MaskedRun key={segmentIndex} length={segment.length} />
-                )
-              )}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-// One due recitation passage as a two-phase attempt (#578, faded by #579): the learner chooses how much
-// visual support to keep — the whole passage, the first half of each clause, each clause's first unit,
-// or none (the external cue) — attempts aloud from that scaffold, Reveals the exact source, then
-// self-assesses. Lowering the support level is the retrieval effort; the level is remembered per passage
-// and is a preference, never a grade — only the final rating updates FSRS. Fading is a pure render-time
-// projection over the canonical text (the reveal always shows the unchanged source). A passage whose
-// source drifted beyond a safe re-anchor is shown as needing repair instead of practising stale text.
+// One whole-Work maintenance review (#643): the learner is asked to recite the exact Work from memory,
+// Reveals the canonical source (read live from the Work's blocks — never copied into recitation state),
+// then self-assesses with Again/Hard/Good/Easy. Only the rating updates FSRS; the reveal itself writes
+// nothing. Rating appends exactly one review event and reschedules only this Work's card, and the
+// rescheduled review is handed back so the page can show when the Work is next due.
 export function RecitationReviewCard({
   onReviewed,
-  passage
+  review
 }: Readonly<{
-  onReviewed: () => void;
-  passage: DueRecitationPassageDto;
+  onReviewed: (next: RecitationReviewDto) => void;
+  review: RecitationReviewDto;
 }>): React.JSX.Element {
-  const [supportLevel, setSupportLevelState] = useState<RecitationSupportLevelDto>(
-    passage.supportLevel
-  );
   const [revealed, setRevealed] = useState(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [leadInFailed, setLeadInFailed] = useState(false);
-  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const targetRef = useRef<HTMLParagraphElement>(null);
+  const sourceRef = useRef<HTMLParagraphElement>(null);
 
-  // The immediate predecessor exists to be practised as an ungraded lead-in (#580): the transition into
-  // this passage. It is offered only when the server supplies the preceding text.
-  const hasLeadIn = passage.precedingText !== null && passage.precedingText !== "";
-
-  // On reveal, move focus to the revealed target so a screen reader announces it (the rating buttons
-  // only enter the a11y tree in this phase).
+  // On reveal, move focus to the revealed source so a screen reader announces it (the rating buttons only
+  // enter the a11y tree in this phase).
   useEffect(() => {
     if (revealed) {
-      targetRef.current?.focus();
+      sourceRef.current?.focus();
     }
   }, [revealed]);
-
-  if (passage.anchorStatus === "needs_repair") {
-    return (
-      <div className="flex flex-col gap-2">
-        <p className="text-text">{passage.context}</p>
-        <p className="text-text-muted" role="alert">
-          This passage&rsquo;s source has changed. It needs repair before you practise it again.
-        </p>
-      </div>
-    );
-  }
-
-  // Persist the chosen level optimistically: the projection follows local state immediately, and a
-  // failed save must not disrupt practice, so the network write is best-effort.
-  function selectSupportLevel(level: RecitationSupportLevelDto): void {
-    setSupportLevelState(level);
-    void setSupportLevel(passage.passageEntryId, level).catch(() => undefined);
-  }
 
   function rate(rating: (typeof recitationRatingChoices)[number]["rating"]): void {
     setPending(true);
     setFailed(false);
-    reviewPassage(passage.passageEntryId, rating, passage.defaultCueStrength, leadInFailed).then(
-      () => onReviewed(),
+    recordRecitationReview(review.planEntryId, rating).then(
+      (response) => onReviewed(response.review),
       () => {
         setPending(false);
         setFailed(true);
@@ -121,58 +43,24 @@ export function RecitationReviewCard({
     );
   }
 
-  const cueText = passageCueText(
-    passage.defaultCueStrength,
-    passage.targetText,
-    passage.precedingText
-  );
-
   return (
     <div className="flex flex-col gap-3">
-      <div>
-        <p className="text-sm text-text-muted">{passage.context}</p>
-        {revealed ? (
-          <p
-            className="mt-1 text-lg text-text focus-visible:outline-none"
-            ref={targetRef}
-            tabIndex={-1}
-          >
-            {passage.targetText}
-          </p>
-        ) : supportLevelShowsTarget(supportLevel) ? (
-          <motion.div
-            animate={{ opacity: 1 }}
-            className="mt-1 text-lg text-text"
-            initial={{ opacity: supportFadeInitialOpacity(prefersReducedMotion) }}
-            key={supportLevel}
-            transition={supportFadeTransition(prefersReducedMotion)}
-          >
-            <SupportText projection={projectRecitationSupport(passage.targetText, supportLevel)} />
-          </motion.div>
-        ) : (
-          <p aria-label="Cue" className="mt-1 text-lg text-text">
-            {cueText === "" ? (
-              <span className="text-text-muted">No cue — begin from memory.</span>
-            ) : (
-              cueText
-            )}
-          </p>
-        )}
-      </div>
+      <p className="text-text">
+        Recite <span className="font-medium">{review.workTitle}</span> from memory, then reveal the
+        source to check yourself.
+      </p>
 
       {revealed ? (
-        <div className="flex flex-col gap-2">
-          {hasLeadIn ? (
-            <label className="flex items-center gap-2 text-sm text-text-muted">
-              <input
-                checked={leadInFailed}
-                onChange={(event) => setLeadInFailed(event.target.checked)}
-                type="checkbox"
-              />
-              The lead-in from the previous passage broke down
-            </label>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-3">
+          <p
+            aria-label="Source"
+            className="whitespace-pre-wrap text-lg text-text focus-visible:outline-none"
+            ref={sourceRef}
+            tabIndex={-1}
+          >
+            {review.sourceText}
+          </p>
+          <div className="flex flex-wrap items-center gap-2" role="group">
             {recitationRatingChoices.map((choice) => (
               <Button
                 key={choice.rating}
@@ -187,25 +75,10 @@ export function RecitationReviewCard({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          <div aria-label="Support level" className="flex flex-wrap gap-2" role="group">
-            {recitationSupportLevels.map((level) => (
-              <Button
-                aria-pressed={level === supportLevel}
-                key={level}
-                onClick={() => selectSupportLevel(level)}
-                size="sm"
-                variant={level === supportLevel ? "primary" : "ghost"}
-              >
-                {recitationSupportLevelLabels[level]}
-              </Button>
-            ))}
-          </div>
-          <div>
-            <Button onClick={() => setRevealed(true)} size="sm" variant="primary">
-              Reveal
-            </Button>
-          </div>
+        <div>
+          <Button onClick={() => setRevealed(true)} size="sm" variant="primary">
+            Reveal
+          </Button>
         </div>
       )}
 

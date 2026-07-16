@@ -2,10 +2,8 @@ import type { AuthoredWorkSummaryDto, LatestReadingPositionDto } from "@whetston
 import {
   composeTodayBoard,
   localDayKey,
-  recitationTodayRoutineSummary,
   type TodayBoard,
   type TodayInvitationSource,
-  type TodayNewPassageSource,
   type TodayRoutineSource
 } from "@whetstone/domain";
 
@@ -13,7 +11,7 @@ import type { DbClient } from "../../db/dbClient.js";
 import { getLatestAuthoredWorkInProgress } from "../authoredWorks/authoredWorkQueries.js";
 import { loadMemoryRoutineSummary } from "../memory/memoryQueries.js";
 import { getLatestReadingPosition } from "../readingPosition/readingPositionQueries.js";
-import { loadRecitationSession } from "../recitation/recitationSessionQueries.js";
+import { loadRecitationRoutineSummary } from "../recitation/recitationReviewQueries.js";
 
 export type TodayDependencies = Readonly<{ db: DbClient }>;
 
@@ -25,44 +23,23 @@ export type TodayDependencies = Readonly<{ db: DbClient }>;
 // route validates at the API boundary before sending.
 export type TodayBoardResult = TodayBoard<LatestReadingPositionDto, AuthoredWorkSummaryDto>;
 
-const NO_DUE_ROUTINE: TodayRoutineSource = {
-  status: "ok",
-  summary: { dueCount: 0, nextDueAt: null, overdueCount: 0 }
-};
-
-// The Recitation routine (#609) and its "New passage" invitation (#607) both derive from one session
-// projection, so one guarded load yields both. A thrown load fails the routine (keeping the board
-// un-clear) and quietly fails the invitation; a plan-less learner has no due routine and no invitation.
-async function loadRecitationSources(
-  dependencies: TodayDependencies,
+// The Recitation routine (#643): its due state derives ONLY from the learner's Work-level maintenance
+// review cards, aggregated across every unpaused plan (#633). Passage/chain/introduction/ownership state
+// no longer contributes, so a plan with no due Work-level card never blocks Today from becoming clear. A
+// thrown load fails the routine (keeping the board un-clear rather than falsely clear).
+async function loadRecitationSource(
+  db: DbClient,
   userId: string,
   now: Date,
   timeZone: string
-): Promise<Readonly<{ newPassage: TodayNewPassageSource; routine: TodayRoutineSource }>> {
+): Promise<TodayRoutineSource> {
   try {
-    const session = await loadRecitationSession(dependencies, userId, now, timeZone);
-    if (session.status === "no_plan") {
-      return { newPassage: { planEntryId: null, status: "ok" }, routine: NO_DUE_ROUTINE };
-    }
     return {
-      newPassage: {
-        planEntryId: session.newPassage.available ? session.planEntryId : null,
-        status: "ok"
-      },
-      routine: {
-        status: "ok",
-        // A required non-card step (unstarted whole-Work / eligible chain) has no due card, so fold the
-        // session step into the summary here — a card-only view would let Today falsely report clear
-        // while a real recitation obligation is pending (#610).
-        summary: recitationTodayRoutineSummary({
-          due: session.due,
-          nowIso: now.toISOString(),
-          step: session.step
-        })
-      }
+      status: "ok",
+      summary: await loadRecitationRoutineSummary({ db }, userId, now, timeZone)
     };
   } catch {
-    return { newPassage: { status: "failed" }, routine: { status: "failed" } };
+    return { status: "failed" };
   }
 }
 
@@ -109,7 +86,7 @@ export async function loadTodayBoard(
   timeZone: string
 ): Promise<TodayBoardResult> {
   const { db } = dependencies;
-  const recitation = await loadRecitationSources(dependencies, userId, now, timeZone);
+  const recitation = await loadRecitationSource(db, userId, now, timeZone);
   const memory = await loadMemorySource(db, userId, now, timeZone);
   const reading = await loadReadingSource(db, userId);
   const writing = await loadWritingSource(db, userId);
@@ -117,9 +94,8 @@ export async function loadTodayBoard(
   return composeTodayBoard<LatestReadingPositionDto, AuthoredWorkSummaryDto>({
     date: localDayKey(now, timeZone),
     memory,
-    newPassage: recitation.newPassage,
     reading,
-    recitation: recitation.routine,
+    recitation,
     writing
   });
 }

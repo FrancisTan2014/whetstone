@@ -1,21 +1,23 @@
 import type {
-  ContinueRecitationDto,
-  CreateRecitationPlanRequest,
-  RecitationPhaseDto,
   RecitationPlanDto,
-  RecitationPlanListDto
+  RecitationPlanListDto,
+  RecitationReviewRating,
+  RecitationReviewResponse,
+  RecordRecitationReviewResponse
 } from "@whetstone/contracts";
 import {
-  parseContinueRecitationDto,
   parseRecitationPlanDto,
-  parseRecitationPlanListDto
+  parseRecitationPlanListDto,
+  parseRecitationReviewResponse,
+  parseRecordRecitationReviewResponse
 } from "@whetstone/contracts";
 
 import { apiUrl } from "../../shared/runtime";
 
-// The recitation-routines API client (#577): every response is parsed through the shared contracts at the
-// boundary before the feature trusts it, mirroring the authored-Works/diary clients. `apiUrl` supplies the
-// host base, so no path hardcodes `/api`.
+// The direct-maintenance recitation API client (#643): "I can recite this" enrolls a known Work straight
+// into FSRS maintenance, and the review reveals the canonical source and records one whole-Work rating.
+// Every response is parsed through the shared contracts at the boundary before the feature trusts it, and
+// `apiUrl` supplies the host base so no path hardcodes `/api`.
 const jsonHeaders = { "content-type": "application/json" } as const;
 
 async function requestJson<T>(
@@ -32,44 +34,43 @@ async function requestJson<T>(
   return parse(await response.json());
 }
 
-// Adopt a source Work as a recitation routine in the chosen initial phase; the server returns the plan.
-export async function createRecitationPlan(
-  request: CreateRecitationPlanRequest
-): Promise<RecitationPlanDto> {
+// Enroll a known Work into Recitation maintenance ("I can recite this"); the server returns the plan whose
+// durable identity carries the Work through review. Idempotent server-side: re-enrolling reuses the plan.
+export async function enrollRecitation(workEntryId: string): Promise<RecitationPlanDto> {
   return requestJson(
-    apiUrl("/recitation/plans"),
-    { body: JSON.stringify(request), headers: jsonHeaders, method: "POST" },
+    apiUrl("/recitation/enroll"),
+    { body: JSON.stringify({ workEntryId }), headers: jsonHeaders, method: "POST" },
     parseRecitationPlanDto
   );
 }
 
-// The current user's recitation plans, so the Library can mark which Works are already being recited.
+// The current user's recitation plans, so the Library can mark which Works are already in maintenance.
 export async function listRecitationPlans(): Promise<RecitationPlanListDto> {
   return requestJson(apiUrl("/recitation/plans"), undefined, parseRecitationPlanListDto);
 }
 
-// Today's "Continue recitation" target: the most recently touched plan, or null when there is none.
-export async function fetchContinueRecitation(): Promise<ContinueRecitationDto> {
-  return requestJson(apiUrl("/recitation/continue"), undefined, parseContinueRecitationDto);
+// The Work-level maintenance review to open: with `workEntryId` the exact Work's review (the review right
+// after enrolling), or with none the earliest-due Work. `review` is null when nothing is due / the Work is
+// not enrolled, so the caller routes to a Library recovery path instead of a dead screen.
+export async function fetchRecitationReview(
+  workEntryId?: string
+): Promise<RecitationReviewResponse> {
+  const path =
+    workEntryId === undefined
+      ? apiUrl("/recitation/review")
+      : apiUrl(`/recitation/review?work=${encodeURIComponent(workEntryId)}`);
+  return requestJson(path, undefined, parseRecitationReviewResponse);
 }
 
-// The explicit learner-driven phase transition (e.g. "Start reciting"); resolves with the updated plan.
-export async function setRecitationPhase(
+// Record one whole-Work maintenance review: rate the plan's single Work-level card; the server appends one
+// review event, reschedules only that card, and returns the rescheduled review with its next due instant.
+export async function recordRecitationReview(
   planEntryId: string,
-  phase: RecitationPhaseDto
-): Promise<RecitationPlanDto> {
+  rating: RecitationReviewRating
+): Promise<RecordRecitationReviewResponse> {
   return requestJson(
-    apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/phase`),
-    { body: JSON.stringify({ phase }), headers: jsonHeaders, method: "PUT" },
-    parseRecitationPlanDto
-  );
-}
-
-// Record one lightweight reading session (session count + last-session time); resolves with the plan.
-export async function recordRecitationSession(planEntryId: string): Promise<RecitationPlanDto> {
-  return requestJson(
-    apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/session`),
-    { method: "POST" },
-    parseRecitationPlanDto
+    apiUrl(`/recitation/plans/${encodeURIComponent(planEntryId)}/review`),
+    { body: JSON.stringify({ rating }), headers: jsonHeaders, method: "POST" },
+    parseRecordRecitationReviewResponse
   );
 }

@@ -1,6 +1,6 @@
 import type { RecitationPlanDto } from "@whetstone/contracts";
 import type { EntryId } from "@whetstone/domain";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { personalEntries, recitationPlans, workMeta } from "../../db/schema.js";
@@ -97,9 +97,9 @@ export async function listRecitationPlans(
 }
 
 // Every unpaused recitation plan the user owns, ordered by a stable plan id — the set the global routine
-// (#633) aggregates so Today and the inline session report one truthful obligation across every active
-// Work, not just the most-recently-touched plan. A paused plan is excluded (its obligations do not
-// count) and the domain selector orders the survivors, so this read only needs a deterministic id sort.
+// (#633) aggregates so Today derives one truthful obligation across every active Work from its Work-level
+// maintenance card (#643). A paused plan is excluded (its obligations do not count) and the domain
+// selector orders the survivors, so this read only needs a deterministic id sort.
 export async function listActiveRecitationPlans(
   db: DbClient,
   userId: string
@@ -111,27 +111,4 @@ export async function listActiveRecitationPlans(
     .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
     .where(and(eq(personalEntries.userId, userId), isNull(recitationPlans.pausedAt)))
     .orderBy(recitationPlans.entryId);
-}
-
-// Today's "Continue recitation" target: the learner's single most-recently-touched plan, or null when
-// they have adopted none. "Touched" = the last reading session if there is one, else when it was adopted
-// (`coalesce(last_session_at, created_at)`), so a just-adopted plan surfaces immediately and a practised
-// one resurfaces on each session. A stable id tie-break keeps the pick deterministic.
-export async function getContinueRecitation(
-  db: DbClient,
-  userId: string
-): Promise<RecitationPlanDto | null> {
-  const [row] = await db
-    .select(planColumns)
-    .from(recitationPlans)
-    .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
-    .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
-    .where(eq(personalEntries.userId, userId))
-    .orderBy(
-      desc(sql`coalesce(${recitationPlans.lastSessionAt}, ${personalEntries.createdAt})`),
-      recitationPlans.entryId
-    )
-    .limit(1);
-
-  return row === undefined ? null : toRecitationPlanDto(row);
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { motion, type Variants } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 
 import type {
   AuthorDto,
@@ -8,12 +9,10 @@ import type {
   WorkListItemDto
 } from "@whetstone/contracts";
 import {
-  recitationPhases,
   toAuthorId,
   workLanguageLabels,
   workLanguages,
   workTypes,
-  type RecitationPhase,
   type WorkLanguage,
   type WorkType
 } from "@whetstone/domain";
@@ -37,8 +36,7 @@ import {
 } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
-import { createRecitationPlan, listRecitationPlans } from "../recitation/recitationApi";
-import { recitationPhaseHints, recitationPhaseLabels } from "../recitation/recitationLabels";
+import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 
 const newAuthorOption = "new-author-or-source";
 
@@ -87,17 +85,14 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // Which works are user-authored documents (vs imported sources), so the shelf can badge them and route
   // them to the editor instead of the reader — one library, no separate silo (#576).
   const [authoredWorkIds, setAuthoredWorkIds] = useState<ReadonlySet<string>>(new Set());
-  // The learner's recitation plans keyed by source Work, so a card shows "Reciting · <phase>" for a Work
-  // already adopted and offers "Practise recitation" otherwise (#577) — a Work is never adopted twice.
+  // The learner's recitation plans keyed by source Work, so a card shows "Reciting" with a "Review" link
+  // for a Work already enrolled and offers "I can recite this" otherwise (#643) — a Work enrolls once.
   const [recitationByWork, setRecitationByWork] = useState<ReadonlyMap<string, RecitationPlanDto>>(
     new Map()
   );
-  // The Work being adopted as a recitation routine (opens the initial-phase picker), the chosen phase, and
-  // the in-flight/error state of the adopt submission.
-  const [reciteTarget, setReciteTarget] = useState<WorkListItemDto | undefined>(undefined);
-  const [recitePhase, setRecitePhase] = useState<RecitationPhase>("familiarizing");
-  const [reciteSubmitting, setReciteSubmitting] = useState(false);
-  const [reciteError, setReciteError] = useState<string | undefined>(undefined);
+  // The Work whose enrollment is in flight (its entry id), so its "I can recite this" action shows a
+  // pending spinner and can't be double-submitted while the plan is being created.
+  const [enrollingWorkId, setEnrollingWorkId] = useState<string | undefined>(undefined);
 
   const [addOpen, setAddOpen] = useState(false);
   const [newDocOpen, setNewDocOpen] = useState(false);
@@ -123,6 +118,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const toast = useToast();
+  const navigate = useNavigate();
 
   async function reload(): Promise<void> {
     const [authorList, workList, withPosition, authored, recitation] = await Promise.all([
@@ -218,28 +214,21 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setAddOpen(false);
   }
 
-  // "Practise recitation" opens the initial-phase picker for a Work (#577): the learner chooses where to
-  // begin — familiarizing for a new work, or maintenance for one they already recite — before adopting.
-  function openRecitePicker(item: WorkListItemDto): void {
-    setReciteTarget(item);
-    setRecitePhase("familiarizing");
-    setReciteError(undefined);
-  }
-
-  async function onSubmitRecite(event: FormEvent, target: WorkListItemDto): Promise<void> {
-    event.preventDefault();
-
-    setReciteSubmitting(true);
+  // "I can recite this" enrolls the exact Work into direct Recitation maintenance (#643): the learner's
+  // explicit declaration that the Work is retrievable. Enrollment persists BEFORE the first review opens
+  // (and is idempotent — re-clicking never duplicates the plan), then we navigate to the Work's whole-Work
+  // review. Learning and maintenance are separate — there is no phase choice.
+  async function enrollWork(item: WorkListItemDto): Promise<void> {
+    const workEntryId = item.work.entryId;
+    setEnrollingWorkId(workEntryId);
     try {
-      await createRecitationPlan({ phase: recitePhase, workEntryId: target.work.entryId });
-      const adoptedTitle = target.work.title;
-      setReciteTarget(undefined);
+      await enrollRecitation(workEntryId);
       await reload();
-      toast.success(`Added “${adoptedTitle}” to your recitation routines.`);
+      navigate(`/recitation?work=${encodeURIComponent(workEntryId)}`);
     } catch {
-      setReciteError("Could not start this recitation routine. Please try again.");
+      toast.error("Could not start reciting this work. Please try again.");
     } finally {
-      setReciteSubmitting(false);
+      setEnrollingWorkId(undefined);
     }
   }
 
@@ -469,7 +458,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
             listVariants,
             onDelete: setPendingDelete,
             onManageContent,
-            onPractiseRecitation: openRecitePicker,
+            onRecite: (item) => void enrollWork(item),
+            enrollingWorkId,
             recitationByWork,
             worksWithPosition
           })
@@ -643,46 +633,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
           </div>
         </Sheet>
       ) : null}
-
-      {reciteTarget !== undefined ? (
-        <Sheet onOpenChange={() => setReciteTarget(undefined)} open title="Practise recitation">
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(event) => void onSubmitRecite(event, reciteTarget)}
-          >
-            <p className="text-sm text-text-muted">
-              Add <span className="font-semibold text-text">“{reciteTarget.work.title}”</span> to
-              your recitation routines.
-            </p>
-
-            <label className="flex flex-col gap-1" htmlFor="recite-phase">
-              Starting phase
-              <select
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="recite-phase"
-                onChange={(event) => setRecitePhase(event.currentTarget.value as RecitationPhase)}
-                value={recitePhase}
-              >
-                {recitationPhases.map((phase) => (
-                  <option key={phase} value={phase}>
-                    {recitationPhaseLabels[phase]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="text-sm text-text-muted">{recitationPhaseHints[recitePhase]}</p>
-
-            <Button pending={reciteSubmitting} type="submit">
-              Add to routines
-            </Button>
-            {reciteError !== undefined ? (
-              <p className="text-danger" role="alert">
-                {reciteError}
-              </p>
-            ) : null}
-          </form>
-        </Sheet>
-      ) : null}
     </main>
   );
 }
@@ -690,10 +640,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 type RenderLibraryOptions = Readonly<{
   authoredWorkIds: ReadonlySet<string>;
   cardVariants: Variants;
+  enrollingWorkId: string | undefined;
   listVariants: Variants;
   onDelete: (item: WorkListItemDto) => void;
   onManageContent: (workEntryId: string) => void;
-  onPractiseRecitation: (item: WorkListItemDto) => void;
+  onRecite: (item: WorkListItemDto) => void;
   recitationByWork: ReadonlyMap<string, RecitationPlanDto>;
   worksWithPosition: ReadonlySet<string>;
 }>;
@@ -740,12 +691,10 @@ function renderLibrary(
 const cardActionClass =
   "inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-accent hover:text-accent-hover";
 
-// A Work already adopted for recitation shows its phase status ("Reciting · <phase>"). A `learning` plan
-// offers "Divide into passages" (the opt-in Learning-phase segmentation + progress surface, #578); a
-// `maintenance` plan — a Work the learner already knows — offers "Set up passages" into the same surface
-// so whole-work upkeep can start without earning every passage through Learning first (#605). A
-// `familiarizing` plan offers no link here; it reaches Learning first via the Recitation hub's "Start
-// reciting". An un-adopted Work offers "Practise recitation" to open the phase picker (#577).
+// A Work already enrolled for recitation shows a calm "Reciting" status and a "Review" link that opens
+// its whole-Work maintenance review (#643). An un-enrolled Work offers "I can recite this" — the explicit
+// declaration that enrolls it into maintenance and opens the first review. There is no phase, passage, or
+// segmentation surface — those are retired.
 function renderRecitationAction(
   item: WorkListItemDto,
   options: RenderLibraryOptions
@@ -755,31 +704,27 @@ function renderRecitationAction(
     return (
       <>
         <span className="inline-flex min-h-11 items-center px-2 text-sm text-text-muted">
-          Reciting · {recitationPhaseLabels[plan.phase]}
+          Reciting
         </span>
-        {plan.phase === "familiarizing" ? null : (
-          <a className={cardActionClass} href={`#/recite?plan=${encodeURIComponent(plan.entryId)}`}>
-            {plan.phase === "learning" ? "Divide into passages" : "Set up passages"}
-          </a>
-        )}
         <a
           className={cardActionClass}
           href={`#/recitation?work=${encodeURIComponent(item.work.entryId)}`}
         >
-          Recitation
+          Review
         </a>
       </>
     );
   }
 
   return (
-    <button
-      className={cardActionClass}
-      onClick={() => options.onPractiseRecitation(item)}
-      type="button"
+    <Button
+      onClick={() => options.onRecite(item)}
+      pending={options.enrollingWorkId === item.work.entryId}
+      size="sm"
+      variant="ghost"
     >
-      Practise recitation
-    </button>
+      I can recite this
+    </Button>
   );
 }
 

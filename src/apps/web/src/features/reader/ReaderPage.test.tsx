@@ -10,18 +10,24 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MemoryRouter } from "react-router-dom";
+
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
 
 // The reader reports note results through the app-wide toast system, so its renders run
 // inside a ToastProvider with the shell's live region mounted — the same way the app wires
-// it — letting the existing "Note saved." assertions resolve against the real viewport.
+// it — letting the existing "Note saved." assertions resolve against the real viewport. The
+// reader header's contextual "I can recite this" control calls useNavigate, so the tree is also
+// framed by a Router as it is in the app.
 function ToastHost({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <ToastProvider>
-      {children}
-      <ToastViewport />
-    </ToastProvider>
+    <MemoryRouter>
+      <ToastProvider>
+        {children}
+        <ToastViewport />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 

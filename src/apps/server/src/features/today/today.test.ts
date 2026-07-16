@@ -17,6 +17,7 @@ import {
   entries,
   readerPreferences,
   readingUnits,
+  recitationWholeWork,
   reviewCards,
   workMeta
 } from "../../db/schema.js";
@@ -26,8 +27,6 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { depositMemory, type MemoryDependencies } from "../memory/memoryCommands.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
-import type { RecitationChainingRouteDependencies } from "../recitationPassages/recitationChainingRoutes.js";
-import type { RecitationPassageRouteDependencies } from "../recitationPassages/recitationPassageRoutes.js";
 import type { RecitationRouteDependencies } from "../recitation/recitationRoutes.js";
 import { loadTodayBoard } from "./todayQueries.js";
 
@@ -55,18 +54,7 @@ async function buildContext(): Promise<TestContext> {
 
   const recitation: RecitationRouteDependencies = {
     createEntryId: () => `plan-${(sequence += 1)}`,
-    db,
-    now: nowFn
-  };
-  const recitationPassages: RecitationPassageRouteDependencies = {
-    createEntryId: () => `passage-${(sequence += 1)}`,
     createId: () => `review-${(sequence += 1)}`,
-    db,
-    now: nowFn
-  };
-  const recitationChaining: RecitationChainingRouteDependencies = {
-    createEntryId: () => `whole-work-${(sequence += 1)}`,
-    createId: () => `chain-${(sequence += 1)}`,
     db,
     now: nowFn
   };
@@ -94,8 +82,6 @@ async function buildContext(): Promise<TestContext> {
       logger: false,
       readingPosition: { db },
       recitation,
-      recitationChaining,
-      recitationPassages,
       today: { db, now: nowFn }
     }),
     setNow: (iso) => {
@@ -150,71 +136,39 @@ async function seedWorkWithBlocks(
   });
 }
 
-async function seedPlan(
+async function enrollWork(
   workEntryId: string,
   texts: readonly string[]
-): Promise<{ passageIds: string[]; planEntryId: string }> {
+): Promise<{ planEntryId: string; targetEntryId: string }> {
   await seedWorkWithBlocks(
     workEntryId,
     texts.map((text, index) => ({ id: `${workEntryId}-b${index}`, text }))
   );
-  const adopt = await context.server.inject({
-    method: "POST",
-    payload: { phase: "learning", workEntryId },
-    url: "/api/recitation/plans"
-  });
-  expect(adopt.statusCode).toBe(201);
-  const planEntryId = (adopt.json() as { entryId: string }).entryId;
-  const seeded = await context.server.inject({
-    method: "POST",
-    url: `/api/recitation/plans/${planEntryId}/passages/seed`
-  });
-  expect(seeded.statusCode).toBe(201);
-  const passageIds = (
-    seeded.json() as { passages: ReadonlyArray<{ entryId: string }> }
-  ).passages.map((passage) => passage.entryId);
-  return { passageIds, planEntryId };
-}
-
-async function introduceNext(planEntryId: string): Promise<void> {
   const response = await context.server.inject({
     method: "POST",
-    url: `/api/recitation/plans/${planEntryId}/introduce-next`
+    payload: { workEntryId },
+    url: "/api/recitation/enroll"
   });
   expect(response.statusCode).toBe(200);
+  const planEntryId = (response.json() as { entryId: string }).entryId;
+  const [target] = await context.db
+    .select({ entryId: recitationWholeWork.entryId })
+    .from(recitationWholeWork)
+    .where(eq(recitationWholeWork.planEntryId, planEntryId));
+  return { planEntryId, targetEntryId: target!.entryId };
 }
 
-async function ownPassage(passageEntryId: string): Promise<void> {
-  for (let index = 0; index < 2; index += 1) {
-    const response = await context.server.inject({
-      method: "POST",
-      payload: { cueStrength: "opening", rating: "good" },
-      url: `/api/recitation/passages/${passageEntryId}/review`
-    });
-    expect(response.statusCode).toBe(200);
-  }
-}
-
-async function setRecitationDueAt(passageEntryId: string, iso: string): Promise<void> {
+async function setRecitationDueAt(targetEntryId: string, iso: string): Promise<void> {
   await context.db
     .update(reviewCards)
     .set({ dueAt: new Date(iso) })
-    .where(eq(reviewCards.targetEntryId, passageEntryId));
+    .where(eq(reviewCards.targetEntryId, targetEntryId));
 }
 
 async function pausePlan(planEntryId: string): Promise<void> {
   const response = await context.server.inject({
     method: "POST",
     url: `/api/recitation/plans/${planEntryId}/pause`
-  });
-  expect(response.statusCode).toBe(200);
-}
-
-async function reviewWholeWork(planEntryId: string): Promise<void> {
-  const response = await context.server.inject({
-    method: "POST",
-    payload: { outcome: { status: "held" }, rating: "good" },
-    url: `/api/recitation/plans/${planEntryId}/whole-work/review`
   });
   expect(response.statusCode).toBe(200);
 }
@@ -304,20 +258,16 @@ describe("GET /api/today", () => {
       continueWriting: { status: "empty" },
       date: localDayKey(new Date(START), "UTC"),
       dueNow: [],
-      newPassage: { status: "unavailable" },
       routineFailures: []
     });
   });
 
   it("groups each due routine into one row and orders overdue routines first", async () => {
-    // Recitation: two owned passages, both due, at least one overdue -> one grouped, overdue row.
-    const { passageIds, planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
-    await introduceNext(planEntryId);
-    await ownPassage(passageIds[0]!);
-    await introduceNext(planEntryId);
-    await ownPassage(passageIds[1]!);
-    await setRecitationDueAt(passageIds[0]!, "2026-06-30T23:00:00.000Z");
-    await setRecitationDueAt(passageIds[1]!, "2026-06-30T22:00:00.000Z");
+    // Recitation: two enrolled Works, both Work-level cards due and overdue -> one grouped, overdue row.
+    const first = await enrollWork("work-1", ["One.", "Two."]);
+    const second = await enrollWork("work-2", ["Three."]);
+    await setRecitationDueAt(first.targetEntryId, "2026-06-30T23:00:00.000Z");
+    await setRecitationDueAt(second.targetEntryId, "2026-06-30T22:00:00.000Z");
     // Memory: a single card due today (not overdue) -> ordered after the overdue recitation routine.
     const promptId = await seedMemoryPrompt(new Date(START));
     await setMemoryDueAt(promptId, "2026-07-01T06:00:00.000Z");
@@ -344,10 +294,8 @@ describe("GET /api/today", () => {
   });
 
   it("excludes a paused plan and a not-due prompt, staying clear", async () => {
-    const { passageIds, planEntryId } = await seedPlan("work-1", ["One."]);
-    await introduceNext(planEntryId);
-    await ownPassage(passageIds[0]!);
-    await setRecitationDueAt(passageIds[0]!, "2026-06-30T23:00:00.000Z");
+    const { planEntryId, targetEntryId } = await enrollWork("work-1", ["One."]);
+    await setRecitationDueAt(targetEntryId, "2026-06-30T23:00:00.000Z");
     await pausePlan(planEntryId);
     const promptId = await seedMemoryPrompt(new Date(START));
     await setMemoryDueAt(promptId, "2026-07-05T00:00:00.000Z");
@@ -357,30 +305,12 @@ describe("GET /api/today", () => {
     expect(board.clear).toBe(true);
     expect(board.dueNow).toEqual([]);
     expect(board.routineFailures).toEqual([]);
-    expect(board.newPassage).toEqual({ status: "unavailable" });
   });
 
-  it("surfaces an available new passage as an invitation that never blocks the clear state", async () => {
-    // Passages seeded but none introduced: nothing is due, yet a new passage is available to start.
-    const { planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
-
-    const board = await getBoard();
-
-    expect(board.clear).toBe(true);
-    expect(board.dueNow).toEqual([]);
-    expect(board.newPassage).toEqual({ planEntryId, status: "available" });
-  });
-
-  it("keeps Recitation due when a required chain step has no due card, never a false clear", async () => {
-    // Own both passages and retire the whole-Work prompt, leaving an eligible owned-prefix chain with no
-    // active chain and no due review card: the session sits on the `chain` step while `due.nextDueAt` is
-    // null. A card-only Today would drop the row and falsely report clear; Today must keep it due (#610).
-    const { passageIds, planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
-    await introduceNext(planEntryId);
-    await ownPassage(passageIds[0]!);
-    await introduceNext(planEntryId);
-    await ownPassage(passageIds[1]!);
-    await reviewWholeWork(planEntryId);
+  it("surfaces the enrolled Work's due-now maintenance card as a single Recitation row", async () => {
+    // A freshly enrolled Work has one Work-level card due immediately (requested retention 0.95): Today
+    // surfaces exactly one recitation row with the card's due instant, and no passage/chain state is needed.
+    await enrollWork("work-1", ["One.", "Two."]);
 
     const board = await getBoard();
 
@@ -459,7 +389,6 @@ describe("loadTodayBoard failure handling", () => {
       continueWriting: { status: "failed" },
       date: localDayKey(new Date(START), "UTC"),
       dueNow: [],
-      newPassage: { status: "failed" },
       routineFailures: ["recitation", "memory"]
     });
   });

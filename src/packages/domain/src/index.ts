@@ -18,15 +18,13 @@ export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timel
 export { isDayKey, monthBounds, monthGrid, shiftMonth, toMonthKey } from "./diaryTimeline.js";
 export { isTimeZone, localDayBoundary, localDayKey } from "./localDay.js";
 export type { LocalDayBoundary } from "./localDay.js";
-export { composeTodayBoard, recitationTodayRoutineSummary } from "./todayBoard.js";
+export { composeTodayBoard } from "./todayBoard.js";
 export type {
   ComposeTodayBoardInput,
   TodayBoard,
   TodayContinueReading,
   TodayContinueWriting,
   TodayInvitationSource,
-  TodayNewPassage,
-  TodayNewPassageSource,
   TodayRoutineComposition,
   TodayRoutineKind,
   TodayRoutineSource,
@@ -104,94 +102,12 @@ export { createEndpointer, forceEndUtterance, pushFrame } from "./endpointing.js
 export type { EndpointConfig, EndpointEvent, EndpointStep } from "./endpointing.js";
 export { sanitizeSvg } from "./svgSanitizer.js";
 export { isWorkType, workTypes } from "./work.js";
-export { isRecitationPhase, recitationPhases } from "./recitation.js";
-export type { RecitationPhase } from "./recitation.js";
-export { deriveRecitationStage, recitationRoutineStages } from "./recitationHub.js";
-export type { RecitationRoutineStage } from "./recitationHub.js";
-export {
-  coveredPassageText,
-  isRecitationCueStrength,
-  mergePassageRanges,
-  OPENING_CUE_CHARS,
-  passageAnchorStatuses,
-  passageCueText,
-  PRECEDING_LINE_MAX_CHARS,
-  reanchorPassageRange,
-  recitationCueStrengths,
-  recitationRatingChoices,
-  seedPassageRanges,
-  splitPassageRange
-} from "./recitationPassage.js";
-export type {
-  AnchoredPassage,
-  MergePassagesResult,
-  PassageAnchorStatus,
-  PassageBlock,
-  PassageRange,
-  ReanchorOutcome,
-  RecitationCueStrength,
-  SplitInvalidReason,
-  SplitPassageResult
-} from "./recitationPassage.js";
-export {
-  evaluateRecitationIntroduction,
-  RECITATION_DAILY_INTRODUCTION_CAP,
-  recitationIntroductionReasons
-} from "./recitationIntroduction.js";
-export type {
-  RecitationIntroductionAvailability,
-  RecitationIntroductionReason
-} from "./recitationIntroduction.js";
-export {
-  DEFAULT_RECITATION_SUPPORT_LEVEL,
-  isRecitationSupportLevel,
-  projectRecitationSupport,
-  recitationSupportLevels,
-  supportLevelShowsTarget
-} from "./recitationFading.js";
-export type {
-  RecitationSupportLevel,
-  RecitationVisibleSupportLevel,
-  SupportLine,
-  SupportProjection,
-  SupportSegment
-} from "./recitationFading.js";
-export {
-  chainEligibility,
-  computeOwnedPrefix,
-  hasValidAnchoredPassage,
-  isOutcomePassageInSession,
-  isPassageOwned,
-  isUnstartedWholeWorkEligible,
-  isWholeWorkOwned,
-  MIN_CHAIN_LENGTH,
-  OWNERSHIP_MIN_SUCCESSFUL_REVIEWS,
-  OWNERSHIP_RETENTION_TARGET,
-  passagesToFailFromOutcome,
-  recitationTodayActions,
-  resolveChainBoundary,
-  selectRecitationTodayAction
-} from "./recitationChaining.js";
-export type {
-  ChainBoundaryInvalidReason,
-  ChainBoundaryResult,
-  ChainEligibility,
-  OwnedPrefix,
-  PassageMastery,
-  RecitationTodayAction,
-  SessionRecallOutcome
-} from "./recitationChaining.js";
-export {
-  compareRecitationObligations,
-  isRequiredRecitationStep,
-  recitationSessionSteps,
-  selectRecitationSessionStep,
-  selectRecitationWork
-} from "./recitationSession.js";
+export { isRecitationPhase, recitationPhases, recitationRatingChoices } from "./recitation.js";
+export type { RecitationPhase, RecitationRatingChoice } from "./recitation.js";
+export { compareRecitationObligations, selectRecitationWork } from "./recitationSession.js";
 export type {
   RecitationAggregateDue,
   RecitationPlanObligation,
-  RecitationSessionStep,
   RecitationWorkSelection
 } from "./recitationSession.js";
 export {

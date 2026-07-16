@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 
 import type { WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
@@ -106,7 +107,9 @@ function selectText(blockElement: HTMLElement, text: string): void {
 function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
   return rtlRender(ui, {
     wrapper: ({ children }: { children: React.ReactNode }) => (
-      <ToastProvider>{children}</ToastProvider>
+      <MemoryRouter>
+        <ToastProvider>{children}</ToastProvider>
+      </MemoryRouter>
     )
   });
 }

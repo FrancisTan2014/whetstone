@@ -8,6 +8,7 @@ import {
   within
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type * as ReactRouterDom from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./libraryApi", () => ({
@@ -30,8 +31,15 @@ vi.mock("../authoredWorks/authoredWorkApi", () => ({
 }));
 
 vi.mock("../recitation/recitationApi", () => ({
-  createRecitationPlan: vi.fn(),
+  enrollRecitation: vi.fn(),
   listRecitationPlans: vi.fn()
+}));
+
+const navigateSpy = vi.fn();
+
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof ReactRouterDom>()),
+  useNavigate: () => navigateSpy
 }));
 
 import {
@@ -44,10 +52,11 @@ import {
 } from "./libraryApi";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
-import { createRecitationPlan, listRecitationPlans } from "../recitation/recitationApi";
+import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
+import { MemoryRouter } from "react-router-dom";
 import type {
   AuthorDto,
   AuthoredWorkDto,
@@ -63,10 +72,12 @@ import { toAuthorId, toEntryId } from "@whetstone/domain";
 // region mounted — matching how the shell wires it.
 function ToastHost({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <ToastProvider>
-      {children}
-      <ToastViewport />
-    </ToastProvider>
+    <MemoryRouter>
+      <ToastProvider>
+        {children}
+        <ToastViewport />
+      </ToastProvider>
+    </MemoryRouter>
   );
 }
 
@@ -85,7 +96,7 @@ const mockedIngestPdf = vi.mocked(ingestPdf);
 const mockedListAuthoredWorks = vi.mocked(listAuthoredWorks);
 const mockedCreateAuthoredWork = vi.mocked(createAuthoredWork);
 const mockedListRecitationPlans = vi.mocked(listRecitationPlans);
-const mockedCreateRecitationPlan = vi.mocked(createRecitationPlan);
+const mockedEnrollRecitation = vi.mocked(enrollRecitation);
 
 const orwell: AuthorDto = { id: toAuthorId("author-1"), name: "George Orwell" };
 const dickens: AuthorDto = { id: toAuthorId("author-2"), name: "Charles Dickens" };
@@ -1061,115 +1072,76 @@ describe("AdminLibraryPage", () => {
     createdAt: "2026-07-01T09:00:00.000Z",
     entryId: `plan-${workEntryId}`,
     lastSessionAt: null,
-    phase: "familiarizing",
+    phase: "maintenance",
     sessionCount: 0,
     updatedAt: "2026-07-01T09:00:00.000Z",
     workEntryId,
     workTitle: title
   });
 
-  it("adopts a Work for recitation in the chosen phase, then marks it on the card (#577)", async () => {
+  it("enrolls a Work with 'I can recite this', marks the card, and opens its review (#643)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
-    mockedCreateRecitationPlan.mockResolvedValue(
+    mockedEnrollRecitation.mockResolvedValue(
       recitationPlanFor("work-1", "Politics and the English Language")
     );
-    // The reload after adopting reports the new plan so the card flips to the reciting status.
+    // The reload after enrolling reports the new plan so the card flips to the reciting status.
     mockedListRecitationPlans.mockResolvedValueOnce({ plans: [] }).mockResolvedValue({
       plans: [recitationPlanFor("work-1", "Politics and the English Language")]
     });
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Practise recitation" }));
-    await screen.findByRole("heading", { name: "Practise recitation" });
-    await user.selectOptions(screen.getByLabelText("Starting phase"), "maintenance");
-    await user.click(screen.getByRole("button", { name: "Add to routines" }));
+    // There is no phase picker (#643): the action enrolls straight into maintenance — the learner's
+    // explicit declaration that the Work is retrievable — with no Familiarizing/Learning/Maintenance choice.
+    expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "I can recite this" }));
 
     await waitFor(() => {
-      expect(mockedCreateRecitationPlan).toHaveBeenCalledWith({
-        phase: "maintenance",
-        workEntryId: "work-1"
-      });
+      expect(mockedEnrollRecitation).toHaveBeenCalledWith("work-1");
     });
-    expect(
-      await screen.findByText(
-        "Added “Politics and the English Language” to your recitation routines."
-      )
-    ).toBeDefined();
-    // The card now shows the quiet reciting status instead of the adopt action.
-    expect(await screen.findByText("Reciting · Familiarizing")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
-    // A familiarizing plan does NOT expose passage practice — that is the opt-in Learning-phase engine,
-    // reached first via the Recitation hub's "Start reciting" (#578).
+    // Enrollment persists, then the exact Work's whole-Work review opens scoped to `?work=`.
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith("/recitation?work=work-1");
+    });
+    // The card now shows the quiet reciting status and a Review link into the whole-Work review.
+    expect(await screen.findByText("Reciting")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "I can recite this" })).toBeNull();
+    // Retired passage-segmentation controls never appear.
     expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
-    // The contextual entry into the recitation routine hub (#608) appears for any adopted plan, scoped
-    // to THIS Work (`?work=`) so it opens this Work's plan rather than the most-recent one (#633 AC7).
-    expect(screen.getByRole("link", { name: "Recitation" }).getAttribute("href")).toBe(
+    expect(screen.queryByRole("link", { name: "Set up passages" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Review" }).getAttribute("href")).toBe(
       "#/recitation?work=work-1"
     );
   });
 
-  it("shows the reciting status (not an adopt button) for an already-adopted Work (#577)", async () => {
+  it("shows the reciting status (not an enroll button) for an already-enrolled Work (#643)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     mockedListRecitationPlans.mockResolvedValue({
-      plans: [
-        { ...recitationPlanFor("work-1", "Politics and the English Language"), phase: "learning" }
-      ]
+      plans: [recitationPlanFor("work-1", "Politics and the English Language")]
     });
     await renderReady();
 
-    expect(await screen.findByText("Reciting · Learning")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Divide into passages" }).getAttribute("href")).toBe(
-      "#/recite?plan=plan-work-1"
-    );
-  });
-
-  it("offers a maintenance plan a Set up passages link into the same segmentation surface (#605)", async () => {
-    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
-    mockedListRecitationPlans.mockResolvedValue({
-      plans: [
-        {
-          ...recitationPlanFor("work-1", "Politics and the English Language"),
-          phase: "maintenance"
-        }
-      ]
-    });
-    await renderReady();
-
-    expect(await screen.findByText("Reciting · Maintenance")).toBeDefined();
-    // A learner who already knows the Work still gets into the segmentation surface — but as "Set up
-    // passages", not "Divide into passages" — so whole-work upkeep can start (#605).
+    expect(await screen.findByText("Reciting")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "I can recite this" })).toBeNull();
+    // No retired phase status or passage links survive on an enrolled card.
+    expect(screen.queryByText(/Reciting · /)).toBeNull();
     expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Set up passages" }).getAttribute("href")).toBe(
-      "#/recite?plan=plan-work-1"
+    expect(screen.getByRole("link", { name: "Review" }).getAttribute("href")).toBe(
+      "#/recitation?work=work-1"
     );
   });
 
-  it("surfaces an error when adopting a recitation routine fails, keeping the sheet open (#577)", async () => {
+  it("surfaces an error and does not navigate when enrolling fails (#643)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
-    mockedCreateRecitationPlan.mockRejectedValue(new Error("boom"));
+    mockedEnrollRecitation.mockRejectedValue(new Error("boom"));
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Practise recitation" }));
-    await screen.findByRole("heading", { name: "Practise recitation" });
-    await user.click(screen.getByRole("button", { name: "Add to routines" }));
+    await user.click(screen.getByRole("button", { name: "I can recite this" }));
 
     expect(
-      await screen.findByText("Could not start this recitation routine. Please try again.")
+      await screen.findByText("Could not start reciting this work. Please try again.")
     ).toBeDefined();
-  });
-
-  it("dismisses the Practise recitation sheet without adopting anything (#577)", async () => {
-    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
-    const user = await renderReady();
-
-    await user.click(screen.getByRole("button", { name: "Practise recitation" }));
-    await screen.findByRole("heading", { name: "Practise recitation" });
-    await user.click(screen.getByRole("button", { name: "Close" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("heading", { name: "Practise recitation" })).toBeNull();
-    });
-    expect(mockedCreateRecitationPlan).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+    // The action stays available so the learner can retry.
+    expect(screen.getByRole("button", { name: "I can recite this" })).toBeDefined();
   });
 });

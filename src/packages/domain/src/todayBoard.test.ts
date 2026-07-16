@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   compareRoutines,
   composeTodayBoard,
-  recitationTodayRoutineSummary,
   type ComposeTodayBoardInput,
   type TodayRoutineComposition,
   type TodayRoutineSource
@@ -27,7 +26,6 @@ function baseInput(
   return {
     date: "2026-07-15",
     memory: clearRoutine,
-    newPassage: { planEntryId: null, status: "ok" },
     reading: { status: "ok", value: null },
     recitation: clearRoutine,
     writing: { status: "ok", value: null },
@@ -154,19 +152,6 @@ describe("composeTodayBoard", () => {
       }
     );
   });
-
-  it("maps the new-passage invitation to available, unavailable, and failed", () => {
-    expect(
-      composeTodayBoard(baseInput({ newPassage: { planEntryId: "plan-1", status: "ok" } }))
-        .newPassage
-    ).toEqual({ planEntryId: "plan-1", status: "available" });
-    expect(
-      composeTodayBoard(baseInput({ newPassage: { planEntryId: null, status: "ok" } })).newPassage
-    ).toEqual({ status: "unavailable" });
-    expect(composeTodayBoard(baseInput({ newPassage: { status: "failed" } })).newPassage).toEqual({
-      status: "failed"
-    });
-  });
 });
 
 describe("compareRoutines", () => {
@@ -203,42 +188,5 @@ describe("compareRoutines", () => {
 
     expect(compareRoutines(memory, recitation)).toBeLessThan(0);
     expect(compareRoutines(recitation, memory)).toBeGreaterThan(0);
-  });
-});
-
-describe("recitationTodayRoutineSummary", () => {
-  const NOW = "2026-07-15T12:00:00.000Z";
-
-  it("passes a due-card summary through untouched even on a required step", () => {
-    const due = { dueCount: 3, nextDueAt: "2026-07-15T08:00:00.000Z", overdueCount: 1 };
-
-    expect(recitationTodayRoutineSummary({ due, nowIso: NOW, step: "due_passage" })).toEqual(due);
-  });
-
-  it("surfaces a required non-card step as one obligation due now", () => {
-    const due = { dueCount: 0, nextDueAt: null, overdueCount: 0 };
-
-    expect(recitationTodayRoutineSummary({ due, nowIso: NOW, step: "chain" })).toEqual({
-      dueCount: 1,
-      nextDueAt: NOW,
-      overdueCount: 0
-    });
-  });
-
-  it("keeps an existing due count when synthesizing a required non-card step", () => {
-    const due = { dueCount: 4, nextDueAt: null, overdueCount: 2 };
-
-    expect(recitationTodayRoutineSummary({ due, nowIso: NOW, step: "whole_work" })).toEqual({
-      dueCount: 4,
-      nextDueAt: NOW,
-      overdueCount: 2
-    });
-  });
-
-  it("leaves a card-less new-passage or clear step reporting clear", () => {
-    const due = { dueCount: 0, nextDueAt: null, overdueCount: 0 };
-
-    expect(recitationTodayRoutineSummary({ due, nowIso: NOW, step: "new_passage" })).toEqual(due);
-    expect(recitationTodayRoutineSummary({ due, nowIso: NOW, step: "clear" })).toEqual(due);
   });
 });

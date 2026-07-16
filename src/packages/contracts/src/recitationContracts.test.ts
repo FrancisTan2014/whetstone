@@ -1,139 +1,98 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  continueRecitationDtoSchema,
-  createRecitationPlanRequestSchema,
-  parseContinueRecitationDto,
-  parseCreateRecitationPlanRequest,
+  enrollRecitationRequestSchema,
+  parseEnrollRecitationRequest,
   parseRecitationPlanDto,
   parseRecitationPlanListDto,
-  parseSetRecitationPhaseRequest,
-  recitationPlanDtoSchema,
-  recitationPlanListDtoSchema,
-  setRecitationPhaseRequestSchema
+  parseRecitationReviewResponse,
+  parseRecordRecitationReviewRequest,
+  parseRecordRecitationReviewResponse,
+  recitationReviewDtoSchema
 } from "./recitationContracts.js";
-import { timelineEntryDtoSchema } from "./diaryContracts.js";
 
-const plan = {
-  createdAt: "2026-07-01T09:00:00.000Z",
+const planDto = {
+  createdAt: "2026-07-15T00:00:00.000Z",
   entryId: "plan-1",
   lastSessionAt: null,
-  phase: "familiarizing" as const,
+  phase: "maintenance" as const,
   sessionCount: 0,
-  updatedAt: "2026-07-01T09:00:00.000Z",
+  updatedAt: "2026-07-15T00:00:00.000Z",
   workEntryId: "work-1",
-  workTitle: "Aesop’s Fables"
+  workTitle: "Ode"
 };
 
-describe("parseCreateRecitationPlanRequest", () => {
-  it("accepts a work id with a valid phase", () => {
-    expect(
-      parseCreateRecitationPlanRequest({ phase: "maintenance", workEntryId: "work-1" })
-    ).toEqual({ phase: "maintenance", workEntryId: "work-1" });
+const reviewDto = {
+  dueAt: "2026-07-15T00:00:00.000Z",
+  planEntryId: "plan-1",
+  sourceText: "line one\nline two",
+  state: "review" as const,
+  workEntryId: "work-1",
+  workTitle: "Ode"
+};
+
+describe("enrollRecitationRequestSchema", () => {
+  it("accepts a non-blank workEntryId and drops any phase choice", () => {
+    expect(parseEnrollRecitationRequest({ workEntryId: "work-1" })).toEqual({
+      workEntryId: "work-1"
+    });
   });
 
-  it("rejects a blank work id", () => {
-    expect(
-      createRecitationPlanRequestSchema.safeParse({ phase: "learning", workEntryId: " " }).success
-    ).toBe(false);
+  it("rejects a blank workEntryId", () => {
+    expect(enrollRecitationRequestSchema.safeParse({ workEntryId: "   " }).success).toBe(false);
   });
 
-  it("rejects an unknown phase", () => {
+  it("rejects an unknown field such as a phase (no phase picker)", () => {
     expect(
-      createRecitationPlanRequestSchema.safeParse({ phase: "reciting", workEntryId: "work-1" })
+      enrollRecitationRequestSchema.safeParse({ workEntryId: "work-1", phase: "maintenance" })
         .success
     ).toBe(false);
   });
+});
 
-  it("rejects unknown keys", () => {
-    expect(
-      createRecitationPlanRequestSchema.safeParse({
-        extra: 1,
-        phase: "learning",
-        workEntryId: "work-1"
-      }).success
-    ).toBe(false);
+describe("recitation plan DTOs", () => {
+  it("parses a plan and a plan list", () => {
+    expect(parseRecitationPlanDto(planDto)).toEqual(planDto);
+    expect(parseRecitationPlanListDto({ plans: [planDto] })).toEqual({ plans: [planDto] });
+  });
+
+  it("still reads a legacy familiarizing phase for auditability", () => {
+    expect(parseRecitationPlanDto({ ...planDto, phase: "familiarizing" }).phase).toBe(
+      "familiarizing"
+    );
   });
 });
 
-describe("parseSetRecitationPhaseRequest", () => {
-  it("accepts a valid phase", () => {
-    expect(parseSetRecitationPhaseRequest({ phase: "learning" })).toEqual({ phase: "learning" });
+describe("recitation review DTOs", () => {
+  it("parses a review response with a review", () => {
+    expect(parseRecitationReviewResponse({ review: reviewDto })).toEqual({ review: reviewDto });
   });
 
-  it("rejects an invalid phase", () => {
-    expect(setRecitationPhaseRequestSchema.safeParse({ phase: "nope" }).success).toBe(false);
-  });
-});
-
-describe("parseRecitationPlanDto", () => {
-  it("accepts a plan with no recorded session", () => {
-    expect(parseRecitationPlanDto(plan)).toEqual(plan);
+  it("parses a null review response for an unenrolled Work", () => {
+    expect(parseRecitationReviewResponse({ review: null })).toEqual({ review: null });
   });
 
-  it("accepts a plan with a recorded session and count", () => {
-    const practised = { ...plan, lastSessionAt: "2026-07-04T09:00:00.000Z", sessionCount: 3 };
-
-    expect(parseRecitationPlanDto(practised)).toEqual(practised);
-  });
-
-  it("rejects a negative session count", () => {
-    expect(recitationPlanDtoSchema.safeParse({ ...plan, sessionCount: -1 }).success).toBe(false);
-  });
-
-  it("rejects unknown keys", () => {
-    expect(recitationPlanDtoSchema.safeParse({ ...plan, extra: 1 }).success).toBe(false);
+  it("rejects an out-of-range card state", () => {
+    expect(recitationReviewDtoSchema.safeParse({ ...reviewDto, state: "archived" }).success).toBe(
+      false
+    );
   });
 });
 
-describe("parseRecitationPlanListDto", () => {
-  it("accepts a list of plans", () => {
-    expect(parseRecitationPlanListDto({ plans: [plan] })).toEqual({ plans: [plan] });
+describe("record recitation review", () => {
+  it("parses each valid rating", () => {
+    for (const rating of ["again", "hard", "good", "easy"] as const) {
+      expect(parseRecordRecitationReviewRequest({ rating })).toEqual({ rating });
+    }
   });
 
-  it("rejects a missing plans field", () => {
-    expect(recitationPlanListDtoSchema.safeParse({}).success).toBe(false);
-  });
-});
-
-describe("parseContinueRecitationDto", () => {
-  it("accepts a plan", () => {
-    expect(parseContinueRecitationDto({ plan })).toEqual({ plan });
+  it("rejects an invented rating", () => {
+    expect(() => parseRecordRecitationReviewRequest({ rating: "perfect" })).toThrow();
   });
 
-  it("accepts an explicit no-plan null", () => {
-    expect(parseContinueRecitationDto({ plan: null })).toEqual({ plan: null });
-  });
-
-  it("rejects a missing plan field", () => {
-    expect(continueRecitationDtoSchema.safeParse({}).success).toBe(false);
-  });
-});
-
-describe("timeline recitation entry", () => {
-  it("parses a recitation entry in the timeline union", () => {
-    const entry = {
-      entryId: "plan-1",
-      kind: "recitation" as const,
-      occurredAt: "2026-07-01T09:00:00.000Z",
-      phase: "learning" as const,
-      title: "腾王阁序",
-      workEntryId: "work-1"
-    };
-
-    expect(timelineEntryDtoSchema.parse(entry)).toEqual(entry);
-  });
-
-  it("rejects a recitation entry with an invalid phase", () => {
-    expect(
-      timelineEntryDtoSchema.safeParse({
-        entryId: "plan-1",
-        kind: "recitation",
-        occurredAt: "2026-07-01T09:00:00.000Z",
-        phase: "nope",
-        title: "腾王阁序",
-        workEntryId: "work-1"
-      }).success
-    ).toBe(false);
+  it("parses the rescheduled review response", () => {
+    expect(parseRecordRecitationReviewResponse({ review: reviewDto })).toEqual({
+      review: reviewDto
+    });
   });
 });

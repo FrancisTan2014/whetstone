@@ -46,14 +46,6 @@ const todayContinueWritingSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("failed") }).strict()
 ]);
 
-// The Recitation "New passage" invitation (#607): available (with the plan to route into), unavailable,
-// or a failed load. It is an invitation, never an obligation — it never blocks the clear state.
-const todayNewPassageSchema = z.discriminatedUnion("status", [
-  z.object({ planEntryId: z.string(), status: z.literal("available") }).strict(),
-  z.object({ status: z.literal("unavailable") }).strict(),
-  z.object({ status: z.literal("failed") }).strict()
-]);
-
 export const todayBoardDtoSchema = z
   .object({
     // The learner's local `YYYY-MM-DD` day key (#606) the board was composed for.
@@ -64,7 +56,6 @@ export const todayBoardDtoSchema = z
     clear: z.boolean(),
     continueReading: todayContinueReadingSchema,
     continueWriting: todayContinueWritingSchema,
-    newPassage: todayNewPassageSchema,
     // Routine sources whose load threw. A non-empty list forces `clear` false so one failing source
     // never presents a false global clear.
     routineFailures: z.array(todayRoutineKindSchema)

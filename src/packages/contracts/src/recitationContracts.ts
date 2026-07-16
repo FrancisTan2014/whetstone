@@ -1,39 +1,31 @@
 import { recitationPhases } from "@whetstone/domain";
 import { z } from "zod";
 
-// Shared, Zod-validated shapes for recitation routines (#577): a learner adopts a source Work as a
-// recitation plan, chooses an initial phase, and moves through familiarization into active recitation on
-// their own schedule. Every value crossing the recitation API is described here; the server validates once
-// at the boundary and trusts the typed data inward.
+// Shared, Zod-validated shapes for direct Work-level Recitation maintenance (#643): the learner declares
+// a known Work retrievable ("I can recite this"), it is enrolled straight into FSRS maintenance, and its
+// single Work-level review card owns retrieval and scheduling. The source Work stays canonical — only a
+// link is created, nothing is copied. The server validates once at the boundary and trusts the typed data
+// inward.
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
 }
 
-// The learner-controlled routine phase, reusing the domain vocabulary so DTO and domain never drift.
+// The learner-controlled routine phase vocabulary, reused from the domain. Direct enrolment always lands
+// a plan in `maintenance`; the earlier phases survive only so legacy plan rows stay readable in the DTO.
 export const recitationPhaseDtoSchema = z.enum(recitationPhases);
 
 export type RecitationPhaseDto = z.infer<typeof recitationPhaseDtoSchema>;
 
-// Adopting a Work as a recitation routine: the source Work to link to and the initial phase the learner
-// picks (so an already-recited work can start in maintenance and a new one in familiarizing). The source
-// content stays canonical — only a link is created, nothing is copied.
-export const createRecitationPlanRequestSchema = z
+// Enrolling a known Work into Recitation maintenance: only the source Work to link to — the phase is no
+// longer a learner choice (#643 removes the phase picker), and no rating is inferred from the action.
+export const enrollRecitationRequestSchema = z
   .object({
-    phase: recitationPhaseDtoSchema,
     workEntryId: z.string().refine(isNonBlank, { message: "workEntryId must be non-empty." })
   })
   .strict();
 
-export type CreateRecitationPlanRequest = z.infer<typeof createRecitationPlanRequestSchema>;
-
-// The explicit, learner-driven phase transition (e.g. "Start reciting"): only ever changed by an explicit
-// action — whetstone never infers readiness, requires a test, or auto-advances after N days.
-export const setRecitationPhaseRequestSchema = z
-  .object({ phase: recitationPhaseDtoSchema })
-  .strict();
-
-export type SetRecitationPhaseRequest = z.infer<typeof setRecitationPhaseRequestSchema>;
+export type EnrollRecitationRequest = z.infer<typeof enrollRecitationRequestSchema>;
 
 // A persisted recitation plan: its own entry id, the source Work it links to (with the Work's title for
 // display), the current phase, and the lightweight routine state. `lastSessionAt` is null until the first
@@ -59,20 +51,59 @@ export const recitationPlanListDtoSchema = z
 
 export type RecitationPlanListDto = z.infer<typeof recitationPlanListDtoSchema>;
 
-// Today's "Continue recitation" target: the learner's most recently touched recitation plan, or null when
-// they have adopted none.
-export const continueRecitationDtoSchema = z
-  .object({ plan: recitationPlanDtoSchema.nullable() })
+// The four FSRS ratings the learner picks after revealing the canonical source, worst→best. The review
+// UI reads the human labels from `recitationRatingChoices` in the domain; the wire value is the rating.
+export const recitationReviewRatingSchema = z.enum(["again", "hard", "good", "easy"]);
+
+export type RecitationReviewRating = z.infer<typeof recitationReviewRatingSchema>;
+
+// The FSRS lifecycle state of a Work-level maintenance card, surfaced so the review can show where the
+// Work sits in its schedule without re-deriving it client-side.
+export const recitationReviewCardStateSchema = z.enum(["new", "learning", "review", "relearning"]);
+
+export type RecitationReviewCardStateDto = z.infer<typeof recitationReviewCardStateSchema>;
+
+// The Work-level maintenance review to present (#643): the plan/Work identity, the Work title, the
+// canonical `sourceText` revealed after an attempt (read live from the Work's blocks — never copied into
+// recitation state), and the card's current due instant and FSRS state. One review per enrolled Work.
+export const recitationReviewDtoSchema = z
+  .object({
+    dueAt: z.string().datetime(),
+    planEntryId: z.string(),
+    sourceText: z.string(),
+    state: recitationReviewCardStateSchema,
+    workEntryId: z.string(),
+    workTitle: z.string()
+  })
   .strict();
 
-export type ContinueRecitationDto = z.infer<typeof continueRecitationDtoSchema>;
+export type RecitationReviewDto = z.infer<typeof recitationReviewDtoSchema>;
 
-export function parseCreateRecitationPlanRequest(value: unknown): CreateRecitationPlanRequest {
-  return createRecitationPlanRequestSchema.parse(value);
-}
+// A fetch of a Work's current review: the review when the Work is enrolled with an active card, else null
+// so the client routes back to a Library recovery path instead of opening a dead screen.
+export const recitationReviewResponseSchema = z
+  .object({ review: recitationReviewDtoSchema.nullable() })
+  .strict();
 
-export function parseSetRecitationPhaseRequest(value: unknown): SetRecitationPhaseRequest {
-  return setRecitationPhaseRequestSchema.parse(value);
+export type RecitationReviewResponse = z.infer<typeof recitationReviewResponseSchema>;
+
+// Recording one Work-level review: the learner's rating. Reveal is a client concern and writes no event;
+// exactly one rating appends one review event and reschedules only this Work's card.
+export const recordRecitationReviewRequestSchema = z
+  .object({ rating: recitationReviewRatingSchema })
+  .strict();
+
+export type RecordRecitationReviewRequest = z.infer<typeof recordRecitationReviewRequestSchema>;
+
+// The rescheduled review after a rating: the same review shape with the card's next due instant + state.
+export const recordRecitationReviewResponseSchema = z
+  .object({ review: recitationReviewDtoSchema })
+  .strict();
+
+export type RecordRecitationReviewResponse = z.infer<typeof recordRecitationReviewResponseSchema>;
+
+export function parseEnrollRecitationRequest(value: unknown): EnrollRecitationRequest {
+  return enrollRecitationRequestSchema.parse(value);
 }
 
 export function parseRecitationPlanDto(value: unknown): RecitationPlanDto {
@@ -83,6 +114,16 @@ export function parseRecitationPlanListDto(value: unknown): RecitationPlanListDt
   return recitationPlanListDtoSchema.parse(value);
 }
 
-export function parseContinueRecitationDto(value: unknown): ContinueRecitationDto {
-  return continueRecitationDtoSchema.parse(value);
+export function parseRecitationReviewResponse(value: unknown): RecitationReviewResponse {
+  return recitationReviewResponseSchema.parse(value);
+}
+
+export function parseRecordRecitationReviewRequest(value: unknown): RecordRecitationReviewRequest {
+  return recordRecitationReviewRequestSchema.parse(value);
+}
+
+export function parseRecordRecitationReviewResponse(
+  value: unknown
+): RecordRecitationReviewResponse {
+  return recordRecitationReviewResponseSchema.parse(value);
 }
