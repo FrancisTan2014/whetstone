@@ -104,10 +104,10 @@ at the web build inside the runner workspace; `ProgramArguments` runs the freshl
     <key>LOG_LEVEL</key><string>info</string>
     <!-- Optional: local Whisper STT for voice diary capture (docs/SPEECH.md). Leave out to run without
          voice transcription; typed diary remains complete. On the deploy host run `pnpm setup:voice` once,
-         then copy the WHISPER_BINARY / WHISPER_MODEL_PATH / WHISPER_LANGUAGE it wrote into .env here. -->
+         then copy the WHISPER_BINARY / WHISPER_MODEL_PATH it wrote into .env here (Whisper auto-detects
+         the language — there is no WHISPER_LANGUAGE). -->
     <!-- <key>WHISPER_BINARY</key><string>/Users/<YOU>/Library/Python/3.x/bin/whetstone-whisper</string> -->
     <!-- <key>WHISPER_MODEL_PATH</key><string>small</string> -->
-    <!-- <key>WHISPER_LANGUAGE</key><string>en</string> -->
   </dict>
 
   <!-- Keep the app running and bring it back after a crash or reboot. -->
