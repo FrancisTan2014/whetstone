@@ -17,9 +17,15 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-// The hub for the current learner: `no_plan` when none is adopted, else the active plan projection.
-export async function getRecitationHub(): Promise<RecitationHubDto> {
-  return parseRecitationHubResponse(await requestJson(apiUrl("/recitation/hub"))).hub;
+// The hub for the current learner: `no_plan` when none is adopted, else the active plan projection. A
+// `workEntryId` scopes the hub to THAT exact Work's plan (#633 AC7) — `unadopted_work` when the learner
+// has not adopted it — so a contextual link never resolves to the most-recent plan.
+export async function getRecitationHub(workEntryId?: string): Promise<RecitationHubDto> {
+  const path =
+    workEntryId === undefined
+      ? apiUrl("/recitation/hub")
+      : apiUrl(`/recitation/hub?work=${encodeURIComponent(workEntryId)}`);
+  return parseRecitationHubResponse(await requestJson(path)).hub;
 }
 
 // Pause a plan; resolves with the refreshed hub (the paused plan surfaces no due work or action).

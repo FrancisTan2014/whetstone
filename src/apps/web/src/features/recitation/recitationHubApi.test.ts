@@ -62,6 +62,18 @@ describe("recitationHubApi", () => {
     expect(result.status).toBe("no_plan");
   });
 
+  it("scopes the hub to a requested Work, encoding the id into ?work=", async () => {
+    const fetchMock = mockFetchOnce({
+      hub: { status: "unadopted_work", workEntryId: "work/9", workTitle: "Ode" }
+    });
+
+    const result = await getRecitationHub("work/9");
+
+    expect(result.status).toBe("unadopted_work");
+    const [path] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/recitation/hub?work=work%2F9");
+  });
+
   it("pauses a plan with a POST, encoding the id, and returns the refreshed hub", async () => {
     const fetchMock = mockFetchOnce({ hub: pausedHub });
 

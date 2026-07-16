@@ -20,6 +20,7 @@ export type ReadingHeaderProps = Readonly<{
   size: ReadingSize;
   title: string;
   tocOpen: boolean;
+  workEntryId: string;
 }>;
 
 // A contents/list glyph for the 目录 control (labelled by the button's aria-label, so the icon
@@ -87,7 +88,8 @@ export function ReadingHeader({
   progress,
   size,
   title,
-  tocOpen
+  tocOpen,
+  workEntryId
 }: ReadingHeaderProps): React.JSX.Element {
   return (
     <header
@@ -155,11 +157,12 @@ export function ReadingHeader({
           {notesCount > 0 ? <span className="readingToolBadge">{notesCount}</span> : null}
         </Button>
         {/* A quiet, contextual Recitation entry from the Work you are reading (#608): it links to
-            the secondary Recitation hub without becoming a fifth primary navigation item. */}
+            the secondary Recitation hub scoped to THIS Work (`?work=`), so the hub opens this Work's
+            plan (or its adoption state) rather than the most-recent plan (#633 AC7). */}
         <a
           aria-label="Recitation"
           className={buttonVariants({ size: "sm", variant: "ghost" })}
-          href="#/recitation"
+          href={`#/recitation?work=${encodeURIComponent(workEntryId)}`}
         >
           <RecitationIcon />
         </a>

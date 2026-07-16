@@ -81,24 +81,50 @@ export function registerRecitationRoutes(
   });
 
   // The recitation routine hub (#608): one calm projection of the learner's most-recently-touched plan —
-  // what needs attention now, where they are in this Work, and the next due-first action — derived purely
-  // from canonical rows joined to shared card state. Static path, so registered before the `:id` routes.
-  server.get("/api/recitation/hub", async (request) => {
+  // or, with `?work=<id>`, THAT exact owner-scoped plan (#633 AC7) — derived purely from canonical rows
+  // joined to shared card state. Static path, so registered before the `:id` routes.
+  server.get<{ Querystring: { work?: string } }>("/api/recitation/hub", async (request) => {
     const userId = request.server.currentUser.getCurrentUserId();
     const timeZone = await getLearnerTimeZone(dependencies.db, userId);
-    const hub = await loadRecitationHub(dependencies, userId, dependencies.now(), timeZone);
+    const workEntryId =
+      typeof request.query.work === "string" && request.query.work.length > 0
+        ? request.query.work
+        : undefined;
+    const hub = await loadRecitationHub(
+      dependencies,
+      userId,
+      dependencies.now(),
+      timeZone,
+      workEntryId
+    );
     return { hub };
   });
 
-  // The complete inline recitation session (#609): a transient projection over the same canonical rows
-  // as the hub, but ordered for one due-first practice run (due passages → whole-Work → chain → optional
-  // new passage → clear). The route validates the response envelope at the boundary before sending.
-  server.get("/api/recitation/session", async (request) => {
-    const userId = request.server.currentUser.getCurrentUserId();
-    const timeZone = await getLearnerTimeZone(dependencies.db, userId);
-    const session = await loadRecitationSession(dependencies, userId, dependencies.now(), timeZone);
-    return recitationSessionResponseSchema.parse({ session });
-  });
+  // The complete inline recitation session (#609): a transient projection over canonical rows aggregated
+  // across every unpaused plan (#633), ordered for one due-first practice run (due passages → whole-Work
+  // → chain → optional new passage → clear). `?pinned=<planEntryId>` keeps the routine on the Work the
+  // caller is working while it still holds required work, so clearing its items never context-switches
+  // mid-Work; an unknown or cleared pin simply falls through to the earliest-required Work. The route
+  // validates the response envelope at the boundary before sending.
+  server.get<{ Querystring: Readonly<{ pinned?: string }> }>(
+    "/api/recitation/session",
+    async (request) => {
+      const userId = request.server.currentUser.getCurrentUserId();
+      const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+      const pinned =
+        typeof request.query.pinned === "string" && request.query.pinned.length > 0
+          ? request.query.pinned
+          : undefined;
+      const session = await loadRecitationSession(
+        dependencies,
+        userId,
+        dependencies.now(),
+        timeZone,
+        pinned
+      );
+      return recitationSessionResponseSchema.parse({ session });
+    }
+  );
 
   // Pause a plan (#608): remove its cards from all due/Today selection without deleting progress,
   // schedule, support levels, chains, or history. Owner-scoped (404 otherwise); idempotent. Returns the

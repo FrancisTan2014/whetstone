@@ -190,6 +190,15 @@ async function getHub(): Promise<RecitationHubDto> {
   return (response.json() as RecitationHubResponse).hub;
 }
 
+async function getHubForWork(workEntryId: string): Promise<RecitationHubDto> {
+  const response = await context.server.inject({
+    method: "GET",
+    url: `/api/recitation/hub?work=${encodeURIComponent(workEntryId)}`
+  });
+  expect(response.statusCode).toBe(200);
+  return (response.json() as RecitationHubResponse).hub;
+}
+
 function activeHub(hub: RecitationHubDto): Extract<RecitationHubDto, { status: "active" }> {
   if (hub.status !== "active") {
     throw new Error(`expected an active hub, got ${hub.status}`);
@@ -483,5 +492,63 @@ describe("pause / resume", () => {
       url: "/api/recitation/plans/nope/pause"
     });
     expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("GET /api/recitation/hub?work= — contextual Work scoping (#633 AC7)", () => {
+  it("opens the requested Work's plan, never the most-recently-touched one", async () => {
+    // Adopt an older Work first, then a newer one — `getContinueRecitation` would surface work-2.
+    const older = await seedPlan("work-1", ["One.", "Two."]);
+    await introduceNext(older.planEntryId);
+    context.setNow("2026-07-02T09:00:00.000Z");
+    await seedPlan("work-2", ["Alpha.", "Beta."]);
+
+    // The default hub surfaces the most-recent plan (work-2)…
+    expect(activeHub(await getHub()).workTitle).toBe("Work work-2");
+    // …but a `?work=` deep-link opens that exact Work's plan instead.
+    const scoped = activeHub(await getHubForWork("work-1"));
+    expect(scoped.workTitle).toBe("Work work-1");
+    expect(scoped.planEntryId).toBe(older.planEntryId);
+  });
+
+  it("presents the requested Work's adoption state when it has no plan, without any plan fallback", async () => {
+    // A most-recent plan exists, but the requested Work is unadopted.
+    await seedPlan("work-1", ["One."]);
+    await seedWorkWithBlocks("work-2", [{ id: "work-2-b0", text: "Unadopted." }]);
+
+    expect(await getHubForWork("work-2")).toEqual({
+      status: "unadopted_work",
+      workEntryId: "work-2",
+      workTitle: "Work work-2"
+    });
+  });
+
+  it("returns no_plan for an unknown Work id", async () => {
+    await seedPlan("work-1", ["One."]);
+    expect(await getHubForWork("does-not-exist")).toEqual({ status: "no_plan" });
+  });
+
+  it("treats an empty ?work= as no scope and falls back to the default most-recent hub", async () => {
+    const { planEntryId } = await seedPlan("work-1", ["One."]);
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/recitation/hub?work="
+    });
+    expect(response.statusCode).toBe(200);
+    expect(activeHub((response.json() as RecitationHubResponse).hub).planEntryId).toBe(planEntryId);
+  });
+
+  it("never opens another learner's plan for the requested Work", async () => {
+    const { planEntryId } = await seedPlan("work-1", ["One."]);
+    // A different learner requesting the same Work sees its adoption state, not the owner's plan.
+    context.setUser(OTHER_USER_ID);
+    expect(await getHubForWork("work-1")).toEqual({
+      status: "unadopted_work",
+      workEntryId: "work-1",
+      workTitle: "Work work-1"
+    });
+    // Sanity: the owner's plan is untouched and still resolves for them.
+    context.setUser(DEFAULT_USER_ID);
+    expect(activeHub(await getHubForWork("work-1")).planEntryId).toBe(planEntryId);
   });
 });

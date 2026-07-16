@@ -762,7 +762,10 @@ function renderRecitationAction(
             {plan.phase === "learning" ? "Divide into passages" : "Set up passages"}
           </a>
         )}
-        <a className={cardActionClass} href="#/recitation">
+        <a
+          className={cardActionClass}
+          href={`#/recitation?work=${encodeURIComponent(item.work.entryId)}`}
+        >
           Recitation
         </a>
       </>

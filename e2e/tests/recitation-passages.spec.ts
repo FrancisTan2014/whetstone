@@ -103,5 +103,10 @@ test.describe("recitation passage practice (#578, faded by #579)", () => {
     await reveal.click();
     await reloadedSession.getByRole("button", { name: "Clean and natural" }).click();
     await expect(reloadedSession.getByRole("button", { name: "Clean and natural" })).toHaveCount(0);
+
+    // Pause this plan so it leaves the shared single-user recitation routine, now a TRUE aggregate over
+    // every active plan (#633). A just-reviewed passage re-enters its learning step within minutes, so an
+    // active plan here would resurface as due work in every later recitation spec's aggregate.
+    await page.request.post(`${setup.baseURL}api/recitation/plans/${planEntryId}/pause`);
   });
 });

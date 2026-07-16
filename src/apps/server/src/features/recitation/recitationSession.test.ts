@@ -14,7 +14,9 @@ import {
   authors,
   docBlocks,
   entries,
+  personalEntries,
   readingUnits,
+  recitationPlans,
   reviewCards,
   workMeta
 } from "../../db/schema.js";
@@ -198,8 +200,12 @@ async function firstWholeWorkTargetId(): Promise<string> {
   return row!.entryId;
 }
 
-async function getSession(): Promise<RecitationSessionDto> {
-  const response = await context.server.inject({ method: "GET", url: "/api/recitation/session" });
+async function getSession(pinned?: string): Promise<RecitationSessionDto> {
+  const url =
+    pinned === undefined
+      ? "/api/recitation/session"
+      : `/api/recitation/session?pinned=${encodeURIComponent(pinned)}`;
+  const response = await context.server.inject({ method: "GET", url });
   expect(response.statusCode).toBe(200);
   return (response.json() as RecitationSessionResponse).session;
 }
@@ -286,20 +292,84 @@ describe("GET /api/recitation/session", () => {
     expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
   });
 
-  it("targets the most-recent plan rather than an older plan with due work", async () => {
+  it("works an older plan's due passage before a newer plan that only offers new material", async () => {
     const oldPlan = await seedPlan("work-1", ["Old."]);
     await introduceNext(oldPlan.planEntryId);
 
     context.setNow("2026-07-01T09:01:00.000Z");
-    const newest = await seedPlan("work-2", ["New."]);
+    await seedPlan("work-2", ["New."]);
 
+    // The aggregate routine works required obligations across every Work before any optional invitation,
+    // so the newer plan's new-material invitation never hides the older plan's due passage (#633 AC1/AC5).
     const session = activeSession(await getSession());
-    expect(session.planEntryId).toBe(newest.planEntryId);
-    expect(session.hasDuePassage).toBe(false);
-    expect(session.step).toBe("new_passage");
+    expect(session.planEntryId).toBe(oldPlan.planEntryId);
+    expect(session.hasDuePassage).toBe(true);
+    expect(session.step).toBe("due_passage");
+    expect(session.newPassage.available).toBe(false);
   });
 
-  it("withholds every session step while the current plan is paused", async () => {
+  it("aggregates due counts and the earliest instant across every active plan", async () => {
+    const first = await seedPlan("work-1", ["One."]);
+    await introduceNext(first.planEntryId);
+    const second = await seedPlan("work-2", ["Two."]);
+    await introduceNext(second.planEntryId);
+    await setDueAt(first.passageIds[0]!, "2026-07-01T07:00:00.000Z");
+    await setDueAt(second.passageIds[0]!, "2026-07-01T06:00:00.000Z");
+
+    const session = activeSession(await getSession());
+    expect(session.due.dueCount).toBe(2);
+    expect(session.due.nextDueAt).toBe("2026-07-01T06:00:00.000Z");
+    // With no pin the earliest-due Work leads.
+    expect(session.planEntryId).toBe(second.planEntryId);
+  });
+
+  it("keeps the pinned Work selected while it holds required work, without changing the aggregate", async () => {
+    const first = await seedPlan("work-1", ["One."]);
+    await introduceNext(first.planEntryId);
+    const second = await seedPlan("work-2", ["Two."]);
+    await introduceNext(second.planEntryId);
+    await setDueAt(first.passageIds[0]!, "2026-07-01T06:00:00.000Z");
+    await setDueAt(second.passageIds[0]!, "2026-07-01T07:00:00.000Z");
+
+    const session = activeSession(await getSession(second.planEntryId));
+    // The pin holds the routine on the second Work even though the first is due earlier, so clearing the
+    // second Work's items never context-switches mid-Work (#633 AC4)…
+    expect(session.planEntryId).toBe(second.planEntryId);
+    // …while the aggregate counts stay truthful across both Works regardless of which is selected.
+    expect(session.due.dueCount).toBe(2);
+    expect(session.due.nextDueAt).toBe("2026-07-01T06:00:00.000Z");
+  });
+
+  it("ignores a pin that no longer holds required work and advances to the next Work", async () => {
+    const first = await seedPlan("work-1", ["One."]);
+    await introduceNext(first.planEntryId);
+    await setDueAt(first.passageIds[0]!, "2026-07-01T06:00:00.000Z");
+    const second = await seedPlan("work-2", ["Two."]);
+    // The second Work has only new material (nothing required), so pinning it falls through to the first.
+    const session = activeSession(await getSession(second.planEntryId));
+    expect(session.planEntryId).toBe(first.planEntryId);
+    expect(session.step).toBe("due_passage");
+  });
+
+  it("excludes a paused plan yet still drives the routine from another active plan", async () => {
+    const paused = await seedPlan("work-1", ["Paused."]);
+    await introduceNext(paused.planEntryId);
+    const active = await seedPlan("work-2", ["Active."]);
+    await introduceNext(active.planEntryId);
+
+    const pauseResponse = await context.server.inject({
+      method: "POST",
+      url: `/api/recitation/plans/${paused.planEntryId}/pause`
+    });
+    expect(pauseResponse.statusCode).toBe(200);
+
+    const session = activeSession(await getSession());
+    // Only the active Work's obligation counts; the paused Work contributes nothing to the aggregate.
+    expect(session.planEntryId).toBe(active.planEntryId);
+    expect(session.due.dueCount).toBe(1);
+  });
+
+  it("returns no_plan when every adopted plan is paused", async () => {
     const { planEntryId } = await seedPlan("work-1", ["One."]);
     await introduceNext(planEntryId);
 
@@ -309,10 +379,125 @@ describe("GET /api/recitation/session", () => {
     });
     expect(response.statusCode).toBe(200);
 
+    // The routine aggregates only unpaused plans, so a learner whose every plan is paused has no routine.
+    expect(await getSession()).toEqual({ status: "no_plan" });
+  });
+
+  it("offers optional new material only when no Work holds required work", async () => {
+    // A single fresh plan with seeded-but-unintroduced passages: nothing is required yet, so the routine
+    // invites new material and points at that Work.
+    const { planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
+
+    const idle = activeSession(await getSession());
+    expect(idle.planEntryId).toBe(planEntryId);
+    expect(idle.step).toBe("new_passage");
+    expect(idle.newPassage.available).toBe(true);
+  });
+
+  it("suppresses the new-material invitation while the same Work still has a due passage", async () => {
+    const { passageIds, planEntryId } = await seedPlan("work-1", ["One.", "Two."]);
+    await introduceNext(planEntryId);
+    await setDueAt(passageIds[0]!, "2026-07-01T06:00:00.000Z");
+
     const session = activeSession(await getSession());
-    expect(session.paused).toBe(true);
-    expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+    // The Work still has capacity to introduce its second passage, but the due passage is required, so
+    // the optional invitation is suppressed until the required work clears (#633 AC5).
+    expect(session.step).toBe("due_passage");
+    expect(session.newPassage.available).toBe(false);
+  });
+
+  it("presents the first Work on a clear routine when no Work offers new material", async () => {
+    // A single-passage plan, its only passage introduced then pushed past due: nothing is required (one
+    // passage is never chain-eligible and the whole Work is not owned) and no new material remains to
+    // introduce. With no required Work selected and no new-material Work, the routine falls back to the
+    // first Work by stable id so the clear session still names a concrete Work (#633 AC5).
+    const { passageIds, planEntryId } = await seedPlan("work-1", ["Only."]);
+    await introduceNext(planEntryId);
+    await setDueAt(passageIds[0]!, "2999-01-01T00:00:00.000Z");
+
+    const session = activeSession(await getSession());
+    expect(session.planEntryId).toBe(planEntryId);
     expect(session.step).toBe("clear");
+    expect(session.newPassage.available).toBe(false);
+    expect(session.due).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+  });
+
+  it("counts every active Work's cardless required step in the session due total (#633 AC1)", async () => {
+    // Two Works, each fully owning its two passages so it holds an unstarted whole-Work maintenance step —
+    // a required obligation carrying no due review card — with both passage cards pushed far past due.
+    // Neither Work has a due card, yet each holds a required step. The aggregate must count both untimed
+    // obligations, not collapse them to a single due item, or Today under-reports the routine as one due
+    // when two Works still need work (#633 AC1).
+    const a = await seedPlan("work-a", ["A one.", "A two."]);
+    await introduceNext(a.planEntryId);
+    await ownPassage(a.passageIds[0]!);
+    await introduceNext(a.planEntryId);
+    await ownPassage(a.passageIds[1]!);
+    await setDueAt(a.passageIds[0]!, "2999-01-01T00:00:00.000Z");
+    await setDueAt(a.passageIds[1]!, "2999-01-01T00:00:00.000Z");
+
+    const b = await seedPlan("work-b", ["B one.", "B two."]);
+    await introduceNext(b.planEntryId);
+    await ownPassage(b.passageIds[0]!);
+    await introduceNext(b.planEntryId);
+    await ownPassage(b.passageIds[1]!);
+    await setDueAt(b.passageIds[0]!, "2999-01-01T00:00:00.000Z");
+    await setDueAt(b.passageIds[1]!, "2999-01-01T00:00:00.000Z");
+
+    const session = activeSession(await getSession());
+    // The selected Work sits on a required whole-Work step with no due card, so nextDueAt is null; both
+    // Works' cardless obligations are still counted in the aggregate total.
+    expect(session.step).toBe("whole_work");
+    expect(session.hasDuePassage).toBe(false);
+    expect(session.due).toEqual({ dueCount: 2, nextDueAt: null, overdueCount: 0 });
+  });
+
+  it("treats an empty pinned query the same as no pin", async () => {
+    const first = await seedPlan("work-1", ["One."]);
+    await introduceNext(first.planEntryId);
+    await setDueAt(first.passageIds[0]!, "2026-07-01T06:00:00.000Z");
+
+    const session = activeSession(await getSession(""));
+    expect(session.planEntryId).toBe(first.planEntryId);
+  });
+
+  it("excludes another user's plan from the learner's aggregate", async () => {
+    await seedWorkWithBlocks("work-foreign", [{ id: "work-foreign-b0", text: "Foreign." }]);
+    await context.db.transaction(async (tx) => {
+      await tx.insert(entries).values({ id: "foreign-plan", type: "recitation_plan" });
+      await tx.insert(personalEntries).values({
+        createdAt: new Date(START),
+        entryId: "foreign-plan",
+        occurredAt: new Date(START),
+        updatedAt: new Date(START),
+        userId: "other-user"
+      });
+      await tx.insert(recitationPlans).values({
+        entryId: "foreign-plan",
+        phase: "learning",
+        workEntryId: "work-foreign"
+      });
+    });
+
+    // The current learner owns nothing; a plan owned by another user must never surface as their routine.
+    expect(await getSession()).toEqual({ status: "no_plan" });
+  });
+
+  it("fails loud when any active plan cannot load, never reporting a false clear", async () => {
+    const first = await seedPlan("work-1", ["One."]);
+    await introduceNext(first.planEntryId);
+    await seedPlan("work-2", ["Two."]);
+
+    // Dropping a table every per-plan slice reads leaves plan listing intact but makes projecting any
+    // plan throw, so the aggregate loader rejects rather than silently dropping a Work and under-reporting
+    // the routine as clear (#633 AC2).
+    await context.db.$client.query("DROP TABLE review_cards CASCADE");
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/recitation/session"
+    });
+    expect(response.statusCode).toBe(500);
   });
 
   it("summarizes the earliest due card as the due nextDueAt", async () => {

@@ -78,7 +78,6 @@ function makeSession(
       introducedToday: 1,
       remainingCapacity: 2
     },
-    paused: false,
     planEntryId: "plan-1",
     status: "active",
     step: "clear",
@@ -234,6 +233,38 @@ describe("RecitationSessionPanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: "reviewed passage-1" }));
 
     await waitFor(() => expect(mockedSession).toHaveBeenCalledTimes(2));
+  });
+
+  it("pins the shown Work on reload and advances to the next Work once it clears", async () => {
+    mockedSession
+      .mockResolvedValueOnce(
+        makeSession({
+          due: { dueCount: 2, nextDueAt: "2026-07-01T06:00:00.000Z", overdueCount: 0 },
+          hasDuePassage: true,
+          planEntryId: "plan-1",
+          workTitle: "First"
+        })
+      )
+      .mockResolvedValueOnce(
+        makeSession({
+          due: { dueCount: 1, nextDueAt: "2026-07-01T07:00:00.000Z", overdueCount: 0 },
+          hasDuePassage: true,
+          planEntryId: "plan-2",
+          workTitle: "Second"
+        })
+      );
+    mockedDue.mockResolvedValue(makeDuePassage({ planEntryId: "plan-2" }));
+    renderPanel();
+
+    expect(await screen.findByText("First")).toBeDefined();
+    expect(mockedDue).toHaveBeenCalledWith("plan-1");
+    await userEvent.click(await screen.findByRole("button", { name: "reviewed passage-1" }));
+
+    // The reload pins the Work that was on screen so a rating never context-switches mid-Work; once that
+    // Work clears, the aggregate hands the routine to the next Work and its steps fetch against it.
+    await waitFor(() => expect(mockedSession).toHaveBeenLastCalledWith("plan-1"));
+    expect(await screen.findByText("Second")).toBeDefined();
+    await waitFor(() => expect(mockedDue).toHaveBeenCalledWith("plan-2"));
   });
 
   it("surfaces due-passage loading failures and already-cleared races", async () => {

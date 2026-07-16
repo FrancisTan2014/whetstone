@@ -1336,6 +1336,7 @@ function renderViewing(
           size={chrome.size}
           title={chrome.title}
           tocOpen={tools.tocOpen}
+          workEntryId={workEntryId}
         />
         <motion.div
           animate={entrance.animate}

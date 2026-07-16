@@ -33,6 +33,21 @@ describe("recitationHubDtoSchema", () => {
     expect(recitationHubDtoSchema.parse({ status: "no_plan" })).toEqual({ status: "no_plan" });
   });
 
+  it("accepts the unadopted_work state carrying the requested Work", () => {
+    const unadopted = {
+      status: "unadopted_work",
+      workEntryId: "work-9",
+      workTitle: "Ode"
+    } as const;
+    expect(recitationHubDtoSchema.parse(unadopted)).toEqual(unadopted);
+  });
+
+  it("rejects an unadopted_work state missing the work title (strict)", () => {
+    expect(() =>
+      recitationHubDtoSchema.parse({ status: "unadopted_work", workEntryId: "work-9" })
+    ).toThrow();
+  });
+
   it("accepts a fully-specified active hub", () => {
     expect(recitationHubDtoSchema.parse(activeHub)).toEqual(activeHub);
   });

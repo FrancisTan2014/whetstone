@@ -84,10 +84,10 @@ function makeHub(
   };
 }
 
-function renderPage(): void {
+function renderPage(workEntryId?: string): void {
   render(
     <MemoryRouter>
-      <RecitationHubPage />
+      <RecitationHubPage workEntryId={workEntryId} />
     </MemoryRouter>
   );
 }
@@ -121,6 +121,38 @@ describe("RecitationHubPage", () => {
     expect(screen.getByRole("link", { name: "Go to Library" }).getAttribute("href")).toBe(
       "/library"
     );
+  });
+
+  it("scopes the load to a contextual Work and shows that Work's adoption state when unadopted", async () => {
+    mockedGet.mockResolvedValue({
+      status: "unadopted_work",
+      workEntryId: "work-9",
+      workTitle: "Ode to Autumn"
+    });
+    renderPage("work-9");
+
+    // The Work-scoped adoption prompt names the Work and routes to the Library to adopt it — the hub
+    // never falls back to another plan here (#633 AC7).
+    expect(await screen.findByText(/haven’t started reciting/i)).toBeDefined();
+    expect(screen.getByText("Ode to Autumn")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Go to Library" }).getAttribute("href")).toBe(
+      "/library"
+    );
+    // The requested Work id was forwarded to the loader so the server opens THAT exact plan.
+    expect(mockedGet).toHaveBeenCalledWith("work-9");
+  });
+
+  it("keeps the contextual Work scope when refreshing the hub after exiting the session", async () => {
+    mockedGet.mockResolvedValue(makeHub({ primaryAction: "due_passage" }));
+    renderPage("work-9");
+
+    const session = await screen.findByLabelText("Session");
+    await userEvent.click(within(session).getByRole("button", { name: "Start session" }));
+    await userEvent.click(screen.getByRole("button", { name: "Exit session" }));
+
+    // Both the initial load and the post-exit refresh stay scoped to the requested Work.
+    await waitFor(() => expect(mockedGet).toHaveBeenCalledTimes(2));
+    expect(mockedGet.mock.calls.every(([arg]) => arg === "work-9")).toBe(true);
   });
 
   it("projects an active learning plan with owned progress as human copy and a due-first action", async () => {

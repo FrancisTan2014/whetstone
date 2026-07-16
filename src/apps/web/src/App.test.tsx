@@ -204,6 +204,15 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Loading your recitation…");
   });
 
+  it("resolves the recitation route with a work query param to the work-scoped hub (#633 AC7)", () => {
+    // The contextual `?work=` entry still resolves to the hub; the route forwards the Work so the hub
+    // opens that exact plan (its adoption state) rather than the most-recent one.
+    const markup = renderAt("/recitation?work=work-1");
+
+    expect(markup).toContain('id="recitation-hub-heading"');
+    expect(markup).toContain("Loading your recitation…");
+  });
+
   it("resolves the search route to the library search page", () => {
     const markup = renderAt("/search");
 

@@ -13,7 +13,6 @@ const activeSession = {
     introducedToday: 1,
     remainingCapacity: 2
   },
-  paused: false,
   planEntryId: "plan-1",
   status: "active",
   step: "due_passage",
@@ -45,6 +44,15 @@ describe("recitationSessionApi", () => {
     expect(result.status).toBe("active");
     const [path] = fetchMock.mock.calls[0] as [string];
     expect(path).toBe("/api/recitation/session");
+  });
+
+  it("pins the requested Work so the routine stays on it while it holds required work", async () => {
+    const fetchMock = mockFetchOnce({ session: activeSession });
+
+    await getRecitationSession("plan 1/2");
+
+    const [path] = fetchMock.mock.calls[0] as [string];
+    expect(path).toBe("/api/recitation/session?pinned=plan%201%2F2");
   });
 
   it("throws when the session request fails", async () => {
