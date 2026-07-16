@@ -90,15 +90,31 @@ export function registerRecitationRoutes(
     return { hub };
   });
 
-  // The complete inline recitation session (#609): a transient projection over the same canonical rows
-  // as the hub, but ordered for one due-first practice run (due passages → whole-Work → chain → optional
-  // new passage → clear). The route validates the response envelope at the boundary before sending.
-  server.get("/api/recitation/session", async (request) => {
-    const userId = request.server.currentUser.getCurrentUserId();
-    const timeZone = await getLearnerTimeZone(dependencies.db, userId);
-    const session = await loadRecitationSession(dependencies, userId, dependencies.now(), timeZone);
-    return recitationSessionResponseSchema.parse({ session });
-  });
+  // The complete inline recitation session (#609): a transient projection over canonical rows aggregated
+  // across every unpaused plan (#633), ordered for one due-first practice run (due passages → whole-Work
+  // → chain → optional new passage → clear). `?pinned=<planEntryId>` keeps the routine on the Work the
+  // caller is working while it still holds required work, so clearing its items never context-switches
+  // mid-Work; an unknown or cleared pin simply falls through to the earliest-required Work. The route
+  // validates the response envelope at the boundary before sending.
+  server.get<{ Querystring: Readonly<{ pinned?: string }> }>(
+    "/api/recitation/session",
+    async (request) => {
+      const userId = request.server.currentUser.getCurrentUserId();
+      const timeZone = await getLearnerTimeZone(dependencies.db, userId);
+      const pinned =
+        typeof request.query.pinned === "string" && request.query.pinned.length > 0
+          ? request.query.pinned
+          : undefined;
+      const session = await loadRecitationSession(
+        dependencies,
+        userId,
+        dependencies.now(),
+        timeZone,
+        pinned
+      );
+      return recitationSessionResponseSchema.parse({ session });
+    }
+  );
 
   // Pause a plan (#608): remove its cards from all due/Today selection without deleting progress,
   // schedule, support levels, chains, or history. Owner-scoped (404 otherwise); idempotent. Returns the

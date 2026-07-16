@@ -16,7 +16,6 @@ const activeSession = {
     introducedToday: 1,
     remainingCapacity: 2
   },
-  paused: false,
   planEntryId: "plan-1",
   status: "active",
   step: "due_passage",

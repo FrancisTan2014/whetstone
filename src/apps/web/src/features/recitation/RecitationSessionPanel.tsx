@@ -24,10 +24,12 @@ type SessionState =
 
 type ActiveSession = Extract<RecitationSessionDto, { status: "active" }>;
 
-// The complete inline recitation session (#609): one focused step at a time, recomputed from canonical
-// server state after each action. The only local state is transient presentation state — a dismissed
-// chain rehearsal and a skipped optional introduction — so ratings and evidence still persist
-// immediately through the existing passage/chain/whole-work commands.
+// The complete inline recitation session (#609/#633): one focused step at a time over the GLOBAL routine,
+// recomputed from canonical server state after each action. The routine aggregates every unpaused plan,
+// so once the current Work's required items clear it advances to the next Work automatically. The panel
+// pins the Work it is currently showing so a rating never context-switches mid-Work (#633 AC4); the only
+// other local state is transient presentation state — a dismissed chain rehearsal and a skipped optional
+// introduction — reset whenever the routine advances to a new Work.
 export function RecitationSessionPanel({
   onExit,
   planEntryId
@@ -41,8 +43,13 @@ export function RecitationSessionPanel({
   // just-started chain) keeps its stale fetch and never drains — its effect keys only on planEntryId.
   const [reloadNonce, setReloadNonce] = useState(0);
 
-  function load(): void {
-    getRecitationSession().then(
+  const selectedPlanEntryId =
+    state.status === "ready" && state.session.status === "active"
+      ? state.session.planEntryId
+      : undefined;
+
+  function load(pinnedPlanEntryId: string): void {
+    getRecitationSession(pinnedPlanEntryId).then(
       (session) => setState({ session, status: "ready" }),
       () => setState({ status: "error" })
     );
@@ -50,10 +57,20 @@ export function RecitationSessionPanel({
 
   function reload(): void {
     setReloadNonce((nonce) => nonce + 1);
-    load();
+    // Pin the Work currently on screen so clearing its items advances within it, not to another Work,
+    // until it is fully clear — then the aggregate hands the routine to the next Work.
+    load(selectedPlanEntryId ?? planEntryId);
   }
 
-  useEffect(load, [planEntryId]);
+  useEffect(() => load(planEntryId), [planEntryId]);
+
+  // Reset transient per-Work presentation state whenever the routine advances to a different Work, so a
+  // chain dismissed or a new passage skipped on the previous Work does not suppress the next Work's steps.
+  useEffect(() => {
+    setChainDismissed(false);
+    setNewPassageIntroduced(false);
+    setNewPassageSkipped(false);
+  }, [selectedPlanEntryId]);
 
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading recitation session…" />;
@@ -80,7 +97,7 @@ export function RecitationSessionPanel({
       onSessionIntroducedNewPassage={() => setNewPassageIntroduced(true)}
       onSkipNewPassage={() => setNewPassageSkipped(true)}
       onUseNewPassage={() => setNewPassageSkipped(false)}
-      planEntryId={planEntryId}
+      planEntryId={state.session.planEntryId}
       reloadNonce={reloadNonce}
       session={state.session}
     />

@@ -1,9 +1,10 @@
 import { recitationSessionSteps } from "@whetstone/domain";
 import { z } from "zod";
 
-// Shared, Zod-validated shapes for the transient recitation session (#609). The session owns no queue:
-// the server's `step` is its due-first pick at fetch time, and the raw booleans are included so the
-// client can recompute locally after a transient chain dismissal without persisting scheduler state.
+// Shared, Zod-validated shapes for the transient recitation session (#609/#633). The session owns no
+// queue: the server's `step` is its due-first pick at fetch time over the aggregate across every unpaused
+// plan, and the raw booleans are the selected Work's, so the client can recompute locally after a
+// transient chain dismissal without persisting scheduler state.
 
 export const recitationSessionStepDtoSchema = z.enum(recitationSessionSteps);
 
@@ -12,8 +13,8 @@ export type RecitationSessionStepDto = z.infer<typeof recitationSessionStepDtoSc
 const sessionDueSchema = z
   .object({
     dueCount: z.number().int().nonnegative(),
-    // The earliest due active card's instant, or null when nothing is due (or the plan is paused). Today
-    // (#610) reads this to order the grouped Recitation routine among the day's obligations.
+    // The earliest due active card's instant across every unpaused plan, or null when nothing is due.
+    // Today (#610) reads this to order the grouped Recitation routine among the day's obligations.
     nextDueAt: z.string().datetime().nullable(),
     overdueCount: z.number().int().nonnegative()
   })
@@ -37,7 +38,6 @@ export const recitationSessionDtoSchema = z.discriminatedUnion("status", [
       due: sessionDueSchema,
       hasDuePassage: z.boolean(),
       newPassage: sessionNewPassageSchema,
-      paused: z.boolean(),
       planEntryId: z.string(),
       status: z.literal("active"),
       step: recitationSessionStepDtoSchema,
