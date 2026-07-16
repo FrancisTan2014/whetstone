@@ -1,9 +1,24 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const navigateSpy = vi.fn();
+
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router-dom")>()),
+  useNavigate: () => navigateSpy
+}));
+
+vi.mock("../recitation/recitationApi", () => ({
+  enrollRecitation: vi.fn()
+}));
+
+import { enrollRecitation } from "../recitation/recitationApi";
 import { ReadingHeader, type ReadingHeaderProps } from "./ReadingHeader";
+
+const mockedEnroll = vi.mocked(enrollRecitation);
 
 function renderHeader(overrides: Partial<ReadingHeaderProps> = {}): ReadingHeaderProps {
   const props: ReadingHeaderProps = {
@@ -22,7 +37,11 @@ function renderHeader(overrides: Partial<ReadingHeaderProps> = {}): ReadingHeade
     ...overrides
   };
 
-  render(<ReadingHeader {...props} />);
+  render(
+    <MemoryRouter>
+      <ReadingHeader {...props} />
+    </MemoryRouter>
+  );
 
   return props;
 }
@@ -30,6 +49,8 @@ function renderHeader(overrides: Partial<ReadingHeaderProps> = {}): ReadingHeade
 beforeEach(() => {
   window.localStorage.clear();
   document.documentElement.classList.remove("dark");
+  navigateSpy.mockReset();
+  mockedEnroll.mockReset();
 });
 
 afterEach(cleanup);
@@ -159,12 +180,36 @@ describe("ReadingHeader", () => {
     expect(screen.getByRole("button", { name: "Increase reading text size" })).toBeDefined();
   });
 
-  it("offers a contextual Recitation entry scoped to the Work being read", () => {
+  it("enrolls the Work being read and opens its review from the contextual control", async () => {
+    const user = userEvent.setup();
+    mockedEnroll.mockResolvedValue({
+      createdAt: "2026-07-01T09:00:00.000Z",
+      entryId: "plan-1",
+      lastSessionAt: null,
+      phase: "maintenance",
+      sessionCount: 0,
+      updatedAt: "2026-07-01T09:00:00.000Z",
+      workEntryId: "work-42",
+      workTitle: "Politics and the English Language"
+    });
     renderHeader({ workEntryId: "work-42" });
 
-    // A Reader Work action reaches the Recitation hub (#608) scoped to THIS Work (`?work=`) so the hub
-    // opens this Work's plan rather than the most-recent one (#633 AC7), without being a primary nav item.
-    const recitation = screen.getByRole("link", { name: "Recitation" });
-    expect(recitation.getAttribute("href")).toBe("#/recitation?work=work-42");
+    // "I can recite this" is the learner's explicit declaration (#643): it enrolls THIS Work into
+    // maintenance and then opens its whole-Work review scoped to `?work=`, never a generic hub.
+    await user.click(screen.getByRole("button", { name: "I can recite this" }));
+
+    expect(mockedEnroll).toHaveBeenCalledWith("work-42");
+    expect(navigateSpy).toHaveBeenCalledWith("/recitation?work=work-42");
+  });
+
+  it("stays put when enrolling the Work fails, so the reader is never stranded", async () => {
+    const user = userEvent.setup();
+    mockedEnroll.mockRejectedValue(new Error("boom"));
+    renderHeader({ workEntryId: "work-42" });
+
+    await user.click(screen.getByRole("button", { name: "I can recite this" }));
+
+    expect(mockedEnroll).toHaveBeenCalledWith("work-42");
+    expect(navigateSpy).not.toHaveBeenCalled();
   });
 });

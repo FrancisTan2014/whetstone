@@ -105,8 +105,7 @@ function isFirstRun(board: TodayBoardDto): boolean {
   return (
     board.clear &&
     board.continueReading.status === "empty" &&
-    board.continueWriting.status === "empty" &&
-    board.newPassage.status !== "available"
+    board.continueWriting.status === "empty"
   );
 }
 
@@ -221,7 +220,6 @@ function ContinueSection({
       </h2>
       <ContinueReading reading={board.continueReading} reload={reload} />
       <ContinueWriting writing={board.continueWriting} reload={reload} />
-      <NewPassageInvitation newPassage={board.newPassage} reload={reload} />
       <Link className={quietLinkClass} to="/diary">
         Return to your diary
       </Link>
@@ -262,26 +260,6 @@ function ContinueWriting({
   return (
     <Link className={quietLinkClass} to={`/write?work=${encodeURIComponent(writing.work.entryId)}`}>
       Keep writing {writing.work.title}
-    </Link>
-  );
-}
-
-function NewPassageInvitation({
-  newPassage,
-  reload
-}: Readonly<{
-  newPassage: TodayBoardDto["newPassage"];
-  reload: () => void;
-}>): React.JSX.Element | null {
-  if (newPassage.status === "failed") {
-    return <FailedInvitation label="new passage" reload={reload} />;
-  }
-  if (newPassage.status === "unavailable") {
-    return null;
-  }
-  return (
-    <Link className={quietLinkClass} to="/recitation">
-      Start a new passage
     </Link>
   );
 }

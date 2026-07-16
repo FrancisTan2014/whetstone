@@ -26,7 +26,6 @@ function makeBoard(overrides: Partial<TodayBoardDto> = {}): TodayBoardDto {
     continueWriting: { status: "empty" },
     date: "2026-07-01",
     dueNow: [],
-    newPassage: { status: "unavailable" },
     routineFailures: [],
     ...overrides
   };
@@ -118,10 +117,9 @@ describe("TodayPage", () => {
     expect(await screen.findByText(/Start with one source/)).toBeTruthy();
     expect(screen.queryByText("All due work is clear.")).toBeNull();
     expect(href("Go to your Library")).toBe("/library");
-    // Continue empties render as quiet copy; the unavailable new passage offers no invitation.
+    // Continue empties render as quiet copy.
     expect(screen.getByText("No reading in progress.")).toBeTruthy();
     expect(screen.getByText("No writing in progress.")).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Start a new passage" })).toBeNull();
   });
 
   it("groups a single due routine into one row with a review deep link", async () => {
@@ -187,8 +185,7 @@ describe("TodayPage", () => {
             workType: "book"
           },
           status: "ready"
-        },
-        newPassage: { planEntryId: "plan-1", status: "available" }
+        }
       })
     );
     renderPage();
@@ -196,22 +193,19 @@ describe("TodayPage", () => {
     expect(await screen.findByRole("link", { name: /Keep reading Fables/ })).toBeTruthy();
     expect(href(/Keep reading Fables/)).toBe("/reader?work=work-1");
     expect(href(/Keep writing My Draft/)).toBe("/write?work=draft-1");
-    expect(href("Start a new passage")).toBe("/recitation");
   });
 
   it("surfaces a quiet Retry for every failed Continue invitation", async () => {
     mockedFetch.mockResolvedValueOnce(
       makeBoard({
         continueReading: { status: "failed" },
-        continueWriting: { status: "failed" },
-        newPassage: { status: "failed" }
+        continueWriting: { status: "failed" }
       })
     );
     renderPage();
 
     expect(await screen.findByText("Couldn’t load your reading right now.")).toBeTruthy();
     expect(screen.getByText("Couldn’t load your writing right now.")).toBeTruthy();
-    expect(screen.getByText("Couldn’t load your new passage right now.")).toBeTruthy();
 
     mockedFetch.mockResolvedValueOnce(makeBoard());
     const [firstRetry] = screen.getAllByRole("button", { name: "Retry" });

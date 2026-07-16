@@ -19,7 +19,6 @@ const board: TodayBoardDto = {
       overdueCount: 2
     }
   ],
-  newPassage: { status: "unavailable" },
   routineFailures: []
 };
 

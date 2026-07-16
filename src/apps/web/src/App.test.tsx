@@ -180,36 +180,35 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain('aria-label="Primary"');
   });
 
-  it("prompts to open a routine at the recite route with no plan param", () => {
-    const markup = renderAt("/recite");
+  it("redirects the retired /recite passage-setup route to the Library recovery path (#643)", () => {
+    // The passage-segmentation route is retired: it must never open a dead or misleading screen, so it
+    // redirects to the Library (effects run under a live render, applying the <Navigate/>).
+    const { container } = renderLiveAt("/recite");
 
-    expect(markup).toContain("Open a recitation routine from your Library to divide it.");
+    expect(container.innerHTML).toContain(">Library<");
+    // None of the retired segmentation copy survives on the recovery landing.
+    expect(container.innerHTML).not.toContain("Loading passages…");
+    expect(container.innerHTML).not.toContain("Open a recitation routine from your Library to divide it.");
   });
 
-  it("resolves the recite route with a plan query param to the segmentation page", () => {
-    const markup = renderAt("/recite?plan=plan-1");
-
-    // Effects do not run under static render, so the page mounts in its loading arm while it would
-    // otherwise fetch the plan's passages.
-    expect(markup).toContain("Loading passages…");
-  });
-
-  it("resolves the recitation route to the routine hub, framed by the primary nav (#608)", () => {
+  it("resolves the recitation route to the direct whole-Work review, framed by the shell (#643)", () => {
     const markup = renderAt("/recitation");
 
     // A secondary destination — reachable off-nav but still framed by the shell. Effects do not run
-    // under static render, so the hub mounts in its loading arm.
+    // under static render, so the review page mounts in its loading arm.
     expect(markup).toContain('aria-label="Primary"');
-    expect(markup).toContain('id="recitation-hub-heading"');
+    expect(markup).toContain('id="recitation-heading"');
     expect(markup).toContain("Loading your recitation…");
+    // The retired hub/passage surface is gone.
+    expect(markup).not.toContain('id="recitation-hub-heading"');
   });
 
-  it("resolves the recitation route with a work query param to the work-scoped hub (#633 AC7)", () => {
-    // The contextual `?work=` entry still resolves to the hub; the route forwards the Work so the hub
-    // opens that exact plan (its adoption state) rather than the most-recent one.
+  it("resolves the recitation route with a work query param to that Work's review (#643)", () => {
+    // The contextual `?work=` entry resolves to the review page; the route forwards the Work so the page
+    // opens that exact Work's whole-Work review rather than the earliest-due one.
     const markup = renderAt("/recitation?work=work-1");
 
-    expect(markup).toContain('id="recitation-hub-heading"');
+    expect(markup).toContain('id="recitation-heading"');
     expect(markup).toContain("Loading your recitation…");
   });
 

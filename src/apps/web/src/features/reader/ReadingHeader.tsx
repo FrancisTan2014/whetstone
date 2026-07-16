@@ -1,5 +1,9 @@
-import { Button, buttonVariants } from "../../shared/ui/Button";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { Button } from "../../shared/ui/Button";
 import { ThemeToggle } from "../../shared/theme/ThemeToggle";
+import { enrollRecitation } from "../recitation/recitationApi";
 import {
   isLargestReadingSize,
   isSmallestReadingSize,
@@ -156,17 +160,37 @@ export function ReadingHeader({
           <NotesIcon />
           {notesCount > 0 ? <span className="readingToolBadge">{notesCount}</span> : null}
         </Button>
-        {/* A quiet, contextual Recitation entry from the Work you are reading (#608): it links to
-            the secondary Recitation hub scoped to THIS Work (`?work=`), so the hub opens this Work's
-            plan (or its adoption state) rather than the most-recent plan (#633 AC7). */}
-        <a
-          aria-label="Recitation"
-          className={buttonVariants({ size: "sm", variant: "ghost" })}
-          href={`#/recitation?work=${encodeURIComponent(workEntryId)}`}
-        >
-          <RecitationIcon />
-        </a>
+        {/* A quiet, contextual "I can recite this" entry from the Work you are reading (#643): it
+            enrolls THIS Work into direct Recitation maintenance (idempotent) and then opens its
+            whole-Work review at `?work=`. Learning and maintenance are separate — this is the learner's
+            explicit declaration that the Work is retrievable, not an inferred rating. */}
+        <ReciteThisControl workEntryId={workEntryId} />
       </div>
     </header>
+  );
+}
+
+function ReciteThisControl({
+  workEntryId
+}: Readonly<{ workEntryId: string }>): React.JSX.Element {
+  const navigate = useNavigate();
+  const [pending, setPending] = useState(false);
+
+  return (
+    <Button
+      aria-label="I can recite this"
+      onClick={() => {
+        setPending(true);
+        enrollRecitation(workEntryId).then(
+          () => navigate(`/recitation?work=${encodeURIComponent(workEntryId)}`),
+          () => setPending(false)
+        );
+      }}
+      pending={pending}
+      size="sm"
+      variant="ghost"
+    >
+      <RecitationIcon />
+    </Button>
   );
 }

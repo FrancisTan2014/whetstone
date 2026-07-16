@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
 
@@ -42,7 +43,9 @@ function firePointer(
 function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
   return rtlRender(ui, {
     wrapper: ({ children }: { children: React.ReactNode }) => (
-      <ToastProvider>{children}</ToastProvider>
+      <MemoryRouter>
+        <ToastProvider>{children}</ToastProvider>
+      </MemoryRouter>
     )
   });
 }

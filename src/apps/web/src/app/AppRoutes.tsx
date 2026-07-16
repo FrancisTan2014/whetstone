@@ -1,4 +1,4 @@
-import { Route, Routes, useSearchParams } from "react-router-dom";
+import { Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 
 import { createCaptureVoice } from "../features/capture/captureVoice.js";
 import { AuthoredWorkPage } from "../features/authoredWorks/AuthoredWorkPage.js";
@@ -7,8 +7,7 @@ import { MemoryPage } from "../features/memory/MemoryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { RecallPage } from "../features/recall/RecallPage.js";
-import { RecitePage } from "../features/recitation/RecitePage.js";
-import { RecitationHubPage } from "../features/recitation/RecitationHubPage.js";
+import { RecitationReviewPage } from "../features/recitation/RecitationReviewPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { TodayPage } from "../features/today/TodayPage.js";
 import { AppShell } from "./AppShell.js";
@@ -48,23 +47,14 @@ function NotesRoute(): React.JSX.Element {
   return <NotesPage focusWorkEntryId={searchParams.get("work") ?? undefined} />;
 }
 
-// The Library's "Divide into passages" action on a recitation plan routes to `#/recite?plan=<entryId>`;
-// the route reads that param so the segmentation page can load one plan's passages. Without it, the page
-// prompts the learner to open a routine from the Library.
-function ReciteRoute(): React.JSX.Element {
-  const [searchParams] = useSearchParams();
-
-  return <RecitePage planEntryId={searchParams.get("plan") ?? undefined} />;
-}
-
-// A contextual Recitation entry (Reader header, Library card) routes to `#/recitation?work=<entryId>`;
-// the route reads that param so the hub opens THAT exact Work's plan — or its adoption state when the
-// Work is not adopted — and never falls back to the most-recent plan (#633 AC7). Without it, the hub
-// shows the learner's most-recently-touched plan.
+// A contextual Recitation entry (Reader header, Library card, Today) routes to
+// `#/recitation?work=<entryId>`; the route reads that param so the page opens THAT exact Work's direct
+// maintenance review — or a calm Library recovery when it is not due (#643). Without it, the earliest-due
+// Work's review opens.
 function RecitationRoute(): React.JSX.Element {
   const [searchParams] = useSearchParams();
 
-  return <RecitationHubPage workEntryId={searchParams.get("work") ?? undefined} />;
+  return <RecitationReviewPage workEntryId={searchParams.get("work") ?? undefined} />;
 }
 
 // Routes for the four navigation modes, all nested under the shell layout. Hash/memory
@@ -79,7 +69,10 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<WriteRoute />} path="write" />
         <Route element={<MemoryPage />} path="memory" />
         <Route element={<RecallPage />} path="recall" />
-        <Route element={<ReciteRoute />} path="recite" />
+        {/* The retired passage-segmentation route (`/recite?plan=`) has no direct-maintenance equivalent —
+            its plan-scoped setup is gone (#643) — so it redirects to the Library recovery path rather than
+            opening a dead or misleading screen. */}
+        <Route element={<Navigate replace to="/library" />} path="recite" />
         <Route element={<RecitationRoute />} path="recitation" />
         <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />
