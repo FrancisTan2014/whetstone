@@ -60,6 +60,9 @@ export type RichContentEditorPresentation = "compact" | "full";
 export interface RichContentEditorProps {
   readonly ariaLabel?: string;
   readonly document: DocumentNodeJSON;
+  // When false the editor is read-only (Tiptap's native `editable`): the content stays visible but every
+  // edit is blocked. Consumers freeze the surface this way (e.g. an in-flight import). Defaults to true.
+  readonly editable?: boolean;
   readonly onChange: (document: DocumentNodeJSON) => void;
   readonly onSave?: (document: DocumentNodeJSON) => void;
   readonly presentation?: RichContentEditorPresentation;
@@ -108,6 +111,7 @@ function MoreIcon(): React.JSX.Element {
 export function RichContentEditor({
   ariaLabel = "Rich content editor",
   document,
+  editable = true,
   onChange,
   onSave,
   presentation = "full"
@@ -140,6 +144,7 @@ export function RichContentEditor({
   );
   const editor = useEditor({
     content: initialDocument,
+    editable,
     editorProps: {
       attributes: {
         "aria-label": ariaLabel,
@@ -184,6 +189,16 @@ export function RichContentEditor({
       editor.commands.setContent(initialDocument, { emitUpdate: false });
     }
   }, [editor, initialDocument]);
+
+  // Reflect a changed `editable` onto the live editor (Tiptap's native read-only toggle): freezing an
+  // in-flight surface after mount must actually block edits, not only at first render.
+  useEffect(() => {
+    if (editor === null) {
+      return;
+    }
+
+    editor.setEditable(editable);
+  }, [editor, editable]);
 
   // Paint the transient wash on the block that owns the interaction: the open menu's block when a menu
   // is open, otherwise the hovered gutter block. Clears (null) at rest. The decoration is a no-op

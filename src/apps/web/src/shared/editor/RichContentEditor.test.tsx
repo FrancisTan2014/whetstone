@@ -244,6 +244,27 @@ describe("RichContentEditor boundary", () => {
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("AB"));
   });
 
+  it("renders read-only when not editable and re-enables editing when toggled back", async () => {
+    const onChange = vi.fn<DocumentListener>();
+    const user = userEvent.setup();
+    const view = render(
+      <RichContentEditor document={textDocument("Frozen")} editable={false} onChange={onChange} />
+    );
+    const textbox = await screen.findByRole("textbox", { name: "Rich content editor" });
+
+    // Tiptap's native read-only: the content shows but the surface blocks edits.
+    expect(textbox.getAttribute("contenteditable")).toBe("false");
+    onChange.mockClear();
+    await user.click(textbox);
+    await user.type(textbox, "X");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(textbox.textContent).toBe("Frozen");
+
+    // Toggling editable back on (the setEditable effect) restores an interactive surface.
+    view.rerender(<RichContentEditor document={textDocument("Frozen")} onChange={onChange} />);
+    await waitFor(() => expect(textbox.getAttribute("contenteditable")).toBe("true"));
+  });
+
   it("synchronizes a changed controlled document without emitting and ignores an equal clone", async () => {
     const first = textDocument("First");
     const second = textDocument("Second");

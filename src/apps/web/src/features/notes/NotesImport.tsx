@@ -167,6 +167,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                     <RichContentEditor
                       ariaLabel="Question"
                       document={draft.questionDoc}
+                      editable={!pending}
                       onChange={(document) =>
                         setDrafts((current) =>
                           updateDraftIn(current, draft.id, { questionDoc: document })
@@ -180,6 +181,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                     <RichContentEditor
                       ariaLabel="Note"
                       document={draft.noteDoc}
+                      editable={!pending}
                       onChange={(document) =>
                         setDrafts((current) =>
                           updateDraftIn(current, draft.id, { noteDoc: document })
@@ -191,6 +193,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                   <div className="flex flex-wrap items-center gap-2">
                     {draft.separator !== null ? (
                       <Button
+                        disabled={pending}
                         onClick={() => setDrafts((current) => undoSplitIn(current, draft.id))}
                         size="sm"
                         type="button"
@@ -201,6 +204,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                     ) : null}
                     {noteBlank ? (
                       <Button
+                        disabled={pending}
                         onClick={() => void suggest(draft.id, documentText(draft.questionDoc))}
                         size="sm"
                         type="button"
@@ -211,6 +215,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                     ) : null}
                     {noteHasSplittableContext(draft) ? (
                       <Button
+                        disabled={pending}
                         onClick={() =>
                           setDrafts((current) => splitContextIn(current, draft.id, makeId))
                         }
@@ -223,6 +228,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                     ) : null}
                     {index < drafts.length - 1 ? (
                       <Button
+                        disabled={pending}
                         onClick={() => setDrafts((current) => mergeDraftsAt(current, index))}
                         size="sm"
                         type="button"
@@ -232,6 +238,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
                       </Button>
                     ) : null}
                     <Button
+                      disabled={pending}
                       onClick={() => setDrafts((current) => removeDraftFrom(current, draft.id))}
                       size="sm"
                       type="button"
@@ -260,10 +267,10 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
             <Button onClick={() => void runImport()} pending={pending} type="button">
               Import {importableCount}
             </Button>
-            <Button onClick={backToPaste} type="button" variant="ghost">
+            <Button disabled={pending} onClick={backToPaste} type="button" variant="ghost">
               Back to paste
             </Button>
-            <Button onClick={cancel} type="button" variant="ghost">
+            <Button disabled={pending} onClick={cancel} type="button" variant="ghost">
               Cancel
             </Button>
           </div>

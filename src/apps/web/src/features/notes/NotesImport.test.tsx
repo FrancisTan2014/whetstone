@@ -15,10 +15,12 @@ vi.mock("../../shared/editor", async () => {
     RichContentEditor: ({
       ariaLabel,
       document,
+      editable = true,
       onChange
     }: {
       ariaLabel?: string;
       document: unknown;
+      editable?: boolean;
       onChange: (document: unknown) => void;
     }) => {
       const [value, setValue] = React.useState(() => documentText(document as never));
@@ -28,7 +30,11 @@ vi.mock("../../shared/editor", async () => {
       }, [document]);
       return React.createElement("textarea", {
         "aria-label": ariaLabel,
+        disabled: !editable,
         onChange: (event: { target: { value: string } }) => {
+          if (!editable) {
+            return;
+          }
           setValue(event.target.value);
           onChange(createTextDocument(event.target.value));
         },
@@ -298,5 +304,63 @@ describe("NotesImport", () => {
     mockedSuggest.mockResolvedValueOnce({ suggestion: null, term: "serendipity" });
     await user.click(screen.getByRole("button", { name: "Suggest note" }));
     await waitFor(() => expect(screen.getByText(/No dictionary suggestion/)).toBeDefined());
+  });
+
+  it("freezes every draft control while an import is in flight, then imports the original snapshot (#661)", async () => {
+    const user = userEvent.setup();
+    // Hold the import pending so the panel stays in its in-flight state until we resolve it by hand.
+    let resolveImport: (value: ImportNotesResultDto) => void = () => {};
+    mockedImport.mockReturnValue(
+      new Promise<ImportNotesResultDto>((resolve) => {
+        resolveImport = resolve;
+      })
+    );
+    const onImported = vi.fn();
+    const onCancel = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<NotesImport onCancel={onCancel} onImported={onImported} />);
+
+    await paste(user, "per -> each\nquorum -> a majority of replicas");
+    await user.click(screen.getByRole("button", { name: /^Import 2$/ }));
+    await waitFor(() => expect(mockedImport).toHaveBeenCalledTimes(1));
+
+    // Every draft-mutating control plus Back/Cancel is disabled while pending: the two editors per row,
+    // each row's Undo split and Remove, the single Merge with next, and the footer's Back/Cancel.
+    for (const editor of [
+      ...screen.getAllByLabelText("Question"),
+      ...screen.getAllByLabelText("Note")
+    ]) {
+      expect((editor as HTMLTextAreaElement).disabled).toBe(true);
+    }
+    for (const button of [
+      ...screen.getAllByRole("button", { name: "Undo split" }),
+      ...screen.getAllByRole("button", { name: "Remove" })
+    ]) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    for (const label of ["Merge with next", "Back to paste", "Cancel"]) {
+      expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(
+        true
+      );
+    }
+
+    // A frozen editor drops edits, so the in-flight snapshot cannot change out from under the request.
+    await user.type(screen.getAllByLabelText("Question")[0]!, " EDITED");
+    expect((screen.getAllByLabelText("Question")[0] as HTMLTextAreaElement).value).toBe("per");
+
+    // Cancelling mid-flight is inert: no discard prompt, no onCancel, the import still owns the outcome.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    // On resolve, the original snapshot (never the dropped edit) is what landed.
+    resolveImport(result);
+    await waitFor(() => expect(onImported).toHaveBeenCalledWith(result));
+    expect(itemsOf(mockedImport.mock.calls[0]![0])).toEqual([
+      { note: "each", question: "per" },
+      { note: "a majority of replicas", question: "quorum" }
+    ]);
+
+    confirmSpy.mockRestore();
   });
 });
