@@ -1,6 +1,6 @@
 import { type Page } from "@playwright/test";
 
-import { INTERACTIVE_SELECTOR } from "../probes";
+import { geometry, INTERACTIVE_SELECTOR } from "../probes";
 import { type SetupData } from "../stack";
 import { expect, test } from "../fixtures";
 
@@ -493,6 +493,22 @@ test("adding a saved reader note to Review enrolls it, persists, and survives a 
   // One click enrolls: the shared card is due now with a link into the Notes-owned Review session.
   await expect(review.getByText("Due now")).toBeVisible();
   await expect(review.getByRole("link", { name: "Review" })).toBeVisible();
+
+  // The Review action is a real >=44px hit target (WCAG 2.5.5), matching the rest of the note sheet: it
+  // reuses the shared button treatment rather than shipping as a small inline text link. jsdom cannot lay
+  // out boxes, so this asserts the real rendered rect (and the shared geometry probe) in a browser.
+  const box = await review
+    .getByRole("link", { name: "Review" })
+    .evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      width: el.getBoundingClientRect().width
+    }));
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  const reviewLinkFlags = (
+    await page.evaluate(geometry, 'a[href="#/notes/review"]')
+  ).issues.flatMap((issue) => issue.flags);
+  expect(reviewLinkFlags).not.toContain("tooSmall");
 
   // Enrollment persists across reopening the note (the section reads the objective server status).
   await editor.getByRole("button", { name: "Close" }).click();

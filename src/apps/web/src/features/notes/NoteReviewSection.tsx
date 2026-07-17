@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import type { NoteReviewEnrollmentStatusDto } from "@whetstone/contracts";
 
-import { Button } from "../../shared/ui/Button";
+import { Button, buttonVariants } from "../../shared/ui/Button";
 import { addNoteToReview, fetchNoteReviewStatus } from "../notesReview/notesReviewApi";
 
 type NoteReviewSectionProps = Readonly<{
@@ -175,7 +175,7 @@ function NoteReviewStatusView({
       return (
         <div>
           <p>Due now</p>
-          <Link className="noteReviewLink" to="/notes/review">
+          <Link className={buttonVariants({ variant: "secondary" })} to="/notes/review">
             Review
           </Link>
         </div>
