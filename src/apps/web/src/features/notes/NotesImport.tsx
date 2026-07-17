@@ -122,7 +122,6 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
   }
 
   const importableCount = importableNoteDrafts(drafts).length;
-  const incompleteCount = incompleteNoteDrafts(drafts).length;
 
   return (
     <section
@@ -260,7 +259,6 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
           </ol>
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              disabled={incompleteCount > 0 || importableCount === 0}
               onClick={() => void runImport()}
               pending={pending}
               type="button"
