@@ -703,3 +703,57 @@ describe("owner-scoped enrollment and status (#659)", () => {
     expect((await ownerStatus(note.entryId)).statusCode).toBe(404);
   });
 });
+
+describe("imported note enrollment reuse (#661)", () => {
+  // Seed a cardless current-note prompt directly on a standalone note, exactly as an import does: one
+  // memory_prompt row + its Entry + the note→prompt `contains` link, with no card or event.
+  async function seedImportedPrompt(noteEntryId: string, cueText: string): Promise<string> {
+    const promptId = `imported-prompt-${noteEntryId}`;
+    await context.db.insert(entries).values({ id: promptId, type: "memory_prompt" });
+    await context.db.insert(memoryPrompts).values({
+      answerDoc: null,
+      answerText: null,
+      chunkId: null,
+      createdAt: at(0),
+      cueDoc: createTextDocument(cueText),
+      cueText,
+      entryId: promptId,
+      lifecycle: "ready",
+      noteEntryId,
+      revealKind: "current_note"
+    });
+    await context.db
+      .insert(entryLinks)
+      .values({ fromEntryId: noteEntryId, toEntryId: promptId, type: "contains" });
+    return promptId;
+  }
+
+  it("surfaces the imported note's confirmed question on owner status while it stays cardless", async () => {
+    context.setNow(at(0));
+    const note = await createStandaloneNote("A write-ahead log records changes first.");
+    await seedImportedPrompt(note.entryId, "What is a WAL?");
+
+    const body = (await ownerStatus(note.entryId)).json() as NoteReviewEnrollmentStatusDto;
+    expect(body).toEqual({ status: "not_enrolled", question: "What is a WAL?" });
+  });
+
+  it("reuses the imported prompt's cue on enroll when the learner types no question", async () => {
+    context.setNow(at(0));
+    const note = await createStandaloneNote("A write-ahead log records changes first.");
+    const promptId = await seedImportedPrompt(note.entryId, "What is a WAL?");
+    context.setNow(at(1));
+
+    // No typed question: the existing imported prompt's cue is reused, so this is not a question_required.
+    const response = await ownerEnroll(note.entryId);
+    expect(response.statusCode).toBe(200);
+    expect(response.json() as NoteReviewEnrollmentStatusDto).toEqual({ status: "due" });
+
+    const prompts = await promptRowsFor(note.entryId);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.entryId).toBe(promptId);
+    expect(prompts[0]!.cueText).toBe("What is a WAL?");
+    const cards = await cardsFor(promptId);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.dueAt).toEqual(at(1));
+  });
+});
