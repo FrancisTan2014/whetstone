@@ -175,3 +175,23 @@ async function loadOwnedPlanForWork(
   const plans = await listActiveRecitationPlans(db, userId);
   return plans.find((plan) => plan.workEntryId === workEntryId);
 }
+
+// How many Works still hold a due Work-level card right now (#637): the aggregate due count recomputed
+// from the canonical cards through the pure #633 selector, with no persisted queue or cursor. Called
+// straight after a rating so the review UI can decide between an optional "Review next" and "Due
+// complete" — the just-rated card is rescheduled forward and so is naturally not counted here. Overdue
+// is irrelevant to the count, so "now" doubles as the day boundary (only overdue would need the zone).
+export async function countDueRecitationWork(
+  dependencies: RecitationReviewDependencies,
+  userId: string,
+  now: Date
+): Promise<number> {
+  const { db } = dependencies;
+  const plans = await listActiveRecitationPlans(db, userId);
+  const obligations: RecitationPlanObligation[] = [];
+  for (const plan of plans) {
+    const target = await loadWholeWorkTarget(db, plan.entryId, userId);
+    obligations.push(toObligation(plan.entryId, target?.card, now, now.getTime()));
+  }
+  return selectRecitationWork(obligations, null).due.dueCount;
+}
