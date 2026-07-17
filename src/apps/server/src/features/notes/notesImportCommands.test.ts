@@ -71,10 +71,7 @@ describe("importNotesBatch", () => {
     expect(result.imported.map((row) => row.noteEntryId)).toEqual(["id-1", "id-3"]);
     expect(result.imported.map((row) => row.promptId)).toEqual(["id-2", "id-4"]);
 
-    const noteRows = await context.db
-      .select()
-      .from(notes)
-      .orderBy(notes.entryId);
+    const noteRows = await context.db.select().from(notes).orderBy(notes.entryId);
     expect(noteRows).toHaveLength(2);
     for (const row of noteRows) {
       expect(row.kind).toBe("note");
@@ -86,10 +83,7 @@ describe("importNotesBatch", () => {
     );
     expect(byId.get("id-3")?.bodyText).toBe("A quorum is a majority of replicas.");
 
-    const promptRows = await context.db
-      .select()
-      .from(memoryPrompts)
-      .orderBy(memoryPrompts.entryId);
+    const promptRows = await context.db.select().from(memoryPrompts).orderBy(memoryPrompts.entryId);
     expect(promptRows).toHaveLength(2);
     for (const row of promptRows) {
       expect(row.revealKind).toBe("current_note");
@@ -116,10 +110,7 @@ describe("importNotesBatch", () => {
     expect(owners[0]?.userId).toBe(userId);
     expect(owners[0]?.entryId).toBe("id-1");
 
-    const links = await context.db
-      .select()
-      .from(entryLinks)
-      .where(eq(entryLinks.type, "contains"));
+    const links = await context.db.select().from(entryLinks).where(eq(entryLinks.type, "contains"));
     expect(links).toEqual([
       expect.objectContaining({ fromEntryId: "id-1", toEntryId: "id-2", type: "contains" })
     ]);
@@ -152,10 +143,7 @@ describe("importNotesBatch", () => {
     const collidingIds = ["id-1", "id-2", "id-1", "id-4"];
     let index = 0;
     const deps = context.deps(() => collidingIds[index++] ?? "overflow");
-    const items: ImportNotesRequest["items"] = [
-      itemFrom("Q1", "N1"),
-      itemFrom("Q2", "N2")
-    ];
+    const items: ImportNotesRequest["items"] = [itemFrom("Q1", "N1"), itemFrom("Q2", "N2")];
 
     await expect(importNotesBatch(deps, items, userId)).rejects.toThrow();
 

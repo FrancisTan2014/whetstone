@@ -55,7 +55,9 @@ vi.mock("./NotesImport", async () => {
   return {
     NotesImport: (props: {
       onCancel: () => void;
-      onImported: (result: { imported: ReadonlyArray<{ noteEntryId: string; promptId: string }> }) => void;
+      onImported: (result: {
+        imported: ReadonlyArray<{ noteEntryId: string; promptId: string }>;
+      }) => void;
     }) =>
       React.createElement("div", { "data-testid": "import-panel" }, [
         React.createElement(

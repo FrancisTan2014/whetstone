@@ -2,7 +2,11 @@ import type { ImportNotesRequest } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import { documentReadableText } from "@whetstone/document";
 
-import { insertCurrentNotePromptInTx, insertNoteInTx, type NotesDependencies } from "./noteCommands.js";
+import {
+  insertCurrentNotePromptInTx,
+  insertNoteInTx,
+  type NotesDependencies
+} from "./noteCommands.js";
 
 // One created note in an import result: its note Entry id and the id of the single cardless current-note
 // prompt created under it, in pasted order.

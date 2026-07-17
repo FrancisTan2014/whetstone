@@ -184,7 +184,8 @@ export function splitContextIn(
 // Whether a draft carries both a non-blank Question and a non-blank Note, and can therefore be imported.
 function isImportable(draft: NoteImportDraft): boolean {
   return (
-    documentText(draft.questionDoc).trim().length > 0 && documentText(draft.noteDoc).trim().length > 0
+    documentText(draft.questionDoc).trim().length > 0 &&
+    documentText(draft.noteDoc).trim().length > 0
   );
 }
 

@@ -30,8 +30,7 @@ type Phase = "paste" | "review";
 const requestFailedMessage =
   "Could not import that list. Nothing was saved \u2014 your text is untouched, so you can try again.";
 
-const incompleteMessage =
-  "Give every row a question and a note, or remove it, before importing.";
+const incompleteMessage = "Give every row a question and a note, or remove it, before importing.";
 
 const discardConfirmMessage = "Discard this import? Your edits will be lost.";
 
@@ -258,11 +257,7 @@ export function NotesImport({ onImported, onCancel }: NotesImportProps): React.J
             })}
           </ol>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              onClick={() => void runImport()}
-              pending={pending}
-              type="button"
-            >
+            <Button onClick={() => void runImport()} pending={pending} type="button">
               Import {importableCount}
             </Button>
             <Button onClick={backToPaste} type="button" variant="ghost">

@@ -72,7 +72,8 @@ export function OwnedNoteReviewSection({
       ? state.status.question
       : undefined;
   const reuseSource = note.anchor !== null || confirmedQuestion !== undefined;
-  const sourceQuestion = note.anchor !== null ? note.anchor.selectedTextSnapshot : confirmedQuestion;
+  const sourceQuestion =
+    note.anchor !== null ? note.anchor.selectedTextSnapshot : confirmedQuestion;
 
   function onAdd(): void {
     // An anchored note reuses its source server-side; an imported note (#661) reuses its existing cardless

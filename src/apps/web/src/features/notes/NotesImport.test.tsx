@@ -221,9 +221,7 @@ describe("NotesImport", () => {
     await paste(user, "per -> each");
     await user.click(screen.getByRole("button", { name: /^Import 1$/ }));
 
-    await waitFor(() =>
-      expect(screen.getByText(/Nothing was saved/)).toBeDefined()
-    );
+    await waitFor(() => expect(screen.getByText(/Nothing was saved/)).toBeDefined());
     expect(onImported).not.toHaveBeenCalled();
     // The refined row is still present to retry.
     expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe("per");

@@ -55,7 +55,12 @@ describe("noteDocumentFromAnswerAndContext (#661)", () => {
   });
 
   it("preserves an empty context line as an empty paragraph", () => {
-    expect(paragraphs(noteDocumentFromAnswerAndContext("x", "a\n\nb"))).toEqual(["x", "a", "", "b"]);
+    expect(paragraphs(noteDocumentFromAnswerAndContext("x", "a\n\nb"))).toEqual([
+      "x",
+      "a",
+      "",
+      "b"
+    ]);
   });
 });
 
@@ -100,7 +105,7 @@ describe("importable and incomplete partition (#661)", () => {
   });
 
   it("treats a Question-less row as incomplete", () => {
-    let [draft] = draftsFromText("per = each", makeId);
+    const [draft] = draftsFromText("per = each", makeId);
     const drafts = updateDraftIn([draft!], draft!.id, {
       questionDoc: createTextDocument("")
     });

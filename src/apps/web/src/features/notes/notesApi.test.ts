@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CreateNoteRequest, ImportNotesRequest, UpdateNoteRequest } from "@whetstone/contracts";
+import type {
+  CreateNoteRequest,
+  ImportNotesRequest,
+  UpdateNoteRequest
+} from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
