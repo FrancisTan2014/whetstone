@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./diaryApi", () => ({
   submitDiaryCapture: vi.fn(),
   deleteDiaryEntry: vi.fn(),
-  fetchDiaryCalendar: vi.fn(),
   fetchTimeline: vi.fn(),
   updateDiaryEntry: vi.fn()
 }));
@@ -58,18 +57,12 @@ import {
   loadPersistedTimeZone,
   resolveBrowserTimeZone
 } from "../../shared/preferences/preferencesApi";
-import {
-  submitDiaryCapture,
-  deleteDiaryEntry,
-  fetchDiaryCalendar,
-  fetchTimeline,
-  updateDiaryEntry
-} from "./diaryApi";
-import { DiaryPage, dayToUnmarkAfterDelete, type FlatEntry } from "./DiaryPage";
+import { submitDiaryCapture, deleteDiaryEntry, fetchTimeline, updateDiaryEntry } from "./diaryApi";
+import { DiaryPage } from "./DiaryPage";
+import { clearDiarySession } from "./diarySessionStore";
 import type { CaptureVoiceDependencies, VoiceRecording } from "../capture/CaptureCard";
 
 const mockedTimeline = vi.mocked(fetchTimeline);
-const mockedCalendar = vi.mocked(fetchDiaryCalendar);
 const mockedSubmit = vi.mocked(submitDiaryCapture);
 const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
@@ -82,8 +75,7 @@ const mockedResolveZone = vi.mocked(resolveBrowserTimeZone);
 // in-month dates (MONTH below), keeping grouping deterministic on any machine.
 const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-// Dates are built inside the diary's current month so the date-jump calendar actually renders their
-// buttons (the grid only draws the visible month).
+// Dates are built inside the current month; `d(day)` yields a `YYYY-MM-DD` day key for the timeline.
 const MONTH = localDayKey(new Date(), BROWSER_ZONE).slice(0, 7);
 const d = (day: number): string => `${MONTH}-${String(day).padStart(2, "0")}`;
 
@@ -203,8 +195,10 @@ async function renderReady(capture: CaptureVoiceDependencies): Promise<void> {
 beforeEach(() => {
   observers = [];
   vi.clearAllMocks();
+  // The Diary remembers its place for the app session (#648); clear it so each case starts fresh at the
+  // top and its first render fetches rather than restoring a previous case's snapshot.
+  clearDiarySession();
   mockedTimeline.mockResolvedValue({ days: [] });
-  mockedCalendar.mockResolvedValue({ dates: [] });
   mockedVoiceActive.mockResolvedValue([]);
   mockedResolveZone.mockReturnValue(BROWSER_ZONE);
   mockedZone.mockResolvedValue(BROWSER_ZONE);
@@ -600,22 +594,20 @@ describe("DiaryPage rich edit and delete (#571)", () => {
     await screen.findByText(/Couldn't delete that entry/);
   });
 
-  it("removes the calendar mark when the last entry for a day is deleted (#498)", async () => {
+  it("removes a day's section from the timeline when its last entry is deleted", async () => {
     mockedDelete.mockResolvedValue();
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(30)] });
 
     await renderReady(makeCapture().capture);
-    await screen.findByRole("button", { name: `Go to ${d(30)}` });
+    expect(screen.getByText("original text")).toBeDefined();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(screen.queryByText("original text")).toBeNull());
-    // The day's only entry is gone, so its calendar mark is dropped immediately.
-    expect(screen.queryByRole("button", { name: `Go to ${d(30)}` })).toBeNull();
+    // The day's only entry is gone, so the timeline falls back to its empty state.
+    expect(screen.getByText(/No entries yet/)).toBeDefined();
   });
 
-  it("keeps the calendar mark when another entry remains on the day (#498)", async () => {
+  it("keeps the day section and its sibling when one of two same-day entries is deleted", async () => {
     mockedDelete.mockResolvedValue();
     mockedTimeline.mockReset();
     mockedTimeline.mockResolvedValue({
@@ -626,11 +618,8 @@ describe("DiaryPage rich edit and delete (#571)", () => {
         ])
       ]
     });
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(30)] });
 
     await renderReady(makeCapture().capture);
-    await screen.findByRole("button", { name: `Go to ${d(30)}` });
 
     // Newest-first ordering (#571) may render the sibling first, so delete the original by its text.
     const originalItem = screen.getByText("original text").closest("li");
@@ -642,35 +631,9 @@ describe("DiaryPage rich edit and delete (#571)", () => {
     );
 
     await waitFor(() => expect(screen.queryByText("original text")).toBeNull());
-    // A sibling entry still falls on the day, so it stays marked.
+    // A sibling entry still falls on the day, so the day section stays (no empty state).
     expect(screen.getByText("sibling text")).toBeDefined();
-    expect(screen.getByRole("button", { name: `Go to ${d(30)}` })).toBeTruthy();
-  });
-});
-
-describe("dayToUnmarkAfterDelete", () => {
-  const entry = (id: string, date: string): FlatEntry => ({
-    bodyDoc: createTextDocument(id),
-    bodyText: id,
-    date,
-    entryId: id,
-    kind: "diary",
-    language: null,
-    occurredAt: `${date}T08:00:00.000Z`
-  });
-
-  it("returns undefined when the id is not among the loaded entries", () => {
-    expect(dayToUnmarkAfterDelete([entry("a", "2026-07-06")], "missing")).toBeUndefined();
-  });
-
-  it("returns undefined when another entry still falls on the deleted entry's day", () => {
-    const entries = [entry("a", "2026-07-06"), entry("b", "2026-07-06")];
-    expect(dayToUnmarkAfterDelete(entries, "a")).toBeUndefined();
-  });
-
-  it("returns the day when the deleted entry was the last one on it", () => {
-    const entries = [entry("a", "2026-07-06"), entry("b", "2026-07-05")];
-    expect(dayToUnmarkAfterDelete(entries, "a")).toBe("2026-07-06");
+    expect(screen.queryByText(/No entries yet/)).toBeNull();
   });
 });
 
@@ -748,154 +711,90 @@ describe("DiaryPage lazy-load", () => {
   });
 });
 
-describe("DiaryPage date-jump calendar", () => {
-  function sevenRecentDays(): { days: TimelineDayDto[] } {
-    return {
+describe("DiaryPage scroll restoration (#648)", () => {
+  // The Diary scroll container is the AppShell `<main>`; wrap the page in one so `closest("main")` resolves
+  // to a real, scrollable ancestor the way it does in the app.
+  function renderInScroller(capture: CaptureVoiceDependencies): ReturnType<typeof render> {
+    return render(
+      <main data-testid="scroller">
+        <DiaryPage capture={capture} />
+      </main>
+    );
+  }
+
+  it("restores the remembered timeline and scroll offset when returning to Diary in the same session", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [tDay(d(28), [tEntry("r28", `${d(28)}T08:00:00.000Z`, "a remembered thought")])]
+    });
+
+    const first = renderInScroller(makeCapture().capture);
+    await screen.findByRole("heading", { level: 1, name: "Diary" });
+    await screen.findByText("a remembered thought");
+
+    // The learner scrolls down; the passive listener remembers the offset for the session.
+    const scroller = screen.getByTestId("scroller");
+    scroller.scrollTop = 240;
+    fireEvent.scroll(scroller);
+
+    first.unmount();
+
+    // Returning must restore from the remembered snapshot without refetching the first page.
+    mockedTimeline.mockClear();
+    renderInScroller(makeCapture().capture);
+
+    await screen.findByText("a remembered thought");
+    expect(mockedTimeline).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId("scroller").scrollTop).toBe(240));
+  });
+
+  it("remembers older pages loaded before leaving, so returning restores the fuller timeline", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValueOnce({
       days: [28, 27, 26, 25, 24, 23, 22].map((day) =>
         tDay(d(day), [tEntry(`r${day}`, `${d(day)}T08:00:00.000Z`, `entry ${day}`)])
       )
-    };
-  }
+    });
+    mockedTimeline.mockResolvedValueOnce({
+      days: [tDay(d(21), [tEntry("r21", `${d(21)}T08:00:00.000Z`, "older entry 21")])]
+    });
 
-  it("navigates between months, refreshing the marks", async () => {
-    await renderReady(makeCapture().capture);
-    expect(mockedCalendar).toHaveBeenCalledTimes(1);
+    const first = renderInScroller(makeCapture().capture);
+    await screen.findByText("entry 28");
 
-    await userEvent.click(screen.getByRole("button", { name: "Previous month" }));
-    await waitFor(() => expect(mockedCalendar).toHaveBeenCalledTimes(2));
+    const observer = await waitForObserver();
+    await act(async () => {
+      observer.trigger(true);
+    });
+    await screen.findByText("older entry 21");
 
-    await userEvent.click(screen.getByRole("button", { name: "Next month" }));
-    await waitFor(() => expect(mockedCalendar).toHaveBeenCalledTimes(3));
+    first.unmount();
+
+    // On return, the older page loaded before leaving is still present without any further fetch.
+    mockedTimeline.mockClear();
+    renderInScroller(makeCapture().capture);
+
+    await screen.findByText("older entry 21");
+    expect(screen.getByText("entry 28")).toBeDefined();
+    expect(mockedTimeline).not.toHaveBeenCalled();
   });
 
-  it("gives the month navigation controls a >=44px hit target in both dimensions (#470)", async () => {
-    await renderReady(makeCapture().capture);
-
-    // jsdom has no layout, so assert the sizing utilities: min-h-11 (from the button base) and the
-    // min-w-11 added for these icon-only arrows (‹ ›) — both = 44px. Dropping min-w-11 fails here.
-    for (const label of ["Previous month", "Next month"]) {
-      const button = screen.getByRole("button", { name: label });
-      expect(button.className).toContain("min-h-11");
-      expect(button.className).toContain("min-w-11");
-    }
-  });
-
-  it("marks the new entry's day on the calendar immediately after saving (#471)", async () => {
-    mockedSubmit.mockResolvedValue(entryDto("typed-1", d(6), "a fresh thought"));
-    await renderReady(makeCapture().capture);
-
-    // No marks yet (the calendar fetch returns none).
-    expect(screen.queryByRole("button", { name: `Go to ${d(6)}` })).toBeNull();
-
-    await userEvent.type(screen.getByLabelText("Capture text"), "a fresh thought");
-    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
-
-    await screen.findByText("a fresh thought");
-    // The day is marked immediately, without a month toggle or reload.
-    expect(screen.getByRole("button", { name: `Go to ${d(6)}` })).toBeTruthy();
-  });
-
-  it("leaves an already-marked day marked when another entry is added the same day (#471)", async () => {
-    // The day is already marked from the calendar fetch; saving another entry that day keeps the mark
-    // (the marked-day set is left unchanged rather than needlessly rebuilt).
-    mockedCalendar.mockResolvedValue({ dates: [d(6)] });
-    mockedSubmit.mockResolvedValue(entryDto("typed-2", d(6), "another thought"));
-    await renderReady(makeCapture().capture);
-    await screen.findByRole("button", { name: `Go to ${d(6)}` });
-
-    await userEvent.type(screen.getByLabelText("Capture text"), "another thought");
-    await userEvent.click(screen.getByRole("button", { name: "Capture" }));
-
-    await screen.findByText("another thought");
-    expect(screen.getByRole("button", { name: `Go to ${d(6)}` })).toBeTruthy();
-  });
-
-  it("clears marks when the calendar lookup fails", async () => {
-    mockedCalendar.mockReset();
-    mockedCalendar.mockRejectedValue(new Error("calendar down"));
-
-    await renderReady(makeCapture().capture);
-
-    expect(screen.queryByRole("button", { name: `Go to ${d(15)}` })).toBeNull();
-  });
-
-  it("scrolls to an already-loaded day", async () => {
+  it("starts fresh at the top after the session is cleared", async () => {
     mockedTimeline.mockReset();
     mockedTimeline.mockResolvedValue({
-      days: [tDay(d(15), [tEntry("m1", `${d(15)}T08:00:00.000Z`, "mid month")])]
+      days: [tDay(d(28), [tEntry("r28", `${d(28)}T08:00:00.000Z`, "a remembered thought")])]
     });
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(15)] });
 
-    await renderReady(makeCapture().capture);
-    await userEvent.click(await screen.findByRole("button", { name: `Go to ${d(15)}` }));
+    const first = renderInScroller(makeCapture().capture);
+    await screen.findByText("a remembered thought");
+    first.unmount();
 
-    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
-  });
+    // A new app session (e.g. a full reload) forgets the place: the next open fetches the first page again.
+    clearDiarySession();
+    mockedTimeline.mockClear();
+    renderInScroller(makeCapture().capture);
 
-  it("gives the marked-day button a >=44px hit target (#483)", async () => {
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(15)] });
-
-    await renderReady(makeCapture().capture);
-
-    // jsdom has no layout, so assert the sizing utility (size-11 = 44px square); it was size-7 (28px).
-    const marked = await screen.findByRole("button", { name: `Go to ${d(15)}` });
-    expect(marked.className).toContain("size-11");
-  });
-
-  it("lazy-loads older pages until the chosen day is loaded, then scrolls", async () => {
-    mockedTimeline.mockReset();
-    mockedTimeline.mockResolvedValueOnce(sevenRecentDays());
-    mockedTimeline.mockResolvedValueOnce({
-      days: [tDay(d(15), [tEntry("m1", `${d(15)}T08:00:00.000Z`, "mid month")])]
-    });
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(15)] });
-
-    await renderReady(makeCapture().capture);
-    await userEvent.click(await screen.findByRole("button", { name: `Go to ${d(15)}` }));
-
-    await screen.findByText("mid month");
-    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
-    expect(mockedTimeline).toHaveBeenNthCalledWith(2, d(22), 7);
-  });
-
-  it("stops paging when the diary runs out before the chosen day is found", async () => {
-    mockedTimeline.mockReset();
-    mockedTimeline.mockResolvedValueOnce(sevenRecentDays());
-    mockedTimeline.mockResolvedValueOnce({ days: [] });
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(15)] });
-
-    await renderReady(makeCapture().capture);
-    await userEvent.click(await screen.findByRole("button", { name: `Go to ${d(15)}` }));
-
-    await waitFor(() => expect(mockedTimeline).toHaveBeenCalledTimes(2));
-    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-  });
-
-  it("warns when a jump's page load fails", async () => {
-    mockedTimeline.mockReset();
-    mockedTimeline.mockResolvedValueOnce(sevenRecentDays());
-    mockedTimeline.mockRejectedValueOnce(new Error("jump failed"));
-    mockedCalendar.mockReset();
-    mockedCalendar.mockResolvedValue({ dates: [d(15)] });
-
-    await renderReady(makeCapture().capture);
-    await userEvent.click(await screen.findByRole("button", { name: `Go to ${d(15)}` }));
-
-    await screen.findByText(/Couldn't jump to that day/);
-  });
-
-  it("renders unmarked days as plain cells", async () => {
-    await renderReady(makeCapture().capture);
-
-    // With no marks, the grid still renders day numbers but none are jump buttons.
-    expect(
-      within(screen.getByLabelText("Jump to a day")).queryByRole("button", {
-        name: /^Go to/
-      })
-    ).toBeNull();
+    await screen.findByText("a remembered thought");
+    expect(mockedTimeline).toHaveBeenCalledTimes(1);
   });
 });
