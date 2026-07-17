@@ -346,6 +346,27 @@ export type {
   SearchMemoryToolInput
 } from "./memoryContracts.js";
 export {
+  noteRevealDtoSchema,
+  noteRevealKindSchema,
+  noteReviewNextDtoSchema,
+  noteReviewPromptDtoSchema,
+  noteReviewRatingRequestSchema,
+  noteReviewRatingResultDtoSchema,
+  parseNoteReviewNextDto,
+  parseNoteReviewPromptDto,
+  parseNoteReviewRatingRequest,
+  parseNoteReviewRatingResultDto,
+  parseNoteRevealDto
+} from "./noteReviewContracts.js";
+export type {
+  NoteRevealDto,
+  NoteRevealKind,
+  NoteReviewNextDto,
+  NoteReviewPromptDto,
+  NoteReviewRatingRequest,
+  NoteReviewRatingResultDto
+} from "./noteReviewContracts.js";
+export {
   parseSearchRequest,
   parseSearchResults,
   searchRequestSchema,

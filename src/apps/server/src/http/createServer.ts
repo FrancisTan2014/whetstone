@@ -39,6 +39,8 @@ import {
   registerMemoryRoutes
 } from "../features/memory/memoryRoutes.js";
 import type { MemoryRouteDependencies } from "../features/memory/memoryRoutes.js";
+import { registerNotesReviewRoutes } from "../features/notesReview/notesReviewRoutes.js";
+import type { NotesReviewRouteDependencies } from "../features/notesReview/notesReviewRoutes.js";
 import { registerTodayRoutes } from "../features/today/todayRoutes.js";
 import type { TodayRouteDependencies } from "../features/today/todayRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
@@ -67,6 +69,7 @@ export type CreateServerOptions = Readonly<{
   logger: NonNullable<FastifyServerOptions["logger"]>;
   lookup?: LookupDependencies;
   notes?: NotesDependencies;
+  notesReview?: NotesReviewRouteDependencies;
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
   recall?: MemoryRouteDependencies;
@@ -147,6 +150,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   if (options.recall !== undefined) {
     registerMemoryReviewRoutes(server, options.recall);
     registerMemoryRoutes(server, options.recall);
+  }
+
+  if (options.notesReview !== undefined) {
+    registerNotesReviewRoutes(server, options.notesReview);
   }
 
   if (options.today !== undefined) {
