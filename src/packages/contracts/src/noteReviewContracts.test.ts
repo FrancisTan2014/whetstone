@@ -6,14 +6,18 @@ import {
   noteRevealDtoSchema,
   noteReviewNextDtoSchema,
   noteReviewSummaryDtoSchema,
+  parseEditNotePromptQuestionRequest,
   parseEnrollNoteRequest,
+  parseNotePromptSettingsDto,
+  parseNotePromptSettingsListDto,
   parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
   parseNoteReviewRatingResultDto,
   parseNoteReviewSummaryDto,
-  parseNoteRevealDto
+  parseNoteRevealDto,
+  parseReviewHistoryPageDto
 } from "./noteReviewContracts.js";
 
 const review = {
@@ -246,5 +250,106 @@ describe("enrollNoteRequestSchema", () => {
   it("rejects a blank question and unexpected keys", () => {
     expect(() => parseEnrollNoteRequest({ question: "   " })).toThrow();
     expect(enrollNoteRequestSchema.safeParse({ question: "hi", extra: true }).success).toBe(false);
+  });
+});
+
+describe("note Review settings & history contracts (#660)", () => {
+  const questionDoc = createTextDocument("What is a WAL?");
+  const answerDoc = createTextDocument("a write-ahead log");
+
+  it("parses a settings list carrying both reveal policies and every card state", () => {
+    const parsed = parseNotePromptSettingsListDto({
+      prompts: [
+        {
+          promptId: "p1",
+          questionDoc,
+          questionText: "What is a WAL?",
+          reveal: { kind: "current_note" },
+          cardState: { state: "due" }
+        },
+        {
+          promptId: "p2",
+          questionDoc,
+          questionText: "What is a WAL?",
+          reveal: { kind: "legacy_custom", answerDoc, answerText: "a write-ahead log" },
+          cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" }
+        },
+        {
+          promptId: "p3",
+          questionDoc,
+          questionText: "What is a WAL?",
+          reveal: { kind: "current_note" },
+          cardState: { state: "paused" }
+        },
+        {
+          promptId: "p4",
+          questionDoc,
+          questionText: "What is a WAL?",
+          reveal: { kind: "current_note" },
+          cardState: { state: "not_in_review" }
+        }
+      ]
+    });
+    expect(parsed.prompts).toHaveLength(4);
+    expect(parsed.prompts[1]?.reveal).toEqual({
+      kind: "legacy_custom",
+      answerDoc,
+      answerText: "a write-ahead log"
+    });
+  });
+
+  it("rejects a current_note reveal that leaks an answer and a scheduled state without a date", () => {
+    expect(() =>
+      parseNotePromptSettingsDto({
+        promptId: "p1",
+        questionDoc,
+        questionText: "q",
+        reveal: { kind: "current_note", answerText: "leaked" },
+        cardState: { state: "due" }
+      })
+    ).toThrow();
+    expect(() =>
+      parseNotePromptSettingsDto({
+        promptId: "p1",
+        questionDoc,
+        questionText: "q",
+        reveal: { kind: "current_note" },
+        cardState: { state: "scheduled" }
+      })
+    ).toThrow();
+  });
+
+  it("parses a history page with rating and reset events and an opaque cursor, null at the end", () => {
+    const parsed = parseReviewHistoryPageDto({
+      events: [
+        { id: "e1", kind: "rating", rating: "good", occurredAt: "2026-07-01T09:30:00.000Z" },
+        { id: "e2", kind: "reset", occurredAt: "2026-06-30T09:30:00.000Z" }
+      ],
+      nextCursor: "opaque-cursor"
+    });
+    expect(parsed.nextCursor).toBe("opaque-cursor");
+    expect(parseReviewHistoryPageDto({ events: [], nextCursor: null }).events).toEqual([]);
+  });
+
+  it("rejects an unknown history kind and a rating event missing its rating", () => {
+    expect(() =>
+      parseReviewHistoryPageDto({
+        events: [{ id: "e1", kind: "paused", occurredAt: "2026-07-01T09:30:00.000Z" }],
+        nextCursor: null
+      })
+    ).toThrow();
+    expect(() =>
+      parseReviewHistoryPageDto({
+        events: [{ id: "e1", kind: "rating", occurredAt: "2026-07-01T09:30:00.000Z" }],
+        nextCursor: null
+      })
+    ).toThrow();
+  });
+
+  it("parses a trimmed non-blank question and rejects a blank one", () => {
+    expect(parseEditNotePromptQuestionRequest({ question: "  Define a WAL  " })).toEqual({
+      question: "Define a WAL"
+    });
+    expect(() => parseEditNotePromptQuestionRequest({ question: "   " })).toThrow();
   });
 });
