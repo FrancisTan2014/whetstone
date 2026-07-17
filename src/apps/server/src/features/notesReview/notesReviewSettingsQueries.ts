@@ -140,11 +140,11 @@ export async function loadNoteReviewHistoryPage(
 
   const hasMore = rows.length > HISTORY_PAGE_SIZE;
   const pageRows = hasMore ? rows.slice(0, HISTORY_PAGE_SIZE) : rows;
-  const last = pageRows.at(-1);
-  const nextCursor =
-    hasMore && last !== undefined
-      ? encodeHistoryCursor({ occurredAt: last.occurredAt, id: last.id })
-      : null;
+  let nextCursor: string | null = null;
+  if (hasMore) {
+    const last = pageRows[pageRows.length - 1]!;
+    nextCursor = encodeHistoryCursor({ occurredAt: last.occurredAt, id: last.id });
+  }
 
   return {
     status: "ok",
