@@ -40,23 +40,60 @@ afterEach(() => {
 });
 
 describe("RecitationReviewPage", () => {
-  it("opens the given Work's review and rates through to a scheduled confirmation", async () => {
+  it("opens the given Work's review and rates through to Due complete when nothing else is due", async () => {
     const user = userEvent.setup();
     mockedFetch.mockResolvedValue({ review });
-    mockedRecord.mockResolvedValue({ review: { ...review, dueAt: "2026-07-08T09:00:00.000Z" } });
+    mockedRecord.mockResolvedValue({
+      remainingDueCount: 0,
+      review: { ...review, dueAt: "2026-07-08T09:00:00.000Z" }
+    });
 
     renderPage("work-1");
 
     await screen.findByText(/Recite/);
     expect(mockedFetch).toHaveBeenCalledWith("work-1");
 
-    await user.click(screen.getByRole("button", { name: "Reveal" }));
+    await user.click(screen.getByRole("button", { name: "Reveal source" }));
     await user.click(screen.getByRole("button", { name: "Complete, with effort" }));
 
-    const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("Aesop’s Fables");
-    expect(status.textContent).toContain("2026-07-08");
+    const status = await screen.findByText("Due complete.");
+    expect(status).toBeDefined();
+    expect(screen.getByRole("status").textContent).toContain("Aesop’s Fables");
+    expect(screen.getByRole("status").textContent).toContain("2026-07-08");
+    expect(screen.queryByRole("button", { name: "Review next" })).toBeNull();
     expect(screen.getByRole("link", { name: "Back to Today" }).getAttribute("href")).toBe("/");
+  });
+
+  it("offers an optional Review next that reloads the earliest-due Work while others remain due", async () => {
+    const user = userEvent.setup();
+    mockedFetch.mockResolvedValue({ review });
+    mockedRecord.mockResolvedValue({
+      remainingDueCount: 2,
+      review: { ...review, dueAt: "2026-07-08T09:00:00.000Z" }
+    });
+
+    renderPage("work-1");
+
+    await screen.findByText(/Recite/);
+    await user.click(screen.getByRole("button", { name: "Reveal source" }));
+    await user.click(screen.getByRole("button", { name: "Complete, with effort" }));
+
+    await screen.findByRole("button", { name: "Review next" });
+    expect(screen.queryByText("Due complete.")).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to Today" }).getAttribute("href")).toBe("/");
+
+    const nextWork: RecitationReviewDto = {
+      ...review,
+      workEntryId: "work-2",
+      workTitle: "Analects"
+    };
+    mockedFetch.mockResolvedValue({ review: nextWork });
+
+    await user.click(screen.getByRole("button", { name: "Review next" }));
+
+    await screen.findByText(/Recite/);
+    expect(mockedFetch).toHaveBeenLastCalledWith(undefined);
+    expect(screen.getByText(/Recite/).textContent).toContain("Analects");
   });
 
   it("requests the earliest-due review when no Work is given", async () => {

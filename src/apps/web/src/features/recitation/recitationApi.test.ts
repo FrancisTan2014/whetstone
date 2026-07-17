@@ -87,12 +87,14 @@ describe("recitationApi", () => {
 
   it("records a review with a POST, encoding the plan id and carrying the rating", async () => {
     const fetchMock = mockFetchOnce({
+      remainingDueCount: 1,
       review: { ...reviewDto, dueAt: "2026-07-05T09:00:00.000Z" }
     });
 
     const result = await recordRecitationReview("plan/1", "good");
 
     expect(result.review.dueAt).toBe("2026-07-05T09:00:00.000Z");
+    expect(result.remainingDueCount).toBe(1);
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(path).toBe("/api/recitation/plans/plan%2F1/review");
     expect(init.method).toBe("POST");

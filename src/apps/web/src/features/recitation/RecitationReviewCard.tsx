@@ -1,21 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { RecitationReviewDto } from "@whetstone/contracts";
+import type { RecitationReviewDto, RecordRecitationReviewResponse } from "@whetstone/contracts";
 import { recitationRatingChoices } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { recordRecitationReview } from "./recitationApi";
 
-// One whole-Work maintenance review (#643): the learner is asked to recite the exact Work from memory,
-// Reveals the canonical source (read live from the Work's blocks — never copied into recitation state),
-// then self-assesses with Again/Hard/Good/Easy. Only the rating updates FSRS; the reveal itself writes
-// nothing. Rating appends exactly one review event and reschedules only this Work's card, and the
-// rescheduled review is handed back so the page can show when the Work is next due.
+// One whole-Work maintenance review (#643/#637): the learner is asked to recite the exact Work from
+// memory, Reveals the canonical source (read live from the Work's blocks — never copied into recitation
+// state), then self-assesses with Again/Hard/Good/Easy. Only the rating updates FSRS; the reveal itself
+// writes nothing, so leaving before it keeps the card due. Rating appends exactly one review event and
+// reschedules only this Work's card, and the whole rescheduled response — the next-due review plus how
+// many Works remain due — is handed back so the page can show the next date and an optional continuation.
 export function RecitationReviewCard({
   onReviewed,
   review
 }: Readonly<{
-  onReviewed: (next: RecitationReviewDto) => void;
+  onReviewed: (next: RecordRecitationReviewResponse) => void;
   review: RecitationReviewDto;
 }>): React.JSX.Element {
   const [revealed, setRevealed] = useState(false);
@@ -35,7 +36,7 @@ export function RecitationReviewCard({
     setPending(true);
     setFailed(false);
     recordRecitationReview(review.planEntryId, rating).then(
-      (response) => onReviewed(response.review),
+      (response) => onReviewed(response),
       () => {
         setPending(false);
         setFailed(true);
@@ -77,7 +78,7 @@ export function RecitationReviewCard({
       ) : (
         <div>
           <Button onClick={() => setRevealed(true)} size="sm" variant="primary">
-            Reveal
+            Reveal source
           </Button>
         </div>
       )}
