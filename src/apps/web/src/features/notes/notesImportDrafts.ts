@@ -104,6 +104,12 @@ export function draftsFromText(text: string, makeId: IdMaker): ReadonlyArray<Not
   return parseNotebookList(text).map((draft) => fromParsed(draft, makeId()));
 }
 
+// Whether a draft's Note has content beyond its first line that could be split into its own following
+// draft — used by the UI to show the "Split off" control only when it would do something.
+export function noteHasSplittableContext(draft: NoteImportDraft): boolean {
+  return splitNotebookDraftContext(toParsed(draft)) !== null;
+}
+
 // Apply a field edit to the draft with the given id, leaving the rest untouched.
 export function updateDraftIn(
   drafts: ReadonlyArray<NoteImportDraft>,

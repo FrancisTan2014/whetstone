@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { NoteOverviewDto } from "@whetstone/contracts";
+import type { ImportNotesResultDto, NoteOverviewDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { fetchAllNotes } from "./notesApi";
 import { NotesHomeList } from "./NotesHomeList";
+import { NotesImport } from "./NotesImport";
 import { OwnedNoteEditor, type OwnedNoteEditorTarget } from "./OwnedNoteEditor";
 
 type NotesState =
@@ -29,9 +30,15 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editor, setEditor] = useState<OwnedNoteEditorTarget | null>(null);
   const [focusEntryId, setFocusEntryId] = useState<string | undefined>(undefined);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const newNoteRef = useRef<HTMLButtonElement>(null);
+  const importRef = useRef<HTMLButtonElement>(null);
   const openButtonRef = useRef<HTMLButtonElement>(null);
+  // After an import lands, move focus to the first imported note's Open button once the reloaded list has
+  // settled. A ref, not state, so arming it never re-renders and it survives the reload it triggers.
+  const pendingImportFocus = useRef(false);
   // Where to return focus after the editor closes: the row's Open button when the note is still present,
   // or the primary "New note" action when it is not (a fresh create, or a deleted note). A ref, not state,
   // so setting it never re-renders and it survives the reload triggered alongside the close.
@@ -87,6 +94,15 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     }
   }, [editor]);
 
+  // Once an import's reloaded list has settled, move focus to the first imported note's Open button.
+  useEffect(() => {
+    if (!pendingImportFocus.current || state.status !== "ready") {
+      return;
+    }
+    pendingImportFocus.current = false;
+    openButtonRef.current?.focus();
+  }, [state]);
+
   // Decide where focus returns the moment the editor opens: the originating row's Open button for an
   // edit, the primary "New note" action for a create. Deleting overrides it to "New note" because the
   // row it came from is gone.
@@ -120,15 +136,48 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     setReloadNonce((nonce) => nonce + 1);
   }
 
+  function openImport(): void {
+    setImportMessage(null);
+    setImporting(true);
+  }
+
+  function onImportCancelled(): void {
+    setImporting(false);
+    importRef.current?.focus();
+  }
+
+  function onImported(result: ImportNotesResultDto): void {
+    setImporting(false);
+    const count = result.imported.length;
+    setImportMessage(count === 1 ? "Imported 1 note." : `Imported ${count} notes.`);
+    const first = result.imported[0]?.noteEntryId;
+    if (first !== undefined) {
+      setFocusEntryId(first);
+      pendingImportFocus.current = true;
+    }
+    setReloadNonce((nonce) => nonce + 1);
+  }
+
   return (
     <section aria-labelledby="notes-heading" className="mx-auto max-w-2xl p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-text" id="notes-heading">
           Notes
         </h1>
-        <Button onClick={openCreate} ref={newNoteRef} type="button">
-          New note
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            disabled={importing}
+            onClick={openImport}
+            ref={importRef}
+            type="button"
+            variant="ghost"
+          >
+            Import
+          </Button>
+          <Button disabled={importing} onClick={openCreate} ref={newNoteRef} type="button">
+            New note
+          </Button>
+        </div>
       </div>
 
       <p className="mt-2 text-text-muted">
@@ -137,25 +186,39 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
           : "Every note you have saved in this work."}
       </p>
 
-      <label className="mt-4 block">
-        <span className="sr-only">Search notes</span>
-        <input
-          aria-label="Search notes"
-          className="min-h-11 w-full rounded border border-border bg-surface px-3 text-text focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Search your notes"
-          type="search"
-          value={input}
-        />
-      </label>
+      {importMessage !== null ? (
+        <p aria-live="polite" className="mt-2 text-sm text-success" role="status">
+          {importMessage}
+        </p>
+      ) : null}
 
-      <div aria-busy={state.status === "loading"} className="mt-6">
-        {renderState(state, query, focusWorkEntryId, {
-          onOpen: openEdit,
-          openRef: openButtonRef,
-          openTargetEntryId: focusEntryId
-        })}
-      </div>
+      {importing ? (
+        <div className="mt-6">
+          <NotesImport onCancel={onImportCancelled} onImported={onImported} />
+        </div>
+      ) : (
+        <>
+          <label className="mt-4 block">
+            <span className="sr-only">Search notes</span>
+            <input
+              aria-label="Search notes"
+              className="min-h-11 w-full rounded border border-border bg-surface px-3 text-text focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Search your notes"
+              type="search"
+              value={input}
+            />
+          </label>
+
+          <div aria-busy={state.status === "loading"} className="mt-6">
+            {renderState(state, query, focusWorkEntryId, {
+              onOpen: openEdit,
+              openRef: openButtonRef,
+              openTargetEntryId: focusEntryId
+            })}
+          </div>
+        </>
+      )}
 
       {editor !== null ? (
         <OwnedNoteEditor
