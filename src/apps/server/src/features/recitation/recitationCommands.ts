@@ -24,7 +24,11 @@ import {
   seedReviewCard
 } from "../review/reviewCardCommands.js";
 import { findRecitationPlanForWork, loadOwnedRecitationPlan } from "./recitationQueries.js";
-import { loadWholeWorkTarget, loadWorkSourceText } from "./recitationReviewQueries.js";
+import {
+  countDueRecitationWork,
+  loadWholeWorkTarget,
+  loadWorkSourceText
+} from "./recitationReviewQueries.js";
 
 // Real infrastructure boundaries (db, id generation, the clock) are injected so the recitation commands
 // stay deterministic and testable. Direct maintenance (#643) never copies a Work's content: enrolment
@@ -179,14 +183,16 @@ export async function enrollRecitation(
 }
 
 export type RecordRecitationReviewResult =
-  | Readonly<{ review: RecitationReviewDto; status: "recorded" }>
+  | Readonly<{ remainingDueCount: number; review: RecitationReviewDto; status: "recorded" }>
   | Readonly<{ status: "not_found" }>;
 
 // Record one Work-level maintenance review (#643): rate the plan's single Work-level card through the
 // shared FSRS boundary, appending exactly ONE review event and rescheduling ONLY that card. No rating is
 // inferred, no cue-strength evidence is written, and no targeted passage repair is created (v0 non-goal).
 // Owner-scoped: a forged, cross-user, or unenrolled plan id is `not_found`. Returns the rescheduled review
-// with the card's next due instant and FSRS state.
+// with the card's next due instant and FSRS state, plus `remainingDueCount` — how many OTHER Works still
+// hold a due card, recomputed from the canonical cards after the reschedule (#637) so the caller can offer
+// an optional "Review next" or show "Due complete" without persisting any session queue.
 export async function recordRecitationReview(
   dependencies: RecitationDependencies,
   planEntryId: EntryId,
@@ -207,7 +213,10 @@ export async function recordRecitationReview(
     applyRatingToCardInTx(tx, target.card, rating, now, dependencies.createId())
   );
 
+  const remainingDueCount = await countDueRecitationWork({ db: dependencies.db }, userId, now);
+
   return {
+    remainingDueCount,
     review: {
       dueAt: card.dueAt.toISOString(),
       planEntryId: owned.entryId,

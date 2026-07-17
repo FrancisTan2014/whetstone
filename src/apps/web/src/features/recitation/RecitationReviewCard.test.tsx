@@ -24,7 +24,10 @@ const review: RecitationReviewDto = {
 };
 
 function nextReview(overrides: Partial<RecitationReviewDto> = {}): RecordRecitationReviewResponse {
-  return { review: { ...review, dueAt: "2026-07-05T09:00:00.000Z", ...overrides } };
+  return {
+    remainingDueCount: 0,
+    review: { ...review, dueAt: "2026-07-05T09:00:00.000Z", ...overrides }
+  };
 }
 
 afterEach(() => {
@@ -39,14 +42,14 @@ describe("RecitationReviewCard", () => {
     expect(screen.getByText(/Recite/).textContent).toContain("Aesop’s Fables");
     expect(screen.queryByLabelText("Source")).toBeNull();
     expect(screen.queryByRole("button", { name: "Complete, with effort" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Reveal" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Reveal source" })).toBeDefined();
   });
 
-  it("reveals the canonical source and the four ratings after Reveal", async () => {
+  it("reveals the canonical source and the four ratings after Reveal source", async () => {
     const user = userEvent.setup();
     render(<RecitationReviewCard onReviewed={vi.fn()} review={review} />);
 
-    await user.click(screen.getByRole("button", { name: "Reveal" }));
+    await user.click(screen.getByRole("button", { name: "Reveal source" }));
 
     expect(screen.getByLabelText("Source").textContent).toBe(review.sourceText);
     for (const label of [
@@ -59,17 +62,17 @@ describe("RecitationReviewCard", () => {
     }
   });
 
-  it("records the rating for this plan and hands back the rescheduled review", async () => {
+  it("records the rating for this plan and hands back the whole rescheduled response", async () => {
     const user = userEvent.setup();
     mockedRecord.mockResolvedValue(nextReview());
     const onReviewed = vi.fn();
     render(<RecitationReviewCard onReviewed={onReviewed} review={review} />);
 
-    await user.click(screen.getByRole("button", { name: "Reveal" }));
+    await user.click(screen.getByRole("button", { name: "Reveal source" }));
     await user.click(screen.getByRole("button", { name: "Complete, with effort" }));
 
     expect(mockedRecord).toHaveBeenCalledWith("plan-1", "good");
-    expect(onReviewed).toHaveBeenCalledWith(nextReview().review);
+    expect(onReviewed).toHaveBeenCalledWith(nextReview());
   });
 
   it("surfaces a retry message and does not advance when recording fails", async () => {
@@ -78,7 +81,7 @@ describe("RecitationReviewCard", () => {
     const onReviewed = vi.fn();
     render(<RecitationReviewCard onReviewed={onReviewed} review={review} />);
 
-    await user.click(screen.getByRole("button", { name: "Reveal" }));
+    await user.click(screen.getByRole("button", { name: "Reveal source" }));
     await user.click(screen.getByRole("button", { name: "Couldn't continue" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("Could not save that rating");

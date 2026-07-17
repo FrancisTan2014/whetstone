@@ -326,13 +326,49 @@ describe("POST /api/recitation/plans/:id/review", () => {
       url: `/api/recitation/plans/${plan.entryId}/review`
     });
     expect(response.statusCode).toBe(200);
-    const { review } = response.json() as { review: RecitationReviewDto };
+    const { remainingDueCount, review } = response.json() as {
+      remainingDueCount: number;
+      review: RecitationReviewDto;
+    };
     expect(review.workEntryId).toBe(workEntryId);
     expect(new Date(review.dueAt).getTime()).toBeGreaterThan(context.deps.now().getTime());
+    // The just-rated Work reschedules into the future and is the only enrolled Work, so nothing else is due.
+    expect(remainingDueCount).toBe(0);
 
     const events = await context.db.select().from(reviewEvents);
     expect(events).toHaveLength(1);
     expect(events[0]!).toMatchObject({ rating: "good", type: "rating" });
+  });
+
+  it("reports how many OTHER Works still hold a due card, recomputed from canonical cards", async () => {
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const first = await enroll(await seedWork("work-1", "One"));
+    await enroll(await seedWork("work-2", "Two"));
+    await enroll(await seedWork("work-3", "Three"));
+
+    // Rating one due Work leaves the other two due: the recomputed remaining count excludes the rated Work.
+    const withMore = await recordRecitationReview(
+      context.deps,
+      toEntryId(first.entryId),
+      "good",
+      DEFAULT_USER_ID
+    );
+    expect(withMore).toMatchObject({ remainingDueCount: 2, status: "recorded" });
+  });
+
+  it("reports zero remaining once the last due Work is rated", async () => {
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const first = await enroll(await seedWork("work-1", "One"));
+    const second = await enroll(await seedWork("work-2", "Two"));
+
+    await recordRecitationReview(context.deps, toEntryId(first.entryId), "good", DEFAULT_USER_ID);
+    const last = await recordRecitationReview(
+      context.deps,
+      toEntryId(second.entryId),
+      "good",
+      DEFAULT_USER_ID
+    );
+    expect(last).toMatchObject({ remainingDueCount: 0, status: "recorded" });
   });
 
   it("rejects a malformed rating at the boundary", async () => {
