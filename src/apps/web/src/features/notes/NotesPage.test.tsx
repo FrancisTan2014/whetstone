@@ -205,4 +205,44 @@ describe("NotesPage (#659)", () => {
     await screen.findByText("second");
     expect(screen.getByTestId("editor")).toBeDefined();
   });
+
+  it("discards a stale in-flight load that resolves after the query already moved on", async () => {
+    let resolveStale: (value: { notes: ReadonlyArray<NoteOverviewDto> }) => void = () => {};
+    const stale = new Promise<{ notes: ReadonlyArray<NoteOverviewDto> }>((resolve) => {
+      resolveStale = resolve;
+    });
+    mockedFetch.mockReturnValueOnce(stale);
+    mockedFetch.mockResolvedValue({ notes: [note("note-2", "fresh")] });
+
+    render(<NotesPage />);
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "fresh");
+    await screen.findByText("fresh");
+
+    // The first load only now resolves; its result belongs to a superseded query and must be ignored.
+    resolveStale({ notes: [note("note-1", "stale")] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("stale")).toBeNull();
+    expect(screen.getByText("fresh")).toBeDefined();
+  });
+
+  it("discards a stale in-flight load that rejects after the query already moved on", async () => {
+    let rejectStale: (reason: Error) => void = () => {};
+    const stale = new Promise<{ notes: ReadonlyArray<NoteOverviewDto> }>((_resolve, reject) => {
+      rejectStale = reject;
+    });
+    mockedFetch.mockReturnValueOnce(stale);
+    mockedFetch.mockResolvedValue({ notes: [note("note-2", "fresh")] });
+
+    render(<NotesPage />);
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "fresh");
+    await screen.findByText("fresh");
+
+    // A superseded load failing must not flip the settled list into the error state.
+    rejectStale(new Error("stale boom"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Could not load your notes. Please try again.")).toBeNull();
+    expect(screen.getByText("fresh")).toBeDefined();
+  });
 });

@@ -324,6 +324,42 @@ describe("OwnedNoteEditor edit (#659)", () => {
     expect(onReviewChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("omits the Open-in-Reader link when the anchored note's work cannot be resolved", () => {
+    render(
+      <OwnedNoteEditor
+        onClose={vi.fn()}
+        onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
+        onSaved={vi.fn()}
+        target={{ kind: "edit", note: anchoredOverview({ workEntryId: null }) }}
+      />
+    );
+
+    expect(screen.getByText(/Source:/)).toBeDefined();
+    expect(screen.queryByRole("link", { name: "Open in Reader" })).toBeNull();
+  });
+
+  it("names a standalone note without a source snapshot in the delete confirmation", async () => {
+    mockedDelete.mockResolvedValue(undefined);
+    const onDeleted = vi.fn();
+    render(
+      <OwnedNoteEditor
+        onClose={vi.fn()}
+        onDeleted={onDeleted}
+        onReviewChanged={vi.fn()}
+        onSaved={vi.fn()}
+        target={{ kind: "edit", note: standaloneOverview() }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete note" }));
+    const prompt = screen.getByText(/Delete this note/);
+    expect(prompt.textContent).not.toContain("“");
+    await userEvent.click(screen.getByRole("button", { name: "Delete note" }));
+
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("note-2"));
+  });
+
   it("edits a standalone note with no source section", () => {
     render(
       <OwnedNoteEditor

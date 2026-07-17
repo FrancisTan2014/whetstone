@@ -87,22 +87,25 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     }
   }, [editor]);
 
+  // Decide where focus returns the moment the editor opens: the originating row's Open button for an
+  // edit, the primary "New note" action for a create. Deleting overrides it to "New note" because the
+  // row it came from is gone.
   function openCreate(): void {
+    pendingFocus.current = "new";
     setEditor({ kind: "create" });
   }
 
   function openEdit(note: NoteOverviewDto): void {
     setFocusEntryId(note.entryId);
+    pendingFocus.current = "row";
     setEditor({ kind: "edit", note });
   }
 
   function requestClose(): void {
-    pendingFocus.current = editor?.kind === "edit" ? "row" : "new";
     setEditor(null);
   }
 
   function onSaved(): void {
-    pendingFocus.current = editor?.kind === "edit" ? "row" : "new";
     setEditor(null);
     setReloadNonce((nonce) => nonce + 1);
   }

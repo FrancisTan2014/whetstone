@@ -58,7 +58,16 @@ export function OwnedNoteEditor({
 
   const heading = target.kind === "create" ? "New note" : "Edit note";
   const blank = documentText(draft).trim().length === 0;
-  const anchor = target.kind === "edit" ? target.note.anchor : null;
+  const editNote = target.kind === "edit" ? target.note : null;
+  const anchor = editNote?.anchor ?? null;
+  // Offer the Reader deep-link only when both the owning work and the anchored block are known; a note
+  // missing either cannot resolve to a location, so we show no link rather than a broken one.
+  const readerLink =
+    editNote !== null && editNote.blockEntryId !== null && editNote.workEntryId !== null
+      ? `#/reader?work=${encodeURIComponent(editNote.workEntryId)}&block=${encodeURIComponent(
+          editNote.blockEntryId
+        )}`
+      : null;
 
   async function persist(): Promise<NoteDto> {
     if (target.kind === "create") {
@@ -91,12 +100,8 @@ export function OwnedNoteEditor({
     onSaved(saved);
   }
 
-  function onConfirmDelete(): void {
-    if (target.kind !== "edit") {
-      return;
-    }
-
-    const { entryId } = target.note;
+  function confirmDelete(note: NoteOverviewDto): void {
+    const { entryId } = note;
     setError(undefined);
     setDeleting(true);
     deleteOwnedNote(entryId).then(
@@ -117,13 +122,8 @@ export function OwnedNoteEditor({
         {anchor !== null ? (
           <div className="noteEditorSource">
             <p className="noteEditorSelection">Source: “{anchor.selectedTextSnapshot}”</p>
-            {target.kind === "edit" && target.note.blockEntryId !== null ? (
-              <a
-                className={buttonVariants({ size: "sm", variant: "ghost" })}
-                href={`#/reader?work=${encodeURIComponent(
-                  target.note.workEntryId ?? ""
-                )}&block=${encodeURIComponent(target.note.blockEntryId)}`}
-              >
+            {readerLink !== null ? (
+              <a className={buttonVariants({ size: "sm", variant: "ghost" })} href={readerLink}>
                 Open in Reader
               </a>
             ) : null}
@@ -163,7 +163,7 @@ export function OwnedNoteEditor({
                   </p>
                   <div className="noteEditorActions">
                     <Button
-                      onClick={onConfirmDelete}
+                      onClick={() => confirmDelete(target.note)}
                       pending={deleting}
                       type="button"
                       variant="primary"
