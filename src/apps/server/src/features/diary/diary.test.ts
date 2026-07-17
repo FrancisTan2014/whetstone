@@ -131,7 +131,8 @@ async function seedMemoryNote(
         cueText: "cue",
         entryId: `${row.id}-prompt`,
         lifecycle: "draft",
-        noteEntryId: row.id
+        noteEntryId: row.id,
+        revealKind: "legacy_custom"
       });
     }
   });

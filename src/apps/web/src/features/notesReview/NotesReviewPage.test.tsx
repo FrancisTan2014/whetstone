@@ -88,9 +88,7 @@ describe("NotesReviewPage", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "Review" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Back to Notes" }).getAttribute("href")).toBe(
-      "/notes"
-    );
+    expect(screen.getByRole("link", { name: "Back to Notes" }).getAttribute("href")).toBe("/notes");
   });
 
   it("reports a calm due-complete state when nothing is due", async () => {

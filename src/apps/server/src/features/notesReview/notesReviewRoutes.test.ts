@@ -68,11 +68,7 @@ async function seedLegacy(
 }
 
 // Seed a current_note prompt on an existing note: no stored answer, its reveal resolves the live note body.
-async function seedCurrentNote(
-  noteId: string,
-  userId: string,
-  dueAt: Date
-): Promise<string> {
+async function seedCurrentNote(noteId: string, userId: string, dueAt: Date): Promise<string> {
   const promptId = `cn-${(sequence += 1)}`;
   await context.db.insert(entries).values({ id: promptId, type: "memory_prompt" });
   await context.db.insert(memoryPrompts).values({

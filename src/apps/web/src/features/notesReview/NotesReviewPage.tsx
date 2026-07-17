@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
@@ -45,22 +45,29 @@ function NotesReviewPageComponent(): React.JSX.Element {
   // without collapsing the phase, so the learner never loses the answer they were grading.
   const [ratingFailed, setRatingFailed] = useState(false);
 
-  async function loadNext(): Promise<void> {
-    setRatingFailed(false);
-    setState({ step: "loading" });
-    try {
-      const prompt = await fetchNextNotePrompt();
-      setState(
-        prompt === null ? { step: "empty" } : { prompt, revealFailed: false, step: "question" }
-      );
-    } catch {
-      setState({ step: "error" });
-    }
-  }
+  // Defer every state transition through the promise's callbacks (never a synchronous set in the
+  // effect body) so the React Compiler's set-state-in-effect lint stays satisfied — the same loader
+  // shape Memory/Today use. The initial `loading` state carries the mount fetch; `reviewNext` sets
+  // `loading` from its own event handler before re-loading.
+  const loadNext = useCallback((): void => {
+    fetchNextNotePrompt().then(
+      (prompt) =>
+        setState(
+          prompt === null ? { step: "empty" } : { prompt, revealFailed: false, step: "question" }
+        ),
+      () => setState({ step: "error" })
+    );
+  }, []);
 
   useEffect(() => {
-    void loadNext();
-  }, []);
+    loadNext();
+  }, [loadNext]);
+
+  function reviewNext(): void {
+    setRatingFailed(false);
+    setState({ step: "loading" });
+    loadNext();
+  }
 
   function reveal(prompt: NoteReviewPromptDto): void {
     void fetchNoteReveal(prompt.promptId).then(
@@ -86,7 +93,7 @@ function NotesReviewPageComponent(): React.JSX.Element {
         <SessionBody
           onRate={rate}
           onReveal={reveal}
-          onReviewNext={loadNext}
+          onReviewNext={reviewNext}
           ratingFailed={ratingFailed}
           state={state}
         />
@@ -150,7 +157,9 @@ function SessionBody({
       />
     );
   }
-  return <QuestionView onReveal={onReveal} prompt={state.prompt} revealFailed={state.revealFailed} />;
+  return (
+    <QuestionView onReveal={onReveal} prompt={state.prompt} revealFailed={state.revealFailed} />
+  );
 }
 
 // Phase 1: the question and a single "Show note" affordance. No answer, no rating controls are exposed
