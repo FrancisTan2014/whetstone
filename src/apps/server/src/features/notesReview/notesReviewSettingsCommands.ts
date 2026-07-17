@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts } from "../../db/schema.js";
-import { getPromptRowForUser } from "../memory/memoryQueries.js";
+import { getPromptRowForUser } from "./notePromptQueries.js";
 import {
   deleteReviewCard,
   pauseReviewCard,

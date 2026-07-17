@@ -38,6 +38,10 @@ export type NotesDependencies = Readonly<{
   createEntryId: () => string;
   db: DbClient;
   now: () => Date;
+  // The bundled offline dictionary (#662): given a bare term, return a suggested gloss or `null` when the
+  // dictionary has no entry. Optional so the model-disabled / no-dictionary build still serves the route —
+  // an absent glosser simply yields `suggestion: null`, and capture is never blocked on it.
+  resolveOfflineGloss?: (text: string) => Promise<string | null>;
 }>;
 
 export type CreateNoteResult =

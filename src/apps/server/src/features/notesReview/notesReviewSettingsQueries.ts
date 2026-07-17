@@ -9,7 +9,7 @@ import { and, asc, desc, eq, lt, or } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts, reviewCards, reviewEvents } from "../../db/schema.js";
 import { getNoteForOwner } from "../notes/noteQueries.js";
-import { getPromptRowForUser } from "../memory/memoryQueries.js";
+import { getPromptRowForUser } from "./notePromptQueries.js";
 import { projectPromptSettings } from "./notesReviewSettingsProjection.js";
 
 // How many history events one page returns. The query fetches one extra to decide `nextCursor` without a

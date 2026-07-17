@@ -1,7 +1,8 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createTextDocument } from "@whetstone/document";
+import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -32,8 +33,8 @@ import {
   workSources
 } from "../../db/schema.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
-import { depositMemory } from "../memory/memoryCommands.js";
-import { noteProvenanceEntryId } from "../memory/memoryQueries.js";
+import { insertCurrentNotePromptInTx, insertNoteInTx } from "../notes/noteCommands.js";
+import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { createServer } from "../../http/createServer.js";
 
 type TestContext = Readonly<{
@@ -350,27 +351,57 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
   });
 }
 
+// The `derived_from` provenance target of a note (the source Entry it was made durable from), or null.
+// Inlined from the retired memoryQueries; only this deletion test needs it.
+async function noteProvenanceEntryId(db: DbClient, noteEntryId: string): Promise<string | null> {
+  const rows = await db
+    .select({ toEntryId: entryLinks.toEntryId })
+    .from(entryLinks)
+    .where(and(eq(entryLinks.fromEntryId, noteEntryId), eq(entryLinks.type, "derived_from")))
+    .limit(1);
+  return rows[0]?.toEntryId ?? null;
+}
+
+// Seed three Notes-owned prompts, each on an unanchored note derived from a piece of work-1 content, via
+// the production note/prompt/card primitives — the shape the retired Memory deposit produced.
 async function seedMemoriesDerivedFromWork(db: DbClient): Promise<ReadonlyArray<string>> {
   let sequence = 0;
-  const createId = (): string => `memory-${(sequence += 1)}`;
+  const now = new Date("2026-01-01T00:00:00.000Z");
   const noteIds: string[] = [];
   for (const [derivedFromEntryId, text] of [
     ["block-1", "from legacy block"],
     ["pmblock-1", "from document block"],
     ["note-1", "from reader note"]
   ] as const) {
-    const deposit = await depositMemory(
-      { createId, db },
-      {
+    const noteId = `memory-note-${(sequence += 1)}`;
+    const promptId = `memory-prompt-${(sequence += 1)}`;
+    await db.transaction(async (tx) => {
+      await insertNoteInTx(tx, {
+        anchor: null,
+        bodyDoc: createTextDocument(text),
+        bodyText: text,
         captureSource: "reader",
         derivedFromEntryId,
-        noteText: text,
-        prompts: [{ answerText: text, cueText: text }]
-      },
-      "user-a",
-      new Date("2026-01-01T00:00:00.000Z")
-    );
-    noteIds.push(deposit.note.noteId);
+        kind: "note",
+        noteEntryId: noteId,
+        now,
+        userId: "user-a"
+      });
+      await insertCurrentNotePromptInTx(tx, {
+        cueDoc: createTextDocument(text),
+        cueText: text,
+        noteEntryId: noteId,
+        now,
+        promptId
+      });
+      await seedReviewCard(tx, {
+        now,
+        requestedRetention: RECALL_REQUEST_RETENTION,
+        targetEntryId: promptId,
+        userId: "user-a"
+      });
+    });
+    noteIds.push(noteId);
   }
   return noteIds;
 }

@@ -17,7 +17,7 @@ function renderAt(path: string): string {
 }
 
 // Live render (jsdom) so we can query the Primary nav landmark and assert exactly which links it
-// contains — the route content (e.g. Today's "Recall" card) shares those words, so the
+// contains — the route content (e.g. Today's note-review card) shares those words, so the
 // "removed from primary nav" invariant (#390) must be scoped to the nav, not the whole document.
 function renderLiveAt(path: string): ReturnType<typeof render> {
   return render(
@@ -37,21 +37,21 @@ afterEach(() => {
 });
 
 describe("App shell and routes", () => {
-  it("shows exactly the four primary destinations in the nav (#573)", () => {
+  it("shows exactly the four primary destinations in the nav (#662)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
     const labels = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(labels).toEqual(["Today", "Library", "Memory", "Search"]);
+    expect(labels).toEqual(["Today", "Library", "Notes", "Search"]);
   });
 
-  it("keeps Reader, Recall, Notes, and Diary out of the primary nav (#573)", () => {
+  it("keeps Reader, Review, and Diary out of the primary nav (#662)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
-    for (const secondary of ["Reader", "Recall", "Notes", "Diary"]) {
+    for (const secondary of ["Reader", "Review", "Diary"]) {
       expect(within(nav).queryByRole("link", { name: secondary })).toBeNull();
     }
   });
@@ -114,17 +114,20 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain("Capture today");
   });
 
-  it("resolves the memory route to the Memory surface", () => {
-    const markup = renderAt("/memory");
+  it("redirects the retired /memory route to the Notes home (#662)", () => {
+    // Effects run under a live render, applying the <Navigate replace/> onto the Notes home.
+    const { container } = renderLiveAt("/memory");
 
-    expect(markup).toContain('aria-label="Primary"');
-    expect(markup).toContain('id="memory-heading"');
+    expect(container.innerHTML).toContain('aria-label="Primary"');
+    expect(container.innerHTML).toContain("Every note you have saved");
+    // The retired standalone Memory surface never renders.
+    expect(container.innerHTML).not.toContain('id="memory-heading"');
   });
 
-  it("resolves the recall route to the Notes-owned review session (compat route, still reachable off-nav)", () => {
-    const markup = renderAt("/recall");
+  it("redirects the retired /recall route to the Notes-owned review session (#662)", () => {
+    const { container } = renderLiveAt("/recall");
 
-    expect(markup).toContain('id="notes-review-heading"');
+    expect(container.innerHTML).toContain('id="notes-review-heading"');
   });
 
   it("resolves the notes-review route to the Notes-owned review session", () => {

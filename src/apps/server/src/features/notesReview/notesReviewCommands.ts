@@ -2,7 +2,7 @@ import type { NoteReviewRatingResultDto } from "@whetstone/contracts";
 import type { ReviewRating } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { getPromptRowForUser } from "../memory/memoryQueries.js";
+import { getPromptRowForUser } from "./notePromptQueries.js";
 import { rateReviewCard } from "../review/reviewCardCommands.js";
 import { countDueNotePrompts } from "./notesReviewQueries.js";
 

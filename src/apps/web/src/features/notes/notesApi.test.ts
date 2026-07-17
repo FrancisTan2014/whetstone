@@ -231,7 +231,7 @@ describe("notesApi import (#661)", () => {
     ).rejects.toThrow("failed with status 400");
   });
 
-  it("reads a dictionary gloss for a term from the shared suggest endpoint", async () => {
+  it("reads a dictionary gloss for a term from the Notes-owned suggest endpoint", async () => {
     const fetchMock = stubFetch({
       body: { suggestion: "a happy accident", term: "serendipity" },
       ok: true
@@ -241,6 +241,6 @@ describe("notesApi import (#661)", () => {
       suggestion: "a happy accident",
       term: "serendipity"
     });
-    expect(fetchMock).toHaveBeenCalledWith("/api/memory/suggest?term=serendipity", undefined);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/suggest?term=serendipity", undefined);
   });
 });

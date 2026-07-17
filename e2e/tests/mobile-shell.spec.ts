@@ -1,13 +1,13 @@
 import { expect, test } from "../fixtures";
 
-// At a phone width the primary navigation is exactly four destinations (Today, Library, Memory,
+// At a phone width the primary navigation is exactly four destinations (Today, Library, Notes,
 // Search) laid out as a SINGLE non-wrapping row of >=44px touch targets — the theme toggle is
 // shell chrome, not a tab, so it can never push the row onto a second line (#390, #573). This replaces
 // the pre-#390 behaviour where nine destinations + the toggle were allowed to wrap.
 
 const MOBILE = { height: 844, width: 390 } as const;
 const MIN_TARGET = 44;
-const PRIMARY_LABELS = ["Today", "Library", "Memory", "Search"] as const;
+const PRIMARY_LABELS = ["Today", "Library", "Notes", "Search"] as const;
 
 const horizontalOverflow = () =>
   ({

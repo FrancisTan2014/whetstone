@@ -9,7 +9,7 @@ import {
 
 import type { DbClient } from "../../db/dbClient.js";
 import { getLatestAuthoredWorkInProgress } from "../authoredWorks/authoredWorkQueries.js";
-import { loadMemoryRoutineSummary } from "../memory/memoryQueries.js";
+import { loadNoteReviewRoutineSummary } from "../notesReview/notePromptQueries.js";
 import { getLatestReadingPosition } from "../readingPosition/readingPositionQueries.js";
 import { loadRecitationRoutineSummary } from "../recitation/recitationReviewQueries.js";
 
@@ -50,7 +50,7 @@ async function loadMemorySource(
   timeZone: string
 ): Promise<TodayRoutineSource> {
   try {
-    return { status: "ok", summary: await loadMemoryRoutineSummary(db, userId, now, timeZone) };
+    return { status: "ok", summary: await loadNoteReviewRoutineSummary(db, userId, now, timeZone) };
   } catch {
     return { status: "failed" };
   }

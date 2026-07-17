@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { localDayKey } from "@whetstone/domain";
+import { localDayKey, newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
+import { createTextDocument } from "@whetstone/document";
 
 import type { TodayBoardDto, TodayBoardResponse } from "@whetstone/contracts";
 
@@ -15,6 +16,9 @@ import {
   authors,
   docBlocks,
   entries,
+  memoryPrompts,
+  notes,
+  personalEntries,
   readerPreferences,
   readingUnits,
   recitationWholeWork,
@@ -24,17 +28,16 @@ import {
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
-import { depositMemory, type MemoryDependencies } from "../memory/memoryCommands.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import type { RecitationRouteDependencies } from "../recitation/recitationRoutes.js";
+import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import { loadTodayBoard } from "./todayQueries.js";
 
 const START = "2026-07-01T12:00:00.000Z";
 
 type TestContext = Readonly<{
   db: DbClient;
-  memory: MemoryDependencies;
   server: ReturnType<typeof createServer>;
   setNow: (iso: string) => void;
   sourcesDir: string;
@@ -70,11 +73,9 @@ async function buildContext(): Promise<TestContext> {
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
-  const memory: MemoryDependencies = { createId: () => `memory-${(sequence += 1)}`, db };
 
   return {
     db,
-    memory,
     server: createServer({
       content,
       currentUser: { getCurrentUserId: () => DEFAULT_USER_ID },
@@ -173,20 +174,53 @@ async function pausePlan(planEntryId: string): Promise<void> {
   expect(response.statusCode).toBe(200);
 }
 
-// --- Memory seeding ---------------------------------------------------------------------------
+// --- Note-review seeding ----------------------------------------------------------------------
 
+let notePromptSeq = 0;
+
+// Seed a Notes-owned ready prompt (a saved note + its current-note prompt + an active due card) directly,
+// the shape the retired Memory deposit produced — so the Today note-review routine has a due card.
 async function seedMemoryPrompt(now: Date): Promise<string> {
-  const deposit = await depositMemory(
-    context.memory,
-    {
-      captureSource: "diary",
-      noteText: "cue",
-      prompts: [{ answerText: "answer", cueText: "cue" }]
-    },
-    DEFAULT_USER_ID,
-    now
-  );
-  return deposit.prompts[0]!.promptId;
+  const noteId = `note-${(notePromptSeq += 1)}`;
+  const promptId = `note-prompt-${(notePromptSeq += 1)}`;
+  await context.db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: noteId, type: "note" });
+    await tx.insert(personalEntries).values({
+      entryId: noteId,
+      userId: DEFAULT_USER_ID,
+      occurredAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await tx.insert(notes).values({
+      bodyDoc: createTextDocument("cue"),
+      bodyText: "cue",
+      captureSource: "manual",
+      entryId: noteId,
+      kind: "note"
+    });
+    await tx.insert(entries).values({ id: promptId, type: "memory_prompt" });
+    await tx.insert(memoryPrompts).values({
+      answerDoc: null,
+      answerText: null,
+      chunkId: null,
+      createdAt: now,
+      cueDoc: createTextDocument("cue"),
+      cueText: "cue",
+      entryId: promptId,
+      lifecycle: "ready",
+      noteEntryId: noteId,
+      revealKind: "current_note"
+    });
+    await tx.insert(reviewCards).values({
+      ...reviewStateColumns(newReviewState(now)),
+      requestedRetention: RECALL_REQUEST_RETENTION,
+      status: "active",
+      targetEntryId: promptId,
+      userId: DEFAULT_USER_ID
+    });
+  });
+  return promptId;
 }
 
 async function setMemoryDueAt(promptId: string, iso: string): Promise<void> {

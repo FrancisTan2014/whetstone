@@ -1129,6 +1129,71 @@ describe("notes route isolation (cross-user) and failure paths", () => {
   });
 });
 
+describe("offline-gloss suggestion relocated to Notes (#662)", () => {
+  it("rejects a blank term with a 400 and never blocks capture", async () => {
+    // A blank or whitespace-only term is a client error, not a null suggestion.
+    for (const term of ["", "   "]) {
+      const response = await context.server.inject({
+        method: "GET",
+        query: { term },
+        url: "/api/notes/suggest"
+      });
+      expect(response.statusCode).toBe(400);
+    }
+
+    // A missing term param is equally rejected.
+    const missing = await context.server.inject({ method: "GET", url: "/api/notes/suggest" });
+    expect(missing.statusCode).toBe(400);
+  });
+
+  it("returns a null suggestion when no offline dictionary is wired", async () => {
+    // The default harness wires no `resolveOfflineGloss`, so a known term still resolves to null —
+    // suggestion is optional enrichment, never a hard dependency.
+    const response = await context.server.inject({
+      method: "GET",
+      query: { term: "kanmusu" },
+      url: "/api/notes/suggest"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ suggestion: null, term: "kanmusu" });
+  });
+
+  it("returns the bundled-dictionary gloss when a glosser is wired", async () => {
+    // Wire a glosser and confirm the handler awaits it and returns its result verbatim.
+    const server = createServer({
+      logger: false,
+      notes: {
+        createEntryId: () => "note-suggest",
+        db: context.db,
+        now: () => new Date(),
+        resolveOfflineGloss: (text: string) =>
+          Promise.resolve(text === "kanmusu" ? "ship girl" : null)
+      }
+    });
+
+    try {
+      const hit = await server.inject({
+        method: "GET",
+        query: { term: "kanmusu" },
+        url: "/api/notes/suggest"
+      });
+      expect(hit.statusCode).toBe(200);
+      expect(hit.json()).toEqual({ suggestion: "ship girl", term: "kanmusu" });
+
+      const miss = await server.inject({
+        method: "GET",
+        query: { term: "unknown" },
+        url: "/api/notes/suggest"
+      });
+      expect(miss.statusCode).toBe(200);
+      expect(miss.json()).toEqual({ suggestion: null, term: "unknown" });
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe("notes home — owner-scoped create, read, edit, delete, filter, and search (#659)", () => {
   let seedSequence = 0;
 

@@ -115,8 +115,8 @@ const lookupService = createLookupService({
 
 // Offline gloss autofill (#526): compose a `resolveOfflineGloss` from the offline dictionaries already
 // built above — WordNet for English, CC-CEDICT for Chinese (chosen by script). Offline-only by
-// construction (no networked/LLM source is wired here), so enrolling a `word`/`phrase` with no back
-// never blocks capture on the network. Threaded into the recall and Make Durable enroll feeders below.
+// construction (no networked/LLM source is wired here), so filling a blank Note from a gloss with no
+// back never blocks capture on the network. Threaded into the Notes-owned suggest route below (#662).
 const resolveOfflineGloss = createOfflineGloss({
   english: (term) => wordNetLookup(term),
   chinese: (term) => cedict.lookup(term)
@@ -204,7 +204,8 @@ const server = createServer({
   notes: {
     createEntryId: () => randomUUID(),
     db,
-    now: () => new Date()
+    now: () => new Date(),
+    resolveOfflineGloss
   },
   notesReview: {
     createId: () => randomUUID(),
@@ -213,12 +214,6 @@ const server = createServer({
   },
   readingPosition: { db },
   preferences: { db },
-  recall: {
-    createId: () => randomUUID(),
-    db,
-    now: () => new Date(),
-    resolveOfflineGloss
-  },
   recitation: {
     createEntryId: () => randomUUID(),
     createId: () => randomUUID(),

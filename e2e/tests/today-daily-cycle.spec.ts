@@ -46,10 +46,10 @@ async function uploadTodayWork(
 
 // The Today daily cycle (#610/#643): the server-composed board shows the learner's real obligations as two
 // grouped routine rows, each routine is completed inside its owning feature (direct whole-Work recitation,
-// recall), and returning to Today recomputes a truthful clear board with the optional Continue section
+// note review), and returning to Today recomputes a truthful clear board with the optional Continue section
 // still present. The stack boots with models disabled, so this whole loop is deterministic.
 test.describe("Today daily cycle (#610)", () => {
-  test("clears mixed due recitation and memory, then shows the truthful clear board", async ({
+  test("clears mixed due recitation and note review, then shows the truthful clear board", async ({
     page,
     setup
   }) => {
@@ -60,18 +60,24 @@ test.describe("Today daily cycle (#610)", () => {
     const work = await uploadTodayWork(page.request, baseURL);
     await post(page.request, baseURL, "/recitation/enroll", { workEntryId: work.entryId });
 
-    // A due memory routine: deposit one scheduled prompt (a cue with an answer is due immediately).
-    await post(page.request, baseURL, "/memory/notes", {
-      captureSource: "manual",
-      noteText: "kanmusu — ship girl",
-      prompts: [{ answerText: "ship girl", cueText: "kanmusu" }]
+    // A due note-review routine: create one standalone note and enroll it in Review with a question, so
+    // its current-note prompt's card is due immediately (the retired Memory deposit route is gone).
+    const doc = (text: string) => ({
+      content: [{ content: [{ text, type: "text" }], type: "paragraph" }],
+      type: "doc"
+    });
+    const note = (await post(page.request, baseURL, "/notes", {
+      bodyDoc: doc("kanmusu — ship girl")
+    })) as { entryId: string };
+    await post(page.request, baseURL, `/notes/${note.entryId}/review/enrollment`, {
+      question: "kanmusu"
     });
 
     // Today shows both obligations as grouped Due-now rows, and no false clear.
     await page.goto(`${baseURL}#/`);
     await expect(page.getByRole("heading", { name: "Due now" })).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toBeVisible();
-    await expect(page.getByText("Memory review")).toBeVisible();
+    await expect(page.getByText("Note review")).toBeVisible();
     await expect(page.getByText("All due work is clear.")).toHaveCount(0);
 
     // Complete the due recitation via the direct whole-Work review (reveal the canonical source, rate).
@@ -81,13 +87,13 @@ test.describe("Today daily cycle (#610)", () => {
     await expect(page.getByRole("status")).toContainText("Scheduled");
     await page.getByRole("link", { name: "Back to Today" }).click();
 
-    // Back on a freshly recomputed board the recitation row is gone; memory review is still due.
-    await expect(page.getByText("Memory review")).toBeVisible();
+    // Back on a freshly recomputed board the recitation row is gone; note review is still due.
+    await expect(page.getByText("Note review")).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toHaveCount(0);
 
-    // Review the due memory via the Notes-owned Review session (reached from Today's Review link).
+    // Review the due note via the Notes-owned Review session (reached from Today's Review link).
     await page.getByRole("link", { name: "Review", exact: true }).click();
-    await expect(page).toHaveURL(/#\/recall$/);
+    await expect(page).toHaveURL(/#\/notes\/review$/);
     await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
     await expect(page.getByText("kanmusu")).toBeVisible();
     await page.getByRole("button", { name: "Show note" }).click();

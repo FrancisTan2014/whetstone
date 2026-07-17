@@ -31,6 +31,8 @@ type OwnerNoteParams = Readonly<{ noteEntryId: string }>;
 
 type NotesQuery = Readonly<{ search?: string; work?: string }>;
 
+type SuggestQuery = Readonly<{ term?: string }>;
+
 export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesDependencies): void {
   // Every note the current user owns — the single Notes home (#659). One continuous list in recency order,
   // each note once, with its rolled-up Review projection. `?work=<id>` narrows to anchored notes in that
@@ -110,6 +112,21 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
     );
 
     return reply.code(201).send(result);
+  });
+
+  // The offline-gloss suggestion (#662, relocated from the retired Memory surface): a bundled-dictionary
+  // gloss for a bare term, or `null` when unknown or when no dictionary is wired. Notes-owned — import
+  // uses it to prefill a blank Note. Never blocks capture; a blank term is a 400.
+  server.get<{ Querystring: SuggestQuery }>("/api/notes/suggest", async (request, reply) => {
+    const term = request.query.term;
+    if (term === undefined || term.trim().length === 0) {
+      return reply.code(400).send(invalidRequestBody);
+    }
+    const suggestion =
+      dependencies.resolveOfflineGloss === undefined
+        ? null
+        : await dependencies.resolveOfflineGloss(term);
+    return reply.code(200).send({ suggestion, term });
   });
   server.patch<{ Params: OwnerNoteParams }>("/api/notes/:noteEntryId", async (request, reply) => {
     const parsed = updateNoteRequestSchema.safeParse(request.body);
