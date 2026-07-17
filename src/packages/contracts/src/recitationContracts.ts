@@ -95,9 +95,16 @@ export const recordRecitationReviewRequestSchema = z
 
 export type RecordRecitationReviewRequest = z.infer<typeof recordRecitationReviewRequestSchema>;
 
-// The rescheduled review after a rating: the same review shape with the card's next due instant + state.
+// The rescheduled review after a rating (#637): the same review shape with the card's next due instant +
+// state, plus `remainingDueCount` — how many OTHER Works still hold a due card, recomputed from the
+// canonical due cards right after this reschedule (the just-rated card is now scheduled forward, so it is
+// never counted). The review UI keys its continuation off it: > 0 offers an optional "Review next" (the
+// next Work never opens automatically), 0 shows "Due complete". No session queue or cursor is persisted.
 export const recordRecitationReviewResponseSchema = z
-  .object({ review: recitationReviewDtoSchema })
+  .object({
+    remainingDueCount: z.number().int().nonnegative(),
+    review: recitationReviewDtoSchema
+  })
   .strict();
 
 export type RecordRecitationReviewResponse = z.infer<typeof recordRecitationReviewResponseSchema>;

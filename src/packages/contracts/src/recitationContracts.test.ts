@@ -90,9 +90,29 @@ describe("record recitation review", () => {
     expect(() => parseRecordRecitationReviewRequest({ rating: "perfect" })).toThrow();
   });
 
-  it("parses the rescheduled review response", () => {
-    expect(parseRecordRecitationReviewResponse({ review: reviewDto })).toEqual({
-      review: reviewDto
-    });
+  it("parses the rescheduled review response with the remaining due count", () => {
+    expect(
+      parseRecordRecitationReviewResponse({ remainingDueCount: 2, review: reviewDto })
+    ).toEqual({ remainingDueCount: 2, review: reviewDto });
+  });
+
+  it("accepts a zero remaining due count (nothing else due)", () => {
+    expect(
+      parseRecordRecitationReviewResponse({ remainingDueCount: 0, review: reviewDto })
+        .remainingDueCount
+    ).toBe(0);
+  });
+
+  it("rejects a response missing the remaining due count", () => {
+    expect(() => parseRecordRecitationReviewResponse({ review: reviewDto })).toThrow();
+  });
+
+  it("rejects a negative or non-integer remaining due count", () => {
+    expect(() =>
+      parseRecordRecitationReviewResponse({ remainingDueCount: -1, review: reviewDto })
+    ).toThrow();
+    expect(() =>
+      parseRecordRecitationReviewResponse({ remainingDueCount: 1.5, review: reviewDto })
+    ).toThrow();
   });
 });
