@@ -219,6 +219,20 @@ can navigate them from another package.
   controls, inline keyboard confirmations, no-double-submit, stale-action list reload); client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).
+- Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
+  standalone Notes — the import surface moved from Memory (`memoryCommands.importMemoryBatch`, retired for
+  this path) into the owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →
+  `importNotesBatch` (`notesImportCommands.ts`) prepares every row (mint note + prompt ids, derive plaintext
+  via `documentReadableText`) then, in ONE `db.transaction`, per row composes the shared `insertNoteInTx`
+  (`kind='note'`, `capture_source='import'`) + `insertCurrentNotePromptInTx` (`noteCommands.ts`) — each note
+  gets ONE cardless `current_note` prompt but NO card/review event, so imports are all-or-nothing and land
+  in Notes un-enrolled (no Review until deliberately added, #658). The `ImportNotesRequest`/`…ResultDto`
+  contracts live in `@whetstone/contracts`. Web: `NotesImport.tsx` (opened from `NotesPage.tsx`'s Import
+  action) pastes → previews the deterministic split → refines rows, driven by the pure draft state machine
+  `notesImportDrafts.ts` (parse/fold via domain `notebookImport.ts`, undo-split/merge/split-off, offline
+  gloss fill); `notesApi.ts` adds `importNotes`/`suggestGloss`. An imported note enrolls by reusing its
+  cardless prompt's confirmed question read-only (`OwnedNoteReviewSection.tsx`, `notesReviewEnrollment.ts`
+  surfaces it on the `not_enrolled` status).
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
