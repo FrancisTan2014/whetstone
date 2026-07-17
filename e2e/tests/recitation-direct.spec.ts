@@ -51,11 +51,15 @@ test.describe("direct Work-level Recitation maintenance (#643)", () => {
     const card = page.getByRole("listitem").filter({ hasText: work.title });
     await expect(card.getByRole("button", { name: "I can recite this" })).toBeVisible();
     // The rigid-flow surface is gone: no phase choice, no passage segmentation on the card.
-    await expect(card.getByText(/Familiarizing|Divide into passages|Starting phase/)).toHaveCount(0);
+    await expect(card.getByText(/Familiarizing|Divide into passages|Starting phase/)).toHaveCount(
+      0
+    );
 
     // Declaring it enrols the exact Work into maintenance and opens its first whole-Work review.
     await card.getByRole("button", { name: "I can recite this" }).click();
-    await expect(page).toHaveURL(new RegExp(`#/recitation\\?work=${encodeURIComponent(work.entryId)}`));
+    await expect(page).toHaveURL(
+      new RegExp(`#/recitation\\?work=${encodeURIComponent(work.entryId)}`)
+    );
     await expect(page.getByText("from memory", { exact: false }).first()).toBeVisible();
 
     // Enrolment persisted BEFORE any rating: leaving without rating keeps the Work due and writes no
@@ -68,13 +72,16 @@ test.describe("direct Work-level Recitation maintenance (#643)", () => {
     // canonical source read live from the Work's blocks, then rate.
     await page.getByRole("link", { name: "Start", exact: true }).click();
     await expect(page).toHaveURL(/#\/recitation$/);
-    await page.getByRole("button", { name: "Reveal" }).click();
+    await page.getByRole("button", { name: "Reveal source" }).click();
     await expect(page.getByLabel("Source")).toBeVisible();
     await page.getByRole("button", { name: "Complete, with effort" }).click();
 
     // The rating reschedules only this Work's card through the shared FSRS boundary and confirms the next
-    // scheduled review — the whole-Work card, not any passage.
+    // scheduled review — the whole-Work card, not any passage. With no other Work due, the session closes
+    // with "Due complete." rather than an optional "Review next" (#637).
     await expect(page.getByRole("status")).toContainText(`Scheduled ${work.title}`);
+    await expect(page.getByText("Due complete.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Review next" })).toHaveCount(0);
     await page.getByRole("link", { name: "Back to Today" }).click();
 
     // On a freshly recomputed board the rescheduled Work is no longer due, so the Recitation row is gone
