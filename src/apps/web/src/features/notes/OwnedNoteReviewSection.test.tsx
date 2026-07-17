@@ -9,6 +9,14 @@ vi.mock("../notesReview/notesReviewApi", () => ({
   fetchOwnedNoteReviewStatus: vi.fn()
 }));
 
+vi.mock("./NoteReviewSettings", () => ({
+  NoteReviewSettings: (props: { noteEntryId: string; onChanged: () => void }) => (
+    <button onClick={() => props.onChanged()} type="button">
+      settings-stub:{props.noteEntryId}
+    </button>
+  )
+}));
+
 import type { NoteDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
@@ -170,5 +178,44 @@ describe("OwnedNoteReviewSection (#659)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByText("This note is not in review yet.")).toBeDefined();
+  });
+});
+
+describe("OwnedNoteReviewSection review-settings disclosure (#660)", () => {
+  it("expands and collapses the review settings in place", async () => {
+    mockedStatus.mockResolvedValue({ status: "paused" });
+    renderSection(anchoredNote());
+
+    const toggle = await screen.findByRole("button", { name: "Review settings" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("settings-stub:note-1")).toBeNull();
+
+    await userEvent.click(toggle);
+    expect(screen.getByText("settings-stub:note-1")).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Hide review settings" }).getAttribute("aria-expanded")
+    ).toBe("true");
+
+    await userEvent.click(screen.getByRole("button", { name: "Hide review settings" }));
+    expect(screen.queryByText("settings-stub:note-1")).toBeNull();
+  });
+
+  it("refreshes the compact status and notifies the host when a setting changes", async () => {
+    mockedStatus.mockResolvedValueOnce({ status: "paused" });
+    mockedStatus.mockResolvedValueOnce({ status: "due" });
+    const onEnrolled = vi.fn();
+    render(
+      <MemoryRouter>
+        <OwnedNoteReviewSection note={anchoredNote()} onEnrolled={onEnrolled} />
+      </MemoryRouter>
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Review settings" }));
+    await userEvent.click(screen.getByText("settings-stub:note-1"));
+
+    // The settings change re-reads the status (now due) and tells the host to refresh its row.
+    await waitFor(() => expect(screen.getByText("Due now")).toBeDefined());
+    expect(onEnrolled).toHaveBeenCalledTimes(1);
+    expect(mockedStatus).toHaveBeenCalledTimes(2);
   });
 });

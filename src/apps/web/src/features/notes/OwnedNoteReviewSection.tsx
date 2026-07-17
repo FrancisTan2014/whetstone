@@ -5,6 +5,7 @@ import type { NoteDto, NoteReviewEnrollmentStatusDto } from "@whetstone/contract
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import { addOwnedNoteToReview, fetchOwnedNoteReviewStatus } from "../notesReview/notesReviewApi";
+import { NoteReviewSettings } from "./NoteReviewSettings";
 
 type OwnedNoteReviewSectionProps = Readonly<{
   note: NoteDto;
@@ -43,6 +44,7 @@ export function OwnedNoteReviewSection({
   const [enrolling, setEnrolling] = useState(false);
   const [enrollFailed, setEnrollFailed] = useState(false);
   const [question, setQuestion] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Defer the state transition into the promise callback (never a synchronous set in the effect body) so
   // the React Compiler's set-state-in-effect lint stays satisfied. The initial `loading` state carries the
@@ -111,6 +113,29 @@ export function OwnedNoteReviewSection({
           question={note.anchor === null ? question : note.anchor.selectedTextSnapshot}
           status={state.status}
         />
+      ) : null}
+      {state.step === "status" ? (
+        <div className="noteReviewSettingsDisclosure">
+          <Button
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((open) => !open)}
+            type="button"
+            variant="ghost"
+          >
+            {settingsOpen ? "Hide review settings" : "Review settings"}
+          </Button>
+          {settingsOpen ? (
+            <NoteReviewSettings
+              noteEntryId={note.entryId}
+              onChanged={() => {
+                // A settings change can move this note's rolled-up state (paused/removed/restarted), so
+                // refresh the compact summary and let the Notes-home list refresh its row too.
+                loadStatus();
+                onEnrolled?.();
+              }}
+            />
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

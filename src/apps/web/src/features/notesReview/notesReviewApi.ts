@@ -1,12 +1,18 @@
 import {
+  parseNotePromptSettingsDto,
+  parseNotePromptSettingsListDto,
   parseNoteRevealDto,
   parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewRatingResultDto,
+  parseReviewHistoryPageDto,
+  type NotePromptSettingsDto,
+  type NotePromptSettingsListDto,
   type NoteReviewEnrollmentStatusDto,
   type NoteReviewPromptDto,
   type NoteRevealDto,
-  type NoteReviewRatingResultDto
+  type NoteReviewRatingResultDto,
+  type ReviewHistoryPageDto
 } from "@whetstone/contracts";
 import { type ReviewRating } from "@whetstone/domain";
 
@@ -111,4 +117,74 @@ export async function addOwnedNoteToReview(
       ? { method: "POST" }
       : { body: JSON.stringify({ question }), headers: jsonHeaders, method: "POST" };
   return parseNoteReviewEnrollmentStatusDto(await requestJson(path, init));
+}
+
+// The full Review-settings list for one owned note (#660): every prompt in creation order with its reveal
+// policy and projected card state. A read; it changes nothing.
+export async function fetchNotePromptSettings(
+  noteEntryId: string
+): Promise<NotePromptSettingsListDto> {
+  return parseNotePromptSettingsListDto(
+    await requestJson(apiUrl(`/notes/${encodeURIComponent(noteEntryId)}/review/settings`))
+  );
+}
+
+// One page of a prompt's append-only Review history (#660), newest first. The opaque `cursor` (from a
+// previous page's `nextCursor`) loads older events; omit it for the first page. A read; it changes nothing.
+export async function fetchNotePromptHistory(
+  promptId: string,
+  cursor?: string
+): Promise<ReviewHistoryPageDto> {
+  const base = apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/history`);
+  const path = cursor === undefined ? base : `${base}?cursor=${encodeURIComponent(cursor)}`;
+  return parseReviewHistoryPageDto(await requestJson(path));
+}
+
+// Edit one prompt's retrieval question (#660): writes ONLY the cue and returns the refreshed settings row.
+export async function editNotePromptQuestion(
+  promptId: string,
+  question: string
+): Promise<NotePromptSettingsDto> {
+  return parseNotePromptSettingsDto(
+    await requestJson(
+      apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/question`),
+      { body: JSON.stringify({ question }), headers: jsonHeaders, method: "PATCH" }
+    )
+  );
+}
+
+// Apply a card transition to one prompt through its settings route (#660): pause, resume, restart, or
+// re-add (POST) and remove (DELETE). Each returns the prompt's refreshed settings row so the caller updates
+// exactly that row. The target is fully addressed by the URL, so no body is sent.
+async function mutateNotePromptCard(
+  promptId: string,
+  action: "pause" | "resume" | "restart" | "card",
+  method: "POST" | "DELETE"
+): Promise<NotePromptSettingsDto> {
+  return parseNotePromptSettingsDto(
+    await requestJson(
+      apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/${action}`),
+      { method }
+    )
+  );
+}
+
+export function pauseNotePromptCard(promptId: string): Promise<NotePromptSettingsDto> {
+  return mutateNotePromptCard(promptId, "pause", "POST");
+}
+
+export function resumeNotePromptCard(promptId: string): Promise<NotePromptSettingsDto> {
+  return mutateNotePromptCard(promptId, "resume", "POST");
+}
+
+export function restartNotePromptCard(promptId: string): Promise<NotePromptSettingsDto> {
+  return mutateNotePromptCard(promptId, "restart", "POST");
+}
+
+export function addNotePromptCardBack(promptId: string): Promise<NotePromptSettingsDto> {
+  return mutateNotePromptCard(promptId, "card", "POST");
+}
+
+export function removeNotePromptCard(promptId: string): Promise<NotePromptSettingsDto> {
+  return mutateNotePromptCard(promptId, "card", "DELETE");
 }
