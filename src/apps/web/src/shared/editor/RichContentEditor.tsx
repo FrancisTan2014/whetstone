@@ -155,7 +155,8 @@ export function RichContentEditor({
       handleKeyDown: (view, event) => {
         // Shift+F10 is the keyboard equivalent of hovering the gutter: open the block-actions menu for
         // the block the caret sits in. Routed through the compact ("more") surface so touch/keyboard
-        // and pointer share one menu instance and open state.
+        // and pointer share one menu instance and open state. ProseMirror does not route key events
+        // through this handler on a read-only surface, and read-only mounts no menu, so it stays inert.
         if (event.shiftKey && event.key === "F10") {
           event.preventDefault();
           setOpenMenu({ pos: activeBlockStart(view.state), source: "more" });
@@ -239,7 +240,7 @@ export function RichContentEditor({
         />
       </BubbleMenu>
 
-      {showPointerGutter ? (
+      {showPointerGutter && editable ? (
         <BlockGutterHandle
           container={container}
           editor={editor}
@@ -250,27 +251,31 @@ export function RichContentEditor({
         />
       ) : null}
 
-      <div className={editorClassNames.moreActions}>
-        <BlockActionsMenu
-          container={container}
-          editor={editor}
-          onOpenChange={(open) =>
-            setOpenMenu(open ? { pos: activeBlockStart(editor.state), source: "more" } : null)
-          }
-          open={openMenu?.source === "more"}
-          pos={openMenu?.source === "more" ? openMenu.pos : activeBlockStart(editor.state)}
-          trigger={
-            <Button
-              aria-label="More block actions"
-              className={blockActionsMenuClassNames.moreTrigger}
-              size="sm"
-              variant="ghost"
-            >
-              <MoreIcon />
-            </Button>
-          }
-        />
-      </div>
+      {/* Block actions mutate the document, so a read-only surface (editable=false) mounts none of this
+          chrome — no compact trigger, no gutter, no Shift+F10 — and cannot be edited through it. */}
+      {editable ? (
+        <div className={editorClassNames.moreActions}>
+          <BlockActionsMenu
+            container={container}
+            editor={editor}
+            onOpenChange={(open) =>
+              setOpenMenu(open ? { pos: activeBlockStart(editor.state), source: "more" } : null)
+            }
+            open={openMenu?.source === "more"}
+            pos={openMenu?.source === "more" ? openMenu.pos : activeBlockStart(editor.state)}
+            trigger={
+              <Button
+                aria-label="More block actions"
+                className={blockActionsMenuClassNames.moreTrigger}
+                size="sm"
+                variant="ghost"
+              >
+                <MoreIcon />
+              </Button>
+            }
+          />
+        </div>
+      ) : null}
 
       <EditorContent editor={editor} />
     </div>
