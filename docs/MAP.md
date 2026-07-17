@@ -166,6 +166,21 @@ can navigate them from another package.
   `reconcilePromptEdit` (`@whetstone/domain`) — keep the card, seed a new one, or revert to a draft — so it
   never silently resets review history. The parsing/edit logic for a pasted list is pure `@whetstone/domain`
   (`notebookImport.ts`: `parseNotebookList` + undo-split/merge/split-context ops, #574).
+- Notes-owned Review session (#657): `src/apps/server/src/features/notesReview/` is the Notes-owned
+  boundary for reviewing DUE note prompts one at a time, served at `/api/notes/review/*` by
+  `notesReviewRoutes.ts` (`registerNotesReviewRoutes`, current-user scoped, Zod-validated): `GET /next`
+  (the single earliest-due active prompt as a QUESTION only — no answer in the payload — or `{ prompt: null }`
+  as the calm due-complete state), `GET /prompts/:id/reveal` (resolves the answer only on demand; 404 unless
+  owned with an active card), `POST /prompts/:id/rating` (`{ rating }` → advances only that prompt's shared
+  card via `rateNotePrompt`, returning its next `review` state; 400 malformed, 404 not-owned/cardless). Wired
+  in `http/createServer.ts` (the `notesReview` dependency option). The reveal is a persisted discriminated
+  shape: `memory_prompts.reveal_kind` ∈ {`legacy_custom`, `current_note`}, enforced by the
+  `memory_prompts_reveal_shape_ck` check (migration `0054_notes_review_reveal.sql`, fail-loud). `legacy_custom`
+  reveals the prompt's OWN preserved answer columns; `current_note` carries no answer columns and reveals the
+  note's LIVE canonical `body_doc`/`body_text` (editing the note changes the reveal in place). The pure
+  `resolveNoteReveal` (`notesReviewReveal.ts`) switches on the discriminant; queries in `notesReviewQueries.ts`,
+  the rating command reuses the shared review boundary (`rateReviewCard`) in `notesReviewCommands.ts`. All
+  current write paths deposit `legacy_custom`; `current_note` is produced only by future enrollment.
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -515,7 +530,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
   `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"
-  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Memory = `MemoryPage` at `/memory`, Recall = `RecallPage`, Search = `SearchPage`, Notes =
+  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Memory = `MemoryPage` at `/memory`,
+  Review = `NotesReviewPage` at both `/notes/review` (canonical) and `/recall` (compat, same session),
+  Search = `SearchPage`, Notes =
   `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`, Write =
   `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`; a trailing `path="*"`
   catch-all renders `NotFoundPage` so any unknown hash route — including the retired `#/practice` — resolves to
@@ -523,9 +540,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
   `ToastViewport` live region). `navigation.ts` holds the **four** primary destinations — Today,
   Library, **Memory**, Search — rendered as a **single non-wrapping row of ≥44px targets** on mobile
-  (#390, #573). Reader, Recall, Notes, and Diary keep their routes
+  (#390, #573). Reader, Review, Notes, and Diary keep their routes
   but are NOT primary: Reader is an immersive destination opened from context, and the others are
-  reached from where they belong (Today links to Recall/Diary; Memory links to Recall when something is
+  reached from where they belong (Today links to the Review session/Diary; Memory links to the Review
+  session when something is
   due; Library links to the all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
   wrap the mobile row). On the `/reader` and `/write` routes the nav (and the toggle bar) recede so the
   reading/writing column owns the viewport (immersive room); each provides its own back-to-Library control.
@@ -786,14 +804,19 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `/api/diary/*` endpoints (`submitDiaryCapture` → `DiaryEntryDto`, `updateDiaryEntry(id, bodyDoc)`) and
   parses every response through `diaryContracts`. The "Mine my history" action and all Make Durable /
   proposal card UI are gone.
-  `recall/` is the Recall mode (#318): `RecallPage.tsx` lists today's **due** prompts (already capped
-  server-side) as gentle, snoozeable proposals — each card is a **two-phase flip** (#525): phase 1
-  shows the prompt's `cueText` (front) + **Show answer** + Snooze and **no** grades; after reveal it shows
-  the `answerText` (back) and the four self-rating controls (Again/Hard/Good/Easy → the FSRS `rating` posted
-  to the review route). A due prompt always carries a real answer (a scheduled Memory prompt requires both
-  cue and answer, #595), so there is no answerless self-check face. Grading or snoozing advances past the
-  prompt, with explicit loading/error/empty ("all caught up") states. The reader stays calm — recall lives
-  only here. `recallApi.ts` calls `/api/recall/*` (`MemoryPromptCardDto`) and parses via `memoryContracts`.
+  `notesReview/` is the Notes-owned Review session (#657), replacing the retired `recall/` mode:
+  `NotesReviewPage.tsx` reviews DUE note prompts ONE at a time and mounts at both `/notes/review` (the
+  canonical entry point) and `/recall` (a compat route onto the SAME session, so Today/Memory links are
+  unchanged). It is an explicit two-phase session driven by one discriminated `SessionState`
+  (loading/error/empty/question/revealed/rated) so an empty or failed read can never masquerade as
+  completion: phase 1 shows the prompt's cue + a single **Show note** affordance (no answer, no grades);
+  after an explicit reveal it renders the note (a `legacy_custom` prompt's preserved answer, or a
+  `current_note` prompt's live body — both via the shared `PmDocument`), moves focus to the Note region,
+  and exposes the four self-ratings (Again/Hard/Good/Easy, also keys 1–4). Nothing advances automatically —
+  after rating, the learner sees the next scheduled date and chooses **Review next**. A failed reveal keeps
+  the question with a specific retry; a failed rating keeps the reveal and its grades in place with a
+  retryable alert. `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
+  and parses via `noteReviewContracts`.
   `memory/` is the Memory mode (#573) at `/memory`: `MemoryPage.tsx` is the browse/capture/manage surface
   over the same Entry-backed store — a `MemoryList` of kept fragments (each row reads jargon-free: fragment,
   capture-source badge, prompt count, one draft/scheduled/due chip via pure `memoryLabels.ts` +

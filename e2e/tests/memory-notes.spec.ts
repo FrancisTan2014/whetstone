@@ -27,17 +27,25 @@ test.describe("memory notes", () => {
     await expect(row).toContainText("1 prompt");
     await expect(row).toContainText("1 due");
 
-    // The Memory surface links to the review flow when something is due; follow it to Recall.
+    // The Memory surface links to the review flow when something is due; follow it to the
+    // Notes-owned Review session. The historical /recall path is kept as a compat route onto it.
     await page.getByRole("link", { name: "Review 1 due" }).click();
     await expect(page).toHaveURL(/#\/recall$/);
+    await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
 
-    // A self-grade only counts after an explicit reveal: the cue shows first, then the answer, then the
+    // A self-grade only counts after an explicit reveal: the cue shows first, then the note, then the
     // four FSRS ratings. Grading "Good" advances the card and clears today's batch.
     await expect(page.getByText("kanmusu")).toBeVisible();
-    await page.getByRole("button", { name: "Show answer" }).click();
+    await page.getByRole("button", { name: "Show note" }).click();
     await expect(page.getByText("ship girl")).toBeVisible();
     await page.getByRole("button", { name: "Good" }).click();
-    await expect(page.getByText(/all caught up/)).toBeVisible();
+    await expect(page.getByText(/Due complete/)).toBeVisible();
+
+    // The canonical /notes/review entry point mounts the very same session — reaching it directly
+    // after the batch is cleared shows the same calm due-complete state, not a different surface.
+    await page.goto(`${setup.baseURL}#/notes/review`);
+    await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+    await expect(page.getByText(/Due complete/)).toBeVisible();
 
     // Back in Memory the same fragment is now scheduled for the future — no longer due today.
     await page.goto(`${setup.baseURL}#/memory`);

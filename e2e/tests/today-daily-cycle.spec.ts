@@ -85,13 +85,14 @@ test.describe("Today daily cycle (#610)", () => {
     await expect(page.getByText("Memory review")).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toHaveCount(0);
 
-    // Review the due memory via recall.
+    // Review the due memory via the Notes-owned Review session (reached from Today's Review link).
     await page.getByRole("link", { name: "Review", exact: true }).click();
     await expect(page).toHaveURL(/#\/recall$/);
+    await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
     await expect(page.getByText("kanmusu")).toBeVisible();
-    await page.getByRole("button", { name: "Show answer" }).click();
+    await page.getByRole("button", { name: "Show note" }).click();
     await page.getByRole("button", { name: "Good" }).click();
-    await expect(page.getByText(/all caught up/)).toBeVisible();
+    await expect(page.getByText(/Due complete/)).toBeVisible();
 
     // Returning to Today shows the truthful clear state, with the optional Continue section still present.
     await page.goto(`${baseURL}#/`);

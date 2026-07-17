@@ -6,7 +6,7 @@ import { DiaryPage } from "../features/diary/DiaryPage.js";
 import { MemoryPage } from "../features/memory/MemoryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
-import { RecallPage } from "../features/recall/RecallPage.js";
+import { NotesReviewPage } from "../features/notesReview/NotesReviewPage.js";
 import { RecitationReviewPage } from "../features/recitation/RecitationReviewPage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { TodayPage } from "../features/today/TodayPage.js";
@@ -68,7 +68,10 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<ReaderRoute />} path="reader" />
         <Route element={<WriteRoute />} path="write" />
         <Route element={<MemoryPage />} path="memory" />
-        <Route element={<RecallPage />} path="recall" />
+        {/* The Notes-owned Review session (#657). `/recall` stays a compatibility route to the SAME
+            session until the consolidation cleanup; both mount the one page. */}
+        <Route element={<NotesReviewPage />} path="notes/review" />
+        <Route element={<NotesReviewPage />} path="recall" />
         {/* The retired passage-segmentation route (`/recite?plan=`) has no direct-maintenance equivalent —
             its plan-scoped setup is gone (#643) — so it redirects to the Library recovery path rather than
             opening a dead or misleading screen. */}

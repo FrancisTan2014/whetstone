@@ -276,6 +276,7 @@ function buildPromptRow(prompt: ResolvedPrompt, noteId: EntryId, now: Date): Mem
         : (prompt.answerDoc ?? createTextDocument(prompt.answerText)),
     answerText: prompt.answerText,
     lifecycle: built.lifecycle,
+    revealKind: "legacy_custom",
     chunkId: prompt.chunkId,
     createdAt: now
   };

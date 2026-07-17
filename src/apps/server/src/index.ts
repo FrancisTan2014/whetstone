@@ -206,6 +206,11 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  notesReview: {
+    createId: () => randomUUID(),
+    db,
+    now: () => new Date()
+  },
   readingPosition: { db },
   preferences: { db },
   recall: {

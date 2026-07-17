@@ -121,10 +121,16 @@ describe("App shell and routes", () => {
     expect(markup).toContain('id="memory-heading"');
   });
 
-  it("resolves the recall route to the due-recall page (still reachable off-nav)", () => {
+  it("resolves the recall route to the Notes-owned review session (compat route, still reachable off-nav)", () => {
     const markup = renderAt("/recall");
 
-    expect(markup).toContain("Due to recall");
+    expect(markup).toContain('id="notes-review-heading"');
+  });
+
+  it("resolves the notes-review route to the Notes-owned review session", () => {
+    const markup = renderAt("/notes/review");
+
+    expect(markup).toContain('id="notes-review-heading"');
   });
 
   it("resolves the diary route to the voice-diary page (still reachable off-nav)", () => {

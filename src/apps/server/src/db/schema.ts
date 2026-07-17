@@ -523,6 +523,17 @@ export const chunks = pgTable(
 // here anymore — enrollment and FSRS state live in the shared `review_cards` substrate keyed by this
 // prompt's `entry_id` (#617). `chunk_id` optionally links the direction to a practice chunk (#205),
 // retained Memory provenance after the Practice retirement (#603).
+//
+// `reveal_kind` (#657) is the explicit, persisted reveal discriminant that declares what a reveal
+// resolves — never inferred from the nullable answer columns. `legacy_custom` is the historical shape:
+// the reveal resolves the prompt's own stored `answer_doc`/`answer_text` custom answer (a `draft` legacy
+// prompt is not yet revealable, so both are NULL; a `ready` legacy prompt has both). `current_note` is
+// the durable reference shape (later Notes enrollment/import produce it): the prompt stores NO answer and
+// resolves its reveal live from the referenced note's canonical `body_doc`/`body_text` at read time, so a
+// note edit is always reflected and note content is never copied onto the prompt. The
+// `memory_prompts_reveal_shape_ck` check enforces the two shapes in the database: a `current_note` prompt
+// is always `ready` with no answer columns; a `ready` legacy prompt has both answer projections; a
+// `draft` legacy prompt has neither.
 export const memoryPrompts = pgTable(
   "memory_prompts",
   {
@@ -537,6 +548,7 @@ export const memoryPrompts = pgTable(
     answerDoc: jsonb("answer_doc"),
     answerText: text("answer_text"),
     lifecycle: text("lifecycle", { enum: ["draft", "ready"] as const }).notNull(),
+    revealKind: text("reveal_kind", { enum: ["current_note", "legacy_custom"] as const }).notNull(),
     // Temporary retained Memory-provenance link (#603): optionally ties a prompt to the practice chunk
     // (#205) it was harvested from. Retained until a later issue migrates provenance off `chunk_id` and
     // drops `domains`/`cases`/`chunks`.
@@ -545,7 +557,14 @@ export const memoryPrompts = pgTable(
   },
   (table) => [
     index("memory_prompts_note_idx").on(table.noteEntryId),
-    index("memory_prompts_chunk_idx").on(table.chunkId)
+    index("memory_prompts_chunk_idx").on(table.chunkId),
+    // The two reveal shapes are enforced in the database, not only at the write boundary: a current-note
+    // prompt is ready and answerless (its reveal is the live note body); a ready legacy prompt has both
+    // answer projections; a draft legacy prompt has neither.
+    check(
+      "memory_prompts_reveal_shape_ck",
+      sql`(${table.revealKind} = 'current_note' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is null and ${table.answerText} is null) or (${table.revealKind} = 'legacy_custom' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is not null and ${table.answerText} is not null) or (${table.revealKind} = 'legacy_custom' and ${table.lifecycle} = 'draft' and ${table.answerDoc} is null and ${table.answerText} is null)`
+    )
   ]
 );
 
