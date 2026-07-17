@@ -14,11 +14,16 @@ vi.mock("./notesApi", () => ({
 vi.mock("./OwnedNoteReviewSection", async () => {
   const React = await import("react");
   return {
-    OwnedNoteReviewSection: (props: { note: { entryId: string } }) =>
-      React.createElement("div", {
-        "data-note": props.note.entryId,
-        "data-testid": "owned-review-section"
-      })
+    OwnedNoteReviewSection: (props: { note: { entryId: string }; onEnrolled?: () => void }) =>
+      React.createElement(
+        "div",
+        { "data-note": props.note.entryId, "data-testid": "owned-review-section" },
+        React.createElement(
+          "button",
+          { onClick: () => props.onEnrolled?.(), type: "button" },
+          "stub-enroll"
+        )
+      )
   };
 });
 
@@ -130,6 +135,7 @@ describe("OwnedNoteEditor create (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={onSaved}
         target={{ kind: "create" }}
       />
@@ -151,6 +157,7 @@ describe("OwnedNoteEditor create (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "create" }}
       />
@@ -170,6 +177,7 @@ describe("OwnedNoteEditor create (#659)", () => {
       <OwnedNoteEditor
         onClose={onClose}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "create" }}
       />
@@ -186,6 +194,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "edit", note: anchoredOverview() }}
       />
@@ -206,6 +215,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={onSaved}
         target={{ kind: "edit", note: anchoredOverview() }}
       />
@@ -228,6 +238,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "edit", note: anchoredOverview() }}
       />
@@ -245,6 +256,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={onDeleted}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "edit", note: anchoredOverview() }}
       />
@@ -264,6 +276,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "edit", note: anchoredOverview() }}
       />
@@ -282,6 +295,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={onDeleted}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "edit", note: anchoredOverview() }}
       />
@@ -294,11 +308,28 @@ describe("OwnedNoteEditor edit (#659)", () => {
     expect(onDeleted).not.toHaveBeenCalled();
   });
 
+  it("forwards a review enrollment up so the host can refresh the list", async () => {
+    const onReviewChanged = vi.fn();
+    render(
+      <OwnedNoteEditor
+        onClose={vi.fn()}
+        onDeleted={vi.fn()}
+        onReviewChanged={onReviewChanged}
+        onSaved={vi.fn()}
+        target={{ kind: "edit", note: anchoredOverview() }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "stub-enroll" }));
+    expect(onReviewChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("edits a standalone note with no source section", () => {
     render(
       <OwnedNoteEditor
         onClose={vi.fn()}
         onDeleted={vi.fn()}
+        onReviewChanged={vi.fn()}
         onSaved={vi.fn()}
         target={{ kind: "edit", note: standaloneOverview() }}
       />

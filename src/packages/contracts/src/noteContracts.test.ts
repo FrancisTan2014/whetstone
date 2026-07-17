@@ -86,9 +86,7 @@ describe("createStandaloneNoteRequestSchema", () => {
   });
 
   it("rejects a blank body, a missing body, or an anchor (standalone notes have no source)", () => {
-    expect(() =>
-      parseCreateStandaloneNoteRequest({ bodyDoc: createTextDocument("") })
-    ).toThrow();
+    expect(() => parseCreateStandaloneNoteRequest({ bodyDoc: createTextDocument("") })).toThrow();
     expect(() => parseCreateStandaloneNoteRequest({})).toThrow();
     expect(createStandaloneNoteRequestSchema.safeParse({ bodyDoc, anchor }).success).toBe(false);
   });

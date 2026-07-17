@@ -146,6 +146,22 @@ describe("OwnedNoteReviewSection (#659)", () => {
     ).toBeDefined();
   });
 
+  it("notifies the host after a successful enrollment so the list can refresh", async () => {
+    mockedStatus.mockResolvedValue({ status: "not_enrolled" });
+    mockedEnroll.mockResolvedValue({ status: "due" });
+    const onEnrolled = vi.fn();
+    render(
+      <MemoryRouter>
+        <OwnedNoteReviewSection note={anchoredNote()} onEnrolled={onEnrolled} />
+      </MemoryRouter>
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add to review" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+
+    await waitFor(() => expect(onEnrolled).toHaveBeenCalledTimes(1));
+  });
+
   it("cancels the confirmation and returns to the invitation", async () => {
     mockedStatus.mockResolvedValue({ status: "not_enrolled" });
     renderSection(standaloneNote());

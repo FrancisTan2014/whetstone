@@ -15,6 +15,7 @@ vi.mock("./OwnedNoteEditor", async () => {
     OwnedNoteEditor: (props: {
       onClose: () => void;
       onDeleted: (id: string) => void;
+      onReviewChanged: () => void;
       onSaved: () => void;
       target: { kind: string; note?: { entryId: string } };
     }) =>
@@ -32,6 +33,11 @@ vi.mock("./OwnedNoteEditor", async () => {
             type: "button"
           },
           "stub-delete"
+        ),
+        React.createElement(
+          "button",
+          { key: "r", onClick: () => props.onReviewChanged(), type: "button" },
+          "stub-review"
         ),
         React.createElement(
           "button",
@@ -183,5 +189,20 @@ describe("NotesPage (#659)", () => {
     await userEvent.click(screen.getByRole("button", { name: "stub-delete" }));
 
     expect(await screen.findByText(/No notes yet\. Create one/)).toBeDefined();
+  });
+
+  it("refreshes the list when a note's review state changes, keeping the editor open", async () => {
+    mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first"), note("note-2", "second")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-review" }));
+
+    // The list reloads underneath while the editor stays open.
+    await screen.findByText("second");
+    expect(screen.getByTestId("editor")).toBeDefined();
   });
 });

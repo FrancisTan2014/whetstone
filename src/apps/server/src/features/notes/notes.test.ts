@@ -1298,9 +1298,7 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
     const blank = await ownerPatch(created.entryId, { bodyDoc: createTextDocument("   ") });
     expect(blank.statusCode).toBe(400);
 
-    expect(
-      (await ownerPatch("nope", { bodyDoc: createTextDocument("x") })).statusCode
-    ).toBe(404);
+    expect((await ownerPatch("nope", { bodyDoc: createTextDocument("x") })).statusCode).toBe(404);
 
     const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
     const mark = await createMark(workEntryId, blockEntryId, plaintext);
@@ -1383,7 +1381,11 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
 
   it("searches across body, anchor snapshot, prompt question, and legacy answer — each note once", async () => {
     const work = await createWorkWithBlock();
-    const anchored = await createWholeBlockNote(work.workEntryId, work.blockEntryId, work.plaintext);
+    const anchored = await createWholeBlockNote(
+      work.workEntryId,
+      work.blockEntryId,
+      work.plaintext
+    );
     const bodyNote = (await createStandalone("A peregrine dive.")).json() as NoteDto;
     const cueNote = (await createStandalone("Quiz card one.")).json() as NoteDto;
     await seedPrompt(cueNote.entryId, { cueText: "what is a kestrel bird" });

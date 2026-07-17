@@ -113,6 +113,10 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     setReloadNonce((nonce) => nonce + 1);
   }
 
+  function onReviewChanged(): void {
+    setReloadNonce((nonce) => nonce + 1);
+  }
+
   return (
     <section aria-labelledby="notes-heading" className="mx-auto max-w-2xl p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -155,6 +159,7 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
           key={editor.kind === "edit" ? editor.note.entryId : "create"}
           onClose={requestClose}
           onDeleted={onDeleted}
+          onReviewChanged={onReviewChanged}
           onSaved={onSaved}
           target={editor}
         />

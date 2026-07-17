@@ -50,9 +50,7 @@ export type UpdateNoteRequest = z.infer<typeof updateNoteRequestSchema>;
 // selection, so — unlike `createNoteRequestSchema` — there is no anchor. The server stamps
 // `kind = 'note'`, `capture_source = 'manual'`, and derives `body_text`; the body must be a valid,
 // non-blank document, the same bar every note body meets.
-export const createStandaloneNoteRequestSchema = z
-  .object({ bodyDoc: noteBodyDocSchema })
-  .strict();
+export const createStandaloneNoteRequestSchema = z.object({ bodyDoc: noteBodyDocSchema }).strict();
 
 export type CreateStandaloneNoteRequest = z.infer<typeof createStandaloneNoteRequestSchema>;
 

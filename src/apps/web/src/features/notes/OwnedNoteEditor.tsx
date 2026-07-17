@@ -19,6 +19,7 @@ export type OwnedNoteEditorTarget =
 type OwnedNoteEditorProps = Readonly<{
   onClose: () => void;
   onDeleted: (noteEntryId: string) => void;
+  onReviewChanged: () => void;
   onSaved: (note: NoteDto) => void;
   target: OwnedNoteEditorTarget;
 }>;
@@ -41,6 +42,7 @@ function initialBodyFor(target: OwnedNoteEditorTarget): DocumentNodeJSON {
 export function OwnedNoteEditor({
   onClose,
   onDeleted,
+  onReviewChanged,
   onSaved,
   target
 }: OwnedNoteEditorProps): React.JSX.Element {
@@ -149,7 +151,7 @@ export function OwnedNoteEditor({
 
         {target.kind === "edit" ? (
           <>
-            <OwnedNoteReviewSection note={target.note} />
+            <OwnedNoteReviewSection note={target.note} onEnrolled={onReviewChanged} />
 
             <section aria-label="Delete note" className="noteEditorDanger">
               {confirmingDelete ? (

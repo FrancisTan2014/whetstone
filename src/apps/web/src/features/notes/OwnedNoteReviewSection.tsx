@@ -6,7 +6,10 @@ import type { NoteDto, NoteReviewEnrollmentStatusDto } from "@whetstone/contract
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import { addOwnedNoteToReview, fetchOwnedNoteReviewStatus } from "../notesReview/notesReviewApi";
 
-type OwnedNoteReviewSectionProps = Readonly<{ note: NoteDto }>;
+type OwnedNoteReviewSectionProps = Readonly<{
+  note: NoteDto;
+  onEnrolled?: () => void;
+}>;
 
 // The section's own load lifecycle, kept explicit so a failed status read can never masquerade as a
 // concrete enrollment state: the section shows a retry instead. Once loaded it holds the objective
@@ -31,7 +34,10 @@ function formatNextReview(iso: string): string {
 // answers exactly "What should Whetstone ask you?" in one required, non-blank input. Enrollment is
 // idempotent; after success the section reflects the objective state (Due now with a Review link,
 // Next review · date, or Paused). A load or enrollment failure offers a retry without disturbing the body.
-export function OwnedNoteReviewSection({ note }: OwnedNoteReviewSectionProps): React.JSX.Element {
+export function OwnedNoteReviewSection({
+  note,
+  onEnrolled
+}: OwnedNoteReviewSectionProps): React.JSX.Element {
   const [state, setState] = useState<SectionState>({ step: "loading" });
   const [confirming, setConfirming] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
@@ -68,6 +74,7 @@ export function OwnedNoteReviewSection({ note }: OwnedNoteReviewSectionProps): R
         setEnrolling(false);
         setConfirming(false);
         setState({ status, step: "status" });
+        onEnrolled?.();
       },
       () => {
         setEnrolling(false);

@@ -222,7 +222,9 @@ describe("noteReviewSummaryDtoSchema", () => {
   it("requires a positive due count and a valid scheduled date", () => {
     expect(() => parseNoteReviewSummaryDto({ status: "due" })).toThrow();
     expect(() => parseNoteReviewSummaryDto({ status: "due", dueCount: 0 })).toThrow();
-    expect(() => parseNoteReviewSummaryDto({ status: "scheduled", nextReviewAt: "soon" })).toThrow();
+    expect(() =>
+      parseNoteReviewSummaryDto({ status: "scheduled", nextReviewAt: "soon" })
+    ).toThrow();
   });
 
   it("rejects a count on a non-due status and an unknown status", () => {

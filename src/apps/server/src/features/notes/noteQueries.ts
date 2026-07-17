@@ -283,7 +283,10 @@ async function searchNoteIds(
           ilike(notes.bodyText, pattern),
           ilike(noteAnchors.selectedText, pattern),
           ilike(memoryPrompts.cueText, pattern),
-          and(eq(memoryPrompts.revealKind, "legacy_custom"), ilike(memoryPrompts.answerText, pattern))
+          and(
+            eq(memoryPrompts.revealKind, "legacy_custom"),
+            ilike(memoryPrompts.answerText, pattern)
+          )
         )
       )
     );

@@ -41,8 +41,7 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
       dependencies.now(),
       {
         search: request.query.search,
-        workEntryId:
-          request.query.work === undefined ? undefined : toEntryId(request.query.work)
+        workEntryId: request.query.work === undefined ? undefined : toEntryId(request.query.work)
       }
     )
   }));
@@ -88,63 +87,54 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
 
   // Edit any owned note's canonical body (#659), owner-scoped. 404 for a forged/cross-user id; 409 for a
   // bodyless Mark.
-  server.patch<{ Params: OwnerNoteParams }>(
-    "/api/notes/:noteEntryId",
-    async (request, reply) => {
-      const parsed = updateNoteRequestSchema.safeParse(request.body);
+  server.patch<{ Params: OwnerNoteParams }>("/api/notes/:noteEntryId", async (request, reply) => {
+    const parsed = updateNoteRequestSchema.safeParse(request.body);
 
-      if (!parsed.success) {
-        return reply.code(400).send(invalidRequestBody);
-      }
-
-      const noteEntryId = toEntryId(request.params.noteEntryId);
-      const result = await updateNoteForOwner(
-        dependencies,
-        noteEntryId,
-        parsed.data,
-        request.server.currentUser.getCurrentUserId()
-      );
-
-      switch (result.status) {
-        case "note_not_found":
-          return reply.code(404).send({ error: "note_not_found" });
-        case "note_not_editable":
-          return reply.code(409).send({ error: "note_not_editable" });
-        case "updated":
-          request.log.info(
-            { noteEntryId: result.note.entryId, route: "PATCH /api/notes/:noteEntryId" },
-            "note_updated"
-          );
-
-          return reply.code(200).send(result.note);
-      }
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequestBody);
     }
-  );
+
+    const noteEntryId = toEntryId(request.params.noteEntryId);
+    const result = await updateNoteForOwner(
+      dependencies,
+      noteEntryId,
+      parsed.data,
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    switch (result.status) {
+      case "note_not_found":
+        return reply.code(404).send({ error: "note_not_found" });
+      case "note_not_editable":
+        return reply.code(409).send({ error: "note_not_editable" });
+      case "updated":
+        request.log.info(
+          { noteEntryId: result.note.entryId, route: "PATCH /api/notes/:noteEntryId" },
+          "note_updated"
+        );
+
+        return reply.code(200).send(result.note);
+    }
+  });
 
   // Delete any owned note (#659) through the owner-scoped cascade, owner-scoped. 404 for a forged/cross-user
   // id.
-  server.delete<{ Params: OwnerNoteParams }>(
-    "/api/notes/:noteEntryId",
-    async (request, reply) => {
-      const noteEntryId = toEntryId(request.params.noteEntryId);
-      const result = await deleteNoteForOwner(
-        dependencies,
-        noteEntryId,
-        request.server.currentUser.getCurrentUserId()
-      );
+  server.delete<{ Params: OwnerNoteParams }>("/api/notes/:noteEntryId", async (request, reply) => {
+    const noteEntryId = toEntryId(request.params.noteEntryId);
+    const result = await deleteNoteForOwner(
+      dependencies,
+      noteEntryId,
+      request.server.currentUser.getCurrentUserId()
+    );
 
-      if (result.status === "note_not_found") {
-        return reply.code(404).send({ error: "note_not_found" });
-      }
-
-      request.log.info(
-        { noteEntryId, route: "DELETE /api/notes/:noteEntryId" },
-        "note_deleted"
-      );
-
-      return reply.code(204).send();
+    if (result.status === "note_not_found") {
+      return reply.code(404).send({ error: "note_not_found" });
     }
-  );
+
+    request.log.info({ noteEntryId, route: "DELETE /api/notes/:noteEntryId" }, "note_deleted");
+
+    return reply.code(204).send();
+  });
 
   server.get<{ Params: WorkParams }>("/api/works/:workEntryId/notes", async (request) => ({
     notes: await listNotesForWork(
