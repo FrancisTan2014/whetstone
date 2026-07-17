@@ -696,7 +696,7 @@ describe("DiaryPage lazy-load", () => {
     });
   });
 
-  it("stops lazy-loading and warns when an older page fails", async () => {
+  it("keeps the older page retryable and offers a retry when an older page fails (#648)", async () => {
     mockedTimeline.mockReset();
     mockedTimeline.mockResolvedValueOnce(sevenDays());
     mockedTimeline.mockRejectedValueOnce(new Error("page failed"));
@@ -707,7 +707,56 @@ describe("DiaryPage lazy-load", () => {
       observer.trigger(true);
     });
 
-    await screen.findByText(/Couldn't load older entries/);
+    // A failed older-page load must not look like the terminal page: an explicit retry is offered
+    // instead of silently hiding the sentinel (the previous behavior removed any way to recover).
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(retry).toBeTruthy();
+    expect(mockedTimeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed older page and appends the recovered entries (#648)", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValueOnce(sevenDays());
+    mockedTimeline.mockRejectedValueOnce(new Error("page failed"));
+    mockedTimeline.mockResolvedValueOnce({
+      days: [tDay(d(21), [tEntry("r21", `${d(21)}T08:00:00.000Z`, "entry 21")])]
+    });
+
+    await renderReady(makeCapture().capture);
+    const observer = await waitForObserver();
+    await act(async () => {
+      observer.trigger(true);
+    });
+    const retry = await screen.findByRole("button", { name: "Try again" });
+
+    await userEvent.click(retry);
+
+    // The retry re-requests the same older page (the cursor never advanced past the failure) and, on
+    // success, appends its entries and clears the retry affordance.
+    await screen.findByText("entry 21");
+    expect(mockedTimeline).toHaveBeenNthCalledWith(3, d(22), 7);
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("does not auto-retry a failed older page until the learner retries (#648)", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValueOnce(sevenDays());
+    mockedTimeline.mockRejectedValueOnce(new Error("page failed"));
+
+    await renderReady(makeCapture().capture);
+    const observer = await waitForObserver();
+    await act(async () => {
+      observer.trigger(true);
+    });
+    await screen.findByRole("button", { name: "Try again" });
+    expect(mockedTimeline).toHaveBeenCalledTimes(2);
+
+    // The sentinel is still mounted (the page is not terminal), so it can intersect again — but auto
+    // lazy-load stays paused after a failure so it does not spam the failing request.
+    await act(async () => {
+      observer.trigger(true);
+    });
+    expect(mockedTimeline).toHaveBeenCalledTimes(2);
   });
 });
 

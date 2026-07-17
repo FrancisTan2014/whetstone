@@ -104,6 +104,11 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const [cursor, setCursor] = useState<string | undefined>(() => restoredSnapshot?.cursor);
   const [hasMore, setHasMore] = useState(() => restoredSnapshot?.hasMore ?? false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // An older-page (lazy-load) request failed. Distinct from the real terminal page: `hasMore` and the
+  // cursor stay intact so the request is retryable, and the sentinel region shows an explicit retry
+  // affordance (#648). Auto lazy-load is paused while this is set so a visible sentinel does not spam the
+  // failing request; an explicit retry clears it and tries again.
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // The learner's calendar-day zone (#606): starts from the browser so the first render groups sensibly,
@@ -121,6 +126,9 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const cursorRef = useRef(cursor);
   const hasMoreRef = useRef(hasMore);
   const busyRef = useRef(false);
+  // Mirrors `loadMoreFailed` so the IntersectionObserver tick pauses auto lazy-loading after a failure
+  // without waiting for a re-render (#648).
+  const loadMoreFailedRef = useRef(loadMoreFailed);
   // The id of a just-saved entry to scroll into view once it mounts (see the entry `ref` below).
   const pendingEntryScrollRef = useRef<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -215,7 +223,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   }
 
   async function loadMore(): Promise<void> {
-    if (busyRef.current || !hasMoreRef.current) {
+    if (busyRef.current || !hasMoreRef.current || loadMoreFailedRef.current) {
       return;
     }
     busyRef.current = true;
@@ -226,12 +234,21 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       setCursor((previous) => days.at(-1)?.date ?? previous);
       setHasMore(days.length === PAGE_SIZE);
     } catch {
-      setHasMore(false);
-      fail("Couldn't load older entries.");
+      // Keep `hasMore`/cursor intact so the older page is retryable, and pause auto lazy-load until the
+      // learner retries — the sentinel region shows the explicit retry affordance (#648).
+      loadMoreFailedRef.current = true;
+      setLoadMoreFailed(true);
     } finally {
       busyRef.current = false;
       setLoadingMore(false);
     }
+  }
+
+  // Explicitly retry a failed older-page load: clear the failure gate and request the same page again.
+  async function retryLoadMore(): Promise<void> {
+    loadMoreFailedRef.current = false;
+    setLoadMoreFailed(false);
+    await loadMore();
   }
 
   // Lazy-load older days as the sentinel below the timeline scrolls into view. Re-subscribes when the
@@ -248,7 +265,6 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     });
     observer.observe(sentinel);
     return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, hasMore]);
 
   function handleCaptured(entry: DiaryEntryDto): void {
@@ -397,7 +413,16 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
 
         {hasMore ? (
           <div ref={sentinelRef}>
-            {loadingMore ? <LoadingIndicator label="Loading older entries…" /> : null}
+            {loadMoreFailed ? (
+              <div className="flex flex-col items-start gap-2" role="alert">
+                <p className="text-sm text-danger">Couldn&apos;t load older entries.</p>
+                <Button onClick={() => void retryLoadMore()} size="sm" variant="secondary">
+                  Try again
+                </Button>
+              </div>
+            ) : loadingMore ? (
+              <LoadingIndicator label="Loading older entries…" />
+            ) : null}
           </div>
         ) : null}
       </div>
