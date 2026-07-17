@@ -180,7 +180,14 @@ can navigate them from another package.
   note's LIVE canonical `body_doc`/`body_text` (editing the note changes the reveal in place). The pure
   `resolveNoteReveal` (`notesReviewReveal.ts`) switches on the discriminant; queries in `notesReviewQueries.ts`,
   the rating command reuses the shared review boundary (`rateReviewCard`) in `notesReviewCommands.ts`. All
-  current write paths deposit `legacy_custom`; `current_note` is produced only by future enrollment.
+  legacy write paths deposit `legacy_custom`; `current_note` prompts are produced by note enrollment (#658):
+  `notesReviewEnrollment.ts` (`getNoteReviewStatus` read + `enrollNoteInReview` write, served at
+  `GET|POST /api/works/:workEntryId/notes/:noteEntryId/review[/enrollment]` in `notesReviewRoutes.ts`) turns a
+  saved anchored note into exactly ONE `current_note` prompt + ONE active shared card (retention 0.90, due now,
+  no copied answer). Enrollment is idempotent under a `SELECT … FOR UPDATE` on the note's `personal_entries` row
+  and enforced at most once per note by the `memory_prompts_one_current_note_per_note_uq` partial unique index
+  (migration `0055_note_review_enrollment.sql`); `getNoteEnrollmentTarget` (`notes/noteQueries.ts`) supplies the
+  non-null anchor snapshot as the read-only Question and rejects Marks/standalone notes as not-enrollable.
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -816,7 +823,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   after rating, the learner sees the next scheduled date and chooses **Review next**. A failed reveal keeps
   the question with a specific retry; a failed rating keeps the reveal and its grades in place with a
   retryable alert. `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
-  and parses via `noteReviewContracts`.
+  and parses via `noteReviewContracts`. Enrollment (#658) is surfaced from the note sheet, not this session:
+  `notes/NoteReviewSection.tsx` (rendered by `NoteEditor.tsx` for a saved anchored note) loads the note's
+  objective status and lets the learner add it to Review by confirming the exact anchor snapshot as a
+  read-only Question; `notesReviewApi.ts` also exposes `fetchNoteReviewStatus`/`addNoteToReview` for it.
   `memory/` is the Memory mode (#573) at `/memory`: `MemoryPage.tsx` is the browse/capture/manage surface
   over the same Entry-backed store — a `MemoryList` of kept fragments (each row reads jargon-free: fragment,
   capture-source badge, prompt count, one draft/scheduled/due chip via pure `memoryLabels.ts` +

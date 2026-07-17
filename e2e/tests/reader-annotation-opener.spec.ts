@@ -1,6 +1,6 @@
 import { type Page } from "@playwright/test";
 
-import { INTERACTIVE_SELECTOR } from "../probes";
+import { geometry, INTERACTIVE_SELECTOR } from "../probes";
 import { type SetupData } from "../stack";
 import { expect, test } from "../fixtures";
 
@@ -456,4 +456,88 @@ test("the Notes tool is an alternate path that opens a whole-block note with no 
   const editor = page.getByRole("dialog", EDIT_DIALOG);
   await expect(editor).toBeVisible();
   await expect(editor.getByText("Whole-block note body.")).toBeVisible();
+});
+
+// #658: the saved-note sheet is the enrollment surface for Notes-owned Review. From a saved anchored
+// note the learner confirms the EXACT anchor snapshot as a read-only Question and adds it to Review;
+// enrollment is one card due now, persists across reopening, and a later body edit never reschedules it.
+test("adding a saved reader note to Review enrolls it, persists, and survives a later body edit", async ({
+  page,
+  setup
+}) => {
+  await page.setViewportSize({ height: DESKTOP.height, width: DESKTOP.width });
+
+  const work = await seedWork(page, setup, "Add To Review", PARAGRAPH);
+  const block = await blockContaining(page, "Alpha");
+  await addNote(
+    page,
+    setup,
+    work.workEntryId,
+    anchorFor(block.blockEntryId, block.text, "Alpha"),
+    "Original note body."
+  );
+  await reloadReader(page, work.readerUrl);
+
+  // Open the note and enroll it from the sheet's own Review section.
+  await underlineFor(page, "note", "Alpha").click();
+  let editor = page.getByRole("dialog", EDIT_DIALOG);
+  let review = editor.getByRole("region", { name: "Review" });
+  await expect(review.getByText("This note is not in review yet.")).toBeVisible();
+  await review.getByRole("button", { name: "Add to review" }).click();
+
+  // The confirmation shows the exact anchor snapshot as a read-only Question — never retyped or edited.
+  await expect(review.getByText("Question")).toBeVisible();
+  await expect(review.getByText("Alpha", { exact: true })).toBeVisible();
+  await review.getByRole("button", { name: "Add to review" }).click();
+
+  // One click enrolls: the shared card is due now with a link into the Notes-owned Review session.
+  await expect(review.getByText("Due now")).toBeVisible();
+  await expect(review.getByRole("link", { name: "Review" })).toBeVisible();
+
+  // The Review action is a real >=44px hit target (WCAG 2.5.5), matching the rest of the note sheet: it
+  // reuses the shared button treatment rather than shipping as a small inline text link. jsdom cannot lay
+  // out boxes, so this asserts the real rendered rect (and the shared geometry probe) in a browser.
+  const box = await review
+    .getByRole("link", { name: "Review" })
+    .evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      width: el.getBoundingClientRect().width
+    }));
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  const reviewLinkFlags = (
+    await page.evaluate(geometry, 'a[href="#/notes/review"]')
+  ).issues.flatMap((issue) => issue.flags);
+  expect(reviewLinkFlags).not.toContain("tooSmall");
+
+  // Enrollment persists across reopening the note (the section reads the objective server status).
+  await editor.getByRole("button", { name: "Close" }).click();
+  await expect(editor).toBeHidden();
+  await underlineFor(page, "note", "Alpha").click();
+  editor = page.getByRole("dialog", EDIT_DIALOG);
+  review = editor.getByRole("region", { name: "Review" });
+  await expect(review.getByText("Due now")).toBeVisible();
+
+  // Editing the note body later must NOT reset the schedule: saving the edit closes the sheet, and on
+  // reopening the note is still due now (the shared card was never rescheduled by the edit).
+  await editor.getByRole("textbox", { name: "Note body" }).fill("Edited canonical body.");
+  await editor.getByRole("button", { name: "Save note" }).click();
+  await expect(editor).toBeHidden();
+
+  await underlineFor(page, "note", "Alpha").click();
+  editor = page.getByRole("dialog", EDIT_DIALOG);
+  review = editor.getByRole("region", { name: "Review" });
+  await expect(review.getByText("Due now")).toBeVisible();
+
+  // The Review link reaches the Notes-owned Review session, where the prompt's QUESTION is the exact
+  // anchor snapshot and its reveal is the note's LIVE canonical body — so the later edit shows here with
+  // no schedule reset. Grading it also returns the shared due queue to complete for the rest of the suite.
+  await review.getByRole("link", { name: "Review" }).click();
+  await expect(page).toHaveURL(/#\/notes\/review$/);
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  await expect(page.getByText("Alpha", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Show note" }).click();
+  await expect(page.getByText("Edited canonical body.")).toBeVisible();
+  await page.getByRole("button", { name: "Good" }).click();
+  await expect(page.getByText(/Due complete/)).toBeVisible();
 });

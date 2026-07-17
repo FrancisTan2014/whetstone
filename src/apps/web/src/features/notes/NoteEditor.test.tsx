@@ -8,6 +8,21 @@ vi.mock("./notesApi", () => ({
   updateNote: vi.fn()
 }));
 
+// The Review section is exercised in its own suite; here it stands in as a marker so the editor's own
+// behaviour is asserted in isolation and the section is only wired in edit mode.
+vi.mock("./NoteReviewSection", async () => {
+  const React = await import("react");
+  return {
+    NoteReviewSection: (props: { noteEntryId: string; question: string; workEntryId: string }) =>
+      React.createElement("div", {
+        "data-note": props.noteEntryId,
+        "data-question": props.question,
+        "data-testid": "note-review-section",
+        "data-work": props.workEntryId
+      })
+  };
+});
+
 // The shared rich editor (#570) is exercised in its own suite; here it stands in as a plain textarea so
 // the note editor's behaviour (which document is saved, blank rejection) is asserted without driving
 // Tiptap in jsdom. Ctrl/Cmd+S forwards to the editor's `onSave` so the blank-save path is reachable.
@@ -279,6 +294,20 @@ describe("NoteEditor edit mode", () => {
     expect(screen.getByRole("heading", { name: "Edit note" })).toBeDefined();
     expect(screen.getByText("Selected: fox")).toBeDefined();
     expect(noteBody().value).toBe("a sly animal");
+  });
+
+  it("wires the Review section to the saved note in edit mode, but not in create mode", () => {
+    renderEditor({ target: { kind: "edit", note: existingNote } });
+
+    const section = screen.getByTestId("note-review-section");
+    expect(section.getAttribute("data-note")).toBe("note-7");
+    expect(section.getAttribute("data-work")).toBe("work-1");
+    // The section confirms the exact anchor snapshot as the read-only Question.
+    expect(section.getAttribute("data-question")).toBe("fox");
+
+    cleanup();
+    renderEditor();
+    expect(screen.queryByTestId("note-review-section")).toBeNull();
   });
 
   it("saves the replaced document through the update endpoint", async () => {

@@ -99,3 +99,21 @@ export function parseNoteReviewRatingRequest(value: unknown): NoteReviewRatingRe
 export function parseNoteReviewRatingResultDto(value: unknown): NoteReviewRatingResultDto {
   return noteReviewRatingResultDtoSchema.parse(value);
 }
+
+// The objective review state the note sheet shows for a saved note (#658), discriminated by `status` so
+// the sheet renders on the persisted fact, never inferring from loose fields. `not_enrolled` offers the
+// "Add to review" control; `due` is enrolled and due now (offering "Review"); `scheduled` carries the
+// next review instant to localize as "Next review · <date>"; `paused` is enrolled but withheld from the
+// due scan. Only `scheduled` carries a date — a due card shows "Due now" and a paused card shows "Paused".
+export const noteReviewEnrollmentStatusDtoSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("not_enrolled") }).strict(),
+  z.object({ status: z.literal("due") }).strict(),
+  z.object({ status: z.literal("scheduled"), nextReviewAt: z.string().datetime() }).strict(),
+  z.object({ status: z.literal("paused") }).strict()
+]);
+
+export type NoteReviewEnrollmentStatusDto = z.infer<typeof noteReviewEnrollmentStatusDtoSchema>;
+
+export function parseNoteReviewEnrollmentStatusDto(value: unknown): NoteReviewEnrollmentStatusDto {
+  return noteReviewEnrollmentStatusDtoSchema.parse(value);
+}

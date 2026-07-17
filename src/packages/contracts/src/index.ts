@@ -348,10 +348,12 @@ export type {
 export {
   noteRevealDtoSchema,
   noteRevealKindSchema,
+  noteReviewEnrollmentStatusDtoSchema,
   noteReviewNextDtoSchema,
   noteReviewPromptDtoSchema,
   noteReviewRatingRequestSchema,
   noteReviewRatingResultDtoSchema,
+  parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
@@ -361,6 +363,7 @@ export {
 export type {
   NoteRevealDto,
   NoteRevealKind,
+  NoteReviewEnrollmentStatusDto,
   NoteReviewNextDto,
   NoteReviewPromptDto,
   NoteReviewRatingRequest,

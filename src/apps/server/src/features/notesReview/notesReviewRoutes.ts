@@ -1,12 +1,17 @@
 import { noteReviewRatingRequestSchema } from "@whetstone/contracts";
+import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
 import type { DbClient } from "../../db/dbClient.js";
+import { enrollNoteInReview, getNoteReviewStatus } from "./notesReviewEnrollment.js";
 import { rateNotePrompt } from "./notesReviewCommands.js";
 import { loadNextDueNotePrompt, loadNotePromptReveal } from "./notesReviewQueries.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
+const notEnrollable = { error: "not_enrollable" } as const;
+
+type NoteReviewParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 
 // The Notes-owned Review session needs the database, an id stamp for review events, and a clock. The clock
 // is held here (the route layer) and passed into the commands/queries, keeping scheduling deterministic.
@@ -79,6 +84,56 @@ export function registerNotesReviewRoutes(
         "note_prompt_reviewed"
       );
       return reply.code(200).send({ remainingDue: result.remainingDue, review: result.review });
+    }
+  );
+
+  // One saved note's Review status (#658), for the note sheet's Review section: 200 with the objective
+  // status (not enrolled / due now / scheduled / paused), or 404 when the note is not the caller's, is
+  // unanchored, or is a Mark (no review resource). Performs no write.
+  server.get<{ Params: NoteReviewParams }>(
+    "/api/works/:workEntryId/notes/:noteEntryId/review",
+    async (request, reply) => {
+      const result = await getNoteReviewStatus(
+        dependencies,
+        toEntryId(request.params.workEntryId),
+        toEntryId(request.params.noteEntryId),
+        request.server.currentUser.getCurrentUserId()
+      );
+      if (result.status !== "ok") {
+        return reply.code(404).send(notFound);
+      }
+      return reply.code(200).send(result.value);
+    }
+  );
+
+  // Add one saved note to Review (#658): idempotently create-or-reuse its current-note prompt and active
+  // shared card, returning the resulting objective status. 404 when the note is not the caller's or is
+  // unanchored; 409 when it is a Mark (never a retrieval target). Retry/double-submit safe at the command.
+  server.post<{ Params: NoteReviewParams }>(
+    "/api/works/:workEntryId/notes/:noteEntryId/review/enrollment",
+    async (request, reply) => {
+      const result = await enrollNoteInReview(
+        dependencies,
+        toEntryId(request.params.workEntryId),
+        toEntryId(request.params.noteEntryId),
+        request.server.currentUser.getCurrentUserId()
+      );
+      switch (result.status) {
+        case "not_found":
+          return reply.code(404).send(notFound);
+        case "not_enrollable":
+          return reply.code(409).send(notEnrollable);
+        case "ok":
+          request.log.info(
+            {
+              noteEntryId: request.params.noteEntryId,
+              route: "POST /api/works/:workEntryId/notes/:noteEntryId/review/enrollment",
+              workEntryId: request.params.workEntryId
+            },
+            "note_review_enrolled"
+          );
+          return reply.code(200).send(result.value);
+      }
     }
   );
 }

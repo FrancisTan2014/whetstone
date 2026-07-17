@@ -231,3 +231,39 @@ export async function getNoteForWork(
 
   return row === undefined ? undefined : toNoteDto(row);
 }
+
+// The minimal facts Review enrollment (#658) needs about a saved note, authorized the same way as
+// `getNoteForWork` (owner + work + existing anchor). Selecting the anchor's NOT NULL `selectedText`
+// through the inner join makes the enrollment cue non-nullable at the type level, so the caller never
+// carries a dead "anchor is null" branch. `undefined` means the note does not exist for this user/work
+// or is unanchored (a standalone note has no anchor row and so is not enrollable here); `kind` lets the
+// caller reject a bodyless Mark.
+export type NoteEnrollmentTarget = Readonly<{
+  kind: "note" | "mark";
+  selectedTextSnapshot: string;
+}>;
+
+export async function getNoteEnrollmentTarget(
+  db: DbClient,
+  workEntryId: EntryId,
+  noteEntryId: EntryId,
+  userId: string
+): Promise<NoteEnrollmentTarget | undefined> {
+  const addressable = addressableBlocks(db);
+  const rows = await db
+    .select({ kind: notes.kind, selectedTextSnapshot: noteAnchors.selectedText })
+    .from(notes)
+    .innerJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .innerJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
+    .where(
+      and(
+        eq(notes.entryId, noteEntryId),
+        eq(addressable.workEntryId, workEntryId),
+        eq(personalEntries.userId, userId)
+      )
+    )
+    .limit(1);
+
+  return rows[0];
+}

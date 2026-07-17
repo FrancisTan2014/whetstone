@@ -9,6 +9,7 @@ import { Button } from "../../shared/ui/Button";
 import { Sheet } from "../../shared/ui/Sheet";
 import { createNote, updateNote } from "./notesApi";
 import { draftToAnchor, type NoteDraft } from "./noteCapture";
+import { NoteReviewSection } from "./NoteReviewSection";
 
 // The editor opens either to capture a new note from a reader selection, or to edit an existing note
 // reopened from a highlight or the note list. A note is always authored content — one rich body, no
@@ -118,6 +119,14 @@ export function NoteEditor({
             Cancel
           </Button>
         </div>
+
+        {target.kind === "edit" ? (
+          <NoteReviewSection
+            noteEntryId={target.note.entryId}
+            question={target.note.anchor.selectedTextSnapshot}
+            workEntryId={workEntryId}
+          />
+        ) : null}
       </div>
     </Sheet>
   );
