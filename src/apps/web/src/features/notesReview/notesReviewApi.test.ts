@@ -96,9 +96,9 @@ describe("fetchNoteReveal", () => {
 
 describe("rateNotePrompt", () => {
   it("POSTs the rating as JSON to the encoded rating endpoint", async () => {
-    const fetchMock = stubFetch({ body: { review }, ok: true });
+    const fetchMock = stubFetch({ body: { review, remainingDue: 3 }, ok: true });
 
-    await expect(rateNotePrompt("prompt 1", "good")).resolves.toEqual({ review });
+    await expect(rateNotePrompt("prompt 1", "good")).resolves.toEqual({ review, remainingDue: 3 });
     expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/prompts/prompt%201/rating", {
       body: JSON.stringify({ rating: "good" }),
       headers: { "content-type": "application/json" },

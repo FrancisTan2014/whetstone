@@ -78,7 +78,7 @@ export function registerNotesReviewRoutes(
         { promptId: request.params.id, route: "POST /api/notes/review/prompts/:id/rating" },
         "note_prompt_reviewed"
       );
-      return reply.code(200).send({ review: result.review });
+      return reply.code(200).send({ remainingDue: result.remainingDue, review: result.review });
     }
   );
 }

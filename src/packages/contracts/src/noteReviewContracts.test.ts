@@ -146,11 +146,22 @@ describe("note-review rating contracts", () => {
     expect(() => parseNoteReviewRatingRequest({ rating: "brilliant" })).toThrow();
   });
 
-  it("parses the rating result carrying the next scheduled state", () => {
-    expect(parseNoteReviewRatingResultDto({ review })).toEqual({ review });
+  it("parses the rating result carrying the next scheduled state and remaining-due count", () => {
+    expect(parseNoteReviewRatingResultDto({ review, remainingDue: 2 })).toEqual({
+      review,
+      remainingDue: 2
+    });
   });
 
   it("rejects a rating result missing the review", () => {
-    expect(() => parseNoteReviewRatingResultDto({})).toThrow();
+    expect(() => parseNoteReviewRatingResultDto({ remainingDue: 0 })).toThrow();
+  });
+
+  it("rejects a rating result missing the remaining-due count", () => {
+    expect(() => parseNoteReviewRatingResultDto({ review })).toThrow();
+  });
+
+  it("rejects a negative remaining-due count", () => {
+    expect(() => parseNoteReviewRatingResultDto({ review, remainingDue: -1 })).toThrow();
   });
 });

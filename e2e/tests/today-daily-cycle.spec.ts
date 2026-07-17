@@ -93,7 +93,6 @@ test.describe("Today daily cycle (#610)", () => {
     await page.getByRole("button", { name: "Show note" }).click();
     await page.getByRole("button", { name: "Good" }).click();
     await expect(page.getByText(/Next review:/)).toBeVisible();
-    await page.getByRole("button", { name: "Review next" }).click();
     await expect(page.getByText(/Due complete/)).toBeVisible();
 
     // Returning to Today shows the truthful clear state, with the optional Continue section still present.

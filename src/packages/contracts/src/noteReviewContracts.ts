@@ -69,9 +69,14 @@ export const noteReviewRatingRequestSchema = z.object({ rating: ratingSchema }).
 
 export type NoteReviewRatingRequest = z.infer<typeof noteReviewRatingRequestSchema>;
 
-// The result of rating a prompt: the rescheduled card's next FSRS state, whose `due` is the next
-// scheduled date the session shows. Only that one prompt's card is rescheduled.
-export const noteReviewRatingResultDtoSchema = z.object({ review: reviewStateDtoSchema }).strict();
+// The result of rating a prompt: the rescheduled card's next FSRS state (whose `due` is the next scheduled
+// date the session shows) and `remainingDue` — the count of the learner's still-due prompts AFTER this
+// rating. The session reads `remainingDue` to truthfully report completion the moment the final due prompt
+// is rated, rather than requiring an extra "Review next" click (#657). Only that one prompt's card is
+// rescheduled.
+export const noteReviewRatingResultDtoSchema = z
+  .object({ review: reviewStateDtoSchema, remainingDue: z.number().int().nonnegative() })
+  .strict();
 
 export type NoteReviewRatingResultDto = z.infer<typeof noteReviewRatingResultDtoSchema>;
 

@@ -1,6 +1,6 @@
 import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, count, eq, lte } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts, notes, personalEntries, reviewCards } from "../../db/schema.js";
@@ -45,6 +45,32 @@ export async function loadNextDueNotePrompt(
     revealKind: row.prompt.revealKind,
     review: reviewStateFromCard(row.card)
   };
+}
+
+// The count of the user's still-due prompts — ACTIVE cards due at `now`, owner-scoped through the note's
+// `personal_entries` facet, exactly the selection scope of `loadNextDueNotePrompt`. The session reads this
+// right AFTER a rating: when it is 0 the final due prompt was just cleared, so the session reports
+// completion immediately instead of forcing an extra advance (#657).
+export async function countDueNotePrompts(
+  db: DbClient,
+  userId: string,
+  now: Date
+): Promise<number> {
+  const rows = await db
+    .select({ value: count() })
+    .from(memoryPrompts)
+    .innerJoin(
+      reviewCards,
+      and(
+        eq(reviewCards.targetEntryId, memoryPrompts.entryId),
+        eq(reviewCards.status, "active"),
+        lte(reviewCards.dueAt, now)
+      )
+    )
+    .innerJoin(personalEntries, eq(memoryPrompts.noteEntryId, personalEntries.entryId))
+    .where(eq(personalEntries.userId, userId));
+
+  return rows.reduce((total, row) => total + row.value, 0);
 }
 
 // Resolve one prompt's reveal for its owner, or undefined when the prompt is not the caller's, or has no

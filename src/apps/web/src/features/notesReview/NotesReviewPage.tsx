@@ -25,7 +25,7 @@ type SessionState =
   | Readonly<{ step: "empty" }>
   | Readonly<{ step: "question"; prompt: NoteReviewPromptDto; revealFailed: boolean }>
   | Readonly<{ step: "revealed"; prompt: NoteReviewPromptDto; reveal: NoteRevealDto }>
-  | Readonly<{ step: "rated"; nextDue: string }>;
+  | Readonly<{ step: "rated"; nextDue: string; hasMoreDue: boolean }>;
 
 // Format a card's next due instant as a calm, human date the learner reads after rating.
 function formatDueDate(iso: string): string {
@@ -79,7 +79,12 @@ function NotesReviewPageComponent(): React.JSX.Element {
   function rate(rating: ReviewRating, prompt: NoteReviewPromptDto): void {
     setRatingFailed(false);
     void rateNotePrompt(prompt.promptId, rating).then(
-      (result) => setState({ nextDue: result.review.due, step: "rated" }),
+      (result) =>
+        setState({
+          hasMoreDue: result.remainingDue > 0,
+          nextDue: result.review.due,
+          step: "rated"
+        }),
       () => setRatingFailed(true)
     );
   }
@@ -139,11 +144,15 @@ function SessionBody({
     return (
       <div>
         <p className="text-text">Next review: {formatDueDate(state.nextDue)}</p>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button onClick={onReviewNext} variant="primary">
-            Review next
-          </Button>
-        </div>
+        {state.hasMoreDue ? (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button onClick={onReviewNext} variant="primary">
+              Review next
+            </Button>
+          </div>
+        ) : (
+          <p className="mt-4 text-text-muted">Due complete — nothing else is due right now.</p>
+        )}
       </div>
     );
   }

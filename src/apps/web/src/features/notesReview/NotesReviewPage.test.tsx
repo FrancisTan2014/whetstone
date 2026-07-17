@@ -158,11 +158,11 @@ describe("NotesReviewPage", () => {
     expect(screen.queryByRole("button", { name: "Good" })).toBeNull();
   });
 
-  it("rates by click, then shows the next scheduled date and Review next", async () => {
+  it("rates by click, then shows the next scheduled date and Review next when more remain", async () => {
     const user = userEvent.setup();
     mockedNext.mockResolvedValue(makePrompt());
     mockedReveal.mockResolvedValue(legacyReveal);
-    mockedRate.mockResolvedValue({ review });
+    mockedRate.mockResolvedValue({ review, remainingDue: 1 });
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "Show note" }));
@@ -171,13 +171,29 @@ describe("NotesReviewPage", () => {
     expect(mockedRate).toHaveBeenCalledWith("prompt-1", "good");
     expect(await screen.findByText(/Next review:.*2026/u)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review next" })).toBeTruthy();
+    expect(screen.queryByText(/Due complete/u)).toBeNull();
+  });
+
+  it("reports completion immediately after rating the final due prompt, with no Review next", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt());
+    mockedReveal.mockResolvedValue(legacyReveal);
+    mockedRate.mockResolvedValue({ review, remainingDue: 0 });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Show note" }));
+    await user.click(await screen.findByRole("button", { name: "Good" }));
+
+    expect(await screen.findByText(/Next review:.*2026/u)).toBeTruthy();
+    expect(await screen.findByText(/Due complete/u)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Review next" })).toBeNull();
   });
 
   it("rates via the 1–4 keyboard accelerators", async () => {
     const user = userEvent.setup();
     mockedNext.mockResolvedValue(makePrompt());
     mockedReveal.mockResolvedValue(legacyReveal);
-    mockedRate.mockResolvedValue({ review });
+    mockedRate.mockResolvedValue({ review, remainingDue: 1 });
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "Show note" }));
@@ -219,7 +235,7 @@ describe("NotesReviewPage", () => {
     const user = userEvent.setup();
     mockedNext.mockResolvedValueOnce(makePrompt()).mockResolvedValueOnce(null);
     mockedReveal.mockResolvedValue(legacyReveal);
-    mockedRate.mockResolvedValue({ review });
+    mockedRate.mockResolvedValue({ review, remainingDue: 1 });
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "Show note" }));

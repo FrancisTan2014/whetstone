@@ -258,7 +258,7 @@ describe("GET /api/notes/review/prompts/:id/reveal", () => {
 });
 
 describe("POST /api/notes/review/prompts/:id/rating", () => {
-  it("reschedules only that prompt's card and returns its next state", async () => {
+  it("reschedules only that prompt's card and returns its next state with no remaining due", async () => {
     context.setNow(at(0));
     const { promptId } = await seedLegacy("cue", "answer:cue", DEFAULT_USER_ID, at(-1));
     const response = await context.server.inject({
@@ -267,10 +267,38 @@ describe("POST /api/notes/review/prompts/:id/rating", () => {
       payload: { rating: "good" }
     });
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { review: { due: string; state: string } };
+    const body = response.json() as {
+      review: { due: string; state: string };
+      remainingDue: number;
+    };
     // A "good" rating on a due card advances it beyond now, so it leaves the due batch.
     expect(new Date(body.review.due).getTime()).toBeGreaterThan(at(0).getTime());
+    // It was the only due prompt, so nothing remains — the session can close out immediately.
+    expect(body.remainingDue).toBe(0);
     expect(await getNext()).toEqual({ prompt: null });
+  });
+
+  it("reports the still-due count when other prompts remain due after a rating", async () => {
+    context.setNow(at(0));
+    const first = await seedLegacy("first", "answer:first", DEFAULT_USER_ID, at(-3));
+    await seedLegacy("second", "answer:second", DEFAULT_USER_ID, at(-2));
+    const response = await context.server.inject({
+      method: "POST",
+      url: `/api/notes/review/prompts/${first.promptId}/rating`,
+      payload: { rating: "good" }
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { remainingDue: number };
+    // The second prompt is still due, so the session keeps offering "review next".
+    expect(body.remainingDue).toBe(1);
+    // Another user's due prompt never counts toward this learner's remaining batch.
+    await seedLegacy("theirs", "answer:theirs", otherUser, at(-1));
+    const afterOther = await context.server.inject({
+      method: "POST",
+      url: `/api/notes/review/prompts/${first.promptId}/rating`,
+      payload: { rating: "good" }
+    });
+    expect((afterOther.json() as { remainingDue: number }).remainingDue).toBe(1);
   });
 
   it("rejects a malformed rating with 400", async () => {
