@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import type {
-  NotePromptSettingsDto,
-  ReviewHistoryEventDto,
-  ReviewHistoryPageDto
-} from "@whetstone/contracts";
+import type { NotePromptSettingsDto, ReviewHistoryEventDto } from "@whetstone/contracts";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import {
@@ -406,15 +402,18 @@ function PromptHistory({ promptId }: PromptHistoryProps): React.JSX.Element {
   const [step, setStep] = useState<"loading" | "error" | "ready">("loading");
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const apply = useCallback((page: ReviewHistoryPageDto): void => {
-    setEvents((current) => [...current, ...page.events]);
-    setCursor(page.nextCursor);
-    setStep("ready");
-  }, []);
-
+  // The first page REPLACES the list, so a re-run of this load (e.g. a StrictMode double-invoked mount
+  // effect, or a retry) is idempotent and never duplicates events. Only "Load older" appends.
   const loadFirst = useCallback((): void => {
-    fetchNotePromptHistory(promptId).then(apply, () => setStep("error"));
-  }, [apply, promptId]);
+    fetchNotePromptHistory(promptId).then(
+      (page) => {
+        setEvents(page.events);
+        setCursor(page.nextCursor);
+        setStep("ready");
+      },
+      () => setStep("error")
+    );
+  }, [promptId]);
 
   useEffect(() => {
     loadFirst();
@@ -425,7 +424,9 @@ function PromptHistory({ promptId }: PromptHistoryProps): React.JSX.Element {
     fetchNotePromptHistory(promptId, olderCursor).then(
       (page) => {
         setLoadingMore(false);
-        apply(page);
+        setEvents((current) => [...current, ...page.events]);
+        setCursor(page.nextCursor);
+        setStep("ready");
       },
       () => {
         setLoadingMore(false);

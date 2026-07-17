@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -385,5 +386,30 @@ describe("NoteReviewSettings history (#660)", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Load older" }));
 
     expect(await screen.findByText("Could not load the review history.")).toBeDefined();
+  });
+
+  it("renders each history event once even when the mount effect runs twice (StrictMode)", async () => {
+    resolveList(prompt());
+    // Persistent (not once): under StrictMode the mount effect runs twice, so both loads resolve to the
+    // same page. The first-page load must REPLACE, not append — otherwise the page is rendered twice
+    // (the real defect an E2E caught: a duplicate React key and two "Schedule restarted" rows).
+    mockedHistory.mockResolvedValue({
+      events: [{ id: "reset-1", kind: "reset", occurredAt: "2026-06-30T09:30:00.000Z" }],
+      nextCursor: null
+    });
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <NoteReviewSettings noteEntryId="note-1" onChanged={vi.fn()} />
+        </MemoryRouter>
+      </StrictMode>
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Review history" }));
+
+    expect(await screen.findByText("Schedule restarted")).toBeDefined();
+    // The double-invoked mount effect fired the load twice, yet the event renders exactly once.
+    await waitFor(() => expect(mockedHistory.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.getAllByText("Schedule restarted")).toHaveLength(1);
   });
 });
