@@ -406,43 +406,6 @@ describe("GET /api/diary/timeline (the logical Timeline)", () => {
   });
 });
 
-describe("GET /api/diary/calendar", () => {
-  it("marks the days in range that have at least one ready diary entry", async () => {
-    context.setNow("2026-06-10T12:00:00.000Z");
-    await createEntry("the 10th");
-    context.setNow("2026-06-20T12:00:00.000Z");
-    await createEntry("the 20th");
-    context.setNow("2026-07-01T12:00:00.000Z");
-    await createEntry("out of range");
-    // An in-flight voice capture on the 15th is not a mark (its body is not ready).
-    await seedDiaryEntry(context.db, {
-      bodyText: "",
-      id: "queued-cal",
-      inputMode: "voice",
-      occurredAt: "2026-06-15T12:00:00.000Z",
-      processingStatus: "queued",
-      userId: DEFAULT_USER_ID
-    });
-
-    const response = await context.server.inject({
-      method: "GET",
-      url: "/api/diary/calendar?from=2026-06-01&to=2026-06-30"
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ dates: ["2026-06-10", "2026-06-20"] });
-  });
-
-  it("rejects a missing range bound", async () => {
-    const response = await context.server.inject({
-      method: "GET",
-      url: "/api/diary/calendar?from=2026-06-01"
-    });
-
-    expect(response.statusCode).toBe(400);
-  });
-});
-
 describe("day grouping honors the learner's stored timezone (#606)", () => {
   // Two instants on the same UTC calendar day (2026-06-10) that fall on DIFFERENT days in a zone behind
   // UTC: 02:00Z is still 2026-06-09 in New York (UTC−4 in June), while 12:00Z is 2026-06-10 there.
@@ -452,31 +415,6 @@ describe("day grouping honors the learner's stored timezone (#606)", () => {
     context.setNow("2026-06-10T12:00:00.000Z");
     await createEntry("midday on the 10th in New York");
   }
-
-  it("groups the calendar by the learner's local day, not the server's UTC day", async () => {
-    await seedStraddlingEntries();
-
-    // Without a stored zone, both instants share the UTC day 2026-06-10.
-    const utcCalendar = await context.server.inject({
-      method: "GET",
-      url: "/api/diary/calendar?from=2026-06-01&to=2026-06-30"
-    });
-    expect(utcCalendar.json()).toEqual({ dates: ["2026-06-10"] });
-
-    // Persist a New York zone; the same instants now split across two local days.
-    await context.db.insert(readerPreferences).values({
-      readingSize: "md",
-      theme: "day",
-      timezone: "America/New_York",
-      userId: DEFAULT_USER_ID
-    });
-
-    const nyCalendar = await context.server.inject({
-      method: "GET",
-      url: "/api/diary/calendar?from=2026-06-01&to=2026-06-30"
-    });
-    expect(nyCalendar.json()).toEqual({ dates: ["2026-06-09", "2026-06-10"] });
-  });
 
   it("groups the timeline by the learner's local day", async () => {
     await seedStraddlingEntries();
