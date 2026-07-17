@@ -65,16 +65,20 @@ export function OwnedNoteReviewSection({
     loadStatus();
   }
 
+  // An imported note carries a confirmed question on its `not_enrolled` status: like an anchored note, it
+  // reuses an existing source rather than asking the learner to type one.
+  const confirmedQuestion =
+    state.step === "status" && state.status.status === "not_enrolled"
+      ? state.status.question
+      : undefined;
+  const reuseSource = note.anchor !== null || confirmedQuestion !== undefined;
+  const sourceQuestion = note.anchor !== null ? note.anchor.selectedTextSnapshot : confirmedQuestion;
+
   function onAdd(): void {
     // An anchored note reuses its source server-side; an imported note (#661) reuses its existing cardless
     // prompt's confirmed question. Both send no question. Only a plain standalone note sends the trimmed,
     // non-blank question the learner supplied.
-    const confirmed =
-      state.step === "status" && state.status.status === "not_enrolled"
-        ? state.status.question
-        : undefined;
-    const reuse = note.anchor !== null || confirmed !== undefined;
-    const supplied = reuse ? undefined : question.trim();
+    const supplied = reuseSource ? undefined : question.trim();
     setEnrolling(true);
     setEnrollFailed(false);
     addOwnedNoteToReview(note.entryId, supplied).then(
@@ -90,15 +94,6 @@ export function OwnedNoteReviewSection({
       }
     );
   }
-
-  // An imported note carries a confirmed question on its `not_enrolled` status: like an anchored note, it
-  // reuses an existing source rather than asking the learner to type one.
-  const confirmedQuestion =
-    state.step === "status" && state.status.status === "not_enrolled"
-      ? state.status.question
-      : undefined;
-  const reuseSource = note.anchor !== null || confirmedQuestion !== undefined;
-  const sourceQuestion = note.anchor !== null ? note.anchor.selectedTextSnapshot : confirmedQuestion;
 
   return (
     <section aria-label="Review" className="noteReviewSection">
@@ -124,7 +119,7 @@ export function OwnedNoteReviewSection({
           }}
           onQuestionChange={setQuestion}
           onStartConfirm={() => setConfirming(true)}
-          question={reuseSource ? (sourceQuestion ?? "") : question}
+          question={sourceQuestion ?? question}
           reuseSource={reuseSource}
           status={state.status}
         />
