@@ -422,12 +422,16 @@ can navigate them from another package.
   resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
   way per unit (its rendered substrate; see `search/`). (The whole-work `GET …/content` route was removed; admin composes
   structure + per-unit client-side.) `notes/` is the single Notes-owned boundary for the ONE unified note
-  facet (#620): `insertNoteInTx`/`deleteNoteInTx` are transaction-composing primitives (Reader captures its
-  own; Memory composes a note write/delete inside its prompt+card transaction), so there is exactly one
-  note writer and one owner-scoped delete cascade (a Memory note's delete tears down its prompts + shared
-  review cards/events through the same cascade). It serves note templates and creates, lists, edits,
+  facet (#620): `insertNoteInTx`/`updateNoteBodyInTx`/`deleteNoteInTx` are transaction-composing primitives
+  that every writer composes (Reader capture; the owner-scoped Notes-home commands `createStandaloneNote`/
+  `updateNoteForOwner`/`deleteNoteForOwner`; the `importNotesBatch` notebook import), so there is exactly one
+  note writer, one body updater, and one owner-scoped delete cascade (an owned note's delete tears down its
+  prompts + shared review cards/events through the same cascade — guarded by `noteFacetOwnership.test.ts`).
+  Review is behavior applied to a note, never a second note store: enrollment adds a `contains`-linked
+  `memory_prompts` prompt + shared card over this boundary (`notesReview/`), and the standalone Memory
+  composer/delete path was retired in #662. It serves note templates and creates, lists, edits,
   and deletes notes (a Reader note/mark is block-anchored via an `annotates` link and scoped to a work
-  through `blocks.work_entry_id`; a Memory/manual note is unanchored — `note_anchors` LEFT-joined),
+  through `blocks.work_entry_id`; a standalone/manual note is unanchored — `note_anchors` LEFT-joined),
   and lists every note the current user owns across works for the Notes mode (`GET /api/notes` →
   `listNotesForUser`, joined to work + author, ordered by work title then note id);
   templates are seeded from the domain on boot
