@@ -175,6 +175,33 @@ function status(
   });
 }
 
+// The owner-scoped Notes-home enrollment/status routes (#659): non-work-scoped, so a standalone note is
+// reachable. A bodyless POST sends no payload (Fastify rejects an empty JSON body), so the route reads
+// `request.body ?? {}`.
+function ownerEnroll(
+  noteEntryId: string,
+  body?: unknown
+): ReturnType<typeof context.server.inject> {
+  return context.server.inject(
+    body === undefined
+      ? { method: "POST", url: `/api/notes/${noteEntryId}/review/enrollment` }
+      : { method: "POST", payload: body, url: `/api/notes/${noteEntryId}/review/enrollment` }
+  );
+}
+
+function ownerStatus(noteEntryId: string): ReturnType<typeof context.server.inject> {
+  return context.server.inject({ method: "GET", url: `/api/notes/${noteEntryId}/review` });
+}
+
+async function createStandaloneNote(bodyText: string): Promise<NoteDto> {
+  const response = await context.server.inject({
+    method: "POST",
+    payload: { bodyDoc: createTextDocument(bodyText) },
+    url: "/api/notes"
+  });
+  return response.json() as NoteDto;
+}
+
 async function promptRowsFor(
   noteEntryId: string
 ): Promise<ReadonlyArray<typeof memoryPrompts.$inferSelect>> {
@@ -537,5 +564,142 @@ describe("enrollNoteInReview (direct)", () => {
         )
       ).status
     ).toBe("not_found");
+  });
+});
+
+describe("owner-scoped enrollment and status (#659)", () => {
+  it("enrolls an anchored note using its anchor snapshot, ignoring any supplied question", async () => {
+    context.setNow(at(0));
+    const { blockEntryId, workEntryId } = await createWorkWithBlock();
+    const note = await createNote(workEntryId, blockEntryId);
+    const before = await updatedAtOf(note.entryId);
+    context.setNow(at(1));
+
+    // A supplied question is ignored for an anchored note — its exact source is the cue.
+    const response = await ownerEnroll(note.entryId, { question: "ignore this" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json() as NoteReviewEnrollmentStatusDto).toEqual({ status: "due" });
+
+    const prompts = await promptRowsFor(note.entryId);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.revealKind).toBe("current_note");
+    expect(prompts[0]!.cueText).toBe("brown fox");
+    expect(prompts[0]!.answerText).toBeNull();
+    const cards = await cardsFor(prompts[0]!.entryId);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.status).toBe("active");
+    expect(cards[0]!.dueAt).toEqual(at(1));
+    expect((await updatedAtOf(note.entryId)).getTime()).toBeGreaterThan(before.getTime());
+  });
+
+  it("enrolls a bodyless anchored note POST (no supplied question)", async () => {
+    context.setNow(at(0));
+    const { blockEntryId, workEntryId } = await createWorkWithBlock();
+    const note = await createNote(workEntryId, blockEntryId);
+
+    const response = await ownerEnroll(note.entryId);
+    expect(response.statusCode).toBe(200);
+    expect(response.json() as NoteReviewEnrollmentStatusDto).toEqual({ status: "due" });
+    expect((await promptRowsFor(note.entryId))[0]!.cueText).toBe("brown fox");
+  });
+
+  it("enrolls a standalone note with the learner's supplied question", async () => {
+    context.setNow(at(0));
+    const note = await createStandaloneNote("A free-standing thought.");
+
+    const response = await ownerEnroll(note.entryId, { question: "  What did I mean here?  " });
+    expect(response.statusCode).toBe(200);
+    expect(response.json() as NoteReviewEnrollmentStatusDto).toEqual({ status: "due" });
+
+    const prompts = await promptRowsFor(note.entryId);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.revealKind).toBe("current_note");
+    // The supplied question is trimmed and used verbatim as the cue.
+    expect(prompts[0]!.cueText).toBe("What did I mean here?");
+    expect(await cardsFor(prompts[0]!.entryId)).toHaveLength(1);
+  });
+
+  it("400s a standalone enrollment that supplies no question, creating nothing", async () => {
+    context.setNow(at(0));
+    const note = await createStandaloneNote("A free-standing thought.");
+
+    // A bodyless POST (no question) is a question_required 400 for a standalone note.
+    const missing = await ownerEnroll(note.entryId);
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toEqual({ error: "question_required" });
+
+    // A blank question fails the contract at the boundary (invalid_request).
+    const blank = await ownerEnroll(note.entryId, { question: "   " });
+    expect(blank.statusCode).toBe(400);
+    expect(blank.json()).toEqual({ error: "invalid_request" });
+
+    expect(await promptRowsFor(note.entryId)).toHaveLength(0);
+  });
+
+  it("is idempotent over the owner route: a re-enroll reuses the prompt and card", async () => {
+    context.setNow(at(0));
+    const note = await createStandaloneNote("A free-standing thought.");
+    await ownerEnroll(note.entryId, { question: "What did I mean?" });
+    const firstUpdatedAt = await updatedAtOf(note.entryId);
+    const prompt = (await promptRowsFor(note.entryId))[0]!;
+
+    context.setNow(at(3));
+    const second = await ownerEnroll(note.entryId, { question: "A different question entirely" });
+    expect(second.statusCode).toBe(200);
+    expect(second.json() as NoteReviewEnrollmentStatusDto).toEqual({ status: "due" });
+
+    const promptsAfter = await promptRowsFor(note.entryId);
+    expect(promptsAfter).toHaveLength(1);
+    expect(promptsAfter[0]!.entryId).toBe(prompt.entryId);
+    // The reused prompt keeps its original cue; the re-submit does not re-question or re-touch chronology.
+    expect(promptsAfter[0]!.cueText).toBe("What did I mean?");
+    expect(await cardsFor(prompt.entryId)).toHaveLength(1);
+    expect((await updatedAtOf(note.entryId)).getTime()).toBe(firstUpdatedAt.getTime());
+  });
+
+  it("409s a Mark and 404s an unknown or cross-user note over the owner enrollment route", async () => {
+    context.setNow(at(0));
+    const { blockEntryId, workEntryId } = await createWorkWithBlock();
+    const mark = await createMark(workEntryId, blockEntryId);
+    const markResponse = await ownerEnroll(mark.entryId, { question: "q" });
+    expect(markResponse.statusCode).toBe(409);
+    expect(markResponse.json()).toEqual({ error: "not_enrollable" });
+
+    expect((await ownerEnroll("missing", { question: "q" })).statusCode).toBe(404);
+
+    const note = await createNote(workEntryId, blockEntryId);
+    await context.db
+      .update(personalEntries)
+      .set({ userId: otherUser })
+      .where(eq(personalEntries.entryId, note.entryId));
+    expect((await ownerEnroll(note.entryId)).statusCode).toBe(404);
+  });
+
+  it("reports owner-scoped status: not_enrolled, then due after enrollment", async () => {
+    context.setNow(at(0));
+    const note = await createStandaloneNote("A free-standing thought.");
+    expect((await ownerStatus(note.entryId)).json() as NoteReviewEnrollmentStatusDto).toEqual({
+      status: "not_enrolled"
+    });
+
+    await ownerEnroll(note.entryId, { question: "What did I mean?" });
+    expect((await ownerStatus(note.entryId)).json() as NoteReviewEnrollmentStatusDto).toEqual({
+      status: "due"
+    });
+  });
+
+  it("404s owner-scoped status for a Mark, an unknown note, and a cross-user note", async () => {
+    context.setNow(at(0));
+    const { blockEntryId, workEntryId } = await createWorkWithBlock();
+    const mark = await createMark(workEntryId, blockEntryId);
+    expect((await ownerStatus(mark.entryId)).statusCode).toBe(404);
+    expect((await ownerStatus("missing")).statusCode).toBe(404);
+
+    const note = await createNote(workEntryId, blockEntryId);
+    await context.db
+      .update(personalEntries)
+      .set({ userId: otherUser })
+      .where(eq(personalEntries.entryId, note.entryId));
+    expect((await ownerStatus(note.entryId)).statusCode).toBe(404);
   });
 });

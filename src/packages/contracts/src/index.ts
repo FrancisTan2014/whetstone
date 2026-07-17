@@ -222,11 +222,13 @@ export type {
 export {
   createMarkRequestSchema,
   createNoteRequestSchema,
+  createStandaloneNoteRequestSchema,
   isAnchoredNote,
   isAnchoredNoteOverview,
   noteBodyDocSchema,
   parseCreateMarkRequest,
   parseCreateNoteRequest,
+  parseCreateStandaloneNoteRequest,
   parseUpdateNoteRequest,
   updateNoteRequestSchema
 } from "./noteContracts.js";
@@ -235,6 +237,7 @@ export type {
   AnchoredNoteOverviewDto,
   CreateMarkRequest,
   CreateNoteRequest,
+  CreateStandaloneNoteRequest,
   NoteDto,
   NoteListDto,
   NoteOverviewDto,
@@ -346,6 +349,7 @@ export type {
   SearchMemoryToolInput
 } from "./memoryContracts.js";
 export {
+  enrollNoteRequestSchema,
   noteRevealDtoSchema,
   noteRevealKindSchema,
   noteReviewEnrollmentStatusDtoSchema,
@@ -353,21 +357,26 @@ export {
   noteReviewPromptDtoSchema,
   noteReviewRatingRequestSchema,
   noteReviewRatingResultDtoSchema,
+  noteReviewSummaryDtoSchema,
+  parseEnrollNoteRequest,
   parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
   parseNoteReviewRatingResultDto,
+  parseNoteReviewSummaryDto,
   parseNoteRevealDto
 } from "./noteReviewContracts.js";
 export type {
+  EnrollNoteRequest,
   NoteRevealDto,
   NoteRevealKind,
   NoteReviewEnrollmentStatusDto,
   NoteReviewNextDto,
   NoteReviewPromptDto,
   NoteReviewRatingRequest,
-  NoteReviewRatingResultDto
+  NoteReviewRatingResultDto,
+  NoteReviewSummaryDto
 } from "./noteReviewContracts.js";
 export {
   parseSearchRequest,

@@ -117,3 +117,36 @@ export type NoteReviewEnrollmentStatusDto = z.infer<typeof noteReviewEnrollmentS
 export function parseNoteReviewEnrollmentStatusDto(value: unknown): NoteReviewEnrollmentStatusDto {
   return noteReviewEnrollmentStatusDtoSchema.parse(value);
 }
+
+// The single Review projection each row of the Notes home shows (#659), rolled up ONCE across all of a
+// note's prompt/cards with a fixed precedence so a note with several legacy prompts still shows one calm
+// state: any active due card → `due` with the due `count`; otherwise the earliest active future card →
+// `scheduled` with that instant; otherwise a paused-only card → `paused`; otherwise `not_enrolled`
+// (offering "Add to review"). Unlike the per-card enrollment status, `due` carries the count so the list
+// can show "Review due (N)". It is a derived projection joined onto the note, never persisted on it.
+export const noteReviewSummaryDtoSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("not_enrolled") }).strict(),
+  z.object({ status: z.literal("due"), dueCount: z.number().int().positive() }).strict(),
+  z.object({ status: z.literal("scheduled"), nextReviewAt: z.string().datetime() }).strict(),
+  z.object({ status: z.literal("paused") }).strict()
+]);
+
+export type NoteReviewSummaryDto = z.infer<typeof noteReviewSummaryDtoSchema>;
+
+export function parseNoteReviewSummaryDto(value: unknown): NoteReviewSummaryDto {
+  return noteReviewSummaryDtoSchema.parse(value);
+}
+
+// Adding a saved note to Review from the Notes home (#659). An anchored note reuses its exact source as the
+// question server-side and carries no body; a standalone note has no source, so the learner supplies the
+// question ("What should Whetstone ask you?") — a required, non-blank string. The field is optional on the
+// wire because the anchored path omits it; the server rejects a standalone enrollment that carries none.
+export const enrollNoteRequestSchema = z
+  .object({ question: z.string().trim().min(1).optional() })
+  .strict();
+
+export type EnrollNoteRequest = z.infer<typeof enrollNoteRequestSchema>;
+
+export function parseEnrollNoteRequest(value: unknown): EnrollNoteRequest {
+  return enrollNoteRequestSchema.parse(value);
+}
