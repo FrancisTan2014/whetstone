@@ -172,11 +172,6 @@ export const timelineDtoSchema = z.object({ days: z.array(timelineDayDtoSchema) 
 
 export type TimelineDto = z.infer<typeof timelineDtoSchema>;
 
-// The dates in a range that have ≥1 entry — the marks the date-jump calendar paints.
-export const diaryCalendarDtoSchema = z.object({ dates: z.array(dayKeySchema) }).strict();
-
-export type DiaryCalendarDto = z.infer<typeof diaryCalendarDtoSchema>;
-
 // The lazy-load cursor: page the days strictly before `before` (omitted on the first page), bounded to
 // `limit` days. Query params arrive as strings, so `limit` is coerced.
 export const timelineQuerySchema = z
@@ -188,16 +183,6 @@ export const timelineQuerySchema = z
 
 export type TimelineQuery = z.infer<typeof timelineQuerySchema>;
 
-// The calendar marks query: the inclusive day-key range to scan for entry-bearing days.
-export const diaryCalendarQuerySchema = z
-  .object({
-    from: dayKeySchema,
-    to: dayKeySchema
-  })
-  .strict();
-
-export type DiaryCalendarQuery = z.infer<typeof diaryCalendarQuerySchema>;
-
 export function parseDiaryEntryDto(value: unknown): DiaryEntryDto {
   return diaryEntryDtoSchema.parse(value);
 }
@@ -208,10 +193,6 @@ export function parseTimelineDto(value: unknown): TimelineDto {
 
 export function parseTimelineEntryDto(value: unknown): TimelineEntryDto {
   return timelineEntryDtoSchema.parse(value);
-}
-
-export function parseDiaryCalendarDto(value: unknown): DiaryCalendarDto {
-  return diaryCalendarDtoSchema.parse(value);
 }
 
 export function parseCreateDiaryEntryRequest(value: unknown): CreateDiaryEntryRequest {
