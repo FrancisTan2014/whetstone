@@ -177,21 +177,30 @@ function PromptSettingsRow({
 
   function saveQuestion(): void {
     const question = draft.trim();
-    run(() => editNotePromptQuestion(prompt.promptId, question), () => setEditing(false));
+    run(
+      () => editNotePromptQuestion(prompt.promptId, question),
+      () => setEditing(false)
+    );
   }
 
   function confirmRestart(): void {
-    run(() => restartNotePromptCard(prompt.promptId), () => {
-      setConfirming(null);
-      pendingFocus.current = "restart";
-    });
+    run(
+      () => restartNotePromptCard(prompt.promptId),
+      () => {
+        setConfirming(null);
+        pendingFocus.current = "restart";
+      }
+    );
   }
 
   function confirmRemove(): void {
-    run(() => removeNotePromptCard(prompt.promptId), () => {
-      setConfirming(null);
-      pendingFocus.current = "add";
-    });
+    run(
+      () => removeNotePromptCard(prompt.promptId),
+      () => {
+        setConfirming(null);
+        pendingFocus.current = "add";
+      }
+    );
   }
 
   const state = prompt.cardState.state;
@@ -366,7 +375,9 @@ function PromptSettingsRow({
       ) : null}
 
       {failed ? (
-        <p role="alert">That action could not be completed. The list was refreshed — please try again.</p>
+        <p role="alert">
+          That action could not be completed. The list was refreshed — please try again.
+        </p>
       ) : null}
 
       <div className="noteReviewSettingsHistory">
@@ -455,7 +466,13 @@ function PromptHistory({ promptId }: PromptHistoryProps): React.JSX.Element {
         ))}
       </ul>
       {cursor !== null ? (
-        <Button onClick={() => loadOlder(cursor)} pending={loadingMore} size="sm" type="button" variant="ghost">
+        <Button
+          onClick={() => loadOlder(cursor)}
+          pending={loadingMore}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           Load older
         </Button>
       ) : null}

@@ -24,10 +24,7 @@ import {
   resumeNotePrompt,
   type NotePromptSettingsMutationOutcome
 } from "./notesReviewSettingsCommands.js";
-import {
-  listNotePromptSettings,
-  loadNoteReviewHistoryPage
-} from "./notesReviewSettingsQueries.js";
+import { listNotePromptSettings, loadNoteReviewHistoryPage } from "./notesReviewSettingsQueries.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;

@@ -13,7 +13,14 @@ import { newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, memoryPrompts, notes, personalEntries, reviewCards, reviewEvents } from "../../db/schema.js";
+import {
+  entries,
+  memoryPrompts,
+  notes,
+  personalEntries,
+  reviewCards,
+  reviewEvents
+} from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { reviewStateColumns } from "../review/reviewCardQueries.js";

@@ -58,11 +58,7 @@ export async function editNotePromptQuestion(
   const card = await getReviewCardForUser(dependencies.db, promptId, userId);
   return {
     status: "ok",
-    value: projectPromptSettings(
-      { ...prompt, cueDoc, cueText: question },
-      card,
-      dependencies.now()
-    )
+    value: projectPromptSettings({ ...prompt, cueDoc, cueText: question }, card, dependencies.now())
   };
 }
 

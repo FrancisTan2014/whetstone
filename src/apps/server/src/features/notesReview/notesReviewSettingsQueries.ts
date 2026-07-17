@@ -73,9 +73,7 @@ export async function listNotePromptSettings(
     .orderBy(asc(memoryPrompts.createdAt), asc(memoryPrompts.entryId));
 
   return {
-    prompts: rows.map((row) =>
-      projectPromptSettings(row.prompt, row.card ?? undefined, now)
-    )
+    prompts: rows.map((row) => projectPromptSettings(row.prompt, row.card ?? undefined, now))
   };
 }
 

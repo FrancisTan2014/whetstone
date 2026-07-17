@@ -161,7 +161,9 @@ describe("NoteReviewSettings question editing (#660)", () => {
 
 describe("NoteReviewSettings card transitions (#660)", () => {
   it("pauses an active card and reports the change", async () => {
-    resolveList(prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } }));
+    resolveList(
+      prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } })
+    );
     mockedPause.mockResolvedValue(prompt({ cardState: { state: "paused" } }));
     const { onChanged } = renderSettings();
 
@@ -195,7 +197,9 @@ describe("NoteReviewSettings card transitions (#660)", () => {
   });
 
   it("confirms a restart and returns focus to the trigger", async () => {
-    resolveList(prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } }));
+    resolveList(
+      prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } })
+    );
     mockedRestart.mockResolvedValue(prompt({ cardState: { state: "due" } }));
     renderSettings();
 
@@ -209,7 +213,9 @@ describe("NoteReviewSettings card transitions (#660)", () => {
   });
 
   it("cancels a restart confirmation and restores focus", async () => {
-    resolveList(prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } }));
+    resolveList(
+      prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } })
+    );
     renderSettings();
 
     await userEvent.click(await screen.findByRole("button", { name: "Restart" }));
@@ -246,16 +252,18 @@ describe("NoteReviewSettings card transitions (#660)", () => {
   });
 
   it("reloads the list and warns when a transition fails on stale state", async () => {
-    mockedList.mockResolvedValueOnce({ prompts: [prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } })] });
+    mockedList.mockResolvedValueOnce({
+      prompts: [
+        prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } })
+      ]
+    });
     mockedList.mockResolvedValueOnce({ prompts: [prompt({ cardState: { state: "paused" } })] });
     mockedPause.mockRejectedValue(new Error("conflict"));
     renderSettings();
 
     await userEvent.click(await screen.findByRole("button", { name: "Pause" }));
 
-    expect(
-      await screen.findByText(/That action could not be completed/)
-    ).toBeDefined();
+    expect(await screen.findByText(/That action could not be completed/)).toBeDefined();
     // The list was reloaded (now paused), never faking success.
     await waitFor(() => expect(screen.getByText("Paused")).toBeDefined());
     expect(mockedList).toHaveBeenCalledTimes(2);
@@ -284,7 +292,9 @@ describe("NoteReviewSettings card transitions (#660)", () => {
   });
 
   it("guards against a double submit while a transition is in flight", async () => {
-    resolveList(prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } }));
+    resolveList(
+      prompt({ cardState: { state: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" } })
+    );
     const pending = deferred<NotePromptSettingsDto>();
     mockedPause.mockReturnValue(pending.promise);
     renderSettings();

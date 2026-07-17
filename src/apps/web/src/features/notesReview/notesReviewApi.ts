@@ -146,10 +146,11 @@ export async function editNotePromptQuestion(
   question: string
 ): Promise<NotePromptSettingsDto> {
   return parseNotePromptSettingsDto(
-    await requestJson(
-      apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/question`),
-      { body: JSON.stringify({ question }), headers: jsonHeaders, method: "PATCH" }
-    )
+    await requestJson(apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/question`), {
+      body: JSON.stringify({ question }),
+      headers: jsonHeaders,
+      method: "PATCH"
+    })
   );
 }
 
@@ -162,10 +163,9 @@ async function mutateNotePromptCard(
   method: "POST" | "DELETE"
 ): Promise<NotePromptSettingsDto> {
   return parseNotePromptSettingsDto(
-    await requestJson(
-      apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/${action}`),
-      { method }
-    )
+    await requestJson(apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/${action}`), {
+      method
+    })
   );
 }
 

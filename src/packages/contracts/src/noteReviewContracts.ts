@@ -217,7 +217,12 @@ export type NotePromptSettingsListDto = z.infer<typeof notePromptSettingsListDto
 // never erases it.
 export const reviewHistoryEventDtoSchema = z.discriminatedUnion("kind", [
   z
-    .object({ id: z.string(), kind: z.literal("rating"), rating: ratingSchema, occurredAt: z.string().datetime() })
+    .object({
+      id: z.string(),
+      kind: z.literal("rating"),
+      rating: ratingSchema,
+      occurredAt: z.string().datetime()
+    })
     .strict(),
   z.object({ id: z.string(), kind: z.literal("reset"), occurredAt: z.string().datetime() }).strict()
 ]);

@@ -44,9 +44,7 @@ export function projectPromptCardState(
 // and the settings row never carries a stale copy. A `legacy_custom` prompt carries its own preserved rich
 // answer so the row can render it READ-ONLY (#657: legacy reveals are never editable or converted). The
 // answer columns are non-null by construction for a legacy prompt.
-export function projectPromptRevealPolicy(
-  row: NotePromptProjectionRow
-): NotePromptRevealPolicyDto {
+export function projectPromptRevealPolicy(row: NotePromptProjectionRow): NotePromptRevealPolicyDto {
   if (row.revealKind === "current_note") {
     return { kind: "current_note" };
   }
