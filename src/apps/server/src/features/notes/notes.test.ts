@@ -17,13 +17,22 @@ import { createTextDocument } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, entryLinks, noteAnchors, notes, personalEntries } from "../../db/schema.js";
+import {
+  entries,
+  entryLinks,
+  memoryPrompts,
+  noteAnchors,
+  notes,
+  personalEntries,
+  reviewCards
+} from "../../db/schema.js";
 import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { NotesDependencies } from "./noteCommands.js";
 import { listNotesForUser, listNotesForWork } from "./noteQueries.js";
-import { toEntryId } from "@whetstone/domain";
+import { newReviewState, RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
+import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
@@ -951,12 +960,14 @@ describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
 });
 
 describe("cross-work notes overview", () => {
-  it("lists every note the user owns across works, ordered by work title then note id", async () => {
+  it("lists every note the user owns across works once each, in recency order (updated_at desc, id tiebreak)", async () => {
     const aesop = await createWorkTitled("Aesop Fables", "Aesop");
     const zen = await createWorkTitled("Zen Mind", "Shunryū Suzuki");
-    // Create the Zen note first (note-1) then two Aesop notes (note-2, note-3): id order alone would
-    // start with the Zen note, so a title-first ordering is what puts the Aesop notes ahead.
+    // The Zen note is created first (note-1) but oldest; the two Aesop notes (note-2, note-3) share the
+    // newest instant, so recency order puts them first and the note-id tiebreak keeps note-2 before note-3.
+    context.setNow("2026-03-01T00:00:00.000Z");
     await createWholeBlockNote(zen.workEntryId, zen.blockEntryId, zen.plaintext);
+    context.setNow("2026-03-02T00:00:00.000Z");
     await createWholeBlockNote(aesop.workEntryId, aesop.blockEntryId, aesop.plaintext);
     await createWholeBlockNote(aesop.workEntryId, aesop.blockEntryId, aesop.plaintext);
 
@@ -964,18 +975,21 @@ describe("cross-work notes overview", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as NotesOverviewListDto;
+    expect(body.notes.map((note) => note.entryId)).toEqual(["note-2", "note-3", "note-1"]);
+    expect(new Set(body.notes.map((note) => note.entryId)).size).toBe(3);
     expect(body.notes.map((note) => note.workTitle)).toEqual([
       "Aesop Fables",
       "Aesop Fables",
       "Zen Mind"
     ]);
-    expect(body.notes.map((note) => note.entryId)).toEqual(["note-2", "note-3", "note-1"]);
 
     const first = body.notes[0];
     expect(first?.workEntryId).toBe(aesop.workEntryId);
     expect(first?.authorName).toBe("Aesop");
     expect(first?.blockEntryId).toBe(aesop.blockEntryId);
     expect((first?.bodyText ?? "").length).toBeGreaterThan(0);
+    // Every note carries its rolled-up Review projection; an un-enrolled note reads not_enrolled.
+    expect(first?.review).toEqual({ status: "not_enrolled" });
   });
 
   it("lists an unanchored note (a manual/Memory note) with null anchor and work context", async () => {
@@ -1027,8 +1041,8 @@ describe("cross-work notes overview", () => {
     const aesop = await createWorkTitled("Aesop Fables", "Aesop");
     await createWholeBlockNote(aesop.workEntryId, aesop.blockEntryId, aesop.plaintext);
 
-    expect(await listNotesForUser(context.db, DEFAULT_USER_ID)).toHaveLength(1);
-    expect(await listNotesForUser(context.db, "another-user")).toEqual([]);
+    expect(await listNotesForUser(context.db, DEFAULT_USER_ID, new Date())).toHaveLength(1);
+    expect(await listNotesForUser(context.db, "another-user", new Date())).toEqual([]);
   });
 });
 
@@ -1111,5 +1125,354 @@ describe("notes route isolation (cross-user) and failure paths", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+describe("notes home — owner-scoped create, read, edit, delete, filter, and search (#659)", () => {
+  let seedSequence = 0;
+
+  function createStandalone(text: string): ReturnType<typeof context.server.inject> {
+    return context.server.inject({
+      method: "POST",
+      payload: { bodyDoc: createTextDocument(text) },
+      url: "/api/notes"
+    });
+  }
+
+  function ownerGet(noteEntryId: string): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "GET", url: `/api/notes/${noteEntryId}` });
+  }
+
+  function ownerList(query = ""): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "GET", url: `/api/notes${query}` });
+  }
+
+  function ownerPatch(
+    noteEntryId: string,
+    payload: unknown
+  ): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "PATCH", payload, url: `/api/notes/${noteEntryId}` });
+  }
+
+  function ownerDelete(noteEntryId: string): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "DELETE", url: `/api/notes/${noteEntryId}` });
+  }
+
+  // A second server over the SAME database authenticated as a different user, to prove the owner-scoped
+  // routes never read or mutate another learner's note.
+  function intruderServer(): ReturnType<typeof createServer> {
+    return createServer({
+      currentUser: { getCurrentUserId: () => "intruder" },
+      logger: false,
+      notes: { createEntryId: () => "intruder-note", db: context.db, now: () => new Date() }
+    });
+  }
+
+  async function createMark(
+    workEntryId: string,
+    blockEntryId: string,
+    plaintext: string
+  ): Promise<NoteDto> {
+    const response = await context.server.inject({
+      method: "POST",
+      payload: {
+        anchor: {
+          blockEntryId,
+          contextSnapshot: plaintext,
+          endOffset: 19,
+          selectedTextSnapshot: "brown fox",
+          startOffset: 10
+        }
+      },
+      url: `/api/works/${workEntryId}/marks`
+    });
+    return response.json() as NoteDto;
+  }
+
+  // Seed a Memory prompt (and optionally its review card) directly onto a note so search and the
+  // review-summary roll-up can be exercised without the (separately tested) enrollment route. A
+  // `current_note` prompt is answerless; a `legacy_custom` prompt carries a preserved custom answer.
+  async function seedPrompt(
+    noteEntryId: string,
+    options: Readonly<{
+      answerText?: string;
+      card?: Readonly<{ dueAt: Date; status?: "active" | "paused" }>;
+      cueText: string;
+      revealKind?: "current_note" | "legacy_custom";
+    }>
+  ): Promise<void> {
+    const revealKind = options.revealKind ?? "current_note";
+    const isLegacy = revealKind === "legacy_custom";
+    const promptId = `prompt-seed-${(seedSequence += 1)}`;
+    await context.db.insert(entries).values({ id: promptId, type: "memory_prompt" });
+    await context.db.insert(memoryPrompts).values({
+      answerDoc: isLegacy ? createTextDocument(options.answerText ?? "") : null,
+      answerText: isLegacy ? (options.answerText ?? "") : null,
+      cueDoc: createTextDocument(options.cueText),
+      cueText: options.cueText,
+      entryId: promptId,
+      lifecycle: "ready",
+      noteEntryId,
+      revealKind
+    });
+    if (options.card !== undefined) {
+      const { dueAt } = options.card;
+      await context.db.insert(reviewCards).values({
+        ...reviewStateColumns(newReviewState(dueAt)),
+        createdAt: dueAt,
+        dueAt,
+        requestedRetention: RECALL_REQUEST_RETENTION,
+        status: options.card.status ?? "active",
+        targetEntryId: promptId,
+        updatedAt: dueAt,
+        userId: DEFAULT_USER_ID
+      });
+    }
+  }
+
+  it("creates a standalone note stamped manual, with no anchor, prompt, or card", async () => {
+    context.setNow("2026-02-01T00:00:00.000Z");
+
+    const response = await createStandalone("A free-standing thought.");
+
+    expect(response.statusCode).toBe(201);
+    const note = response.json() as NoteDto;
+    expect(note.kind).toBe("note");
+    expect(note.captureSource).toBe("manual");
+    expect(note.anchor).toBeNull();
+    expect(note.blockEntryId).toBeNull();
+    expect(note.bodyText).toBe("A free-standing thought.");
+    expect(note.createdAt).toBe("2026-02-01T00:00:00.000Z");
+
+    // The write persists exactly one note aggregate — no anchor and no Memory prompt.
+    const anchorRows = await context.db
+      .select()
+      .from(noteAnchors)
+      .where(eq(noteAnchors.noteEntryId, note.entryId));
+    expect(anchorRows).toEqual([]);
+    const promptRows = await context.db
+      .select()
+      .from(memoryPrompts)
+      .where(eq(memoryPrompts.noteEntryId, note.entryId));
+    expect(promptRows).toEqual([]);
+  });
+
+  it("rejects a standalone note whose body is blank or missing", async () => {
+    const blank = await context.server.inject({
+      method: "POST",
+      payload: { bodyDoc: createTextDocument("   ") },
+      url: "/api/notes"
+    });
+    expect(blank.statusCode).toBe(400);
+
+    const missing = await context.server.inject({ method: "POST", payload: {}, url: "/api/notes" });
+    expect(missing.statusCode).toBe(400);
+  });
+
+  it("reads any owned note by id, 404ing a forged or cross-user id", async () => {
+    const created = (await createStandalone("Readable.")).json() as NoteDto;
+
+    const got = await ownerGet(created.entryId);
+    expect(got.statusCode).toBe(200);
+    expect((got.json() as NoteDto).entryId).toBe(created.entryId);
+
+    expect((await ownerGet("note-does-not-exist")).statusCode).toBe(404);
+
+    const intruder = intruderServer();
+    try {
+      const cross = await intruder.inject({ method: "GET", url: `/api/notes/${created.entryId}` });
+      // Dropping the owner predicate from getNoteForOwner would leak the note here.
+      expect(cross.statusCode).toBe(404);
+    } finally {
+      await intruder.close();
+    }
+  });
+
+  it("edits an owned note's body, 404ing a forged id and 409ing a bodyless mark", async () => {
+    const created = (await createStandalone("Before.")).json() as NoteDto;
+
+    const patched = await ownerPatch(created.entryId, { bodyDoc: createTextDocument("After.") });
+    expect(patched.statusCode).toBe(200);
+    expect((patched.json() as NoteDto).bodyText).toBe("After.");
+
+    const blank = await ownerPatch(created.entryId, { bodyDoc: createTextDocument("   ") });
+    expect(blank.statusCode).toBe(400);
+
+    expect(
+      (await ownerPatch("nope", { bodyDoc: createTextDocument("x") })).statusCode
+    ).toBe(404);
+
+    const { blockEntryId, plaintext, workEntryId } = await createWorkWithBlock();
+    const mark = await createMark(workEntryId, blockEntryId, plaintext);
+    const editMark = await ownerPatch(mark.entryId, { bodyDoc: createTextDocument("x") });
+    // A Mark has no editable body; the owner edit must reject it rather than fabricate one.
+    expect(editMark.statusCode).toBe(409);
+
+    const intruder = intruderServer();
+    try {
+      const cross = await intruder.inject({
+        method: "PATCH",
+        payload: { bodyDoc: createTextDocument("hijacked") },
+        url: `/api/notes/${created.entryId}`
+      });
+      expect(cross.statusCode).toBe(404);
+    } finally {
+      await intruder.close();
+    }
+    // The note is untouched by the cross-user attempt.
+    expect(((await ownerGet(created.entryId)).json() as NoteDto).bodyText).toBe("After.");
+  });
+
+  it("deletes an owned note and its review rows atomically, 404ing a forged or cross-user id", async () => {
+    const created = (await createStandalone("Doomed.")).json() as NoteDto;
+    await seedPrompt(created.entryId, {
+      card: { dueAt: new Date("2026-05-01T00:00:00.000Z") },
+      cueText: "What is doomed?"
+    });
+
+    const intruder = intruderServer();
+    try {
+      const cross = await intruder.inject({
+        method: "DELETE",
+        url: `/api/notes/${created.entryId}`
+      });
+      expect(cross.statusCode).toBe(404);
+    } finally {
+      await intruder.close();
+    }
+    // The cross-user delete was a no-op: the note (and its prompt) survive.
+    expect((await ownerGet(created.entryId)).statusCode).toBe(200);
+
+    const removed = await ownerDelete(created.entryId);
+    expect(removed.statusCode).toBe(204);
+    expect((await ownerGet(created.entryId)).statusCode).toBe(404);
+
+    // The cascade tore down the prompt and its card in the same transaction.
+    const promptRows = await context.db
+      .select()
+      .from(memoryPrompts)
+      .where(eq(memoryPrompts.noteEntryId, created.entryId));
+    expect(promptRows).toEqual([]);
+
+    expect((await ownerDelete("already-gone")).statusCode).toBe(404);
+  });
+
+  it("narrows the list to one work's anchored notes with ?work=, excluding unanchored notes", async () => {
+    const workA = await createWorkTitled("Work A", "Author A");
+    const workB = await createWorkTitled("Work B", "Author B");
+    context.setNow("2026-03-01T00:00:00.000Z");
+    const inA = await createWholeBlockNote(workA.workEntryId, workA.blockEntryId, workA.plaintext);
+    context.setNow("2026-03-02T00:00:00.000Z");
+    const inB = await createWholeBlockNote(workB.workEntryId, workB.blockEntryId, workB.plaintext);
+    context.setNow("2026-03-03T00:00:00.000Z");
+    const standalone = (await createStandalone("Standalone.")).json() as NoteDto;
+
+    const all = (await ownerList()).json() as NotesOverviewListDto;
+    // Recency order: newest updated_at first.
+    expect(all.notes.map((note) => note.entryId)).toEqual([
+      standalone.entryId,
+      inB.entryId,
+      inA.entryId
+    ]);
+
+    const filtered = (await ownerList(`?work=${workA.workEntryId}`)).json() as NotesOverviewListDto;
+    expect(filtered.notes.map((note) => note.entryId)).toEqual([inA.entryId]);
+    // The unanchored standalone and the other work's note are both excluded.
+    expect(filtered.notes.every((note) => note.workEntryId === workA.workEntryId)).toBe(true);
+  });
+
+  it("searches across body, anchor snapshot, prompt question, and legacy answer — each note once", async () => {
+    const work = await createWorkWithBlock();
+    const anchored = await createWholeBlockNote(work.workEntryId, work.blockEntryId, work.plaintext);
+    const bodyNote = (await createStandalone("A peregrine dive.")).json() as NoteDto;
+    const cueNote = (await createStandalone("Quiz card one.")).json() as NoteDto;
+    await seedPrompt(cueNote.entryId, { cueText: "what is a kestrel bird" });
+    const answerNote = (await createStandalone("Study set two.")).json() as NoteDto;
+    await seedPrompt(answerNote.entryId, {
+      answerText: "a hunting falcon",
+      cueText: "define raptor",
+      revealKind: "legacy_custom"
+    });
+    await seedPrompt(answerNote.entryId, {
+      answerText: "also a falcon here",
+      cueText: "another",
+      revealKind: "legacy_custom"
+    });
+
+    const byBody = (await ownerList("?search=peregrine")).json() as NotesOverviewListDto;
+    expect(byBody.notes.map((note) => note.entryId)).toEqual([bodyNote.entryId]);
+
+    const byAnchor = (await ownerList("?search=brown%20fox")).json() as NotesOverviewListDto;
+    expect(byAnchor.notes.map((note) => note.entryId)).toEqual([anchored.entryId]);
+
+    const byCue = (await ownerList("?search=kestrel")).json() as NotesOverviewListDto;
+    expect(byCue.notes.map((note) => note.entryId)).toEqual([cueNote.entryId]);
+
+    // Case-insensitive, and de-duplicated even though two prompts on the same note match.
+    const byAnswer = (await ownerList("?search=FALCON")).json() as NotesOverviewListDto;
+    expect(byAnswer.notes.map((note) => note.entryId)).toEqual([answerNote.entryId]);
+  });
+
+  it("ignores a blank search, returns nothing for a no-match query, and treats wildcards literally", async () => {
+    context.setNow("2026-04-01T00:00:00.000Z");
+    const withPercent = (await createStandalone("Contains 50% off today.")).json() as NoteDto;
+    context.setNow("2026-04-02T00:00:00.000Z");
+    const plain = (await createStandalone("Plain note.")).json() as NoteDto;
+
+    // A blank query is ignored — the full recency list comes back.
+    const blank = (await ownerList("?search=")).json() as NotesOverviewListDto;
+    expect(blank.notes.map((note) => note.entryId)).toEqual([plain.entryId, withPercent.entryId]);
+
+    const none = (await ownerList("?search=zzznomatch")).json() as NotesOverviewListDto;
+    expect(none.notes).toEqual([]);
+
+    // "%" is escaped, so it matches the literal characters rather than acting as a wildcard.
+    const literalPercent = (await ownerList("?search=50%25")).json() as NotesOverviewListDto;
+    expect(literalPercent.notes.map((note) => note.entryId)).toEqual([withPercent.entryId]);
+
+    // "_" is escaped too, so "5_" does not wildcard-match the "50" in the note.
+    const literalUnderscore = (await ownerList("?search=5_")).json() as NotesOverviewListDto;
+    expect(literalUnderscore.notes).toEqual([]);
+  });
+
+  it("rolls each note's cards into one Review summary with due/scheduled/paused/not_enrolled precedence", async () => {
+    context.setNow("2026-05-10T00:00:00.000Z");
+    const dueNote = (await createStandalone("Due note.")).json() as NoteDto;
+    const scheduledNote = (await createStandalone("Scheduled note.")).json() as NoteDto;
+    const pausedNote = (await createStandalone("Paused note.")).json() as NoteDto;
+    const plainNote = (await createStandalone("Plain note.")).json() as NoteDto;
+
+    // Two active due cards on the same note roll up to one `due` with a count of 2.
+    await seedPrompt(dueNote.entryId, {
+      card: { dueAt: new Date("2026-05-09T00:00:00.000Z") },
+      cueText: "cue"
+    });
+    await seedPrompt(dueNote.entryId, {
+      answerText: "a",
+      card: { dueAt: new Date("2026-05-08T00:00:00.000Z") },
+      cueText: "legacy cue",
+      revealKind: "legacy_custom"
+    });
+    await seedPrompt(scheduledNote.entryId, {
+      card: { dueAt: new Date("2026-05-20T00:00:00.000Z") },
+      cueText: "cue"
+    });
+    await seedPrompt(pausedNote.entryId, {
+      card: { dueAt: new Date("2026-05-01T00:00:00.000Z"), status: "paused" },
+      cueText: "cue"
+    });
+
+    const byId = new Map(
+      ((await ownerList()).json() as NotesOverviewListDto).notes.map(
+        (note) => [note.entryId, note.review] as const
+      )
+    );
+    expect(byId.get(dueNote.entryId)).toEqual({ dueCount: 2, status: "due" });
+    expect(byId.get(scheduledNote.entryId)).toEqual({
+      nextReviewAt: "2026-05-20T00:00:00.000Z",
+      status: "scheduled"
+    });
+    expect(byId.get(pausedNote.entryId)).toEqual({ status: "paused" });
+    expect(byId.get(plainNote.entryId)).toEqual({ status: "not_enrolled" });
   });
 });

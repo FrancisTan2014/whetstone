@@ -4,7 +4,12 @@ import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
 import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
-import { addNoteToReview, fetchNoteReviewStatus } from "./notesReviewApi";
+import {
+  addNoteToReview,
+  addOwnedNoteToReview,
+  fetchNoteReviewStatus,
+  fetchOwnedNoteReviewStatus
+} from "./notesReviewApi";
 
 const review = {
   due: "2026-07-11T12:00:00.000Z",
@@ -157,5 +162,56 @@ describe("addNoteToReview", () => {
     stubFetch({ ok: false, status: 409 });
 
     await expect(addNoteToReview("work-1", "note-7")).rejects.toThrow("status 409");
+  });
+});
+
+describe("fetchOwnedNoteReviewStatus (#659)", () => {
+  it("GETs the owner-scoped note review status", async () => {
+    const fetchMock = stubFetch({ body: { status: "not_enrolled" }, ok: true });
+
+    await expect(fetchOwnedNoteReviewStatus("note 7")).resolves.toEqual({
+      status: "not_enrolled"
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review", undefined);
+  });
+
+  it("throws when the owner-scoped status read fails", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(fetchOwnedNoteReviewStatus("note-7")).rejects.toThrow("status 404");
+  });
+});
+
+describe("addOwnedNoteToReview (#659)", () => {
+  it("POSTs an anchored enrollment with no body so the server reuses the exact source", async () => {
+    const fetchMock = stubFetch({ body: { status: "due" }, ok: true });
+
+    await expect(addOwnedNoteToReview("note 7")).resolves.toEqual({ status: "due" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review/enrollment", {
+      method: "POST"
+    });
+  });
+
+  it("POSTs a standalone enrollment carrying the learner's question", async () => {
+    const fetchMock = stubFetch({
+      body: { status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" },
+      ok: true
+    });
+
+    await expect(addOwnedNoteToReview("note 7", "What is a WAL?")).resolves.toEqual({
+      status: "scheduled",
+      nextReviewAt: "2026-07-11T00:00:00.000Z"
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review/enrollment", {
+      body: JSON.stringify({ question: "What is a WAL?" }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("throws when the owner-scoped enrollment fails", async () => {
+    stubFetch({ ok: false, status: 409 });
+
+    await expect(addOwnedNoteToReview("note-7")).rejects.toThrow("status 409");
   });
 });

@@ -1,16 +1,18 @@
-import type { NoteDto, NoteOverviewDto } from "@whetstone/contracts";
+import type { NoteDto, NoteOverviewDto, NoteReviewSummaryDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
 import { toEntryId, type CaptureSource, type EntryId, type NoteAnchor } from "@whetstone/domain";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
 
 import { addressableBlocks } from "../../db/addressableBlocks.js";
 import type { DbClient } from "../../db/dbClient.js";
 import {
   authors,
+  memoryPrompts,
   noteAnchors,
   notes,
   personalEntries,
   readingUnits,
+  reviewCards,
   workMeta
 } from "../../db/schema.js";
 
@@ -163,7 +165,43 @@ type NoteOverviewRow = NoteRow &
     workTitle: string | null;
   }>;
 
-function toNoteOverviewDto(row: NoteOverviewRow): NoteOverviewDto {
+// The parts of a review card the Notes home's rolled-up summary needs (#659): its active/paused status and
+// its due instant, tagged with the note whose prompt owns it so cards can be grouped per note. The full
+// FSRS state is irrelevant to the projection — only "is it due, scheduled, or paused" matters.
+type NoteReviewCardRow = Readonly<{
+  dueAt: Date;
+  noteEntryId: string;
+  status: "active" | "paused";
+}>;
+
+// Roll a note's zero-or-more review cards into the single Review state its Notes-home row shows (#659),
+// with a fixed precedence so several legacy prompts still resolve to one calm state: any active card due
+// at/before `now` → `due` with the count of such cards; otherwise the earliest active future card →
+// `scheduled` for that instant; otherwise a card exists but only paused → `paused`; otherwise no card →
+// `not_enrolled` (the row offers "Add to review"). Pure over the card set + clock so the precedence is
+// tested without a database.
+export function summarizeNoteReview(
+  cards: ReadonlyArray<NoteReviewCardRow>,
+  now: Date
+): NoteReviewSummaryDto {
+  const active = cards.filter((card) => card.status === "active");
+  const dueCount = active.filter((card) => card.dueAt.getTime() <= now.getTime()).length;
+  if (dueCount > 0) {
+    return { status: "due", dueCount };
+  }
+  if (active.length > 0) {
+    const earliest = active.reduce((soonest, card) =>
+      card.dueAt.getTime() < soonest.dueAt.getTime() ? card : soonest
+    );
+    return { status: "scheduled", nextReviewAt: earliest.dueAt.toISOString() };
+  }
+  if (cards.length > 0) {
+    return { status: "paused" };
+  }
+  return { status: "not_enrolled" };
+}
+
+function toNoteOverviewBase(row: NoteOverviewRow): Omit<NoteOverviewDto, "review"> {
   return {
     ...toNoteDto(row),
     authorName: row.authorName,
@@ -172,17 +210,124 @@ function toNoteOverviewDto(row: NoteOverviewRow): NoteOverviewDto {
   };
 }
 
-// Every note the user owns, across all works, for the Notes mode. The anchor, its block's work, and the
-// work's author are LEFT-joined because an unanchored note (a manual or Memory note with no source) has
-// no anchor and therefore no work context — it is still listed, with null work fields, and the client
-// shows its body only. Anchored notes carry their work title/author and `workEntryId` (resolved over both
-// legacy and PM blocks; notes on soft-deleted blocks stay listed). Ordered by work title then note id so
-// the client can group by work.
+// Every review card belonging to the given notes' prompts, for this user, tagged with the owning note so
+// the Notes-home list can roll each note's cards into one summary. A note with no prompt/card contributes
+// no row and rolls up as `not_enrolled`. Returns an empty array for an empty id set without a query.
+async function listNoteReviewCards(
+  db: DbClient,
+  noteEntryIds: ReadonlyArray<string>,
+  userId: string
+): Promise<ReadonlyArray<NoteReviewCardRow>> {
+  if (noteEntryIds.length === 0) {
+    return [];
+  }
+  return db
+    .select({
+      dueAt: reviewCards.dueAt,
+      noteEntryId: memoryPrompts.noteEntryId,
+      status: reviewCards.status
+    })
+    .from(memoryPrompts)
+    .innerJoin(
+      reviewCards,
+      and(eq(reviewCards.targetEntryId, memoryPrompts.entryId), eq(reviewCards.userId, userId))
+    )
+    .where(inArray(memoryPrompts.noteEntryId, [...noteEntryIds]));
+}
+
+// Group a flat card list by its owning note so each note gets exactly its own cards for the roll-up.
+function groupCardsByNote(
+  cards: ReadonlyArray<NoteReviewCardRow>
+): ReadonlyMap<string, ReadonlyArray<NoteReviewCardRow>> {
+  const byNote = new Map<string, NoteReviewCardRow[]>();
+  for (const card of cards) {
+    const existing = byNote.get(card.noteEntryId);
+    if (existing === undefined) {
+      byNote.set(card.noteEntryId, [card]);
+    } else {
+      existing.push(card);
+    }
+  }
+  return byNote;
+}
+
+// Escape the LIKE wildcards (`%`, `_`) and the escape char itself in a user's search text so a query such
+// as "50%" matches the literal characters instead of being read as a pattern. The default PostgreSQL LIKE
+// escape (`\`) then applies.
+function escapeLikePattern(query: string): string {
+  return query.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+// The distinct ids of the user's notes matching a note-centric search (#659): a note matches when the
+// query text appears in its canonical body, its anchor's selected-text snapshot, ANY of its prompts'
+// questions, or ANY of its prompts' preserved legacy custom-reveal answers. All four sources are searched
+// in one pass with the prompt/anchor facets LEFT-joined (an unanchored or unenrolled note simply has no
+// matching facet); `selectDistinct` collapses a note that matches on several prompts to one id. The match
+// is case-insensitive (`ILIKE`) and wildcard-safe.
+async function searchNoteIds(
+  db: DbClient,
+  userId: string,
+  query: string
+): Promise<ReadonlyArray<string>> {
+  const pattern = `%${escapeLikePattern(query)}%`;
+  const rows = await db
+    .selectDistinct({ entryId: notes.entryId })
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .leftJoin(memoryPrompts, eq(memoryPrompts.noteEntryId, notes.entryId))
+    .where(
+      and(
+        eq(personalEntries.userId, userId),
+        or(
+          ilike(notes.bodyText, pattern),
+          ilike(noteAnchors.selectedText, pattern),
+          ilike(memoryPrompts.cueText, pattern),
+          and(eq(memoryPrompts.revealKind, "legacy_custom"), ilike(memoryPrompts.answerText, pattern))
+        )
+      )
+    );
+  return rows.map((row) => row.entryId);
+}
+
+// Optional narrowing for the Notes home (#659): restrict to one Work (anchored notes in that work only),
+// and/or a note-centric search. Neither changes the stable recency order.
+export type ListNotesOptions = Readonly<{
+  search?: string | undefined;
+  workEntryId?: EntryId | undefined;
+}>;
+
+// Every note the user owns — the single Notes home (#659). One continuous list in stable recency order
+// (`updated_at` newest first, note id as the deterministic tie-breaker), each note appearing exactly once
+// whether anchored, standalone, imported, or a bodyless Mark. The anchor, its block's work, and the work's
+// author are LEFT-joined so an unanchored note is still listed with null work fields. `workEntryId` narrows
+// to anchored notes in that one work; a non-blank `search` restricts to notes matching across body, anchor
+// snapshot, prompt questions, and legacy answers (a blank query is ignored). Each note carries its rolled-up
+// Review summary, joined from its prompt/cards — never persisted on the note.
 export async function listNotesForUser(
   db: DbClient,
-  userId: string
+  userId: string,
+  now: Date,
+  options: ListNotesOptions = {}
 ): Promise<ReadonlyArray<NoteOverviewDto>> {
+  const search = options.search?.trim();
+  let matchingIds: ReadonlyArray<string> | undefined;
+  if (search !== undefined && search.length > 0) {
+    matchingIds = await searchNoteIds(db, userId, search);
+    if (matchingIds.length === 0) {
+      return [];
+    }
+  }
+
   const addressable = addressableBlocks(db);
+  const filters = [eq(personalEntries.userId, userId)];
+  if (options.workEntryId !== undefined) {
+    filters.push(eq(addressable.workEntryId, options.workEntryId));
+  }
+  if (matchingIds !== undefined) {
+    filters.push(inArray(notes.entryId, [...matchingIds]));
+  }
+
   const rows = await db
     .select({
       ...noteColumns,
@@ -196,10 +341,43 @@ export async function listNotesForUser(
     .leftJoin(addressable, eq(addressable.entryId, noteAnchors.blockEntryId))
     .leftJoin(workMeta, eq(workMeta.entryId, addressable.workEntryId))
     .leftJoin(authors, eq(authors.id, workMeta.authorId))
-    .where(eq(personalEntries.userId, userId))
-    .orderBy(asc(workMeta.title), asc(notes.entryId));
+    .where(and(...filters))
+    .orderBy(desc(personalEntries.updatedAt), asc(notes.entryId));
 
-  return rows.map(toNoteOverviewDto);
+  const bases = rows.map(toNoteOverviewBase);
+  const cardsByNote = groupCardsByNote(
+    await listNoteReviewCards(
+      db,
+      bases.map((base) => base.entryId),
+      userId
+    )
+  );
+
+  return bases.map((base) => ({
+    ...base,
+    review: summarizeNoteReview(cardsByNote.get(base.entryId) ?? [], now)
+  }));
+}
+
+// A single note scoped to its owner (#659) — the authorization for the generic, non-work-scoped read,
+// update, delete, and enrollment paths the Notes home uses. Unlike `getNoteForWork` the anchor is
+// LEFT-joined, so a standalone (unanchored) note resolves too; `undefined` means the note does not exist
+// for this user (a forged or cross-user id).
+export async function getNoteForOwner(
+  db: DbClient,
+  noteEntryId: EntryId,
+  userId: string
+): Promise<NoteDto | undefined> {
+  const rows = await db
+    .select(noteColumns)
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .leftJoin(noteAnchors, eq(noteAnchors.noteEntryId, notes.entryId))
+    .where(and(eq(notes.entryId, noteEntryId), eq(personalEntries.userId, userId)))
+    .limit(1);
+  const row = rows[0];
+
+  return row === undefined ? undefined : toNoteDto(row);
 }
 
 // A single note scoped to the work AND the current user, used to authorize edits and deletes

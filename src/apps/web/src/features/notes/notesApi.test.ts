@@ -7,10 +7,13 @@ import { toEntryId } from "@whetstone/domain";
 import {
   createMark,
   createNote,
+  createStandaloneNote,
   deleteNote,
+  deleteOwnedNote,
   fetchAllNotes,
   fetchNotes,
-  updateNote
+  updateNote,
+  updateOwnedNote
 } from "./notesApi";
 
 function stubFetch(response: {
@@ -122,5 +125,76 @@ describe("notesApi", () => {
     stubFetch({ ok: false, status: 404 });
 
     await expect(deleteNote("work 1", "note 1")).rejects.toThrow("failed with status 404");
+  });
+});
+
+describe("notesApi owner-scoped (#659)", () => {
+  it("narrows the notes list to a work without a search param", async () => {
+    const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
+
+    await expect(fetchAllNotes({ workEntryId: "work 1" })).resolves.toEqual({ notes: [] });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes?work=work+1", undefined);
+  });
+
+  it("passes a trimmed, non-blank search across the note-centric endpoint", async () => {
+    const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
+
+    await expect(fetchAllNotes({ search: "  surrender  " })).resolves.toEqual({ notes: [] });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes?search=surrender", undefined);
+  });
+
+  it("omits a blank search so the full list is restored", async () => {
+    const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
+
+    await expect(fetchAllNotes({ search: "   " })).resolves.toEqual({ notes: [] });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes", undefined);
+  });
+
+  it("combines the work filter and the search term", async () => {
+    const fetchMock = stubFetch({ body: { notes: [] }, ok: true });
+
+    await expect(fetchAllNotes({ search: "fox", workEntryId: "work 1" })).resolves.toEqual({
+      notes: []
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes?work=work+1&search=fox", undefined);
+  });
+
+  it("creates a standalone note on the owner-scoped notes endpoint", async () => {
+    const note = { entryId: "note-1" };
+    const fetchMock = stubFetch({ body: note, ok: true });
+    const request = { bodyDoc: createTextDocument("a standalone thought") };
+
+    await expect(createStandaloneNote(request)).resolves.toEqual(note);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("patches an owned note on the owner-scoped note endpoint", async () => {
+    const note = { entryId: "note-1" };
+    const fetchMock = stubFetch({ body: note, ok: true });
+    const request: UpdateNoteRequest = { bodyDoc: createTextDocument("edited") };
+
+    await expect(updateOwnedNote("note 1", request)).resolves.toEqual(note);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%201", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "PATCH"
+    });
+  });
+
+  it("deletes an owned note on the owner-scoped note endpoint", async () => {
+    const fetchMock = stubFetch({ ok: true });
+
+    await expect(deleteOwnedNote("note 1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%201", { method: "DELETE" });
+  });
+
+  it("throws when an owned delete responds with a non-ok status", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(deleteOwnedNote("note 1")).rejects.toThrow("failed with status 404");
   });
 });

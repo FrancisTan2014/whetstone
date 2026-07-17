@@ -86,3 +86,29 @@ export async function addNoteToReview(
     )
   );
 }
+
+// One owned note's Review status for the Notes home (#659), owner-scoped so a standalone note reads too.
+// A read; it changes nothing.
+export async function fetchOwnedNoteReviewStatus(
+  noteEntryId: string
+): Promise<NoteReviewEnrollmentStatusDto> {
+  return parseNoteReviewEnrollmentStatusDto(
+    await requestJson(apiUrl(`/notes/${encodeURIComponent(noteEntryId)}/review`))
+  );
+}
+
+// Add any owned note to Review from the Notes home (#659), owner-scoped. An anchored note reuses its exact
+// source server-side (no question sent); a standalone note supplies the learner's question. Idempotent —
+// a re-submit reuses the same prompt and card. A standalone enrollment MUST carry a non-blank question, so
+// this sends a JSON body only when a question is given; the anchored path posts no body.
+export async function addOwnedNoteToReview(
+  noteEntryId: string,
+  question?: string
+): Promise<NoteReviewEnrollmentStatusDto> {
+  const path = apiUrl(`/notes/${encodeURIComponent(noteEntryId)}/review/enrollment`);
+  const init: RequestInit =
+    question === undefined
+      ? { method: "POST" }
+      : { body: JSON.stringify({ question }), headers: jsonHeaders, method: "POST" };
+  return parseNoteReviewEnrollmentStatusDto(await requestJson(path, init));
+}

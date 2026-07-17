@@ -3,6 +3,7 @@ import { documentReadableText, type DocumentNodeJSON } from "@whetstone/document
 import type {
   CreateMarkRequest,
   CreateNoteRequest,
+  CreateStandaloneNoteRequest,
   NoteDto,
   UpdateNoteRequest
 } from "@whetstone/contracts";
@@ -18,7 +19,12 @@ import {
   personalEntries
 } from "../../db/schema.js";
 import { deleteReviewCardsAndEvents } from "../review/reviewCardCommands.js";
-import { findBlockInWork, getNoteForWork, type BlockInWork } from "./noteQueries.js";
+import {
+  findBlockInWork,
+  getNoteForOwner,
+  getNoteForWork,
+  type BlockInWork
+} from "./noteQueries.js";
 
 // The transaction handle drizzle passes into `db.transaction`, so the note insert/delete primitives can
 // compose inside a caller's transaction — Reader capture opens its own, and Memory composes a note write
@@ -51,6 +57,10 @@ export type UpdateNoteResult =
 export type DeleteNoteResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "note_not_found" }>;
+
+// Creating a standalone note (#659) always succeeds once the body validated at the boundary — there is no
+// anchor and so no block/range check — so its only outcome is the created note.
+export type CreateStandaloneNoteResult = Readonly<{ note: NoteDto; status: "created" }>;
 
 // Everything the Notes boundary needs to persist one unified note (#620), whatever captured it. A note
 // carries its validated `bodyDoc` + server-derived `bodyText`; a mark carries neither (both null).
@@ -327,6 +337,105 @@ export async function deleteNote(
   userId: string
 ): Promise<DeleteNoteResult> {
   const existing = await getNoteForWork(dependencies.db, workEntryId, noteEntryId, userId);
+
+  if (existing === undefined) {
+    return { status: "note_not_found" };
+  }
+
+  await dependencies.db.transaction((tx) => deleteNoteInTx(tx, noteEntryId));
+
+  return { status: "deleted" };
+}
+
+// Create a standalone note from the Notes home (#659): the learner authors one rich body with no reader
+// selection, so there is no anchor and no block check. Stamps `kind = 'note'`, `capture_source = 'manual'`,
+// derives `body_text` on the server, and persists exactly one note aggregate (Entry + personal facet + note
+// row) through the SAME `insertNoteInTx` boundary Reader and Memory use — no anchor, prompt, card, or event.
+export async function createStandaloneNote(
+  dependencies: NotesDependencies,
+  request: CreateStandaloneNoteRequest,
+  userId: string
+): Promise<CreateStandaloneNoteResult> {
+  const noteEntryId = toEntryId(dependencies.createEntryId());
+  const bodyDoc = request.bodyDoc;
+  const bodyText = documentReadableText(bodyDoc);
+  const now = dependencies.now();
+
+  await dependencies.db.transaction((tx) =>
+    insertNoteInTx(tx, {
+      anchor: null,
+      bodyDoc,
+      bodyText,
+      captureSource: "manual",
+      kind: "note",
+      noteEntryId,
+      now,
+      userId
+    })
+  );
+
+  const iso = now.toISOString();
+
+  return {
+    note: {
+      anchor: null,
+      blockEntryId: null,
+      bodyDoc,
+      bodyText,
+      captureSource: "manual",
+      createdAt: iso,
+      entryId: noteEntryId,
+      kind: "note",
+      occurredAt: iso,
+      updatedAt: iso
+    },
+    status: "created"
+  };
+}
+
+// Edit any note the caller owns (#659) — the generic, non-work-scoped body write the Notes home uses,
+// authorized by owner only so a standalone (unanchored) note edits too. It runs the SAME
+// `updateNoteBodyInTx` writer as the Reader's work-scoped edit (replace `body_doc`, re-derive `body_text`,
+// bump `updated_at`); a Mark has no editable body and is rejected. The anchor, if any, is unchanged.
+export async function updateNoteForOwner(
+  dependencies: NotesDependencies,
+  noteEntryId: EntryId,
+  request: UpdateNoteRequest,
+  userId: string
+): Promise<UpdateNoteResult> {
+  const existing = await getNoteForOwner(dependencies.db, noteEntryId, userId);
+
+  if (existing === undefined) {
+    return { status: "note_not_found" };
+  }
+
+  if (existing.kind !== "note") {
+    return { status: "note_not_editable" };
+  }
+
+  const bodyDoc = request.bodyDoc;
+  const now = dependencies.now();
+
+  const bodyText = await dependencies.db.transaction((tx) =>
+    updateNoteBodyInTx(tx, { bodyDoc, noteEntryId, now })
+  );
+
+  return {
+    note: { ...existing, bodyDoc, bodyText, kind: "note", updatedAt: now.toISOString() },
+    status: "updated"
+  };
+}
+
+// Delete any note the caller owns (#659) through the SAME owner-scoped cascade (`deleteNoteInTx`) the
+// Reader's work-scoped delete uses — the note's anchor, links, prompts, and shared cards/events come down
+// atomically. Authorized by owner only, so a standalone note deletes too; a forged or cross-user id is a
+// no-op `note_not_found`.
+export async function deleteNoteForOwner(
+  dependencies: NotesDependencies,
+  noteEntryId: EntryId,
+  userId: string
+): Promise<DeleteNoteResult> {
+  const existing = await getNoteForOwner(dependencies.db, noteEntryId, userId);
 
   if (existing === undefined) {
     return { status: "note_not_found" };

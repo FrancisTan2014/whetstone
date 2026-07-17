@@ -3,6 +3,7 @@ import type { CaptureSource, EntryId } from "@whetstone/domain";
 import { z } from "zod";
 
 import { noteAnchorDtoSchema, type NoteAnchorDto } from "./entryContracts.js";
+import type { NoteReviewSummaryDto } from "./noteReviewContracts.js";
 
 // A note's canonical body is a ProseMirror/Tiptap document, validated against the shared document
 // schema AND required to be non-blank: a note is authored content, so an empty document is not a note.
@@ -45,6 +46,16 @@ export const updateNoteRequestSchema = z
 
 export type UpdateNoteRequest = z.infer<typeof updateNoteRequestSchema>;
 
+// Creating a standalone note from the Notes home (#659): the learner authors one rich body with no reader
+// selection, so — unlike `createNoteRequestSchema` — there is no anchor. The server stamps
+// `kind = 'note'`, `capture_source = 'manual'`, and derives `body_text`; the body must be a valid,
+// non-blank document, the same bar every note body meets.
+export const createStandaloneNoteRequestSchema = z
+  .object({ bodyDoc: noteBodyDocSchema })
+  .strict();
+
+export type CreateStandaloneNoteRequest = z.infer<typeof createStandaloneNoteRequestSchema>;
+
 // A persisted note or mark — the learner's one durable Note type (#620). `kind` discriminates the two
 // content shapes: a `note` carries a canonical `bodyDoc` and its server-derived `bodyText`; a `mark` has
 // neither (both null). `captureSource` is how it was captured (structured provenance). `anchor` is its
@@ -83,14 +94,16 @@ export function isAnchoredNote(note: NoteDto): note is AnchoredNoteDto {
   return note.anchor !== null;
 }
 
-// A saved note enriched with the work it belongs to, for the cross-work Notes mode. An anchored note
-// carries its `blockEntryId` (from `NoteDto`) plus the work title/author and `workEntryId` so the list can
-// group by work and deep-link the reader to the anchored block. An unanchored note (a manual or Memory
-// note with no source) has no work context, so those three fields are `null` and the row shows its body
-// only.
+// A saved note enriched with the work it belongs to AND its rolled-up Review projection, for the Notes
+// home (#659). An anchored note carries its `blockEntryId` (from `NoteDto`) plus the work title/author and
+// `workEntryId` so the list can group by work and deep-link the reader to the anchored block. An unanchored
+// note (a manual or standalone note with no source) has no work context, so those three fields are `null`
+// and the row shows its body only. `review` is the single derived Review state the row shows — joined from
+// the note's prompt/cards, never persisted on the note.
 export type NoteOverviewDto = NoteDto &
   Readonly<{
     authorName: string | null;
+    review: NoteReviewSummaryDto;
     workEntryId: EntryId | null;
     workTitle: string | null;
   }>;
@@ -126,4 +139,8 @@ export function parseCreateMarkRequest(value: unknown): CreateMarkRequest {
 
 export function parseUpdateNoteRequest(value: unknown): UpdateNoteRequest {
   return updateNoteRequestSchema.parse(value);
+}
+
+export function parseCreateStandaloneNoteRequest(value: unknown): CreateStandaloneNoteRequest {
+  return createStandaloneNoteRequestSchema.parse(value);
 }

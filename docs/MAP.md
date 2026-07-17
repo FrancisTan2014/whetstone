@@ -188,6 +188,26 @@ can navigate them from another package.
   and enforced at most once per note by the `memory_prompts_one_current_note_per_note_uq` partial unique index
   (migration `0055_note_review_enrollment.sql`); `getNoteEnrollmentTarget` (`notes/noteQueries.ts`) supplies the
   non-null anchor snapshot as the read-only Question and rejects Marks/standalone notes as not-enrollable.
+- Notes home — the owner-scoped note surface (#659): the `notes` feature owns generic, owner-scoped CRUD +
+  search for EVERY owned note (anchored, standalone, imported, or a Mark), independent of any work. Server:
+  `noteRoutes.ts` serves `GET /api/notes` (one recency-ordered list — `updated_at` desc, entry-id tiebreak —
+  with each note's rolled-up Review projection; `?work=<id>` narrows to that work's anchored notes and
+  `?search=<q>` runs the note-centric search across body, anchor snapshot, prompt questions, and legacy
+  answers), `GET|PATCH|DELETE /api/notes/:noteEntryId`, and `POST /api/notes` (creates a standalone
+  `kind='note'`, `capture_source='manual'` note with no anchor). Queries live in `noteQueries.ts`
+  (`listNotesForUser` recency/work/search + `summarizeNoteReview` per-note projection, `getNoteForOwner`,
+  `searchNoteIds`, `listNoteReviewCards`); owner-scoped writes in `noteCommands.ts` (`createStandaloneNote`/
+  `updateNoteForOwner`/`deleteNoteForOwner`, each composing the single `insertNoteInTx`/`updateNoteBodyInTx`/
+  `deleteNoteInTx` primitives — guarded by `noteFacetOwnership.test.ts`). Owner-scoped Review enrollment/status
+  is served at `GET|POST /api/notes/:noteEntryId/review[/enrollment]` (`notesReviewRoutes.ts` →
+  `enrollNoteInReviewForOwner`/`getNoteReviewStatusForOwner` in `notesReviewEnrollment.ts`): an anchored note
+  reuses its exact source (no question), a standalone note supplies the learner's question. Web: `NotesPage.tsx`
+  is the single Notes home (one continuous list via `NotesHomeList.tsx`, per-row Review projection via
+  `noteReviewSummaryLabel.ts`, debounced note-centric search, a 44px "New note" primary action). Opening any
+  body-bearing note edits it in the shared `RichContentEditor` through `OwnedNoteEditor.tsx` (named-delete
+  cascade + owner-scoped `OwnedNoteReviewSection.tsx`); the owner-scoped client lives in `notes/notesApi.ts`
+  (`fetchAllNotes({work,search})`/`createStandaloneNote`/`updateOwnedNote`/`deleteOwnedNote`) and
+  `notesReview/notesReviewApi.ts` (`fetchOwnedNoteReviewStatus`/`addOwnedNoteToReview`).
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain

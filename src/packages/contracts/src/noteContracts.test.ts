@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
   createMarkRequestSchema,
   createNoteRequestSchema,
+  createStandaloneNoteRequestSchema,
   parseCreateMarkRequest,
   parseCreateNoteRequest,
+  parseCreateStandaloneNoteRequest,
   parseUpdateNoteRequest,
   updateNoteRequestSchema
 } from "./noteContracts.js";
@@ -73,5 +75,21 @@ describe("updateNoteRequestSchema", () => {
   it("rejects a blank body and unexpected keys (the anchor is fixed at capture)", () => {
     expect(() => parseUpdateNoteRequest({ bodyDoc: createTextDocument("") })).toThrow();
     expect(updateNoteRequestSchema.safeParse({ bodyDoc, anchor }).success).toBe(false);
+  });
+});
+
+describe("createStandaloneNoteRequestSchema", () => {
+  it("parses a standalone note carrying only a non-blank body (no anchor)", () => {
+    const parsed = parseCreateStandaloneNoteRequest({ bodyDoc });
+
+    expect(parsed).toEqual({ bodyDoc });
+  });
+
+  it("rejects a blank body, a missing body, or an anchor (standalone notes have no source)", () => {
+    expect(() =>
+      parseCreateStandaloneNoteRequest({ bodyDoc: createTextDocument("") })
+    ).toThrow();
+    expect(() => parseCreateStandaloneNoteRequest({})).toThrow();
+    expect(createStandaloneNoteRequestSchema.safeParse({ bodyDoc, anchor }).success).toBe(false);
   });
 });

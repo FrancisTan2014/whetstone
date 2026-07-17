@@ -11,7 +11,7 @@ import {
   personalEntries,
   reviewCards
 } from "../../db/schema.js";
-import { getNoteEnrollmentTarget } from "../notes/noteQueries.js";
+import { getNoteEnrollmentTarget, getNoteForOwner } from "../notes/noteQueries.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { type ReviewCardRow } from "../review/reviewCardQueries.js";
 
@@ -132,10 +132,31 @@ export async function enrollNoteInReview(
     return { status: "not_enrollable" };
   }
 
-  const question = target.selectedTextSnapshot;
+  const value = await enrollNoteWithQuestion(
+    dependencies,
+    noteEntryId,
+    userId,
+    target.selectedTextSnapshot
+  );
+  return { status: "ok", value };
+}
+
+// The serialized create-or-reuse enrollment transaction shared by BOTH the work-scoped Reader path (#658)
+// and the owner-scoped Notes-home path (#659), so there is exactly one enrollment writer. The caller has
+// already authorized the note and resolved the question (anchor snapshot for an anchored note, the
+// learner's typed question for a standalone one). It locks the note's `personal_entries` row FOR UPDATE so
+// a concurrent/retried enrollment blocks then reuses the prompt/card the first created, creates at most one
+// current-note prompt (its cue = the question, no answer) and one active shared card at the recall
+// retention due now, writes no review event, and bumps the note's `updated_at` only on a genuine create.
+async function enrollNoteWithQuestion(
+  dependencies: NoteReviewEnrollmentDependencies,
+  noteEntryId: EntryId,
+  userId: string,
+  question: string
+): Promise<NoteReviewEnrollmentStatusDto> {
   const now = dependencies.now();
 
-  const value = await dependencies.db.transaction(async (tx) => {
+  return dependencies.db.transaction(async (tx) => {
     // Serialize concurrent/retried enrollments of THIS note so the reuse-or-create decision is atomic: a
     // second attempt blocks here, then finds the prompt/card the first created and reuses them.
     await tx
@@ -192,6 +213,63 @@ export async function enrollNoteInReview(
 
     return projectEnrollmentStatus(card, now);
   });
+}
 
+// The outcome of an owner-scoped enrollment (#659): the shared `ok`/`not_found`/`not_enrollable`, plus
+// `question_required` — a standalone (unanchored) note carries no source to reuse as the question, so the
+// learner must supply one; the route maps this to a 400.
+export type EnrollNoteForOwnerOutcome =
+  | NoteReviewOutcome<NoteReviewEnrollmentStatusDto>
+  | Readonly<{ status: "question_required" }>;
+
+// Read any owned note's Review status (#659), owner-scoped so a standalone note reads too. Authorizes by
+// owner alone (not work + anchor), then projects the status from the note's current-note prompt's shared
+// card. A Mark is never a retrieval target; a note with no current-note prompt/card reads as `not_enrolled`.
+export async function getNoteReviewStatusForOwner(
+  dependencies: NoteReviewEnrollmentDependencies,
+  noteEntryId: EntryId,
+  userId: string
+): Promise<NoteReviewOutcome<NoteReviewEnrollmentStatusDto>> {
+  const note = await getNoteForOwner(dependencies.db, noteEntryId, userId);
+  if (note === undefined) {
+    return { status: "not_found" };
+  }
+  if (note.kind !== "note") {
+    return { status: "not_enrollable" };
+  }
+
+  const promptId = await findCurrentNotePromptId(dependencies.db, noteEntryId);
+  const card =
+    promptId === undefined ? undefined : await findCard(dependencies.db, promptId, userId);
+
+  return { status: "ok", value: projectEnrollmentStatus(card, dependencies.now()) };
+}
+
+// Enroll any owned note into Review from the Notes home (#659). Owner-scoped, so a standalone note enrolls
+// too. The question is #658's exact source for an anchored note (its anchor snapshot, ignoring any supplied
+// text) and the learner's typed question for a standalone note; a standalone note with no supplied,
+// non-blank question is `question_required`. A Mark is `not_enrollable`. Delegates to the SAME serialized
+// enrollment command as the Reader path, so it is idempotent and retry/double-submit safe.
+export async function enrollNoteInReviewForOwner(
+  dependencies: NoteReviewEnrollmentDependencies,
+  noteEntryId: EntryId,
+  userId: string,
+  requestedQuestion: string | undefined
+): Promise<EnrollNoteForOwnerOutcome> {
+  const note = await getNoteForOwner(dependencies.db, noteEntryId, userId);
+  if (note === undefined) {
+    return { status: "not_found" };
+  }
+  if (note.kind !== "note") {
+    return { status: "not_enrollable" };
+  }
+
+  const question =
+    note.anchor !== null ? note.anchor.selectedTextSnapshot : requestedQuestion?.trim();
+  if (question === undefined || question.length === 0) {
+    return { status: "question_required" };
+  }
+
+  const value = await enrollNoteWithQuestion(dependencies, noteEntryId, userId, question);
   return { status: "ok", value };
 }

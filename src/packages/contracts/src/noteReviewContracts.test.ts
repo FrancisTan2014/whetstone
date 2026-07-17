@@ -2,13 +2,17 @@ import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
+  enrollNoteRequestSchema,
   noteRevealDtoSchema,
   noteReviewNextDtoSchema,
+  noteReviewSummaryDtoSchema,
+  parseEnrollNoteRequest,
   parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
   parseNoteReviewRatingResultDto,
+  parseNoteReviewSummaryDto,
   parseNoteRevealDto
 } from "./noteReviewContracts.js";
 
@@ -197,5 +201,48 @@ describe("noteReviewEnrollmentStatusDtoSchema", () => {
       })
     ).toThrow();
     expect(() => parseNoteReviewEnrollmentStatusDto({ status: "archived" })).toThrow();
+  });
+});
+
+describe("noteReviewSummaryDtoSchema", () => {
+  it("parses each rolled-up summary status, with due carrying a positive count", () => {
+    expect(parseNoteReviewSummaryDto({ status: "not_enrolled" })).toEqual({
+      status: "not_enrolled"
+    });
+    expect(parseNoteReviewSummaryDto({ status: "due", dueCount: 3 })).toEqual({
+      status: "due",
+      dueCount: 3
+    });
+    expect(parseNoteReviewSummaryDto({ status: "paused" })).toEqual({ status: "paused" });
+    expect(
+      parseNoteReviewSummaryDto({ status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" })
+    ).toEqual({ status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" });
+  });
+
+  it("requires a positive due count and a valid scheduled date", () => {
+    expect(() => parseNoteReviewSummaryDto({ status: "due" })).toThrow();
+    expect(() => parseNoteReviewSummaryDto({ status: "due", dueCount: 0 })).toThrow();
+    expect(() => parseNoteReviewSummaryDto({ status: "scheduled", nextReviewAt: "soon" })).toThrow();
+  });
+
+  it("rejects a count on a non-due status and an unknown status", () => {
+    expect(noteReviewSummaryDtoSchema.safeParse({ status: "paused", dueCount: 1 }).success).toBe(
+      false
+    );
+    expect(() => parseNoteReviewSummaryDto({ status: "archived" })).toThrow();
+  });
+});
+
+describe("enrollNoteRequestSchema", () => {
+  it("parses an anchored enrollment carrying no question, and a standalone one carrying a trimmed question", () => {
+    expect(parseEnrollNoteRequest({})).toEqual({});
+    expect(parseEnrollNoteRequest({ question: "  What is FSRS?  " })).toEqual({
+      question: "What is FSRS?"
+    });
+  });
+
+  it("rejects a blank question and unexpected keys", () => {
+    expect(() => parseEnrollNoteRequest({ question: "   " })).toThrow();
+    expect(enrollNoteRequestSchema.safeParse({ question: "hi", extra: true }).success).toBe(false);
   });
 });

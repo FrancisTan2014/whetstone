@@ -70,6 +70,28 @@ describe("one unified note facet (#620)", () => {
   });
 });
 
+describe("owner-scoped Notes-home commands compose the single boundary (#659)", () => {
+  it("standalone create, owner edit, and owner delete route through the shared in-tx primitives", () => {
+    const noteCommands = code("./noteCommands.ts");
+    // Each owner-scoped Notes-home command composes the one boundary primitive rather than writing note
+    // facets itself — the same writer/cascade/body-updater Reader and Memory use — so a standalone note is
+    // never a second note store or a parallel body path.
+    expect(noteCommands).toMatch(/createStandaloneNote[\s\S]*?insertNoteInTx/u);
+    expect(noteCommands).toMatch(/updateNoteForOwner[\s\S]*?updateNoteBodyInTx/u);
+    expect(noteCommands).toMatch(/deleteNoteForOwner[\s\S]*?deleteNoteInTx/u);
+  });
+
+  it("the Notes-home Review summary derives only from prompt/card rows, never a persisted note column", () => {
+    const noteQueries = code("./noteQueries.ts");
+    // The rolled-up summary is computed from the note's `memory_prompts` + `review_cards`, never selected
+    // from a column on the `notes` row — Review is behavior applied to a note, not part of it.
+    expect(noteQueries).toContain("summarizeNoteReview");
+    expect(noteQueries).toMatch(/memoryPrompts/u);
+    expect(noteQueries).toMatch(/reviewCards/u);
+    expect(noteQueries).not.toMatch(/notes\.review\b/u);
+  });
+});
+
 describe("a Note DTO carries no scheduler state (#620)", () => {
   const scheduler = [
     "promptCount",
