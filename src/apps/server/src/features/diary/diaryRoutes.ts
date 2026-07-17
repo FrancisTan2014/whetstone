@@ -1,6 +1,5 @@
 import {
   createDiaryEntryRequestSchema,
-  diaryCalendarQuerySchema,
   timelineQuerySchema,
   updateDiaryEntryRequestSchema
 } from "@whetstone/contracts";
@@ -12,7 +11,7 @@ import {
   updateDiaryEntry,
   type DiaryDependencies
 } from "./diaryCommands.js";
-import { listCalendarDates, listTimelinePage } from "./diaryQueries.js";
+import { listTimelinePage } from "./diaryQueries.js";
 import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
   getVoiceCaptureStatus,
@@ -151,25 +150,6 @@ export function registerDiaryRoutes(
     );
 
     return { days };
-  });
-
-  // The date-jump calendar's marks: which days in the range have ≥1 entry.
-  server.get("/api/diary/calendar", async (request, reply) => {
-    const parsed = diaryCalendarQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send(invalidRequest);
-    }
-
-    const userId = request.server.currentUser.getCurrentUserId();
-    const dates = await listCalendarDates(
-      dependencies.db,
-      userId,
-      parsed.data.from,
-      parsed.data.to,
-      await getLearnerTimeZone(dependencies.db, userId)
-    );
-
-    return { dates };
   });
 
   server.patch<{ Params: EntryParams }>("/api/diary/entries/:id", async (request, reply) => {

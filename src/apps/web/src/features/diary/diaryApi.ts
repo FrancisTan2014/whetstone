@@ -1,9 +1,7 @@
 import {
-  parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
   type CaptureInputMode,
-  type DiaryCalendarDto,
   type DiaryEntryDto,
   type TimelineDto
 } from "@whetstone/contracts";
@@ -55,13 +53,6 @@ export async function fetchTimeline(
   }
 
   return parseTimelineDto(await requestJson(apiUrl(`/diary/timeline?${params.toString()}`)));
-}
-
-// The date-jump calendar's marks: which days in `[from, to]` have ≥1 entry.
-export async function fetchDiaryCalendar(from: string, to: string): Promise<DiaryCalendarDto> {
-  const params = new URLSearchParams({ from, to });
-
-  return parseDiaryCalendarDto(await requestJson(apiUrl(`/diary/calendar?${params.toString()}`)));
 }
 
 // Edit a diary Entry's rich body through the shared editor: PATCH the new ProseMirror/Tiptap document.

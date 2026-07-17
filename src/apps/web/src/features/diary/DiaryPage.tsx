@@ -2,14 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { DiaryEntryDto, TimelineDayDto } from "@whetstone/contracts";
 import { documentText, type DocumentNodeJSON } from "@whetstone/document";
-import {
-  groupTimelineEntriesByDay,
-  localDayKey,
-  monthBounds,
-  monthGrid,
-  shiftMonth,
-  toMonthKey
-} from "@whetstone/domain";
+import { groupTimelineEntriesByDay, localDayKey } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
@@ -19,12 +12,13 @@ import {
   resolveBrowserTimeZone
 } from "../../shared/preferences/preferencesApi.js";
 import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCard.js";
+import { deleteDiaryEntry, fetchTimeline, updateDiaryEntry } from "./diaryApi.js";
 import {
-  deleteDiaryEntry,
-  fetchDiaryCalendar,
-  fetchTimeline,
-  updateDiaryEntry
-} from "./diaryApi.js";
+  diaryScrollTop,
+  diaryTimelineSnapshot,
+  rememberDiaryScrollTop,
+  rememberDiaryTimeline
+} from "./diarySessionStore.js";
 
 // How many days the Timeline loads per page (matches the server's default page size).
 const PAGE_SIZE = 7;
@@ -80,38 +74,12 @@ function toFlat(entry: DiaryEntryDto, timeZone: string): FlatEntry {
   };
 }
 
-// The calendar day whose mark should be removed after deleting entry `id`, or undefined when nothing
-// should be unmarked (#498): undefined when the id isn't among the loaded entries, or when another
-// loaded entry still falls on that day. A loaded day holds all its entries, so "no other loaded entry
-// on that day" means the day is now empty.
-export function dayToUnmarkAfterDelete(
-  entries: ReadonlyArray<FlatEntry>,
-  id: string
-): string | undefined {
-  const removed = entries.find((entry) => entry.entryId === id);
-  if (removed === undefined) {
-    return undefined;
-  }
-  const dayStillHasEntry = entries.some(
-    (entry) => entry.entryId !== id && entry.date === removed.date
-  );
-  return dayStillHasEntry ? undefined : removed.date;
-}
-
 function dayLabel(dayKey: string): string {
   return new Date(`${dayKey}T00:00:00Z`).toLocaleDateString("en-US", {
     day: "numeric",
     month: "long",
     timeZone: "UTC",
     weekday: "long",
-    year: "numeric"
-  });
-}
-
-function monthLabel(monthKey: string): string {
-  return new Date(`${monthKey}-01T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "long",
-    timeZone: "UTC",
     year: "numeric"
   });
 }
@@ -123,44 +91,52 @@ function timeLabel(createdAt: string): string {
 type DiaryPageProps = Readonly<{ capture: CaptureVoiceDependencies }>;
 
 export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
-  const [load, setLoad] = useState<LoadState>("loading");
+  // The snapshot remembered for this app session, captured once at mount so the first render restores it
+  // (#648) and a later write (from a page load) cannot change which branch this mount took.
+  const [restoredSnapshot] = useState(diaryTimelineSnapshot);
+  const [load, setLoad] = useState<LoadState>(() =>
+    restoredSnapshot === null ? "loading" : "ready"
+  );
   const [reloadKey, setReloadKey] = useState(0);
-  const [entries, setEntries] = useState<ReadonlyArray<FlatEntry>>([]);
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [hasMore, setHasMore] = useState(false);
+  const [entries, setEntries] = useState<ReadonlyArray<FlatEntry>>(
+    () => restoredSnapshot?.entries ?? []
+  );
+  const [cursor, setCursor] = useState<string | undefined>(() => restoredSnapshot?.cursor);
+  const [hasMore, setHasMore] = useState(() => restoredSnapshot?.hasMore ?? false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // An older-page (lazy-load) request failed. Distinct from the real terminal page: `hasMore` and the
+  // cursor stay intact so the request is retryable, and the sentinel region shows an explicit retry
+  // affordance (#648). Auto lazy-load is paused while this is set so a visible sentinel does not spam the
+  // failing request; an explicit retry clears it and tries again.
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [monthKey, setMonthKey] = useState(() =>
-    toMonthKey(localDayKey(new Date(), resolveBrowserTimeZone()))
-  );
-  const [markedDays, setMarkedDays] = useState<ReadonlySet<string>>(new Set());
-  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
   // The learner's calendar-day zone (#606): starts from the browser so the first render groups sensibly,
   // then adopts the server-owned preference once loaded. Day sections and the new-entry day derive from
   // it, so the client and server agree on which local day each entry falls under.
   const [timeZone, setTimeZone] = useState(() => resolveBrowserTimeZone());
-  // Gate the first timeline/calendar load until the learner's zone is resolved *and persisted* (#606).
-  // On first use, `loadPersistedTimeZone` writes the browser zone before resolving, so once this flips
-  // true the server's timeline/calendar queries group by the same zone the client pages with — the
-  // day-key cursor stays coherent across pages instead of mixing a UTC-fallback first page with
-  // browser-zone older pages.
+  // Gate the first timeline load until the learner's zone is resolved *and persisted* (#606). On first
+  // use, `loadPersistedTimeZone` writes the browser zone before resolving, so once this flips true the
+  // server's timeline queries group by the same zone the client pages with — the day-key cursor stays
+  // coherent across pages instead of mixing a UTC-fallback first page with browser-zone older pages.
   const [zoneReady, setZoneReady] = useState(false);
 
-  // Mirrors of the paging state, read inside async callbacks (the IntersectionObserver tick, a date jump)
-  // so they act on the latest committed values rather than a stale closure.
-  const entriesRef = useRef(entries);
+  // Mirrors of the paging state, read inside async callbacks (the IntersectionObserver tick) so they act
+  // on the latest committed values rather than a stale closure.
   const cursorRef = useRef(cursor);
   const hasMoreRef = useRef(hasMore);
   const busyRef = useRef(false);
-  const dayRefs = useRef(new Map<string, HTMLElement>());
+  // Mirrors `loadMoreFailed` so the IntersectionObserver tick pauses auto lazy-loading after a failure
+  // without waiting for a re-render (#648).
+  const loadMoreFailedRef = useRef(loadMoreFailed);
   // The id of a just-saved entry to scroll into view once it mounts (see the entry `ref` below).
   const pendingEntryScrollRef = useRef<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // The Diary content root; the scroll container is its nearest ancestor `<main>` (the AppShell scroller).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Whether this mount restored a snapshot on its first render, so the first-page fetch is skipped (#648).
+  const restoredRef = useRef(restoredSnapshot !== null);
 
-  useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
   useEffect(() => {
     cursorRef.current = cursor;
   }, [cursor]);
@@ -171,9 +147,9 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   const grouped = useMemo(() => groupTimelineEntriesByDay(entries, timeZone), [entries, timeZone]);
 
   // Adopt the learner's server-owned timezone once, waiting for the first-use default to persist before
-  // marking the zone ready (#606), so day grouping and the timeline/calendar cursor match the server's
-  // projection. A failed resolve still flips ready so the timeline can load (and surface its own error)
-  // under the browser-zone fallback rather than hanging on the loading state.
+  // marking the zone ready (#606), so day grouping and the timeline cursor match the server's projection.
+  // A failed resolve still flips ready so the timeline can load (and surface its own error) under the
+  // browser-zone fallback rather than hanging on the loading state.
   useEffect(() => {
     let active = true;
     loadPersistedTimeZone().then(
@@ -195,10 +171,11 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   }, []);
 
   // Load the first (newest) page on mount and on retry, but only once the learner's zone is persisted so
-  // the server groups this page — and every older page's cursor — by that one zone (#606). The async work
-  // awaits before any setState so the effect never updates state synchronously in its body.
+  // the server groups this page — and every older page's cursor — by that one zone (#606). Skipped when
+  // this mount restored a session snapshot (#648): the remembered timeline is already shown. The async
+  // work awaits before any setState so the effect never updates state synchronously in its body.
   useEffect(() => {
-    if (!zoneReady) {
+    if (!zoneReady || restoredRef.current) {
       return;
     }
     fetchTimeline(undefined, PAGE_SIZE).then(
@@ -212,66 +189,41 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     );
   }, [reloadKey, zoneReady]);
 
-  // The date-jump calendar's marks for the visible month. Waits for the persisted zone (#606) so the
-  // server computes marks in the same local-day projection the timeline pages by. Non-critical: a failure
-  // simply shows no marks.
+  // Remember the loaded timeline for the app session so returning to Diary restores it (#648). Kept in
+  // sync on every paging change while ready; a full reload clears it (a new session).
   useEffect(() => {
-    if (!zoneReady) {
-      return;
+    if (load === "ready") {
+      rememberDiaryTimeline({ cursor, entries, hasMore });
     }
-    const { from, to } = monthBounds(monthKey);
-    fetchDiaryCalendar(from, to).then(
-      (dto) => setMarkedDays(new Set(dto.dates)),
-      () => setMarkedDays(new Set())
-    );
-  }, [monthKey, zoneReady]);
+  }, [cursor, entries, hasMore, load]);
 
-  // After a jump has loaded (and rendered) the target day, scroll its header into view, then clear.
+  // Preserve the learner's scroll position across leaving and returning to Diary in the same app session
+  // (#648). The scroll container is the AppShell `<main>` (Diary itself does not scroll), so reapply the
+  // remembered offset once the timeline is ready (and its restored content has rendered tall enough to
+  // hold that position), then keep the offset current via a passive scroll listener. The effect re-runs
+  // only when `load` reaches "ready", so the reapply happens once per mount.
   useEffect(() => {
-    if (pendingScroll === null) {
+    if (load !== "ready") {
       return;
     }
-    const element = dayRefs.current.get(pendingScroll);
-    if (element !== undefined) {
-      element.scrollIntoView();
-      setPendingScroll(null);
+    const container = rootRef.current?.closest("main");
+    if (container === null || container === undefined) {
+      return;
     }
-  }, [grouped, pendingScroll]);
+    container.scrollTop = diaryScrollTop();
+    const handleScroll = (): void => {
+      rememberDiaryScrollTop(container.scrollTop);
+    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [load]);
 
   function fail(message: string): void {
     setNotice(message);
   }
 
-  // Mark the day of a just-saved entry immediately, so the date-jump calendar reflects it without waiting
-  // for a month change/reload to re-fetch marks (#471). The month effect still refreshes marks whenever the
-  // visible month changes, so this only needs to add the new day to the current set.
-  function markEntryDay(entryDate: string): void {
-    setMarkedDays((previous) => {
-      if (previous.has(entryDate)) {
-        return previous;
-      }
-      const next = new Set(previous);
-      next.add(entryDate);
-      return next;
-    });
-  }
-
-  // Remove a day's calendar mark when its last entry is deleted (#498). The timeline loads all of a
-  // day's entries together, so a loaded day's entry set is complete — the caller unmarks only after
-  // confirming no other loaded entry remains on that day.
-  function unmarkEntryDay(entryDate: string): void {
-    setMarkedDays((previous) => {
-      if (!previous.has(entryDate)) {
-        return previous;
-      }
-      const next = new Set(previous);
-      next.delete(entryDate);
-      return next;
-    });
-  }
-
   async function loadMore(): Promise<void> {
-    if (busyRef.current || !hasMoreRef.current) {
+    if (busyRef.current || !hasMoreRef.current || loadMoreFailedRef.current) {
       return;
     }
     busyRef.current = true;
@@ -282,12 +234,21 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
       setCursor((previous) => days.at(-1)?.date ?? previous);
       setHasMore(days.length === PAGE_SIZE);
     } catch {
-      setHasMore(false);
-      fail("Couldn't load older entries.");
+      // Keep `hasMore`/cursor intact so the older page is retryable, and pause auto lazy-load until the
+      // learner retries — the sentinel region shows the explicit retry affordance (#648).
+      loadMoreFailedRef.current = true;
+      setLoadMoreFailed(true);
     } finally {
       busyRef.current = false;
       setLoadingMore(false);
     }
+  }
+
+  // Explicitly retry a failed older-page load: clear the failure gate and request the same page again.
+  async function retryLoadMore(): Promise<void> {
+    loadMoreFailedRef.current = false;
+    setLoadMoreFailed(false);
+    await loadMore();
   }
 
   // Lazy-load older days as the sentinel below the timeline scrolls into view. Re-subscribes when the
@@ -304,14 +265,12 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     });
     observer.observe(sentinel);
     return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, hasMore]);
 
   function handleCaptured(entry: DiaryEntryDto): void {
     setNotice(null);
     const flat = toFlat(entry, timeZone);
     setEntries((previous) => [...previous, flat]);
-    markEntryDay(flat.date);
     pendingEntryScrollRef.current = entry.id;
   }
 
@@ -340,35 +299,9 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     setNotice(null);
     try {
       await deleteDiaryEntry(id);
-      const dayToUnmark = dayToUnmarkAfterDelete(entriesRef.current, id);
       setEntries((previous) => previous.filter((entry) => entry.entryId !== id));
-      // Drop the calendar mark when the deleted entry was the last one on its day (#498).
-      if (dayToUnmark !== undefined) {
-        unmarkEntryDay(dayToUnmark);
-      }
     } catch {
       fail("Couldn't delete that entry.");
-    }
-  }
-
-  async function jumpToDay(day: string): Promise<void> {
-    setNotice(null);
-    let loaded = entriesRef.current;
-    let before = cursorRef.current;
-    let more = hasMoreRef.current;
-    try {
-      while (more && !loaded.some((entry) => entry.date === day)) {
-        const { days } = await fetchTimeline(before, PAGE_SIZE);
-        loaded = [...loaded, ...flatten(days)];
-        before = days.at(-1)?.date ?? before;
-        more = days.length === PAGE_SIZE;
-      }
-      setEntries(loaded);
-      setCursor(before);
-      setHasMore(more);
-      setPendingScroll(day);
-    } catch {
-      fail("Couldn't jump to that day.");
     }
   }
 
@@ -397,7 +330,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
 
   return (
     <Shell>
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6" ref={rootRef}>
         <CaptureCard capture={capture} onCaptured={handleCaptured} />
 
         {notice !== null ? (
@@ -408,13 +341,6 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
             {notice}
           </p>
         ) : null}
-
-        <DiaryCalendar
-          markedDays={markedDays}
-          monthKey={monthKey}
-          onJump={(day) => void jumpToDay(day)}
-          onShiftMonth={(delta) => setMonthKey((previous) => shiftMonth(previous, delta))}
-        />
 
         {grouped.length === 0 ? (
           <p className="text-text-muted">
@@ -428,14 +354,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                 className="flex flex-col gap-2"
                 key={group.date}
               >
-                <h2
-                  className="sticky top-0 bg-bg py-1 text-sm font-semibold text-text-muted"
-                  ref={(element) => {
-                    if (element !== null) {
-                      dayRefs.current.set(group.date, element);
-                    }
-                  }}
-                >
+                <h2 className="sticky top-0 bg-bg py-1 text-sm font-semibold text-text-muted">
                   {dayLabel(group.date)}
                 </h2>
                 <ul className="flex flex-col gap-2">
@@ -445,9 +364,9 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                       key={entry.entryId}
                       ref={(element) => {
                         // Scroll a freshly saved entry into view when it mounts. On mobile the compose
-                        // form and date-jump calendar sit above the timeline, so a new entry lands under
-                        // the fold with its Edit/Delete actions clipped behind the bottom navigation
-                        // (#506); `block: "nearest"` lifts the whole entry the minimal amount above the nav.
+                        // form sits above the timeline, so a new entry lands under the fold with its
+                        // Edit/Delete actions clipped behind the bottom navigation (#506); `block:
+                        // "nearest"` lifts the whole entry the minimal amount above the nav.
                         if (element !== null && pendingEntryScrollRef.current === entry.entryId) {
                           element.scrollIntoView({ block: "nearest" });
                           pendingEntryScrollRef.current = null;
@@ -494,7 +413,16 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
 
         {hasMore ? (
           <div ref={sentinelRef}>
-            {loadingMore ? <LoadingIndicator label="Loading older entries…" /> : null}
+            {loadMoreFailed ? (
+              <div className="flex flex-col items-start gap-2" role="alert">
+                <p className="text-sm text-danger">Couldn&apos;t load older entries.</p>
+                <Button onClick={() => void retryLoadMore()} size="sm" variant="secondary">
+                  Try again
+                </Button>
+              </div>
+            ) : loadingMore ? (
+              <LoadingIndicator label="Loading older entries…" />
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -544,80 +472,5 @@ function EditForm({
         </Button>
       </div>
     </div>
-  );
-}
-
-function DiaryCalendar({
-  markedDays,
-  monthKey,
-  onJump,
-  onShiftMonth
-}: Readonly<{
-  markedDays: ReadonlySet<string>;
-  monthKey: string;
-  onJump: (day: string) => void;
-  onShiftMonth: (delta: number) => void;
-}>): React.JSX.Element {
-  return (
-    <section aria-label="Jump to a day" className="rounded border border-border bg-surface p-3">
-      <div className="flex items-center justify-between">
-        <Button
-          aria-label="Previous month"
-          className="min-w-11"
-          onClick={() => onShiftMonth(-1)}
-          size="sm"
-          variant="ghost"
-        >
-          ‹
-        </Button>
-        <span className="text-sm font-medium text-text">{monthLabel(monthKey)}</span>
-        <Button
-          aria-label="Next month"
-          className="min-w-11"
-          onClick={() => onShiftMonth(1)}
-          size="sm"
-          variant="ghost"
-        >
-          ›
-        </Button>
-      </div>
-      <table className="mt-2 w-full table-fixed text-center text-sm">
-        <thead>
-          <tr className="text-text-muted">
-            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((weekday, index) => (
-              <th className="py-1 font-normal" key={index} scope="col">
-                {weekday}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {monthGrid(monthKey).map((week, weekIndex) => (
-            <tr key={weekIndex}>
-              {week.map((cell, dayIndex) =>
-                cell === null ? (
-                  <td className="py-1" key={dayIndex} />
-                ) : (
-                  <td className="py-1" key={dayIndex}>
-                    {markedDays.has(cell) ? (
-                      <button
-                        aria-label={`Go to ${cell}`}
-                        className="mx-auto flex size-11 items-center justify-center rounded-full bg-accent text-accent-fg"
-                        onClick={() => onJump(cell)}
-                        type="button"
-                      >
-                        {Number(cell.slice(8))}
-                      </button>
-                    ) : (
-                      <span className="text-text-muted">{Number(cell.slice(8))}</span>
-                    )}
-                  </td>
-                )
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
   );
 }

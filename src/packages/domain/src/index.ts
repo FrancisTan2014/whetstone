@@ -15,7 +15,7 @@ export {
   timelineKindsAreRealEntries
 } from "./timeline.js";
 export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timeline.js";
-export { isDayKey, monthBounds, monthGrid, shiftMonth, toMonthKey } from "./diaryTimeline.js";
+export { isDayKey } from "./diaryTimeline.js";
 export { isTimeZone, localDayBoundary, localDayKey } from "./localDay.js";
 export type { LocalDayBoundary } from "./localDay.js";
 export { composeTodayBoard } from "./todayBoard.js";

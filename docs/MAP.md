@@ -43,8 +43,8 @@ rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`
 `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
-`diaryTimeline.ts` (#246 voice-diary pure date logic — `isDayKey`/`toMonthKey`, and
-`monthBounds`/`shiftMonth`/`monthGrid` for the date-jump calendar; day-grouping now lives in `timeline.ts`),
+`diaryTimeline.ts` (#246 voice-diary pure date logic — `isDayKey` day-key validation; day-grouping
+lives in `timeline.ts`),
 `localDay.ts` (#606 the learner's local calendar-day boundary: the single pure projection
 `localDayKey(instant, timeZone)` + `localDayBoundary(now, timeZone) → {dateKey, utcStart, utcEnd}` and
 `isTimeZone`, exact over `Intl` — every day-grouping/per-day-cap consumer derives its day from here so
@@ -248,9 +248,9 @@ can navigate them from another package.
   (diary carries `body_doc`/`body_text`, note its markdown) and ordering/day-grouping via the pure domain
   `groupTimelineEntriesByDay` (`occurred_at` DESC, `entry_id` ASC tie-break) — never a stored Timeline
   object; `listTimelinePage` pages days newest-first via the exclusive `before` day-key cursor,
-  `listCalendarDates` returns days-with-entries from `occurred_at`, `listDiaryEntriesForUser` is the
+  `listDiaryEntriesForUser` is the
   full-state read facet. Diary is the `kind === "diary"` filter over that result. `diaryRoutes.ts`:
-  `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`, `GET /api/diary/calendar?from&to`,
+  `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`,
   `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). No proposal card is
   returned. The tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`. Shapes in
   `@whetstone/contracts` (`diaryContracts.ts`).
@@ -780,9 +780,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   state stay structured metadata; `saveEdit` PATCHes the rich `bodyDoc` (guarding a blank body). Below
   capture, the **Timeline** history groups entries by day newest-first (pure `groupTimelineEntriesByDay`)
   with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
-  → next `before` page), and a **date-jump mini-calendar** marks days-with-entries (from the calendar
-  endpoint, pure `monthGrid`/`monthBounds`/`shiftMonth`) and scrolls to a chosen day (loading older pages
-  until it is present); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
+  → next `before` page), and restores the learner's scroll position (and already-loaded pages) when they
+  leave and return to Diary within the same app session (module-level `diarySessionStore.ts`, reset on a
+  full reload); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
   `/api/diary/*` endpoints (`submitDiaryCapture` → `DiaryEntryDto`, `updateDiaryEntry(id, bodyDoc)`) and
   parses every response through `diaryContracts`. The "Mine my history" action and all Make Durable /
   proposal card UI are gone.

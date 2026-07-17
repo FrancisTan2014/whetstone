@@ -58,13 +58,10 @@ export type {
 } from "./recitationContracts.js";
 export {
   createDiaryEntryRequestSchema,
-  diaryCalendarDtoSchema,
-  diaryCalendarQuerySchema,
   diaryEntryDtoSchema,
   diaryProcessingStatusSchema,
   documentJsonSchema,
   parseCreateDiaryEntryRequest,
-  parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
   parseTimelineEntryDto,
@@ -82,8 +79,6 @@ export {
 } from "./diaryContracts.js";
 export type {
   CreateDiaryEntryRequest,
-  DiaryCalendarDto,
-  DiaryCalendarQuery,
   DiaryEntryDto,
   DiaryProcessingStatus,
   TimelineDayDto,

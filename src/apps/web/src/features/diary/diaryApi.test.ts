@@ -3,13 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiaryEntryDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
-import {
-  deleteDiaryEntry,
-  fetchDiaryCalendar,
-  fetchTimeline,
-  submitDiaryCapture,
-  updateDiaryEntry
-} from "./diaryApi";
+import { deleteDiaryEntry, fetchTimeline, submitDiaryCapture, updateDiaryEntry } from "./diaryApi";
 
 const bodyDoc = createTextDocument("today I read a book");
 
@@ -84,18 +78,6 @@ describe("diaryApi", () => {
     await fetchTimeline("2026-06-20", 7);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/timeline?limit=7&before=2026-06-20",
-      undefined
-    );
-  });
-
-  it("fetches the calendar marks for a range", async () => {
-    const fetchMock = stubFetch({ body: { dates: ["2026-06-10"] }, ok: true });
-
-    await expect(fetchDiaryCalendar("2026-06-01", "2026-06-30")).resolves.toEqual({
-      dates: ["2026-06-10"]
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/calendar?from=2026-06-01&to=2026-06-30",
       undefined
     );
   });

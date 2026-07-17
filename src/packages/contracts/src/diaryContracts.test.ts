@@ -2,10 +2,8 @@ import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
-  diaryCalendarQuerySchema,
   documentJsonSchema,
   parseCreateDiaryEntryRequest,
-  parseDiaryCalendarDto,
   parseDiaryEntryDto,
   parseTimelineDto,
   parseTimelineEntryDto,
@@ -237,18 +235,6 @@ describe("parseTimelineDto", () => {
   });
 });
 
-describe("parseDiaryCalendarDto", () => {
-  it("accepts a list of marked dates", () => {
-    expect(parseDiaryCalendarDto({ dates: ["2026-06-29", "2026-06-30"] })).toEqual({
-      dates: ["2026-06-29", "2026-06-30"]
-    });
-  });
-
-  it("rejects a malformed date", () => {
-    expect(() => parseDiaryCalendarDto({ dates: ["June 30"] })).toThrow();
-  });
-});
-
 describe("timelineQuerySchema", () => {
   it("coerces a string limit and a before cursor", () => {
     expect(timelineQuerySchema.parse({ before: "2026-06-30", limit: "7" })).toEqual({
@@ -267,18 +253,5 @@ describe("timelineQuerySchema", () => {
 
   it("rejects a malformed before cursor", () => {
     expect(() => timelineQuerySchema.parse({ before: "yesterday" })).toThrow();
-  });
-});
-
-describe("diaryCalendarQuerySchema", () => {
-  it("accepts a from/to day-key range", () => {
-    expect(diaryCalendarQuerySchema.parse({ from: "2026-06-01", to: "2026-06-30" })).toEqual({
-      from: "2026-06-01",
-      to: "2026-06-30"
-    });
-  });
-
-  it("requires both bounds", () => {
-    expect(() => diaryCalendarQuerySchema.parse({ from: "2026-06-01" })).toThrow();
   });
 });
