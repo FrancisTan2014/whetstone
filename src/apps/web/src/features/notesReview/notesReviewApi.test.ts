@@ -4,6 +4,7 @@ import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
 import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
+import { addNoteToReview, fetchNoteReviewStatus } from "./notesReviewApi";
 
 const review = {
   due: "2026-07-11T12:00:00.000Z",
@@ -110,5 +111,51 @@ describe("rateNotePrompt", () => {
     stubFetch({ ok: false, status: 400 });
 
     await expect(rateNotePrompt("prompt-1", "again")).rejects.toThrow("status 400");
+  });
+});
+
+describe("fetchNoteReviewStatus", () => {
+  it("GETs the note's review status from the encoded work/note endpoint", async () => {
+    const fetchMock = stubFetch({ body: { status: "not_enrolled" }, ok: true });
+
+    await expect(fetchNoteReviewStatus("work 1", "note 7")).resolves.toEqual({
+      status: "not_enrolled"
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes/note%207/review", undefined);
+  });
+
+  it("parses the scheduled status carrying its next-review date", async () => {
+    stubFetch({
+      body: { status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" },
+      ok: true
+    });
+
+    await expect(fetchNoteReviewStatus("work-1", "note-7")).resolves.toEqual({
+      status: "scheduled",
+      nextReviewAt: "2026-07-11T00:00:00.000Z"
+    });
+  });
+
+  it("throws when the status read fails", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(fetchNoteReviewStatus("work-1", "note-7")).rejects.toThrow("status 404");
+  });
+});
+
+describe("addNoteToReview", () => {
+  it("POSTs to the encoded enrollment endpoint and returns the resulting status", async () => {
+    const fetchMock = stubFetch({ body: { status: "due" }, ok: true });
+
+    await expect(addNoteToReview("work 1", "note 7")).resolves.toEqual({ status: "due" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes/note%207/review/enrollment", {
+      method: "POST"
+    });
+  });
+
+  it("throws when the enrollment request fails", async () => {
+    stubFetch({ ok: false, status: 409 });
+
+    await expect(addNoteToReview("work-1", "note-7")).rejects.toThrow("status 409");
   });
 });

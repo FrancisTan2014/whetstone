@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   noteRevealDtoSchema,
   noteReviewNextDtoSchema,
+  parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
@@ -163,5 +164,38 @@ describe("note-review rating contracts", () => {
 
   it("rejects a negative remaining-due count", () => {
     expect(() => parseNoteReviewRatingResultDto({ review, remainingDue: -1 })).toThrow();
+  });
+});
+
+describe("noteReviewEnrollmentStatusDtoSchema", () => {
+  it("parses each objective enrollment status, and only scheduled carries a date", () => {
+    expect(parseNoteReviewEnrollmentStatusDto({ status: "not_enrolled" })).toEqual({
+      status: "not_enrolled"
+    });
+    expect(parseNoteReviewEnrollmentStatusDto({ status: "due" })).toEqual({ status: "due" });
+    expect(parseNoteReviewEnrollmentStatusDto({ status: "paused" })).toEqual({ status: "paused" });
+    expect(
+      parseNoteReviewEnrollmentStatusDto({
+        status: "scheduled",
+        nextReviewAt: "2026-07-11T00:00:00.000Z"
+      })
+    ).toEqual({ status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" });
+  });
+
+  it("requires a valid datetime for the scheduled status", () => {
+    expect(() => parseNoteReviewEnrollmentStatusDto({ status: "scheduled" })).toThrow();
+    expect(() =>
+      parseNoteReviewEnrollmentStatusDto({ status: "scheduled", nextReviewAt: "next week" })
+    ).toThrow();
+  });
+
+  it("rejects a date on a non-scheduled status and an unknown status", () => {
+    expect(() =>
+      parseNoteReviewEnrollmentStatusDto({
+        status: "due",
+        nextReviewAt: "2026-07-11T00:00:00.000Z"
+      })
+    ).toThrow();
+    expect(() => parseNoteReviewEnrollmentStatusDto({ status: "archived" })).toThrow();
   });
 });

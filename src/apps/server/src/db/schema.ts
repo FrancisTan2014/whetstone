@@ -558,6 +558,14 @@ export const memoryPrompts = pgTable(
   (table) => [
     index("memory_prompts_note_idx").on(table.noteEntryId),
     index("memory_prompts_chunk_idx").on(table.chunkId),
+    // At most one `current_note` prompt per note (#658): enrollment applies retrieval to an already-saved
+    // note exactly once, so the note→current-note-prompt relationship is one-to-one. Enforced as a partial
+    // unique index (only `current_note` rows participate) so retried/concurrent "Add to review" attempts
+    // can never create a second current-note prompt, while historical `legacy_custom` siblings — which may
+    // legitimately be many per note — are unconstrained.
+    uniqueIndex("memory_prompts_one_current_note_per_note_uq")
+      .on(table.noteEntryId)
+      .where(sql`${table.revealKind} = 'current_note'`),
     // The two reveal shapes are enforced in the database, not only at the write boundary: a current-note
     // prompt is ready and answerless (its reveal is the live note body); a ready legacy prompt has both
     // answer projections; a draft legacy prompt has neither.

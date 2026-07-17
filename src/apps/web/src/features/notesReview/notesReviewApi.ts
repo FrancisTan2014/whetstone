@@ -1,7 +1,9 @@
 import {
   parseNoteRevealDto,
+  parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewRatingResultDto,
+  type NoteReviewEnrollmentStatusDto,
   type NoteReviewPromptDto,
   type NoteRevealDto,
   type NoteReviewRatingResultDto
@@ -49,5 +51,38 @@ export async function rateNotePrompt(
       headers: jsonHeaders,
       method: "POST"
     })
+  );
+}
+
+// One saved note's current Review status, for the note sheet's Review section: not enrolled, due now,
+// scheduled for a future date, or paused. A read; it changes nothing.
+export async function fetchNoteReviewStatus(
+  workEntryId: string,
+  noteEntryId: string
+): Promise<NoteReviewEnrollmentStatusDto> {
+  return parseNoteReviewEnrollmentStatusDto(
+    await requestJson(
+      apiUrl(
+        `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}/review`
+      )
+    )
+  );
+}
+
+// Add one saved note to Review: idempotently create-or-reuse its current-note prompt and active card,
+// returning the resulting objective status. Safe to call again — a second submit reuses the same prompt
+// and card without resetting the schedule. The target is fully addressed by the URL, so the POST carries
+// no body (and no JSON content-type, which Fastify would otherwise reject as an empty JSON body).
+export async function addNoteToReview(
+  workEntryId: string,
+  noteEntryId: string
+): Promise<NoteReviewEnrollmentStatusDto> {
+  return parseNoteReviewEnrollmentStatusDto(
+    await requestJson(
+      apiUrl(
+        `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}/review/enrollment`
+      ),
+      { method: "POST" }
+    )
   );
 }
