@@ -106,6 +106,25 @@ describe("OwnedNoteReviewSection (#659)", () => {
     expect(mockedEnroll).toHaveBeenCalledWith("note-1", "What is a WAL?");
   });
 
+  it("reuses an imported note's confirmed question read-only, sending no question (#661)", async () => {
+    // An imported standalone note already owns a cardless prompt: its status carries the confirmed cue.
+    mockedStatus.mockResolvedValue({ question: "What is a WAL?", status: "not_enrolled" });
+    mockedEnroll.mockResolvedValue({ status: "due" });
+    renderSection(standaloneNote());
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add to review" }));
+
+    // The confirmed question is shown read-only — no free-text input to retype it.
+    expect(screen.getByText("What is a WAL?")).toBeDefined();
+    expect(screen.queryByLabelText("What should Whetstone ask you?")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+
+    await waitFor(() => expect(screen.getByText("Due now")).toBeDefined());
+    // Like an anchored note, it reuses the existing source server-side, so no question is sent.
+    expect(mockedEnroll).toHaveBeenCalledWith("note-1", undefined);
+  });
+
   it("shows Due now with a Review link when the note is already due", async () => {
     mockedStatus.mockResolvedValue({ status: "due" });
     renderSection(anchoredNote());

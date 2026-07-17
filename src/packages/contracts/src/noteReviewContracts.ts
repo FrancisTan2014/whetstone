@@ -105,8 +105,11 @@ export function parseNoteReviewRatingResultDto(value: unknown): NoteReviewRating
 // "Add to review" control; `due` is enrolled and due now (offering "Review"); `scheduled` carries the
 // next review instant to localize as "Next review · <date>"; `paused` is enrolled but withheld from the
 // due scan. Only `scheduled` carries a date — a due card shows "Due now" and a paused card shows "Paused".
+// `not_enrolled` may carry a `question`: an imported note (#661) already owns a confirmed, cardless
+// current-note prompt, so its stored question is surfaced for the UI to show read-only and reuse on
+// "Add to review" instead of asking the learner to retype it. It is absent when no prompt exists yet.
 export const noteReviewEnrollmentStatusDtoSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("not_enrolled") }).strict(),
+  z.object({ status: z.literal("not_enrolled"), question: z.string().min(1).optional() }).strict(),
   z.object({ status: z.literal("due") }).strict(),
   z.object({ status: z.literal("scheduled"), nextReviewAt: z.string().datetime() }).strict(),
   z.object({ status: z.literal("paused") }).strict()

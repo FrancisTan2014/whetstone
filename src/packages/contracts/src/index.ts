@@ -397,6 +397,20 @@ export type {
   ReviewHistoryPageDto
 } from "./noteReviewContracts.js";
 export {
+  importNotesRequestSchema,
+  importNotesResultDtoSchema,
+  importedNoteDtoSchema,
+  noteImportItemSchema,
+  parseImportNotesRequest,
+  parseImportNotesResultDto
+} from "./notesImportContracts.js";
+export type {
+  ImportedNoteDto,
+  ImportNotesRequest,
+  ImportNotesResultDto,
+  NoteImportItem
+} from "./notesImportContracts.js";
+export {
   parseSearchRequest,
   parseSearchResults,
   searchRequestSchema,

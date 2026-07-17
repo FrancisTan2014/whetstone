@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
+  ImportNotesResultDto,
   NoteDto,
   NoteListDto,
   NotesOverviewListDto,
@@ -1476,5 +1477,62 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
     });
     expect(byId.get(pausedNote.entryId)).toEqual({ status: "paused" });
     expect(byId.get(plainNote.entryId)).toEqual({ status: "not_enrolled" });
+  });
+});
+
+describe("import notebook lists route (#661)", () => {
+  function importItem(question: string, note: string): unknown {
+    return { noteDoc: createTextDocument(note), questionDoc: createTextDocument(question) };
+  }
+
+  function postImport(payload: unknown): ReturnType<typeof context.server.inject> {
+    return context.server.inject({ method: "POST", payload, url: "/api/notes/import" });
+  }
+
+  it("creates one standalone note and one cardless prompt per row and returns them in pasted order", async () => {
+    const response = await postImport({
+      items: [
+        importItem("What is a WAL?", "A write-ahead log records changes before applying them."),
+        importItem("Define quorum", "A quorum is a majority of replicas.")
+      ]
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as ImportNotesResultDto;
+    expect(body.imported.map((row) => row.noteEntryId)).toEqual(["note-1", "note-3"]);
+    expect(body.imported.map((row) => row.promptId)).toEqual(["note-2", "note-4"]);
+
+    const noteRows = await context.db.select().from(notes);
+    expect(noteRows).toHaveLength(2);
+    for (const row of noteRows) {
+      expect(row.kind).toBe("note");
+      expect(row.captureSource).toBe("import");
+    }
+
+    const promptRows = await context.db.select().from(memoryPrompts);
+    expect(promptRows).toHaveLength(2);
+    for (const row of promptRows) {
+      expect(row.revealKind).toBe("current_note");
+      expect(row.answerText).toBeNull();
+    }
+
+    // Cardless: import never seeds Review.
+    expect(await context.db.select().from(reviewCards)).toHaveLength(0);
+
+    const owners = await context.db.select().from(personalEntries);
+    expect(owners.every((row) => row.userId === DEFAULT_USER_ID)).toBe(true);
+  });
+
+  it("rejects a malformed import body at the boundary without writing any note", async () => {
+    const empty = await postImport({ items: [] });
+    expect(empty.statusCode).toBe(400);
+
+    const blank = await postImport({
+      items: [{ noteDoc: createTextDocument("   "), questionDoc: createTextDocument("q") }]
+    });
+    expect(blank.statusCode).toBe(400);
+
+    expect(await context.db.select().from(notes)).toHaveLength(0);
+    expect(await context.db.select().from(memoryPrompts)).toHaveLength(0);
   });
 });

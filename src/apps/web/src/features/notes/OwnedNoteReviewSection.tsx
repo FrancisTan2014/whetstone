@@ -65,10 +65,21 @@ export function OwnedNoteReviewSection({
     loadStatus();
   }
 
+  // An imported note carries a confirmed question on its `not_enrolled` status: like an anchored note, it
+  // reuses an existing source rather than asking the learner to type one.
+  const confirmedQuestion =
+    state.step === "status" && state.status.status === "not_enrolled"
+      ? state.status.question
+      : undefined;
+  const reuseSource = note.anchor !== null || confirmedQuestion !== undefined;
+  const sourceQuestion =
+    note.anchor !== null ? note.anchor.selectedTextSnapshot : confirmedQuestion;
+
   function onAdd(): void {
-    // An anchored note reuses its source server-side (no question); a standalone note sends the trimmed,
+    // An anchored note reuses its source server-side; an imported note (#661) reuses its existing cardless
+    // prompt's confirmed question. Both send no question. Only a plain standalone note sends the trimmed,
     // non-blank question the learner supplied.
-    const supplied = note.anchor === null ? question.trim() : undefined;
+    const supplied = reuseSource ? undefined : question.trim();
     setEnrolling(true);
     setEnrollFailed(false);
     addOwnedNoteToReview(note.entryId, supplied).then(
@@ -99,7 +110,6 @@ export function OwnedNoteReviewSection({
       ) : null}
       {state.step === "status" ? (
         <OwnedNoteReviewStatusView
-          anchored={note.anchor !== null}
           confirming={confirming}
           enrollFailed={enrollFailed}
           enrolling={enrolling}
@@ -110,7 +120,8 @@ export function OwnedNoteReviewSection({
           }}
           onQuestionChange={setQuestion}
           onStartConfirm={() => setConfirming(true)}
-          question={note.anchor === null ? question : note.anchor.selectedTextSnapshot}
+          question={sourceQuestion ?? question}
+          reuseSource={reuseSource}
           status={state.status}
         />
       ) : null}
@@ -142,7 +153,6 @@ export function OwnedNoteReviewSection({
 }
 
 type OwnedNoteReviewStatusViewProps = Readonly<{
-  anchored: boolean;
   confirming: boolean;
   enrollFailed: boolean;
   enrolling: boolean;
@@ -151,15 +161,16 @@ type OwnedNoteReviewStatusViewProps = Readonly<{
   onQuestionChange: (value: string) => void;
   onStartConfirm: () => void;
   question: string;
+  reuseSource: boolean;
   status: NoteReviewEnrollmentStatusDto;
 }>;
 
 // The objective view for a loaded status. `not_enrolled` offers "Add to review", which opens an inline
-// confirmation: an anchored note shows its exact source as a read-only Question; a standalone note asks the
-// learner "What should Whetstone ask you?" in one required input. The enrolled states are the calm,
-// objective projections of the note's shared card.
+// confirmation: a note that reuses an existing source — an anchored note's exact source, or an imported
+// note's confirmed question — shows it as a read-only Question; a plain standalone note asks the learner
+// "What should Whetstone ask you?" in one required input. The enrolled states are the calm, objective
+// projections of the note's shared card.
 function OwnedNoteReviewStatusView({
-  anchored,
   confirming,
   enrollFailed,
   enrolling,
@@ -168,13 +179,14 @@ function OwnedNoteReviewStatusView({
   onQuestionChange,
   onStartConfirm,
   question,
+  reuseSource,
   status
 }: OwnedNoteReviewStatusViewProps): React.JSX.Element {
   switch (status.status) {
     case "not_enrolled":
       return confirming ? (
         <div className="noteReviewConfirm">
-          {anchored ? (
+          {reuseSource ? (
             <>
               <p className="noteReviewQuestionLabel" id="noteReviewQuestionLabel">
                 Question
@@ -199,7 +211,7 @@ function OwnedNoteReviewStatusView({
           ) : null}
           <div className="noteReviewConfirmActions">
             <Button
-              disabled={!anchored && question.trim().length === 0}
+              disabled={!reuseSource && question.trim().length === 0}
               onClick={onAdd}
               pending={enrolling}
               type="button"

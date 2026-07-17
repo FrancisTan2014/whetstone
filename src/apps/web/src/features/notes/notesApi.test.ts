@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CreateNoteRequest, UpdateNoteRequest } from "@whetstone/contracts";
+import type {
+  CreateNoteRequest,
+  ImportNotesRequest,
+  UpdateNoteRequest
+} from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
@@ -12,6 +16,8 @@ import {
   deleteOwnedNote,
   fetchAllNotes,
   fetchNotes,
+  importNotes,
+  suggestGloss,
   updateNote,
   updateOwnedNote
 } from "./notesApi";
@@ -196,5 +202,45 @@ describe("notesApi owner-scoped (#659)", () => {
     stubFetch({ ok: false, status: 404 });
 
     await expect(deleteOwnedNote("note 1")).rejects.toThrow("failed with status 404");
+  });
+});
+
+describe("notesApi import (#661)", () => {
+  it("posts the batch to the atomic import endpoint and parses the ordered result", async () => {
+    const body = { imported: [{ noteEntryId: "note-1", promptId: "prompt-1" }] };
+    const fetchMock = stubFetch({ body, ok: true });
+    const request: ImportNotesRequest = {
+      items: [{ noteDoc: createTextDocument("each"), questionDoc: createTextDocument("per") }]
+    };
+
+    await expect(importNotes(request)).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/import", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("throws when the import responds with a non-ok status, leaving the caller's paste intact", async () => {
+    stubFetch({ ok: false, status: 400 });
+
+    await expect(
+      importNotes({
+        items: [{ noteDoc: createTextDocument("n"), questionDoc: createTextDocument("q") }]
+      })
+    ).rejects.toThrow("failed with status 400");
+  });
+
+  it("reads a dictionary gloss for a term from the shared suggest endpoint", async () => {
+    const fetchMock = stubFetch({
+      body: { suggestion: "a happy accident", term: "serendipity" },
+      ok: true
+    });
+
+    await expect(suggestGloss("serendipity")).resolves.toEqual({
+      suggestion: "a happy accident",
+      term: "serendipity"
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/memory/suggest?term=serendipity", undefined);
   });
 });

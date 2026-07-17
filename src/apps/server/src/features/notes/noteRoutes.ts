@@ -2,6 +2,7 @@ import {
   createMarkRequestSchema,
   createNoteRequestSchema,
   createStandaloneNoteRequestSchema,
+  importNotesRequestSchema,
   updateNoteRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
@@ -17,6 +18,7 @@ import {
   updateNoteForOwner,
   type NotesDependencies
 } from "./noteCommands.js";
+import { importNotesBatch } from "./notesImportCommands.js";
 import { getNoteForOwner, listNotesForUser, listNotesForWork } from "./noteQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
@@ -85,8 +87,30 @@ export function registerNoteRoutes(server: FastifyInstance, dependencies: NotesD
     return reply.code(201).send(result.note);
   });
 
-  // Edit any owned note's canonical body (#659), owner-scoped. 404 for a forged/cross-user id; 409 for a
-  // bodyless Mark.
+  // Import a batch of refined notebook rows as standalone Notes in one atomic write (#661). Each row
+  // becomes exactly one `capture_source = import` note plus one cardless current-note prompt; either every
+  // row lands or none does. Imported notes are cardless — they enter Review only when the learner
+  // deliberately adds one. Returns the created note/prompt ids in pasted order.
+  server.post("/api/notes/import", async (request, reply) => {
+    const parsed = importNotesRequestSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequestBody);
+    }
+
+    const result = await importNotesBatch(
+      dependencies,
+      parsed.data.items,
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    request.log.info(
+      { count: result.imported.length, route: "POST /api/notes/import" },
+      "notes_imported"
+    );
+
+    return reply.code(201).send(result);
+  });
   server.patch<{ Params: OwnerNoteParams }>("/api/notes/:noteEntryId", async (request, reply) => {
     const parsed = updateNoteRequestSchema.safeParse(request.body);
 

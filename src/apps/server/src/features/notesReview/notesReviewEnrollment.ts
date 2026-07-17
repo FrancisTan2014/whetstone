@@ -4,13 +4,8 @@ import { createTextDocument } from "@whetstone/document";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import {
-  entries,
-  entryLinks,
-  memoryPrompts,
-  personalEntries,
-  reviewCards
-} from "../../db/schema.js";
+import { memoryPrompts, personalEntries, reviewCards } from "../../db/schema.js";
+import { insertCurrentNotePromptInTx } from "../notes/noteCommands.js";
 import { getNoteEnrollmentTarget, getNoteForOwner } from "../notes/noteQueries.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { type ReviewCardRow } from "../review/reviewCardQueries.js";
@@ -52,21 +47,23 @@ export function projectEnrollmentStatus(
   return { status: "scheduled", nextReviewAt: card.dueAt.toISOString() };
 }
 
-// The single current-note prompt entry id for a note, if one exists (#658). At most one can exist — the
-// partial unique index enforces it — so this reads the one row that makes the note→prompt relationship.
-async function findCurrentNotePromptId(
+// The single current-note prompt for a note, if one exists (#658): its entry id and cue text. At most one
+// can exist — the partial unique index enforces it — so this reads the one row that makes the note→prompt
+// relationship. The cue text lets the owner status/enrollment paths reuse an imported note's confirmed
+// question (#661) instead of asking for it again.
+async function findCurrentNotePrompt(
   reader: Reader,
   noteEntryId: EntryId
-): Promise<string | undefined> {
+): Promise<Readonly<{ entryId: string; cueText: string }> | undefined> {
   const rows = await reader
-    .select({ entryId: memoryPrompts.entryId })
+    .select({ entryId: memoryPrompts.entryId, cueText: memoryPrompts.cueText })
     .from(memoryPrompts)
     .where(
       and(eq(memoryPrompts.noteEntryId, noteEntryId), eq(memoryPrompts.revealKind, "current_note"))
     )
     .limit(1);
 
-  return rows[0]?.entryId;
+  return rows[0];
 }
 
 // The prompt's shared review card for this user, if one exists. Read through the same handle as the reuse
@@ -103,9 +100,9 @@ export async function getNoteReviewStatus(
     return { status: "not_enrollable" };
   }
 
-  const promptId = await findCurrentNotePromptId(dependencies.db, noteEntryId);
+  const prompt = await findCurrentNotePrompt(dependencies.db, noteEntryId);
   const card =
-    promptId === undefined ? undefined : await findCard(dependencies.db, promptId, userId);
+    prompt === undefined ? undefined : await findCard(dependencies.db, prompt.entryId, userId);
 
   return { status: "ok", value: projectEnrollmentStatus(card, dependencies.now()) };
 }
@@ -166,26 +163,15 @@ async function enrollNoteWithQuestion(
       .for("update");
 
     let changed = false;
-    let promptId = await findCurrentNotePromptId(tx, noteEntryId);
+    let promptId = (await findCurrentNotePrompt(tx, noteEntryId))?.entryId;
     if (promptId === undefined) {
       promptId = dependencies.createId();
-      await tx.insert(entries).values({ id: promptId, type: "memory_prompt" });
-      await tx.insert(memoryPrompts).values({
-        entryId: promptId,
-        noteEntryId,
+      await insertCurrentNotePromptInTx(tx, {
         cueDoc: createTextDocument(question),
         cueText: question,
-        answerDoc: null,
-        answerText: null,
-        lifecycle: "ready",
-        revealKind: "current_note",
-        chunkId: null,
-        createdAt: now
-      });
-      await tx.insert(entryLinks).values({
-        fromEntryId: noteEntryId,
-        toEntryId: promptId,
-        type: "contains"
+        noteEntryId,
+        now,
+        promptId
       });
       changed = true;
     }
@@ -238,11 +224,17 @@ export async function getNoteReviewStatusForOwner(
     return { status: "not_enrollable" };
   }
 
-  const promptId = await findCurrentNotePromptId(dependencies.db, noteEntryId);
+  const prompt = await findCurrentNotePrompt(dependencies.db, noteEntryId);
   const card =
-    promptId === undefined ? undefined : await findCard(dependencies.db, promptId, userId);
+    prompt === undefined ? undefined : await findCard(dependencies.db, prompt.entryId, userId);
 
-  return { status: "ok", value: projectEnrollmentStatus(card, dependencies.now()) };
+  const status = projectEnrollmentStatus(card, dependencies.now());
+  // An imported note (#661) owns a confirmed, cardless current-note prompt: surface its cue so the Notes
+  // home shows the question read-only and reuses it on "Add to review" instead of asking for one again.
+  if (status.status === "not_enrolled" && prompt !== undefined) {
+    return { status: "ok", value: { status: "not_enrolled", question: prompt.cueText } };
+  }
+  return { status: "ok", value: status };
 }
 
 // Enroll any owned note into Review from the Notes home (#659). Owner-scoped, so a standalone note enrolls
@@ -264,8 +256,19 @@ export async function enrollNoteInReviewForOwner(
     return { status: "not_enrollable" };
   }
 
-  const question =
-    note.anchor !== null ? note.anchor.selectedTextSnapshot : requestedQuestion?.trim();
+  // An anchored note reuses its exact source as the question; a standalone note uses the learner's typed
+  // question, falling back to an existing current-note prompt's confirmed cue when none is typed — an
+  // imported note (#661) already owns that prompt, so "Add to review" reuses it instead of asking again.
+  let question: string | undefined;
+  if (note.anchor !== null) {
+    question = note.anchor.selectedTextSnapshot;
+  } else {
+    const typed = requestedQuestion?.trim();
+    question =
+      typed !== undefined && typed.length > 0
+        ? typed
+        : (await findCurrentNotePrompt(dependencies.db, noteEntryId))?.cueText;
+  }
   if (question === undefined || question.length === 0) {
     return { status: "question_required" };
   }

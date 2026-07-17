@@ -206,6 +206,20 @@ describe("noteReviewEnrollmentStatusDtoSchema", () => {
     ).toThrow();
     expect(() => parseNoteReviewEnrollmentStatusDto({ status: "archived" })).toThrow();
   });
+
+  it("carries an imported note's confirmed question on not_enrolled (#661), rejecting a blank one", () => {
+    expect(
+      parseNoteReviewEnrollmentStatusDto({ status: "not_enrolled", question: "What is a WAL?" })
+    ).toEqual({ status: "not_enrolled", question: "What is a WAL?" });
+    // The question is optional, and a blank string is not a real cue.
+    expect(() =>
+      parseNoteReviewEnrollmentStatusDto({ status: "not_enrolled", question: "" })
+    ).toThrow();
+    // No other status carries a question.
+    expect(() =>
+      parseNoteReviewEnrollmentStatusDto({ status: "due", question: "What is a WAL?" })
+    ).toThrow();
+  });
 });
 
 describe("noteReviewSummaryDtoSchema", () => {

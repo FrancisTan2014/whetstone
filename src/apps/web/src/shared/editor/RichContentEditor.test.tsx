@@ -244,6 +244,46 @@ describe("RichContentEditor boundary", () => {
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("AB"));
   });
 
+  it("renders read-only when not editable and re-enables editing when toggled back", async () => {
+    const onChange = vi.fn<DocumentListener>();
+    const user = userEvent.setup();
+    const view = render(
+      <RichContentEditor document={textDocument("Frozen")} editable={false} onChange={onChange} />
+    );
+    const textbox = await screen.findByRole("textbox", { name: "Rich content editor" });
+
+    // Tiptap's native read-only: the content shows but the surface blocks edits.
+    expect(textbox.getAttribute("contenteditable")).toBe("false");
+    onChange.mockClear();
+    await user.click(textbox);
+    await user.type(textbox, "X");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(textbox.textContent).toBe("Frozen");
+
+    // The block-actions chrome — which runs mutating commands — is not mounted at all: no compact
+    // trigger, and Shift+F10 opens no menu, so the document cannot be mutated through editor chrome.
+    expect(screen.queryByRole("button", { name: "More block actions" })).toBeNull();
+    fireEvent.keyDown(textbox, { key: "F10", shiftKey: true });
+    expect(screen.queryByRole("menu", { name: "More block actions" })).toBeNull();
+
+    // Toggling editable back on (the setEditable effect) restores an interactive surface and its chrome.
+    view.rerender(<RichContentEditor document={textDocument("Frozen")} onChange={onChange} />);
+    await waitFor(() => expect(textbox.getAttribute("contenteditable")).toBe("true"));
+    expect(screen.getByRole("button", { name: "More block actions" })).toBeTruthy();
+  });
+
+  it("mounts no pointer drag-gutter on a read-only surface even under a fine pointer", async () => {
+    mockMatchMedia(true);
+    render(
+      <RichContentEditor document={textDocument("Frozen")} editable={false} onChange={vi.fn()} />
+    );
+    await screen.findByRole("textbox", { name: "Rich content editor" });
+
+    // A fine pointer would normally mount the drag-gutter; read-only mounts none of its mutating chrome.
+    expect(window.document.querySelector(".richContentEditorGutter")).toBeNull();
+    expect(screen.queryByRole("button", { name: "More block actions" })).toBeNull();
+  });
+
   it("synchronizes a changed controlled document without emitting and ignores an equal clone", async () => {
     const first = textDocument("First");
     const second = textDocument("Second");

@@ -48,6 +48,61 @@ vi.mock("./OwnedNoteEditor", async () => {
   };
 });
 
+// The import surface has its own suite; here it stands in as a controllable stub so the page's
+// orchestration (opening, closing, success message, reload, focus) is asserted without driving the panel.
+vi.mock("./NotesImport", async () => {
+  const React = await import("react");
+  return {
+    NotesImport: (props: {
+      onCancel: () => void;
+      onImported: (result: {
+        imported: ReadonlyArray<{ noteEntryId: string; promptId: string }>;
+      }) => void;
+    }) =>
+      React.createElement("div", { "data-testid": "import-panel" }, [
+        React.createElement(
+          "button",
+          {
+            key: "i2",
+            onClick: () =>
+              props.onImported({
+                imported: [
+                  { noteEntryId: "note-2", promptId: "prompt-2" },
+                  { noteEntryId: "note-3", promptId: "prompt-3" }
+                ]
+              }),
+            type: "button"
+          },
+          "stub-import-two"
+        ),
+        React.createElement(
+          "button",
+          {
+            key: "i1",
+            onClick: () =>
+              props.onImported({ imported: [{ noteEntryId: "note-2", promptId: "prompt-2" }] }),
+            type: "button"
+          },
+          "stub-import-one"
+        ),
+        React.createElement(
+          "button",
+          {
+            key: "i0",
+            onClick: () => props.onImported({ imported: [] }),
+            type: "button"
+          },
+          "stub-import-none"
+        ),
+        React.createElement(
+          "button",
+          { key: "c", onClick: () => props.onCancel(), type: "button" },
+          "stub-import-cancel"
+        )
+      ])
+  };
+});
+
 import type { NoteOverviewDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
@@ -244,5 +299,76 @@ describe("NotesPage (#659)", () => {
 
     expect(screen.queryByText("Could not load your notes. Please try again.")).toBeNull();
     expect(screen.getByText("fresh")).toBeDefined();
+  });
+});
+
+describe("NotesPage import (#661)", () => {
+  it("opens the import panel, replacing the list and search until it closes", async () => {
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    expect(screen.getByTestId("import-panel")).toBeDefined();
+    // The list and search box give way to the panel while importing.
+    expect(screen.queryByText("first")).toBeNull();
+    expect(screen.queryByRole("searchbox", { name: "Search notes" })).toBeNull();
+
+    // Cancel restores the list and returns focus to the Import button.
+    const importButton = screen.getByRole("button", { name: "Import" });
+    await userEvent.click(screen.getByRole("button", { name: "stub-import-cancel" }));
+    expect(screen.queryByTestId("import-panel")).toBeNull();
+    expect(await screen.findByText("first")).toBeDefined();
+    expect(document.activeElement).toBe(importButton);
+  });
+
+  it("reports how many notes were imported, reloads, and focuses the first imported note", async () => {
+    mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
+    mockedFetch.mockResolvedValue({
+      notes: [note("note-1", "first"), note("note-2", "second"), note("note-3", "third")]
+    });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-import-two" }));
+
+    // The panel closes, the success message shows the count, and the reloaded list appears.
+    expect(screen.queryByTestId("import-panel")).toBeNull();
+    expect(await screen.findByText("Imported 2 notes.")).toBeDefined();
+    await screen.findByText("second");
+    // Focus lands on the first imported note's Open button once the reloaded list settles.
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/second/)
+    );
+  });
+
+  it("uses the singular message when exactly one note is imported", async () => {
+    mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first"), note("note-2", "second")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-import-one" }));
+
+    expect(await screen.findByText("Imported 1 note.")).toBeDefined();
+  });
+
+  it("closes the panel and reloads even if the import somehow yields no notes", async () => {
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-import-none" }));
+
+    expect(screen.queryByTestId("import-panel")).toBeNull();
+    expect(await screen.findByText("Imported 0 notes.")).toBeDefined();
+    expect(await screen.findByText("first")).toBeDefined();
   });
 });
