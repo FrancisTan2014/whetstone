@@ -126,10 +126,10 @@ describe("TodayPage", () => {
     mockedFetch.mockResolvedValue(makeBoard({ clear: false, dueNow: [memoryDue] }));
     renderPage();
 
-    expect(await screen.findByText("Memory review")).toBeTruthy();
+    expect(await screen.findByText("Note review")).toBeTruthy();
     expect(screen.getByText("1 due")).toBeTruthy();
     expect(screen.queryByText(/overdue/)).toBeNull();
-    expect(href("Review")).toBe("/recall");
+    expect(href("Review")).toBe("/notes/review");
     expect(screen.getByRole("listitem")).toBeTruthy();
     expect(screen.queryByText("All due work is clear.")).toBeNull();
     expect(screen.queryByText(/Start with one source/)).toBeNull();
@@ -145,7 +145,7 @@ describe("TodayPage", () => {
     const rows = screen.getAllByRole("listitem");
     expect(rows[0]?.textContent).toContain("Recitation");
     expect(rows[0]?.textContent).toContain("2 due · 2 overdue");
-    expect(rows[1]?.textContent).toContain("Memory review");
+    expect(rows[1]?.textContent).toContain("Note review");
     expect(href("Start")).toBe("/recitation");
   });
 
@@ -153,14 +153,14 @@ describe("TodayPage", () => {
     mockedFetch.mockResolvedValueOnce(makeBoard({ clear: false, routineFailures: ["memory"] }));
     renderPage();
 
-    expect(await screen.findByText("Couldn’t load your memory review right now.")).toBeTruthy();
+    expect(await screen.findByText("Couldn’t load your note review right now.")).toBeTruthy();
     expect(screen.queryByText("All due work is clear.")).toBeNull();
 
     mockedFetch.mockResolvedValueOnce(makeBoard());
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText(/Start with one source/)).toBeTruthy();
-    expect(screen.queryByText("Couldn’t load your memory review right now.")).toBeNull();
+    expect(screen.queryByText("Couldn’t load your note review right now.")).toBeNull();
   });
 
   it("offers each ready Continue invitation as a deep link into its feature", async () => {
@@ -216,13 +216,13 @@ describe("TodayPage", () => {
   it("recomputes the board when the tab regains focus", async () => {
     mockedFetch.mockResolvedValueOnce(makeBoard({ clear: false, dueNow: [memoryDue] }));
     renderPage();
-    await screen.findByText("Memory review");
+    await screen.findByText("Note review");
 
     mockedFetch.mockResolvedValueOnce(makeBoard());
     window.dispatchEvent(new Event("focus"));
 
     expect(await screen.findByText(/Start with one source/)).toBeTruthy();
-    expect(screen.queryByText("Memory review")).toBeNull();
+    expect(screen.queryByText("Note review")).toBeNull();
     expect(mockedFetch).toHaveBeenCalledTimes(2);
   });
 

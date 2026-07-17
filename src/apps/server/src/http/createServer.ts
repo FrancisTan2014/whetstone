@@ -34,11 +34,6 @@ import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWo
 import type { AuthoredWorkRouteDependencies } from "../features/authoredWorks/authoredWorkRoutes.js";
 import { registerRecitationRoutes } from "../features/recitation/recitationRoutes.js";
 import type { RecitationRouteDependencies } from "../features/recitation/recitationRoutes.js";
-import {
-  registerMemoryReviewRoutes,
-  registerMemoryRoutes
-} from "../features/memory/memoryRoutes.js";
-import type { MemoryRouteDependencies } from "../features/memory/memoryRoutes.js";
 import { registerNotesReviewRoutes } from "../features/notesReview/notesReviewRoutes.js";
 import type { NotesReviewRouteDependencies } from "../features/notesReview/notesReviewRoutes.js";
 import { registerTodayRoutes } from "../features/today/todayRoutes.js";
@@ -72,7 +67,6 @@ export type CreateServerOptions = Readonly<{
   notesReview?: NotesReviewRouteDependencies;
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
-  recall?: MemoryRouteDependencies;
   recitation?: RecitationRouteDependencies;
   search?: SearchDependencies;
   today?: TodayRouteDependencies;
@@ -145,11 +139,6 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.recitation !== undefined) {
     registerRecitationRoutes(server, options.recitation);
-  }
-
-  if (options.recall !== undefined) {
-    registerMemoryReviewRoutes(server, options.recall);
-    registerMemoryRoutes(server, options.recall);
   }
 
   if (options.notesReview !== undefined) {

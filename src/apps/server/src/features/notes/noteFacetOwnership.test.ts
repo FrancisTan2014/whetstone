@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-// #620: Reader notes and Memory notes are ONE durable object type behind ONE Notes-owned boundary. A Note
-// is a pure content + ownership facet; scheduler mechanics (prompts, cards, events) live in Memory and the
-// shared review substrate, never on the Note. These structural guards lock that separation in place so a
-// future change cannot silently reintroduce a second note store, a parallel body writer, or a Note DTO
-// that smuggles scheduler state.
+// #620/#662: Reader notes and former Memory notes are ONE durable object type behind ONE Notes-owned
+// boundary. A Note is a pure content + ownership facet; scheduler mechanics (prompts, cards, events) live
+// in the `memory_prompts` table and the shared review substrate, never on the Note. These structural
+// guards lock that separation in place so a future change cannot silently reintroduce a second note store,
+// a parallel body writer, or a Note DTO that smuggles scheduler state.
 
 function read(relative: string): string {
   return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
@@ -35,22 +35,6 @@ describe("one unified note facet (#620)", () => {
     // `memory_prompt` stays — a prompt is its own reviewable Entry.
     const schema = read("../../db/schema.ts");
     expect(schema).not.toContain('"memory_note"');
-  });
-
-  it("Memory composes the Notes boundary instead of writing note facets itself", () => {
-    const memoryCommands = code("../memory/memoryCommands.ts");
-    // Memory must go through the single note writer/cascade/body-updater…
-    expect(memoryCommands).toContain("insertNoteInTx");
-    expect(memoryCommands).toContain("deleteNoteInTx");
-    expect(memoryCommands).toContain("updateNoteBodyInTx");
-    // …and must NOT duplicate a note's ownership/anchor inserts, write its body columns directly, or
-    // re-derive its readable projection (that is the boundary's job). Any of these would be a parallel
-    // note-body writer/facet — the regression the reviewer flagged on the edit path. (Memory still inserts
-    // its own `memory_prompt` Entries and bumps the note's chronology when it adds a prompt.)
-    expect(memoryCommands).not.toMatch(/insert\(personalEntries/u);
-    expect(memoryCommands).not.toMatch(/insert\(noteAnchors/u);
-    expect(memoryCommands).not.toMatch(/update\(notes/u);
-    expect(memoryCommands).not.toContain("documentReadableText");
   });
 
   it("the Note boundary is the single note-row inserter", () => {

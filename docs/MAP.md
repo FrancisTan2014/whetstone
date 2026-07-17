@@ -131,41 +131,24 @@ can navigate them from another package.
   `rateReviewCard` is a thin wrapper over it. `reviewCardQueries.ts` maps a card row → domain `ReviewState`
   (`reviewStateFromCard`, `reviewStateColumns`, owner-scoped `getReviewCardForUser`). Consumers read schedule
   through these and never re-implement `applyRating`/`newReviewState` (guarded by
-  `memory/memoryReviewOwnership.test.ts` and `recitation/recitation.test.ts`).
-- Memory store (#595): `src/features/memory/` (`memoryCommands.ts` deposit/reviewChunk/pushedPhrase/
-  recordReview/snooze, `memoryQueries.ts` due/search/get + by-chunk review-state grouping + ReviewState
-  <->row mapping) over Entry-backed rows: a unified `notes` note (#620 — a `kind='note'` row in the single
-  notes facet, unanchored; a first-class owned Entry — ownership + chronology in the shared
-  `personal_entries` facet; provenance to its source is a `derived_from`
-  `entry_links` row, not a column) and one-or-more `memory_prompts` (each a child Entry linked by
-  `contains`; `cue`/`answer` docs + text, a `lifecycle` of `draft` — captured but no revealable answer, so
-  no card — or `ready` with an optional `chunk_id` link to a practice chunk (#205)). FSRS state and history
-  no longer live on the prompt: since #617 a `ready` prompt owns a row in the shared `review_cards` substrate
-  (below, keyed by the prompt's Entry id) and its append-only history lands in `review_events`
-  (`memory_prompt_reviews` was migrated away in 0048). A prompt is `ready` (and appears in
-  the due queue) iff it has BOTH a non-blank cue AND answer; the offline dictionary may SUGGEST an answer
-  but never blocks the write. Pure scheduling is `@whetstone/domain` FSRS (v6, via `ts-fsrs`, in `fsrs.ts`);
-  DTOs/validation in `@whetstone/contracts` (`memoryContracts.ts`). The web Recall surface is served by
-  `memoryRoutes.ts` (`registerMemoryReviewRoutes`, current-user scoped, Zod-validated): `GET /api/recall/due`
-  (today's due scheduled prompts, capped at `DAILY_RECALL_CAP` = 20 so a backlog never becomes a wall),
-  `POST /api/recall/prompts/:id/review` (`{ rating }` → FSRS advance + a `memory_prompt_reviews` row; 404
-  otherwise), `POST /api/recall/prompts/:id/snooze` (the `snoozePrompt` command defers only `due_at` one day
-  — not a rating; 404 otherwise); wired in `http/createServer.ts` (the `recall` dependency option). The
-  learner-facing Memory surface (#573) adds `registerMemoryRoutes` (same file, same `recall` deps):
-  `GET/POST /api/memory/notes`, `GET/PATCH/DELETE /api/memory/notes/:id`, `POST /api/memory/notes/:id/prompts`,
-  `PATCH /api/memory/prompts/:id`, `GET /api/memory/suggest` (offline gloss), and `POST /api/memory/import`
-  (#574: `importMemoryBatch` deposits a pasted notebook list as many notes in ONE transaction — all-or-nothing,
-  reusing the shared `writeMemory` atomic write; answers resolve up front, gloss stays outside the tx).
-  A prompt input carries optional `cueDoc`/`answerDoc` documents (`memoryDocumentSchema`, #574) so a rich
-  authoring surface can supply formatted cue/answer; when omitted the server derives a single-block document
-  from the text, so plain-text feeders (Quick Add, MCP) are unchanged.
-  List/search/detail queries
-  and the `editMemoryNote`/`editMemoryPrompt`/`addPromptToNote`/`deleteMemoryNote` commands live alongside
-  the deposit path; a note appears once in the Timeline via `diaryQueries.ts` (a `memory_note` row with its
-  prompt count), never its prompts/reviews. Editing a prompt reconciles its schedule via the pure
-  `reconcilePromptEdit` (`@whetstone/domain`) — keep the card, seed a new one, or revert to a draft — so it
-  never silently resets review history. The parsing/edit logic for a pasted list is pure `@whetstone/domain`
-  (`notebookImport.ts`: `parseNotebookList` + undo-split/merge/split-context ops, #574).
+  `recitation/recitation.test.ts`, and the Notes-owned Review boundary in `notesReview/` which composes the
+  shared `rateReviewCard`/`applyRatingToCardInTx` rather than re-scheduling).
+- Note prompts (retained storage; the standalone Memory store/routes/web mode and the Recall MCP tools were
+  retired in #662): a reviewable note prompt is a `memory_prompts` row (the table name is kept for migration
+  continuity, not for a live Memory surface) — a child Entry linked by `contains` to a unified `notes` note
+  (#620 — a `kind='note'` row in the single notes facet; a first-class owned Entry with ownership + chronology
+  in the shared `personal_entries` facet). Since #617 an enrolled prompt owns a row in the shared `review_cards`
+  substrate (below, keyed by the prompt's Entry id) with append-only history in `review_events`; the prompt row
+  holds no scheduling state of its own. Prompt creation and scheduling now happen ONLY through the Notes-owned
+  Review boundary (`notesReview/`, below) and note enrollment — there is no deposit/import/edit command on a
+  Memory feature anymore. The two surviving prompt reads live in `notesReview/notePromptQueries.ts`:
+  `getPromptRowForUser` (owner-scoped prompt-row fetch used by the Notes review/settings commands) and
+  `loadNoteReviewRoutineSummary` (the note-review routine Today's board reads). Pure scheduling is
+  `@whetstone/domain` FSRS (v6, via `ts-fsrs`, `fsrs.ts`); the shared review/capture DTOs live in
+  `@whetstone/contracts` (`memoryContracts.ts`, slimmed to `ratingSchema`/`reviewStateDtoSchema`/
+  `memoryDocumentSchema`/`captureSourceSchema`). No `/api/memory/*` or `/api/recall/*` route survives: the
+  offline-gloss suggest moved to Notes (`GET /api/notes/suggest`, `noteRoutes.ts`, backed by
+  `resolveOfflineGloss`) and Notes import (`notesImportCommands.ts`, #661) is the only batch note-create path.
 - Notes-owned Review session (#657): `src/apps/server/src/features/notesReview/` is the Notes-owned
   boundary for reviewing DUE note prompts one at a time, served at `/api/notes/review/*` by
   `notesReviewRoutes.ts` (`registerNotesReviewRoutes`, current-user scoped, Zod-validated): `GET /next`
@@ -220,8 +203,8 @@ can navigate them from another package.
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
-  standalone Notes — the import surface moved from Memory (`memoryCommands.importMemoryBatch`, retired for
-  this path) into the owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →
+  standalone Notes — the import surface replaced the retired Memory batch import (the Memory
+  `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →
   `importNotesBatch` (`notesImportCommands.ts`) prepares every row (mint note + prompt ids, derive plaintext
   via `documentReadableText`) then, in ONE `db.transaction`, per row composes the shared `insertNoteInTx`
   (`kind='note'`, `capture_source='import'`) + `insertCurrentNotePromptInTx` (`noteCommands.ts`) — each note
@@ -272,14 +255,11 @@ can navigate them from another package.
   `recitation_plans` into the Timeline as the `recitation` kind; `library/libraryCommands.ts` `deleteWork`
   cascades the plan's recitation targets + their shared cards/events/evidence. DTOs in `@whetstone/contracts`
   (`recitationContracts.ts`).
-- Memory MCP server: `src/apps/server/src/mcp/` exposes the Memory store to any MCP client (a local/cloud LLM) —
-  `recallTools.ts` (the Memory-op tools: `deposit_memory` (#458/#595): a production-style deposit of a
-  memory note + one-or-more prompts — captureSource/noteText/prompts (each cue + optional answer/gloss/
-  provenance) — that reuses the `depositMemory` command directly (no proposal/review gate) and never
-  accepts an integrity-bearing chunk link; plus `list_due_prompts`/`record_review`/`search_memory`/
-  `get_memory_prompt`; all validate via contracts; `createRecallMcpServer`)
-  and the stdio entry `mcp/main.ts` (run via `pnpm --filter @whetstone/server mcp`). Thin adapter; no
-  logic duplicated. Tool list + transport: `docs/MCP.md`.
+- Memory/Recall MCP server: retired with the standalone Memory experience (#662). The five legacy tools
+  (`deposit_memory`/`list_due_prompts`/`record_review`/`search_memory`/`get_memory_prompt`) and their stdio
+  entry point are gone — PRODUCT defers AI-authored prompts, and the Notes + shared Review loop is complete
+  without an MCP surface. There is currently no MCP tool set; the retained `memory_prompts` table is written
+  only through Notes + the shared Review substrate.
 - Shared LLM seam: `src/llm/` — the one model-agnostic prompt→text boundary every server LLM caller
   (diary tidy, AI 解释) goes through. `llmModel.ts` exports the `LlmModel` type
   (`(prompt: string) => Promise<string>`), `createOllamaModel(model)` (local Ollama via the Vercel AI
@@ -471,8 +451,8 @@ can navigate them from another package.
   (PRODUCT.md "v0 search").
   `today/` composes the Today board (#610): `todayQueries.loadTodayBoard` fetches each source guarded by
   its own try/catch (so one throwing marks only that source failed, never blanking the board) — the
-  recitation routine from `recitationReviewQueries.loadRecitationRoutineSummary`, the memory routine from
-  `memoryQueries.loadMemoryRoutineSummary`, Continue reading/writing from the readingPosition/authoredWorks
+  recitation routine from `recitationReviewQueries.loadRecitationRoutineSummary`, the note-review routine from
+  `notesReview/notePromptQueries.loadNoteReviewRoutineSummary`, Continue reading/writing from the readingPosition/authoredWorks
   queries — folds them through the pure `@whetstone/domain` `composeTodayBoard`, sets `date` =
   `localDayKey(now, timeZone)`, and `todayRoutes.registerTodayRoutes` serves `GET /api/today` (userId +
   `getLearnerTimeZone`, response validated via `todayBoardResponseSchema`); wired in `createServer.ts`/
@@ -582,21 +562,25 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - App shell + routing: `src/app/` — `AppRoutes.tsx` nests the modes under the `AppShell` layout
   route (Today = `TodayPage` at the index route — the app's proactive landing, Library =
   `LibraryMode` at `/library` — the shelf `AdminLibraryPage` plus an on-demand "Manage content"
-  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Memory = `MemoryPage` at `/memory`,
-  Review = `NotesReviewPage` at both `/notes/review` (canonical) and `/recall` (compat, same session),
-  Search = `SearchPage`, Notes =
-  `NotesRoute`→`NotesPage` (reads `?work=<id>` to narrow to a single work), Diary = `DiaryPage`, Write =
-  `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`; a trailing `path="*"`
-  catch-all renders `NotFoundPage` so any unknown hash route — including the retired `#/practice` — resolves to
-  the calm not-found page inside the shell); `AppShell.tsx` is the responsive frame (one `Primary`
-  `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus the single
-  `ToastViewport` live region). `navigation.ts` holds the **four** primary destinations — Today,
-  Library, **Memory**, Search — rendered as a **single non-wrapping row of ≥44px targets** on mobile
-  (#390, #573). Reader, Review, Notes, and Diary keep their routes
+  `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Notes = `NotesRoute`→`NotesPage` at `/notes`
+  (reads `?work=<id>` to narrow to a single work; also the target of the primary nav — see below),
+  Review = `NotesReviewPage` at both `/notes/review` (canonical) and `/recall` (compat redirect, #662),
+  Search = `SearchPage`, Diary = `DiaryPage`, Write =
+  `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`; `/memory`
+  redirects (history-replace) to `/notes` and `/recall` to `/notes/review` (#662 retired the standalone
+  Memory/Recall pages — the redirects read live due/card state from the DB, never reset it); a trailing
+  `path="*"` catch-all renders `NotFoundPage` so any unknown hash route — including the retired
+  `#/practice` — resolves to the calm not-found page inside the shell); `AppShell.tsx` is the responsive
+  frame (one `Primary` `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus
+  the single `ToastViewport` live region). `navigation.ts` holds the **four** primary destinations — Today,
+  Library, **Notes** (`/notes`, occupying the former Memory position until #638 recomposes to five), Search
+  — rendered as a **single non-wrapping row of ≥44px targets** on mobile
+  (#390, #662). Reader, Review, and Diary keep their routes
   but are NOT primary: Reader is an immersive destination opened from context, and the others are
-  reached from where they belong (Today links to the Review session/Diary; Memory links to the Review
+  reached from where they belong (Today links to the Review session/Diary; Notes links to the Review
   session when something is
-  due; Library links to the all-notes surface). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
+  due; Library links to the all-notes surface). The Notes nav target's active state is truthful on both
+  `/notes` and `/notes/review` (prefix match). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
   wrap the mobile row). On the `/reader` and `/write` routes the nav (and the toggle bar) recede so the
   reading/writing column owns the viewport (immersive room); each provides its own back-to-Library control.
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
@@ -857,9 +841,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   parses every response through `diaryContracts`. The "Mine my history" action and all Make Durable /
   proposal card UI are gone.
   `notesReview/` is the Notes-owned Review session (#657), replacing the retired `recall/` mode:
-  `NotesReviewPage.tsx` reviews DUE note prompts ONE at a time and mounts at both `/notes/review` (the
-  canonical entry point) and `/recall` (a compat route onto the SAME session, so Today/Memory links are
-  unchanged). It is an explicit two-phase session driven by one discriminated `SessionState`
+  `NotesReviewPage.tsx` reviews DUE note prompts ONE at a time and mounts at `/notes/review` (the
+  canonical entry point); the legacy `/recall` route redirects (history-replace) onto it (#662), so legacy
+  links recover into the same session. It is an explicit two-phase session driven by one discriminated `SessionState`
   (loading/error/empty/question/revealed/rated) so an empty or failed read can never masquerade as
   completion: phase 1 shows the prompt's cue + a single **Show note** affordance (no answer, no grades);
   after an explicit reveal it renders the note (a `legacy_custom` prompt's preserved answer, or a
@@ -872,27 +856,19 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `notes/NoteReviewSection.tsx` (rendered by `NoteEditor.tsx` for a saved anchored note) loads the note's
   objective status and lets the learner add it to Review by confirming the exact anchor snapshot as a
   read-only Question; `notesReviewApi.ts` also exposes `fetchNoteReviewStatus`/`addNoteToReview` for it.
-  `memory/` is the Memory mode (#573) at `/memory`: `MemoryPage.tsx` is the browse/capture/manage surface
-  over the same Entry-backed store — a `MemoryList` of kept fragments (each row reads jargon-free: fragment,
-  capture-source badge, prompt count, one draft/scheduled/due chip via pure `memoryLabels.ts` +
-  `memory.tokens.ts`), a `role="search"` filter, and `MemoryQuickAdd` (progressive disclosure: a bare term
-  requests an offline gloss then confirm-or-save-as-draft; expanded, a multi-direction cue/answer/context
-  form). Opening a row shows `MemoryNoteDetail` (edit the fragment, `MemoryPromptRow` per prompt,
-  `MemoryAddDirection`, delete). A "Paste a list" toggle opens `MemoryImport.tsx` (#574): paste multiline
-  plain text, preview the deterministic split into editable drafts whose cue/answer are edited in the shared
-  `RichContentEditor` (edit/undo-split/merge/split-context/remove/suggest-answer), then import the whole
-  batch atomically. Each draft's rich cue/answer document rides through the deposit contract's optional
-  `cueDoc`/`answerDoc` (see `memoryContracts`). Its pure list-edit logic lives in
-  `memoryImportDrafts.ts` (doc-based drafts over `@whetstone/domain` `notebookImport`); the component only
-  wires it to inputs and the `importMemory` call. The review flow itself stays at `/recall`; Memory links
-  there when a note is due. `memoryApi.ts` calls `/api/memory/*` and parses every response through
-  `memoryContracts`.
+  The standalone `memory/` web mode (#573) was retired in #662: its browse/capture/manage clients
+  (`MemoryPage`/`MemoryList`/`MemoryQuickAdd`/`MemoryAddDirection`/`MemoryNoteDetail`/`MemoryPromptRow`/
+  `MemoryImport`), their tokens/labels, and `memoryApi.ts` are gone, and `/memory` now redirects to
+  `/notes`. The retained capabilities live in Notes: the collection + search in `notes/NotesPage.tsx`,
+  batch capture in `notes/NotesImport.tsx` (#661, `POST /api/notes/import`), and the offline-gloss
+  suggestion via `notesApi.suggestGloss` → `GET /api/notes/suggest`. No live browser code calls
+  `/api/memory/*` or `/api/recall/*`.
   `today/` is the deterministic routine board (#610) and the app's landing (`/`): `TodayPage.tsx` is a
   calm, finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") rendered
   from ONE server-composed read model — `todayApi.fetchTodayBoard` → `GET /api/today`, parsed once through
   `parseTodayBoardResponse`. It renders a greeting; a **Due now** section with each deterministic routine
-  as ONE grouped row (recitation count/overdue → Start `#/recitation`, memory count/overdue → Review
-  `#/recall`), ordered as the DTO gives (overdue-first, then `nextDueAt`); a truthful **All due work is
+  as ONE grouped row (recitation count/overdue → Start `#/recitation`, note-review count/overdue → Review
+  `#/notes/review`), ordered as the DTO gives (overdue-first, then `nextDueAt`); a truthful **All due work is
   clear** line ONLY when `board.clear`; a per-routine failure note with a Retry (a failed routine keeps the
   board un-clear — never a false clear); the always-present save-first quick-capture `CaptureCard` (`/diary`);
   a first-run on-ramp to the Library when nothing is due or continuable; and a visibly-secondary **Continue**

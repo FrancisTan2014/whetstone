@@ -1,13 +1,13 @@
 import {
+  parseGlossSuggestionDto,
   parseImportNotesResultDto,
-  parseMemoryGlossSuggestionDto,
   type AnchoredNoteDto,
   type CreateMarkRequest,
   type CreateNoteRequest,
   type CreateStandaloneNoteRequest,
+  type GlossSuggestionDto,
   type ImportNotesRequest,
   type ImportNotesResultDto,
-  type MemoryGlossSuggestionDto,
   type NoteDto,
   type NoteListDto,
   type NotesOverviewListDto,
@@ -104,12 +104,12 @@ export async function importNotes(request: ImportNotesRequest): Promise<ImportNo
   );
 }
 
-// The bundled offline dictionary's suggestion for a bare term, reused from the shared endpoint so import
-// can fill a blank Note from a gloss without any network dictionary. Returns null inside the DTO when the
-// term is unknown.
-export async function suggestGloss(term: string): Promise<MemoryGlossSuggestionDto> {
-  return parseMemoryGlossSuggestionDto(
-    await requestJson<unknown>(apiUrl(`/memory/suggest?term=${encodeURIComponent(term)}`))
+// The bundled offline dictionary's suggestion for a bare term, served by the Notes-owned endpoint (#662)
+// so import can fill a blank Note from a gloss without any network dictionary. Returns null inside the DTO
+// when the term is unknown.
+export async function suggestGloss(term: string): Promise<GlossSuggestionDto> {
+  return parseGlossSuggestionDto(
+    await requestJson<unknown>(apiUrl(`/notes/suggest?term=${encodeURIComponent(term)}`))
   );
 }
 

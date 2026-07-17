@@ -24,7 +24,6 @@ import {
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { reviewStateColumns } from "../review/reviewCardQueries.js";
-import { depositMemory, type MemoryDependencies } from "../memory/memoryCommands.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
 
 const otherUser = "user-other";
@@ -34,7 +33,6 @@ const at = (days: number): Date => new Date(t0.getTime() + days * day);
 
 type TestContext = Readonly<{
   db: DbClient;
-  memory: MemoryDependencies;
   server: ReturnType<typeof createServer>;
   setNow: (when: Date) => void;
 }>;
@@ -49,12 +47,10 @@ async function buildContext(): Promise<TestContext> {
 
   let now = t0;
   const createId = (): string => `id-${(sequence += 1)}`;
-  const memory: MemoryDependencies = { createId, db };
   const notesReview: NotesReviewRouteDependencies = { createId, db, now: () => now };
 
   return {
     db,
-    memory,
     server: createServer({ logger: false, notesReview }),
     setNow: (when) => {
       now = when;
@@ -62,21 +58,25 @@ async function buildContext(): Promise<TestContext> {
   };
 }
 
-// Seed one ready legacy prompt (cue + custom answer) whose active card is due at `depositedAt`.
+// Seed one ready legacy prompt (cue + custom answer) whose active card is due at `depositedAt`, on a
+// freshly seeded owned note — the shape the retired Memory deposit used to produce.
 async function seedLegacy(
   cueText: string,
   answerText: string,
   userId: string,
   depositedAt: Date
 ): Promise<{ promptId: string; noteId: string }> {
-  const deposit = await depositMemory(
-    context.memory,
-    { captureSource: "practice", noteText: cueText, prompts: [{ cueText, answerText }] },
-    userId,
-    depositedAt
-  );
-  const prompt = deposit.prompts[0]!;
-  return { promptId: prompt.promptId, noteId: prompt.noteId };
+  const noteId = await seedNote(userId, cueText, depositedAt);
+  const promptId = await seedPromptOn({
+    noteId,
+    cueText,
+    answerText,
+    createdAt: depositedAt,
+    revealKind: "legacy_custom",
+    card: { dueAt: depositedAt, status: "active" },
+    userId
+  });
+  return { promptId, noteId };
 }
 
 // Seed a current_note prompt on an existing note: no stored answer, its reveal resolves the live note body.
@@ -337,13 +337,12 @@ describe("POST /api/notes/review/prompts/:id/rating", () => {
 
   it("404s when rating a prompt that has no card (a draft)", async () => {
     context.setNow(at(0));
-    const deposit = await depositMemory(
-      context.memory,
-      { captureSource: "practice", noteText: "draft", prompts: [{ cueText: "draft cue" }] },
-      DEFAULT_USER_ID,
-      at(-1)
-    );
-    const draftPromptId = deposit.prompts[0]!.promptId;
+    const noteId = await seedNote(DEFAULT_USER_ID, "draft", at(-1));
+    const draftPromptId = await seedPromptOn({
+      noteId,
+      cueText: "draft cue",
+      createdAt: at(-1)
+    });
     const response = await context.server.inject({
       method: "POST",
       url: `/api/notes/review/prompts/${draftPromptId}/rating`,

@@ -282,72 +282,12 @@ export type {
   UpsertPreferencesRequest
 } from "./preferencesContracts.js";
 export {
-  addMemoryPromptRequestSchema,
   captureSourceSchema,
-  depositMemoryRequestSchema,
-  editMemoryNoteRequestSchema,
-  editMemoryPromptRequestSchema,
-  getMemoryPromptToolInputSchema,
-  importMemoryRequestSchema,
-  importMemoryResultDtoSchema,
-  listDuePromptsToolInputSchema,
-  memoryDepositDtoSchema,
   memoryDocumentSchema,
-  memoryGlossSuggestionDtoSchema,
-  memoryNoteDetailDtoSchema,
-  memoryNoteDtoSchema,
-  memoryNoteListDtoSchema,
-  memoryNoteSummaryDtoSchema,
-  memoryPromptCardDtoSchema,
-  memoryPromptCardListDtoSchema,
-  memoryPromptDtoSchema,
-  memoryPromptInputSchema,
-  parseAddMemoryPromptRequest,
-  parseDepositMemoryRequest,
-  parseEditMemoryNoteRequest,
-  parseEditMemoryPromptRequest,
-  parseImportMemoryRequest,
-  parseImportMemoryResultDto,
-  parseMemoryDepositDto,
-  parseMemoryGlossSuggestionDto,
-  parseMemoryNoteDetailDto,
-  parseMemoryNoteListDto,
-  parseMemoryNoteSummaryDto,
-  parseMemoryPromptCardDto,
-  parseMemoryPromptCardListDto,
-  parseMemoryPromptDto,
-  parseRecordMemoryReviewRequest,
-  promptLifecycleSchema,
   ratingSchema,
-  recordMemoryReviewRequestSchema,
-  recordReviewToolInputSchema,
-  reviewStateDtoSchema,
-  searchMemoryToolInputSchema
+  reviewStateDtoSchema
 } from "./memoryContracts.js";
-export type {
-  AddMemoryPromptRequest,
-  DepositMemoryRequest,
-  EditMemoryNoteRequest,
-  EditMemoryPromptRequest,
-  GetMemoryPromptToolInput,
-  ImportMemoryRequest,
-  ImportMemoryResultDto,
-  ListDuePromptsToolInput,
-  MemoryDepositDto,
-  MemoryGlossSuggestionDto,
-  MemoryNoteDetailDto,
-  MemoryNoteDto,
-  MemoryNoteListDto,
-  MemoryNoteSummaryDto,
-  MemoryPromptCardDto,
-  MemoryPromptCardListDto,
-  MemoryPromptDto,
-  MemoryPromptInput,
-  RecordMemoryReviewRequest,
-  RecordReviewToolInput,
-  ReviewStateDto,
-  SearchMemoryToolInput
-} from "./memoryContracts.js";
+export type { ReviewStateDto } from "./memoryContracts.js";
 export {
   enrollNoteRequestSchema,
   editNotePromptQuestionRequestSchema,
@@ -397,14 +337,17 @@ export type {
   ReviewHistoryPageDto
 } from "./noteReviewContracts.js";
 export {
+  glossSuggestionDtoSchema,
   importNotesRequestSchema,
   importNotesResultDtoSchema,
   importedNoteDtoSchema,
   noteImportItemSchema,
+  parseGlossSuggestionDto,
   parseImportNotesRequest,
   parseImportNotesResultDto
 } from "./notesImportContracts.js";
 export type {
+  GlossSuggestionDto,
   ImportedNoteDto,
   ImportNotesRequest,
   ImportNotesResultDto,

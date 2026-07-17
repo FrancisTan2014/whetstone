@@ -62,3 +62,17 @@ export function parseImportNotesRequest(value: unknown): ImportNotesRequest {
 export function parseImportNotesResultDto(value: unknown): ImportNotesResultDto {
   return importNotesResultDtoSchema.parse(value);
 }
+
+// The bundled offline dictionary's suggestion for a bare term (#662): the term the learner typed and a
+// suggested gloss, or `null` when the dictionary has no entry. A Notes-owned capability — import fills a
+// blank Note from a gloss without any network dictionary — served at `GET /api/notes/suggest`. Never
+// blocks capture; an absent glosser yields `suggestion: null`.
+export const glossSuggestionDtoSchema = z
+  .object({ suggestion: z.string().nullable(), term: z.string() })
+  .strict();
+
+export type GlossSuggestionDto = z.infer<typeof glossSuggestionDtoSchema>;
+
+export function parseGlossSuggestionDto(value: unknown): GlossSuggestionDto {
+  return glossSuggestionDtoSchema.parse(value);
+}

@@ -3,7 +3,6 @@ import { Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { createCaptureVoice } from "../features/capture/captureVoice.js";
 import { AuthoredWorkPage } from "../features/authoredWorks/AuthoredWorkPage.js";
 import { DiaryPage } from "../features/diary/DiaryPage.js";
-import { MemoryPage } from "../features/memory/MemoryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { NotesReviewPage } from "../features/notesReview/NotesReviewPage.js";
@@ -67,11 +66,12 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<LibraryMode />} path="library" />
         <Route element={<ReaderRoute />} path="reader" />
         <Route element={<WriteRoute />} path="write" />
-        <Route element={<MemoryPage />} path="memory" />
-        {/* The Notes-owned Review session (#657). `/recall` stays a compatibility route to the SAME
-            session until the consolidation cleanup; both mount the one page. */}
+        {/* The standalone Memory/Recall experience is retired (#662): `/memory` and `/recall` are
+            compatibility redirects (history-replaced so back/forward never loops through them) into the
+            Notes home and the Notes-owned Review session, which read due/card state from the database. */}
+        <Route element={<Navigate replace to="/notes" />} path="memory" />
         <Route element={<NotesReviewPage />} path="notes/review" />
-        <Route element={<NotesReviewPage />} path="recall" />
+        <Route element={<Navigate replace to="/notes/review" />} path="recall" />
         {/* The retired passage-segmentation route (`/recite?plan=`) has no direct-maintenance equivalent —
             its plan-scoped setup is gone (#643) — so it redirects to the Library recovery path rather than
             opening a dead or misleading screen. */}
