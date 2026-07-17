@@ -208,6 +208,17 @@ can navigate them from another package.
   cascade + owner-scoped `OwnedNoteReviewSection.tsx`); the owner-scoped client lives in `notes/notesApi.ts`
   (`fetchAllNotes({work,search})`/`createStandaloneNote`/`updateOwnedNote`/`deleteOwnedNote`) and
   `notesReview/notesReviewApi.ts` (`fetchOwnedNoteReviewStatus`/`addOwnedNoteToReview`).
+- Notes-owned Review settings & history (#660): the same owner-scoped boundary manages each note prompt's
+  Review lifecycle over the shared Review commands (never re-implementing FSRS). Server
+  `notesReview/notesReviewSettings{Projection,Queries,Commands}.ts` project a per-prompt settings row
+  (reveal policy + `not_in_review`/`due`/`scheduled`/`paused` card state, never persisted) and compose
+  `reviewCardCommands` for edit-question/pause/resume/restart/remove/re-add; history is keyset-paginated
+  (opaque cursor) over `review_events`. Routes (`notesReviewRoutes.ts`): `GET /api/notes/:noteEntryId/review/settings`,
+  `GET /api/notes/review/prompts/:id/history`, `PATCH .../question`, `POST .../pause|/resume|/restart|/card`,
+  `DELETE .../card`. Web: `OwnedNoteReviewSection.tsx` discloses `NoteReviewSettings.tsx` in place (state-driven
+  controls, inline keyboard confirmations, no-double-submit, stale-action list reload); client fns in
+  `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
+  `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
