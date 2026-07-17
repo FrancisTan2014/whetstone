@@ -1,6 +1,10 @@
-import { enrollNoteRequestSchema, noteReviewRatingRequestSchema } from "@whetstone/contracts";
+import {
+  editNotePromptQuestionRequestSchema,
+  enrollNoteRequestSchema,
+  noteReviewRatingRequestSchema
+} from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -11,11 +15,22 @@ import {
 } from "./notesReviewEnrollment.js";
 import { rateNotePrompt } from "./notesReviewCommands.js";
 import { loadNextDueNotePrompt, loadNotePromptReveal } from "./notesReviewQueries.js";
+import {
+  addNotePromptCard,
+  editNotePromptQuestion,
+  pauseNotePrompt,
+  removeNotePromptCard,
+  restartNotePrompt,
+  resumeNotePrompt,
+  type NotePromptSettingsMutationOutcome
+} from "./notesReviewSettingsCommands.js";
+import { listNotePromptSettings, loadNoteReviewHistoryPage } from "./notesReviewSettingsQueries.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
 const notEnrollable = { error: "not_enrollable" } as const;
 const questionRequired = { error: "question_required" } as const;
+const conflict = { error: "conflict" } as const;
 
 type NoteReviewParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 
@@ -30,6 +45,29 @@ export type NotesReviewRouteDependencies = Readonly<{
 }>;
 
 type PromptParams = Readonly<{ id: string }>;
+
+// The opaque forward cursor a history page echoes to fetch older events; absent on the first page.
+type HistoryQuery = Readonly<{ cursor?: string }>;
+
+// Map a settings-mutation outcome to its HTTP reply once, so every settings route answers identically:
+// 200 with the refreshed row (logged), 404 when the prompt is not the caller's, 409 on a stale card
+// precondition. Centralizing this keeps the six routes to a single line each.
+function sendSettingsMutation(
+  reply: FastifyReply,
+  result: NotePromptSettingsMutationOutcome,
+  request: FastifyRequest<{ Params: PromptParams }>,
+  route: string
+): FastifyReply {
+  switch (result.status) {
+    case "not_found":
+      return reply.code(404).send(notFound);
+    case "conflict":
+      return reply.code(409).send(conflict);
+    case "ok":
+      request.log.info({ promptId: request.params.id, route }, "note_review_settings_changed");
+      return reply.code(200).send(result.value);
+  }
+}
 
 // The Notes-owned Review session surface (#657): a two-phase, one-at-a-time review of the user's due Notes
 // prompts. `next` presents the single earliest-due prompt's QUESTION only; `reveal` resolves that prompt's
@@ -196,6 +234,137 @@ export function registerNotesReviewRoutes(
           );
           return reply.code(200).send(result.value);
       }
+    }
+  );
+
+  // The full Review-settings list for one owned note (#660): every prompt in creation order with its reveal
+  // policy and projected card state. 404 when the note is not the caller's or is a Mark. Performs no write.
+  server.get<{ Params: OwnerNoteReviewParams }>(
+    "/api/notes/:noteEntryId/review/settings",
+    async (request, reply) => {
+      const value = await listNotePromptSettings(
+        dependencies.db,
+        request.server.currentUser.getCurrentUserId(),
+        toEntryId(request.params.noteEntryId),
+        dependencies.now()
+      );
+      if (value === undefined) {
+        return reply.code(404).send(notFound);
+      }
+      return reply.code(200).send(value);
+    }
+  );
+
+  // One prompt's append-only Review history, newest first, paged by an opaque cursor (#660). 404 when the
+  // prompt is not the caller's; 400 on a malformed cursor. History outlives the card, so a removed prompt's
+  // record still reads. Performs no write.
+  server.get<{ Params: PromptParams; Querystring: HistoryQuery }>(
+    "/api/notes/review/prompts/:id/history",
+    async (request, reply) => {
+      const result = await loadNoteReviewHistoryPage(
+        dependencies.db,
+        request.server.currentUser.getCurrentUserId(),
+        request.params.id,
+        request.query.cursor
+      );
+      switch (result.status) {
+        case "not_found":
+          return reply.code(404).send(notFound);
+        case "invalid_cursor":
+          return reply.code(400).send(invalidRequest);
+        case "ok":
+          return reply.code(200).send(result.value);
+      }
+    }
+  );
+
+  // Edit one prompt's retrieval question (#660): writes ONLY the cue. 404 when the prompt is not the
+  // caller's; 400 on a blank/malformed question. Returns the refreshed settings row.
+  server.patch<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/question",
+    async (request, reply) => {
+      const parsed = editNotePromptQuestionRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequest);
+      }
+      const result = await editNotePromptQuestion(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId(),
+        parsed.data.question
+      );
+      return sendSettingsMutation(reply, result, request, "PATCH /question");
+    }
+  );
+
+  // Pause one prompt's card (#660): withhold it from the due scan (no FSRS change, no event). 404 when the
+  // prompt is not the caller's; 409 when it has no card. Returns the refreshed row.
+  server.post<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/pause",
+    async (request, reply) => {
+      const result = await pauseNotePrompt(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      return sendSettingsMutation(reply, result, request, "POST /pause");
+    }
+  );
+
+  // Resume one prompt's paused card (#660): return it to the due scan (no FSRS change, no event). 404 when
+  // the prompt is not the caller's; 409 when it has no card. Returns the refreshed row.
+  server.post<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/resume",
+    async (request, reply) => {
+      const result = await resumeNotePrompt(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      return sendSettingsMutation(reply, result, request, "POST /resume");
+    }
+  );
+
+  // Restart one prompt's schedule (#660): reset FSRS state and append one `reset` event through the shared
+  // boundary. 404 when the prompt is not the caller's; 409 when it has no card. Returns the refreshed row.
+  server.post<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/restart",
+    async (request, reply) => {
+      const result = await restartNotePrompt(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      return sendSettingsMutation(reply, result, request, "POST /restart");
+    }
+  );
+
+  // Re-add a cardless prompt to Review (#660): seed a fresh active card due now, reusing the SAME prompt and
+  // its preserved history (no event). 404 when the prompt is not the caller's; 409 when it already has a
+  // card. Returns the refreshed row.
+  server.post<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/card",
+    async (request, reply) => {
+      const result = await addNotePromptCard(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      return sendSettingsMutation(reply, result, request, "POST /card");
+    }
+  );
+
+  // Remove one prompt's card from Review (#660): drop the card, KEEP the note and history. 404 when the
+  // prompt is not the caller's; 409 when it has no card. Returns the refreshed row.
+  server.delete<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/card",
+    async (request, reply) => {
+      const result = await removeNotePromptCard(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      return sendSettingsMutation(reply, result, request, "DELETE /card");
     }
   );
 }

@@ -1,14 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
+import type {
+  NotePromptSettingsDto,
+  NoteReviewPromptDto,
+  NoteRevealDto,
+  ReviewHistoryPageDto
+} from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
 import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
 import {
+  addNotePromptCardBack,
   addNoteToReview,
   addOwnedNoteToReview,
+  editNotePromptQuestion,
+  fetchNotePromptHistory,
+  fetchNotePromptSettings,
   fetchNoteReviewStatus,
-  fetchOwnedNoteReviewStatus
+  fetchOwnedNoteReviewStatus,
+  pauseNotePromptCard,
+  removeNotePromptCard,
+  restartNotePromptCard,
+  resumeNotePromptCard
 } from "./notesReviewApi";
 
 const review = {
@@ -213,5 +226,88 @@ describe("addOwnedNoteToReview (#659)", () => {
     stubFetch({ ok: false, status: 409 });
 
     await expect(addOwnedNoteToReview("note-7")).rejects.toThrow("status 409");
+  });
+});
+
+describe("note Review settings client (#660)", () => {
+  const settingsDto: NotePromptSettingsDto = {
+    cardState: { state: "due" },
+    promptId: "prompt-1",
+    questionDoc: createTextDocument("What is a WAL?"),
+    questionText: "What is a WAL?",
+    reveal: { kind: "current_note" }
+  };
+
+  it("GETs the owner-scoped settings list from the encoded note endpoint", async () => {
+    const fetchMock = stubFetch({ body: { prompts: [settingsDto] }, ok: true });
+
+    await expect(fetchNotePromptSettings("note 7")).resolves.toEqual({ prompts: [settingsDto] });
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review/settings", undefined);
+  });
+
+  it("GETs the first history page without a cursor", async () => {
+    const page: ReviewHistoryPageDto = {
+      events: [{ id: "e1", kind: "reset", occurredAt: "2026-07-01T09:30:00.000Z" }],
+      nextCursor: null
+    };
+    const fetchMock = stubFetch({ body: page, ok: true });
+
+    await expect(fetchNotePromptHistory("prompt 1")).resolves.toEqual(page);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/notes/review/prompts/prompt%201/history",
+      undefined
+    );
+  });
+
+  it("GETs an older history page with the encoded cursor query", async () => {
+    const page: ReviewHistoryPageDto = { events: [], nextCursor: null };
+    const fetchMock = stubFetch({ body: page, ok: true });
+
+    await expect(fetchNotePromptHistory("prompt-1", "a b|1")).resolves.toEqual(page);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/notes/review/prompts/prompt-1/history?cursor=a%20b%7C1",
+      undefined
+    );
+  });
+
+  it("PATCHes the edited question as JSON to the encoded question endpoint", async () => {
+    const fetchMock = stubFetch({ body: settingsDto, ok: true });
+
+    await expect(editNotePromptQuestion("prompt 1", "Define a WAL")).resolves.toEqual(settingsDto);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/prompts/prompt%201/question", {
+      body: JSON.stringify({ question: "Define a WAL" }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH"
+    });
+  });
+
+  it("POSTs each active card transition with no body", async () => {
+    for (const [call, action] of [
+      [() => pauseNotePromptCard("p"), "pause"],
+      [() => resumeNotePromptCard("p"), "resume"],
+      [() => restartNotePromptCard("p"), "restart"],
+      [() => addNotePromptCardBack("p"), "card"]
+    ] as const) {
+      const fetchMock = stubFetch({ body: settingsDto, ok: true });
+      await expect(call()).resolves.toEqual(settingsDto);
+      expect(fetchMock).toHaveBeenCalledWith(`/api/notes/review/prompts/p/${action}`, {
+        method: "POST"
+      });
+    }
+  });
+
+  it("DELETEs the card to remove a prompt from review", async () => {
+    const fetchMock = stubFetch({ body: settingsDto, ok: true });
+
+    await expect(removeNotePromptCard("prompt 1")).resolves.toEqual(settingsDto);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/prompts/prompt%201/card", {
+      method: "DELETE"
+    });
+  });
+
+  it("throws when a settings request fails", async () => {
+    stubFetch({ ok: false, status: 409 });
+
+    await expect(pauseNotePromptCard("prompt-1")).rejects.toThrow("status 409");
   });
 });

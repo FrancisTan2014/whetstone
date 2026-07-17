@@ -150,3 +150,118 @@ export type EnrollNoteRequest = z.infer<typeof enrollNoteRequestSchema>;
 export function parseEnrollNoteRequest(value: unknown): EnrollNoteRequest {
   return enrollNoteRequestSchema.parse(value);
 }
+
+// The projected Review state of a single prompt's card, as the Notes-owned Review settings list shows it
+// (#660), discriminated by `state` so a row renders on the persisted fact and never infers from loose
+// fields. `not_in_review` has no card and offers "Add to review"; `due` is an active card due now (offering
+// "Review"); `scheduled` carries the next review instant to localize as "Next review · <date>"; `paused` is
+// enrolled but withheld from the due scan. Only `scheduled` carries a date. It is derived per request from
+// the card, never persisted on the prompt.
+export const notePromptCardStateDtoSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("not_in_review") }).strict(),
+  z.object({ state: z.literal("due") }).strict(),
+  z.object({ state: z.literal("scheduled"), nextReviewAt: z.string().datetime() }).strict(),
+  z.object({ state: z.literal("paused") }).strict()
+]);
+
+export type NotePromptCardStateDto = z.infer<typeof notePromptCardStateDtoSchema>;
+
+// How a prompt reveals its answer, as the settings list declares it (#660), discriminated by the persisted
+// `kind`. A `current_note` prompt follows the note's live canonical body — it carries no answer content
+// because editing the note edits the reveal. A `legacy_custom` prompt preserves its own rich custom answer,
+// carried here so the settings row can render it READ-ONLY (#657: legacy reveals are never editable or
+// converted). A consumer switches on `kind`, never on nullable answer fields.
+export const notePromptRevealPolicyDtoSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("current_note") }).strict(),
+  z
+    .object({
+      kind: z.literal("legacy_custom"),
+      answerDoc: noteReviewDocumentSchema,
+      answerText: z.string()
+    })
+    .strict()
+]);
+
+export type NotePromptRevealPolicyDto = z.infer<typeof notePromptRevealPolicyDtoSchema>;
+
+// One row of the Notes-owned Review settings list (#660): a prompt's identity, its editable retrieval
+// question (the rich cue and its readable projection), its reveal policy (current-note vs read-only legacy
+// custom), and its projected card state. The list is ordered by creation so a note with several legacy
+// prompts reads stably. It carries the question (editable) but never a `current_note` reveal body — that
+// lives on the note — so the settings view cannot drift from the canonical note.
+export const notePromptSettingsDtoSchema = z
+  .object({
+    promptId: z.string(),
+    questionDoc: noteReviewDocumentSchema,
+    questionText: z.string(),
+    reveal: notePromptRevealPolicyDtoSchema,
+    cardState: notePromptCardStateDtoSchema
+  })
+  .strict();
+
+export type NotePromptSettingsDto = z.infer<typeof notePromptSettingsDtoSchema>;
+
+// The full Review settings projection for one note (#660): every prompt owned by the note, in creation
+// order. A refresh recomputes it from the prompts and their cards; nothing here is persisted as a rollup.
+export const notePromptSettingsListDtoSchema = z
+  .object({ prompts: z.array(notePromptSettingsDtoSchema) })
+  .strict();
+
+export type NotePromptSettingsListDto = z.infer<typeof notePromptSettingsListDtoSchema>;
+
+// One entry of a prompt's append-only Review history (#660), discriminated by `kind` so a consumer renders
+// on the persisted fact: a `rating` is a graded review (its four-button FSRS rating localized as
+// Again/Hard/Good/Easy); a `reset` is a schedule restart ("Schedule restarted"). Every entry carries its
+// identity and the instant it occurred. History records only real card events — never a synthetic entry for
+// reveal, pause, resume, enrollment, or removal — and outlives the card, so removing and re-adding a prompt
+// never erases it.
+export const reviewHistoryEventDtoSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      id: z.string(),
+      kind: z.literal("rating"),
+      rating: ratingSchema,
+      occurredAt: z.string().datetime()
+    })
+    .strict(),
+  z.object({ id: z.string(), kind: z.literal("reset"), occurredAt: z.string().datetime() }).strict()
+]);
+
+export type ReviewHistoryEventDto = z.infer<typeof reviewHistoryEventDtoSchema>;
+
+// One page of a prompt's Review history (#660): the newest events first (occurred_at desc, id desc as the
+// stable tiebreak) and an opaque `nextCursor` to load older ones, or null at the end. The cursor is opaque
+// so the client never constructs a query from raw columns — it just echoes what the server handed back.
+export const reviewHistoryPageDtoSchema = z
+  .object({
+    events: z.array(reviewHistoryEventDtoSchema),
+    nextCursor: z.string().nullable()
+  })
+  .strict();
+
+export type ReviewHistoryPageDto = z.infer<typeof reviewHistoryPageDtoSchema>;
+
+// Editing a prompt's retrieval question from Review settings (#660): the new question as a required,
+// non-blank string. Editing writes ONLY the cue — it never touches the prompt's reveal policy, its card, its
+// FSRS state, its due date, its requested retention, or its history.
+export const editNotePromptQuestionRequestSchema = z
+  .object({ question: z.string().trim().min(1) })
+  .strict();
+
+export type EditNotePromptQuestionRequest = z.infer<typeof editNotePromptQuestionRequestSchema>;
+
+export function parseNotePromptSettingsListDto(value: unknown): NotePromptSettingsListDto {
+  return notePromptSettingsListDtoSchema.parse(value);
+}
+
+export function parseNotePromptSettingsDto(value: unknown): NotePromptSettingsDto {
+  return notePromptSettingsDtoSchema.parse(value);
+}
+
+export function parseReviewHistoryPageDto(value: unknown): ReviewHistoryPageDto {
+  return reviewHistoryPageDtoSchema.parse(value);
+}
+
+export function parseEditNotePromptQuestionRequest(value: unknown): EditNotePromptQuestionRequest {
+  return editNotePromptQuestionRequestSchema.parse(value);
+}

@@ -72,4 +72,76 @@ test.describe("notes home", () => {
     await page.getByRole("button", { name: "Good" }).click();
     await expect(page.getByText(/Due complete/)).toBeVisible();
   });
+
+  // The Review-settings expansion (#660): a learner manages a note's Review lifecycle in place — pause,
+  // resume, restart, remove, and re-add — without ever losing the note or its append-only history, all
+  // over the shared Review command boundary. The restart writes a real reset event that survives a
+  // removal (the history is kept), and the note body is never touched. The re-added prompt is graded back
+  // to "Due complete" so the shared review queue stays clean for the other specs.
+  test("manages a note's Review settings without losing the note or its history", async ({
+    page,
+    setup
+  }) => {
+    await page.goto(`${setup.baseURL}#/notes`);
+    await expect(page.getByRole("heading", { level: 1, name: "Notes" })).toBeVisible();
+
+    await page.getByRole("button", { name: "New note" }).click();
+    const newEditor = page.getByRole("dialog");
+    await newEditor.getByRole("textbox", { name: "Note body" }).fill("Raft leader election note");
+    await page.getByRole("button", { name: "Save note" }).click();
+
+    const list = page.getByRole("list", { name: "Your notes" });
+    const row = list.getByRole("listitem").filter({ hasText: "Raft leader election note" });
+    await expect(row).toBeVisible();
+
+    // Enroll with a learner-authored question, then open the Review-settings expansion in place.
+    await row.getByRole("button", { name: /Open note/ }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Add to review" }).click();
+    await dialog.getByLabel("What should Whetstone ask you?").fill("What triggers a Raft election?");
+    await dialog.getByRole("button", { name: "Add to review" }).click();
+    await expect(dialog.getByText("Due now")).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Review settings" }).click();
+    const settingsRow = dialog
+      .getByRole("listitem")
+      .filter({ hasText: "What triggers a Raft election?" });
+    await expect(settingsRow).toBeVisible();
+
+    // Pause withholds the card from the due scan; resume restores it — neither writes a history event.
+    await settingsRow.getByRole("button", { name: "Pause" }).click();
+    await expect(settingsRow.getByText("Paused")).toBeVisible();
+    await settingsRow.getByRole("button", { name: "Resume" }).click();
+    await expect(settingsRow.getByText("Due now")).toBeVisible();
+
+    // Restart writes exactly one reset event and pulls the next review to now.
+    await settingsRow.getByRole("button", { name: "Restart" }).click();
+    await settingsRow.getByRole("button", { name: "Confirm restart" }).click();
+    await expect(settingsRow.getByText("Due now")).toBeVisible();
+    await settingsRow.getByRole("button", { name: "Review history" }).click();
+    await expect(settingsRow.getByText("Schedule restarted")).toBeVisible();
+    await settingsRow.getByRole("button", { name: "Hide review history" }).click();
+
+    // Remove drops the card but keeps the note and its history; re-adding brings the card back, due now.
+    await settingsRow.getByRole("button", { name: "Remove" }).click();
+    await settingsRow.getByRole("button", { name: "Confirm remove" }).click();
+    await expect(settingsRow.getByText("Not in review")).toBeVisible();
+    await settingsRow.getByRole("button", { name: "Review history" }).click();
+    await expect(settingsRow.getByText("Schedule restarted")).toBeVisible();
+    await settingsRow.getByRole("button", { name: "Hide review history" }).click();
+    await settingsRow.getByRole("button", { name: "Add to review" }).click();
+    await expect(settingsRow.getByText("Due now")).toBeVisible();
+
+    // The note body itself was never rewritten by any settings action.
+    await expect(dialog.getByRole("textbox", { name: "Note body" })).toContainText(
+      "Raft leader election note"
+    );
+
+    // Grade the re-added due prompt back to "Due complete" so the shared queue stays clean.
+    await page.goto(`${setup.baseURL}#/notes/review`);
+    await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+    await page.getByRole("button", { name: "Show note" }).click();
+    await page.getByRole("button", { name: "Good" }).click();
+    await expect(page.getByText(/Due complete/)).toBeVisible();
+  });
 });

@@ -350,6 +350,11 @@ export type {
 } from "./memoryContracts.js";
 export {
   enrollNoteRequestSchema,
+  editNotePromptQuestionRequestSchema,
+  notePromptCardStateDtoSchema,
+  notePromptRevealPolicyDtoSchema,
+  notePromptSettingsDtoSchema,
+  notePromptSettingsListDtoSchema,
   noteRevealDtoSchema,
   noteRevealKindSchema,
   noteReviewEnrollmentStatusDtoSchema,
@@ -358,17 +363,28 @@ export {
   noteReviewRatingRequestSchema,
   noteReviewRatingResultDtoSchema,
   noteReviewSummaryDtoSchema,
+  parseEditNotePromptQuestionRequest,
   parseEnrollNoteRequest,
+  parseNotePromptSettingsDto,
+  parseNotePromptSettingsListDto,
   parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
   parseNoteReviewRatingResultDto,
   parseNoteReviewSummaryDto,
-  parseNoteRevealDto
+  parseNoteRevealDto,
+  parseReviewHistoryPageDto,
+  reviewHistoryEventDtoSchema,
+  reviewHistoryPageDtoSchema
 } from "./noteReviewContracts.js";
 export type {
+  EditNotePromptQuestionRequest,
   EnrollNoteRequest,
+  NotePromptCardStateDto,
+  NotePromptRevealPolicyDto,
+  NotePromptSettingsDto,
+  NotePromptSettingsListDto,
   NoteRevealDto,
   NoteRevealKind,
   NoteReviewEnrollmentStatusDto,
@@ -376,7 +392,9 @@ export type {
   NoteReviewPromptDto,
   NoteReviewRatingRequest,
   NoteReviewRatingResultDto,
-  NoteReviewSummaryDto
+  NoteReviewSummaryDto,
+  ReviewHistoryEventDto,
+  ReviewHistoryPageDto
 } from "./noteReviewContracts.js";
 export {
   parseSearchRequest,
