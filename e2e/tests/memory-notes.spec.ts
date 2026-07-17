@@ -39,6 +39,9 @@ test.describe("memory notes", () => {
     await page.getByRole("button", { name: "Show note" }).click();
     await expect(page.getByText("ship girl")).toBeVisible();
     await page.getByRole("button", { name: "Good" }).click();
+    // Rating never auto-advances: the next scheduled date is shown, and the learner chooses to continue.
+    await expect(page.getByText(/Next review:/)).toBeVisible();
+    await page.getByRole("button", { name: "Review next" }).click();
     await expect(page.getByText(/Due complete/)).toBeVisible();
 
     // The canonical /notes/review entry point mounts the very same session — reaching it directly
