@@ -39,6 +39,9 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   // After an import lands, move focus to the first imported note's Open button once the reloaded list has
   // settled. A ref, not state, so arming it never re-renders and it survives the reload it triggers.
   const pendingImportFocus = useRef(false);
+  // After a cancelled import, return focus to the Import button — but only once the panel has closed and
+  // the button is enabled again, so a synchronous focus on the still-disabled button never silently fails.
+  const pendingImportButtonFocus = useRef(false);
   // Where to return focus after the editor closes: the row's Open button when the note is still present,
   // or the primary "New note" action when it is not (a fresh create, or a deleted note). A ref, not state,
   // so setting it never re-renders and it survives the reload triggered alongside the close.
@@ -103,6 +106,15 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     openButtonRef.current?.focus();
   }, [state]);
 
+  // Once a cancelled import has closed the panel and re-enabled the Import button, restore focus to it.
+  useEffect(() => {
+    if (importing || !pendingImportButtonFocus.current) {
+      return;
+    }
+    pendingImportButtonFocus.current = false;
+    importRef.current?.focus();
+  }, [importing]);
+
   // Decide where focus returns the moment the editor opens: the originating row's Open button for an
   // edit, the primary "New note" action for a create. Deleting overrides it to "New note" because the
   // row it came from is gone.
@@ -143,7 +155,7 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
 
   function onImportCancelled(): void {
     setImporting(false);
-    importRef.current?.focus();
+    pendingImportButtonFocus.current = true;
   }
 
   function onImported(result: ImportNotesResultDto): void {
