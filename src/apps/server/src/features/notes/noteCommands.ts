@@ -128,6 +128,43 @@ export async function insertNoteInTx(tx: Transaction, params: InsertNoteParams):
   }
 }
 
+// Insert ONE cardless current-note prompt under a note inside the caller's transaction — the single writer
+// of the note→prompt relationship (#658/#661). It creates the prompt Entry (`type: "memory_prompt"`), its
+// `memory_prompts` row (cue doc/text, no answer, `revealKind: "current_note"`, `lifecycle: "ready"`), and
+// the `contains` link from the note. It writes no review card or event, so the prompt is cardless until a
+// caller deliberately seeds a card. The `memory_prompts_one_current_note_per_note_uq` partial unique index
+// guarantees at most one current-note prompt per note. Both Notes-owned enrollment and import compose it,
+// so there is exactly one place a current-note prompt's rows are written.
+export async function insertCurrentNotePromptInTx(
+  tx: Transaction,
+  params: Readonly<{
+    cueDoc: DocumentNodeJSON;
+    cueText: string;
+    noteEntryId: string;
+    now: Date;
+    promptId: string;
+  }>
+): Promise<void> {
+  await tx.insert(entries).values({ id: params.promptId, type: "memory_prompt" });
+  await tx.insert(memoryPrompts).values({
+    answerDoc: null,
+    answerText: null,
+    chunkId: null,
+    createdAt: params.now,
+    cueDoc: params.cueDoc,
+    cueText: params.cueText,
+    entryId: params.promptId,
+    lifecycle: "ready",
+    noteEntryId: params.noteEntryId,
+    revealKind: "current_note"
+  });
+  await tx.insert(entryLinks).values({
+    fromEntryId: params.noteEntryId,
+    toEntryId: params.promptId,
+    type: "contains"
+  });
+}
+
 // Delete a note and EVERYTHING bound to it inside the caller's transaction — the single owner-scoped
 // cascade both Reader and Memory delete through (#620). It first tears down each Memory prompt the note
 // `contains` (its shared review card + append-only events, via the review substrate), then the note's and

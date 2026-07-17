@@ -1,12 +1,17 @@
-import type {
-  AnchoredNoteDto,
-  CreateMarkRequest,
-  CreateNoteRequest,
-  CreateStandaloneNoteRequest,
-  NoteDto,
-  NoteListDto,
-  NotesOverviewListDto,
-  UpdateNoteRequest
+import {
+  parseImportNotesResultDto,
+  parseMemoryGlossSuggestionDto,
+  type AnchoredNoteDto,
+  type CreateMarkRequest,
+  type CreateNoteRequest,
+  type CreateStandaloneNoteRequest,
+  type ImportNotesRequest,
+  type ImportNotesResultDto,
+  type MemoryGlossSuggestionDto,
+  type NoteDto,
+  type NoteListDto,
+  type NotesOverviewListDto,
+  type UpdateNoteRequest
 } from "@whetstone/contracts";
 
 import { apiUrl } from "../../shared/runtime";
@@ -83,6 +88,29 @@ export async function deleteOwnedNote(noteEntryId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`Request to ${path} failed with status ${response.status}.`);
   }
+}
+
+// Import a batch of refined notebook rows as standalone Notes in one atomic write (#661). Either every
+// note lands or none does, so a failed import lets the caller keep the untouched paste. Each imported note
+// is cardless — it enters Review only when the learner deliberately adds it. Returns the created note and
+// prompt ids in pasted order.
+export async function importNotes(request: ImportNotesRequest): Promise<ImportNotesResultDto> {
+  return parseImportNotesResultDto(
+    await requestJson<unknown>(apiUrl("/notes/import"), {
+      body: JSON.stringify(request),
+      headers: jsonHeaders,
+      method: "POST"
+    })
+  );
+}
+
+// The bundled offline dictionary's suggestion for a bare term, reused from the shared endpoint so import
+// can fill a blank Note from a gloss without any network dictionary. Returns null inside the DTO when the
+// term is unknown.
+export async function suggestGloss(term: string): Promise<MemoryGlossSuggestionDto> {
+  return parseMemoryGlossSuggestionDto(
+    await requestJson<unknown>(apiUrl(`/memory/suggest?term=${encodeURIComponent(term)}`))
+  );
 }
 
 export async function createNote(
