@@ -66,20 +66,52 @@ code {
   font-size: 0.75rem;
 }
 
-/* The immersive reading room: a single centered column on the paper surface. The app
-   navigation recedes on the reader route (see AppShell), so the reading column owns the
-   viewport. Honors device safe-area insets on the inline edges. */
+/* The immersive reading room: a single centered column on the paper surface, framed by the app
+   shell rather than replacing it. The shell's navigation and utility bar stay in place; the reader
+   fills the shell's content region and provides its own scroll container. Honors device safe-area
+   insets on the inline edges via the reading column and chrome, not the frame. */
 .readerShell {
-  display: block;
-  margin: 0 auto;
-  max-width: 60rem;
-  padding: 2rem;
-  padding-left: max(2rem, env(safe-area-inset-left));
-  padding-right: max(2rem, env(safe-area-inset-right));
+  /* The reader is framed by the app shell (its nav + utility bar); it fills the shell's content
+     region and scrolls inside its own inner column rather than the window — `.app-safe-area` is
+     `100dvh; overflow: hidden`, so the window never scrolls. A flex column: the back-link sits at
+     the top, the reading frame takes the rest. No inline padding here, so the immersive chrome
+     (mobile top/bottom bars) can span the full content width between the shell's bars. */
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+/* The reading region below the back-link: fills the remaining height so its inner column scrolls. */
+.readerReading {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-block-size: 0;
+}
+
+/* The non-scrolling reading frame. `position: relative` scopes the immersive chrome
+   (`.readingHeader` and its title/progress/tools) to this region instead of the viewport, so it no
+   longer paints over or intercepts the shell's utility bar (top) or navigation (bottom). It is a
+   containing block only for `position: absolute` descendants — it deliberately sets no
+   transform/filter/contain, so the editor's `position: fixed` floating surfaces (SelectionToolbar,
+   LookupPanel, Sheet menus) still resolve against the viewport and keep their anchored geometry. */
+.readerReadingMain {
+  position: relative;
+  flex: 1;
+  min-block-size: 0;
+}
+
+/* The reader's own scroll container: the reading column scrolls here (see `useReaderScroll`, which
+   observes this element for progress), leaving the frame and its chrome fixed in place. */
+.readerReadingScroll {
+  block-size: 100%;
+  overflow-y: auto;
 }
 
 /* The unobtrusive back-to-Library control, always reachable while reading and on the
-   empty state. A plain hash anchor so it needs no router context. */
+   empty state. A plain hash anchor so it needs no router context. Its own top/inline spacing
+   (the shell frame now carries no padding), placed clear of the shell's top utility bar. */
 .readerExit {
   color: var(--color-text-muted);
   /* A primary reader navigation control: expand the quiet text link to a ≥44px hit target
@@ -88,7 +120,8 @@ code {
   align-items: center;
   min-block-size: 44px;
   font-weight: 600;
-  margin-bottom: 1.5rem;
+  margin-block: 2rem 1.5rem;
+  margin-inline-start: max(2rem, env(safe-area-inset-left));
   text-decoration: none;
 }
 

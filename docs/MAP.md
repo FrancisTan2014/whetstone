@@ -793,7 +793,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   tap on the reading area recedes/restores it; it must not start receded, else the tools sit below the
   fold and are untappable — #511; `ReaderPage.tsx` owns the narrow-screen tap state). On mobile the
   whole chrome recedes as one through the `data-hidden` flag; on desktop only the title recedes on
-  scroll-up (via `useReaderScroll.ts`) while the tool rail persists. `readingSize.ts` holds the
+  scroll-up (via `useReaderScroll.ts`) while the tool rail persists. Framed inside the app shell (#638),
+  the reader does not scroll the window (`.app-safe-area` is `100dvh; overflow: hidden`): the reading
+  column scrolls inside its own `.readerReadingScroll` container within the non-scrolling
+  `.readerReadingMain` frame, and `useReaderScroll.ts` observes **that element** (not the window) for
+  progress/recede. The immersive chrome is `position: absolute` scoped to that frame (never
+  viewport-`fixed`), so it stays clear of the shell's utility bar and navigation instead of covering
+  them (`readerChromeScope.test.ts` locks this). `readingSize.ts` holds the
   text-size steps (`--reading-size`); `annotationHue.tokens.ts` maps a note template to its inline
   highlight hue key (`noteMark--<hue>`, applied by `applyNoteHighlights.ts`).
   Block content (lists, code, blockquotes, tables, footnotes) renders to the PRODUCT.md readability

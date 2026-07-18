@@ -85,6 +85,7 @@ type ReaderChrome = Readonly<{
   onSizeChange: (size: ReadingSize) => void;
   onToggleChrome: () => void;
   prefersReducedMotion: boolean;
+  registerScrollRef: (element: HTMLElement | null) => void;
   scroll: ReaderScroll;
   size: ReadingSize;
   title: string;
@@ -406,7 +407,8 @@ export function ReaderPage({
   const [tocOpen, setTocOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const scroll = useReaderScroll();
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+  const scroll = useReaderScroll(scrollElement);
   // Below the desktop rail's fit width the chrome is a top bar + bottom tools bar, shown by default
   // and toggled to recede on a center tap of the reading area. It must NOT start hidden: a receded
   // bottom bar sits below the fold (translateY(130%)), so hiding by default left the reading tools
@@ -1132,6 +1134,7 @@ export function ReaderPage({
               onSizeChange,
               onToggleChrome,
               prefersReducedMotion,
+              registerScrollRef: setScrollElement,
               scroll,
               size,
               tools: {
@@ -1354,27 +1357,29 @@ function renderViewing(
           tocOpen={tools.tocOpen}
           workEntryId={workEntryId}
         />
-        <motion.div
-          animate={entrance.animate}
-          className="readerEntrance"
-          initial={entrance.initial}
-          key={`${workEntryId}-${activeUnitIndex}`}
-          transition={entrance.transition}
-        >
-          <div className="reading-surface readerPaper" lang={chrome.language}>
-            <FrontMatterNotice
-              activeUnitIndex={activeUnitIndex}
-              onSelectUnit={onSelectUnit}
-              structure={structure}
-            />
-            {renderActiveUnit(structure, activeUnit, onRetryUnit, handlers)}
-            <ChapterPager
-              activeUnitIndex={activeUnitIndex}
-              onSelectUnit={onSelectUnit}
-              structure={structure}
-            />
-          </div>
-        </motion.div>
+        <div className="readerReadingScroll" ref={chrome.registerScrollRef}>
+          <motion.div
+            animate={entrance.animate}
+            className="readerEntrance"
+            initial={entrance.initial}
+            key={`${workEntryId}-${activeUnitIndex}`}
+            transition={entrance.transition}
+          >
+            <div className="reading-surface readerPaper" lang={chrome.language}>
+              <FrontMatterNotice
+                activeUnitIndex={activeUnitIndex}
+                onSelectUnit={onSelectUnit}
+                structure={structure}
+              />
+              {renderActiveUnit(structure, activeUnit, onRetryUnit, handlers)}
+              <ChapterPager
+                activeUnitIndex={activeUnitIndex}
+                onSelectUnit={onSelectUnit}
+                structure={structure}
+              />
+            </div>
+          </motion.div>
+        </div>
       </div>
       <Sheet onOpenChange={tools.onSetNotesOpen} open={tools.notesOpen} title="Your notes">
         <div className="readerNotesPanel">

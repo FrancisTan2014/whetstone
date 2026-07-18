@@ -4,57 +4,84 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { useReaderScroll } from "./useReaderScroll.js";
 
-function setViewport(scrollHeight: number, innerHeight: number): void {
-  Object.defineProperty(document.documentElement, "scrollHeight", {
-    configurable: true,
-    value: scrollHeight
-  });
-  Object.defineProperty(window, "innerHeight", { configurable: true, value: innerHeight });
+// A stand-in scroll container: jsdom does not lay elements out, so scrollTop/scrollHeight/
+// clientHeight are defined explicitly and a "scroll" event is dispatched to drive the hook.
+function makeScroller(scrollHeight: number, clientHeight: number): HTMLDivElement {
+  const element = document.createElement("div");
+  Object.defineProperty(element, "scrollHeight", { configurable: true, value: scrollHeight });
+  Object.defineProperty(element, "clientHeight", { configurable: true, value: clientHeight });
+  Object.defineProperty(element, "scrollTop", { configurable: true, writable: true, value: 0 });
+  document.body.append(element);
+  return element;
 }
 
-function scrollTo(scrollY: number): void {
-  Object.defineProperty(window, "scrollY", { configurable: true, value: scrollY });
+function scrollTo(element: HTMLElement, scrollTop: number): void {
+  Object.defineProperty(element, "scrollTop", {
+    configurable: true,
+    writable: true,
+    value: scrollTop
+  });
   act(() => {
-    window.dispatchEvent(new Event("scroll"));
+    element.dispatchEvent(new Event("scroll"));
   });
 }
 
 afterEach(() => {
-  Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
+  document.body.replaceChildren();
 });
 
 describe("useReaderScroll", () => {
-  it("hides the header on scroll down past the threshold and tracks progress", () => {
-    setViewport(1000, 400); // max scrollable distance = 600
-    Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
+  it("reports the neutral state when there is no scroll element", () => {
+    const { result } = renderHook(() => useReaderScroll(null));
+    expect(result.current).toEqual({ headerHidden: false, progress: 0 });
+  });
 
-    const { result } = renderHook(() => useReaderScroll());
+  it("hides the header on scroll down past the threshold and tracks progress", () => {
+    const element = makeScroller(1000, 400); // max scrollable distance = 600
+
+    const { result } = renderHook(() => useReaderScroll(element));
     expect(result.current).toEqual({ headerHidden: false, progress: 0 });
 
     // Down but below the hide threshold: header stays visible.
-    scrollTo(50);
+    scrollTo(element, 50);
     expect(result.current.headerHidden).toBe(false);
 
     // Down past the threshold: header hides; progress = 300 / 600.
-    scrollTo(300);
+    scrollTo(element, 300);
     expect(result.current.headerHidden).toBe(true);
     expect(result.current.progress).toBeCloseTo(0.5);
 
     // Up: header reappears.
-    scrollTo(100);
+    scrollTo(element, 100);
     expect(result.current.headerHidden).toBe(false);
   });
 
-  it("clamps progress to 1 and reports 0 when the document does not overflow", () => {
-    setViewport(1000, 400);
-    Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
-    const { result } = renderHook(() => useReaderScroll());
+  it("clamps progress to 1 and reports 0 when the content does not overflow", () => {
+    const element = makeScroller(1000, 400);
+    const { result } = renderHook(() => useReaderScroll(element));
 
-    scrollTo(5000);
+    scrollTo(element, 5000);
     expect(result.current.progress).toBe(1);
 
-    setViewport(300, 400); // max <= 0
-    scrollTo(10);
+    Object.defineProperty(element, "scrollHeight", { configurable: true, value: 300 }); // max <= 0
+    scrollTo(element, 10);
     expect(result.current.progress).toBe(0);
+  });
+
+  it("detaches from a removed scroll element and ignores its later scrolls", () => {
+    const element = makeScroller(1000, 400);
+    const { result, rerender } = renderHook(
+      ({ el }: { el: HTMLElement | null }) => useReaderScroll(el),
+      { initialProps: { el: element as HTMLElement | null } }
+    );
+
+    scrollTo(element, 300);
+    expect(result.current.progress).toBeCloseTo(0.5);
+
+    rerender({ el: null });
+    // The listener is detached on teardown: a later scroll on the old element no longer updates
+    // progress (it holds its last value), proving the effect cleanup removed the listener.
+    scrollTo(element, 900);
+    expect(result.current.progress).toBeCloseTo(0.5);
   });
 });
