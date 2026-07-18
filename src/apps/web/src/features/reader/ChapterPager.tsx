@@ -1,3 +1,5 @@
+import { ArrowLeft, ArrowRight } from "lucide-react";
+
 import { clampUnitIndex, unitTocLabel } from "./readerNavigation";
 import type { ReaderStructure } from "./readerModel";
 
@@ -34,7 +36,9 @@ export function ChapterPager({
           onClick={() => onSelectUnit(clampUnitIndex(structure, activeUnitIndex - 1))}
           type="button"
         >
-          <span className="readerPagerDir">← Previous</span>
+          <span className="readerPagerDir">
+            <ArrowLeft aria-hidden size={14} strokeWidth={1.75} /> Previous
+          </span>
           <span className="readerPagerTitle">{unitTocLabel(previous, activeUnitIndex - 1)}</span>
         </button>
       )}
@@ -46,7 +50,9 @@ export function ChapterPager({
           onClick={() => onSelectUnit(clampUnitIndex(structure, activeUnitIndex + 1))}
           type="button"
         >
-          <span className="readerPagerDir">Next →</span>
+          <span className="readerPagerDir">
+            Next <ArrowRight aria-hidden size={14} strokeWidth={1.75} />
+          </span>
           <span className="readerPagerTitle">{unitTocLabel(next, activeUnitIndex + 1)}</span>
         </button>
       )}

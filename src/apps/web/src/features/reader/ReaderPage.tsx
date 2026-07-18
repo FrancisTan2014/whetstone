@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { ArrowLeft, CornerDownLeft } from "lucide-react";
 
 import { isAnchoredNote, type AnchoredNoteDto, type WorkListItemDto } from "@whetstone/contracts";
 import { lookupSourceLabel, lookupSourcesForLanguage } from "@whetstone/contracts";
@@ -1122,7 +1123,7 @@ export function ReaderPage({
   return (
     <section aria-label="Reader" className="readerShell">
       <a aria-label="Back to Library" className="readerExit" href="#/library">
-        ← Library
+        <ArrowLeft aria-hidden size={18} strokeWidth={1.75} /> Library
       </a>
 
       {state.status === "loadingWorks" ? <LoadingIndicator label="Loading works…" /> : null}
@@ -1634,7 +1635,7 @@ const ReaderBlockView = memo(function ReaderBlockView({
           onMouseUp={(event) => event.stopPropagation()}
           type="button"
         >
-          ↩
+          <CornerDownLeft aria-hidden size={16} strokeWidth={1.75} />
         </button>
       )}
     </>
