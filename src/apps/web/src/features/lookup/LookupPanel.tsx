@@ -1,4 +1,5 @@
 import * as Popover from "@radix-ui/react-popover";
+import { X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type {
@@ -394,7 +395,7 @@ function LookupPopover({
         >
           <div className="lookupPopoverChrome">
             <Popover.Close aria-label="Close" className="lookupClose">
-              ✕
+              <X aria-hidden size={20} strokeWidth={1.75} />
             </Popover.Close>
           </div>
           <div className="lookupPanel">

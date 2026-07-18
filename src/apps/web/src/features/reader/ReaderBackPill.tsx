@@ -1,3 +1,5 @@
+import { ArrowLeft, X } from "lucide-react";
+
 import { returnPillAriaLabel, returnPillLabel } from "./returnPoint";
 import type { ReaderReturnPoint } from "./returnPoint";
 
@@ -31,7 +33,7 @@ export function ReaderBackPill({
         type="button"
       >
         <span aria-hidden="true" className="readerBackPillArrow">
-          ‹—
+          <ArrowLeft size={18} strokeWidth={1.75} />
         </span>
         <span className="readerBackPillLabel">{label}</span>
       </button>
@@ -41,7 +43,7 @@ export function ReaderBackPill({
         onClick={onDismiss}
         type="button"
       >
-        <span aria-hidden="true">×</span>
+        <X aria-hidden="true" size={16} strokeWidth={1.75} />
       </button>
     </div>
   );

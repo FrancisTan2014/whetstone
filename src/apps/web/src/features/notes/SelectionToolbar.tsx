@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { X } from "lucide-react";
 
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion.js";
 
@@ -72,7 +73,7 @@ export function SelectionToolbar({
         onClick={onClose}
         type="button"
       >
-        ✕
+        <X aria-hidden size={18} strokeWidth={1.75} />
       </button>
       {overlapsAnnotation ? (
         <p className="selectionToolbarHint" role="note">

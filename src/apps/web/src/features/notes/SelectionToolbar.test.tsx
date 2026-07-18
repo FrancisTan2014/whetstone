@@ -55,7 +55,7 @@ describe("SelectionToolbar", () => {
       "Add note",
       "Mark",
       "Look up",
-      "✕"
+      ""
     ]);
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeDefined();
   });
