@@ -12,9 +12,9 @@ import { selectWordIn } from "../select";
 //  - the reading prose column (`article[aria-label="Reading"]`): its controls — inline cross-reference
 //    links, footnote markers, note marks — are content actuated via selection/lookup/tap and sized to
 //    the words they annotate (a 44px block would wreck inline reading), not chrome.
-//  - visually-hidden (`.sr-only`) inputs: a screen-reader-only control (e.g. the file `<input>` behind a
-//    styled "Upload" button) is a 1×1 proxy; the VISIBLE control that actuates it is swept and must meet
-//    44px.
+//  - visually-hidden (`.sr-only`) inputs: a screen-reader-only control (e.g. the file `<input>` the
+//    Library's Add-menu "Upload file" action actuates) is a 1×1 proxy; the VISIBLE control that fronts
+//    it — the header **Add** trigger — is swept and must meet 44px.
 // Everything else — all app chrome: nav, reader tools, the 目录 drawer, the selection toolbar, the note
 // sheet, the lookup popover — must meet the 44px bar.
 const ALLOWLIST = ['article[aria-label="Reading"]', ".sr-only"].join(", ");
@@ -128,32 +128,32 @@ for (const [viewportName, viewport] of [
   });
 }
 
-// Regression for the sweep's own coverage (#519): the Library "Upload" control is a button-styled
-// `<label>` wrapping an `.sr-only` `<input type=file>`. The hidden input is allowlisted, so if the
-// sweep did not also enumerate the visible label proxy (its earlier blind spot), this whole class of
-// app chrome would go unguarded. Assert the label IS matched by the sweep's interactive selector and
-// meets the 44px bar — so a regression of the visible proxy would fail the sweep.
-test("the Library Upload proxy label is swept and meets the 44px bar (#519)", async ({
-  page,
-  setup
-}) => {
+// Regression for the sweep's own coverage (#519): the Library's file-upload front door is the header
+// **Add** menu trigger — a persistent 44px button — while the `<input type=file>` it drives is an
+// `.sr-only` proxy actuated from the menu's "Upload file" item (#640). The hidden input is allowlisted,
+// so the persistent VISIBLE actuator (the Add trigger) is what must be enumerated by the sweep and meet
+// the 44px bar; a regression of that chrome would fail the sweep.
+test("the Library Add trigger is swept and meets the 44px bar (#519)", async ({ page, setup }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
   await page.goto(`${setup.baseURL}#/library`);
 
-  const upload = page.locator('label:has(input[type="file"])').filter({ hasText: "Upload" });
-  await expect(upload).toBeVisible();
+  const add = page.getByRole("button", { name: "Add" });
+  await expect(add).toBeVisible();
 
-  // The visible proxy — not just the hidden input — is in the enumerated set the sweep measures.
-  const swept = await upload.evaluate(
+  // The visible actuator — not the hidden file input — is in the enumerated set the sweep measures.
+  const swept = await add.evaluate(
     (element, selector) => element.matches(selector),
     INTERACTIVE_SELECTOR
   );
-  expect(swept, "the Upload label proxy must be enumerated by the sweep").toBe(true);
+  expect(swept, "the Add trigger must be enumerated by the sweep").toBe(true);
 
-  const box = await upload.evaluate((element) => {
+  const box = await add.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return { height: rect.height, width: rect.width };
   });
   expect(box.height).toBeGreaterThanOrEqual(44);
   expect(box.width).toBeGreaterThanOrEqual(44);
+
+  // The file input itself is the allowlisted `.sr-only` 1×1 proxy — hidden, never a hit target.
+  await expect(page.getByLabel("Upload")).toHaveClass(/sr-only/);
 });

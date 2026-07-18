@@ -41,12 +41,17 @@ test.describe("direct Recitation maintenance continuation (#637)", () => {
     const workA = await uploadWork(page.request, baseURL, workAFixture);
     const workB = await uploadWork(page.request, baseURL, workBFixture);
 
-    // Enrol both Works from the Library. Declaring "I can recite this" enrols the exact Work and opens its
-    // review; leaving before rating keeps its card due, so both remain outstanding.
+    // Enrol both Works from the Library. The read-first card holds "I can recite this" in its overflow
+    // menu (#640); declaring it enrols the exact Work and opens its review; leaving before rating keeps
+    // its card due, so both remain outstanding.
     for (const work of [workA, workB]) {
       await page.goto(`${baseURL}#/library`);
       const card = page.getByRole("listitem").filter({ hasText: work.title });
-      await card.getByRole("button", { name: "I can recite this" }).click();
+      await card.getByRole("button", { name: `More actions for ${work.title}` }).click();
+      await page
+        .getByRole("menu", { name: `More actions for ${work.title}` })
+        .getByRole("menuitem", { name: "I can recite this" })
+        .click();
       await expect(page.getByText("from memory", { exact: false }).first()).toBeVisible();
     }
 

@@ -39,7 +39,7 @@ reading unit of blocks via `rehype-parse` + `rehype-remark`; detects structural 
 `<img>` at the hast stage and emits figure blocks carrying the transient image src + alt + caption,
 consuming `<figcaption>` so it is never a heading or the unit title), `epubMetadata.ts` (normalize OPF
 title/author/language), `blockMarkdown.ts` (serialize a block's mdast back to Markdown for safe
-rendering; `blocksToMarkdown` reconstructs a whole work for export), `author.ts`, `work.ts`,
+rendering; `blocksToMarkdown` reconstructs a whole work for re-ingestion diffing), `author.ts`, `work.ts`,
 `noteTemplate.ts` (v0 note templates +
 size-based preselection), `noteAnswers.ts` (answer validation + note-body Markdown), `noteAnchor.ts`
 (anchors a note to a block id with an optional sub-block offset range), `productIdentity.ts`,
@@ -406,9 +406,8 @@ can navigate them from another package.
   `(target_source_file, target_anchor)`, and writes the flattened tree to `toc_entries` (pre-order
   `order_index`, `depth`, `parent_entry_id`; each entry also a first-class `entries` row of type
   `toc_entry`); fail-soft — no nav / empty parse persists nothing (#379). Blocks carry `work_entry_id`, so notes on
-  soft-deleted (unit-detached) blocks stay addressable; a work's Markdown can be exported
-  (`GET /api/works/:id/content/markdown`, which keeps `loadWorkContent` server-side). The reader no
-  longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
+    soft-deleted (unit-detached) blocks stay addressable. The reader no
+    longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
   (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit` / `loadWorkAnchorIndex`):
   `GET …/structure` (units + block counts, no content), `GET …/units/:unitId/content` (one unit's
   ordered blocks — both the mdast `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`,
@@ -665,24 +664,31 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   straight to a Work (`libraryApi.ingestEpub` posts the raw bytes, OPF metadata authoritative), while a
   PDF/Markdown (no reliable metadata) opens the same **Add work** sheet pre-filled with the filename's
   title, then on submit creates the Work and ingests the held file into it via the content feature's
-  `contentApi.ingestPdf`/`ingestMarkdown`. Each card carries four
-  actions — a reader link (`#/reader?work=<entryId>`, labelled **Continue** when the work has a saved
-  reading position, else **Read** — armed by `libraryApi.fetchWorksWithReadingPosition` →
-  `GET /api/reading-position/works` → the set of work ids with a position), a **Manage content**
-  button (emits `onManageContent` up to `LibraryMode`, which opens the content sheet), a contextual
-  **Notes** link (`#/notes?work=<entryId>`), and **Export Markdown**. Creating a work auto-opens its
-  Manage-content sheet (add content right after create); an EPUB import does not. A **New document**
-  action (#576) opens a minimal sheet (title/type/language — the current user is the author) that calls
+  `contentApi.ingestPdf`/`ingestMarkdown`. The Library is **read-first** (#640): each card leads with one
+  primary action — a reader link (`#/reader?work=<entryId>`, labelled **Continue** when the work has a
+  saved reading position, else **Read** — armed by `libraryApi.fetchWorksWithReadingPosition` →
+  `GET /api/reading-position/works` → the set of work ids with a position) — and folds the rest into one
+  ≥44px overflow menu (`WorkOverflowMenu.tsx`, Radix `DropdownMenu`, `modal={false}`, accessible name
+  `More actions for <title>`): **I can recite this** / **Open in Recite** (`#/recite`) → **View notes**
+  (`#/notes?work=<entryId>`) → **Edit document** (`#/write?work=`) for authored works else **Manage
+  content** (emits `onManageContent`) → separator → **Delete work** (destructive). Recitation *status*
+  never appears in Library — Recite owns it. The header's file-and-create controls collapse into one
+  ≥44px **Add** menu (`LibraryAddMenu.tsx`): **Upload file** (`.epub, .pdf, .md`), **New document**,
+  **Add work manually**; class maps for both menus live in the coverage-excluded
+  `libraryMenu.tokens.ts`. **Upload file** opens the same file front door as before — an EPUB ingests
+  straight to a Work, a PDF/Markdown opens the pre-filled **Add work** sheet. Creating a work auto-opens
+  its Manage-content sheet (add content right after create); an EPUB import does not. **New document**
+  (#576) opens a minimal sheet (title/type/language — the current user is the author) that calls
   `authoredWorks/authoredWorkApi.createAuthoredWork` and hash-navigates into the editor
   (`#/write?work=<id>`); works the current user authored (loaded via `listAuthoredWorks`) carry an
-  **Authored** badge and route their card's primary action to the editor (**Open** → `#/write?work=`)
-  instead of the reader, hiding **Manage content**. `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
+  **Authored** badge and use the same read-first primary action (Read/Continue → `#/reader`), with
+  editing available as the overflow's **Edit document** rather than competing on the card (#640). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
   transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
   each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
   `fetchUnitContent` / `locateBlockUnit` / `fetchWorkAnchorIndex`), with an explicit per-unit loading
   state and an error+Retry;
   `readerModel.ts` carries each block's stored mdast for direct, re-parse-free rendering (no Markdown
-  round-trip; `blockToMarkdown` stays for the export path only);
+  round-trip; `blockToMarkdown` stays for internal Markdown serialization);
   `readerNavigation.ts` holds the pure unit helpers (TOC labels, clamp, unit-by-entry-id, work-level
   progress, `firstSubstantiveUnitIndex`) and `readingPosition.ts` resolves the opening unit (deep-link
   `?block=` via the locator, else saved position, else the **first substantive unit**, skipping
