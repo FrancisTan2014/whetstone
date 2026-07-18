@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,8 +8,8 @@ vi.mock("./todayApi", () => ({
   fetchTodayBoard: vi.fn()
 }));
 
-vi.mock("../capture/CaptureCard", () => ({
-  CaptureCard: () => <section aria-label="Capture today">capture</section>
+vi.mock("./TodayCapture", () => ({
+  TodayCapture: () => <section aria-label="New diary entry">capture</section>
 }));
 
 import type { TodayBoardDto, TodayRoutineDto } from "@whetstone/contracts";
@@ -26,10 +26,21 @@ function makeBoard(overrides: Partial<TodayBoardDto> = {}): TodayBoardDto {
     continueWriting: { status: "empty" },
     date: "2026-07-01",
     dueNow: [],
+    nextReviewAt: null,
     routineFailures: [],
     ...overrides
   };
 }
+
+const readingReady: TodayBoardDto["continueReading"] = {
+  position: {
+    anchorBlockEntryId: null,
+    unitEntryId: "unit-1",
+    workEntryId: "work-1",
+    workTitle: "Fables"
+  },
+  status: "ready"
+};
 
 const memoryDue: TodayRoutineDto = {
   dueCount: 1,
@@ -88,54 +99,62 @@ describe("TodayPage", () => {
     expect(mockedFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the truthful clear line only when the board is clear and something can be continued", async () => {
+  it("shows the calm Done-for-today state when the board is clear and something can be continued", async () => {
+    mockedFetch.mockResolvedValue(makeBoard({ continueReading: readingReady }));
+    renderPage();
+
+    expect(await screen.findByText("Done for today.")).toBeTruthy();
+    expect(screen.queryByText(/Start with one source/)).toBeNull();
+    expect(href(/Keep reading Fables/)).toBe("/reader?work=work-1");
+    // The permanent diary-return link is gone now Diary is a primary destination (#638).
+    expect(screen.queryByText("Return to your diary")).toBeNull();
+  });
+
+  it("reports the next known review date beneath Done for today when one exists", async () => {
     mockedFetch.mockResolvedValue(
-      makeBoard({
-        continueReading: {
-          position: {
-            anchorBlockEntryId: null,
-            unitEntryId: "unit-1",
-            workEntryId: "work-1",
-            workTitle: "Fables"
-          },
-          status: "ready"
-        }
-      })
+      makeBoard({ continueReading: readingReady, nextReviewAt: "2026-07-20T00:00:00.000Z" })
     );
     renderPage();
 
-    expect(await screen.findByText("All due work is clear.")).toBeTruthy();
-    expect(screen.queryByText(/Start with one source/)).toBeNull();
-    expect(href(/Keep reading Fables/)).toBe("/reader?work=work-1");
-    expect(href("Return to your diary")).toBe("/diary");
+    expect(await screen.findByText("Done for today.")).toBeTruthy();
+    expect(screen.getByText("Next review July 20, 2026.")).toBeTruthy();
   });
 
-  it("shows a first-run on-ramp instead of the clear line when there is nothing to continue", async () => {
+  it("omits the next-review line when nothing is enrolled ahead", async () => {
+    mockedFetch.mockResolvedValue(makeBoard({ continueReading: readingReady, nextReviewAt: null }));
+    renderPage();
+
+    expect(await screen.findByText("Done for today.")).toBeTruthy();
+    expect(screen.queryByText(/Next review/)).toBeNull();
+  });
+
+  it("shows a first-run on-ramp with no empty Continue placeholders when there is nothing to continue", async () => {
     mockedFetch.mockResolvedValue(makeBoard());
     renderPage();
 
     expect(await screen.findByText(/Start with one source/)).toBeTruthy();
-    expect(screen.queryByText("All due work is clear.")).toBeNull();
+    expect(screen.queryByText("Done for today.")).toBeNull();
     expect(href("Go to your Library")).toBe("/library");
-    // Continue empties render as quiet copy.
-    expect(screen.getByText("No reading in progress.")).toBeTruthy();
-    expect(screen.getByText("No writing in progress.")).toBeTruthy();
+    // Empty continuations render nothing at all — no placeholder copy and no Continue heading.
+    expect(screen.queryByText("No reading in progress.")).toBeNull();
+    expect(screen.queryByText("No writing in progress.")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Continue" })).toBeNull();
   });
 
-  it("groups a single due routine into one row with a review deep link", async () => {
+  it("groups a single due Notes-review routine into one row with a Review deep link", async () => {
     mockedFetch.mockResolvedValue(makeBoard({ clear: false, dueNow: [memoryDue] }));
     renderPage();
 
-    expect(await screen.findByText("Note review")).toBeTruthy();
+    expect(await screen.findByText("Notes review")).toBeTruthy();
     expect(screen.getByText("1 due")).toBeTruthy();
     expect(screen.queryByText(/overdue/)).toBeNull();
     expect(href("Review")).toBe("/notes/review");
     expect(screen.getByRole("listitem")).toBeTruthy();
-    expect(screen.queryByText("All due work is clear.")).toBeNull();
+    expect(screen.queryByText("Done for today.")).toBeNull();
     expect(screen.queryByText(/Start with one source/)).toBeNull();
   });
 
-  it("orders overdue routines first and emphasizes the overdue count", async () => {
+  it("orders overdue routines first, emphasizes the overdue count, and opens each into Review", async () => {
     mockedFetch.mockResolvedValue(
       makeBoard({ clear: false, dueNow: [recitationOverdue, memoryDue] })
     );
@@ -145,36 +164,34 @@ describe("TodayPage", () => {
     const rows = screen.getAllByRole("listitem");
     expect(rows[0]?.textContent).toContain("Recitation");
     expect(rows[0]?.textContent).toContain("2 due · 2 overdue");
-    expect(rows[1]?.textContent).toContain("Note review");
-    expect(href("Start")).toBe("/recitation");
+    expect(rows[1]?.textContent).toContain("Notes review");
+    // Both required rows open a direct review, so both actions read "Review".
+    expect(within(rows[0]!).getByRole("link", { name: "Review" }).getAttribute("href")).toBe(
+      "/recitation"
+    );
+    expect(within(rows[1]!).getByRole("link", { name: "Review" }).getAttribute("href")).toBe(
+      "/notes/review"
+    );
   });
 
   it("keeps the board un-clear and offers a Retry when a routine source fails", async () => {
     mockedFetch.mockResolvedValueOnce(makeBoard({ clear: false, routineFailures: ["memory"] }));
     renderPage();
 
-    expect(await screen.findByText("Couldn’t load your note review right now.")).toBeTruthy();
-    expect(screen.queryByText("All due work is clear.")).toBeNull();
+    expect(await screen.findByText("Couldn’t load your notes review right now.")).toBeTruthy();
+    expect(screen.queryByText("Done for today.")).toBeNull();
 
     mockedFetch.mockResolvedValueOnce(makeBoard());
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText(/Start with one source/)).toBeTruthy();
-    expect(screen.queryByText("Couldn’t load your note review right now.")).toBeNull();
+    expect(screen.queryByText("Couldn’t load your notes review right now.")).toBeNull();
   });
 
   it("offers each ready Continue invitation as a deep link into its feature", async () => {
     mockedFetch.mockResolvedValue(
       makeBoard({
-        continueReading: {
-          position: {
-            anchorBlockEntryId: null,
-            unitEntryId: "unit-1",
-            workEntryId: "work-1",
-            workTitle: "Fables"
-          },
-          status: "ready"
-        },
+        continueReading: readingReady,
         continueWriting: {
           work: {
             createdAt: "2026-06-01T00:00:00.000Z",
@@ -193,6 +210,30 @@ describe("TodayPage", () => {
     expect(await screen.findByRole("link", { name: /Keep reading Fables/ })).toBeTruthy();
     expect(href(/Keep reading Fables/)).toBe("/reader?work=work-1");
     expect(href(/Keep writing My Draft/)).toBe("/write?work=draft-1");
+  });
+
+  it("renders the Continue section for writing alone when only reading is empty", async () => {
+    mockedFetch.mockResolvedValue(
+      makeBoard({
+        continueReading: { status: "empty" },
+        continueWriting: {
+          work: {
+            createdAt: "2026-06-01T00:00:00.000Z",
+            entryId: "draft-1",
+            language: "en",
+            title: "My Draft",
+            updatedAt: "2026-06-30T00:00:00.000Z",
+            workType: "book"
+          },
+          status: "ready"
+        }
+      })
+    );
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Continue" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Keep writing My Draft/ })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Keep reading/ })).toBeNull();
   });
 
   it("surfaces a quiet Retry for every failed Continue invitation", async () => {
@@ -216,29 +257,29 @@ describe("TodayPage", () => {
   it("recomputes the board when the tab regains focus", async () => {
     mockedFetch.mockResolvedValueOnce(makeBoard({ clear: false, dueNow: [memoryDue] }));
     renderPage();
-    await screen.findByText("Note review");
+    await screen.findByText("Notes review");
 
     mockedFetch.mockResolvedValueOnce(makeBoard());
     window.dispatchEvent(new Event("focus"));
 
     expect(await screen.findByText(/Start with one source/)).toBeTruthy();
-    expect(screen.queryByText("Note review")).toBeNull();
+    expect(screen.queryByText("Notes review")).toBeNull();
     expect(mockedFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the save-first quick capture present on every board", async () => {
+  it("keeps the compact capture present on every board", async () => {
     mockedFetch.mockResolvedValue(makeBoard({ clear: false, dueNow: [memoryDue] }));
     renderPage();
 
-    expect(await screen.findByLabelText("Capture today")).toBeTruthy();
+    expect(await screen.findByLabelText("New diary entry")).toBeTruthy();
   });
 
-  it("keeps the save-first quick capture present while the board is still loading", () => {
+  it("keeps the compact capture present while the board is still loading", () => {
     mockedFetch.mockReturnValue(new Promise(() => {}));
 
     renderPage();
 
     expect(screen.getByText("Loading your day…")).toBeTruthy();
-    expect(screen.getByLabelText("Capture today")).toBeTruthy();
+    expect(screen.getByLabelText("New diary entry")).toBeTruthy();
   });
 });

@@ -1,4 +1,4 @@
-import { localDayBoundary } from "@whetstone/domain";
+import { localDayBoundary, type TodayRoutineSummary } from "@whetstone/domain";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -40,7 +40,7 @@ export async function loadNoteReviewRoutineSummary(
   userId: string,
   now: Date,
   timeZone: string
-): Promise<Readonly<{ dueCount: number; nextDueAt: string | null; overdueCount: number }>> {
+): Promise<TodayRoutineSummary> {
   const rows = await db
     .select({ dueAt: reviewCards.dueAt })
     .from(reviewCards)
@@ -54,9 +54,15 @@ export async function loadNoteReviewRoutineSummary(
   let dueCount = 0;
   let overdueCount = 0;
   let earliestDueMs: number | null = null;
+  let nextReviewMs: number | null = null;
   for (const row of rows) {
     const dueMs = row.dueAt.getTime();
     if (dueMs > nowMs) {
+      // Not due yet: the earliest such card is the next scheduled review reported beneath a clear Today
+      // (#639); it is never an obligation.
+      if (nextReviewMs === null || dueMs < nextReviewMs) {
+        nextReviewMs = dueMs;
+      }
       continue;
     }
     dueCount += 1;
@@ -70,6 +76,7 @@ export async function loadNoteReviewRoutineSummary(
   return {
     dueCount,
     nextDueAt: earliestDueMs === null ? null : new Date(earliestDueMs).toISOString(),
+    nextReviewAt: nextReviewMs === null ? null : new Date(nextReviewMs).toISOString(),
     overdueCount
   };
 }

@@ -50,10 +50,14 @@ function readyVoiceEntry(ready: VoiceCaptureStatusDto, text: string): DiaryEntry
 // degrade quietly so this never blanks Today or the Diary timeline.
 export function CaptureCard({
   capture = createCaptureVoice(),
-  onCaptured
+  onCaptured,
+  onVoiceAccepted
 }: Readonly<{
   capture?: CaptureVoiceDependencies;
   onCaptured?: (entry: DiaryEntryDto) => void;
+  // Fired the moment a recorded clip is accepted (saved server-side) — before background transcription
+  // finishes — so a host surface (Today's compact capture, #639) can collapse to its confirmation state.
+  onVoiceAccepted?: () => void;
 }>): React.JSX.Element {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -143,6 +147,8 @@ export function CaptureCard({
       const saved = await voice.submit(audio);
       if (!saved) {
         setError("Couldn't save your capture. Please try again.");
+      } else {
+        onVoiceAccepted?.();
       }
     } catch {
       setError("Couldn't save your capture. Please try again.");

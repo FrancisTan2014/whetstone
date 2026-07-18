@@ -110,7 +110,7 @@ describe("App shell and routes", () => {
     const markup = renderAt("/");
 
     expect(markup).toContain('id="today-heading"');
-    expect(markup).toContain("Capture today");
+    expect(markup).toContain("New diary entry");
     // Today is the landing now — the Library no longer mounts at the index route.
     expect(markup).not.toContain("Work detail");
   });

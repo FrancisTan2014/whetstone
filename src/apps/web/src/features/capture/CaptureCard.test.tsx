@@ -184,6 +184,34 @@ describe("CaptureCard voice capture (saved-first, #566)", () => {
     expect(await screen.findByText("Saved — waiting to transcribe…")).toBeTruthy();
   });
 
+  it("signals an accepted voice clip so a host can collapse to its confirmation (#639)", async () => {
+    mockedVoiceSubmit.mockResolvedValue({ id: "vc-1", status: "queued" });
+    mockedVoiceActive.mockResolvedValueOnce([]).mockResolvedValue([voiceStatus()]);
+    const onVoiceAccepted = vi.fn();
+    render(<CaptureCard capture={fakeVoice()} onVoiceAccepted={onVoiceAccepted} />);
+    await waitFor(() => expect(mockedVoiceActive).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    await waitFor(() => expect(onVoiceAccepted).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not signal acceptance when saving the voice clip fails (#639)", async () => {
+    mockedVoiceSubmit.mockRejectedValue(new Error("save down"));
+    const onVoiceAccepted = vi.fn();
+    render(<CaptureCard capture={fakeVoice()} onVoiceAccepted={onVoiceAccepted} />);
+    await waitFor(() => expect(mockedVoiceActive).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await user.click(await screen.findByRole("button", { name: "Stop & save" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(onVoiceAccepted).not.toHaveBeenCalled();
+  });
+
   it("shows a calm retry and saves nothing when no speech is caught", async () => {
     const start = vi.fn(async () => ({ stop: async () => new Blob() }));
     render(<CaptureCard capture={fakeVoice({ start })} />);

@@ -28,6 +28,7 @@ const board = {
   continueWriting: { status: "empty" },
   date: "2026-07-15",
   dueNow: [routine],
+  nextReviewAt: null,
   routineFailures: ["memory"]
 } as const;
 
@@ -52,6 +53,18 @@ describe("todayRoutineDtoSchema", () => {
 describe("todayBoardDtoSchema", () => {
   it("accepts a fully-specified board", () => {
     expect(todayBoardDtoSchema.parse(board)).toEqual(board);
+  });
+
+  it("accepts an ISO nextReviewAt for a clear board's next known due time", () => {
+    const parsed = todayBoardDtoSchema.parse({
+      ...board,
+      nextReviewAt: "2026-07-20T00:00:00.000Z"
+    });
+    expect(parsed.nextReviewAt).toBe("2026-07-20T00:00:00.000Z");
+  });
+
+  it("rejects a non-ISO nextReviewAt", () => {
+    expect(() => todayBoardDtoSchema.parse({ ...board, nextReviewAt: "someday" })).toThrow();
   });
 
   it("accepts the failed invitation variants", () => {

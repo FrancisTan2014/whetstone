@@ -111,15 +111,25 @@ export async function loadRecitationRoutineSummary(
   const dayStartMs = utcStart.getTime();
 
   const obligations: RecitationPlanObligation[] = [];
+  let nextReviewMs: number | null = null;
   for (const plan of plans) {
     const target = await loadWholeWorkTarget(db, plan.entryId, userId);
     obligations.push(toObligation(plan.entryId, target?.card, now, dayStartMs));
+    // The next scheduled review still ahead: the earliest active Work-level card due strictly after now
+    // (a due-now card is an obligation, not a future review). Surfaced beneath a clear Today (#639).
+    if (target !== undefined && target.card.status === "active") {
+      const dueMs = target.card.dueAt.getTime();
+      if (dueMs > now.getTime() && (nextReviewMs === null || dueMs < nextReviewMs)) {
+        nextReviewMs = dueMs;
+      }
+    }
   }
 
   const { due } = selectRecitationWork(obligations, null);
   return {
     dueCount: due.dueCount,
     nextDueAt: due.nextDueAtMs === null ? null : new Date(due.nextDueAtMs).toISOString(),
+    nextReviewAt: nextReviewMs === null ? null : new Date(nextReviewMs).toISOString(),
     overdueCount: due.overdueCount
   };
 }

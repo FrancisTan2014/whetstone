@@ -19,6 +19,7 @@ const board: TodayBoardDto = {
       overdueCount: 2
     }
   ],
+  nextReviewAt: null,
   routineFailures: []
 };
 
