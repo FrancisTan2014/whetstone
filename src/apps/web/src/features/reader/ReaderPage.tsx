@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 import { isAnchoredNote, type AnchoredNoteDto, type WorkListItemDto } from "@whetstone/contracts";
@@ -859,7 +859,15 @@ export function ReaderPage({
   // cross-block) from the rendered DOM via the shared offset model, so the toolbar appears wherever
   // the release lands. A release outside the reader, or one whose selection is empty/whitespace,
   // captures nothing.
-  useEffect(() => {
+  //
+  // A layout effect (not a passive one) installs the release listener synchronously in the same
+  // commit that first renders the reading surface, so the listener is guaranteed to be attached the
+  // instant the reading content is queryable. A passive effect runs in a later scheduler task after
+  // commit, which under load (CI's parallel coverage run) can be delayed past a release that lands
+  // immediately after the content appears — dropping the very first selection. Layout timing closes
+  // that window; it only registers document listeners (no layout read/write), so running earlier is
+  // safe.
+  useLayoutEffect(() => {
     if (selectionContext === undefined) {
       return;
     }
