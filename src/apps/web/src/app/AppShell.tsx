@@ -12,7 +12,7 @@ function navLinkClassName(isActive: boolean): string {
     "flex min-h-[44px] min-w-[44px] flex-1 items-center justify-center rounded px-1 py-2 text-sm font-medium whitespace-nowrap md:flex-none md:justify-start md:px-3";
 
   return isActive
-    ? `${base} bg-anno-thought-wash text-accent`
+    ? `${base} bg-accent-selection text-accent`
     : `${base} text-text-muted hover:text-text`;
 }
 

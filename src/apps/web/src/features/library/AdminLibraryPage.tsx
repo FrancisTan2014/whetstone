@@ -717,9 +717,7 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
           {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
         </span>
         {authored ? (
-          <span className="rounded bg-anno-thought-wash px-1.5 py-0.5 text-xs text-accent">
-            Authored
-          </span>
+          <span className="rounded bg-bg px-1.5 py-0.5 text-xs text-text-muted">Authored</span>
         ) : null}
       </p>
       <div className="mt-auto flex items-center justify-between gap-2">
