@@ -27,11 +27,16 @@ test.describe("diary capture language removal (#647)", () => {
     await expect(capture.getByRole("button", { name: "中文" })).toHaveCount(0);
     await expect(capture.getByRole("button", { name: "EN" })).toHaveCount(0);
 
-    // A typed capture still saves end to end with no language choice: the box clears only on a successful
-    // save against the real /api/diary/entries endpoint, which no longer accepts or requires a language.
+    // A typed capture still saves end to end with no language choice, against the real
+    // /api/diary/entries endpoint (which no longer accepts or requires a language).
     const box = capture.getByLabel("Capture text");
     await box.fill("today I shipped the capture-language removal");
     await capture.getByRole("button", { name: "Capture" }).click();
-    await expect(box).toHaveValue("");
+
+    // Today's compact capture collapses to its saved confirmation on a successful save (#639): the shared
+    // surface unmounts rather than clearing in place, so the "Capture today" region is gone and Today
+    // shows the restrained "Saved to your diary." status.
+    await expect(capture).toBeHidden();
+    await expect(page.getByText("Saved to your diary.")).toBeVisible();
   });
 });
