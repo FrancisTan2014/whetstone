@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { X } from "lucide-react";
 
 import { motionSprings, withReducedMotion } from "../motion/motion.js";
+import { IconButton } from "./Button.js";
 import type { ToastIntent } from "./toast/ToastProvider.js";
 
 export type ToastProps = Readonly<{
@@ -36,14 +37,12 @@ export function Toast({
       transition={withReducedMotion(motionSprings.snappy, prefersReducedMotion)}
     >
       <span>{message}</span>
-      <button
-        aria-label="Dismiss notification"
-        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      <IconButton
+        icon={<X aria-hidden className="h-4 w-4" focusable="false" strokeWidth={1.75} />}
+        label="Dismiss notification"
         onClick={onDismiss}
-        type="button"
-      >
-        <X aria-hidden className="h-4 w-4" focusable="false" strokeWidth={1.75} />
-      </button>
+        variant="ghost"
+      />
     </motion.div>
   );
 }
