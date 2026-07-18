@@ -130,6 +130,7 @@ describe("loadNoteReviewRoutineSummary", () => {
     expect(summary).toEqual({
       dueCount: 2,
       nextDueAt: "2026-01-01T00:00:00.000Z",
+      nextReviewAt: "2026-01-03T00:00:00.000Z",
       overdueCount: 1
     });
   });
@@ -148,6 +149,38 @@ describe("loadNoteReviewRoutineSummary", () => {
       zone
     );
 
-    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+    expect(summary).toEqual({
+      dueCount: 0,
+      nextDueAt: null,
+      nextReviewAt: "2026-01-05T00:00:00.000Z",
+      overdueCount: 0
+    });
+  });
+
+  it("reports a future card as the next review even with several enrolled ahead", async () => {
+    await seedPrompt({
+      cueText: "futureA",
+      dueAt: new Date("2026-01-04T00:00:00.000Z"),
+      userId: userA
+    });
+    await seedPrompt({
+      cueText: "futureB",
+      dueAt: new Date("2026-01-04T00:00:00.000Z"),
+      userId: userA
+    });
+
+    const summary = await loadNoteReviewRoutineSummary(
+      context.db,
+      userA,
+      new Date("2026-01-02T12:00:00.000Z"),
+      zone
+    );
+
+    expect(summary).toEqual({
+      dueCount: 0,
+      nextDueAt: null,
+      nextReviewAt: "2026-01-04T00:00:00.000Z",
+      overdueCount: 0
+    });
   });
 });

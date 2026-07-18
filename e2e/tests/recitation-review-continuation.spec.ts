@@ -55,7 +55,7 @@ test.describe("direct Recitation maintenance continuation (#637)", () => {
     await expect(page.getByText("Recitation", { exact: true })).toBeVisible();
 
     // Enter the earliest-due review (no ?work), recite, reveal, and rate the first Work.
-    await page.getByRole("link", { name: "Start", exact: true }).click();
+    await page.getByRole("link", { name: "Review", exact: true }).click();
     await expect(page).toHaveURL(/#\/recitation$/);
     await page.getByRole("button", { name: "Reveal source" }).click();
     await page.getByRole("button", { name: "Complete, with effort" }).click();
@@ -70,7 +70,7 @@ test.describe("direct Recitation maintenance continuation (#637)", () => {
     await expect(page.getByText("Recitation", { exact: true })).toBeVisible();
 
     // Returning to the review opens the remaining due Work; rating it clears the last due card.
-    await page.getByRole("link", { name: "Start", exact: true }).click();
+    await page.getByRole("link", { name: "Review", exact: true }).click();
     await expect(page).toHaveURL(/#\/recitation$/);
     await page.getByRole("button", { name: "Reveal source" }).click();
     await page.getByRole("button", { name: "Complete, with effort" }).click();

@@ -77,18 +77,23 @@ test.describe("Today daily cycle (#610)", () => {
     await page.goto(`${baseURL}#/`);
     await expect(page.getByRole("heading", { name: "Due now" })).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toBeVisible();
-    await expect(page.getByText("Note review")).toBeVisible();
-    await expect(page.getByText("All due work is clear.")).toHaveCount(0);
+    await expect(page.getByText("Notes review")).toBeVisible();
+    await expect(page.getByText("Done for today.")).toHaveCount(0);
 
     // Complete the due recitation via the direct whole-Work review (reveal the canonical source, rate).
-    await page.getByRole("link", { name: "Start", exact: true }).click();
+    // Both required rows now read "Review" (#639), so scope to the Recitation row before clicking.
+    await page
+      .getByRole("listitem")
+      .filter({ hasText: "Recitation" })
+      .getByRole("link", { name: "Review", exact: true })
+      .click();
     await page.getByRole("button", { name: "Reveal" }).click();
     await page.getByRole("button", { name: "Complete, with effort" }).click();
     await expect(page.getByRole("status")).toContainText("Scheduled");
     await page.getByRole("link", { name: "Back to Today" }).click();
 
     // Back on a freshly recomputed board the recitation row is gone; note review is still due.
-    await expect(page.getByText("Note review")).toBeVisible();
+    await expect(page.getByText("Notes review")).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toHaveCount(0);
 
     // Review the due note via the Notes-owned Review session (reached from Today's Review link).
@@ -103,9 +108,8 @@ test.describe("Today daily cycle (#610)", () => {
 
     // Returning to Today shows the truthful clear state, with the optional Continue section still present.
     await page.goto(`${baseURL}#/`);
-    await expect(page.getByText("All due work is clear.")).toBeVisible();
+    await expect(page.getByText("Done for today.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Due now" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Continue" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Return to your diary" })).toBeVisible();
   });
 });

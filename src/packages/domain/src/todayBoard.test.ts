@@ -13,11 +13,20 @@ type Work = Readonly<{ entryId: string }>;
 
 const clearRoutine: TodayRoutineSource = {
   status: "ok",
-  summary: { dueCount: 0, nextDueAt: null, overdueCount: 0 }
+  summary: { dueCount: 0, nextDueAt: null, nextReviewAt: null, overdueCount: 0 }
 };
 
+// A clear routine that still has a future scheduled review — the shape that lets a clear board report
+// its next known due time.
+function clearWithNextReview(nextReviewAt: string): TodayRoutineSource {
+  return { status: "ok", summary: { dueCount: 0, nextDueAt: null, nextReviewAt, overdueCount: 0 } };
+}
+
 function dueRoutine(nextDueAt: string, overdueCount: number, dueCount = 2): TodayRoutineSource {
-  return { status: "ok", summary: { dueCount, nextDueAt, overdueCount } };
+  return {
+    status: "ok",
+    summary: { dueCount, nextDueAt, nextReviewAt: null, overdueCount }
+  };
 }
 
 function baseInput(
@@ -97,13 +106,55 @@ describe("composeTodayBoard", () => {
     expect(board.dueNow.map((routine) => routine.kind)).toEqual(["memory", "recitation"]);
   });
 
-  it("tie-breaks equal overdue and nextDueAt by kind", () => {
+  it("tie-breaks equal overdue and nextDueAt with Recitation first", () => {
     const at = "2026-07-15T09:00:00.000Z";
     const board = composeTodayBoard(
       baseInput({ memory: dueRoutine(at, 1), recitation: dueRoutine(at, 1) })
     );
 
-    expect(board.dueNow.map((routine) => routine.kind)).toEqual(["memory", "recitation"]);
+    expect(board.dueNow.map((routine) => routine.kind)).toEqual(["recitation", "memory"]);
+  });
+
+  it("reports the earliest future scheduled review across both sources as nextReviewAt", () => {
+    const board = composeTodayBoard(
+      baseInput({
+        memory: clearWithNextReview("2026-07-20T00:00:00.000Z"),
+        recitation: clearWithNextReview("2026-07-18T00:00:00.000Z")
+      })
+    );
+
+    expect(board.clear).toBe(true);
+    expect(board.nextReviewAt).toBe("2026-07-18T00:00:00.000Z");
+  });
+
+  it("reports a single source's future review when the other is enrolled with none ahead", () => {
+    const board = composeTodayBoard(
+      baseInput({
+        memory: clearRoutine,
+        recitation: clearWithNextReview("2026-07-18T00:00:00.000Z")
+      })
+    );
+
+    expect(board.nextReviewAt).toBe("2026-07-18T00:00:00.000Z");
+  });
+
+  it("leaves nextReviewAt null when nothing is enrolled ahead", () => {
+    const board = composeTodayBoard(baseInput());
+
+    expect(board.nextReviewAt).toBeNull();
+  });
+
+  it("never reports nextReviewAt from a failed source", () => {
+    const board = composeTodayBoard(
+      baseInput({
+        memory: { status: "failed" },
+        recitation: clearWithNextReview("2026-07-18T00:00:00.000Z")
+      })
+    );
+
+    // The one loaded source still contributes its future review; the failed one cannot claim a time.
+    expect(board.nextReviewAt).toBe("2026-07-18T00:00:00.000Z");
+    expect(board.routineFailures).toEqual(["memory"]);
   });
 
   it("records a failed routine and stays un-clear even with nothing due", () => {
@@ -182,11 +233,11 @@ describe("compareRoutines", () => {
     expect(compareRoutines(later, earlier)).toBeGreaterThan(0);
   });
 
-  it("tie-breaks equal overdue and nextDueAt by kind, in either argument order", () => {
+  it("tie-breaks equal overdue and nextDueAt with Recitation first, in either argument order", () => {
     const memory = routine({ kind: "memory" });
     const recitation = routine({ kind: "recitation" });
 
-    expect(compareRoutines(memory, recitation)).toBeLessThan(0);
-    expect(compareRoutines(recitation, memory)).toBeGreaterThan(0);
+    expect(compareRoutines(recitation, memory)).toBeLessThan(0);
+    expect(compareRoutines(memory, recitation)).toBeGreaterThan(0);
   });
 });

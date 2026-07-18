@@ -564,7 +564,32 @@ describe("scheduled resurfacing on Today", () => {
       context.deps.now(),
       "UTC"
     );
-    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+    expect(summary).toEqual({
+      dueCount: 0,
+      nextDueAt: null,
+      nextReviewAt: "2026-07-05T09:00:00.000Z",
+      overdueCount: 0
+    });
+  });
+
+  it("reports the earliest Work-level card as the next review across enrolled plans", async () => {
+    const planA = await enroll(await seedWork("work-1", "Fables"));
+    const planB = await enroll(await seedWork("work-2", "Odes"));
+    await recordRecitationReview(context.deps, toEntryId(planA.entryId), "easy", DEFAULT_USER_ID);
+    await recordRecitationReview(context.deps, toEntryId(planB.entryId), "easy", DEFAULT_USER_ID);
+
+    const summary = await loadRecitationRoutineSummary(
+      { db: context.db },
+      DEFAULT_USER_ID,
+      context.deps.now(),
+      "UTC"
+    );
+    expect(summary).toEqual({
+      dueCount: 0,
+      nextDueAt: null,
+      nextReviewAt: "2026-07-05T09:00:00.000Z",
+      overdueCount: 0
+    });
   });
 });
 
@@ -790,7 +815,12 @@ describe("a removed plan never contributes due work", () => {
       context.deps.now(),
       "UTC"
     );
-    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+    expect(summary).toEqual({
+      dueCount: 0,
+      nextDueAt: null,
+      nextReviewAt: null,
+      overdueCount: 0
+    });
   });
 
   it("withholds a card that is paused out of lockstep with an active plan row", async () => {
@@ -810,6 +840,11 @@ describe("a removed plan never contributes due work", () => {
       context.deps.now(),
       "UTC"
     );
-    expect(summary).toEqual({ dueCount: 0, nextDueAt: null, overdueCount: 0 });
+    expect(summary).toEqual({
+      dueCount: 0,
+      nextDueAt: null,
+      nextReviewAt: null,
+      overdueCount: 0
+    });
   });
 });

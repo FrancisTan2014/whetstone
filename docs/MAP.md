@@ -889,16 +889,22 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `today/` is the deterministic routine board (#610) and the app's landing (`/`): `TodayPage.tsx` is a
   calm, finite, clearable single column (PRODUCT "v0 assistant home (Today)" + "The arranger") rendered
   from ONE server-composed read model — `todayApi.fetchTodayBoard` → `GET /api/today`, parsed once through
-  `parseTodayBoardResponse`. It renders a greeting; a **Due now** section with each deterministic routine
-  as ONE grouped row (recitation count/overdue → Start `#/recitation`, note-review count/overdue → Review
-  `#/notes/review`), ordered as the DTO gives (overdue-first, then `nextDueAt`); a truthful **All due work is
-  clear** line ONLY when `board.clear`; a per-routine failure note with a Retry (a failed routine keeps the
-  board un-clear — never a false clear); the always-present save-first quick-capture `CaptureCard` (`/diary`);
-  a first-run on-ramp to the Library when nothing is due or continuable; and a visibly-secondary **Continue**
-  section of optional invitations (reading `#/reader?work=`, writing `#/write?work=`, diary return) each with ready/empty/failed copy. It handles loading and offline/retry, and
-  refetches the whole board on window focus so returning from a deep-linked feature shows a freshly recomputed
-  board. Pure routine-kind → title/action/path maps live in `today.tokens.ts` (coverage-excluded). The board
-  persists no Today state; it is a pure read/compose over feature-owned canonical state.
+  `parseTodayBoardResponse`. It renders a **Due now** section with each deterministic routine as ONE
+  grouped row — Recitation (count/overdue → `#/recitation`) and **Notes review** (count/overdue →
+  `#/notes/review`), both actions read **Review** — ordered as the DTO gives (overdue-first, then
+  `nextDueAt`, then Recitation as the stable tie-break, #639); a truthful **Done for today** state ONLY
+  when `board.clear`, with the next known review date beneath it when `board.nextReviewAt` is set (omitted
+  when nothing is enrolled ahead — never invented); a per-routine failure note with a Retry (a failed
+  routine keeps the board un-clear — never a false clear); the compact save-first capture (`TodayCapture`
+  wraps the shared `CaptureCard` — one **New diary entry** control that opens typed/voice capture only on
+  activation, then collapses to an **Open in Diary** confirmation, #639); a first-run on-ramp to the
+  Library when nothing is due or continuable; and a visibly-secondary **Continue** section of optional
+  invitations (reading `#/reader?work=`, writing `#/write?work=`) that renders ONLY when a resumable item
+  or a failed load exists — empty placeholders and the old diary-return link are gone (#638/#639). It
+  handles loading and offline/retry, and refetches the whole board on window focus so returning from a
+  deep-linked feature shows a freshly recomputed board. Pure routine-kind → title/action/path maps live in
+  `today.tokens.ts` (coverage-excluded). The board persists no Today state; it is a pure read/compose over
+  feature-owned canonical state.
   `authoredWorks/` is the owned-Work editor slice (#576): `AuthoredWorkPage.tsx` is the immersive
   `/write?work=<id>` surface that loads a user-authored Work's canonical ProseMirror document
   (`authoredWorkApi.fetchAuthoredWork`), edits it in the shared `RichContentEditor`, and reads it back

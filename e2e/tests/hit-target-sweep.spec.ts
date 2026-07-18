@@ -30,7 +30,7 @@ const DESKTOP = { height: 900, width: 1280 } as const;
 // loading state). Where a route has no single positive ready marker, the loading-indicator wait below
 // is the guard instead.
 const ROUTES: ReadonlyArray<readonly [string, string, string | undefined]> = [
-  ["Today", "#/", 'section[aria-label="Capture today"]'],
+  ["Today", "#/", 'section[aria-label="New diary entry"]'],
   ["Library", "#/library", 'a[href^="#/reader?work="]'],
   ["Search", "#/search", 'input[type="search"]'],
   ["Diary", "#/diary", 'section[aria-label="Capture today"]']

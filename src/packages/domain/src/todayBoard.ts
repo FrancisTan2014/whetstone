@@ -11,12 +11,16 @@
 // The deterministic-obligation sources Today groups into one row each (#609 Recitation, Memory review).
 export type TodayRoutineKind = "recitation" | "memory";
 
-// A routine's due summary from its owning feature: the raw counts plus the earliest due instant. By
-// construction of every source, `nextDueAt` is non-null exactly when the routine has due work
-// (`dueCount > 0`) and null when it is clear or paused — so the composer keys due-ness off `nextDueAt`.
+// A routine's due summary from its owning feature: the raw counts, the earliest due instant, and the
+// earliest scheduled review still in the future. By construction of every source, `nextDueAt` is
+// non-null exactly when the routine has due work (`dueCount > 0`) and null when it is clear or paused —
+// so the composer keys due-ness off `nextDueAt`. `nextReviewAt` is the earliest active card scheduled
+// strictly after now (null when nothing is enrolled ahead); the composer surfaces it beneath a clear
+// board as the next known due time (#639), never inventing one when nothing is enrolled.
 export type TodayRoutineSummary = Readonly<{
   dueCount: number;
   nextDueAt: string | null;
+  nextReviewAt: string | null;
   overdueCount: number;
 }>;
 
@@ -58,6 +62,10 @@ export type TodayBoard<Position, Work> = Readonly<{
   continueWriting: TodayContinueWriting<Work>;
   date: string;
   dueNow: ReadonlyArray<TodayRoutineComposition>;
+  // The earliest scheduled review still in the future across every loaded routine, or null when nothing
+  // is enrolled ahead. The clear-state UI reports it as the next known due time (#639); a due board
+  // ignores it. A failed source contributes nothing (it cannot claim a truthful next time).
+  nextReviewAt: string | null;
   routineFailures: ReadonlyArray<TodayRoutineKind>;
 }>;
 
@@ -69,10 +77,11 @@ export type ComposeTodayBoardInput<Position, Work> = Readonly<{
   writing: TodayInvitationSource<Work>;
 }>;
 
-// Order Due now: overdue routines first, then earliest `nextDueAt` ascending, then kind as a stable
-// deterministic tie-break (kinds are always distinct). ISO instants compare chronologically as strings.
-// Exported so the total order can be verified directly in both argument orders — `composeTodayBoard`
-// only ever sorts a fixed-order two-routine array, which cannot exercise every comparison branch.
+// Order Due now: overdue routines first, then earliest `nextDueAt` ascending, then Recitation first as
+// the stable deterministic tie-break (#639) (kinds are always distinct). ISO instants compare
+// chronologically as strings. Exported so the total order can be verified directly in both argument
+// orders — `composeTodayBoard` only ever sorts a fixed-order two-routine array, which cannot exercise
+// every comparison branch.
 export function compareRoutines(a: TodayRoutineComposition, b: TodayRoutineComposition): number {
   if (a.overdue !== b.overdue) {
     return a.overdue ? -1 : 1;
@@ -80,7 +89,7 @@ export function compareRoutines(a: TodayRoutineComposition, b: TodayRoutineCompo
   if (a.nextDueAt !== b.nextDueAt) {
     return a.nextDueAt < b.nextDueAt ? -1 : 1;
   }
-  return a.kind < b.kind ? -1 : 1;
+  return a.kind === "recitation" ? -1 : 1;
 }
 
 function toContinueReading<Position>(
@@ -97,6 +106,22 @@ function toContinueWriting<Work>(source: TodayInvitationSource<Work>): TodayCont
     return { status: "failed" };
   }
   return source.value === null ? { status: "empty" } : { status: "ready", work: source.value };
+}
+
+// The earliest scheduled review still ahead across the loaded routines: the minimum non-null
+// `nextReviewAt` of the OK sources, or null when neither is enrolled ahead (or both failed). ISO
+// instants order chronologically as strings, so a plain string comparison finds the earliest.
+function earliestNextReview(sources: ReadonlyArray<TodayRoutineSource>): string | null {
+  let earliest: string | null = null;
+  for (const source of sources) {
+    if (source.status === "failed" || source.summary.nextReviewAt === null) {
+      continue;
+    }
+    if (earliest === null || source.summary.nextReviewAt < earliest) {
+      earliest = source.summary.nextReviewAt;
+    }
+  }
+  return earliest;
 }
 
 export function composeTodayBoard<Position, Work>(
@@ -140,6 +165,7 @@ export function composeTodayBoard<Position, Work>(
     continueWriting: toContinueWriting(input.writing),
     date: input.date,
     dueNow,
+    nextReviewAt: earliestNextReview([input.recitation, input.memory]),
     routineFailures
   };
 }

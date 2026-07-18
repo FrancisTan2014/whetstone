@@ -5,8 +5,8 @@ import type { TodayBoardDto, TodayRoutineDto, TodayRoutineKind } from "@whetston
 
 import { buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { CaptureCard } from "../capture/CaptureCard";
 import { fetchTodayBoard } from "./todayApi";
+import { TodayCapture } from "./TodayCapture";
 import { todayRoutineActionLabels, todayRoutinePaths, todayRoutineTitles } from "./today.tokens";
 
 // Today is the deterministic routine board (#610): one calm, finishable, vertical column composed
@@ -60,14 +60,11 @@ export function TodayPage(): React.JSX.Element {
         <h1 className="text-2xl font-semibold text-text" id="today-heading">
           Today
         </h1>
-        <p className="mt-1 text-text-muted">
-          A small, finishable set. Clear it, then rest and play freely.
-        </p>
       </header>
       {renderPrimary(state, load)}
       {/* Quick capture is save-first and always available — even while the board loads or fails —
           and never marks other work done or schedules review. */}
-      <CaptureCard />
+      <TodayCapture />
       {state.status === "ready" ? <ContinueSection board={state.board} reload={load} /> : null}
     </section>
   );
@@ -138,10 +135,35 @@ function PrimaryBoard({
       {firstRun ? (
         <FirstRunOnRamp />
       ) : board.clear ? (
-        <p className="text-text" role="status">
-          All due work is clear.
-        </p>
+        <DoneForToday nextReviewAt={board.nextReviewAt} />
       ) : null}
+    </div>
+  );
+}
+
+// Render the next scheduled review instant as a calm absolute date in UTC, so the caption stays stable
+// regardless of the runner's local timezone. Learner-facing, e.g. "July 5, 2026".
+function formatNextReview(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+    year: "numeric"
+  });
+}
+
+// The truthful completion state (#639): shown only when every required source loaded and nothing is
+// due. It reports the next known due time beneath it when one exists, and omits it entirely when nothing
+// is enrolled ahead rather than inventing a date. No streak, score, or "rest and play" prescription.
+function DoneForToday({
+  nextReviewAt
+}: Readonly<{ nextReviewAt: string | null }>): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1" role="status">
+      <p className="text-text">Done for today.</p>
+      {nextReviewAt === null ? null : (
+        <p className="text-sm text-text-muted">Next review {formatNextReview(nextReviewAt)}.</p>
+      )}
     </div>
   );
 }
@@ -207,35 +229,45 @@ function FirstRunOnRamp(): React.JSX.Element {
   );
 }
 
-// The visibly-secondary Continue section: optional invitations that never block the clear state. Each
-// renders its own ready/empty/failed state in quiet copy, and the diary return link is always offered.
+// The visibly-secondary Continue section (#639): optional invitations that never block completion. It
+// renders only when reading or writing has a real resumable item — or a quiet retry after a failed load
+// — and hides entirely (heading included) when neither exists. Empty placeholders never appear, and the
+// permanent diary-return link is gone now Diary is a primary destination (#638).
 function ContinueSection({
   board,
   reload
-}: Readonly<{ board: TodayBoardDto; reload: () => void }>): React.JSX.Element {
+}: Readonly<{ board: TodayBoardDto; reload: () => void }>): React.JSX.Element | null {
+  const { continueReading, continueWriting } = board;
+  if (continueReading.status === "empty" && continueWriting.status === "empty") {
+    return null;
+  }
   return (
     <section aria-labelledby="today-continue-heading" className="flex flex-col gap-3">
       <h2 className="text-sm font-medium text-text-muted" id="today-continue-heading">
         Continue
       </h2>
-      <ContinueReading reading={board.continueReading} reload={reload} />
-      <ContinueWriting writing={board.continueWriting} reload={reload} />
-      <Link className={quietLinkClass} to="/diary">
-        Return to your diary
-      </Link>
+      {continueReading.status === "empty" ? null : (
+        <ContinueReading reading={continueReading} reload={reload} />
+      )}
+      {continueWriting.status === "empty" ? null : (
+        <ContinueWriting writing={continueWriting} reload={reload} />
+      )}
     </section>
   );
 }
 
+// A resumable reading/writing invitation: the ready link or a failed load's quiet retry. The empty
+// variant is excluded upstream (`ContinueSection` renders these only for a non-empty source), so it is
+// never a state here.
+type ReadingInvitation = Exclude<TodayBoardDto["continueReading"], { status: "empty" }>;
+type WritingInvitation = Exclude<TodayBoardDto["continueWriting"], { status: "empty" }>;
+
 function ContinueReading({
   reading,
   reload
-}: Readonly<{ reading: TodayBoardDto["continueReading"]; reload: () => void }>): React.JSX.Element {
+}: Readonly<{ reading: ReadingInvitation; reload: () => void }>): React.JSX.Element {
   if (reading.status === "failed") {
     return <FailedInvitation label="reading" reload={reload} />;
-  }
-  if (reading.status === "empty") {
-    return <p className="text-sm text-text-muted">No reading in progress.</p>;
   }
   return (
     <Link
@@ -250,12 +282,9 @@ function ContinueReading({
 function ContinueWriting({
   writing,
   reload
-}: Readonly<{ writing: TodayBoardDto["continueWriting"]; reload: () => void }>): React.JSX.Element {
+}: Readonly<{ writing: WritingInvitation; reload: () => void }>): React.JSX.Element {
   if (writing.status === "failed") {
     return <FailedInvitation label="writing" reload={reload} />;
-  }
-  if (writing.status === "empty") {
-    return <p className="text-sm text-text-muted">No writing in progress.</p>;
   }
   return (
     <Link className={quietLinkClass} to={`/write?work=${encodeURIComponent(writing.work.entryId)}`}>

@@ -1243,7 +1243,7 @@ describe("ReaderPage", () => {
     // b-2 lives in the second unit, so the reader opens straight into that unit.
     expect(await screen.findByText("Heading text")).toBeDefined();
     expect(screen.queryByText("Intro paragraph.")).toBeNull();
-    expect(blockElement(container, "b-2")?.scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => expect(blockElement(container, "b-2")?.scrollIntoView).toHaveBeenCalled());
   });
 
   it("shows the empty state when the initial work entry id is unknown", async () => {
@@ -2631,7 +2631,7 @@ describe("ReaderPage note management", () => {
     // landing on the block is covered by the non-dialog block-notes jump below, which is not
     // subject to the Sheet's async focus restoration.)
     expect(screen.queryByRole("dialog", { name: "Your notes" })).toBeNull();
-    expect(blockElement(container, "b-1").scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => expect(blockElement(container, "b-1").scrollIntoView).toHaveBeenCalled());
   });
 
   it("jumps back to the block from the annotations chooser", async () => {
@@ -3293,7 +3293,7 @@ describe("ReaderPage reading position", () => {
     expect(await screen.findByText("Heading text")).toBeDefined();
     expect(screen.queryByText("Intro paragraph.")).toBeNull();
     expect(mockedFetchReadingPosition).toHaveBeenCalledWith("work-1");
-    expect(blockElement(container, "b-2").scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => expect(blockElement(container, "b-2").scrollIntoView).toHaveBeenCalled());
   });
 
   it("does not overwrite the saved block anchor with a pre-scroll save when reopening", async () => {
@@ -3306,7 +3306,7 @@ describe("ReaderPage reading position", () => {
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
 
     expect(await screen.findByText("Heading text")).toBeDefined();
-    expect(blockElement(container, "b-3").scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => expect(blockElement(container, "b-3").scrollIntoView).toHaveBeenCalled());
     expect(mockedSaveReadingPosition).not.toHaveBeenCalled();
   });
 

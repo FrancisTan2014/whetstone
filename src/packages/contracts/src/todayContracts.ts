@@ -56,6 +56,10 @@ export const todayBoardDtoSchema = z
     clear: z.boolean(),
     continueReading: todayContinueReadingSchema,
     continueWriting: todayContinueWritingSchema,
+    // The earliest scheduled review still ahead across the loaded routines, or null when nothing is
+    // enrolled ahead. The clear-state UI reports it as the next known due time (#639); it never invents
+    // one and a due board ignores it.
+    nextReviewAt: z.string().datetime().nullable(),
     // Routine sources whose load threw. A non-empty list forces `clear` false so one failing source
     // never presents a false global clear.
     routineFailures: z.array(todayRoutineKindSchema)

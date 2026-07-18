@@ -292,6 +292,7 @@ describe("GET /api/today", () => {
       continueWriting: { status: "empty" },
       date: localDayKey(new Date(START), "UTC"),
       dueNow: [],
+      nextReviewAt: null,
       routineFailures: []
     });
   });
@@ -327,7 +328,7 @@ describe("GET /api/today", () => {
     ]);
   });
 
-  it("excludes a paused plan and a not-due prompt, staying clear", async () => {
+  it("excludes a paused plan and a not-due prompt, staying clear and reporting the next review", async () => {
     const { planEntryId, targetEntryId } = await enrollWork("work-1", ["One."]);
     await setRecitationDueAt(targetEntryId, "2026-06-30T23:00:00.000Z");
     await pausePlan(planEntryId);
@@ -339,6 +340,21 @@ describe("GET /api/today", () => {
     expect(board.clear).toBe(true);
     expect(board.dueNow).toEqual([]);
     expect(board.routineFailures).toEqual([]);
+    // The paused plan is out of due selection entirely; the future note prompt is the next known review.
+    expect(board.nextReviewAt).toBe("2026-07-05T00:00:00.000Z");
+  });
+
+  it("reports a Work's future maintenance card as the next review on a clear board", async () => {
+    const { targetEntryId } = await enrollWork("work-1", ["One."]);
+    // Push the freshly-enrolled (due-now) card into the future: nothing is due, so the board is clear and
+    // reports that scheduled instant as the next known review time.
+    await setRecitationDueAt(targetEntryId, "2026-07-09T00:00:00.000Z");
+
+    const board = await getBoard();
+
+    expect(board.clear).toBe(true);
+    expect(board.dueNow).toEqual([]);
+    expect(board.nextReviewAt).toBe("2026-07-09T00:00:00.000Z");
   });
 
   it("surfaces the enrolled Work's due-now maintenance card as a single Recitation row", async () => {
@@ -423,6 +439,7 @@ describe("loadTodayBoard failure handling", () => {
       continueWriting: { status: "failed" },
       date: localDayKey(new Date(START), "UTC"),
       dueNow: [],
+      nextReviewAt: null,
       routineFailures: ["recitation", "memory"]
     });
   });
