@@ -109,12 +109,7 @@ describe("IconButton", () => {
   it("forwards Button props such as variant and click handling", () => {
     const clicks: string[] = [];
     render(
-      <IconButton
-        icon={icon}
-        label="Delete"
-        onClick={() => clicks.push("x")}
-        variant="ghost"
-      />
+      <IconButton icon={icon} label="Delete" onClick={() => clicks.push("x")} variant="ghost" />
     );
 
     const button = screen.getByRole("button", { name: "Delete" });

@@ -43,11 +43,7 @@ export function RecitePage(): React.JSX.Element {
     load();
   }, [load]);
 
-  return (
-    <PageFrame title="Recite">
-      {renderState(state)}
-    </PageFrame>
-  );
+  return <PageFrame title="Recite">{renderState(state)}</PageFrame>;
 }
 
 function renderState(state: OverviewState): React.JSX.Element {

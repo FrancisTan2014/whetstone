@@ -74,12 +74,7 @@ export type IconButtonProps = Omit<ButtonProps, "aria-label" | "children" | "siz
 // visible focus ring rather than re-declaring them, and forces a `label` so every icon-only control has a
 // specific accessible name plus a hover tooltip (the `title`, defaulting to the label). Callers pass a
 // single Lucide icon (20px, `strokeWidth={1.75}`, decorative) — never a bare glyph.
-export function IconButton({
-  icon,
-  label,
-  title,
-  ...rest
-}: IconButtonProps): React.JSX.Element {
+export function IconButton({ icon, label, title, ...rest }: IconButtonProps): React.JSX.Element {
   return (
     <Button {...rest} aria-label={label} size="icon" title={title ?? label}>
       {icon}

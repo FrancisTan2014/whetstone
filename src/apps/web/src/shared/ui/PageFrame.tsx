@@ -71,9 +71,7 @@ export function PageFrame({
                 <p className="text-base leading-6 text-text-muted">{description}</p>
               )}
             </div>
-            {primaryAction === undefined ? null : (
-              <div className="shrink-0">{primaryAction}</div>
-            )}
+            {primaryAction === undefined ? null : <div className="shrink-0">{primaryAction}</div>}
           </div>
         </header>
         {children}
