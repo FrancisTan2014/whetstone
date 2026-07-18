@@ -137,6 +137,25 @@ function mockMatchMedia(reduce = false): void {
 }
 
 beforeAll(() => {
+  // Radix DropdownMenu reads pointer-capture and layout APIs jsdom lacks; stub them so opening the
+  // header Add menu and the per-Work overflow menu does not throw during interaction tests.
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: () => false
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: () => {}
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: () => {}
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {}
+  });
+
   // jsdom does not implement Blob.text(); the page uses the standard File.text() web API (native in
   // browsers) to read a held Markdown upload, so provide it here via FileReader.
   if (typeof Blob.prototype.text !== "function") {
@@ -183,9 +202,26 @@ async function renderReady(
   return user;
 }
 
+async function openAddMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  // Radix labels the menu by its trigger (aria-labelledby), so the menu's accessible name is "Add".
+  return screen.findByRole("menu", { name: "Add" });
+}
+
 async function openAddWork(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.click(screen.getByRole("button", { name: "Add work" }));
+  const menu = await openAddMenu(user);
+  await user.click(within(menu).getByRole("menuitem", { name: "Add work manually" }));
   await screen.findByLabelText("Title");
+}
+
+// Open a Work card's overflow menu by the card title and return the menu node for scoped queries.
+async function openWorkOverflow(
+  user: ReturnType<typeof userEvent.setup>,
+  title: string
+): Promise<HTMLElement> {
+  await user.click(screen.getByRole("button", { name: `More actions for ${title}` }));
+  // Radix labels the menu by its trigger, so its accessible name matches the trigger's.
+  return screen.findByRole("menu", { name: `More actions for ${title}` });
 }
 
 describe("AdminLibraryPage", () => {
@@ -193,15 +229,8 @@ describe("AdminLibraryPage", () => {
     await renderReady();
 
     expect(
-      screen.getByText("No works yet. Add a work or upload a document to start your library.")
+      screen.getByText("No works yet. Use Add above to upload a file or create your first work.")
     ).toBeDefined();
-  });
-
-  it("links to the all-notes review surface from the header (#390)", async () => {
-    await renderReady();
-
-    const notesLink = screen.getByRole("link", { name: "Review all notes" });
-    expect(notesLink.getAttribute("href")).toBe("#/notes");
   });
 
   it("shows a loading state before the initial load resolves", async () => {
@@ -221,9 +250,9 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Could not load the library.")).toBeDefined();
   });
 
-  it("groups works by author with a per-author count and card affordances", async () => {
+  it("groups works by author with a per-author count and one primary read action", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
-    await renderReady();
+    const user = await renderReady();
 
     const group = await screen.findByRole("region", { name: "George Orwell" });
     expect(within(group).getByText("2 works")).toBeDefined();
@@ -233,29 +262,35 @@ describe("AdminLibraryPage", () => {
     expect(within(group).getByRole("heading", { name: "Animal Farm" })).toBeDefined();
     expect(within(group).getByText("essay · English")).toBeDefined();
 
-    // Default reader label is a truthful "Read" (no saved position seeded above).
+    // Default reader label is a truthful "Read" (no saved position seeded above); it is the single
+    // persistent action on the card face, alongside the overflow trigger.
     const readLinks = within(group).getAllByRole("link", { name: "Read" });
     expect(readLinks[0]?.getAttribute("href")).toBe("#/reader?work=work-1");
 
-    const notesLinks = within(group).getAllByRole("link", { name: "Notes" });
-    expect(notesLinks[0]?.getAttribute("href")).toBe("#/notes?work=work-1");
+    // Secondary management is behind the overflow menu; nothing but Read + the overflow trigger shows
+    // on the card face — no Notes, Manage content, or Markdown export links compete on the surface.
+    expect(within(group).queryByRole("menuitem", { name: "View notes" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Manage content" })).toBeNull();
+    expect(within(group).queryByRole("link", { name: "Export Markdown" })).toBeNull();
 
-    const exportLinks = within(group).getAllByRole("link", { name: "Export Markdown" });
-    expect(exportLinks[0]?.getAttribute("href")).toBe("/api/works/work-1/content/markdown");
-
-    expect(within(group).getAllByRole("button", { name: "Manage content" })).toHaveLength(2);
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    expect(
+      within(overflow).getByRole("menuitem", { name: "View notes" }).getAttribute("href")
+    ).toBe("#/notes?work=work-1");
+    expect(within(overflow).getByRole("menuitem", { name: "Manage content" })).toBeDefined();
+    expect(within(overflow).queryByRole("menuitem", { name: "Export Markdown" })).toBeNull();
   });
 
-  it("gives every per-work card action a >=44px hit target (#463)", async () => {
+  it("gives the persistent card controls a >=44px hit target (#463)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     await renderReady();
 
     const group = await screen.findByRole("region", { name: "George Orwell" });
     const actions = [
       within(group).getByRole("link", { name: "Read" }),
-      within(group).getByRole("button", { name: "Manage content" }),
-      within(group).getByRole("link", { name: "Notes" }),
-      within(group).getByRole("link", { name: "Export Markdown" })
+      within(group).getByRole("button", {
+        name: "More actions for Politics and the English Language"
+      })
     ];
 
     // jsdom has no layout, so assert the sizing utilities that drive the >=44px target in both
@@ -283,8 +318,8 @@ describe("AdminLibraryPage", () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
 
-    const group = await screen.findByRole("region", { name: "George Orwell" });
-    await user.click(within(group).getByRole("button", { name: "Manage content" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    await user.click(within(overflow).getByRole("menuitem", { name: "Manage content" }));
 
     expect(onManageContent).toHaveBeenCalledWith("work-1");
   });
@@ -556,6 +591,17 @@ describe("AdminLibraryPage", () => {
     expect(input.accept).toBe(".epub,application/epub+zip,.pdf,application/pdf,.md,text/markdown");
   });
 
+  it("opens the OS file picker from the Add menu's Upload file action", async () => {
+    const user = await renderReady();
+    const input = screen.getByLabelText("Upload") as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, "click").mockImplementation(() => {});
+
+    const menu = await openAddMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: /Upload file/ }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("ingests a selected EPUB directly without showing the Add-work form", async () => {
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
     const epubWork: WorkListItemDto = {
@@ -800,7 +846,8 @@ describe("AdminLibraryPage", () => {
     });
 
     // A fresh, purely-manual Add work must not ingest the previously held file.
-    await user.click(screen.getByRole("button", { name: "Add work" }));
+    const menu = await openAddMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Add work manually" }));
     await screen.findByLabelText("Title");
     await user.type(screen.getByLabelText("Title"), "Manual Work");
     await user.type(screen.getByLabelText("New author or source name"), "Someone");
@@ -887,7 +934,8 @@ describe("AdminLibraryPage", () => {
     mockedDeleteWork.mockResolvedValue(undefined);
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    await user.click(within(overflow).getByRole("menuitem", { name: "Delete work" }));
 
     // The confirm dialog names the work and the destructive act.
     const dialog = await screen.findByRole("dialog", { name: "Delete work" });
@@ -911,7 +959,8 @@ describe("AdminLibraryPage", () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    await user.click(within(overflow).getByRole("menuitem", { name: "Delete work" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete work" });
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
@@ -928,7 +977,8 @@ describe("AdminLibraryPage", () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    await user.click(within(overflow).getByRole("menuitem", { name: "Delete work" }));
     await screen.findByRole("dialog", { name: "Delete work" });
     await user.keyboard("{Escape}");
 
@@ -943,7 +993,8 @@ describe("AdminLibraryPage", () => {
     mockedDeleteWork.mockRejectedValue(new Error("boom"));
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    await user.click(within(overflow).getByRole("menuitem", { name: "Delete work" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete work" });
     await user.click(within(dialog).getByRole("button", { name: "Delete work" }));
 
@@ -952,7 +1003,7 @@ describe("AdminLibraryPage", () => {
     expect(screen.getByRole("dialog", { name: "Delete work" })).toBeDefined();
   });
 
-  it("marks a Work authored with a badge, opens it in the reader and editor, and hides Manage content + Markdown export (#576)", async () => {
+  it("marks a Work authored with a badge, keeps the shared read action, and moves Edit document into overflow with no Markdown export (#576, #640)", async () => {
     const authoredSummary: AuthoredWorkSummaryDto = {
       createdAt: "2026-07-01T00:00:00.000Z",
       entryId: "work-1",
@@ -963,7 +1014,7 @@ describe("AdminLibraryPage", () => {
     };
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
     mockedListAuthoredWorks.mockResolvedValue({ works: [authoredSummary] });
-    await renderReady();
+    const user = await renderReady();
 
     const group = await screen.findByRole("region", { name: "George Orwell" });
     const authoredCard = within(group)
@@ -971,31 +1022,44 @@ describe("AdminLibraryPage", () => {
       .closest("li");
     expect(authoredCard).not.toBeNull();
     const authored = within(authoredCard as HTMLElement);
-    // The authored badge plus a shared-reader Read link (where selection → notes and search deep-links
-    // work) and an editor Edit link — but no Manage-content and no broken Markdown export (#576).
+    // The authored badge plus the same shared-reader Read link imported works use (selection → notes,
+    // search deep-links). Edit and Notes move off the card face into the overflow menu.
     expect(authored.getByText("Authored")).toBeDefined();
     expect(authored.getByRole("link", { name: "Read" }).getAttribute("href")).toBe(
       "#/reader?work=work-1"
     );
-    expect(authored.getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
-      "#/write?work=work-1"
-    );
-    expect(authored.queryByRole("button", { name: "Manage content" })).toBeNull();
-    expect(authored.queryByRole("link", { name: "Export Markdown" })).toBeNull();
-    // Notes stays available across both authored and imported works.
-    expect(authored.getByRole("link", { name: "Notes" }).getAttribute("href")).toBe(
-      "#/notes?work=work-1"
-    );
+    expect(authored.queryByRole("menuitem", { name: "Edit document" })).toBeNull();
 
-    // A non-authored Work keeps the reader flow, Manage content, and Markdown export.
+    const authoredOverflow = await openWorkOverflow(user, "Politics and the English Language");
+    // Authored Works edit in the rich editor — never a "Manage content" surface — and never expose a
+    // Markdown export.
+    expect(
+      within(authoredOverflow).getByRole("menuitem", { name: "Edit document" }).getAttribute("href")
+    ).toBe("#/write?work=work-1");
+    expect(
+      within(authoredOverflow).getByRole("menuitem", { name: "View notes" }).getAttribute("href")
+    ).toBe("#/notes?work=work-1");
+    expect(within(authoredOverflow).queryByRole("menuitem", { name: "Manage content" })).toBeNull();
+    expect(
+      within(authoredOverflow).queryByRole("menuitem", { name: "Export Markdown" })
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+
+    // A non-authored Work keeps the reader flow and Manage content, but likewise has no Markdown export.
     const importedCard = within(group).getByRole("heading", { name: "Animal Farm" }).closest("li");
     const imported = within(importedCard as HTMLElement);
     expect(imported.queryByText("Authored")).toBeNull();
     expect(imported.getByRole("link", { name: "Read" }).getAttribute("href")).toBe(
       "#/reader?work=work-2"
     );
-    expect(imported.getByRole("button", { name: "Manage content" })).toBeDefined();
-    expect(imported.getByRole("link", { name: "Export Markdown" })).toBeDefined();
+    const importedOverflow = await openWorkOverflow(user, "Animal Farm");
+    expect(
+      within(importedOverflow).getByRole("menuitem", { name: "Manage content" })
+    ).toBeDefined();
+    expect(within(importedOverflow).queryByRole("menuitem", { name: "Edit document" })).toBeNull();
+    expect(
+      within(importedOverflow).queryByRole("menuitem", { name: "Export Markdown" })
+    ).toBeNull();
   });
 
   it("creates a new authored document and jumps into the editor (#576)", async () => {
@@ -1013,7 +1077,8 @@ describe("AdminLibraryPage", () => {
     mockedCreateAuthoredWork.mockResolvedValue(created);
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "New document" }));
+    const menu = await openAddMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
     await screen.findByRole("heading", { name: "New document" });
     await user.type(screen.getByLabelText("Title"), "My new essay");
     await user.selectOptions(screen.getByLabelText("Type"), "essay");
@@ -1033,7 +1098,8 @@ describe("AdminLibraryPage", () => {
   it("validates that a new document needs a title before creating (#576)", async () => {
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "New document" }));
+    const menu = await openAddMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
     await screen.findByRole("heading", { name: "New document" });
     await user.click(screen.getByRole("button", { name: "Create and write" }));
 
@@ -1045,7 +1111,8 @@ describe("AdminLibraryPage", () => {
     mockedCreateAuthoredWork.mockRejectedValue(new Error("boom"));
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "New document" }));
+    const menu = await openAddMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
     await screen.findByRole("heading", { name: "New document" });
     await user.type(screen.getByLabelText("Title"), "Doomed doc");
     await user.click(screen.getByRole("button", { name: "Create and write" }));
@@ -1058,7 +1125,8 @@ describe("AdminLibraryPage", () => {
   it("dismisses the New document sheet without creating anything (#576)", async () => {
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "New document" }));
+    const menu = await openAddMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
     await screen.findByRole("heading", { name: "New document" });
     await user.click(screen.getByRole("button", { name: "Close" }));
 
@@ -1079,12 +1147,12 @@ describe("AdminLibraryPage", () => {
     workTitle: title
   });
 
-  it("enrolls a Work with 'I can recite this', marks the card, and opens its review (#643)", async () => {
+  it("enrolls a Work with 'I can recite this' from overflow, then offers Open in Recite (#640, #643)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     mockedEnrollRecitation.mockResolvedValue(
       recitationPlanFor("work-1", "Politics and the English Language")
     );
-    // The reload after enrolling reports the new plan so the card flips to the reciting status.
+    // The reload after enrolling reports the new plan so the overflow flips to "Open in Recite".
     mockedListRecitationPlans.mockResolvedValueOnce({ plans: [] }).mockResolvedValue({
       plans: [recitationPlanFor("work-1", "Politics and the English Language")]
     });
@@ -1093,41 +1161,46 @@ describe("AdminLibraryPage", () => {
     // There is no phase picker (#643): the action enrolls straight into maintenance — the learner's
     // explicit declaration that the Work is retrievable — with no Familiarizing/Learning/Maintenance choice.
     expect(screen.queryByRole("button", { name: "Practise recitation" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "I can recite this" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    // Retired passage-segmentation controls never appear in Library.
+    expect(within(overflow).queryByRole("menuitem", { name: "Divide into passages" })).toBeNull();
+    expect(within(overflow).queryByRole("menuitem", { name: "Set up passages" })).toBeNull();
+    await user.click(within(overflow).getByRole("menuitem", { name: "I can recite this" }));
 
     await waitFor(() => {
       expect(mockedEnrollRecitation).toHaveBeenCalledWith("work-1");
     });
-    // Enrollment persists, then the exact Work's whole-Work review opens scoped to `?work=`.
+    // Enrollment persists, then the exact Work's whole-Work review opens scoped to `?work=` (#643).
     await waitFor(() => {
       expect(navigateSpy).toHaveBeenCalledWith("/recitation?work=work-1");
     });
-    // The card now shows the quiet reciting status and a Review link into the whole-Work review.
-    expect(await screen.findByText("Reciting")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "I can recite this" })).toBeNull();
-    // Retired passage-segmentation controls never appear.
-    expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Set up passages" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Review" }).getAttribute("href")).toBe(
-      "#/recitation?work=work-1"
-    );
+
+    // The card face carries no recitation status (Recite owns it); the enrolled Work now offers only
+    // "Open in Recite" — the enroll action is gone.
+    expect(screen.queryByText("Reciting")).toBeNull();
+    const reopened = await openWorkOverflow(user, "Politics and the English Language");
+    expect(
+      within(reopened).getByRole("menuitem", { name: "Open in Recite" }).getAttribute("href")
+    ).toBe("#/recite");
+    expect(within(reopened).queryByRole("menuitem", { name: "I can recite this" })).toBeNull();
   });
 
-  it("shows the reciting status (not an enroll button) for an already-enrolled Work (#643)", async () => {
+  it("offers Open in Recite (not enrol, no face status) for an already-enrolled Work (#640, #643)", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     mockedListRecitationPlans.mockResolvedValue({
       plans: [recitationPlanFor("work-1", "Politics and the English Language")]
     });
-    await renderReady();
+    const user = await renderReady();
 
-    expect(await screen.findByText("Reciting")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "I can recite this" })).toBeNull();
-    // No retired phase status or passage links survive on an enrolled card.
+    // No recitation phase/status/due state leaks onto the card face — Recite owns all of it.
+    expect(screen.queryByText("Reciting")).toBeNull();
     expect(screen.queryByText(/Reciting · /)).toBeNull();
-    expect(screen.queryByRole("link", { name: "Divide into passages" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Review" }).getAttribute("href")).toBe(
-      "#/recitation?work=work-1"
-    );
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    expect(within(overflow).queryByRole("menuitem", { name: "I can recite this" })).toBeNull();
+    expect(within(overflow).queryByRole("menuitem", { name: "Divide into passages" })).toBeNull();
+    expect(
+      within(overflow).getByRole("menuitem", { name: "Open in Recite" }).getAttribute("href")
+    ).toBe("#/recite");
   });
 
   it("surfaces an error and does not navigate when enrolling fails (#643)", async () => {
@@ -1135,13 +1208,15 @@ describe("AdminLibraryPage", () => {
     mockedEnrollRecitation.mockRejectedValue(new Error("boom"));
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "I can recite this" }));
+    const overflow = await openWorkOverflow(user, "Politics and the English Language");
+    await user.click(within(overflow).getByRole("menuitem", { name: "I can recite this" }));
 
     expect(
       await screen.findByText("Could not start reciting this work. Please try again.")
     ).toBeDefined();
     expect(navigateSpy).not.toHaveBeenCalled();
     // The action stays available so the learner can retry.
-    expect(screen.getByRole("button", { name: "I can recite this" })).toBeDefined();
+    const reopened = await openWorkOverflow(user, "Politics and the English Language");
+    expect(within(reopened).getByRole("menuitem", { name: "I can recite this" })).toBeDefined();
   });
 });

@@ -78,13 +78,14 @@ something (text resized, theme changed, results appeared, content persisted), be
 silently does nothing is a defect:
 
 - **Admin / content ingestion (drive the real upload UI — the riskiest, least-covered area).** From
-  the Library/admin surface, exercise the single shelf **Upload** control (the one file front door,
-  accepting `.epub`/`.pdf`/`.md`): **upload a real EPUB** (use a fixture from `fixtures/epub/`) and
-  confirm it ingests straight to a new work with **no** metadata form, and upload a `.pdf`/`.md` and
+  the Library, open the header **Add** menu and use its **Upload file** action (the one file front
+  door, accepting `.epub`/`.pdf`/`.md`): **upload a real EPUB** (use a fixture from `fixtures/epub/`)
+  and confirm it ingests straight to a new work with **no** metadata form, and upload a `.pdf`/`.md` and
   confirm it opens the **Add work** sheet pre-filled with the filename title, then creates and ingests
-  on submit. Also create a work by hand (*Add work*, including the new-author path) and add content via
-  the Manage-content panel (paste Markdown — the panel has no file upload; files come in through the
-  shelf **Upload**). Then confirm the work opens in the
+  on submit. Also create a work by hand (the Add menu's **Add work manually**, including the new-author
+  path) and add content via the Manage-content panel opened from the work card's overflow menu
+  (**Manage content** — the panel has no file upload; files come in through **Add ▸ Upload file**).
+  Then confirm the work opens in the
   reader with its blocks. Watch for the classic ingestion failures: a work created but **empty / no
   readable content with no error**, an oversized book that fails silently, or a missing/incorrect
   error on bad input. Do **not** API-seed to skip this — testing the upload path is the point.
@@ -94,8 +95,6 @@ silently does nothing is a defect:
   (Vocabulary / Expression / Thought) and fill its answer fields; **edit** an existing note and
   **delete** one; and exercise the dedicated notes review surface — confirm it lists notes and jumps
   back to the anchored block.
-- **Export.** Trigger *Export Markdown* for a work and confirm it yields the work's content rather
-  than erroring or producing nothing.
 - **Selection in each block type** — paragraph, heading, list, blockquote, code — and across blocks;
   confirm the toolbar behaves and notes anchor correctly.
 - **Each reader tool** — font size, column width, 目录 (table of contents) navigation, Day/Night theme,

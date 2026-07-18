@@ -46,17 +46,20 @@ test.describe("direct Work-level Recitation maintenance (#643)", () => {
     // A known Work the learner can already recite (no passage setup, no phase picker anywhere).
     const work = await uploadWork(page.request, baseURL);
 
-    // From the Library the un-enrolled Work offers the explicit declaration "I can recite this".
+    // The read-first Library card carries no recitation state (#640); the explicit declaration
+    // "I can recite this" lives in the Work's overflow menu, whose accessible name names the Work.
     await page.goto(`${baseURL}#/library`);
     const card = page.getByRole("listitem").filter({ hasText: work.title });
-    await expect(card.getByRole("button", { name: "I can recite this" })).toBeVisible();
-    // The rigid-flow surface is gone: no phase choice, no passage segmentation on the card.
-    await expect(card.getByText(/Familiarizing|Divide into passages|Starting phase/)).toHaveCount(
-      0
-    );
+    // The rigid-flow surface is gone: no phase choice, no passage segmentation, no recitation status.
+    await expect(
+      card.getByText(/Familiarizing|Divide into passages|Starting phase|Reciting/)
+    ).toHaveCount(0);
+    await card.getByRole("button", { name: `More actions for ${work.title}` }).click();
+    const overflow = page.getByRole("menu", { name: `More actions for ${work.title}` });
+    await expect(overflow.getByRole("menuitem", { name: "I can recite this" })).toBeVisible();
 
     // Declaring it enrols the exact Work into maintenance and opens its first whole-Work review.
-    await card.getByRole("button", { name: "I can recite this" }).click();
+    await overflow.getByRole("menuitem", { name: "I can recite this" }).click();
     await expect(page).toHaveURL(
       new RegExp(`#/recitation\\?work=${encodeURIComponent(work.entryId)}`)
     );
@@ -89,16 +92,21 @@ test.describe("direct Work-level Recitation maintenance (#643)", () => {
     await expect(page.getByText("Done for today.")).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toHaveCount(0);
 
-    // Re-enrolling is idempotent — the Library now shows the single durable plan as "Reciting" with a
-    // "Review" link (never a duplicate "I can recite this"), preserving the Work's identity.
+    // The enrolled Work shows no recitation status on the Library card — Recite owns all maintenance
+    // state (#640). Its overflow now offers "Open in Recite" and never a duplicate "I can recite this".
     await page.goto(`${baseURL}#/library`);
     const enrolled = page.getByRole("listitem").filter({ hasText: work.title });
-    await expect(enrolled.getByText("Reciting", { exact: true })).toBeVisible();
-    await expect(enrolled.getByRole("button", { name: "I can recite this" })).toHaveCount(0);
+    await expect(enrolled.getByText("Reciting", { exact: true })).toHaveCount(0);
+    await enrolled.getByRole("button", { name: `More actions for ${work.title}` }).click();
+    const enrolledOverflow = page.getByRole("menu", { name: `More actions for ${work.title}` });
+    await expect(enrolledOverflow.getByRole("menuitem", { name: "Open in Recite" })).toBeVisible();
+    await expect(enrolledOverflow.getByRole("menuitem", { name: "I can recite this" })).toHaveCount(
+      0
+    );
 
-    // The Work-level maintenance card persists for its next scheduled review: opening the Work's review
-    // reopens the same whole-Work review, keeping the exact Work's identity end to end.
-    await enrolled.getByRole("link", { name: "Review", exact: true }).click();
-    await expect(page.getByText("from memory", { exact: false }).first()).toBeVisible();
+    // "Open in Recite" routes ongoing maintenance back to Recite, which owns the Work's next scheduled
+    // review — the Library no longer deep-links a per-Work review (#640).
+    await enrolledOverflow.getByRole("menuitem", { name: "Open in Recite" }).click();
+    await expect(page).toHaveURL(/#\/recite$/);
   });
 });

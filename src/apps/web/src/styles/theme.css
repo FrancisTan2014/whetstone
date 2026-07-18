@@ -575,7 +575,8 @@
 
 /* The block-actions dropdown and its "Turn into" submenu: floating token surfaces matching the slash
    and formatting menus. Items are 44px-tall touch targets; the delete action reads as destructive. */
-.blockActionsMenu {
+.blockActionsMenu,
+.libraryMenu {
   z-index: 60;
   min-inline-size: 12rem;
   max-inline-size: min(18rem, calc(100vw - 1rem));
@@ -588,7 +589,8 @@
   font-family: var(--font-sans);
 }
 
-.blockActionsMenuItem {
+.blockActionsMenuItem,
+.libraryMenuItem {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -601,23 +603,28 @@
 }
 
 .blockActionsMenuItem[data-highlighted],
-.blockActionsMenuItem[data-state="open"] {
+.blockActionsMenuItem[data-state="open"],
+.libraryMenuItem[data-highlighted],
+.libraryMenuItem[data-state="open"] {
   outline: none;
   background-color: var(--color-bg);
   color: var(--color-accent);
 }
 
-.blockActionsMenuItem[data-disabled] {
+.blockActionsMenuItem[data-disabled],
+.libraryMenuItem[data-disabled] {
   color: var(--color-text-muted);
   cursor: not-allowed;
   opacity: 0.6;
 }
 
-.blockActionsMenuItem--destructive {
+.blockActionsMenuItem--destructive,
+.libraryMenuItem--destructive {
   color: var(--color-danger);
 }
 
-.blockActionsMenuItem--destructive[data-highlighted] {
+.blockActionsMenuItem--destructive[data-highlighted],
+.libraryMenuItem--destructive[data-highlighted] {
   background-color: var(--color-danger);
   color: var(--color-surface);
 }
@@ -626,7 +633,8 @@
   justify-content: space-between;
 }
 
-.blockActionsMenuSeparator {
+.blockActionsMenuSeparator,
+.libraryMenuSeparator {
   block-size: 1px;
   margin: 0.25rem 0;
   background-color: var(--color-border);

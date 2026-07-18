@@ -236,8 +236,8 @@ export interface HitTargetViolation {
 
 // The interactive controls the hit-target sweep (#519) enumerates. Beyond the obvious `button`/`a[href]`
 // /form controls/ARIA roles, it includes a styled `label` that WRAPS a form control — the visible click
-// proxy for a control that is itself hidden (e.g. the Library "Upload" button is a button-styled
-// `<label>` around an `.sr-only` `<input type=file>`), so that proxy's real hit target is swept too.
+// proxy for a control that is itself hidden (a button-styled `<label>` around an `.sr-only` form input),
+// so that proxy's real hit target is swept too.
 // Exported so the probe (which receives it as an argument — a probe body cannot read module scope) and
 // its callers/tests share ONE definition.
 export const INTERACTIVE_SELECTOR =

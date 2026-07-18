@@ -387,39 +387,19 @@ describe("content routes", () => {
     ).toEqual(["Alpha", "Beta"]);
   });
 
-  it("exports a work's Markdown reconstructed from its blocks", async () => {
+  it("no longer exposes a Markdown export route", async () => {
+    // The Markdown export endpoint was retired (#640): Markdown/EPUB are import formats only, and a
+    // block-reconstructed export misrepresented the stored document model. The route is fully gone, so
+    // even a real, populated work 404s here rather than returning `text/markdown`.
     const workEntryId = await createWork();
-    const source = "# Title\n\nA paragraph.\n\n- one\n- two";
-    await ingest(workEntryId, { kind: "manual", markdown: source });
+    await ingest(workEntryId, { kind: "manual", markdown: "# Title\n\nA paragraph." });
 
     const response = await context.server.inject({
       method: "GET",
       url: `/api/works/${workEntryId}/content/markdown`
     });
-    expect(response.statusCode).toBe(200);
-    expect(response.headers["content-type"]).toContain("text/markdown");
-
-    // Round-trip: the exported Markdown re-ingests into the same structure.
-    const roundTripWork = await createWork();
-    await ingest(roundTripWork, { kind: "manual", markdown: response.body });
-    const original = await getContent(workEntryId);
-    const roundTripped = await getContent(roundTripWork);
-    expect(
-      roundTripped.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext))
-    ).toEqual(original.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext)));
-    expect(roundTripped.readingUnits.map((unit) => unit.title)).toEqual(
-      original.readingUnits.map((unit) => unit.title)
-    );
-  });
-
-  it("returns 404 when exporting Markdown for a missing work", async () => {
-    const response = await context.server.inject({
-      method: "GET",
-      url: "/api/works/missing-work/content/markdown"
-    });
 
     expect(response.statusCode).toBe(404);
-    expect(response.json()).toEqual({ error: "work_not_found" });
   });
 
   it("retains manual input as source text with its sha256", async () => {

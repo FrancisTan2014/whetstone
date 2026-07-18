@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { motion, type Variants } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
@@ -17,13 +17,11 @@ import {
   type WorkType
 } from "@whetstone/domain";
 
-import { Button, buttonVariants } from "../../shared/ui/Button";
+import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
-import { Spinner } from "../../shared/ui/Spinner";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
-import { apiUrl } from "../../shared/runtime";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import {
@@ -35,6 +33,8 @@ import {
   ingestEpub
 } from "./libraryApi";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
+import { LibraryAddMenu } from "./LibraryAddMenu";
+import { WorkOverflowMenu } from "./WorkOverflowMenu";
 import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 
@@ -82,11 +82,13 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [authors, setAuthors] = useState<ReadonlyArray<AuthorDto>>([]);
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
   const [worksWithPosition, setWorksWithPosition] = useState<ReadonlySet<string>>(new Set());
-  // Which works are user-authored documents (vs imported sources), so the shelf can badge them and route
-  // them to the editor instead of the reader — one library, no separate silo (#576).
+  // Which works are user-authored documents (vs imported sources), so the shelf can badge them and
+  // surface **Edit document** in overflow — one library, no separate silo (#576); the card's primary
+  // action stays read-first for authored and imported works alike (#640).
   const [authoredWorkIds, setAuthoredWorkIds] = useState<ReadonlySet<string>>(new Set());
-  // The learner's recitation plans keyed by source Work, so a card shows "Reciting" with a "Review" link
-  // for a Work already enrolled and offers "I can recite this" otherwise (#643) — a Work enrolls once.
+  // The learner's recitation plans keyed by source Work: a Work already enrolled offers **Open in
+  // Recite** in overflow, an un-enrolled one offers **I can recite this** (#643) — a Work enrolls once.
+  // Library shows no recitation status/phase/due; Recite owns all maintenance state (#640).
   const [recitationByWork, setRecitationByWork] = useState<ReadonlyMap<string, RecitationPlanDto>>(
     new Map()
   );
@@ -119,6 +121,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const toast = useToast();
   const navigate = useNavigate();
+  // The single hidden file input behind the header's "Upload file" action — the one front door for
+  // .epub/.pdf/.md. The Add menu item clicks it to open the OS picker; `onSelectUpload` then routes the
+  // chosen file into the existing ingest flow.
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function reload(): Promise<void> {
     const [authorList, workList, withPosition, authored, recitation] = await Promise.all([
@@ -416,33 +422,21 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     <main className="mx-auto max-w-5xl p-4">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold text-text">Library</h1>
-        <div className="flex flex-wrap items-center gap-3">
-          <a className={buttonVariants({ variant: "secondary" })} href="#/notes">
-            Review all notes
-          </a>
-          <label
-            aria-busy={uploadBusy}
-            className={`${buttonVariants({ variant: "secondary" })} cursor-pointer focus-within:ring-2 focus-within:ring-ring focus-within:outline-none ${
-              uploadBusy ? "pointer-events-none opacity-50" : ""
-            }`}
-          >
-            {uploadBusy ? <Spinner /> : null}
-            Upload
-            <input
-              accept=".epub,application/epub+zip,.pdf,application/pdf,.md,text/markdown"
-              className="sr-only"
-              disabled={uploadBusy}
-              onChange={(event) => void onSelectUpload(event)}
-              type="file"
-            />
-          </label>
-          <Button onClick={openNewDocument} type="button">
-            New document
-          </Button>
-          <Button onClick={openManualAddWork} type="button" variant="secondary">
-            Add work
-          </Button>
-        </div>
+        <LibraryAddMenu
+          busy={uploadBusy}
+          onAddWorkManually={openManualAddWork}
+          onNewDocument={openNewDocument}
+          onUploadFile={() => fileInputRef.current?.click()}
+        />
+        <input
+          accept=".epub,application/epub+zip,.pdf,application/pdf,.md,text/markdown"
+          aria-label="Upload"
+          className="sr-only"
+          onChange={(event) => void onSelectUpload(event)}
+          ref={fileInputRef}
+          tabIndex={-1}
+          type="file"
+        />
       </header>
 
       {uploadKind === "epub" ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
@@ -656,7 +650,7 @@ function renderLibrary(
   if (groups.length === 0) {
     return (
       <p className="rounded border border-border bg-surface p-6 text-text-muted">
-        No works yet. Add a work or upload a document to start your library.
+        No works yet. Use Add above to upload a file or create your first work.
       </p>
     );
   }
@@ -691,43 +685,6 @@ function renderLibrary(
 const cardActionClass =
   "inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-accent hover:text-accent-hover";
 
-// A Work already enrolled for recitation shows a calm "Reciting" status and a "Review" link that opens
-// its whole-Work maintenance review (#643). An un-enrolled Work offers "I can recite this" — the explicit
-// declaration that enrolls it into maintenance and opens the first review. There is no phase, passage, or
-// segmentation surface — those are retired.
-function renderRecitationAction(
-  item: WorkListItemDto,
-  options: RenderLibraryOptions
-): React.JSX.Element {
-  const plan = options.recitationByWork.get(item.work.entryId);
-  if (plan !== undefined) {
-    return (
-      <>
-        <span className="inline-flex min-h-11 items-center px-2 text-sm text-text-muted">
-          Reciting
-        </span>
-        <a
-          className={cardActionClass}
-          href={`#/recitation?work=${encodeURIComponent(item.work.entryId)}`}
-        >
-          Review
-        </a>
-      </>
-    );
-  }
-
-  return (
-    <Button
-      onClick={() => options.onRecite(item)}
-      pending={options.enrollingWorkId === item.work.entryId}
-      size="sm"
-      variant="ghost"
-    >
-      I can recite this
-    </Button>
-  );
-}
-
 function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): React.JSX.Element {
   const workEntryId = item.work.entryId;
   // "Continue" only when the reader has a saved position for this work; otherwise a truthful "Read".
@@ -755,47 +712,22 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
           </span>
         ) : null}
       </p>
-      <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+      <div className="mt-auto flex items-center justify-between gap-2">
         <a
           className={`${cardActionClass} font-medium`}
           href={`#/reader?work=${encodeURIComponent(workEntryId)}`}
         >
           {resumes ? "Continue" : "Read"}
         </a>
-        {authored ? (
-          <a className={cardActionClass} href={`#/write?work=${encodeURIComponent(workEntryId)}`}>
-            Edit
-          </a>
-        ) : null}
-        {authored ? null : (
-          <button
-            className={cardActionClass}
-            onClick={() => options.onManageContent(workEntryId)}
-            type="button"
-          >
-            Manage content
-          </button>
-        )}
-        <a className={cardActionClass} href={`#/notes?work=${encodeURIComponent(workEntryId)}`}>
-          Notes
-        </a>
-        {renderRecitationAction(item, options)}
-        {authored ? null : (
-          <a
-            className={cardActionClass}
-            download={`${item.work.title}.md`}
-            href={apiUrl(`/works/${workEntryId}/content/markdown`)}
-          >
-            Export Markdown
-          </a>
-        )}
-        <button
-          className={`${cardActionClass} text-danger hover:text-danger`}
-          onClick={() => options.onDelete(item)}
-          type="button"
-        >
-          Delete
-        </button>
+        <WorkOverflowMenu
+          authored={authored}
+          enrolled={options.recitationByWork.has(workEntryId)}
+          enrolling={options.enrollingWorkId === workEntryId}
+          item={item}
+          onDelete={() => options.onDelete(item)}
+          onManageContent={() => options.onManageContent(workEntryId)}
+          onRecite={() => options.onRecite(item)}
+        />
       </div>
     </motion.li>
   );
