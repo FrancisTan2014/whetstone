@@ -161,6 +161,7 @@ function ReciteThisControl({ workEntryId }: Readonly<{ workEntryId: string }>): 
       variant="ghost"
     >
       <RecitationIcon />
+      <span className="readingToolLabel">I can recite this</span>
     </Button>
   );
 }

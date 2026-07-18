@@ -546,7 +546,8 @@
 /* The block-actions dropdown and its "Turn into" submenu: floating token surfaces matching the slash
    and formatting menus. Items are 44px-tall touch targets; the delete action reads as destructive. */
 .blockActionsMenu,
-.libraryMenu {
+.libraryMenu,
+.notesMenu {
   z-index: 60;
   min-inline-size: 12rem;
   max-inline-size: min(18rem, calc(100vw - 1rem));
@@ -560,7 +561,8 @@
 }
 
 .blockActionsMenuItem,
-.libraryMenuItem {
+.libraryMenuItem,
+.notesMenuItem {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -575,14 +577,17 @@
 .blockActionsMenuItem[data-highlighted],
 .blockActionsMenuItem[data-state="open"],
 .libraryMenuItem[data-highlighted],
-.libraryMenuItem[data-state="open"] {
+.libraryMenuItem[data-state="open"],
+.notesMenuItem[data-highlighted],
+.notesMenuItem[data-state="open"] {
   outline: none;
   background-color: var(--color-bg);
   color: var(--color-accent);
 }
 
 .blockActionsMenuItem[data-disabled],
-.libraryMenuItem[data-disabled] {
+.libraryMenuItem[data-disabled],
+.notesMenuItem[data-disabled] {
   color: var(--color-text-muted);
   cursor: not-allowed;
   opacity: 0.6;
@@ -1339,6 +1344,13 @@
 .readingToolIcon {
   inline-size: 1.25rem;
   block-size: 1.25rem;
+}
+
+/* A consequential Reader action (I can recite this, #641) keeps its visible text label beside the
+   icon rather than going icon-only; nowrap so the labelled control stays on one line in the rail. */
+.readingToolLabel {
+  font-size: var(--text-scale-sm);
+  white-space: nowrap;
 }
 
 /* The note count rides the notes tool as a quiet pill rather than a second control. */

@@ -8,6 +8,7 @@ import { PageFrame } from "../../shared/ui/PageFrame";
 import { fetchAllNotes } from "./notesApi";
 import { NotesHomeList } from "./NotesHomeList";
 import { NotesImport } from "./NotesImport";
+import { NotesOverflowMenu } from "./NotesOverflowMenu";
 import { OwnedNoteEditor, type OwnedNoteEditorTarget } from "./OwnedNoteEditor";
 
 type NotesState =
@@ -40,8 +41,9 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   // After an import lands, move focus to the first imported note's Open button once the reloaded list has
   // settled. A ref, not state, so arming it never re-renders and it survives the reload it triggers.
   const pendingImportFocus = useRef(false);
-  // After a cancelled import, return focus to the Import button — but only once the panel has closed and
-  // the button is enabled again, so a synchronous focus on the still-disabled button never silently fails.
+  // After a cancelled import, return focus to the overflow menu trigger — but only once the panel has
+  // closed and the trigger is enabled again, so a synchronous focus on the still-disabled trigger never
+  // silently fails.
   const pendingImportButtonFocus = useRef(false);
   // Where to return focus after the editor closes: the row's Open button when the note is still present,
   // or the primary "New note" action when it is not (a fresh create, or a deleted note). A ref, not state,
@@ -107,7 +109,7 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     openButtonRef.current?.focus();
   }, [state]);
 
-  // Once a cancelled import has closed the panel and re-enabled the Import button, restore focus to it.
+  // Once a cancelled import has closed the panel and re-enabled the trigger, restore focus to it.
   useEffect(() => {
     if (importing || !pendingImportButtonFocus.current) {
       return;
@@ -180,15 +182,7 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
       }
       primaryAction={
         <div className="flex items-center gap-2">
-          <Button
-            disabled={importing}
-            onClick={openImport}
-            ref={importRef}
-            type="button"
-            variant="ghost"
-          >
-            Import
-          </Button>
+          <NotesOverflowMenu busy={importing} onImport={openImport} triggerRef={importRef} />
           <Button disabled={importing} onClick={openCreate} ref={newNoteRef} type="button">
             New note
           </Button>
