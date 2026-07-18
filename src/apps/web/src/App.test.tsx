@@ -37,23 +37,51 @@ afterEach(() => {
 });
 
 describe("App shell and routes", () => {
-  it("shows exactly the four primary destinations in the nav (#662)", () => {
+  it("shows exactly the five primary destinations in order in the nav (#638)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
     const labels = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(labels).toEqual(["Today", "Library", "Notes", "Search"]);
+    expect(labels).toEqual(["Today", "Library", "Recite", "Notes", "Diary"]);
   });
 
-  it("keeps Reader, Review, and Diary out of the primary nav (#662)", () => {
+  it("keeps Reader, Review, and Search out of the primary nav (#638)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
-    for (const secondary of ["Reader", "Review", "Diary"]) {
+    for (const secondary of ["Reader", "Review", "Search"]) {
       expect(within(nav).queryByRole("link", { name: secondary })).toBeNull();
     }
+  });
+
+  it("keeps Search reachable in one action as a shell utility with the accessible name Search (#638)", () => {
+    const markup = renderAt("/");
+
+    expect(markup).toContain('href="/search"');
+    expect(markup).toContain(">Search<");
+  });
+
+  it("marks Recite active on the secondary Recitation review route (#638)", () => {
+    const { getByRole } = renderLiveAt("/recitation");
+    const nav = getByRole("navigation", { name: "Primary" });
+
+    expect(within(nav).getByRole("link", { name: "Recite" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
+    expect(
+      within(nav).getByRole("link", { name: "Today" }).getAttribute("aria-current")
+    ).toBeNull();
+  });
+
+  it("marks Notes active on the secondary note Review route (#638)", () => {
+    const { getByRole } = renderLiveAt("/notes/review");
+    const nav = getByRole("navigation", { name: "Primary" });
+
+    expect(within(nav).getByRole("link", { name: "Notes" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
   });
 
   it("gives the theme toggle a home in the shell", () => {
@@ -136,7 +164,7 @@ describe("App shell and routes", () => {
     expect(markup).toContain('id="notes-review-heading"');
   });
 
-  it("resolves the diary route to the voice-diary page (still reachable off-nav)", () => {
+  it("resolves the diary route to the voice-diary page as a primary destination (#638)", () => {
     const markup = renderAt("/diary");
 
     expect(markup).toContain('aria-label="Primary"');
@@ -189,17 +217,15 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain('aria-label="Primary"');
   });
 
-  it("redirects the retired /recite passage-setup route to the Library recovery path (#643)", () => {
-    // The passage-segmentation route is retired: it must never open a dead or misleading screen, so it
-    // redirects to the Library (effects run under a live render, applying the <Navigate/>).
-    const { container } = renderLiveAt("/recite");
+  it("resolves the /recite route to the Recite home framed by the shell (#638)", () => {
+    const markup = renderAt("/recite");
 
-    expect(container.innerHTML).toContain(">Library<");
-    // None of the retired segmentation copy survives on the recovery landing.
-    expect(container.innerHTML).not.toContain("Loading passages…");
-    expect(container.innerHTML).not.toContain(
-      "Open a recitation routine from your Library to divide it."
-    );
+    // Recite is now a primary destination: its home mounts inside the shell (primary nav present) and,
+    // under static render (no effects), in its loading arm. The retired passage-setup copy never renders.
+    expect(markup).toContain('aria-label="Primary"');
+    expect(markup).toContain('id="recite-heading"');
+    expect(markup).not.toContain("Loading passages…");
+    expect(markup).not.toContain("Open a recitation routine from your Library to divide it.");
   });
 
   it("resolves the recitation route to the direct whole-Work review, framed by the shell (#643)", () => {

@@ -82,7 +82,9 @@ readable-only), `enrollRecitationRequestSchema` (just a Work entry id — no pha
 `RecitationPlanDto`/list (the durable plan identity: Work + phase + session bookkeeping),
 `recitationReviewDtoSchema` (the whole-Work review — plan/Work identity, the canonical source read live,
 the card's `dueAt` + FSRS `state`) + `recitationReviewResponseSchema` (review-or-null),
-`recordRecitationReviewRequestSchema` (one of `again`/`hard`/`good`/`easy`) + non-null response, and
+`recordRecitationReviewRequestSchema` (one of `again`/`hard`/`good`/`easy`) + non-null response,
+`recitationOverviewDtoSchema` (#638 the Recite-home DTO: `dueCount` + `works[]`, each carrying Work identity,
+`isDue`, nullable `nextReviewAt`/`state`, `paused`) + `parseRecitationOverviewDto`, and
 their `parse*` boundary helpers; the Timeline union keeps a `recitation` member carrying the Work title +
 phase),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
@@ -239,17 +241,22 @@ can navigate them from another package.
   `review_events` row, and returns the rescheduled review); `pauseRecitation`/`resumeRecitation`/
   `removeRecitation` (owner-scoped -> `not_found`, preserve the Work + source content). `recitationQueries.ts`
   (`toRecitationPlanDto`, `findRecitationPlanForWork`, `loadOwnedRecitationPlan`, `listRecitationPlans`,
-  `listActiveRecitationPlans` — unpaused only). `recitationReviewQueries.ts` (`loadWholeWorkTarget` joins
+  `listActiveRecitationPlans` — unpaused only, `listRecitationOverviewPlans` — ALL owned plans incl. paused,
+  newest-first). `recitationReviewQueries.ts` (`loadWholeWorkTarget` joins
   the plan's target Entry to its shared card; `loadWorkSourceText` reveals the canonical source live from
   the Work's ordered non-deleted blocks — NEVER copied into recitation state; `loadRecitationReview` opens
   THAT exact Work's review by `?work=` regardless of strict due-ness, else the earliest-due Work, else null
   -> a calm Library recovery; `loadRecitationRoutineSummary` folds every unpaused plan's Work-level card
   through the pure #633 `selectRecitationWork` so Today's Recitation-due derives ONLY from whole-Work cards —
-  passage/chain/introduction/ownership state never contributes). `recitationTeardown.ts`
+  passage/chain/introduction/ownership state never contributes; `loadRecitationOverview` folds every owned
+  plan (incl. paused) with its whole-Work card into the #638 Recite-home DTO — each Work's `isDue`
+  (active + unpaused + due), `nextReviewAt`/`state` read from any existing card, `paused` flag — plus the
+  active due-count). `recitationTeardown.ts`
   (`deleteRecitationReviewData` tears down a target's cards+events+cue-strength evidence referentially safely,
   including any legacy passage/whole-work targets, when its Work is deleted). `recitationRoutes.ts`
   (current-user scoped, Zod-validated, `now`/`createEntryId` injected): `POST /api/recitation/enroll`
-  (200 plan, 400 work_not_found), `GET /api/recitation/plans`, `GET /api/recitation/review?work=`,
+  (200 plan, 400 work_not_found), `GET /api/recitation/plans`, `GET /api/recitation/overview` (#638 the
+  Recite-home DTO), `GET /api/recitation/review?work=`,
   `POST /api/recitation/plans/:id/review`, `POST /api/recitation/plans/:id/pause|resume`,
   `DELETE /api/recitation/plans/:id`; wired in `createServer.ts`/`index.ts`. `diaryQueries.ts` still joins
   `recitation_plans` into the Timeline as the `recitation` kind; `library/libraryCommands.ts` `deleteWork`
@@ -569,22 +576,27 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `Sheet` over `WorkContentPanel`, Reader = `ReaderPage`, Notes = `NotesRoute`→`NotesPage` at `/notes`
   (reads `?work=<id>` to narrow to a single work; also the target of the primary nav — see below),
   Review = `NotesReviewPage` at both `/notes/review` (canonical) and `/recall` (compat redirect, #662),
-  Search = `SearchPage`, Diary = `DiaryPage`, Write =
+  Search = `SearchPage`, Recite = `RecitePage` at `/recite` — the Recite home listing enrolled Works with
+  their due/next-review state (#638), Diary = `DiaryPage`, Write =
   `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`; `/memory`
   redirects (history-replace) to `/notes` and `/recall` to `/notes/review` (#662 retired the standalone
   Memory/Recall pages — the redirects read live due/card state from the DB, never reset it); a trailing
   `path="*"` catch-all renders `NotFoundPage` so any unknown hash route — including the retired
   `#/practice` — resolves to the calm not-found page inside the shell); `AppShell.tsx` is the responsive
   frame (one `Primary` `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus
-  the single `ToastViewport` live region). `navigation.ts` holds the **four** primary destinations — Today,
-  Library, **Notes** (`/notes`, occupying the former Memory position until #638 recomposes to five), Search
-  — rendered as a **single non-wrapping row of ≥44px targets** on mobile
-  (#390, #662). Reader, Review, and Diary keep their routes
-  but are NOT primary: Reader is an immersive destination opened from context, and the others are
-  reached from where they belong (Today links to the Review session/Diary; Notes links to the Review
-  session when something is
-  due; Library links to the all-notes surface). The Notes nav target's active state is truthful on both
-  `/notes` and `/notes/review` (prefix match). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
+  the single `ToastViewport` live region). `navigation.ts` holds the **five** primary destinations — Today,
+  Library, **Recite** (`/recite`), **Notes** (`/notes`), **Diary** (`/diary`) (#638) — plus the pure
+  `activeDestination(pathname)` mapping every secondary route to its owning parent so the parent tab stays
+  truthfully active (Reader/Write → Library, Recitation review → Recite, note Review + retired Memory/Recall
+  → Notes); the destinations render as a **single non-wrapping row of ≥44px targets** on mobile
+  (#390, #662, #638). **Search is a persistent shell utility** (a `Link` to `/search` in the top bar beside
+  the `ThemeToggle`), not a primary destination. Reader, Review, and the Recitation review keep their routes
+  the `ThemeToggle`), not a primary destination. Reader, Review, and the Recitation review keep their routes
+  but are NOT primary: Reader is an immersive destination opened from context, the note Review is reached
+  from Notes/Today, and the whole-Work Recitation review is reached from Recite (its "Back to Recite"
+  control) or a contextual `?work=` deep link. Each secondary route's parent stays visibly active via
+  `activeDestination` (e.g. `/notes/review` keeps Notes active, `/recitation` keeps Recite active). The
+  `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
   wrap the mobile row). On the `/reader` and `/write` routes the nav (and the toggle bar) recede so the
   reading/writing column owns the viewport (immersive room); each provides its own back-to-Library control.
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
@@ -893,16 +905,20 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   chaining/fading/hub surface is retired (a repository-search guard, `retiredFlow.test.ts`, fails if any of
   its labels or modules reappear). `recitationApi.ts` (`enrollRecitation`/`listRecitationPlans`/
   `fetchRecitationReview`/`recordRecitationReview`, every response parsed through `recitationContracts`).
-  `RecitationReviewCard.tsx` is ONE whole-Work review — recite the Work from memory, **Reveal** the
+  `reciteOverviewApi.ts` (`fetchRecitationOverview` → `GET /api/recitation/overview`, parsed through
+  `recitationContracts`). `RecitePage.tsx` is the `/recite` Recite home (a primary destination, #638):
+  loading/error/ready states listing every enrolled Work newest-first with its due/next-review/paused
+  status, a due-review lead when any Work is due (deep-linking `#/recitation`), and an empty state pointing
+  to Library. `RecitationReviewCard.tsx` is ONE whole-Work review — recite the Work from memory, **Reveal** the
   canonical source (read live from the Work's blocks, never copied), then one of the four FSRS-mapped
   self-ratings; only the rating posts, and it reschedules only that Work's card. `RecitationReviewPage.tsx`
   is the `/recitation` route (reads `?work=<id>` to open THAT exact Work's review, else the earliest-due
-  Work) with loading/error/ready(review-or-calm Library recovery)/done(next-scheduled + Back to Today)
-  states. The **"I can recite this"** entry points live on `library/AdminLibraryPage.tsx` (per un-enrolled
+  Work) with a "Back to Recite" control and loading/error/ready(review-or-calm Library recovery)/done
+  (next-scheduled + Back to Today) states. The **"I can recite this"** entry points live on `library/AdminLibraryPage.tsx` (per un-enrolled
   Work; an enrolled Work shows a quiet "Reciting" status + a "Review" link) and `reader/ReadingHeader.tsx`
   (`ReciteThisControl` enrols then navigates to the review); both enrol BEFORE opening the review and are
-  idempotent. Today's **Due now** Recitation row deep-links to `#/recitation`; the retired `/recite?plan=`
-  route redirects to the Library recovery path (`app/AppRoutes.tsx`).
+  idempotent. Today's **Due now** Recitation row deep-links to `#/recitation`; the `/recite` route is now
+  the Recite home (`app/AppRoutes.tsx`, #638 — no longer a Library redirect).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

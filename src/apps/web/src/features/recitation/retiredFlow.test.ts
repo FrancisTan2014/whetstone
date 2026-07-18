@@ -31,12 +31,15 @@ const retiredLabels: readonly string[] = [
   "Starting phase"
 ];
 
-// Retired modules that must no longer exist anywhere under the web source tree.
+// Retired modules that must no longer exist anywhere under the web source tree. NOTE: `RecitePage.tsx` is
+// intentionally NOT listed — #638 reuses that filename for the *new* Recite home (a primary destination
+// listing enrolled Works), which is unrelated to the retired passage-segmentation page. The retired
+// passage/phase/session copy stays guarded by `retiredLabels` above and by App.test.tsx, so reusing the
+// filename cannot silently resurrect the retired surface.
 const retiredModules: readonly string[] = [
   "RecitationHubPage.tsx",
   "RecitationSessionPanel.tsx",
   "RecitationChainingPanel.tsx",
-  "RecitePage.tsx",
   "recitationChainingApi.ts",
   "recitationHubApi.ts",
   "recitationPassageApi.ts",

@@ -49,6 +49,11 @@ export function RecitationReviewPage({
 
   return (
     <section aria-labelledby="recitation-heading" className="mx-auto max-w-2xl p-6">
+      <p className="mb-4">
+        <Link className="text-sm text-text-muted underline" to="/recite">
+          Back to Recite
+        </Link>
+      </p>
       <h1 className="text-xl font-semibold text-text" id="recitation-heading">
         Recitation
       </h1>
