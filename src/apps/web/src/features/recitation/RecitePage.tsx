@@ -5,6 +5,7 @@ import type { RecitationOverviewDto, RecitationOverviewWorkDto } from "@whetston
 
 import { buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { PageFrame } from "../../shared/ui/PageFrame";
 import { fetchRecitationOverview } from "./reciteOverviewApi";
 
 type OverviewState =
@@ -43,12 +44,9 @@ export function RecitePage(): React.JSX.Element {
   }, [load]);
 
   return (
-    <section aria-labelledby="recite-heading" className="mx-auto max-w-2xl p-6">
-      <h1 className="text-xl font-semibold text-text" id="recite-heading">
-        Recite
-      </h1>
-      <div className="mt-4">{renderState(state)}</div>
-    </section>
+    <PageFrame title="Recite">
+      {renderState(state)}
+    </PageFrame>
   );
 }
 

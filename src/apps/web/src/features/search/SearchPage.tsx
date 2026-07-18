@@ -4,6 +4,7 @@ import type { SearchResultDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { PageFrame } from "../../shared/ui/PageFrame";
 import { searchLibrary } from "./searchApi";
 
 type SearchState =
@@ -38,32 +39,30 @@ export function SearchPage(): React.JSX.Element {
   }
 
   return (
-    <section aria-labelledby="search-heading" className="mx-auto max-w-2xl p-6">
-      <h1 className="text-2xl font-semibold text-text" id="search-heading">
-        Search
-      </h1>
-      <p className="mt-2 text-text-muted">
-        Find words and phrases across every work in your library.
-      </p>
+    <PageFrame
+      description="Find words and phrases across every work in your library."
+      title="Search"
+    >
+      <div>
+        <form className="flex gap-2" onSubmit={(event) => void onSubmit(event)} role="search">
+          <label className="sr-only" htmlFor="search-query">
+            Search query
+          </label>
+          <input
+            autoComplete="off"
+            className="flex-1 rounded border border-border bg-surface px-3 py-2 text-text"
+            id="search-query"
+            onChange={(event) => setTerm(event.currentTarget.value)}
+            placeholder="Search the library…"
+            type="search"
+            value={term}
+          />
+          <Button type="submit">Search</Button>
+        </form>
 
-      <form className="mt-4 flex gap-2" onSubmit={(event) => void onSubmit(event)} role="search">
-        <label className="sr-only" htmlFor="search-query">
-          Search query
-        </label>
-        <input
-          autoComplete="off"
-          className="flex-1 rounded border border-border bg-surface px-3 py-2 text-text"
-          id="search-query"
-          onChange={(event) => setTerm(event.currentTarget.value)}
-          placeholder="Search the library…"
-          type="search"
-          value={term}
-        />
-        <Button type="submit">Search</Button>
-      </form>
-
-      <div className="mt-6">{renderState(state)}</div>
-    </section>
+        <div className="mt-6">{renderState(state)}</div>
+      </div>
+    </PageFrame>
   );
 }
 

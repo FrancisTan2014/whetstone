@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 
 import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
 import type { ReviewRating } from "@whetstone/domain";
@@ -7,6 +6,7 @@ import type { ReviewRating } from "@whetstone/domain";
 import { PmDocument } from "../reader/PmDocument.js";
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { PageFrame } from "../../shared/ui/PageFrame";
 import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
 
 // The four self-grade controls, in increasing-confidence order. Each is an FSRS rating sent to the API.
@@ -90,25 +90,15 @@ function NotesReviewPageComponent(): React.JSX.Element {
   }
 
   return (
-    <section aria-labelledby="notes-review-heading" className="mx-auto max-w-2xl px-4 py-6">
-      <h1 className="text-2xl font-semibold text-text" id="notes-review-heading">
-        Review
-      </h1>
-      <div className="mt-6">
-        <SessionBody
-          onRate={rate}
-          onReveal={reveal}
-          onReviewNext={reviewNext}
-          ratingFailed={ratingFailed}
-          state={state}
-        />
-      </div>
-      <p className="mt-8">
-        <Link className="text-text-muted underline" to="/notes">
-          Back to Notes
-        </Link>
-      </p>
-    </section>
+    <PageFrame parentLink={{ label: "Notes", to: "/notes" }} title="Review">
+      <SessionBody
+        onRate={rate}
+        onReveal={reveal}
+        onReviewNext={reviewNext}
+        ratingFailed={ratingFailed}
+        state={state}
+      />
+    </PageFrame>
   );
 }
 

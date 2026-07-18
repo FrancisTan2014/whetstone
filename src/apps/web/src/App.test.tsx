@@ -109,7 +109,7 @@ describe("App shell and routes", () => {
   it("lands on the proactive Today home at the index route", () => {
     const markup = renderAt("/");
 
-    expect(markup).toContain('id="today-heading"');
+    expect(markup).toContain(">Today</h1>");
     expect(markup).toContain("New diary entry");
     // Today is the landing now — the Library no longer mounts at the index route.
     expect(markup).not.toContain("Work detail");
@@ -149,7 +149,7 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain("Due to recall");
     expect(markup).not.toContain('aria-label="Practice nudge"');
     expect(markup).not.toContain("Practise now");
-    expect(markup).not.toContain('id="today-heading"');
+    expect(markup).not.toContain(">Today</h1>");
     expect(markup).not.toContain("Capture today");
   });
 
@@ -166,13 +166,13 @@ describe("App shell and routes", () => {
   it("redirects the retired /recall route to the Notes-owned review session (#662)", () => {
     const { container } = renderLiveAt("/recall");
 
-    expect(container.innerHTML).toContain('id="notes-review-heading"');
+    expect(container.innerHTML).toContain(">Review</h1>");
   });
 
   it("resolves the notes-review route to the Notes-owned review session", () => {
     const markup = renderAt("/notes/review");
 
-    expect(markup).toContain('id="notes-review-heading"');
+    expect(markup).toContain(">Review</h1>");
   });
 
   it("resolves the diary route to the voice-diary page as a primary destination (#638)", () => {
@@ -188,7 +188,6 @@ describe("App shell and routes", () => {
     // The retired coach Practice route is gone: #/practice lands on the normal not-found route, never a
     // SessionPage. The shell (primary nav) still frames it, so it is a calm not-found, not a blank screen.
     expect(markup).toContain('aria-label="Primary"');
-    expect(markup).toContain('id="not-found-heading"');
     expect(markup).toContain("Page not found");
   });
 
@@ -196,7 +195,7 @@ describe("App shell and routes", () => {
     for (const path of ["/progress", "/does-not-exist"]) {
       const markup = renderAt(path);
 
-      expect(markup).toContain('id="not-found-heading"');
+      expect(markup).toContain(">Page not found</h1>");
       expect(markup).not.toContain('id="progress-heading"');
     }
   });
@@ -237,7 +236,7 @@ describe("App shell and routes", () => {
     // Recite is now a primary destination: its home mounts inside the shell (primary nav present) and,
     // under static render (no effects), in its loading arm. The retired passage-setup copy never renders.
     expect(markup).toContain('aria-label="Primary"');
-    expect(markup).toContain('id="recite-heading"');
+    expect(markup).toContain(">Recite</h1>");
     expect(markup).not.toContain("Loading passages…");
     expect(markup).not.toContain("Open a recitation routine from your Library to divide it.");
   });
@@ -248,7 +247,7 @@ describe("App shell and routes", () => {
     // A secondary destination — reachable off-nav but still framed by the shell. Effects do not run
     // under static render, so the review page mounts in its loading arm.
     expect(markup).toContain('aria-label="Primary"');
-    expect(markup).toContain('id="recitation-heading"');
+    expect(markup).toContain(">Recitation</h1>");
     expect(markup).toContain("Loading your recitation…");
     // The retired hub/passage surface is gone.
     expect(markup).not.toContain('id="recitation-hub-heading"');
@@ -259,7 +258,7 @@ describe("App shell and routes", () => {
     // opens that exact Work's whole-Work review rather than the earliest-due one.
     const markup = renderAt("/recitation?work=work-1");
 
-    expect(markup).toContain('id="recitation-heading"');
+    expect(markup).toContain(">Recitation</h1>");
     expect(markup).toContain("Loading your recitation…");
   });
 

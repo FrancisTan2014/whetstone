@@ -83,12 +83,14 @@ afterEach(() => {
 });
 
 describe("NotesReviewPage", () => {
-  it("always shows the Review heading and a Back to Notes target, including while loading", () => {
+  it("always shows the Review heading and a Notes parent link, including while loading", () => {
     mockedNext.mockReturnValue(new Promise<NoteReviewPromptDto | null>(() => {}));
     renderPage();
 
     expect(screen.getByRole("heading", { name: "Review" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Back to Notes" }).getAttribute("href")).toBe("/notes");
+    // The parent treatment is now the shared PageFrame parent link (#641): an ArrowLeft plus the
+    // visible parent label "Notes", still a real /notes target above the title.
+    expect(screen.getByRole("link", { name: "Notes" }).getAttribute("href")).toBe("/notes");
   });
 
   it("reports a calm due-complete state when nothing is due", async () => {
