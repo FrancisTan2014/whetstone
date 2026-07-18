@@ -1,4 +1,4 @@
-import type { RecitationReviewDto } from "@whetstone/contracts";
+import type { RecitationOverviewDto, RecitationReviewDto } from "@whetstone/contracts";
 import {
   localDayBoundary,
   selectRecitationWork,
@@ -10,7 +10,11 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import { blocks, recitationWholeWork, reviewCards } from "../../db/schema.js";
 import { type ReviewCardRow } from "../review/reviewCardQueries.js";
-import { listActiveRecitationPlans, type RecitationPlanRow } from "./recitationQueries.js";
+import {
+  listActiveRecitationPlans,
+  listRecitationOverviewPlans,
+  type RecitationPlanRow
+} from "./recitationQueries.js";
 
 // The one Work-level maintenance target a plan owns (#643): its `recitation_whole_work` Entry id and the
 // shared FSRS card keyed by that id, scoped to the owner. Undefined when the plan has no active-or-paused
@@ -176,7 +180,48 @@ async function loadOwnedPlanForWork(
   return plans.find((plan) => plan.workEntryId === workEntryId);
 }
 
-// How many Works still hold a due Work-level card right now (#637): the aggregate due count recomputed
+// The Recite home payload (#638): every enrolled Work with its live due state and next review date, read
+// straight from its Work-level maintenance card. A Work whose maintenance was removed has no active card,
+// so it carries a null schedule and is never due; a paused Work keeps its scheduled `nextReviewAt` but is
+// never due while paused. `dueCount` is the number of Works due now, so the landing can lead with due
+// maintenance without recomputing it client-side. Newest-enrolled order is preserved from the plan read.
+export async function loadRecitationOverview(
+  dependencies: RecitationReviewDependencies,
+  userId: string,
+  now: Date
+): Promise<RecitationOverviewDto> {
+  const { db } = dependencies;
+  const plans = await listRecitationOverviewPlans(db, userId);
+
+  const works: RecitationOverviewDto["works"] = [];
+  let dueCount = 0;
+  for (const plan of plans) {
+    const target = await loadWholeWorkTarget(db, plan.entryId, userId);
+    const paused = plan.pausedAt !== null;
+    const isDue =
+      target !== undefined &&
+      target.card.status === "active" &&
+      !paused &&
+      target.card.dueAt.getTime() <= now.getTime();
+    if (isDue) {
+      dueCount += 1;
+    }
+    works.push({
+      isDue,
+      // The card keeps its schedule while paused (only removal drops the card), so a paused Work still
+      // shows its preserved next review date; a removed Work has no card and no schedule.
+      nextReviewAt: target === undefined ? null : target.card.dueAt.toISOString(),
+      paused,
+      planEntryId: plan.entryId,
+      state: target === undefined ? null : target.card.state,
+      workEntryId: plan.workEntryId,
+      workTitle: plan.workTitle
+    });
+  }
+
+  return { dueCount, works };
+}
+
 // from the canonical cards through the pure #633 selector, with no persisted queue or cursor. Called
 // straight after a rating so the review UI can decide between an optional "Review next" and "Due
 // complete" — the just-rated card is rescheduled forward and so is naturally not counted here. Overdue

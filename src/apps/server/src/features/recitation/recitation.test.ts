@@ -2,7 +2,12 @@ import { PGlite } from "@electric-sql/pglite";
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { RecitationPlanDto, RecitationReviewDto, TimelineDto } from "@whetstone/contracts";
+import type {
+  RecitationOverviewDto,
+  RecitationPlanDto,
+  RecitationReviewDto,
+  TimelineDto
+} from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -311,6 +316,94 @@ describe("GET /api/recitation/review", () => {
     await recordRecitationReview(context.deps, toEntryId(plan.entryId), "easy", DEFAULT_USER_ID);
 
     expect(await fetchReview()).toBeNull();
+  });
+});
+
+describe("GET /api/recitation/overview", () => {
+  async function fetchOverview(): Promise<RecitationOverviewDto> {
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/recitation/overview"
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json() as RecitationOverviewDto;
+  }
+
+  it("lists enrolled Works newest first with their due state and next review date", async () => {
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const first = await enroll(await seedWork("work-1", "One"));
+    context.setNow("2026-07-01T10:00:00.000Z");
+    const second = await enroll(await seedWork("work-2", "Two"));
+    context.setNow("2026-07-02T09:00:00.000Z");
+
+    const overview = await fetchOverview();
+
+    expect(overview.dueCount).toBe(2);
+    // Newest adopted first: work-2 (enrolled later) precedes work-1.
+    expect(overview.works.map((work) => work.workEntryId)).toEqual([
+      second.workEntryId,
+      first.workEntryId
+    ]);
+    const two = overview.works[0]!;
+    expect(two).toMatchObject({
+      isDue: true,
+      paused: false,
+      planEntryId: second.entryId,
+      state: "new",
+      workTitle: "Two"
+    });
+    expect(new Date(two.nextReviewAt!).getTime()).toBeLessThanOrEqual(context.deps.now().getTime());
+  });
+
+  it("reports a rescheduled Work as not due with its future next review date", async () => {
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const plan = await enroll(await seedWork("work-1", "Fables"));
+    await recordRecitationReview(context.deps, toEntryId(plan.entryId), "easy", DEFAULT_USER_ID);
+
+    const overview = await fetchOverview();
+
+    expect(overview.dueCount).toBe(0);
+    const work = overview.works[0]!;
+    expect(work.isDue).toBe(false);
+    expect(new Date(work.nextReviewAt!).getTime()).toBeGreaterThan(context.deps.now().getTime());
+  });
+
+  it("shows a paused Work as not due while keeping its scheduled next review", async () => {
+    context.setNow("2026-07-01T09:00:00.000Z");
+    const plan = await enroll(await seedWork("work-1", "Fables"));
+    await pauseRecitation(context.deps, toEntryId(plan.entryId), DEFAULT_USER_ID);
+
+    const overview = await fetchOverview();
+
+    expect(overview.dueCount).toBe(0);
+    expect(overview.works[0]).toMatchObject({ isDue: false, paused: true });
+    expect(overview.works[0]!.nextReviewAt).not.toBeNull();
+  });
+
+  it("shows a removed-maintenance Work with a null schedule that is never due", async () => {
+    const plan = await enroll(await seedWork("work-1", "Fables"));
+    await removeRecitation(context.deps, toEntryId(plan.entryId), DEFAULT_USER_ID);
+
+    const overview = await fetchOverview();
+
+    expect(overview.dueCount).toBe(0);
+    expect(overview.works[0]).toMatchObject({
+      isDue: false,
+      nextReviewAt: null,
+      paused: false,
+      state: null
+    });
+  });
+
+  it("returns an empty overview when the learner has enrolled nothing", async () => {
+    expect(await fetchOverview()).toEqual({ dueCount: 0, works: [] });
+  });
+
+  it("never leaks another learner's enrolled Works", async () => {
+    await enroll(await seedWork("work-1", "Mine"));
+    context.setUser(OTHER_USER_ID);
+
+    expect(await fetchOverview()).toEqual({ dueCount: 0, works: [] });
   });
 });
 
