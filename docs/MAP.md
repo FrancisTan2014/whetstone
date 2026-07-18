@@ -784,8 +784,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   column); jumping back from a note card loads the unit holding the block (when it differs
   from the open one) then scrolls/focuses it via `scrollToBlock.ts`. The reader is the calm `paper` reading surface (`.reading-surface` +
   `readerPaper`, `lang` from the work for CJK measure): `ReadingHeader.tsx` is the receding reading
-  chrome — a minimal title + a thin top progress line plus the one home for every reading tool
-  (text-size, Day/Night `ThemeToggle`, the 目录 toggle as a contents icon, and the notes toggle),
+  chrome — a minimal title + a thin top progress line plus the one home for every reading-specific tool
+  (text-size, the 目录 toggle as a contents icon, and the notes toggle; the Day/Night `ThemeToggle` is
+  shell chrome, so it is not duplicated here — #638),
   laid out as a **persistent vertical icon rail docked at the bottom-right on desktop** (beside the
   reading column, always one click away — it stays put while scrolling, never receding) and a **top bar
   plus a bottom tools bar shown by default on mobile** (a center

@@ -104,12 +104,6 @@ describe("ReadingHeader", () => {
     expect(props.onSizeChange).not.toHaveBeenCalled();
   });
 
-  it("includes the Day/Night theme toggle in the tool strip", () => {
-    renderHeader();
-
-    expect(screen.getByRole("button", { name: "Switch to Night" })).toBeDefined();
-  });
-
   it("renders the 目录 toggle when the work has a table of contents", async () => {
     const user = userEvent.setup();
     const props = renderHeader({ hasToc: true, tocOpen: false });

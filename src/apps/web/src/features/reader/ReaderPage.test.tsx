@@ -2706,14 +2706,6 @@ describe("ReaderPage reading tools", () => {
     expect(notes.querySelector(".readingToolBadge")).toBeNull();
   });
 
-  it("offers the Day/Night theme toggle among the reading tools", async () => {
-    seedWorkContent(multiUnitContent);
-    render(<ReaderPage initialWorkEntryId="work-1" />);
-    await screen.findByText("Intro paragraph.");
-
-    expect(screen.getByRole("button", { name: "Switch to Night" })).toBeDefined();
-  });
-
   it("closes the 目录 drawer after a unit is selected", async () => {
     seedWorkContent(multiUnitContent);
     const user = userEvent.setup();
