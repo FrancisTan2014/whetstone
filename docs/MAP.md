@@ -406,8 +406,8 @@ can navigate them from another package.
   `(target_source_file, target_anchor)`, and writes the flattened tree to `toc_entries` (pre-order
   `order_index`, `depth`, `parent_entry_id`; each entry also a first-class `entries` row of type
   `toc_entry`); fail-soft — no nav / empty parse persists nothing (#379). Blocks carry `work_entry_id`, so notes on
-    soft-deleted (unit-detached) blocks stay addressable. The reader no
-    longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
+  soft-deleted (unit-detached) blocks stay addressable. The reader no
+  longer transfers the whole work: `contentQueries.ts` exposes the lazy-reader read endpoints
   (`loadWorkStructure` / `loadReadingUnitContent` / `locateBlockUnit` / `loadWorkAnchorIndex`):
   `GET …/structure` (units + block counts, no content), `GET …/units/:unitId/content` (one unit's
   ordered blocks — both the mdast `blocks` and the PM `docBlocks`: `{ entryId, node, orderIndex, type }`,
@@ -601,8 +601,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
-  `100vh`), `Button` (token variants via `cva`; a `pending` prop shows a `Spinner`, sets `aria-busy`,
-  and disables so an in-flight action cannot double-submit), `Sheet` (Radix Dialog: focus trap +
+  `100vh`), `PageFrame` (`PageFrame.tsx` + `PageFrame.tokens.ts`, #641: the one shared page-frame
+  boundary owning horizontal gutters, the two content widths — `focused` 42rem / `collection` 64rem,
+  viewport-capped — the header rhythm of an optional `ArrowLeft` parent link, one 28px/34px semibold
+  H1, an optional muted description, and the single primary-action slot, plus the 24px header→content
+  gap; every standard page frames through it while Reader stays the immersive exception), `Button`
+  (token variants via `cva`; a `pending` prop shows a `Spinner`, sets `aria-busy`, and disables so an
+  in-flight action cannot double-submit; `size="icon"` + the `IconButton` form give every icon-only
+  control a 44×44 target, visible focus, a required accessible `label`, and a hover `title` from one
+  boundary — #641), `Sheet` (Radix Dialog: focus trap +
   dismissal; right side panel on desktop / bottom sheet on mobile via `useMediaQuery`; tokenized Framer
   spring honoring reduced motion; splits its `Dialog.Content` into an un-transformed, un-clipped
   `.sheet-content-root` holding both the animated `.sheet-panel` and a sibling `.sheet-floating-layer`
@@ -622,9 +629,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - Design system (PRODUCT.md "v0 design language"): `src/styles/theme.css` defines the Tailwind v4
   `@theme` semantic tokens (OKLCH + hex fallback) with Day defaults and `.dark` Night overrides
   (class strategy), self-hosted Inter/Source Serif 4, the language-aware reading stack, and motion
-  vars. `src/shared/theme/` is the theme controller (`theme.ts` pure rules, `useTheme.ts` applies the
-  `.dark` class + persists, `ThemeToggle.tsx` the sun/moon icon button placed as app-shell chrome in a
-  slim top bar — not a nav tab (#390)); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
+  vars. Four global meaning channels only — indigo interaction/accent, blue links, amber annotations,
+  red destructive — plus `--color-accent-selection` (a `color-mix` accent wash for active nav and
+  selection that auto-adapts under `.dark`); the retired Vocabulary/Expression/Thought/Gem tokens are
+  gone, leaving `anno-note`/`anno-mark` for Reader overlays (#641). General-purpose UI icons come from
+  one system — `lucide-react` via direct named imports (tree-shaken), rendered 20px `strokeWidth={1.75}`
+  in `currentColor` (16px in dense editor chrome); custom SVG is kept only for the functional `Spinner`
+  and the product mark (#641). `src/shared/theme/` is the theme controller (`theme.ts` pure rules,
+  `useTheme.ts` applies the `.dark` class + persists, `ThemeToggle.tsx` the sun/moon `IconButton`
+  placed as app-shell chrome in a slim top bar — not a nav tab (#390)); `src/shared/motion/motion.tokens.ts` holds the motion tokens and `motion.ts`
   the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
 - Shared editing: `src/shared/editor/` is the cross-feature rich-content boundary (#570).
   `RichContentEditor.tsx` mounts the single `@whetstone/document` extension set through Tiptap React,
@@ -671,7 +684,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   ≥44px overflow menu (`WorkOverflowMenu.tsx`, Radix `DropdownMenu`, `modal={false}`, accessible name
   `More actions for <title>`): **I can recite this** / **Open in Recite** (`#/recite`) → **View notes**
   (`#/notes?work=<entryId>`) → **Edit document** (`#/write?work=`) for authored works else **Manage
-  content** (emits `onManageContent`) → separator → **Delete work** (destructive). Recitation *status*
+  content** (emits `onManageContent`) → separator → **Delete work** (destructive). Recitation _status_
   never appears in Library — Recite owns it. The header's file-and-create controls collapse into one
   ≥44px **Add** menu (`LibraryAddMenu.tsx`): **Upload file** (`.epub, .pdf, .md`), **New document**,
   **Add work manually**; class maps for both menus live in the coverage-excluded

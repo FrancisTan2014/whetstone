@@ -912,7 +912,7 @@ export function ReaderPage({
   }, [selectionContext, readerLanguage]);
 
   // Dismiss the toolbar across its whole lifecycle: a pointer press anywhere outside the toolbar
-  // closes it, as does clearing the selection. The explicit ✕ / confirm / lookup still close it.
+  // closes it, as does clearing the selection. The explicit close / confirm / lookup still close it.
   useEffect(() => {
     if (capture === undefined) {
       return;
