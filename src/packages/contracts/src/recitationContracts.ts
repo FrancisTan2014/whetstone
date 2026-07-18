@@ -109,6 +109,38 @@ export const recordRecitationReviewResponseSchema = z
 
 export type RecordRecitationReviewResponse = z.infer<typeof recordRecitationReviewResponseSchema>;
 
+// One enrolled Work as the Recite home presents it (#638): the plan/Work identity and title, plus the
+// Work-level maintenance card's schedule read live — `nextReviewAt` is the card's next due instant (null
+// when maintenance was removed and no active card remains), `state` its FSRS lifecycle, `isDue` whether it
+// is due now (always false while paused), and `paused` whether the learner has withheld it from the due
+// scan. Derived, never stored: the Recite landing shows due state and next review dates without the client
+// re-deriving them.
+export const recitationOverviewWorkSchema = z
+  .object({
+    isDue: z.boolean(),
+    nextReviewAt: z.string().datetime().nullable(),
+    paused: z.boolean(),
+    planEntryId: z.string(),
+    state: recitationReviewCardStateSchema.nullable(),
+    workEntryId: z.string(),
+    workTitle: z.string()
+  })
+  .strict();
+
+export type RecitationOverviewWorkDto = z.infer<typeof recitationOverviewWorkSchema>;
+
+// The Recite home payload (#638): every enrolled Work with its live due state and next review date, newest
+// enrolled first, plus `dueCount` — how many Works hold a due card right now — so the landing can lead with
+// due maintenance without recomputing it client-side.
+export const recitationOverviewDtoSchema = z
+  .object({
+    dueCount: z.number().int().nonnegative(),
+    works: z.array(recitationOverviewWorkSchema)
+  })
+  .strict();
+
+export type RecitationOverviewDto = z.infer<typeof recitationOverviewDtoSchema>;
+
 export function parseEnrollRecitationRequest(value: unknown): EnrollRecitationRequest {
   return enrollRecitationRequestSchema.parse(value);
 }
@@ -133,4 +165,8 @@ export function parseRecordRecitationReviewResponse(
   value: unknown
 ): RecordRecitationReviewResponse {
   return recordRecitationReviewResponseSchema.parse(value);
+}
+
+export function parseRecitationOverviewDto(value: unknown): RecitationOverviewDto {
+  return recitationOverviewDtoSchema.parse(value);
 }
