@@ -4,6 +4,7 @@ import { Placeholder } from "@tiptap/extensions/placeholder";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu, type BubbleMenuProps } from "@tiptap/react/menus";
+import { MoreHorizontal } from "lucide-react";
 import {
   type DocumentNodeJSON,
   documentExtensions,
@@ -93,13 +94,7 @@ function activeBlockStart(state: EditorState): number {
 
 // The horizontal ellipsis for the compact/touch `More block actions` trigger.
 function MoreIcon(): React.JSX.Element {
-  return (
-    <svg aria-hidden="true" fill="currentColor" height="16" viewBox="0 0 16 16" width="16">
-      <circle cx="3" cy="8" r="1.4" />
-      <circle cx="8" cy="8" r="1.4" />
-      <circle cx="13" cy="8" r="1.4" />
-    </svg>
-  );
+  return <MoreHorizontal aria-hidden height={16} strokeWidth={1.75} width={16} />;
 }
 
 // The shared editing surface: a document-first writing area with no permanent chrome. Inline

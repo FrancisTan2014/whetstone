@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { X } from "lucide-react";
 
 import { motionSprings, withReducedMotion } from "../motion/motion.js";
 import type { ToastIntent } from "./toast/ToastProvider.js";
@@ -41,19 +42,7 @@ export function Toast({
         onClick={onDismiss}
         type="button"
       >
-        <svg
-          aria-hidden="true"
-          className="h-4 w-4"
-          fill="none"
-          focusable="false"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-        >
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
+        <X aria-hidden className="h-4 w-4" focusable="false" strokeWidth={1.75} />
       </button>
     </motion.div>
   );
