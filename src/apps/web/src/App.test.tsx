@@ -124,11 +124,10 @@ describe("App shell and routes", () => {
     expect(markup).not.toContain("Work detail");
   });
 
-  it("links Library to the all-notes review surface (#390)", () => {
+  it("no longer shows a Review all notes shortcut in the Library header now Notes is a primary destination (#640)", () => {
     const markup = renderAt("/library");
 
-    expect(markup).toContain('href="#/notes"');
-    expect(markup).toContain("Review all notes");
+    expect(markup).not.toContain("Review all notes");
   });
 
   it("frames the reader within the shell with Library active and Search reachable, while staying calm (#638)", () => {
