@@ -70,7 +70,7 @@ test.describe("direct Work-level Recitation maintenance (#643)", () => {
 
     // Enter the due review from Today (no ?work — the earliest-due Work opens), recite, reveal the
     // canonical source read live from the Work's blocks, then rate.
-    await page.getByRole("link", { name: "Start", exact: true }).click();
+    await page.getByRole("link", { name: "Review", exact: true }).click();
     await expect(page).toHaveURL(/#\/recitation$/);
     await page.getByRole("button", { name: "Reveal source" }).click();
     await expect(page.getByLabel("Source")).toBeVisible();
@@ -86,7 +86,7 @@ test.describe("direct Work-level Recitation maintenance (#643)", () => {
 
     // On a freshly recomputed board the rescheduled Work is no longer due, so the Recitation row is gone
     // and Today is truthfully clear.
-    await expect(page.getByText("All due work is clear.")).toBeVisible();
+    await expect(page.getByText("Done for today.")).toBeVisible();
     await expect(page.getByText("Recitation", { exact: true })).toHaveCount(0);
 
     // Re-enrolling is idempotent — the Library now shows the single durable plan as "Reciting" with a

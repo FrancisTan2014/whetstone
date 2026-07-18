@@ -63,11 +63,10 @@ test.describe("diary timeline (#648)", () => {
     }, offset);
     await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(offset);
 
-    // (3) Leave Diary (its component unmounts) and return within the same app session via Today.
+    // (3) Leave Diary (its component unmounts) and return within the same app session. Today no longer
+    // carries a diary back-link (#639), so return via the persistent Diary nav destination.
     await page.getByRole("link", { name: "Today" }).click();
-    const returnLink = page.getByRole("link", { name: "Return to your diary" });
-    await expect(returnLink).toBeVisible();
-    await returnLink.click();
+    await page.getByRole("link", { name: "Diary" }).click();
 
     // The timeline (including the in-place edit) is restored, and the scroll offset returns to where the
     // learner left it — no full reload, no refetch to the top.

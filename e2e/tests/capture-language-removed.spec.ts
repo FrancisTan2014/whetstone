@@ -17,6 +17,9 @@ test.describe("diary capture language removal (#647)", () => {
 
     await page.goto(`${baseURL}#/`);
 
+    // Today's capture is compact until activated (#639): open it to reveal the shared capture surface.
+    await page.getByRole("button", { name: "New diary entry" }).click();
+
     const capture = page.getByRole("region", { name: "Capture today" });
     await expect(capture).toBeVisible();
 
