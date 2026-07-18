@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 import { isAnchoredNote, type AnchoredNoteDto, type WorkListItemDto } from "@whetstone/contracts";
@@ -85,6 +85,7 @@ type ReaderChrome = Readonly<{
   onSizeChange: (size: ReadingSize) => void;
   onToggleChrome: () => void;
   prefersReducedMotion: boolean;
+  registerScrollRef: (element: HTMLElement | null) => void;
   scroll: ReaderScroll;
   size: ReadingSize;
   title: string;
@@ -406,7 +407,8 @@ export function ReaderPage({
   const [tocOpen, setTocOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const scroll = useReaderScroll();
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+  const scroll = useReaderScroll(scrollElement);
   // Below the desktop rail's fit width the chrome is a top bar + bottom tools bar, shown by default
   // and toggled to recede on a center tap of the reading area. It must NOT start hidden: a receded
   // bottom bar sits below the fold (translateY(130%)), so hiding by default left the reading tools
@@ -857,7 +859,15 @@ export function ReaderPage({
   // cross-block) from the rendered DOM via the shared offset model, so the toolbar appears wherever
   // the release lands. A release outside the reader, or one whose selection is empty/whitespace,
   // captures nothing.
-  useEffect(() => {
+  //
+  // A layout effect (not a passive one) installs the release listener synchronously in the same
+  // commit that first renders the reading surface, so the listener is guaranteed to be attached the
+  // instant the reading content is queryable. A passive effect runs in a later scheduler task after
+  // commit, which under load (CI's parallel coverage run) can be delayed past a release that lands
+  // immediately after the content appears — dropping the very first selection. Layout timing closes
+  // that window; it only registers document listeners (no layout read/write), so running earlier is
+  // safe.
+  useLayoutEffect(() => {
     if (selectionContext === undefined) {
       return;
     }
@@ -1111,7 +1121,7 @@ export function ReaderPage({
 
   return (
     <section aria-label="Reader" className="readerShell">
-      <a aria-label="Back to Library" className="readerExit" href="#/">
+      <a aria-label="Back to Library" className="readerExit" href="#/library">
         ← Library
       </a>
 
@@ -1132,6 +1142,7 @@ export function ReaderPage({
               onSizeChange,
               onToggleChrome,
               prefersReducedMotion,
+              registerScrollRef: setScrollElement,
               scroll,
               size,
               tools: {
@@ -1354,27 +1365,29 @@ function renderViewing(
           tocOpen={tools.tocOpen}
           workEntryId={workEntryId}
         />
-        <motion.div
-          animate={entrance.animate}
-          className="readerEntrance"
-          initial={entrance.initial}
-          key={`${workEntryId}-${activeUnitIndex}`}
-          transition={entrance.transition}
-        >
-          <div className="reading-surface readerPaper" lang={chrome.language}>
-            <FrontMatterNotice
-              activeUnitIndex={activeUnitIndex}
-              onSelectUnit={onSelectUnit}
-              structure={structure}
-            />
-            {renderActiveUnit(structure, activeUnit, onRetryUnit, handlers)}
-            <ChapterPager
-              activeUnitIndex={activeUnitIndex}
-              onSelectUnit={onSelectUnit}
-              structure={structure}
-            />
-          </div>
-        </motion.div>
+        <div className="readerReadingScroll" ref={chrome.registerScrollRef}>
+          <motion.div
+            animate={entrance.animate}
+            className="readerEntrance"
+            initial={entrance.initial}
+            key={`${workEntryId}-${activeUnitIndex}`}
+            transition={entrance.transition}
+          >
+            <div className="reading-surface readerPaper" lang={chrome.language}>
+              <FrontMatterNotice
+                activeUnitIndex={activeUnitIndex}
+                onSelectUnit={onSelectUnit}
+                structure={structure}
+              />
+              {renderActiveUnit(structure, activeUnit, onRetryUnit, handlers)}
+              <ChapterPager
+                activeUnitIndex={activeUnitIndex}
+                onSelectUnit={onSelectUnit}
+                structure={structure}
+              />
+            </div>
+          </motion.div>
+        </div>
       </div>
       <Sheet onOpenChange={tools.onSetNotesOpen} open={tools.notesOpen} title="Your notes">
         <div className="readerNotesPanel">

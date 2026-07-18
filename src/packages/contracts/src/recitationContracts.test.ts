@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   enrollRecitationRequestSchema,
   parseEnrollRecitationRequest,
+  parseRecitationOverviewDto,
   parseRecitationPlanDto,
   parseRecitationPlanListDto,
   parseRecitationReviewResponse,
   parseRecordRecitationReviewRequest,
   parseRecordRecitationReviewResponse,
+  recitationOverviewDtoSchema,
   recitationReviewDtoSchema
 } from "./recitationContracts.js";
 
@@ -76,6 +78,65 @@ describe("recitation review DTOs", () => {
     expect(recitationReviewDtoSchema.safeParse({ ...reviewDto, state: "archived" }).success).toBe(
       false
     );
+  });
+});
+
+const overviewWork = {
+  isDue: true,
+  nextReviewAt: "2026-07-15T00:00:00.000Z",
+  paused: false,
+  planEntryId: "plan-1",
+  state: "review" as const,
+  workEntryId: "work-1",
+  workTitle: "Ode"
+};
+
+describe("recitation overview DTO", () => {
+  it("parses an overview with enrolled Works and a due count", () => {
+    expect(parseRecitationOverviewDto({ dueCount: 1, works: [overviewWork] })).toEqual({
+      dueCount: 1,
+      works: [overviewWork]
+    });
+  });
+
+  it("accepts a removed-maintenance Work with a null schedule that is not due", () => {
+    const parsed = parseRecitationOverviewDto({
+      dueCount: 0,
+      works: [{ ...overviewWork, isDue: false, nextReviewAt: null, state: null }]
+    });
+    expect(parsed.works[0]!.nextReviewAt).toBeNull();
+    expect(parsed.works[0]!.state).toBeNull();
+  });
+
+  it("accepts a paused Work in the overview", () => {
+    expect(
+      parseRecitationOverviewDto({
+        dueCount: 0,
+        works: [{ ...overviewWork, isDue: false, paused: true }]
+      }).works[0]!.paused
+    ).toBe(true);
+  });
+
+  it("rejects an out-of-range card state in a Work", () => {
+    expect(
+      recitationOverviewDtoSchema.safeParse({
+        dueCount: 0,
+        works: [{ ...overviewWork, state: "archived" }]
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a non-datetime next review instant", () => {
+    expect(
+      recitationOverviewDtoSchema.safeParse({
+        dueCount: 0,
+        works: [{ ...overviewWork, nextReviewAt: "not-a-date" }]
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a negative due count", () => {
+    expect(recitationOverviewDtoSchema.safeParse({ dueCount: -1, works: [] }).success).toBe(false);
   });
 });
 

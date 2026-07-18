@@ -29,11 +29,14 @@ export type {
 export {
   enrollRecitationRequestSchema,
   parseEnrollRecitationRequest,
+  parseRecitationOverviewDto,
   parseRecitationPlanDto,
   parseRecitationPlanListDto,
   parseRecitationReviewResponse,
   parseRecordRecitationReviewRequest,
   parseRecordRecitationReviewResponse,
+  recitationOverviewDtoSchema,
+  recitationOverviewWorkSchema,
   recitationPhaseDtoSchema,
   recitationPlanDtoSchema,
   recitationPlanListDtoSchema,
@@ -46,6 +49,8 @@ export {
 } from "./recitationContracts.js";
 export type {
   EnrollRecitationRequest,
+  RecitationOverviewDto,
+  RecitationOverviewWorkDto,
   RecitationPhaseDto,
   RecitationPlanDto,
   RecitationPlanListDto,

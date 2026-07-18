@@ -50,7 +50,7 @@ describe("RecitationReviewPage", () => {
 
     renderPage("work-1");
 
-    await screen.findByText(/Recite/);
+    await screen.findByText(/from memory/);
     expect(mockedFetch).toHaveBeenCalledWith("work-1");
 
     await user.click(screen.getByRole("button", { name: "Reveal source" }));
@@ -74,7 +74,7 @@ describe("RecitationReviewPage", () => {
 
     renderPage("work-1");
 
-    await screen.findByText(/Recite/);
+    await screen.findByText(/from memory/);
     await user.click(screen.getByRole("button", { name: "Reveal source" }));
     await user.click(screen.getByRole("button", { name: "Complete, with effort" }));
 
@@ -91,9 +91,9 @@ describe("RecitationReviewPage", () => {
 
     await user.click(screen.getByRole("button", { name: "Review next" }));
 
-    await screen.findByText(/Recite/);
+    await screen.findByText(/from memory/);
     expect(mockedFetch).toHaveBeenLastCalledWith(undefined);
-    expect(screen.getByText(/Recite/).textContent).toContain("Analects");
+    expect(screen.getByText(/from memory/).textContent).toContain("Analects");
   });
 
   it("requests the earliest-due review when no Work is given", async () => {
@@ -101,7 +101,7 @@ describe("RecitationReviewPage", () => {
 
     renderPage();
 
-    await screen.findByText(/Recite/);
+    await screen.findByText(/from memory/);
     expect(mockedFetch).toHaveBeenCalledWith(undefined);
   });
 

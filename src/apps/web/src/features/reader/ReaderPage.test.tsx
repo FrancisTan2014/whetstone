@@ -1032,7 +1032,7 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("Open a work from your Library")).toBeDefined();
     const back = screen.getByRole("link", { name: "Back to Library" });
-    expect(back.getAttribute("href")).toBe("#/");
+    expect(back.getAttribute("href")).toBe("#/library");
   });
 
   it("opens the requested work on arrival when given an initial work entry id", async () => {
@@ -2704,14 +2704,6 @@ describe("ReaderPage reading tools", () => {
 
     const notes = screen.getByRole("button", { name: "Your notes" });
     expect(notes.querySelector(".readingToolBadge")).toBeNull();
-  });
-
-  it("offers the Day/Night theme toggle among the reading tools", async () => {
-    seedWorkContent(multiUnitContent);
-    render(<ReaderPage initialWorkEntryId="work-1" />);
-    await screen.findByText("Intro paragraph.");
-
-    expect(screen.getByRole("button", { name: "Switch to Night" })).toBeDefined();
   });
 
   it("closes the 目录 drawer after a unit is selected", async () => {

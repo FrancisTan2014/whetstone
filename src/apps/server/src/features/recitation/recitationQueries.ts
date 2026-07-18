@@ -112,3 +112,39 @@ export async function listActiveRecitationPlans(
     .where(and(eq(personalEntries.userId, userId), isNull(recitationPlans.pausedAt)))
     .orderBy(recitationPlans.entryId);
 }
+
+// The columns the Recite home reads for one enrolled Work (#638): the plan/Work identity, title, adoption
+// time (for newest-first ordering), and `pausedAt` — so the overview can mark a paused Work without a
+// separate read. Distinct from `planColumns` because the overview needs `pausedAt` (paused plans ARE shown
+// on Recite) and not the routine's phase/session fields.
+const overviewPlanColumns = {
+  createdAt: personalEntries.createdAt,
+  entryId: recitationPlans.entryId,
+  pausedAt: recitationPlans.pausedAt,
+  workEntryId: recitationPlans.workEntryId,
+  workTitle: workMeta.title
+} as const;
+
+export type RecitationOverviewPlanRow = Readonly<{
+  createdAt: Date;
+  entryId: string;
+  pausedAt: Date | null;
+  workEntryId: string;
+  workTitle: string;
+}>;
+
+// Every recitation plan the user owns — paused included — newest adopted first (stable id tie-break), the
+// set the Recite home (#638) projects into per-Work due state and next review dates. Unlike the routine
+// read it keeps paused plans, because Recite shows a paused Work with its preserved schedule.
+export async function listRecitationOverviewPlans(
+  db: DbClient,
+  userId: string
+): Promise<ReadonlyArray<RecitationOverviewPlanRow>> {
+  return db
+    .select(overviewPlanColumns)
+    .from(recitationPlans)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, recitationPlans.entryId))
+    .innerJoin(workMeta, eq(workMeta.entryId, recitationPlans.workEntryId))
+    .where(eq(personalEntries.userId, userId))
+    .orderBy(desc(personalEntries.createdAt), recitationPlans.entryId);
+}

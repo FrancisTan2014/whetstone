@@ -10,36 +10,47 @@ export type ReaderScroll = Readonly<{
 
 const hideThreshold = 80;
 
-function readProgress(scrollY: number): number {
-  const max = document.documentElement.scrollHeight - window.innerHeight;
+function readProgress(element: HTMLElement): number {
+  const max = element.scrollHeight - element.clientHeight;
 
   if (max <= 0) {
     return 0;
   }
 
-  return Math.min(1, Math.max(0, scrollY / max));
+  return Math.min(1, Math.max(0, element.scrollTop / max));
 }
 
-export function useReaderScroll(): ReaderScroll {
+// Observes the reader's own scroll container rather than the window. The reader is framed inside
+// the app shell (whose `.app-safe-area` is `100dvh; overflow: hidden`, so the window never
+// scrolls); the reading column scrolls inside an inner element instead. The caller passes that
+// element once it mounts (null while the reader is not in its reading state). While it is null the
+// hook holds the neutral state and attaches nothing; once an element arrives, progress/hide state
+// derive from it (an immediate read seeds the initial values).
+export function useReaderScroll(element: HTMLElement | null): ReaderScroll {
   const [scroll, setScroll] = useState<ReaderScroll>({ headerHidden: false, progress: 0 });
 
   useEffect(() => {
-    let lastY = window.scrollY;
+    if (element === null) {
+      return;
+    }
+
+    const el = element;
+    let lastY = el.scrollTop;
 
     function onScroll(): void {
-      const y = window.scrollY;
+      const y = el.scrollTop;
       const headerHidden = y > lastY && y > hideThreshold;
       lastY = y;
-      setScroll({ headerHidden, progress: readProgress(y) });
+      setScroll({ headerHidden, progress: readProgress(el) });
     }
 
     onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("scroll", onScroll, { passive: true });
 
     return () => {
-      window.removeEventListener("scroll", onScroll);
+      el.removeEventListener("scroll", onScroll);
     };
-  }, []);
+  }, [element]);
 
   return scroll;
 }

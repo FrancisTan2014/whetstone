@@ -7,6 +7,7 @@ import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { NotesReviewPage } from "../features/notesReview/NotesReviewPage.js";
 import { RecitationReviewPage } from "../features/recitation/RecitationReviewPage.js";
+import { RecitePage } from "../features/recitation/RecitePage.js";
 import { SearchPage } from "../features/search/SearchPage.js";
 import { TodayPage } from "../features/today/TodayPage.js";
 import { AppShell } from "./AppShell.js";
@@ -72,10 +73,10 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<Navigate replace to="/notes" />} path="memory" />
         <Route element={<NotesReviewPage />} path="notes/review" />
         <Route element={<Navigate replace to="/notes/review" />} path="recall" />
-        {/* The retired passage-segmentation route (`/recite?plan=`) has no direct-maintenance equivalent —
-            its plan-scoped setup is gone (#643) — so it redirects to the Library recovery path rather than
-            opening a dead or misleading screen. */}
-        <Route element={<Navigate replace to="/library" />} path="recite" />
+        {/* Recite is a primary destination (#638): its home lists enrolled Works with due state and next
+            review dates. The retired passage-segmentation flow (`/recite?plan=`) has no equivalent, but the
+            landing is calm and never dead, so the old deep link resolves here too instead of redirecting. */}
+        <Route element={<RecitePage />} path="recite" />
         <Route element={<RecitationRoute />} path="recitation" />
         <Route element={<NotesRoute />} path="notes" />
         <Route element={<DiaryPage capture={createCaptureVoice()} />} path="diary" />

@@ -104,8 +104,10 @@ async function seedWorkWithNote(
   return word;
 }
 
-// Reach a known theme from the reader header toggle (labelled by its DESTINATION: "Switch to Night"
-// shows in Day, "Switch to Day" shows in Night). Idempotent — only clicks when a flip is needed.
+// Reach a known theme from the shell's utility-bar theme toggle (labelled by its DESTINATION: "Switch
+// to Night" shows in Day, "Switch to Day" shows in Night). The theme control lives once in the shell now
+// that the reader is framed by it (#638), so this name resolves to a single button. Idempotent — only
+// clicks when a flip is needed.
 async function setTheme(page: Page, target: "day" | "night"): Promise<void> {
   const isNight = await page.evaluate(() => document.documentElement.classList.contains("dark"));
   if (isNight === (target === "night")) {

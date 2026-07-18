@@ -1270,12 +1270,15 @@
   border: 1px dashed var(--color-border);
 }
 
-/* Reading chrome (WeRead-style): a fixed overlay whose children position independently so the
-   reading column underneath is never pushed or split. Pointer events are off on the overlay and
-   back on for each control. The title (and, on mobile, the top bar) recedes while reading via
+/* Reading chrome (WeRead-style): an overlay whose children position independently so the reading
+   column underneath is never pushed or split. It is `position: absolute`, scoped to the reader's
+   own frame (`.readerReadingMain`) rather than the viewport, so it stays clear of the app shell's
+   utility bar (above) and navigation (below) instead of painting over them. Pointer events are off
+   on the overlay and back on only for the interactive tools; the display-only title and progress
+   line stay transparent to input. The title (and, on mobile, the top bar) recedes while reading via
    `data-hidden`; the desktop tool rail is persistent and stays put. */
 .readingHeader {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 20;
   pointer-events: none;
@@ -1285,9 +1288,12 @@
   pointer-events: auto;
 }
 
-/* A minimal top affordance: the work title, top-start and translucent, recedes upward. */
+/* A minimal top affordance: the work title, top-start and translucent, recedes upward. Display
+   only — it never captures input, so a tap over it reaches the reading area (and any shell control
+   it may overlap) beneath. */
 .readingHeaderTitle {
-  position: fixed;
+  position: absolute;
+  pointer-events: none;
   inset-block-start: 0;
   inset-inline-start: 0;
   max-inline-size: min(60vw, 28rem);
@@ -1306,9 +1312,10 @@
     opacity var(--duration-base) var(--ease-standard);
 }
 
-/* A thin reading-progress line pinned to the very top edge. */
+/* A thin reading-progress line pinned to the very top edge. Display only — never captures input. */
 .readingProgress {
-  position: fixed;
+  position: absolute;
+  pointer-events: none;
   inset-block-start: 0;
   inset-inline: 0;
   block-size: 3px;
@@ -1327,7 +1334,7 @@
 /* The reading tools. Desktop: a persistent vertical icon rail docked at the bottom-right, beside the
    reading column. Narrow: a horizontal cluster at the top-end forming a top bar with the title. */
 .readingTools {
-  position: fixed;
+  position: absolute;
   display: flex;
   align-items: center;
   gap: 0.25rem;

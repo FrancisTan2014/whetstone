@@ -54,9 +54,11 @@ describe("standalone Memory client retirement (#662)", () => {
     }
   });
 
-  it("offers exactly the four retained primary destinations, none of them Memory or Recall", () => {
+  it("offers exactly the five retained primary destinations, none of them Memory or Recall", () => {
     const navigation = code("./navigation.ts");
-    for (const label of ['"Today"', '"Library"', '"Notes"', '"Search"']) {
+    // #638 recomposed the primary nav to five learner modes; Search moved out to a shell utility. The
+    // enduring #662 guarantee is only that the retired Memory/Recall never return as primary destinations.
+    for (const label of ['"Today"', '"Library"', '"Recite"', '"Notes"', '"Diary"']) {
       expect(navigation).toContain(label);
     }
     expect(navigation).not.toContain('"Memory"');

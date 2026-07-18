@@ -1,5 +1,6 @@
 import {
   enrollRecitationRequestSchema,
+  recitationOverviewDtoSchema,
   recitationReviewResponseSchema,
   recordRecitationReviewRequestSchema,
   recordRecitationReviewResponseSchema
@@ -20,7 +21,7 @@ import {
   loadOwnedRecitationPlan,
   toRecitationPlanDto
 } from "./recitationQueries.js";
-import { loadRecitationReview } from "./recitationReviewQueries.js";
+import { loadRecitationOverview, loadRecitationReview } from "./recitationReviewQueries.js";
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
@@ -66,6 +67,18 @@ export function registerRecitationRoutes(
       request.server.currentUser.getCurrentUserId()
     );
     return { plans };
+  });
+
+  // The Recite home overview (#638): every enrolled Work with its live due state and next review date, so
+  // the Recite landing shows enrolled Works, due maintenance, and next review dates without re-deriving
+  // schedules client-side. Static path, registered before the `:id` routes.
+  server.get("/api/recitation/overview", async (request) => {
+    const overview = await loadRecitationOverview(
+      { db: dependencies.db },
+      request.server.currentUser.getCurrentUserId(),
+      dependencies.now()
+    );
+    return recitationOverviewDtoSchema.parse(overview);
   });
 
   // The Work-level maintenance review to present (#643). With `?work=<id>` the caller opens THAT exact

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "../../shared/ui/Button";
-import { ThemeToggle } from "../../shared/theme/ThemeToggle";
 import { enrollRecitation } from "../recitation/recitationApi";
 import {
   isLargestReadingSize,
@@ -73,13 +72,15 @@ function RecitationIcon(): React.JSX.Element {
   );
 }
 
-// The immersive reading chrome: every reading tool in one surface — text size (A−/A+),
-// the Day/Night theme toggle, the 目录 (when the work has units, shown as a contents icon), a notes
-// toggle, and a progress indicator. On desktop the tools sit in a persistent vertical icon rail
-// docked at the bottom-right beside the reading column (always one click away — it never recedes),
-// and the title is a minimal top affordance that recedes on scroll. On narrow screens the tools form
-// a top bar and the whole chrome recedes while reading (`hidden` → `data-hidden`), returning on a
-// center tap; the single `data-hidden` flag drives the CSS transition. Tool labels stay on
+// The immersive reading chrome: the reading-specific tools in one surface — text size (A−/A+),
+// the 目录 (when the work has units, shown as a contents icon), a notes toggle, a contextual
+// Recitation entry, and a progress indicator. The Day/Night theme is a global app concern, so it
+// lives once in the shell's utility bar (#638) rather than being duplicated here — that keeps a single
+// unambiguous theme control now that the reader is framed by the shell. On desktop the tools sit in a
+// persistent vertical icon rail docked at the bottom-right beside the reading column (always one click
+// away — it never recedes), and the title is a minimal top affordance that recedes on scroll. On narrow
+// screens the tools form a top bar and the whole chrome recedes while reading (`hidden` → `data-hidden`),
+// returning on a center tap; the single `data-hidden` flag drives the CSS transition. Tool labels stay on
 // `aria-label`, so the controls are screen-reader clear even as icons.
 export function ReadingHeader({
   hasToc,
@@ -137,7 +138,6 @@ export function ReadingHeader({
             A+
           </Button>
         </div>
-        <ThemeToggle />
         {hasToc ? (
           <Button
             aria-controls="reader-toc-list"

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, within } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,27 +33,59 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  // Unmount the live-rendered roots (not merely wipe the DOM): the reader/write routes mount pages
+  // that start async work, so leaving the root mounted let that work resolve after the jsdom
+  // environment was torn down — a leaked React update that surfaced as `ReferenceError: window is
+  // not defined` in CI. `cleanup()` unmounts every rendered tree, matching the repo convention.
+  cleanup();
 });
 
 describe("App shell and routes", () => {
-  it("shows exactly the four primary destinations in the nav (#662)", () => {
+  it("shows exactly the five primary destinations in order in the nav (#638)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
     const labels = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(labels).toEqual(["Today", "Library", "Notes", "Search"]);
+    expect(labels).toEqual(["Today", "Library", "Recite", "Notes", "Diary"]);
   });
 
-  it("keeps Reader, Review, and Diary out of the primary nav (#662)", () => {
+  it("keeps Reader, Review, and Search out of the primary nav (#638)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
-    for (const secondary of ["Reader", "Review", "Diary"]) {
+    for (const secondary of ["Reader", "Review", "Search"]) {
       expect(within(nav).queryByRole("link", { name: secondary })).toBeNull();
     }
+  });
+
+  it("keeps Search reachable in one action as a shell utility with the accessible name Search (#638)", () => {
+    const markup = renderAt("/");
+
+    expect(markup).toContain('href="/search"');
+    expect(markup).toContain(">Search<");
+  });
+
+  it("marks Recite active on the secondary Recitation review route (#638)", () => {
+    const { getByRole } = renderLiveAt("/recitation");
+    const nav = getByRole("navigation", { name: "Primary" });
+
+    expect(within(nav).getByRole("link", { name: "Recite" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
+    expect(
+      within(nav).getByRole("link", { name: "Today" }).getAttribute("aria-current")
+    ).toBeNull();
+  });
+
+  it("marks Notes active on the secondary note Review route (#638)", () => {
+    const { getByRole } = renderLiveAt("/notes/review");
+    const nav = getByRole("navigation", { name: "Primary" });
+
+    expect(within(nav).getByRole("link", { name: "Notes" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
   });
 
   it("gives the theme toggle a home in the shell", () => {
@@ -99,14 +131,22 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Review all notes");
   });
 
-  it("recedes the primary navigation and shows the reader landmark at the reader route", () => {
-    const markup = renderAt("/reader");
+  it("frames the reader within the shell with Library active and Search reachable, while staying calm (#638)", () => {
+    const { getByRole, container } = renderLiveAt("/reader");
+    const nav = getByRole("navigation", { name: "Primary" });
 
+    // The reader is a secondary surface under Library: the primary nav is present and Library is the
+    // active parent, and the Search utility stays one action away.
+    expect(within(nav).getByRole("link", { name: "Library" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
+    expect(container.querySelector('a[href="/search"]')).not.toBeNull();
+
+    // The reading landmark is present and the surface stays calm: no work-detail chrome, no recall or
+    // practice-nudge UI, and no Today chrome live in the reader.
+    const markup = container.innerHTML;
     expect(markup).toContain('aria-label="Reader"');
     expect(markup).not.toContain("Work detail");
-    expect(markup).not.toContain('aria-label="Primary"');
-    // The reading surface stays calm: no recall UI, no practice-nudge UI, and no Today chrome
-    // live in the reader.
     expect(markup).not.toContain("Due to recall");
     expect(markup).not.toContain('aria-label="Practice nudge"');
     expect(markup).not.toContain("Practise now");
@@ -136,7 +176,7 @@ describe("App shell and routes", () => {
     expect(markup).toContain('id="notes-review-heading"');
   });
 
-  it("resolves the diary route to the voice-diary page (still reachable off-nav)", () => {
+  it("resolves the diary route to the voice-diary page as a primary destination (#638)", () => {
     const markup = renderAt("/diary");
 
     expect(markup).toContain('aria-label="Primary"');
@@ -180,26 +220,27 @@ describe("App shell and routes", () => {
     expect(markup).toContain("No document selected");
   });
 
-  it("opens the immersive authored-work editor at the write route with a work param", () => {
-    const markup = renderAt("/write?work=work-1");
+  it("frames the authored-work editor within the shell with Library active at the write route (#638)", () => {
+    const { getByRole, container } = renderLiveAt("/write?work=work-1");
+    const nav = getByRole("navigation", { name: "Primary" });
 
-    // The editor mounts in its loading arm (effects do not run under static render), and the write
-    // route is immersive like the reader — the primary nav recedes.
-    expect(markup).toContain("Opening your document…");
-    expect(markup).not.toContain('aria-label="Primary"');
+    // The editor mounts in its loading arm (effects do not run under static render), and the write route
+    // is a secondary surface under Library: the primary nav is present with Library the active parent.
+    expect(container.innerHTML).toContain("Opening your document…");
+    expect(within(nav).getByRole("link", { name: "Library" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
   });
 
-  it("redirects the retired /recite passage-setup route to the Library recovery path (#643)", () => {
-    // The passage-segmentation route is retired: it must never open a dead or misleading screen, so it
-    // redirects to the Library (effects run under a live render, applying the <Navigate/>).
-    const { container } = renderLiveAt("/recite");
+  it("resolves the /recite route to the Recite home framed by the shell (#638)", () => {
+    const markup = renderAt("/recite");
 
-    expect(container.innerHTML).toContain(">Library<");
-    // None of the retired segmentation copy survives on the recovery landing.
-    expect(container.innerHTML).not.toContain("Loading passages…");
-    expect(container.innerHTML).not.toContain(
-      "Open a recitation routine from your Library to divide it."
-    );
+    // Recite is now a primary destination: its home mounts inside the shell (primary nav present) and,
+    // under static render (no effects), in its loading arm. The retired passage-setup copy never renders.
+    expect(markup).toContain('aria-label="Primary"');
+    expect(markup).toContain('id="recite-heading"');
+    expect(markup).not.toContain("Loading passages…");
+    expect(markup).not.toContain("Open a recitation routine from your Library to divide it.");
   });
 
   it("resolves the recitation route to the direct whole-Work review, framed by the shell (#643)", () => {
