@@ -31,22 +31,12 @@ function navLinkClassName(isActive: boolean): string {
 //
 // Search is a persistent shell utility (#638), not a primary tab: it lives in the slim top utility bar
 // beside the theme toggle so it is always one action away without displacing a daily destination, and can
-// never push the mobile bottom nav into a second row (#390). On the reader/write routes the app navigation
-// and the utility bar recede so the reading/writing column owns the full viewport (an immersive room):
-// nothing but the routed content and the toast region renders. Those surfaces provide their own back path.
+// never push the mobile bottom nav into a second row (#390). Every routed surface — including the reader
+// and authored-work editor — is framed by this one shell so its parent destination stays visibly active
+// (Reader/Write keep Library highlighted, #638) and Search stays one action away; each secondary surface
+// additionally provides its own explicit back path to its parent.
 export function AppShell(): React.JSX.Element {
   const location = useLocation();
-
-  if (location.pathname === "/reader" || location.pathname === "/write") {
-    return (
-      <SafeArea>
-        <main className="min-h-0 flex-1 overflow-y-auto bg-bg text-text">
-          <Outlet />
-        </main>
-        <ToastViewport />
-      </SafeArea>
-    );
-  }
 
   const active = activeDestination(location.pathname);
 

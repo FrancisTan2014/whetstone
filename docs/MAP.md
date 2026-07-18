@@ -591,14 +591,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   → Notes); the destinations render as a **single non-wrapping row of ≥44px targets** on mobile
   (#390, #662, #638). **Search is a persistent shell utility** (a `Link` to `/search` in the top bar beside
   the `ThemeToggle`), not a primary destination. Reader, Review, and the Recitation review keep their routes
-  the `ThemeToggle`), not a primary destination. Reader, Review, and the Recitation review keep their routes
-  but are NOT primary: Reader is an immersive destination opened from context, the note Review is reached
+  but are NOT primary: Reader/Write are secondary surfaces under Library opened from context, the note Review is reached
   from Notes/Today, and the whole-Work Recitation review is reached from Recite (its "Back to Recite"
   control) or a contextual `?work=` deep link. Each secondary route's parent stays visibly active via
-  `activeDestination` (e.g. `/notes/review` keeps Notes active, `/recitation` keeps Recite active). The
-  `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
-  wrap the mobile row). On the `/reader` and `/write` routes the nav (and the toggle bar) recede so the
-  reading/writing column owns the viewport (immersive room); each provides its own back-to-Library control.
+  `activeDestination` (e.g. `/reader` and `/write` keep Library active, `/notes/review` keeps Notes active,
+  `/recitation` keeps Recite active). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
+  wrap the mobile row). Every routed surface — including `/reader` and `/write` — is framed by the one shell
+  (#638): the primary nav and Search utility stay present with the parent (Library) visibly active, and each
+  secondary surface additionally provides its own explicit back path (e.g. the reader's "Back to Library").
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never

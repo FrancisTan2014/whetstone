@@ -127,14 +127,22 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Review all notes");
   });
 
-  it("recedes the primary navigation and shows the reader landmark at the reader route", () => {
-    const markup = renderAt("/reader");
+  it("frames the reader within the shell with Library active and Search reachable, while staying calm (#638)", () => {
+    const { getByRole, container } = renderLiveAt("/reader");
+    const nav = getByRole("navigation", { name: "Primary" });
 
+    // The reader is a secondary surface under Library: the primary nav is present and Library is the
+    // active parent, and the Search utility stays one action away.
+    expect(within(nav).getByRole("link", { name: "Library" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
+    expect(container.querySelector('a[href="/search"]')).not.toBeNull();
+
+    // The reading landmark is present and the surface stays calm: no work-detail chrome, no recall or
+    // practice-nudge UI, and no Today chrome live in the reader.
+    const markup = container.innerHTML;
     expect(markup).toContain('aria-label="Reader"');
     expect(markup).not.toContain("Work detail");
-    expect(markup).not.toContain('aria-label="Primary"');
-    // The reading surface stays calm: no recall UI, no practice-nudge UI, and no Today chrome
-    // live in the reader.
     expect(markup).not.toContain("Due to recall");
     expect(markup).not.toContain('aria-label="Practice nudge"');
     expect(markup).not.toContain("Practise now");
@@ -208,13 +216,16 @@ describe("App shell and routes", () => {
     expect(markup).toContain("No document selected");
   });
 
-  it("opens the immersive authored-work editor at the write route with a work param", () => {
-    const markup = renderAt("/write?work=work-1");
+  it("frames the authored-work editor within the shell with Library active at the write route (#638)", () => {
+    const { getByRole, container } = renderLiveAt("/write?work=work-1");
+    const nav = getByRole("navigation", { name: "Primary" });
 
-    // The editor mounts in its loading arm (effects do not run under static render), and the write
-    // route is immersive like the reader — the primary nav recedes.
-    expect(markup).toContain("Opening your document…");
-    expect(markup).not.toContain('aria-label="Primary"');
+    // The editor mounts in its loading arm (effects do not run under static render), and the write route
+    // is a secondary surface under Library: the primary nav is present with Library the active parent.
+    expect(container.innerHTML).toContain("Opening your document…");
+    expect(within(nav).getByRole("link", { name: "Library" }).getAttribute("aria-current")).toBe(
+      "page"
+    );
   });
 
   it("resolves the /recite route to the Recite home framed by the shell (#638)", () => {
