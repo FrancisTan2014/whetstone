@@ -1032,7 +1032,7 @@ describe("ReaderPage", () => {
 
     expect(await screen.findByText("Open a work from your Library")).toBeDefined();
     const back = screen.getByRole("link", { name: "Back to Library" });
-    expect(back.getAttribute("href")).toBe("#/");
+    expect(back.getAttribute("href")).toBe("#/library");
   });
 
   it("opens the requested work on arrival when given an initial work entry id", async () => {

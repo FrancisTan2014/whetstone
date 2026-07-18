@@ -1121,7 +1121,7 @@ export function ReaderPage({
 
   return (
     <section aria-label="Reader" className="readerShell">
-      <a aria-label="Back to Library" className="readerExit" href="#/">
+      <a aria-label="Back to Library" className="readerExit" href="#/library">
         ← Library
       </a>
 
