@@ -850,8 +850,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `content/` is the focused Manage-content surface (`WorkContentPanel.tsx`), opened on demand inside
   the Library's "Manage content" `Sheet`: a work switcher, a header (title/author/type/language +
   unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, a calm add-content
-  area (manual **paste-Markdown** editor only — bringing a file in is the shelf **Upload** control's
-  job (#417); this panel edits an existing Work's content via `ingestMarkdown` — #418) reporting the ingestion result, and a units/blocks overview
+  area (manual **paste-Markdown** editor only — bringing a file in is the Library **Add ▸ Upload file**
+  action's job (#417); this panel edits an existing Work's content via `ingestMarkdown` — #418) reporting the ingestion result, and a units/blocks overview
   that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
   behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
