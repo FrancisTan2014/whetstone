@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, within } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,7 +33,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  // Unmount the live-rendered roots (not merely wipe the DOM): the reader/write routes mount pages
+  // that start async work, so leaving the root mounted let that work resolve after the jsdom
+  // environment was torn down — a leaked React update that surfaced as `ReferenceError: window is
+  // not defined` in CI. `cleanup()` unmounts every rendered tree, matching the repo convention.
+  cleanup();
 });
 
 describe("App shell and routes", () => {
