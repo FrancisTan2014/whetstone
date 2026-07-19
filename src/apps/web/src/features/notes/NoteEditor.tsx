@@ -106,7 +106,7 @@ export function NoteEditor({
           document={initialBody}
           onChange={setDraft}
           onSave={() => void onSave()}
-          presentation="compact"
+          presentation="workspace"
         />
 
         {error !== undefined ? <p role="alert">{error}</p> : null}

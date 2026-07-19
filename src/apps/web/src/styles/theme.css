@@ -270,14 +270,16 @@
   color: var(--color-text);
 }
 
-.richContentEditor[data-presentation="compact"] {
+.richContentEditor[data-presentation="compact"],
+.richContentEditor[data-presentation="workspace"] {
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   background-color: var(--color-surface);
 }
 
-.richContentEditor[data-presentation="compact"]:focus-within {
+.richContentEditor[data-presentation="compact"]:focus-within,
+.richContentEditor[data-presentation="workspace"]:focus-within {
   border-color: var(--color-ring);
   box-shadow: 0 0 0 2px var(--color-ring);
 }
@@ -359,6 +361,26 @@
 
 .richContentEditor[data-presentation="compact"] .richContentEditorContent {
   min-block-size: 6rem;
+}
+
+/*
+ * Note composition workspace (#677). The Reader and Notes-home note sheets reuse the compact surface
+ * above (bordered box, focus ring, contextual formatting menu, slash commands, block gutter) but need a
+ * composition-sized body rather than the 6rem quick-input box, so a note keeps a real writing area even
+ * with a selected-source line, Review settings, an error, or delete controls stacked around it inside the
+ * Sheet (the Sheet body owns the scroll; these controls never squeeze the editor to quick-input height).
+ * Desktop/tablet get a taller band; the narrow bottom sheet — below the 48rem width where the Sheet flips
+ * from a side panel to a full-width bottom sheet — gets a shorter one so the on-screen keyboard still
+ * leaves the composition area visible. Only the body min-size differs from compact.
+ */
+.richContentEditor[data-presentation="workspace"] .richContentEditorContent {
+  min-block-size: clamp(16rem, 42dvh, 28rem);
+}
+
+@media (max-width: 47.999rem) {
+  .richContentEditor[data-presentation="workspace"] .richContentEditorContent {
+    min-block-size: clamp(12rem, 34dvh, 20rem);
+  }
 }
 
 .richContentEditorContent:focus-visible {

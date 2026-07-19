@@ -56,7 +56,7 @@ const POINTER_GUTTER_QUERY = "(hover: hover) and (pointer: fine)";
 // compact/keyboard trigger) never open at once.
 type OpenMenu = { readonly pos: number; readonly source: "gutter" | "more" };
 
-export type RichContentEditorPresentation = "compact" | "full";
+export type RichContentEditorPresentation = "compact" | "full" | "workspace";
 
 export interface RichContentEditorProps {
   readonly ariaLabel?: string;
