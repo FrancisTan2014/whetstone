@@ -5,6 +5,7 @@ import type { TodayBoardDto, TodayRoutineDto, TodayRoutineKind } from "@whetston
 
 import { buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { PageFrame } from "../../shared/ui/PageFrame";
 import { fetchTodayBoard } from "./todayApi";
 import { TodayCapture } from "./TodayCapture";
 import { todayRoutineActionLabels, todayRoutinePaths, todayRoutineTitles } from "./today.tokens";
@@ -55,18 +56,13 @@ export function TodayPage(): React.JSX.Element {
   }, [load]);
 
   return (
-    <section aria-labelledby="today-heading" className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
-      <header>
-        <h1 className="text-2xl font-semibold text-text" id="today-heading">
-          Today
-        </h1>
-      </header>
+    <PageFrame title="Today">
       {renderPrimary(state, load)}
       {/* Quick capture is save-first and always available — even while the board loads or fails —
           and never marks other work done or schedules review. */}
       <TodayCapture />
       {state.status === "ready" ? <ContinueSection board={state.board} reload={load} /> : null}
-    </section>
+    </PageFrame>
   );
 }
 

@@ -19,6 +19,7 @@ import {
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { PageFrame } from "../../shared/ui/PageFrame";
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
@@ -419,15 +420,19 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const groups = groupWorksByAuthor(works);
 
   return (
-    <main className="mx-auto max-w-5xl p-4">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-3xl font-semibold text-text">Library</h1>
+    <PageFrame
+      primaryAction={
         <LibraryAddMenu
           busy={uploadBusy}
           onAddWorkManually={openManualAddWork}
           onNewDocument={openNewDocument}
           onUploadFile={() => fileInputRef.current?.click()}
         />
+      }
+      title="Library"
+      width="collection"
+    >
+      <div>
         <input
           accept=".epub,application/epub+zip,.pdf,application/pdf,.md,text/markdown"
           aria-label="Upload"
@@ -437,197 +442,202 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
           tabIndex={-1}
           type="file"
         />
-      </header>
 
-      {uploadKind === "epub" ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
-      {uploadKind === "pdf" ? <LoadingIndicator label="Converting the PDF…" /> : null}
+        {uploadKind === "epub" ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
+        {uploadKind === "pdf" ? <LoadingIndicator label="Converting the PDF…" /> : null}
 
-      {loadState === "loading" ? <LoadingIndicator label="Loading the library…" /> : null}
-      {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
+        {loadState === "loading" ? <LoadingIndicator label="Loading the library…" /> : null}
+        {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
 
-      {loadState === "ready"
-        ? renderLibrary(groups, {
-            authoredWorkIds,
-            cardVariants,
-            listVariants,
-            onDelete: setPendingDelete,
-            onManageContent,
-            onRecite: (item) => void enrollWork(item),
-            enrollingWorkId,
-            recitationByWork,
-            worksWithPosition
-          })
-        : null}
+        {loadState === "ready"
+          ? renderLibrary(groups, {
+              authoredWorkIds,
+              cardVariants,
+              listVariants,
+              onDelete: setPendingDelete,
+              onManageContent,
+              onRecite: (item) => void enrollWork(item),
+              enrollingWorkId,
+              recitationByWork,
+              worksWithPosition
+            })
+          : null}
 
-      {addOpen ? (
-        <Sheet onOpenChange={onSheetDismiss} open title="Add work">
-          <form className="flex flex-col gap-3" onSubmit={(event) => void onSubmitWork(event)}>
-            <label className="flex flex-col gap-1" htmlFor="work-title">
-              Title
-              <input
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="work-title"
-                onChange={(event) => setTitle(event.currentTarget.value)}
-                value={title}
-              />
-            </label>
-
-            <label className="flex flex-col gap-1" htmlFor="work-type">
-              Type
-              <select
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="work-type"
-                onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
-                value={workType}
-              >
-                {workTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {formatWorkType(type)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-1" htmlFor="work-language">
-              Language
-              <select
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="work-language"
-                onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
-                value={language}
-              >
-                {workLanguages.map((code) => (
-                  <option key={code} value={code}>
-                    {workLanguageLabels[code]}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-1" htmlFor="work-author">
-              Author or source
-              <select
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="work-author"
-                onChange={(event) => setAuthorChoice(event.currentTarget.value)}
-                value={authorChoice}
-              >
-                <option value={newAuthorOption}>New author or source…</option>
-                {authors.map((author) => (
-                  <option key={author.id} value={author.id}>
-                    {author.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {authorChoice === newAuthorOption ? (
-              <label className="flex flex-col gap-1" htmlFor="inline-author-name">
-                New author or source name
+        {addOpen ? (
+          <Sheet onOpenChange={onSheetDismiss} open title="Add work">
+            <form className="flex flex-col gap-3" onSubmit={(event) => void onSubmitWork(event)}>
+              <label className="flex flex-col gap-1" htmlFor="work-title">
+                Title
                 <input
                   className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                  id="inline-author-name"
-                  onChange={(event) => setInlineAuthorName(event.currentTarget.value)}
-                  value={inlineAuthorName}
+                  id="work-title"
+                  onChange={(event) => setTitle(event.currentTarget.value)}
+                  value={title}
                 />
               </label>
-            ) : null}
 
-            <Button pending={submitting} type="submit">
-              Create work
-            </Button>
-            {workError !== undefined ? (
-              <p className="text-danger" role="alert">
-                {workError}
-              </p>
-            ) : null}
-          </form>
-        </Sheet>
-      ) : null}
+              <label className="flex flex-col gap-1" htmlFor="work-type">
+                Type
+                <select
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                  id="work-type"
+                  onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
+                  value={workType}
+                >
+                  {workTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {formatWorkType(type)}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-      {newDocOpen ? (
-        <Sheet onOpenChange={() => setNewDocOpen(false)} open title="New document">
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(event) => void onSubmitNewDocument(event)}
-          >
-            <label className="flex flex-col gap-1" htmlFor="new-doc-title">
-              Title
-              <input
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="new-doc-title"
-                onChange={(event) => setTitle(event.currentTarget.value)}
-                value={title}
-              />
-            </label>
+              <label className="flex flex-col gap-1" htmlFor="work-language">
+                Language
+                <select
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                  id="work-language"
+                  onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
+                  value={language}
+                >
+                  {workLanguages.map((code) => (
+                    <option key={code} value={code}>
+                      {workLanguageLabels[code]}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label className="flex flex-col gap-1" htmlFor="new-doc-type">
-              Type
-              <select
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="new-doc-type"
-                onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
-                value={workType}
-              >
-                {workTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {formatWorkType(type)}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label className="flex flex-col gap-1" htmlFor="work-author">
+                Author or source
+                <select
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                  id="work-author"
+                  onChange={(event) => setAuthorChoice(event.currentTarget.value)}
+                  value={authorChoice}
+                >
+                  <option value={newAuthorOption}>New author or source…</option>
+                  {authors.map((author) => (
+                    <option key={author.id} value={author.id}>
+                      {author.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label className="flex flex-col gap-1" htmlFor="new-doc-language">
-              Language
-              <select
-                className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                id="new-doc-language"
-                onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
-                value={language}
-              >
-                {workLanguages.map((code) => (
-                  <option key={code} value={code}>
-                    {workLanguageLabels[code]}
-                  </option>
-                ))}
-              </select>
-            </label>
+              {authorChoice === newAuthorOption ? (
+                <label className="flex flex-col gap-1" htmlFor="inline-author-name">
+                  New author or source name
+                  <input
+                    className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                    id="inline-author-name"
+                    onChange={(event) => setInlineAuthorName(event.currentTarget.value)}
+                    value={inlineAuthorName}
+                  />
+                </label>
+              ) : null}
 
-            <Button pending={submitting} type="submit">
-              Create and write
-            </Button>
-            {workError !== undefined ? (
-              <p className="text-danger" role="alert">
-                {workError}
-              </p>
-            ) : null}
-          </form>
-        </Sheet>
-      ) : null}
-
-      {pendingDelete !== undefined ? (
-        <Sheet onOpenChange={() => setPendingDelete(undefined)} open title="Delete work">
-          <div className="flex flex-col gap-4">
-            <p className="text-text">
-              Permanently delete <span className="font-semibold">“{pendingDelete.work.title}”</span>{" "}
-              and all of its content? This can’t be undone.
-            </p>
-            <div className="flex flex-wrap justify-end gap-3">
-              <Button onClick={() => setPendingDelete(undefined)} type="button" variant="secondary">
-                Cancel
+              <Button pending={submitting} type="submit">
+                Create work
               </Button>
-              <Button
-                onClick={() => void onConfirmDelete(pendingDelete)}
-                pending={deleting}
-                type="button"
-              >
-                Delete work
+              {workError !== undefined ? (
+                <p className="text-danger" role="alert">
+                  {workError}
+                </p>
+              ) : null}
+            </form>
+          </Sheet>
+        ) : null}
+
+        {newDocOpen ? (
+          <Sheet onOpenChange={() => setNewDocOpen(false)} open title="New document">
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(event) => void onSubmitNewDocument(event)}
+            >
+              <label className="flex flex-col gap-1" htmlFor="new-doc-title">
+                Title
+                <input
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                  id="new-doc-title"
+                  onChange={(event) => setTitle(event.currentTarget.value)}
+                  value={title}
+                />
+              </label>
+
+              <label className="flex flex-col gap-1" htmlFor="new-doc-type">
+                Type
+                <select
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                  id="new-doc-type"
+                  onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
+                  value={workType}
+                >
+                  {workTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {formatWorkType(type)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1" htmlFor="new-doc-language">
+                Language
+                <select
+                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                  id="new-doc-language"
+                  onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
+                  value={language}
+                >
+                  {workLanguages.map((code) => (
+                    <option key={code} value={code}>
+                      {workLanguageLabels[code]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <Button pending={submitting} type="submit">
+                Create and write
               </Button>
+              {workError !== undefined ? (
+                <p className="text-danger" role="alert">
+                  {workError}
+                </p>
+              ) : null}
+            </form>
+          </Sheet>
+        ) : null}
+
+        {pendingDelete !== undefined ? (
+          <Sheet onOpenChange={() => setPendingDelete(undefined)} open title="Delete work">
+            <div className="flex flex-col gap-4">
+              <p className="text-text">
+                Permanently delete{" "}
+                <span className="font-semibold">“{pendingDelete.work.title}”</span> and all of its
+                content? This can’t be undone.
+              </p>
+              <div className="flex flex-wrap justify-end gap-3">
+                <Button
+                  onClick={() => setPendingDelete(undefined)}
+                  type="button"
+                  variant="secondary"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void onConfirmDelete(pendingDelete)}
+                  pending={deleting}
+                  type="button"
+                >
+                  Delete work
+                </Button>
+              </div>
             </div>
-          </div>
-        </Sheet>
-      ) : null}
-    </main>
+          </Sheet>
+        ) : null}
+      </div>
+    </PageFrame>
   );
 }
 
@@ -707,9 +717,7 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
           {formatWorkType(item.work.workType)} · {workLanguageLabels[item.work.language]}
         </span>
         {authored ? (
-          <span className="rounded bg-anno-thought-wash px-1.5 py-0.5 text-xs text-accent">
-            Authored
-          </span>
+          <span className="rounded bg-bg px-1.5 py-0.5 text-xs text-text-muted">Authored</span>
         ) : null}
       </p>
       <div className="mt-auto flex items-center justify-between gap-2">

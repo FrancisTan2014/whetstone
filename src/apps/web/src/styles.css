@@ -491,9 +491,9 @@ code {
   justify-content: flex-end;
 }
 
-/* The popover's Close control is a primary dismiss action, so give the quiet "✕" button a >=44px hit
-   target (WCAG 2.5.5 / #460) in BOTH dimensions — the glyph alone measured only ~11x14px. Center the
-   glyph in the target with inline-flex; keep the transparent, tokenized quiet styling. */
+/* The popover's Close control is a primary dismiss action, so give the quiet close button a >=44px hit
+   target (WCAG 2.5.5 / #460) in BOTH dimensions — the icon alone measured only ~11x14px. Center the
+   icon in the target with inline-flex; keep the transparent, tokenized quiet styling. */
 .lookupClose {
   align-items: center;
   background: transparent;
@@ -904,8 +904,8 @@ code {
   }
 }
 
-/* The jump-back affordance on a footnote/endnote block (#250): a quiet ↩ that returns to the marker.
-   Tokenized for Day/Night and sized ≥44px so it is comfortable to tap on mobile. */
+/* The jump-back affordance on a footnote/endnote block (#250): a quiet return icon that goes back to
+   the marker. Tokenized for Day/Night and sized ≥44px so it is comfortable to tap on mobile. */
 .readerBacklink {
   display: inline-flex;
   align-items: center;
@@ -965,6 +965,9 @@ code {
 }
 
 .readerFrontMatterNoticeStart {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   min-height: 44px;
   padding: 0.5rem 0.9rem;
   background: transparent;
@@ -1001,6 +1004,9 @@ code {
 }
 
 .readerPagerDir {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   color: var(--color-text-muted);
   font-size: 0.75rem;
   font-weight: 600;

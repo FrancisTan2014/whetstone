@@ -6,6 +6,7 @@ import type { DocumentNodeJSON } from "@whetstone/document";
 import { RichContentEditor } from "../../shared/editor/index.js";
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
+import { PageFrame } from "../../shared/ui/PageFrame.js";
 import { PmDocument } from "../reader/PmDocument.js";
 import { fetchAuthoredWork, saveAuthoredWorkContent } from "./authoredWorkApi.js";
 import { autosaveStatusClassNames, autosaveStatusLabels } from "./authoredWork.tokens.js";
@@ -83,22 +84,26 @@ export function AuthoredWorkPage({
   return <AuthoredWorkEditor key={load.work.entryId} work={load.work} />;
 }
 
-// The immersive shell around the writing surface: a quiet header with a way back to the Library, and the
-// content region. Kept separate so the loading/error/empty arms share the same calm frame.
+// The immersive shell around the writing surface: a Library parent link, the page title, an optional
+// status/mode-toggle action, and the content region. Kept separate so the loading/error/empty arms
+// share the same calm frame. The editor overrides the title with the document's own name.
 function WriteFrame({
   children,
-  header
-}: Readonly<{ children: React.ReactNode; header?: React.ReactNode }>): React.JSX.Element {
+  primaryAction,
+  title = "Write"
+}: Readonly<{
+  children: React.ReactNode;
+  primaryAction?: React.ReactNode;
+  title?: string;
+}>): React.JSX.Element {
   return (
-    <section aria-labelledby="write-heading" className="mx-auto max-w-3xl p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <a className="text-sm text-text-muted hover:text-text" href="#/library">
-          ← Library
-        </a>
-        {header}
-      </header>
-      <div className="mt-4">{children}</div>
-    </section>
+    <PageFrame
+      parentLink={{ label: "Library", to: "/library" }}
+      primaryAction={primaryAction}
+      title={title}
+    >
+      {children}
+    </PageFrame>
   );
 }
 
@@ -178,25 +183,20 @@ function AuthoredWorkEditor({ work }: Readonly<{ work: AuthoredWorkDto }>): Reac
   );
 
   return (
-    <WriteFrame header={header}>
-      <h1 className="text-2xl font-semibold text-text" id="write-heading">
-        {work.title}
-      </h1>
-      <div className="mt-4">
-        {mode === "edit" ? (
-          <RichContentEditor
-            ariaLabel={`Edit ${work.title}`}
-            document={editorSeed}
-            onChange={handleChange}
-            onSave={handleExplicitSave}
-            presentation="full"
-          />
-        ) : (
-          <article aria-label={`Read ${work.title}`}>
-            <PmDocument document={draft} />
-          </article>
-        )}
-      </div>
+    <WriteFrame primaryAction={header} title={work.title}>
+      {mode === "edit" ? (
+        <RichContentEditor
+          ariaLabel={`Edit ${work.title}`}
+          document={editorSeed}
+          onChange={handleChange}
+          onSave={handleExplicitSave}
+          presentation="full"
+        />
+      ) : (
+        <article aria-label={`Read ${work.title}`}>
+          <PmDocument document={draft} />
+        </article>
+      )}
     </WriteFrame>
   );
 }

@@ -19,7 +19,10 @@ export const buttonVariants = cva(
       size: {
         sm: "px-3 text-sm",
         md: "px-4 text-base",
-        lg: "min-h-12 px-6 text-lg"
+        lg: "min-h-12 px-6 text-lg",
+        // A square 44x44 icon-only target: the base `min-h-11` floor plus a matching `min-w-11` and no
+        // horizontal padding so a single centered icon keeps a full WCAG 2.5.5 hit target (#641).
+        icon: "min-w-11 px-0"
       },
       variant: {
         ghost: "bg-transparent text-text hover:bg-bg",
@@ -61,5 +64,20 @@ export function Button({
       {pending === true ? <Spinner /> : null}
       {children}
     </button>
+  );
+}
+
+export type IconButtonProps = Omit<ButtonProps, "aria-label" | "children" | "size"> &
+  Readonly<{ icon: React.ReactNode; label: string; title?: string }>;
+
+// The icon-only form of the shared Button boundary (#641): it reuses Button's variants, 44px target, and
+// visible focus ring rather than re-declaring them, and forces a `label` so every icon-only control has a
+// specific accessible name plus a hover tooltip (the `title`, defaulting to the label). Callers pass a
+// single Lucide icon (20px, `strokeWidth={1.75}`, decorative) — never a bare glyph.
+export function IconButton({ icon, label, title, ...rest }: IconButtonProps): React.JSX.Element {
+  return (
+    <Button {...rest} aria-label={label} size="icon" title={title ?? label}>
+      {icon}
+    </Button>
   );
 }

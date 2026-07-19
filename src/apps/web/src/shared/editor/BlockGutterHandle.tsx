@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { DragHandle } from "@tiptap/extension-drag-handle-react";
+import { GripVertical } from "lucide-react";
 
 import { Button } from "../ui/Button.js";
 import { BlockActionsMenu } from "./BlockActionsMenu.js";
@@ -8,16 +9,7 @@ import { editorClassNames } from "./RichContentEditor.tokens.js";
 
 // The vertical grip icon shown in the gutter (16px), centered in its 44px target by the button.
 function GripIcon(): React.JSX.Element {
-  return (
-    <svg aria-hidden="true" fill="currentColor" height="16" viewBox="0 0 16 16" width="16">
-      <circle cx="6" cy="4" r="1.4" />
-      <circle cx="10" cy="4" r="1.4" />
-      <circle cx="6" cy="8" r="1.4" />
-      <circle cx="10" cy="8" r="1.4" />
-      <circle cx="6" cy="12" r="1.4" />
-      <circle cx="10" cy="12" r="1.4" />
-    </svg>
-  );
+  return <GripVertical aria-hidden height={16} strokeWidth={1.75} width={16} />;
 }
 
 export interface BlockGutterHandleProps {

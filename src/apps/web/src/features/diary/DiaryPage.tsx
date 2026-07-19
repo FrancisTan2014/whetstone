@@ -6,6 +6,7 @@ import { groupTimelineEntriesByDay, localDayKey } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
+import { PageFrame } from "../../shared/ui/PageFrame.js";
 import { RichContentEditor } from "../../shared/editor/index.js";
 import {
   loadPersistedTimeZone,
@@ -431,14 +432,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
 }
 
 function Shell({ children }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
-  return (
-    <section aria-labelledby="diary-heading" className="mx-auto max-w-2xl p-6">
-      <h1 className="text-2xl font-semibold text-text" id="diary-heading">
-        Diary
-      </h1>
-      <div className="mt-6">{children}</div>
-    </section>
-  );
+  return <PageFrame title="Diary">{children}</PageFrame>;
 }
 
 // Editing a diary body uses the shared rich editor (#571): the durable ProseMirror/Tiptap document is

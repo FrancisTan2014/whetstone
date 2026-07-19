@@ -4,6 +4,7 @@ import type { ImportNotesResultDto, NoteOverviewDto } from "@whetstone/contracts
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
+import { PageFrame } from "../../shared/ui/PageFrame";
 import { fetchAllNotes } from "./notesApi";
 import { NotesHomeList } from "./NotesHomeList";
 import { NotesImport } from "./NotesImport";
@@ -171,78 +172,74 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   }
 
   return (
-    <section aria-labelledby="notes-heading" className="mx-auto max-w-2xl p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold text-text" id="notes-heading">
-          Notes
-        </h1>
-        <div className="flex items-center gap-2">
-          <Button
-            disabled={importing}
-            onClick={openImport}
-            ref={importRef}
-            type="button"
-            variant="ghost"
-          >
-            Import
-          </Button>
-          <Button disabled={importing} onClick={openCreate} ref={newNoteRef} type="button">
-            New note
-          </Button>
-        </div>
-      </div>
-
-      <p className="mt-2 text-text-muted">
-        {focusWorkEntryId === undefined
+    <PageFrame
+      description={
+        focusWorkEntryId === undefined
           ? "Every note you have saved, in one place."
-          : "Every note you have saved in this work."}
-      </p>
+          : "Every note you have saved in this work."
+      }
+      primaryAction={
+        <Button disabled={importing} onClick={openCreate} ref={newNoteRef} type="button">
+          New note
+        </Button>
+      }
+      title="Notes"
+    >
+      <div>
+        {importMessage !== null ? (
+          <p aria-live="polite" className="text-sm text-success" role="status">
+            {importMessage}
+          </p>
+        ) : null}
 
-      {importMessage !== null ? (
-        <p aria-live="polite" className="mt-2 text-sm text-success" role="status">
-          {importMessage}
-        </p>
-      ) : null}
-
-      {importing ? (
-        <div className="mt-6">
-          <NotesImport onCancel={onImportCancelled} onImported={onImported} />
-        </div>
-      ) : (
-        <>
-          <label className="mt-4 block">
-            <span className="sr-only">Search notes</span>
-            <input
-              aria-label="Search notes"
-              className="min-h-11 w-full rounded border border-border bg-surface px-3 text-text focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="Search your notes"
-              type="search"
-              value={input}
-            />
-          </label>
-
-          <div aria-busy={state.status === "loading"} className="mt-6">
-            {renderState(state, query, focusWorkEntryId, {
-              onOpen: openEdit,
-              openRef: openButtonRef,
-              openTargetEntryId: focusEntryId
-            })}
+        {importing ? (
+          <div className="mt-6">
+            <NotesImport onCancel={onImportCancelled} onImported={onImported} />
           </div>
-        </>
-      )}
+        ) : (
+          <>
+            {/* Import is a secondary affordance, so it sits in the page body rather than the header —
+                the header keeps a single persistent primary action (New note), per #641. */}
+            <div className="mt-4 flex justify-end">
+              <Button onClick={openImport} ref={importRef} type="button" variant="ghost">
+                Import
+              </Button>
+            </div>
 
-      {editor !== null ? (
-        <OwnedNoteEditor
-          key={editor.kind === "edit" ? editor.note.entryId : "create"}
-          onClose={requestClose}
-          onDeleted={onDeleted}
-          onReviewChanged={onReviewChanged}
-          onSaved={onSaved}
-          target={editor}
-        />
-      ) : null}
-    </section>
+            <label className="mt-4 block">
+              <span className="sr-only">Search notes</span>
+              <input
+                aria-label="Search notes"
+                className="min-h-11 w-full rounded border border-border bg-surface px-3 text-text focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Search your notes"
+                type="search"
+                value={input}
+              />
+            </label>
+
+            <div aria-busy={state.status === "loading"} className="mt-6">
+              {renderState(state, query, focusWorkEntryId, {
+                onOpen: openEdit,
+                openRef: openButtonRef,
+                openTargetEntryId: focusEntryId
+              })}
+            </div>
+          </>
+        )}
+
+        {editor !== null ? (
+          <OwnedNoteEditor
+            key={editor.kind === "edit" ? editor.note.entryId : "create"}
+            onClose={requestClose}
+            onDeleted={onDeleted}
+            onReviewChanged={onReviewChanged}
+            onSaved={onSaved}
+            target={editor}
+          />
+        ) : null}
+      </div>
+    </PageFrame>
   );
 }
 

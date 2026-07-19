@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion, useReducedMotion } from "framer-motion";
+import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { motionSprings, withReducedMotion } from "../motion/motion.js";
@@ -120,7 +121,7 @@ export function Sheet({
                   aria-label="Close"
                   className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text"
                 >
-                  ✕
+                  <X aria-hidden size={20} strokeWidth={1.75} />
                 </Dialog.Close>
               </header>
               <div className="sheet-body">

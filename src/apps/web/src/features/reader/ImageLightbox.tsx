@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion, useReducedMotion } from "framer-motion";
+import { X } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useRef, useState, type WheelEvent } from "react";
 
 import { motionSprings, withReducedMotion } from "../../shared/motion/motion.js";
@@ -170,7 +171,7 @@ export function ImageLightbox({
             transition={transition}
           >
             <Dialog.Close aria-label="Close" className="lightbox-close" type="button">
-              ✕
+              <X aria-hidden size={20} strokeWidth={1.75} />
             </Dialog.Close>
             <div
               className="lightbox-viewport"

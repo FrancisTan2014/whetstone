@@ -1,3 +1,5 @@
+import { ArrowRight } from "lucide-react";
+
 import { firstSubstantiveUnitIndex } from "./readerNavigation";
 import type { ReaderStructure } from "./readerModel";
 
@@ -37,7 +39,7 @@ export function FrontMatterNotice({
         onClick={() => onSelectUnit(target)}
         type="button"
       >
-        Start reading →
+        Start reading <ArrowRight aria-hidden size={16} strokeWidth={1.75} />
       </button>
     </aside>
   );

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import type { AuthoredWorkDto } from "@whetstone/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -62,6 +63,12 @@ import { AuthoredWorkPage } from "./AuthoredWorkPage";
 const mockedFetch = vi.mocked(fetchAuthoredWork);
 const mockedSave = vi.mocked(saveAuthoredWorkContent);
 
+// The page now renders through the shared PageFrame, whose parent link is a router <Link>, so tests
+// mount it inside a MemoryRouter.
+function renderWithRouter(ui: React.ReactElement): ReturnType<typeof render> {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
+
 const work: AuthoredWorkDto = {
   createdAt: "2026-07-01T00:00:00.000Z",
   document: createTextDocument("First words"),
@@ -85,14 +92,14 @@ afterEach(() => {
 
 describe("AuthoredWorkPage", () => {
   it("prompts to open a document when no work is selected", () => {
-    render(<AuthoredWorkPage workEntryId={undefined} />);
+    renderWithRouter(<AuthoredWorkPage workEntryId={undefined} />);
 
     expect(screen.getByText(/No document selected/i)).toBeDefined();
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 
   it("loads the work and opens it in the editor", async () => {
-    render(<AuthoredWorkPage workEntryId="work-1" />);
+    renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
 
     expect(await screen.findByRole("textbox", { name: "Edit My essay" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "My essay" })).toBeDefined();
@@ -101,14 +108,14 @@ describe("AuthoredWorkPage", () => {
 
   it("surfaces a calm error when the document cannot be opened", async () => {
     mockedFetch.mockRejectedValueOnce(new Error("gone"));
-    render(<AuthoredWorkPage workEntryId="missing" />);
+    renderWithRouter(<AuthoredWorkPage workEntryId="missing" />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/Couldn.t open this document/i);
   });
 
   it("autosaves an edit after the debounce, showing saving then saved", async () => {
-    render(<AuthoredWorkPage workEntryId="work-1" />);
+    renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
     const editor = await screen.findByRole("textbox", { name: "Edit My essay" });
 
     vi.useFakeTimers();
@@ -130,7 +137,7 @@ describe("AuthoredWorkPage", () => {
 
   it("saves immediately on an explicit save", async () => {
     const user = userEvent.setup();
-    render(<AuthoredWorkPage workEntryId="work-1" />);
+    renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
     await screen.findByRole("textbox", { name: "Edit My essay" });
 
     await user.click(screen.getByRole("button", { name: "Save document" }));
@@ -140,7 +147,7 @@ describe("AuthoredWorkPage", () => {
 
   it("switches between edit and read modes, rendering the saved document in the reader", async () => {
     const user = userEvent.setup();
-    render(<AuthoredWorkPage workEntryId="work-1" />);
+    renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
     await screen.findByRole("textbox", { name: "Edit My essay" });
 
     await user.click(screen.getByRole("button", { name: "Read" }));
@@ -158,7 +165,7 @@ describe("AuthoredWorkPage", () => {
         resolveLoad = resolve;
       })
     );
-    const { unmount } = render(<AuthoredWorkPage workEntryId="work-1" />);
+    const { unmount } = renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
     unmount();
 
     await act(async () => {
@@ -174,7 +181,7 @@ describe("AuthoredWorkPage", () => {
         rejectLoad = reject;
       })
     );
-    const { unmount } = render(<AuthoredWorkPage workEntryId="work-1" />);
+    const { unmount } = renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
     unmount();
 
     await act(async () => {

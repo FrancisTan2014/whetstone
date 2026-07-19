@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BookOpen, FileText, List } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "../../shared/ui/Button";
@@ -29,47 +30,18 @@ export type ReadingHeaderProps = Readonly<{
 // A contents/list glyph for the 目录 control (labelled by the button's aria-label, so the icon
 // itself is decorative). Replaces the literal "目录" text per the WeRead-style chrome.
 function ContentsIcon(): React.JSX.Element {
-  return (
-    <svg aria-hidden className="readingToolIcon" fill="none" viewBox="0 0 24 24">
-      <path
-        d="M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
+  return <List aria-hidden className="readingToolIcon" strokeWidth={1.75} />;
 }
 
 function NotesIcon(): React.JSX.Element {
-  return (
-    <svg aria-hidden className="readingToolIcon" fill="none" viewBox="0 0 24 24">
-      <path
-        d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 20V4a.5.5 0 0 1 .5-.5zM14.5 3.5V8h4.5M9 13h6M9 16.5h4"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
+  return <FileText aria-hidden className="readingToolIcon" strokeWidth={1.75} />;
 }
 
 // An open-book glyph for the contextual Recitation control (labelled by the link's aria-label, so
 // the icon itself is decorative). Recitation works from the text you are reading, so an open book
 // reads more naturally here than a nav label.
 function RecitationIcon(): React.JSX.Element {
-  return (
-    <svg aria-hidden className="readingToolIcon" fill="none" viewBox="0 0 24 24">
-      <path
-        d="M12 6.5C10 5 7 5 4.5 6v12C7 17 10 17 12 18.5M12 6.5C14 5 17 5 19.5 6v12C17 17 14 17 12 18.5M12 6.5v12"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
+  return <BookOpen aria-hidden className="readingToolIcon" strokeWidth={1.75} />;
 }
 
 // The immersive reading chrome: the reading-specific tools in one surface — text size (A−/A+),
@@ -189,6 +161,7 @@ function ReciteThisControl({ workEntryId }: Readonly<{ workEntryId: string }>): 
       variant="ghost"
     >
       <RecitationIcon />
+      <span className="readingToolLabel">I can recite this</span>
     </Button>
   );
 }

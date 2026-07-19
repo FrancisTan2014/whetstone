@@ -31,14 +31,14 @@ describe("ChapterPager", () => {
 
   it("hides Previous on the first unit and shows Next", () => {
     render(<ChapterPager activeUnitIndex={0} onSelectUnit={vi.fn()} structure={structure(3)} />);
-    expect(screen.queryByText("← Previous")).toBeNull();
-    expect(screen.getByText("Next →")).toBeDefined();
+    expect(screen.queryByText("Previous")).toBeNull();
+    expect(screen.getByText("Next")).toBeDefined();
   });
 
   it("hides Next on the last unit and shows Previous", () => {
     render(<ChapterPager activeUnitIndex={2} onSelectUnit={vi.fn()} structure={structure(3)} />);
-    expect(screen.queryByText("Next →")).toBeNull();
-    expect(screen.getByText("← Previous")).toBeDefined();
+    expect(screen.queryByText("Next")).toBeNull();
+    expect(screen.getByText("Previous")).toBeDefined();
   });
 
   it("shows both with adjacent titles in the middle and selects index ±1", async () => {
@@ -51,8 +51,8 @@ describe("ChapterPager", () => {
     expect(screen.getByText("Chapter 1")).toBeDefined();
     expect(screen.getByText("Chapter 3")).toBeDefined();
 
-    await user.click(screen.getByText("Next →"));
-    await user.click(screen.getByText("← Previous"));
+    await user.click(screen.getByText("Next"));
+    await user.click(screen.getByText("Previous"));
     expect(onSelectUnit).toHaveBeenNthCalledWith(1, 2);
     expect(onSelectUnit).toHaveBeenNthCalledWith(2, 0);
   });

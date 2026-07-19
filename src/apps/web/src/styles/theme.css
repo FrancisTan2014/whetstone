@@ -44,6 +44,10 @@
   --color-accent-hover: oklch(0.47 0.18 280);
   --color-accent-fg: #ffffff;
   --color-accent-fg: oklch(1 0 0);
+  /* The calm accent selection wash (#641): a low-alpha accent tint for a selected/active surface
+   * (active nav destination, selected controls). Defined once as a mix over the themed accent, so it
+   * re-resolves to the Night accent automatically inside the `.dark` scope. */
+  --color-accent-selection: color-mix(in oklch, var(--color-accent) 15%, transparent);
   /* In-content reference links (#517): a blue that reads as "reference", kept distinct from the indigo
      accent (hue ~280) and all four annotation hues (amber 65 / teal 180 / violet 295 / rose 12) so a
      link never looks like an annotated word — underline is reserved for .noteMark. AA >= 4.5:1 on
@@ -59,26 +63,8 @@
   --color-danger: #c0392b;
   --color-danger: oklch(0.55 0.18 25);
 
-  /* Annotation hues mapped to the note templates (Vocabulary / Expression / Thought). */
-  --color-anno-vocab: #b45309;
-  --color-anno-vocab: oklch(0.58 0.13 65);
-  --color-anno-vocab-wash: #fef3c7;
-  --color-anno-vocab-wash: oklch(0.95 0.05 85);
-  --color-anno-expr: #0f766e;
-  --color-anno-expr: oklch(0.5 0.1 180);
-  --color-anno-expr-wash: #d6f5e9;
-  --color-anno-expr-wash: oklch(0.95 0.04 160);
-  --color-anno-thought: #6d28d9;
-  --color-anno-thought: oklch(0.5 0.18 295);
-  --color-anno-thought-wash: #efe7fd;
-  --color-anno-thought-wash: oklch(0.95 0.03 300);
-  /* The Gem hue for a mark-only highlight (#255): a distinct rose, apart from the three template
-   * hues (amber / teal-green / violet). Day values; the .dark block overrides them. */
-  --color-anno-gem: #be123c;
-  --color-anno-gem: oklch(0.55 0.18 12);
-  --color-anno-gem-wash: #ffe4e6;
-  --color-anno-gem-wash: oklch(0.95 0.03 12);
-
+  /* Annotation hues: the single muted-amber note/mark channel (below). The retired multi-hue
+   * template palette (Vocabulary / Expression / Thought / Gem) is gone with its last consumer. */
   /* The single muted-amber annotation channel for every rich note (#619), plus a lighter variant for
    * a bodyless Mark. The channel carries only the note/mark distinction — never the note's content.
    * Day values; the .dark block overrides them. */
@@ -157,22 +143,6 @@
   --color-success: oklch(0.82 0.12 165);
   --color-danger: #f1a59c;
   --color-danger: oklch(0.78 0.1 25);
-  --color-anno-vocab: #fbbf24;
-  --color-anno-vocab: oklch(0.82 0.12 80);
-  --color-anno-vocab-wash: #3a2f12;
-  --color-anno-vocab-wash: oklch(0.3 0.04 80);
-  --color-anno-expr: #5eead4;
-  --color-anno-expr: oklch(0.82 0.1 180);
-  --color-anno-expr-wash: #103a32;
-  --color-anno-expr-wash: oklch(0.3 0.04 165);
-  --color-anno-thought: #c4b5fd;
-  --color-anno-thought: oklch(0.8 0.1 295);
-  --color-anno-thought-wash: #2a2342;
-  --color-anno-thought-wash: oklch(0.3 0.05 300);
-  --color-anno-gem: #fda4af;
-  --color-anno-gem: oklch(0.8 0.1 12);
-  --color-anno-gem-wash: #3a1620;
-  --color-anno-gem-wash: oklch(0.3 0.05 12);
   --color-anno-note: #fbbf24;
   --color-anno-note: oklch(0.82 0.12 80);
   --color-anno-note-wash: #3a2f12;
@@ -1369,6 +1339,13 @@
 .readingToolIcon {
   inline-size: 1.25rem;
   block-size: 1.25rem;
+}
+
+/* A consequential Reader action (I can recite this, #641) keeps its visible text label beside the
+   icon rather than going icon-only; nowrap so the labelled control stays on one line in the rail. */
+.readingToolLabel {
+  font-size: var(--text-scale-sm);
+  white-space: nowrap;
 }
 
 /* The note count rides the notes tool as a quiet pill rather than a second control. */

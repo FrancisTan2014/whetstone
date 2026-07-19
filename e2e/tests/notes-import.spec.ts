@@ -16,7 +16,7 @@ test.describe("notes import", () => {
     await page.goto(`${setup.baseURL}#/notes`);
     await expect(page.getByRole("heading", { level: 1, name: "Notes" })).toBeVisible();
 
-    // Open the import surface and paste two "term = gloss" pairs.
+    // Open the import surface (a secondary action in the page body, #641) and paste two "term = gloss" pairs.
     await page.getByRole("button", { name: "Import" }).click();
     const panel = page.getByRole("region", { name: "Import a list into notes" });
     await expect(panel).toBeVisible();
