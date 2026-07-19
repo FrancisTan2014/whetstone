@@ -63,8 +63,8 @@ The usable personal-learning cycle contains:
   recall, and maintain it with recitation-specific FSRS.
 - **Diary:** type or speak; persist raw input first; optionally transcribe and tidy; edit and revisit
   the durable entry in a reverse-chronological timeline.
-- **Writing:** create an owned Work, autosave it in the shared rich editor, and read it through the
-  same Reader.
+- **Writing:** create and resume owned essays from a dedicated Writing home, autosave them in the
+  shared rich editor, and read them through the same Reader.
 - **Today:** show deterministic due work and optional continuations, then a truthful completion.
 - **Search:** recover source content by text; Diary owns the chronological journal view.
 
@@ -74,20 +74,23 @@ contains a coach-led Practice experience or a deterministic fake standing in for
 
 ## Information architecture
 
-Primary navigation has **five** destinations:
+Primary navigation has **six** destinations:
 
 1. **Today** — due work, optional continuations, and capture.
 2. **Library** — source and authored Works.
-3. **Recite** — enrolled Works, due maintenance, and next review dates.
-4. **Notes** — anchored and standalone notes, review enrollment, and due Review.
-5. **Diary** — typed/voice capture and the chronological journal.
+3. **Write** — authored essays and their editor.
+4. **Recite** — enrolled Works, due maintenance, and next review dates.
+5. **Notes** — anchored and standalone notes, review enrollment, and due Review.
+6. **Diary** — typed/voice capture and the chronological journal.
 
-Search is a persistent one-action shell utility, not a primary destination. Reader and Writing belong
-to Library; note Review belongs to Notes; Recitation review belongs to Recite. Every secondary surface
-keeps its parent visibly active and provides one explicit return path. Old Memory and Recall links
-redirect into Notes and its Review session. There is no primary Practice or Progress Map destination.
+Search is a persistent one-action shell utility, not a primary destination. Reader belongs to
+Library; the authored-Work editor belongs to Write; note Review belongs to Notes; Recitation review
+belongs to Recite. Library still shelves authored Works for reading, but it does not own their
+creation or editing. Every secondary surface keeps its parent visibly active and provides one
+explicit return path. Old Memory and Recall links redirect into Notes and its Review session. There
+is no primary Practice or Progress Map destination.
 
-Desktop/tablet uses a left sidebar. Mobile uses one non-wrapping bottom bar with five targets at
+Desktop/tablet uses a left sidebar. Mobile uses one non-wrapping bottom bar with six targets at
 320px and above. Every navigation target is at least 44px in both dimensions.
 
 ## v0 assistant home (Today)
@@ -177,14 +180,16 @@ Again, Hard, Good, or Easy.
 - Before reveal, source text is neither visually nor accessibly exposed.
 - Reveal uses the current canonical Work. Leaving before rating writes no event and keeps the card due.
 - One rating appends one review event, reschedules only that Work-level card through maintained
-  `ts-fsrs` (FSRS v6), and shows the next scheduled date.
+  `ts-fsrs` (FSRS v6), and shows the next scheduled local time. A short-term interval due on the
+  current local day is labeled **Later today** with its exact time; it is never collapsed to the
+  current date with no explanation.
 - If another Work is due, **Review next** is optional; nothing opens automatically. Otherwise the
   session reports **Due complete**.
 - Loading, reveal, and rating failures stay on the current Work with a specific retry and never
   fabricate completion.
 - There is no notification, speech grade, exactness score, timer, streak, or automatic repair task.
 
-This closes the cycle: **I can recite this → recite → reveal source → self-rate → FSRS next date**.
+This closes the cycle: **I can recite this → recite → reveal source → self-rate → FSRS next time**.
 
 ## Notes and Review
 
@@ -208,7 +213,8 @@ competing content stores.
   It is idempotent and is not itself a review event.
 - Review shows one question, keeps the note hidden until reveal, then shows the current note body and
   accepts Again, Hard, Good, or Easy. A rating appends one event, reschedules only that card, and shows
-  the next date.
+  the next scheduled local time. A short-term interval due on the current local day is labeled
+  **Later today** with its exact time rather than repeating today's date.
 - The learner may stop after any item. Review settings own question editing, pause/resume, restart,
   removal, due state, and auditable history. Removing review never deletes the note.
 - Notes lists anchored and standalone notes together, supports search and editing, and owns paste-list
@@ -222,13 +228,18 @@ silently enrolls review.
 
 ### v0 content ingestion
 
-Library has one **Add** menu with **Upload file** (`.epub`, `.pdf`, `.md`), **New document**, and
-**Add work manually**. Each option enters its existing owning flow:
+Library has one **Add** menu with **Upload file** (`.epub`, `.pdf`, `.md`) and **Add work
+manually**. Writing owns **New essay** and authored-Work creation. Each Library option enters its
+owning source flow:
 
 - EPUB reads OPF metadata and authored navigation, then creates a Work and ordered ReadingUnits.
 - Markdown uses confirmed title, author, and language and enters through the same block pipeline.
 - PDF confirms metadata, then uses the optional isolated Docling path; scanned PDFs receive an OCR
   pre-pass. Missing tooling produces a specific setup remedy, never a corrupt Work.
+- Manual and Markdown Works derive their Reader structure from the source's heading levels. `#`
+  headings create chapters, deeper headings create nested sections, and content management shows
+  the resulting outline. This hierarchy is projected from canonical source headings, not maintained
+  as a second editable TOC that can drift.
 - The original uploaded file and sha256 are retained for provenance.
 - Ingestion is transactional and fail-loud: unknown source structures are preserved conservatively and
   emit evidence rather than disappearing silently.
@@ -238,7 +249,7 @@ The Library is a read-first shelf:
 - Every Work exposes exactly one persistent **Read** or **Continue** action.
 - One Work-specific overflow contains valid setup/management actions: Recitation enrollment/open,
   Work-scoped Notes, edit/manage content, and confirmed deletion. Authored Works do not expose a
-  second persistent Edit action.
+  second persistent Edit action; their overflow routes to **Edit in Writing**.
 - Ongoing Recitation phase/due/progress state belongs in Recite, not on Library cards.
 - Markdown import remains supported, but reconstructed **Export Markdown** is not a trustworthy
   portable copy and is not a product capability. Backup/restore remains the recovery path.
@@ -249,6 +260,9 @@ The Reader is reading-unit scoped and TOC driven:
 
 - Render one ReadingUnit at a time; scroll within it and use Previous/Next between units.
 - Use the authored hierarchical TOC where present; normalize structural Part → Chapter nesting.
+  Manual and Markdown Works project the same Reader tree from canonical heading levels. Content
+  before the first heading is **Start** when later headings make navigation necessary; a headingless
+  single-unit Work needs no TOC.
 - Remember server-side reading position (unit + best-effort block anchor) and preferences.
 - Keep one stable-width, single-column reading surface; text size reflows within it.
 - Desktop tools live in a persistent bottom-right rail; mobile chrome recedes and returns from a
@@ -273,7 +287,9 @@ states. Target body size is about 18px, line height at least 1.5, and Latin meas
 - The anchor stores block id, character offsets, exact quote, and surrounding context.
 - The editor opens as a comfortable wide side panel on desktop
   (`clamp(28rem, 46vw, 36rem)`, viewport-capped) and a full-width bottom sheet on narrow screens
-  without covering the selected text.
+  without covering the selected text. Its bordered **workspace** body is
+  `clamp(16rem, 42dvh, 28rem)` tall on desktop and `clamp(12rem, 34dvh, 20rem)` on narrow screens;
+  the Sheet scrolls when surrounding source or Review controls need more room.
 - The note body uses the shared rich-text editor. There is no template selector, automatic
   classification, structured answer form, or generated Markdown copy.
 - Activating underlined text by mouse, touch, or keyboard opens that exact note. A chooser appears only
@@ -311,15 +327,21 @@ Lookup is view-only and never creates a note:
 
 Typed and voice capture create the same owned `diary_entry`:
 
-- Typed text is persisted immediately.
+- Typed capture starts in the shared rich editor. Saving persists its canonical ProseMirror document
+  immediately and derives plaintext only for search/preview; there is no plain-text compose variant
+  or flatten-and-rebuild round trip. Diary uses the workspace presentation, while Today's activated
+  capture uses the compact presentation.
 - Voice persists raw audio and a queued entry before transcription.
 - The worker transcribes with automatic language detection, optionally tidies, and produces the
   editable rich body. There is no capture language switch or forced-language configuration.
 - Detected language is nullable observed metadata. Detection failure never fails capture, and existing
   stored language values remain valid.
-- Raw input, verbatim transcript, processing state, and retry state remain available.
-- A failed model tidy falls back to the transcript. A failed transcription remains retryable and
-  never masquerades as success.
+- The raw typed document or audio, verbatim voice transcript, processing state, and retry state
+  remain available.
+- A failed model tidy falls back to the transcript. A failed transcription never masquerades as
+  success. It exposes a stable, safe failure category, says whether the recording is retryable, and
+  gives the exact remedy; raw adapter/process details remain in server logs rather than leaking
+  through the client contract.
 - Diary capture journals only. It creates no proposal, review prompt, case, or next action.
 
 ### Tidy, not polish
@@ -333,9 +355,10 @@ is the safe fallback.
 
 Diary opens directly to a reverse-chronological timeline grouped by the learner's local day. It loads
 older day pages automatically from a bounded cursor, stops at the terminal page, and offers a clear
-retry after failure. Clicking an entry opens its rich editor; edits and deletions update the visible
-timeline. Leaving and returning during one app session restores scroll position. There is no month
-calendar, date-jump mode, or separate calendar API.
+retry after failure. The timeline renders each canonical rich body; clicking an entry opens the same
+rich editor, and edits and deletions update the visible timeline. Leaving and returning during one
+app session restores scroll position. There is no month calendar, date-jump mode, or separate
+calendar API.
 
 The timeline is a logical chronological view over owned Entries through `personal_entries`; it is not
 a second store. Diary filters that view to journal entries. Review events are history, not Timeline
@@ -343,9 +366,12 @@ Entries.
 
 ### Writing
 
-An authored Work is owned, canonical content in the same ProseMirror/Tiptap document model:
+Writing is a primary destination with a focused home over authored Works:
 
-- Create it from Library.
+- **New essay** is the one creation action; it asks for title, language, and Work type (default
+  `essay`), then opens the editor.
+- The home lists authored Works by most recently edited and provides one clear **Continue writing**
+  action per Work. The same Works remain visible in Library for reading.
 - Edit it in the shared rich editor with debounced, latest-write-safe autosave and a pending-save
   navigation guard.
 - Resume the most recently edited unfinished Work from Today.
@@ -500,7 +526,7 @@ The pivot is usable only when all are true:
   rating, and later resurface from its whole-Work FSRS schedule.
 - Today includes every unpaused due Recitation Work and every due note prompt; neither recency nor a
   currently open Work can create a false all-clear state.
-- The five primary destinations remain truthful on desktop/mobile, and Search stays one action away.
+- The six primary destinations remain truthful on desktop/mobile, and Search stays one action away.
 - Reader annotations open their exact note; rich-editor floating controls stay usable above the wide
   desktop note sheet.
 - Diary capture requires no language choice, and Diary history is a paginated chronological timeline
