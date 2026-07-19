@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { NoteDto, NoteReviewEnrollmentStatusDto } from "@whetstone/contracts";
+import { formatNextReviewLabel } from "@whetstone/domain";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { addOwnedNoteToReview, fetchOwnedNoteReviewStatus } from "../notesReview/notesReviewApi";
 import { NoteReviewSettings } from "./NoteReviewSettings";
 
@@ -20,21 +22,12 @@ type SectionState =
   | Readonly<{ step: "error" }>
   | Readonly<{ status: NoteReviewEnrollmentStatusDto; step: "status" }>;
 
-// Format a card's next due instant as a calm, localized date, matching the Review session's own format.
-function formatNextReview(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    year: "numeric"
-  });
-}
-
 // The owner-scoped Review controls inside the Notes-home editor (#659), for any saved note. It loads the
 // note's objective Review status and lets the learner add the note to Review. An anchored note reuses its
 // exact source as the Question (server-side, no retyping); a standalone note has no source, so the learner
 // answers exactly "What should Whetstone ask you?" in one required, non-blank input. Enrollment is
 // idempotent; after success the section reflects the objective state (Due now with a Review link,
-// Next review · date, or Paused). A load or enrollment failure offers a retry without disturbing the body.
+// Next review · <when>, or Paused). A load or enrollment failure offers a retry without disturbing the body.
 export function OwnedNoteReviewSection({
   note,
   onEnrolled
@@ -45,6 +38,7 @@ export function OwnedNoteReviewSection({
   const [enrollFailed, setEnrollFailed] = useState(false);
   const [question, setQuestion] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const timeZone = useLearnerTimeZone();
 
   // Defer the state transition into the promise callback (never a synchronous set in the effect body) so
   // the React Compiler's set-state-in-effect lint stays satisfied. The initial `loading` state carries the
@@ -123,6 +117,7 @@ export function OwnedNoteReviewSection({
           question={sourceQuestion ?? question}
           reuseSource={reuseSource}
           status={state.status}
+          timeZone={timeZone}
         />
       ) : null}
       {state.step === "status" ? (
@@ -163,6 +158,7 @@ type OwnedNoteReviewStatusViewProps = Readonly<{
   question: string;
   reuseSource: boolean;
   status: NoteReviewEnrollmentStatusDto;
+  timeZone: string;
 }>;
 
 // The objective view for a loaded status. `not_enrolled` offers "Add to review", which opens an inline
@@ -180,7 +176,8 @@ function OwnedNoteReviewStatusView({
   onStartConfirm,
   question,
   reuseSource,
-  status
+  status,
+  timeZone
 }: OwnedNoteReviewStatusViewProps): React.JSX.Element {
   switch (status.status) {
     case "not_enrolled":
@@ -246,7 +243,12 @@ function OwnedNoteReviewStatusView({
         </div>
       );
     case "scheduled":
-      return <p>Next review · {formatNextReview(status.nextReviewAt)}</p>;
+      return (
+        <p>
+          Next review ·{" "}
+          {formatNextReviewLabel({ due: new Date(status.nextReviewAt), now: new Date(), timeZone })}
+        </p>
+      );
     case "paused":
       return <p>Paused</p>;
   }

@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
-import type { ReviewRating } from "@whetstone/domain";
+import {
+  formatNextReviewLabel,
+  isShortTermReviewState,
+  type ReviewRating
+} from "@whetstone/domain";
 
 import { PmDocument } from "../reader/PmDocument.js";
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { PageFrame } from "../../shared/ui/PageFrame";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
 
 // The four self-grade controls, in increasing-confidence order. Each is an FSRS rating sent to the API.
@@ -25,16 +30,7 @@ type SessionState =
   | Readonly<{ step: "empty" }>
   | Readonly<{ step: "question"; prompt: NoteReviewPromptDto; revealFailed: boolean }>
   | Readonly<{ step: "revealed"; prompt: NoteReviewPromptDto; reveal: NoteRevealDto }>
-  | Readonly<{ step: "rated"; nextDue: string; hasMoreDue: boolean }>;
-
-// Format a card's next due instant as a calm, human date the learner reads after rating.
-function formatDueDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    year: "numeric"
-  });
-}
+  | Readonly<{ step: "rated"; nextDue: string; hasMoreDue: boolean; shortTerm: boolean }>;
 
 // The Notes-owned Review session (#657): a one-item-at-a-time, two-phase review of the user's DUE note
 // prompts. Nothing advances automatically — the learner reveals, rates, and chooses to continue. `/recall`
@@ -44,6 +40,9 @@ function NotesReviewPageComponent(): React.JSX.Element {
   // A failed rating keeps the reveal (and its controls) in place; this flag surfaces a retryable alert
   // without collapsing the phase, so the learner never loses the answer they were grading.
   const [ratingFailed, setRatingFailed] = useState(false);
+  // The learner's persisted zone (#676): the rated confirmation resolves its next-review label in it, so a
+  // short-term interval reads as a truthful local time rather than the runner's zone.
+  const timeZone = useLearnerTimeZone();
 
   // Defer every state transition through the promise's callbacks (never a synchronous set in the
   // effect body) so the React Compiler's set-state-in-effect lint stays satisfied — the same loader
@@ -83,6 +82,7 @@ function NotesReviewPageComponent(): React.JSX.Element {
         setState({
           hasMoreDue: result.remainingDue > 0,
           nextDue: result.review.due,
+          shortTerm: isShortTermReviewState(result.review.state),
           step: "rated"
         }),
       () => setRatingFailed(true)
@@ -97,6 +97,7 @@ function NotesReviewPageComponent(): React.JSX.Element {
         onReviewNext={reviewNext}
         ratingFailed={ratingFailed}
         state={state}
+        timeZone={timeZone}
       />
     </PageFrame>
   );
@@ -109,13 +110,15 @@ function SessionBody({
   onReveal,
   onReviewNext,
   ratingFailed,
-  state
+  state,
+  timeZone
 }: Readonly<{
   onRate: (rating: ReviewRating, prompt: NoteReviewPromptDto) => void;
   onReveal: (prompt: NoteReviewPromptDto) => void;
   onReviewNext: () => void;
   ratingFailed: boolean;
   state: SessionState;
+  timeZone: string;
 }>): React.JSX.Element {
   if (state.step === "loading") {
     return <LoadingIndicator label="Finding what's due…" />;
@@ -133,7 +136,14 @@ function SessionBody({
   if (state.step === "rated") {
     return (
       <div>
-        <p className="text-text">Next review: {formatDueDate(state.nextDue)}</p>
+        <p className="text-text">
+          {formatNextReviewLabel({
+            due: new Date(state.nextDue),
+            now: new Date(),
+            shortTerm: state.shortTerm,
+            timeZone
+          })}
+        </p>
         {state.hasMoreDue ? (
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button onClick={onReviewNext} variant="primary">

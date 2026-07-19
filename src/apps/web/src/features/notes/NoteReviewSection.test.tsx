@@ -9,6 +9,11 @@ vi.mock("../notesReview/notesReviewApi", () => ({
   fetchNoteReviewStatus: vi.fn()
 }));
 
+// A fixed learner zone so the scheduled next-review label is deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
+}));
+
 import type { NoteReviewEnrollmentStatusDto } from "@whetstone/contracts";
 
 import { addNoteToReview, fetchNoteReviewStatus } from "../notesReview/notesReviewApi";
@@ -29,9 +34,12 @@ function renderSection(): ReturnType<typeof userEvent.setup> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
 });
 
@@ -139,7 +147,7 @@ describe("NoteReviewSection", () => {
     });
     renderSection();
 
-    expect(await screen.findByText("Next review · July 11, 2026")).toBeDefined();
+    expect(await screen.findByText("Next review · July 11, 2026 at 12:00 AM")).toBeDefined();
   });
 
   it("renders the paused state", async () => {

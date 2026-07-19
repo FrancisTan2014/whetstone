@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { RecitationReviewDto } from "@whetstone/contracts";
+import { formatNextReviewLabel, isShortTermReviewState } from "@whetstone/domain";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { PageFrame } from "../../shared/ui/PageFrame";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { fetchRecitationReview } from "./recitationApi";
 import { RecitationReviewCard } from "./RecitationReviewCard";
 
@@ -26,6 +28,9 @@ export function RecitationReviewPage({
   workEntryId
 }: Readonly<{ workEntryId?: string | undefined }> = {}): React.JSX.Element {
   const [state, setState] = useState<ReviewState>({ status: "loading" });
+  // The learner's persisted zone (#676): the post-rating confirmation resolves its next-review label in it,
+  // so a short-term (learning/relearning) interval reads as a truthful local time, not a bare date slice.
+  const timeZone = useLearnerTimeZone();
 
   // Load one review: the given Work, or — when omitted — the earliest-due Work recomputed from canonical
   // due cards. Only sets state once the fetch settles (never synchronously), so it is safe to drive from the
@@ -50,7 +55,7 @@ export function RecitationReviewPage({
 
   return (
     <PageFrame parentLink={{ label: "Recite", to: "/recite" }} title="Recitation">
-      {renderState(state, setState, reviewNext)}
+      {renderState(state, setState, reviewNext, timeZone)}
     </PageFrame>
   );
 }
@@ -58,7 +63,8 @@ export function RecitationReviewPage({
 function renderState(
   state: ReviewState,
   setState: (next: ReviewState) => void,
-  onReviewNext: () => void
+  onReviewNext: () => void,
+  timeZone: string
 ): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading your recitation…" />;
@@ -71,7 +77,7 @@ function renderState(
     );
   }
   if (state.status === "done") {
-    return <ScheduledState onReviewNext={onReviewNext} state={state} />;
+    return <ScheduledState onReviewNext={onReviewNext} state={state} timeZone={timeZone} />;
   }
   if (state.review === null) {
     return <NothingDueState />;
@@ -111,17 +117,25 @@ function NothingDueState(): React.JSX.Element {
 // automatically) or announce "Due complete". Either way a clear way back to Today is always present.
 function ScheduledState({
   onReviewNext,
-  state
+  state,
+  timeZone
 }: Readonly<{
   onReviewNext: () => void;
   state: Readonly<{ remainingDueCount: number; scheduled: RecitationReviewDto }>;
+  timeZone: string;
 }>): React.JSX.Element {
   const moreDue = state.remainingDueCount > 0;
   return (
     <div className="flex flex-col gap-3">
       <p className="text-text" role="status">
-        Scheduled <span className="font-medium">{state.scheduled.workTitle}</span>. Next review on{" "}
-        {state.scheduled.dueAt.slice(0, 10)}.
+        Scheduled <span className="font-medium">{state.scheduled.workTitle}</span>.{" "}
+        {formatNextReviewLabel({
+          due: new Date(state.scheduled.dueAt),
+          now: new Date(),
+          shortTerm: isShortTermReviewState(state.scheduled.state),
+          timeZone
+        })}
+        .
       </p>
       {moreDue ? (
         <div className="flex flex-wrap items-center gap-2">

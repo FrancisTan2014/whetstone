@@ -5,6 +5,7 @@ import type { ImportNotesResultDto, NoteOverviewDto } from "@whetstone/contracts
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { PageFrame } from "../../shared/ui/PageFrame";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { fetchAllNotes } from "./notesApi";
 import { NotesHomeList } from "./NotesHomeList";
 import { NotesImport } from "./NotesImport";
@@ -28,6 +29,8 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   const [state, setState] = useState<NotesState>({ status: "loading" });
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
+  // The learner's persisted zone (#676): every Notes-home row resolves its next-review label in it.
+  const timeZone = useLearnerTimeZone();
   const [reloadNonce, setReloadNonce] = useState(0);
   const [editor, setEditor] = useState<OwnedNoteEditorTarget | null>(null);
   const [focusEntryId, setFocusEntryId] = useState<string | undefined>(undefined);
@@ -219,7 +222,7 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
             </label>
 
             <div aria-busy={state.status === "loading"} className="mt-6">
-              {renderState(state, query, focusWorkEntryId, {
+              {renderState(state, query, focusWorkEntryId, timeZone, {
                 onOpen: openEdit,
                 openRef: openButtonRef,
                 openTargetEntryId: focusEntryId
@@ -253,6 +256,7 @@ function renderState(
   state: NotesState,
   query: string,
   focusWorkEntryId: string | undefined,
+  timeZone: string,
   handlers: ListHandlers
 ): React.JSX.Element {
   if (state.status === "loading") {
@@ -286,6 +290,7 @@ function renderState(
       onOpen={handlers.onOpen}
       openRef={handlers.openRef}
       openTargetEntryId={handlers.openTargetEntryId}
+      timeZone={timeZone}
     />
   );
 }

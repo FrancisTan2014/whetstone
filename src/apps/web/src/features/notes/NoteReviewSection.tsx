@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { NoteReviewEnrollmentStatusDto } from "@whetstone/contracts";
+import { formatNextReviewLabel } from "@whetstone/domain";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { addNoteToReview, fetchNoteReviewStatus } from "../notesReview/notesReviewApi";
 
 type NoteReviewSectionProps = Readonly<{
@@ -21,20 +23,11 @@ type SectionState =
   | Readonly<{ step: "error" }>
   | Readonly<{ status: NoteReviewEnrollmentStatusDto; step: "status" }>;
 
-// Format a card's next due instant as a calm, localized date, matching the Review session's own format.
-function formatNextReview(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    year: "numeric"
-  });
-}
-
 // The Review controls inside the note sheet (#658), shown only for a saved anchored note. It loads the
 // note's objective Review status and lets the learner add the note to Review by confirming the exact
 // anchor snapshot as the Question — no extra writing, no generated question. Enrollment is idempotent, so
 // re-adding is safe; after success the section reflects the objective state (Due now with a Review link,
-// Next review · date, or Paused). All states stay inside this section: a load or enrollment failure offers
+// Next review · <when>, or Paused). All states stay inside this section: a load or enrollment failure offers
 // a retry without disturbing the note body above.
 export function NoteReviewSection({
   noteEntryId,
@@ -45,6 +38,7 @@ export function NoteReviewSection({
   const [confirming, setConfirming] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [enrollFailed, setEnrollFailed] = useState(false);
+  const timeZone = useLearnerTimeZone();
 
   // Defer the state transition into the promise callback (never a synchronous set in the effect body) so
   // the React Compiler's set-state-in-effect lint stays satisfied — the same loader shape Review uses. The
@@ -106,6 +100,7 @@ export function NoteReviewSection({
           onStartConfirm={() => setConfirming(true)}
           question={question}
           status={state.status}
+          timeZone={timeZone}
         />
       ) : null}
     </section>
@@ -121,6 +116,7 @@ type NoteReviewStatusViewProps = Readonly<{
   onStartConfirm: () => void;
   question: string;
   status: NoteReviewEnrollmentStatusDto;
+  timeZone: string;
 }>;
 
 // The objective view for a loaded status. `not_enrolled` offers "Add to review", which opens an inline
@@ -134,7 +130,8 @@ function NoteReviewStatusView({
   onCancelConfirm,
   onStartConfirm,
   question,
-  status
+  status,
+  timeZone
 }: NoteReviewStatusViewProps): React.JSX.Element {
   switch (status.status) {
     case "not_enrolled":
@@ -181,7 +178,12 @@ function NoteReviewStatusView({
         </div>
       );
     case "scheduled":
-      return <p>Next review · {formatNextReview(status.nextReviewAt)}</p>;
+      return (
+        <p>
+          Next review ·{" "}
+          {formatNextReviewLabel({ due: new Date(status.nextReviewAt), now: new Date(), timeZone })}
+        </p>
+      );
     case "paused":
       return <p>Paused</p>;
   }

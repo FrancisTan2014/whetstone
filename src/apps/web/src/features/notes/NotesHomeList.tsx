@@ -10,6 +10,7 @@ type NotesHomeListProps = Readonly<{
   onOpen: (note: NoteOverviewDto) => void;
   openRef?: React.Ref<HTMLButtonElement>;
   openTargetEntryId?: string | undefined;
+  timeZone: string;
 }>;
 
 // A short, single-line plaintext preview of a note's body, so a long note never blows out the row. The
@@ -30,16 +31,21 @@ export function NotesHomeList({
   notes,
   onOpen,
   openRef,
-  openTargetEntryId
+  openTargetEntryId,
+  timeZone
 }: NotesHomeListProps): React.JSX.Element {
+  // One `now` for the whole render so every row's next-review label resolves against the same instant.
+  const now = new Date();
   return (
     <ul aria-label="Your notes" className="flex flex-col gap-3">
       {notes.map((note) => (
         <NotesHomeRow
           key={note.entryId}
           note={note}
+          now={now}
           onOpen={onOpen}
           openRef={note.entryId === openTargetEntryId ? openRef : undefined}
+          timeZone={timeZone}
         />
       ))}
     </ul>
@@ -48,11 +54,19 @@ export function NotesHomeList({
 
 type NotesHomeRowProps = Readonly<{
   note: NoteOverviewDto;
+  now: Date;
   onOpen: (note: NoteOverviewDto) => void;
   openRef?: React.Ref<HTMLButtonElement> | undefined;
+  timeZone: string;
 }>;
 
-function NotesHomeRow({ note, onOpen, openRef }: NotesHomeRowProps): React.JSX.Element {
+function NotesHomeRow({
+  note,
+  now,
+  onOpen,
+  openRef,
+  timeZone
+}: NotesHomeRowProps): React.JSX.Element {
   const anchored = isAnchoredNoteOverview(note);
   const isMark = note.kind === "mark";
 
@@ -75,7 +89,9 @@ function NotesHomeRow({ note, onOpen, openRef }: NotesHomeRowProps): React.JSX.E
       <div className="mt-1 flex flex-wrap items-center gap-3">
         {isMark ? null : <OpenNoteButton note={note} onOpen={onOpen} ref={openRef} />}
         {isMark ? null : (
-          <span className="text-xs text-text-muted">{reviewSummaryLabel(note.review)}</span>
+          <span className="text-xs text-text-muted">
+            {reviewSummaryLabel(note.review, now, timeZone)}
+          </span>
         )}
         {anchored ? (
           <a
