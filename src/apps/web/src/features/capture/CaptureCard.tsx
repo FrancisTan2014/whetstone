@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 
+import { type DiaryEntryDto, type VoiceCaptureStatusDto } from "@whetstone/contracts";
 import {
-  type DiaryEntryDto,
-  type CaptureInputMode,
-  type VoiceCaptureStatusDto
-} from "@whetstone/contracts";
-import { createTextDocument } from "@whetstone/document";
+  createTextDocument,
+  documentReadableText,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 
+import {
+  RichContentEditor,
+  createEmptyDocument,
+  type RichContentEditorPresentation
+} from "../../shared/editor";
 import { Button } from "../../shared/ui/Button";
 import { submitDiaryCapture } from "../diary/diaryApi";
 import { createCaptureVoice } from "./captureVoice";
@@ -50,15 +55,24 @@ function readyVoiceEntry(ready: VoiceCaptureStatusDto, text: string): DiaryEntry
 export function CaptureCard({
   capture = createCaptureVoice(),
   onCaptured,
-  onVoiceAccepted
+  onVoiceAccepted,
+  presentation = "workspace"
 }: Readonly<{
   capture?: CaptureVoiceDependencies;
   onCaptured?: (entry: DiaryEntryDto) => void;
   // Fired the moment a recorded clip is accepted (saved server-side) — before background transcription
   // finishes — so a host surface (Today's compact capture, #639) can collapse to its confirmation state.
   onVoiceAccepted?: () => void;
+  // How the typed composer presents itself (#678): Diary gives it a full "workspace" writing surface,
+  // while Today's activated capture stays "compact" so the restrained collapsed card doesn't balloon.
+  presentation?: RichContentEditorPresentation;
 }>): React.JSX.Element {
-  const [text, setText] = useState("");
+  // The typed composer is the shared rich editor. `seed` is the authoritative document handed to the
+  // editor (it resets the surface whenever its identity changes); `draft` tracks live edits. Keeping the
+  // seed stable across a failed save preserves the learner's in-progress rich content (#678); a
+  // successful save swaps in a fresh empty document to clear the surface.
+  const [seed, setSeed] = useState<DocumentNodeJSON>(() => createEmptyDocument());
+  const [draft, setDraft] = useState<DocumentNodeJSON>(seed);
   const [busy, setBusy] = useState(false);
   const [savingVoice, setSavingVoice] = useState(false);
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
@@ -97,16 +111,17 @@ export function CaptureCard({
 
   // The single path both typed and voice capture funnel through: save the diary Entry, then hand it to
   // the Timeline. Returns whether the submit succeeded so the caller can clear its input only on success.
-  async function runCapture(rawText: string, inputMode: CaptureInputMode): Promise<boolean> {
-    const trimmed = rawText.trim();
-    if (trimmed.length === 0) {
+  // The canonical rich document crosses the boundary intact (#678); blank is judged by readable text so a
+  // document of only empty structural nodes cannot be saved.
+  async function runCapture(bodyDoc: DocumentNodeJSON): Promise<boolean> {
+    if (documentReadableText(bodyDoc).trim().length === 0) {
       return false;
     }
 
     setBusy(true);
     setError(null);
     try {
-      const entry = await submitDiaryCapture(trimmed, inputMode);
+      const entry = await submitDiaryCapture(bodyDoc);
       onCaptured?.(entry);
       return true;
     } catch {
@@ -117,10 +132,17 @@ export function CaptureCard({
     }
   }
 
-  async function captureTyped(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
-    if (await runCapture(text, "typed")) {
-      setText("");
+  async function captureTyped(bodyDoc: DocumentNodeJSON = draft): Promise<void> {
+    // The shared editor hands its own live transaction document to `onSave` on Ctrl/Cmd+S; route that
+    // exact document through the capture path so a keyboard save persists what the editor shows, not a
+    // possibly-staler React `draft` snapshot. The Capture button, which has no editor payload, falls
+    // back to `draft` (the default) — the value its disabled/enabled state is already computed from.
+    if (await runCapture(bodyDoc)) {
+      // Reset the surface only after the server has the entry: a fresh empty document changes the seed
+      // identity, so the editor clears; a failed save leaves the seed (and the learner's content) intact.
+      const empty = createEmptyDocument();
+      setSeed(empty);
+      setDraft(empty);
     }
   }
 
@@ -279,23 +301,25 @@ export function CaptureCard({
         </ul>
       )}
 
-      <form className="mt-3 flex flex-col gap-2" onSubmit={captureTyped}>
-        <label className="sr-only" htmlFor="quick-capture">
-          Capture text
-        </label>
-        <textarea
-          className="min-h-20 rounded border border-border bg-bg p-2 text-text"
-          id="quick-capture"
-          onChange={(event) => setText(event.target.value)}
-          placeholder="e.g. I wanted to say the deploy is rolling back, but I couldn't."
-          value={text}
+      <div className="mt-3 flex flex-col gap-2">
+        <RichContentEditor
+          ariaLabel="Capture text"
+          document={seed}
+          onChange={setDraft}
+          onSave={(bodyDoc) => void captureTyped(bodyDoc)}
+          presentation={presentation}
         />
         <div>
-          <Button disabled={voiceBusy || text.trim().length === 0} type="submit" variant="primary">
+          <Button
+            disabled={voiceBusy || documentReadableText(draft).trim().length === 0}
+            onClick={() => void captureTyped()}
+            type="button"
+            variant="primary"
+          >
             {busy ? "Saving…" : "Capture"}
           </Button>
         </div>
-      </form>
+      </div>
 
       {error === null ? null : (
         <p className="mt-2 text-text-muted" role="alert">

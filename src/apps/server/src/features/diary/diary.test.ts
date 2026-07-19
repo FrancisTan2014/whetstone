@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CaptureInputMode, DiaryEntryDto, TimelineDto } from "@whetstone/contracts";
@@ -170,13 +171,11 @@ async function buildContext(): Promise<TestContext> {
   };
 }
 
-async function createEntry(
-  transcript: string,
-  inputMode: CaptureInputMode = "typed"
-): Promise<DiaryEntryDto> {
+async function createEntry(body: string | DocumentNodeJSON): Promise<DiaryEntryDto> {
+  const bodyDoc = typeof body === "string" ? createTextDocument(body) : body;
   const response = await context.server.inject({
     method: "POST",
-    payload: { inputMode, transcript },
+    payload: { bodyDoc },
     url: "/api/diary/entries"
   });
   expect(response.statusCode).toBe(201);
@@ -201,15 +200,25 @@ afterEach(async () => {
 });
 
 describe("POST /api/diary/entries", () => {
-  it("saves a typed capture first — ready immediately, with a rich body built from the text (#571)", async () => {
+  it("saves a typed capture first — ready immediately, storing the canonical document byte-for-byte (#678)", async () => {
     context.setNow("2026-06-30T20:38:00.000Z");
 
-    const entry = await createEntry("today I went to the park", "typed");
+    // A multi-block rich document the learner authored in the shared editor.
+    const bodyDoc: DocumentNodeJSON = {
+      content: [
+        { content: [{ text: "A good day", type: "text" }], type: "heading" },
+        { content: [{ text: "I went to the park.", type: "text" }], type: "paragraph" }
+      ],
+      type: "doc"
+    };
 
-    // Save-first: the entry is ready on write (no async status), stamped at `now`, its rich body carrying
-    // the captured text verbatim and its plaintext projection matching.
+    const entry = await createEntry(bodyDoc);
+
+    // Save-first: the entry is ready on write (no async status), stamped at `now`, its input mode fixed to
+    // typed by the server, no language, and its plaintext projection derived via the shared readable-text
+    // helper (block-boundary spaces).
     expect(entry).toMatchObject({
-      bodyText: "today I went to the park",
+      bodyText: documentReadableText(bodyDoc),
       createdAt: "2026-06-30T20:38:00.000Z",
       id: "diary-1",
       inputMode: "typed",
@@ -218,24 +227,39 @@ describe("POST /api/diary/entries", () => {
       processingStatus: null,
       updatedAt: "2026-06-30T20:38:00.000Z"
     });
-    expect(documentText(entry.bodyDoc)).toBe("today I went to the park");
+    // The durable body is the exact document the learner authored — never flattened to plaintext and
+    // rebuilt (its heading/paragraph structure survives).
+    expect(entry.bodyDoc).toEqual(bodyDoc);
 
     // Persisted: it reads back from the owner's diary store as the same DTO.
     expect(await listDiaryEntriesForUser(context.db, DEFAULT_USER_ID)).toEqual([entry]);
   });
 
-  it("persists a capture without language metadata and never translates the body", async () => {
-    const entry = await createEntry("今天 我 去 了 公园", "voice");
+  it("fixes inputMode to typed on the server and keeps no second transcript copy (#678)", async () => {
+    // Even if a client smuggles inputMode/rawTranscript, the request schema is strict, so the only
+    // accepted shape is { bodyDoc }; the server owns inputMode and stores no raw transcript.
+    const entry = await createEntry("a plain thought");
+    expect(entry.inputMode).toBe("typed");
 
-    expect(entry.bodyText).toBe("今天 我 去 了 公园");
-    expect(entry.language).toBeNull();
-    expect(entry.inputMode).toBe("voice");
+    const [stored] = await context.db
+      .select({ inputMode: diaryEntries.inputMode, rawTranscript: diaryEntries.rawTranscript })
+      .from(diaryEntries)
+      .where(eq(diaryEntries.entryId, entry.id));
+    expect(stored).toEqual({ inputMode: "typed", rawTranscript: null });
   });
 
-  it("rejects a blank transcript", async () => {
+  it("persists a typed capture with no language and never translates the body", async () => {
+    const entry = await createEntry("今天我去了公园");
+
+    expect(entry.bodyText).toBe("今天我去了公园");
+    expect(entry.language).toBeNull();
+    expect(entry.inputMode).toBe("typed");
+  });
+
+  it("rejects a document with no readable text (only empty structural nodes, #678)", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "typed", transcript: "   " },
+      payload: { bodyDoc: { content: [{ type: "paragraph" }], type: "doc" } },
       url: "/api/diary/entries"
     });
 
@@ -243,34 +267,29 @@ describe("POST /api/diary/entries", () => {
     expect(response.json()).toEqual({ error: "invalid_request" });
   });
 
-  it("rejects a missing or unsupported input mode", async () => {
+  it("rejects a malformed or missing body document (#678)", async () => {
+    const malformed = await context.server.inject({
+      method: "POST",
+      payload: { bodyDoc: { content: [{ type: "bogus" }], type: "doc" } },
+      url: "/api/diary/entries"
+    });
+    expect(malformed.statusCode).toBe(400);
+
     const missing = await context.server.inject({
       method: "POST",
-      payload: { transcript: "a valid thought" },
+      payload: {},
       url: "/api/diary/entries"
     });
     expect(missing.statusCode).toBe(400);
-
-    const invalid = await context.server.inject({
-      method: "POST",
-      payload: { inputMode: "handwritten", transcript: "a valid thought" },
-      url: "/api/diary/entries"
-    });
-    expect(invalid.statusCode).toBe(400);
   });
 
-  it("no longer accepts a capture language: a request that still sends one is rejected (#647)", async () => {
+  it("no longer accepts the legacy transcript/inputMode shape (#678)", async () => {
     const response = await context.server.inject({
       method: "POST",
-      payload: { inputMode: "typed", language: "zh", transcript: "a valid thought" },
+      payload: { inputMode: "typed", transcript: "a valid thought" },
       url: "/api/diary/entries"
     });
     expect(response.statusCode).toBe(400);
-  });
-
-  it("persists a typed capture with no language when none is supplied", async () => {
-    const entry = await createEntry("a language-free thought", "typed");
-    expect(entry.language).toBeNull();
   });
 });
 
@@ -484,7 +503,7 @@ describe("PATCH /api/diary/entries/:id (rich editing)", () => {
   });
 
   it("optionally updates the language alongside the body", async () => {
-    const created = await createEntry("original", "typed");
+    const created = await createEntry("original");
 
     const response = await context.server.inject({
       method: "PATCH",

@@ -1,9 +1,5 @@
-import type { CaptureInputMode, CaptureLanguage, DiaryEntryDto } from "@whetstone/contracts";
-import {
-  createTextDocument,
-  documentReadableText,
-  type DocumentNodeJSON
-} from "@whetstone/document";
+import type { CaptureLanguage, DiaryEntryDto } from "@whetstone/contracts";
+import { documentReadableText, type DocumentNodeJSON } from "@whetstone/document";
 import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -26,24 +22,26 @@ export type DeleteDiaryEntryResult =
   | Readonly<{ status: "deleted" }>
   | Readonly<{ status: "not_found" }>;
 
-// Capture a diary Entry, save-first (#571): the durable ProseMirror/Tiptap body is built from the typed
-// text and persisted BEFORE returning — a typed capture is ready immediately (`processing_status` null),
-// with no asynchronous tidy or transcription in the path. No capture language is chosen: a typed capture
-// needs no language metadata, so `language` is null (#647). Three rows are written in one transaction so a
-// capture never exists without its identity: the owning `entries` row (`type = "diary_entry"`), the
-// shared `personal_entries` ownership+chronology facet (owner + occurredAt/createdAt/updatedAt, all
-// `now`, server-owned so the client cannot backdate a day), and the diary-specific `diary_entries` facet
-// (the body doc + its plaintext projection, the input mode, and the verbatim transcript). `raw_transcript`
-// preserves the captured text; `tidied_text` is null on the synchronous path (tidy is a voice-only step).
+// Capture a typed diary Entry, save-first (#571): the durable ProseMirror/Tiptap body is the exact
+// canonical document the learner authored in the shared editor — it crosses the boundary intact, never
+// flattened to plaintext and rebuilt (#678) — and is persisted BEFORE returning, so a typed capture is
+// ready immediately (`processing_status` null) with no asynchronous tidy or transcription in the path.
+// The server owns the facts the client must not: `inputMode` is fixed to `typed` here (not trusted from
+// the request), and occurredAt/createdAt/updatedAt are all `now` (server-owned so the client cannot
+// backdate a day). No capture language is chosen for typed capture, so `language` is null (#647). Three
+// rows are written in one transaction so a capture never exists without its identity: the owning
+// `entries` row (`type = "diary_entry"`), the shared `personal_entries` ownership+chronology facet, and
+// the diary-specific `diary_entries` facet (the body doc + its readable-text projection). `raw_transcript`
+// is null: the canonical `bodyDoc` IS the raw user input, so no second transcript copy is kept (legacy
+// typed rows retain whatever transcript they were written with); `tidied_text` is null (tidy is a
+// voice-only step).
 export async function createDiaryEntry(
   dependencies: DiaryDependencies,
-  transcript: string,
-  inputMode: CaptureInputMode,
+  bodyDoc: DocumentNodeJSON,
   userId: string,
   now: Date
 ): Promise<DiaryEntryDto> {
   const entryId = dependencies.createId();
-  const bodyDoc = createTextDocument(transcript);
   const bodyText = documentReadableText(bodyDoc);
 
   await dependencies.db.transaction(async (tx) => {
@@ -56,11 +54,11 @@ export async function createDiaryEntry(
       bodyText,
       entryId,
       failureReason: null,
-      inputMode,
+      inputMode: "typed",
       language: null,
       processingStatus: null,
       rawAudioPath: null,
-      rawTranscript: transcript,
+      rawTranscript: null,
       tidiedText: null
     });
   });
@@ -71,7 +69,7 @@ export async function createDiaryEntry(
     bodyText,
     createdAt: iso,
     id: entryId,
-    inputMode,
+    inputMode: "typed",
     language: null,
     occurredAt: iso,
     processingStatus: null,

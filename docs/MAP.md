@@ -303,8 +303,11 @@ can navigate them from another package.
   fillers/false starts/repeats + light reorder, but preserve wording/meaning/voice — never upgrade
   vocabulary or translate; language-agnostic). `diaryCommands.ts`: `createDiaryEntry` is **save-first** — in
   one transaction it writes the `entries` (`diary_entry`) row, the shared `personal_entries` facet
-  (owner + `occurred_at`/`created_at`/`updated_at`), and the `diary_entries` row; **typed** capture is ready
-  immediately (`processing_status` null, body from the typed text), voice is the async path (below).
+  (owner + `occurred_at`/`created_at`/`updated_at`), and the `diary_entries` row; **typed** capture accepts the
+  canonical ProseMirror/Tiptap `body_doc` the learner authored in the shared editor (#678) — stored
+  byte-for-byte, `input_mode` fixed to `typed` server-side, `body_text` derived via `documentReadableText`,
+  `raw_transcript` null (no second copy) — and is ready immediately (`processing_status` null); voice is the
+  async path (below, still `createTextDocument` from the transcript).
   `updateDiaryEntry` edits the rich `body_doc` (+ `body_text`, optional `language`) and bumps `updated_at`;
   `updateDiaryEntry`/`deleteDiaryEntry` are owner-scoped → 404 otherwise (delete removes `diary_entries` +
   `personal_entries` + `entries`). `diaryQueries.ts` derives the **logical Timeline** from `personal_entries`
@@ -889,12 +892,19 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
   behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
-  `capture/CaptureCard` at the top, wiring `onCaptured` to prepend the newly saved diary Entry into the
-  browsable Timeline. `POST /api/diary/entries` returns a `DiaryEntryDto` (no proposal card — capture
+  `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
+  the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the
+  shared `RichContentEditor` (#678): it keeps a stable seed doc as the editor's authoritative `document`
+  and tracks live edits via `onChange`, posts the canonical `bodyDoc` on **Capture**, keeps the rich
+  content on a failed save, and resets to a fresh empty document only after the server returns the entry;
+  blank is judged by `documentReadableText`. Today's `TodayCapture` mounts the same card in the **compact**
+  presentation. `POST /api/diary/entries` returns a `DiaryEntryDto` (no proposal card — capture
   journals only). The Timeline shows the `kind === "diary"` filter over the derived result; each entry's
-  durable body is a **ProseMirror/Tiptap document** displayed via its `bodyText` and **edited with the
-  shared `RichContentEditor`** (`src/apps/web/src/shared/editor`, #570) — titles/dates/language/processing
-  state stay structured metadata; `saveEdit` PATCHes the rich `bodyDoc` (guarding a blank body). Below
+  durable body is a **ProseMirror/Tiptap document** rendered on the timeline through the static
+  `reader/PmDocument` renderer (#678, so heading/list/emphasis/link structure shows) and **edited with the
+  shared `RichContentEditor`** (`src/apps/web/src/shared/editor`, #570) — `bodyText` is now search/preview
+  only; titles/dates/language/processing state stay structured metadata; `saveEdit` PATCHes the rich
+  `bodyDoc` (guarding a blank body). Below
   capture, the **Timeline** history groups entries by day newest-first (pure `groupTimelineEntriesByDay`)
   with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
   → next `before` page), and restores the learner's scroll position (and already-loaded pages) when they

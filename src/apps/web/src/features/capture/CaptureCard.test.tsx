@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as SharedEditor from "../../shared/editor";
 
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
@@ -14,6 +15,71 @@ vi.mock("./voiceCaptureApi", () => ({
   retryVoiceCapture: vi.fn(),
   removeVoiceCapture: vi.fn()
 }));
+
+// The shared rich editor is mocked as a controlled <textarea> (the real Tiptap surface is not
+// exercisable in jsdom): typing emits a single-paragraph document via `createTextDocument`, and the
+// authoritative `document` prop resets the field whenever its identity changes — so a fresh empty seed
+// after a successful save clears the box, while an unchanged seed after a failed save keeps the text.
+// `presentation` is surfaced as a data attribute so a test can assert which surface each host requests.
+vi.mock("../../shared/editor", async (importOriginal) => {
+  const actual = await importOriginal<typeof SharedEditor>();
+  const { createTextDocument, documentText } = await import("@whetstone/document");
+  const React = await import("react");
+  const MockEditor = ({
+    ariaLabel,
+    document,
+    onChange,
+    onSave,
+    presentation
+  }: {
+    ariaLabel?: string;
+    document: unknown;
+    onChange: (document: unknown) => void;
+    onSave?: (document: unknown) => void;
+    presentation?: string;
+  }): React.JSX.Element => {
+    const [value, setValue] = React.useState(() => documentText(document as never));
+    // The real shared editor hands `onSave` its own live transaction document (`view.state.doc`), which
+    // updates synchronously on each keystroke — while the onChange-synced React `draft` only catches up on
+    // a later commit. `liveRef` models that authoritative live document so a save can legitimately carry a
+    // character the draft has not yet received, proving the component forwards the payload, not its draft.
+    const liveRef = React.useRef(value);
+    React.useEffect(() => {
+      const text = documentText(document as never);
+      setValue(text);
+      liveRef.current = text;
+    }, [document]);
+    return React.createElement("textarea", {
+      "aria-label": ariaLabel,
+      "data-presentation": presentation,
+      onChange: (event: { target: { value: string } }) => {
+        liveRef.current = event.target.value;
+        setValue(event.target.value);
+        onChange(createTextDocument(event.target.value));
+      },
+      onKeyDown: (event: {
+        key: string;
+        metaKey: boolean;
+        ctrlKey: boolean;
+        altKey?: boolean;
+        preventDefault?: () => void;
+      }) => {
+        if (onSave && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+          event.preventDefault?.();
+          onSave(createTextDocument(liveRef.current));
+          return;
+        }
+        // A printable keystroke advances the editor's live document immediately; the draft lags until the
+        // next input event. Tests use this one-keystroke lead to distinguish the live payload from draft.
+        if (!event.metaKey && !event.ctrlKey && event.altKey !== true && event.key.length === 1) {
+          liveRef.current += event.key;
+        }
+      },
+      value
+    });
+  };
+  return { ...actual, RichContentEditor: MockEditor };
+});
 
 import type {
   DiaryEntryDto,
@@ -142,7 +208,7 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
 
     await typeCapture("I couldn't say it");
 
-    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed");
+    expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("I couldn't say it"));
     expect(onCaptured).toHaveBeenCalledWith(entry);
   });
 
@@ -157,7 +223,7 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
     );
   });
 
-  it("surfaces a quiet error when the capture fails", async () => {
+  it("surfaces a quiet error when the capture fails and keeps the composed text (#678)", async () => {
     mockedSubmit.mockRejectedValue(new Error("boom"));
     render(<CaptureCard />);
 
@@ -165,15 +231,57 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn't save your capture");
+    // The rich content survives a failed save so the learner can retry without retyping.
+    expect((screen.getByLabelText("Capture text") as HTMLTextAreaElement).value).toBe("try me");
   });
 
-  it("ignores a capture submit with no text", () => {
+  it("does not submit when the document has no readable text (#678)", () => {
     render(<CaptureCard />);
 
-    const form = screen.getByLabelText("Capture text").closest("form");
-    fireEvent.submit(form as HTMLFormElement);
+    const button = screen.getByRole("button", { name: "Capture" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
 
     expect(mockedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("saves via the editor's Ctrl/Cmd+S shortcut, persisting the editor's live document not a stale draft (#678)", async () => {
+    const entry = diaryEntry("saved by shortcut!");
+    mockedSubmit.mockResolvedValue(entry);
+    const onCaptured = vi.fn();
+    render(<CaptureCard onCaptured={onCaptured} />);
+
+    const editor = screen.getByLabelText("Capture text");
+    await userEvent.setup().type(editor, "saved by shortcut");
+    // A final live keystroke the editor captures on keydown but React's draft has not flushed yet, so the
+    // editor's live document ("saved by shortcut!") leads the draft ("saved by shortcut") by one char.
+    fireEvent.keyDown(editor, { key: "!" });
+    // Ctrl+S must persist that live document verbatim — not the laggy draft.
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
+
+    await waitFor(() =>
+      expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("saved by shortcut!"))
+    );
+    expect(onCaptured).toHaveBeenCalledWith(entry);
+  });
+
+  it("does not save via the keyboard shortcut when the document has no readable text (#678)", () => {
+    render(<CaptureCard />);
+
+    fireEvent.keyDown(screen.getByLabelText("Capture text"), { key: "s", ctrlKey: true });
+
+    expect(mockedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("gives Diary a workspace surface and Today's capture a compact one (#678)", () => {
+    const { unmount } = render(<CaptureCard presentation="workspace" />);
+    expect(screen.getByLabelText("Capture text").getAttribute("data-presentation")).toBe(
+      "workspace"
+    );
+    unmount();
+
+    render(<CaptureCard presentation="compact" />);
+    expect(screen.getByLabelText("Capture text").getAttribute("data-presentation")).toBe("compact");
   });
 });
 

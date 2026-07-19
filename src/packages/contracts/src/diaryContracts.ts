@@ -1,4 +1,4 @@
-import { type DocumentNodeJSON, isValidDocument } from "@whetstone/document";
+import { type DocumentNodeJSON, documentReadableText, isValidDocument } from "@whetstone/document";
 import { isDayKey, timelineEntryKinds } from "@whetstone/domain";
 import { z } from "zod";
 
@@ -30,17 +30,22 @@ export const diaryProcessingStatusSchema = z.enum(processingStatuses);
 
 export type DiaryProcessingStatus = z.infer<typeof diaryProcessingStatusSchema>;
 
-// Capture: the web posts the transcript (typed text or STT transcript) plus how it was entered
-// (`inputMode`). No capture language is chosen — typed capture needs no language metadata and voice
-// capture auto-detects it during transcription (#647). The server saves the Diary Entry FIRST (before any
-// async tidy/transcription), stamps occurredAt/createdAt/updatedAt, and builds the initial body from the
-// text.
+// Typed capture: the web posts the canonical rich document (`bodyDoc`) authored in the shared editor —
+// the document crosses the typed-capture boundary intact, never flattened to a plaintext transcript and
+// rebuilt (#678). How it was entered is NOT trusted from the client: the server fixes `inputMode = typed`
+// for this path (voice capture has its own audio endpoint). No capture language is chosen — typed capture
+// needs no language metadata (#647). The server saves the Diary Entry FIRST (before any async tidy), stamps
+// occurredAt/createdAt/updatedAt, and derives `bodyText` from the document with the shared readable-text
+// projection. A document with no readable text (only structural empty nodes) is rejected here.
 export const createDiaryEntryRequestSchema = z
   .object({
-    inputMode: captureInputModeSchema,
-    transcript: z.string().refine(isNonBlank, { message: "transcript must be non-empty." })
+    bodyDoc: documentJsonSchema
   })
-  .strict();
+  .strict()
+  .refine((value) => isNonBlank(documentReadableText(value.bodyDoc)), {
+    message: "bodyDoc must have readable text.",
+    path: ["bodyDoc"]
+  });
 
 export type CreateDiaryEntryRequest = z.infer<typeof createDiaryEntryRequestSchema>;
 

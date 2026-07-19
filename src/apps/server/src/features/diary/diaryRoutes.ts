@@ -48,13 +48,7 @@ export function registerDiaryRoutes(
 
     const now = dependencies.now();
     const userId = request.server.currentUser.getCurrentUserId();
-    const entry = await createDiaryEntry(
-      dependencies,
-      parsed.data.transcript,
-      parsed.data.inputMode,
-      userId,
-      now
-    );
+    const entry = await createDiaryEntry(dependencies, parsed.data.bodyDoc, userId, now);
     request.log.info({ diaryEntryId: entry.id, route: "POST /api/diary/entries" }, "diary_created");
 
     return reply.code(201).send(entry);

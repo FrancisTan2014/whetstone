@@ -22,7 +22,11 @@ export function TodayCapture(): React.JSX.Element {
   if (mode === "active") {
     return (
       <section aria-label="New diary entry" className="flex flex-col gap-2">
-        <CaptureCard onCaptured={() => setMode("saved")} onVoiceAccepted={() => setMode("saved")} />
+        <CaptureCard
+          onCaptured={() => setMode("saved")}
+          onVoiceAccepted={() => setMode("saved")}
+          presentation="compact"
+        />
         <div>
           <Button onClick={() => setMode("compact")} type="button" variant="secondary">
             Cancel

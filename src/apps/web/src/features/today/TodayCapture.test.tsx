@@ -10,12 +10,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../capture/CaptureCard", () => ({
   CaptureCard: ({
     onCaptured,
-    onVoiceAccepted
+    onVoiceAccepted,
+    presentation
   }: Readonly<{
     onCaptured?: () => void;
     onVoiceAccepted?: () => void;
+    presentation?: string;
   }>) => (
-    <div>
+    <div data-presentation={presentation}>
       <span>capture form</span>
       <button onClick={() => onCaptured?.()} type="button">
         typed-save
@@ -50,13 +52,18 @@ describe("TodayCapture", () => {
     expect(screen.queryByText("Saved to your diary.")).toBeNull();
   });
 
-  it("opens the shared capture form on activation", async () => {
+  it("opens the shared capture form on activation, sized for Today's compact surface (#678)", async () => {
     renderCapture();
 
     await userEvent.click(screen.getByRole("button", { name: "New diary entry" }));
 
     expect(screen.getByText("capture form")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    // Today keeps its restrained collapsed feel: the composer mounts in the compact presentation.
+    expect(screen.getByText("capture form").closest("[data-presentation]")).toHaveProperty(
+      "dataset.presentation",
+      "compact"
+    );
   });
 
   it("returns to the compact state with an Open in Diary confirmation after a typed save", async () => {

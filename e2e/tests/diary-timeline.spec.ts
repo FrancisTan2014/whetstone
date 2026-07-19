@@ -20,15 +20,24 @@ test.describe("diary timeline (#648)", () => {
   }) => {
     const entriesUrl = new URL("api/diary/entries", setup.baseURL).toString();
     // Seed enough entries that the Diary timeline scrolls well past one viewport, so a restored scroll
-    // offset is meaningful. Two-digit labels keep each transcript a unique, non-overlapping string. They
+    // offset is meaningful. Two-digit labels keep each body a unique, non-overlapping string. They
     // all fall on today (one day section) — all a browser session can create — which suffices to prove
-    // scroll restoration.
+    // scroll restoration. Typed capture now posts the canonical document (#678), not a transcript.
     const seedCount = 16;
     for (let index = 1; index <= seedCount; index += 1) {
       const response = await page.request.post(entriesUrl, {
         data: {
-          inputMode: "typed",
-          transcript: `Seed diary entry ${String(index).padStart(2, "0")}`
+          bodyDoc: {
+            content: [
+              {
+                content: [
+                  { text: `Seed diary entry ${String(index).padStart(2, "0")}`, type: "text" }
+                ],
+                type: "paragraph"
+              }
+            ],
+            type: "doc"
+          }
         }
       });
       expect(response.status()).toBe(201);
