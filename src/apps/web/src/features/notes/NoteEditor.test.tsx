@@ -34,12 +34,14 @@ vi.mock("../../shared/editor/index.js", async () => {
       ariaLabel,
       document,
       onChange,
-      onSave
+      onSave,
+      presentation
     }: {
       ariaLabel?: string;
       document: unknown;
       onChange: (document: unknown) => void;
       onSave?: () => void;
+      presentation?: string;
     }) => {
       // Model the real editor's contract: `document` is authoritative, so the surface re-syncs to it
       // whenever the prop's content changes (RichContentEditor.tsx resets via `setContent`). A stable
@@ -51,6 +53,7 @@ vi.mock("../../shared/editor/index.js", async () => {
       }, [document]);
       return React.createElement("textarea", {
         "aria-label": ariaLabel,
+        "data-presentation": presentation,
         onChange: (event: { target: { value: string } }) => {
           setValue(event.target.value);
           onChange(createTextDocument(event.target.value));
@@ -181,6 +184,12 @@ describe("NoteEditor create mode", () => {
     expect(screen.getByRole("dialog", { name: "New note" }).getAttribute("data-size")).toBe("wide");
   });
 
+  it("gives note composition the workspace editor, not the quick-input compact box (#677)", () => {
+    renderEditor();
+
+    expect(noteBody().getAttribute("data-presentation")).toBe("workspace");
+  });
+
   it("saves the authored document with the capture anchor and no client plaintext", async () => {
     mockedCreateNote.mockResolvedValue(savedNote);
     const { onSaved, user } = renderEditor();
@@ -294,6 +303,8 @@ describe("NoteEditor edit mode", () => {
     expect(screen.getByRole("heading", { name: "Edit note" })).toBeDefined();
     expect(screen.getByText("Selected: fox")).toBeDefined();
     expect(noteBody().value).toBe("a sly animal");
+    // Editing composes in the same workspace-sized editor as creating (#677).
+    expect(noteBody().getAttribute("data-presentation")).toBe("workspace");
   });
 
   it("wires the Review section to the saved note in edit mode, but not in create mode", () => {

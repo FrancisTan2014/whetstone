@@ -35,12 +35,14 @@ vi.mock("../../shared/editor/index.js", async () => {
       ariaLabel,
       document,
       onChange,
-      onSave
+      onSave,
+      presentation
     }: {
       ariaLabel?: string;
       document: unknown;
       onChange: (document: unknown) => void;
       onSave?: () => void;
+      presentation?: string;
     }) => {
       const [value, setValue] = React.useState(() => documentText(document as never));
       React.useEffect(() => {
@@ -49,6 +51,7 @@ vi.mock("../../shared/editor/index.js", async () => {
       }, [document]);
       return React.createElement("textarea", {
         "aria-label": ariaLabel,
+        "data-presentation": presentation,
         onChange: (event: { target: { value: string } }) => {
           setValue(event.target.value);
           onChange(createTextDocument(event.target.value));
@@ -144,6 +147,8 @@ describe("OwnedNoteEditor create (#659)", () => {
     expect(screen.getByRole("heading", { name: "New note" })).toBeDefined();
     expect(screen.queryByText(/Source:/)).toBeNull();
     expect(screen.queryByTestId("owned-review-section")).toBeNull();
+    // Note composition uses the workspace-sized editor, not the quick-input compact box (#677).
+    expect(screen.getByLabelText("Note body").getAttribute("data-presentation")).toBe("workspace");
 
     await userEvent.type(screen.getByLabelText("Note body"), "a fresh thought");
     await userEvent.click(screen.getByRole("button", { name: "Save note" }));
@@ -374,5 +379,7 @@ describe("OwnedNoteEditor edit (#659)", () => {
     expect(screen.queryByText(/Source:/)).toBeNull();
     expect(screen.queryByRole("link", { name: "Open in Reader" })).toBeNull();
     expect(screen.getByTestId("owned-review-section")).toBeDefined();
+    // Editing composes in the same workspace-sized editor as creating (#677).
+    expect(screen.getByLabelText("Note body").getAttribute("data-presentation")).toBe("workspace");
   });
 });
