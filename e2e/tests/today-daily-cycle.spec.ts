@@ -103,7 +103,10 @@ test.describe("Today daily cycle (#610)", () => {
     await expect(page.getByText("kanmusu")).toBeVisible();
     await page.getByRole("button", { name: "Show note" }).click();
     await page.getByRole("button", { name: "Good" }).click();
-    await expect(page.getByText(/Next review:/)).toBeVisible();
+    // #676: the confirmed next review now shows a clock time (Later today / Tomorrow / a dated time),
+    // never a bare date — so a same-day short-term interval reads truthfully. The old copy showed only a
+    // calendar date, so asserting a time-of-day is a fail-before/pass-after guard.
+    await expect(page.getByText(/\b\d{1,2}:\d{2}\s?(AM|PM)\b/u)).toBeVisible();
     await expect(page.getByText(/Due complete/)).toBeVisible();
 
     // Returning to Today shows the truthful clear state, with the optional Continue section still present.

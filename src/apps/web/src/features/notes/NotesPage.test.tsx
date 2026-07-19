@@ -7,6 +7,11 @@ vi.mock("./notesApi", () => ({
   fetchAllNotes: vi.fn()
 }));
 
+// A fixed learner zone so the notes list's review summaries are deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
+}));
+
 // The editor has its own suite; here it stands in as a controllable stub so the page's orchestration
 // (opening, reloading on save/delete, focus return) is asserted without driving the real sheet.
 vi.mock("./OwnedNoteEditor", async () => {

@@ -18,6 +18,12 @@ export type { TimelineChronology, TimelineDay, TimelineEntryKind } from "./timel
 export { isDayKey } from "./diaryTimeline.js";
 export { isTimeZone, localDayBoundary, localDayKey } from "./localDay.js";
 export type { LocalDayBoundary } from "./localDay.js";
+export {
+  formatNextReviewLabel,
+  isShortTermReviewState,
+  SHORT_TERM_REVIEW_PREFIX
+} from "./nextReview.js";
+export type { NextReviewLabelInput } from "./nextReview.js";
 export { composeTodayBoard } from "./todayBoard.js";
 export type {
   ComposeTodayBoardInput,

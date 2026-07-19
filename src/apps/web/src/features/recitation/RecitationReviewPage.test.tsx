@@ -2,11 +2,16 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./recitationApi", () => ({
   fetchRecitationReview: vi.fn(),
   recordRecitationReview: vi.fn()
+}));
+
+// A fixed learner zone so the scheduled next-review label is deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
 }));
 
 import type { RecitationReviewDto } from "@whetstone/contracts";
@@ -37,6 +42,13 @@ function renderPage(workEntryId?: string): void {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
+});
+
+beforeEach(() => {
+  // Fake only Date so `now` is fixed for the label math; setTimeout stays real so userEvent works.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
 });
 
 describe("RecitationReviewPage", () => {
@@ -59,9 +71,29 @@ describe("RecitationReviewPage", () => {
     const status = await screen.findByText("Due complete.");
     expect(status).toBeDefined();
     expect(screen.getByRole("status").textContent).toContain("Aesop’s Fables");
-    expect(screen.getByRole("status").textContent).toContain("2026-07-08");
+    expect(screen.getByRole("status").textContent).toContain("July 8, 2026 at 9:00 AM");
     expect(screen.queryByRole("button", { name: "Review next" })).toBeNull();
     expect(screen.getByRole("link", { name: "Back to Today" }).getAttribute("href")).toBe("/");
+  });
+
+  it("prefixes a short-term (learning) next recitation with the shared marker and a local time (#676)", async () => {
+    const user = userEvent.setup();
+    mockedFetch.mockResolvedValue({ review });
+    mockedRecord.mockResolvedValue({
+      remainingDueCount: 0,
+      review: { ...review, dueAt: "2026-07-01T12:10:00.000Z", state: "learning" }
+    });
+
+    renderPage("work-1");
+
+    await screen.findByText(/from memory/);
+    await user.click(screen.getByRole("button", { name: "Reveal source" }));
+    await user.click(screen.getByRole("button", { name: "Complete, with effort" }));
+
+    await screen.findByText("Due complete.");
+    expect(screen.getByRole("status").textContent).toContain(
+      "Short-term review · Later today at 12:10 PM"
+    );
   });
 
   it("offers an optional Review next that reloads the earliest-due Work while others remain due", async () => {

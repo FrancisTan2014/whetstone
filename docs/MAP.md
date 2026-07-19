@@ -49,6 +49,12 @@ lives in `timeline.ts`),
 `localDayKey(instant, timeZone)` + `localDayBoundary(now, timeZone) → {dateKey, utcStart, utcEnd}` and
 `isTimeZone`, exact over `Intl` — every day-grouping/per-day-cap consumer derives its day from here so
 Today/Recitation/Diary can never disagree; DST-length days are why the boundary returns two instants),
+`nextReview.ts` (#676 the single pure projection of a card's next-due instant to the learner-facing
+label — `formatNextReviewLabel({due, now, timeZone, shortTerm?})` → `Due now`/`Later today at <time>`/
+`Tomorrow at <time>`/`<Month day, year> at <time>`, plus `isShortTermReviewState` + the
+`SHORT_TERM_REVIEW_PREFIX`; resolved in the learner's zone over `localDay.ts` and every review surface
+(Notes Review, note Review summaries/settings/sections, Recite, Recitation Review, Today) renders it, so
+a same-day short-term interval reads as a local time, never a repeated date; throws on an invalid instant),
 `timeline.ts` (#571 the logical Timeline: the `diary`/`note`/`work`/`recitation` discriminated-kind
 vocabulary, each kind
 mapped to a real Entry type — there is no `timeline_entry`; the deterministic order `occurredAt` DESC with a

@@ -75,6 +75,7 @@ describe("NotesHomeList (#659)", () => {
       <NotesHomeList
         notes={[anchoredNote({ review: { dueCount: 2, status: "due" } })]}
         onOpen={vi.fn()}
+        timeZone="UTC"
       />
     );
 
@@ -87,7 +88,7 @@ describe("NotesHomeList (#659)", () => {
   });
 
   it("renders a standalone note with body only and no reader link", () => {
-    render(<NotesHomeList notes={[standaloneNote()]} onOpen={vi.fn()} />);
+    render(<NotesHomeList notes={[standaloneNote()]} onOpen={vi.fn()} timeZone="UTC" />);
 
     expect(screen.getByText("a standalone thought")).toBeDefined();
     expect(screen.queryByRole("link", { name: "Open in Reader" })).toBeNull();
@@ -95,7 +96,7 @@ describe("NotesHomeList (#659)", () => {
   });
 
   it("renders a Mark with its quote and label but no body, review, or open control", () => {
-    render(<NotesHomeList notes={[markNote()]} onOpen={vi.fn()} />);
+    render(<NotesHomeList notes={[markNote()]} onOpen={vi.fn()} timeZone="UTC" />);
 
     expect(screen.getByText("Mark")).toBeDefined();
     expect(screen.getByText("“the quick brown fox”")).toBeDefined();
@@ -111,14 +112,16 @@ describe("NotesHomeList (#659)", () => {
     ["paused", { status: "paused" }, "Paused"],
     ["not enrolled", { status: "not_enrolled" }, "Add to review"]
   ])("projects the %s review state onto the row", (_label, review, expected) => {
-    render(<NotesHomeList notes={[standaloneNote({ review })]} onOpen={vi.fn()} />);
+    render(<NotesHomeList notes={[standaloneNote({ review })]} onOpen={vi.fn()} timeZone="UTC" />);
 
     expect(screen.getByText(new RegExp(expected))).toBeDefined();
   });
 
   it("clamps a very long body into a single-line preview", () => {
     const long = `${"word ".repeat(60)}end`;
-    render(<NotesHomeList notes={[standaloneNote({ bodyText: long })]} onOpen={vi.fn()} />);
+    render(
+      <NotesHomeList notes={[standaloneNote({ bodyText: long })]} onOpen={vi.fn()} timeZone="UTC" />
+    );
 
     const preview = screen.getByText(/word word/);
     expect(preview.textContent?.endsWith("…")).toBe(true);
@@ -126,7 +129,9 @@ describe("NotesHomeList (#659)", () => {
   });
 
   it("previews an empty body as a blank string", () => {
-    render(<NotesHomeList notes={[standaloneNote({ bodyText: null })]} onOpen={vi.fn()} />);
+    render(
+      <NotesHomeList notes={[standaloneNote({ bodyText: null })]} onOpen={vi.fn()} timeZone="UTC" />
+    );
 
     expect(screen.getByRole("button", { name: "Open note:" })).toBeDefined();
   });
@@ -134,7 +139,7 @@ describe("NotesHomeList (#659)", () => {
   it("calls onOpen with the note when its Open control is pressed", async () => {
     const onOpen = vi.fn();
     const note = standaloneNote();
-    render(<NotesHomeList notes={[note]} onOpen={onOpen} />);
+    render(<NotesHomeList notes={[note]} onOpen={onOpen} timeZone="UTC" />);
 
     await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
 
@@ -147,6 +152,7 @@ describe("NotesHomeList (#659)", () => {
       <NotesHomeList
         notes={[standaloneNote(), standaloneNote({ entryId: toEntryId("note-3") })]}
         onOpen={vi.fn()}
+        timeZone="UTC"
         openRef={ref}
         openTargetEntryId="note-3"
       />
@@ -162,6 +168,7 @@ describe("NotesHomeList (#659)", () => {
       <NotesHomeList
         notes={[standaloneNote()]}
         onOpen={vi.fn()}
+        timeZone="UTC"
         openRef={ref}
         openTargetEntryId={undefined}
       />
@@ -171,7 +178,7 @@ describe("NotesHomeList (#659)", () => {
   });
 
   it("uses 44px hit targets for the open and reader controls", () => {
-    render(<NotesHomeList notes={[anchoredNote()]} onOpen={vi.fn()} />);
+    render(<NotesHomeList notes={[anchoredNote()]} onOpen={vi.fn()} timeZone="UTC" />);
 
     expect(screen.getByRole("button", { name: /Open note/ }).className).toContain("min-h-11");
     expect(screen.getByRole("link", { name: "Open in Reader" }).className).toContain("min-h-11");

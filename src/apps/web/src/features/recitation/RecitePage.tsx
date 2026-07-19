@@ -2,25 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { RecitationOverviewDto, RecitationOverviewWorkDto } from "@whetstone/contracts";
+import { formatNextReviewLabel } from "@whetstone/domain";
 
 import { buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { PageFrame } from "../../shared/ui/PageFrame";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { fetchRecitationOverview } from "./reciteOverviewApi";
 
 type OverviewState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
   | Readonly<{ overview: RecitationOverviewDto; status: "ready" }>;
-
-// Format a card's next review instant as a calm, human date the learner reads on the Recite home.
-function formatReviewDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    year: "numeric"
-  });
-}
 
 // The Recite home (#638): the primary destination for whole-Work recitation maintenance. It lists every
 // enrolled Work with its live due state and next review date read from the server, leads with a due-review
@@ -29,6 +22,8 @@ function formatReviewDate(iso: string): string {
 // there rather than inventing an enrol action here.
 export function RecitePage(): React.JSX.Element {
   const [state, setState] = useState<OverviewState>({ status: "loading" });
+  // The learner's persisted zone (#676): each Work row resolves its next-review label in it.
+  const timeZone = useLearnerTimeZone();
 
   // Defer the state transition through the promise's callbacks (never a synchronous set in the effect
   // body), the same loader shape the review page uses.
@@ -43,10 +38,10 @@ export function RecitePage(): React.JSX.Element {
     load();
   }, [load]);
 
-  return <PageFrame title="Recite">{renderState(state)}</PageFrame>;
+  return <PageFrame title="Recite">{renderState(state, timeZone)}</PageFrame>;
 }
 
-function renderState(state: OverviewState): React.JSX.Element {
+function renderState(state: OverviewState, timeZone: string): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading your recitation…" />;
   }
@@ -57,12 +52,13 @@ function renderState(state: OverviewState): React.JSX.Element {
       </p>
     );
   }
-  return <OverviewView overview={state.overview} />;
+  return <OverviewView overview={state.overview} timeZone={timeZone} />;
 }
 
 function OverviewView({
-  overview
-}: Readonly<{ overview: RecitationOverviewDto }>): React.JSX.Element {
+  overview,
+  timeZone
+}: Readonly<{ overview: RecitationOverviewDto; timeZone: string }>): React.JSX.Element {
   if (overview.works.length === 0) {
     return (
       <div className="flex flex-col gap-3">
@@ -97,7 +93,7 @@ function OverviewView({
       )}
       <ul aria-label="Enrolled Works" className="flex flex-col gap-2">
         {overview.works.map((work) => (
-          <WorkRow key={work.planEntryId} work={work} />
+          <WorkRow key={work.planEntryId} timeZone={timeZone} work={work} />
         ))}
       </ul>
     </div>
@@ -105,8 +101,9 @@ function OverviewView({
 }
 
 // Turn one enrolled Work's live state into the calm, human status the learner reads: due now, paused, its
-// next review date, or — when maintenance was removed but the plan remains — not scheduled.
-function workStatusLabel(work: RecitationOverviewWorkDto): string {
+// next review time, or — when maintenance was removed but the plan remains — not scheduled. The scheduled
+// when-phrase is the ONE shared next-review projection (#676), resolved in the learner's zone.
+function workStatusLabel(work: RecitationOverviewWorkDto, now: Date, timeZone: string): string {
   if (work.paused) {
     return "Paused";
   }
@@ -116,10 +113,13 @@ function workStatusLabel(work: RecitationOverviewWorkDto): string {
   if (work.nextReviewAt === null) {
     return "Not scheduled";
   }
-  return `Next review ${formatReviewDate(work.nextReviewAt)}`;
+  return `Next review ${formatNextReviewLabel({ due: new Date(work.nextReviewAt), now, timeZone })}`;
 }
 
-function WorkRow({ work }: Readonly<{ work: RecitationOverviewWorkDto }>): React.JSX.Element {
+function WorkRow({
+  timeZone,
+  work
+}: Readonly<{ timeZone: string; work: RecitationOverviewWorkDto }>): React.JSX.Element {
   return (
     <li>
       <Link
@@ -127,7 +127,9 @@ function WorkRow({ work }: Readonly<{ work: RecitationOverviewWorkDto }>): React
         to={`/recitation?work=${encodeURIComponent(work.workEntryId)}`}
       >
         <span className="font-medium text-text">{work.workTitle}</span>
-        <span className="text-sm text-text-muted">{workStatusLabel(work)}</span>
+        <span className="text-sm text-text-muted">
+          {workStatusLabel(work, new Date(), timeZone)}
+        </span>
       </Link>
     </li>
   );

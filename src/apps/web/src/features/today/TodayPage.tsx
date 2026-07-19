@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { TodayBoardDto, TodayRoutineDto, TodayRoutineKind } from "@whetstone/contracts";
+import { formatNextReviewLabel } from "@whetstone/domain";
 
 import { buttonVariants } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { PageFrame } from "../../shared/ui/PageFrame";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { fetchTodayBoard } from "./todayApi";
 import { TodayCapture } from "./TodayCapture";
 import { todayRoutineActionLabels, todayRoutinePaths, todayRoutineTitles } from "./today.tokens";
@@ -32,6 +34,8 @@ type BoardState =
 
 export function TodayPage(): React.JSX.Element {
   const [state, setState] = useState<BoardState>({ status: "loading" });
+  // The learner's persisted zone (#676): the completion copy resolves its next-review label in it.
+  const timeZone = useLearnerTimeZone();
 
   // One board load, reused by the mount effect, the focus refetch, and every Retry. State is set only
   // after the fetch settles (never synchronously inside the effect), so the initial `loading` state
@@ -57,7 +61,7 @@ export function TodayPage(): React.JSX.Element {
 
   return (
     <PageFrame title="Today">
-      {renderPrimary(state, load)}
+      {renderPrimary(state, load, timeZone)}
       {/* Quick capture is save-first and always available — even while the board loads or fails —
           and never marks other work done or schedules review. */}
       <TodayCapture />
@@ -66,7 +70,7 @@ export function TodayPage(): React.JSX.Element {
   );
 }
 
-function renderPrimary(state: BoardState, reload: () => void): React.JSX.Element {
+function renderPrimary(state: BoardState, reload: () => void, timeZone: string): React.JSX.Element {
   if (state.status === "loading") {
     return <LoadingIndicator label="Loading your day…" />;
   }
@@ -88,7 +92,7 @@ function renderPrimary(state: BoardState, reload: () => void): React.JSX.Element
       </div>
     );
   }
-  return <PrimaryBoard board={state.board} reload={reload} />;
+  return <PrimaryBoard board={state.board} reload={reload} timeZone={timeZone} />;
 }
 
 // A confirmed first run: nothing is due, no routine failed, and there is not a single thing to continue.
@@ -106,8 +110,9 @@ function isFirstRun(board: TodayBoardDto): boolean {
 // first-run on-ramp or the truthful clear line. Quick capture and the Continue section render outside it.
 function PrimaryBoard({
   board,
-  reload
-}: Readonly<{ board: TodayBoardDto; reload: () => void }>): React.JSX.Element {
+  reload,
+  timeZone
+}: Readonly<{ board: TodayBoardDto; reload: () => void; timeZone: string }>): React.JSX.Element {
   const firstRun = isFirstRun(board);
   return (
     <div className="flex flex-col gap-6">
@@ -131,34 +136,28 @@ function PrimaryBoard({
       {firstRun ? (
         <FirstRunOnRamp />
       ) : board.clear ? (
-        <DoneForToday nextReviewAt={board.nextReviewAt} />
+        <DoneForToday nextReviewAt={board.nextReviewAt} timeZone={timeZone} />
       ) : null}
     </div>
   );
 }
 
-// Render the next scheduled review instant as a calm absolute date in UTC, so the caption stays stable
-// regardless of the runner's local timezone. Learner-facing, e.g. "July 5, 2026".
-function formatNextReview(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    timeZone: "UTC",
-    year: "numeric"
-  });
-}
-
 // The truthful completion state (#639): shown only when every required source loaded and nothing is
-// due. It reports the next known due time beneath it when one exists, and omits it entirely when nothing
-// is enrolled ahead rather than inventing a date. No streak, score, or "rest and play" prescription.
+// due. It reports the next known due time beneath it when one exists — as the ONE shared next-review label
+// (#676), resolved in the learner's zone so a same-day next review reads as a local time — and omits it
+// entirely when nothing is enrolled ahead rather than inventing a date. No streak, score, or prescription.
 function DoneForToday({
-  nextReviewAt
-}: Readonly<{ nextReviewAt: string | null }>): React.JSX.Element {
+  nextReviewAt,
+  timeZone
+}: Readonly<{ nextReviewAt: string | null; timeZone: string }>): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1" role="status">
       <p className="text-text">Done for today.</p>
       {nextReviewAt === null ? null : (
-        <p className="text-sm text-text-muted">Next review {formatNextReview(nextReviewAt)}.</p>
+        <p className="text-sm text-text-muted">
+          Next review{" "}
+          {formatNextReviewLabel({ due: new Date(nextReviewAt), now: new Date(), timeZone })}.
+        </p>
       )}
     </div>
   );

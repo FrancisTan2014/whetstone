@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./reciteOverviewApi", () => ({
   fetchRecitationOverview: vi.fn()
+}));
+
+// A fixed learner zone so each Work's next-review label is deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
 }));
 
 import { fetchRecitationOverview } from "./reciteOverviewApi";
@@ -23,6 +28,12 @@ function renderPage(): void {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
+});
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
 });
 
 describe("RecitePage", () => {
@@ -65,7 +76,7 @@ describe("RecitePage", () => {
 
     const scheduledWork = within(list).getByRole("link", { name: /Tang Poems/ });
     expect(scheduledWork.getAttribute("href")).toBe("/recitation?work=work-2");
-    expect(within(scheduledWork).getByText(/Next review August 15, 2026/)).toBeDefined();
+    expect(within(scheduledWork).getByText("Next review August 15, 2026 at 9:00 AM")).toBeDefined();
   });
 
   it("pluralizes the due-count lead when more than one Work is due", async () => {

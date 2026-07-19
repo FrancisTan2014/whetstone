@@ -19,6 +19,11 @@ vi.mock("../reader/PmDocument.js", async () => {
   };
 });
 
+// A fixed learner zone so the rated confirmation's next-review label is deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
+}));
+
 import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
@@ -40,6 +45,14 @@ const review = {
   lapses: 0,
   state: "review",
   lastReviewedAt: null
+} as const;
+
+// A short-term (learning) result whose next review is 6 minutes later the same day, so the rated
+// confirmation must read "Short-term review · Later today at <time>" (#676).
+const learningReview = {
+  ...review,
+  due: "2026-07-01T12:06:00.000Z",
+  state: "learning"
 } as const;
 
 function makePrompt(overrides: Partial<NoteReviewPromptDto> = {}): NoteReviewPromptDto {
@@ -76,9 +89,13 @@ function renderPage(): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Fake only Date so `now` is fixed for the label math; setTimeout stays real so userEvent works.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
 });
 
@@ -171,9 +188,22 @@ describe("NotesReviewPage", () => {
     await user.click(await screen.findByRole("button", { name: "Good" }));
 
     expect(mockedRate).toHaveBeenCalledWith("prompt-1", "good");
-    expect(await screen.findByText(/Next review:.*2026/u)).toBeTruthy();
+    expect(await screen.findByText("July 11, 2026 at 12:00 PM")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review next" })).toBeTruthy();
     expect(screen.queryByText(/Due complete/u)).toBeNull();
+  });
+
+  it("prefixes a short-term (learning) next review with the shared marker and a local time (#676)", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt());
+    mockedReveal.mockResolvedValue(legacyReveal);
+    mockedRate.mockResolvedValue({ review: learningReview, remainingDue: 1 });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Show note" }));
+    await user.click(await screen.findByRole("button", { name: "Again" }));
+
+    expect(await screen.findByText("Short-term review · Later today at 12:06 PM")).toBeTruthy();
   });
 
   it("reports completion immediately after rating the final due prompt, with no Review next", async () => {
@@ -186,7 +216,7 @@ describe("NotesReviewPage", () => {
     await user.click(await screen.findByRole("button", { name: "Show note" }));
     await user.click(await screen.findByRole("button", { name: "Good" }));
 
-    expect(await screen.findByText(/Next review:.*2026/u)).toBeTruthy();
+    expect(await screen.findByText("July 11, 2026 at 12:00 PM")).toBeTruthy();
     expect(await screen.findByText(/Due complete/u)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Review next" })).toBeNull();
   });

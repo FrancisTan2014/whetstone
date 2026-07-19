@@ -12,6 +12,11 @@ vi.mock("./TodayCapture", () => ({
   TodayCapture: () => <section aria-label="New diary entry">capture</section>
 }));
 
+// A fixed learner zone so the completion-copy next-review label is deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
+}));
+
 import type { TodayBoardDto, TodayRoutineDto } from "@whetstone/contracts";
 
 import { TodayPage } from "./TodayPage";
@@ -72,9 +77,12 @@ function href(name: RegExp | string): string | null {
 
 beforeEach(() => {
   mockedFetch.mockReset();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
 });
 
@@ -117,7 +125,7 @@ describe("TodayPage", () => {
     renderPage();
 
     expect(await screen.findByText("Done for today.")).toBeTruthy();
-    expect(screen.getByText("Next review July 20, 2026.")).toBeTruthy();
+    expect(screen.getByText("Next review July 20, 2026 at 12:00 AM.")).toBeTruthy();
   });
 
   it("omits the next-review line when nothing is enrolled ahead", async () => {

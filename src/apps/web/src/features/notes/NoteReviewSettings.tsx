@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { NotePromptSettingsDto, ReviewHistoryEventDto } from "@whetstone/contracts";
+import { formatNextReviewLabel } from "@whetstone/domain";
 
 import { Button, buttonVariants } from "../../shared/ui/Button";
+import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import {
   addNotePromptCardBack,
   editNotePromptQuestion,
@@ -20,22 +22,19 @@ type NoteReviewSettingsProps = Readonly<{
   onChanged: () => void;
 }>;
 
-// Localize a card's next due instant as a calm date, matching the Review session's format.
-function formatNextReview(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "long",
-    year: "numeric"
-  });
-}
-
 // The objective state label a settings row shows, derived from the projected card state (never persisted).
-function cardStateLabel(cardState: NotePromptSettingsDto["cardState"]): string {
+// A scheduled card's when-phrase is the ONE shared next-review projection (#676), resolved in the learner's
+// zone, so a card scheduled later the same day reads "Next review · Later today at <time>", not a bare date.
+function cardStateLabel(
+  cardState: NotePromptSettingsDto["cardState"],
+  now: Date,
+  timeZone: string
+): string {
   switch (cardState.state) {
     case "due":
       return "Due now";
     case "scheduled":
-      return `Next review · ${formatNextReview(cardState.nextReviewAt)}`;
+      return `Next review · ${formatNextReviewLabel({ due: new Date(cardState.nextReviewAt), now, timeZone })}`;
     case "paused":
       return "Paused";
     case "not_in_review":
@@ -54,6 +53,7 @@ export function NoteReviewSettings({
 }: NoteReviewSettingsProps): React.JSX.Element {
   const [phase, setPhase] = useState<"loading" | "error" | "ready">("loading");
   const [prompts, setPrompts] = useState<ReadonlyArray<NotePromptSettingsDto>>([]);
+  const timeZone = useLearnerTimeZone();
 
   const loadList = useCallback((): void => {
     fetchNotePromptSettings(noteEntryId).then(
@@ -109,6 +109,7 @@ export function NoteReviewSettings({
           onReload={loadList}
           onRefreshed={applyRefreshed}
           prompt={prompt}
+          timeZone={timeZone}
         />
       ))}
     </ul>
@@ -119,6 +120,7 @@ type PromptSettingsRowProps = Readonly<{
   onReload: () => void;
   onRefreshed: (refreshed: NotePromptSettingsDto) => void;
   prompt: NotePromptSettingsDto;
+  timeZone: string;
 }>;
 
 // One prompt row. It owns its transient UI (editing the question, an inline restart/remove confirmation,
@@ -127,7 +129,8 @@ type PromptSettingsRowProps = Readonly<{
 function PromptSettingsRow({
   onReload,
   onRefreshed,
-  prompt
+  prompt,
+  timeZone
 }: PromptSettingsRowProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -265,7 +268,9 @@ function PromptSettingsRow({
         <p className="noteReviewSettingsLegacyAnswer">{prompt.reveal.answerText}</p>
       ) : null}
 
-      <p className="noteReviewSettingsState">{cardStateLabel(prompt.cardState)}</p>
+      <p className="noteReviewSettingsState">
+        {cardStateLabel(prompt.cardState, new Date(), timeZone)}
+      </p>
 
       <div className="noteReviewSettingsActions">
         {state === "due" ? (

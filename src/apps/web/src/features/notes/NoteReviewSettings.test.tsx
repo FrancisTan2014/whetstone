@@ -16,6 +16,11 @@ vi.mock("../notesReview/notesReviewApi", () => ({
   resumeNotePromptCard: vi.fn()
 }));
 
+// A fixed learner zone so the scheduled next-review label is deterministic (#676).
+vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
+  useLearnerTimeZone: () => "UTC"
+}));
+
 import type {
   NotePromptSettingsDto,
   ReviewHistoryEventDto,
@@ -78,10 +83,13 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
   mockedHistory.mockResolvedValue({ events: [], nextCursor: null });
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
 });
 
@@ -114,7 +122,7 @@ describe("NoteReviewSettings list lifecycle (#660)", () => {
     renderSettings();
 
     expect(await screen.findByText("Due now")).toBeDefined();
-    expect(screen.getByText(/Next review ·/)).toBeDefined();
+    expect(screen.getByText("Next review · July 11, 2026 at 12:00 AM")).toBeDefined();
     expect(screen.getByText("Paused")).toBeDefined();
     expect(screen.getByText("Not in review")).toBeDefined();
     // Reveal policies: current_note carries no answer; legacy custom shows a read-only answer.
