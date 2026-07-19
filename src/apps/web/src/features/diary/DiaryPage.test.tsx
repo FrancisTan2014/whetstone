@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as SharedEditor from "../../shared/editor/index.js";
 
 vi.mock("./diaryApi", () => ({
   submitDiaryCapture: vi.fn(),
@@ -13,7 +14,7 @@ vi.mock("./diaryApi", () => ({
 // The shared rich editor (#570) is exercised in its own suite; here it stands in as a plain textarea so
 // the diary's editing behaviour (which document is saved) is asserted without driving Tiptap in jsdom.
 vi.mock("../../shared/editor/index.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../shared/editor/index.js")>();
+  const actual = await importOriginal<typeof SharedEditor>();
   const { createTextDocument, documentText } = await import("@whetstone/document");
   const React = await import("react");
   return {

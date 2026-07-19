@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 
+import { type DiaryEntryDto, type VoiceCaptureStatusDto } from "@whetstone/contracts";
 import {
-  type DiaryEntryDto,
-  type VoiceCaptureStatusDto
-} from "@whetstone/contracts";
-import { createTextDocument, documentReadableText, type DocumentNodeJSON } from "@whetstone/document";
+  createTextDocument,
+  documentReadableText,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 
 import {
   RichContentEditor,

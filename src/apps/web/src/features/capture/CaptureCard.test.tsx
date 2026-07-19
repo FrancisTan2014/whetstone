@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as SharedEditor from "../../shared/editor";
 
 vi.mock("../diary/diaryApi", () => ({
   submitDiaryCapture: vi.fn()
@@ -21,18 +22,20 @@ vi.mock("./voiceCaptureApi", () => ({
 // after a successful save clears the box, while an unchanged seed after a failed save keeps the text.
 // `presentation` is surfaced as a data attribute so a test can assert which surface each host requests.
 vi.mock("../../shared/editor", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../shared/editor")>();
+  const actual = await importOriginal<typeof SharedEditor>();
   const { createTextDocument, documentText } = await import("@whetstone/document");
   const React = await import("react");
   const MockEditor = ({
     ariaLabel,
     document,
     onChange,
+    onSave,
     presentation
   }: {
     ariaLabel?: string;
     document: unknown;
     onChange: (document: unknown) => void;
+    onSave?: () => void;
     presentation?: string;
   }): React.JSX.Element => {
     const [value, setValue] = React.useState(() => documentText(document as never));
@@ -45,6 +48,11 @@ vi.mock("../../shared/editor", async (importOriginal) => {
       onChange: (event: { target: { value: string } }) => {
         setValue(event.target.value);
         onChange(createTextDocument(event.target.value));
+      },
+      onKeyDown: (event: { key: string; metaKey: boolean; ctrlKey: boolean }) => {
+        if (onSave && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          onSave();
+        }
       },
       value
     });
@@ -212,6 +220,30 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
     const button = screen.getByRole("button", { name: "Capture" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(button);
+
+    expect(mockedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("saves via the editor's keyboard shortcut and hands the entry to the parent (#678)", async () => {
+    const entry = diaryEntry("saved by shortcut");
+    mockedSubmit.mockResolvedValue(entry);
+    const onCaptured = vi.fn();
+    render(<CaptureCard onCaptured={onCaptured} />);
+
+    const editor = screen.getByLabelText("Capture text");
+    await userEvent.setup().type(editor, "saved by shortcut");
+    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+
+    await waitFor(() =>
+      expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("saved by shortcut"))
+    );
+    expect(onCaptured).toHaveBeenCalledWith(entry);
+  });
+
+  it("does not save via the keyboard shortcut when the draft has no readable text (#678)", () => {
+    render(<CaptureCard />);
+
+    fireEvent.keyDown(screen.getByLabelText("Capture text"), { key: "Enter", ctrlKey: true });
 
     expect(mockedSubmit).not.toHaveBeenCalled();
   });

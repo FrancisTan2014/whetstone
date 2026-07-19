@@ -1,8 +1,4 @@
-import {
-  type DocumentNodeJSON,
-  documentReadableText,
-  isValidDocument
-} from "@whetstone/document";
+import { type DocumentNodeJSON, documentReadableText, isValidDocument } from "@whetstone/document";
 import { isDayKey, timelineEntryKinds } from "@whetstone/domain";
 import { z } from "zod";
 
