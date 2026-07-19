@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
@@ -141,6 +141,19 @@ const saveVoiceCaptureAudio = (audio: Buffer): Promise<string> => {
   writeFileSync(path, audio);
   return Promise.resolve(path);
 };
+// Best-effort removal of a discarded failed capture's clip (#675): the DB rows are already gone, so a
+// missing/already-unlinked file is not an error — a stale file just lingers, logged at warn.
+const deleteVoiceCaptureAudio = (path: string): Promise<void> => {
+  try {
+    rmSync(path, { force: true });
+  } catch (error) {
+    console.warn(
+      "[diary] failed to unlink removed voice capture audio",
+      JSON.stringify({ path, reason: error instanceof Error ? error.message : String(error) })
+    );
+  }
+  return Promise.resolve();
+};
 
 const server = createServer({
   authoredWorks: {
@@ -182,6 +195,7 @@ const server = createServer({
   diary: {
     createId: () => randomUUID(),
     db,
+    deleteAudio: deleteVoiceCaptureAudio,
     now: () => new Date(),
     saveAudio: saveVoiceCaptureAudio
   },
@@ -235,7 +249,14 @@ const server = createServer({
 const diaryTidyConfig = readDiaryTidyConfig();
 const voiceCaptureWorker: VoiceCaptureWorkerDependencies = {
   db,
+  // Keep the raw adapter/process failure message in safe server logs only, tagged with the capture id and
+  // the stable category — it never crosses the status API into the browser (#675).
+  logFailure: ({ captureId, category, rawMessage }) =>
+    server.log.error({ captureId, category, rawMessage }, "voice_capture_failed"),
   speech,
+  // The speech boundary's report of whether local Whisper is set up on this machine, so an empty
+  // transcript is classified as genuine silence vs. missing voice setup (#675).
+  speechConfigured: speechConfig.whisper !== undefined,
   tidy: resolveDiaryTidy({ config: diaryTidyConfig, createModel: createOllamaModel })
 };
 const VOICE_CAPTURE_POLL_MS = 1_000;

@@ -23,6 +23,7 @@ import type { DiaryRouteDependencies } from "./diaryRoutes.js";
 import {
   processNextVoiceCapture,
   requeueStalledVoiceCaptures,
+  type VoiceCaptureFailureLogger,
   type VoiceCaptureWorkerDependencies
 } from "./voiceCaptureWorker.js";
 
@@ -47,7 +48,9 @@ const throwingNonErrorSpeech: SpeechInput = {
 };
 
 type WorkerOverrides = Readonly<{
+  logFailure?: VoiceCaptureFailureLogger;
   speech?: SpeechInput;
+  speechConfigured?: boolean;
   tidy?: DiaryTidy;
 }>;
 
@@ -57,8 +60,12 @@ function buildWorker(
 ): VoiceCaptureWorkerDependencies {
   return {
     db,
+    logFailure: overrides.logFailure ?? (() => undefined),
     speech:
       overrides.speech ?? createFakeSpeechInput({ transcript: "the deploy is green", words: [] }),
+    // Default to the unconfigured (fake-speech) path, so an empty transcript classifies as
+    // `voice_setup_required` unless a test opts into a configured Whisper.
+    speechConfigured: overrides.speechConfigured ?? false,
     tidy: overrides.tidy ?? ((transcript) => Promise.resolve(fakeTidy(transcript)))
   };
 }
@@ -129,13 +136,19 @@ type RouteContext = Readonly<{
 }>;
 
 let route: RouteContext;
+let deletedAudioPaths: string[];
 
 async function buildRouteContext(): Promise<RouteContext> {
   const db = await buildDb();
+  deletedAudioPaths = [];
   let sequence = 0;
   const diary: DiaryRouteDependencies = {
     createId: () => `vc-${(sequence += 1)}`,
     db,
+    deleteAudio: (path) => {
+      deletedAudioPaths.push(path);
+      return Promise.resolve();
+    },
     now: () => new Date("2026-07-09T10:00:00.000Z"),
     saveAudio: (audio) => Promise.resolve(`voice-captures/${audio.length}.audio`)
   };
@@ -226,36 +239,52 @@ describe("processNextVoiceCapture", () => {
     expect((await readRow(db, "newer")).processingStatus).toBe("queued");
   });
 
-  it("marks a capture failed and keeps its audio when transcription throws", async () => {
+  it("marks a capture failed (transcription_failed) and logs the raw message to safe server logs when transcription throws", async () => {
     await seedVoiceCapture(db, {
       id: "cap-fail",
       occurredAt: "2026-07-09T09:00:00.000Z",
       processingStatus: "queued",
       rawAudioPath: "audio-keepme"
     });
+    const logged: Array<{ captureId: string; category: string; rawMessage: string }> = [];
 
-    const result = await processNextVoiceCapture(buildWorker(db, { speech: throwingSpeech }));
+    const result = await processNextVoiceCapture(
+      buildWorker(db, {
+        logFailure: (event) => logged.push(event),
+        speech: throwingSpeech
+      })
+    );
 
-    expect(result).toEqual({ status: "failed", id: "cap-fail", reason: "whisper crashed" });
+    expect(result).toEqual({ status: "failed", id: "cap-fail", code: "transcription_failed" });
     const row = await readRow(db, "cap-fail");
     expect(row.processingStatus).toBe("failed");
-    expect(row.failureReason).toBe("whisper crashed");
+    // Only the stable category is persisted — the raw adapter message never touches the DB/API.
+    expect(row.failureReason).toBe("transcription_failed");
     expect(row.rawAudioPath).toBe("audio-keepme");
+    // …but it IS captured in safe server logs, tagged with the capture id + category.
+    expect(logged).toEqual([
+      { captureId: "cap-fail", category: "transcription_failed", rawMessage: "whisper crashed" }
+    ]);
   });
 
-  it("stringifies a non-Error transcription failure into the capture's reason", async () => {
+  it("stringifies a non-Error transcription failure for the safe log and still stores only the category", async () => {
     await seedVoiceCapture(db, {
       id: "cap-str",
       occurredAt: "2026-07-09T09:00:00.000Z",
       processingStatus: "queued"
     });
+    const logged: Array<{ captureId: string; category: string; rawMessage: string }> = [];
 
     const result = await processNextVoiceCapture(
-      buildWorker(db, { speech: throwingNonErrorSpeech })
+      buildWorker(db, {
+        logFailure: (event) => logged.push(event),
+        speech: throwingNonErrorSpeech
+      })
     );
 
-    expect(result).toEqual({ status: "failed", id: "cap-str", reason: "stt offline" });
-    expect((await readRow(db, "cap-str")).failureReason).toBe("stt offline");
+    expect(result).toEqual({ status: "failed", id: "cap-str", code: "transcription_failed" });
+    expect((await readRow(db, "cap-str")).failureReason).toBe("transcription_failed");
+    expect(logged[0]?.rawMessage).toBe("stt offline");
   });
 
   it("persists Whisper's auto-detected language when it is supported (zh/en)", async () => {
@@ -320,7 +349,7 @@ describe("processNextVoiceCapture", () => {
     expect(row.language).toBeNull();
   });
 
-  it("fails a capture whose transcript is empty rather than persisting a hollow ready entry", async () => {
+  it("fails an empty transcript as voice_setup_required when local speech is not configured", async () => {
     await seedVoiceCapture(db, {
       id: "cap-empty",
       occurredAt: "2026-07-09T09:00:00.000Z",
@@ -328,13 +357,33 @@ describe("processNextVoiceCapture", () => {
     });
     const speech = createFakeSpeechInput({ transcript: "   ", words: [] });
 
-    const result = await processNextVoiceCapture(buildWorker(db, { speech }));
+    const result = await processNextVoiceCapture(
+      buildWorker(db, { speech, speechConfigured: false })
+    );
 
-    expect(result).toEqual({ status: "failed", id: "cap-empty", reason: "empty_transcript" });
-    expect((await readRow(db, "cap-empty")).processingStatus).toBe("failed");
+    expect(result).toEqual({ status: "failed", id: "cap-empty", code: "voice_setup_required" });
+    const row = await readRow(db, "cap-empty");
+    expect(row.processingStatus).toBe("failed");
+    expect(row.failureReason).toBe("voice_setup_required");
   });
 
-  it("fails a capture with no saved audio path", async () => {
+  it("fails an empty transcript as no_speech when local speech IS configured (genuine silence)", async () => {
+    await seedVoiceCapture(db, {
+      id: "cap-silent",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "queued"
+    });
+    const speech = createFakeSpeechInput({ transcript: "", words: [] });
+
+    const result = await processNextVoiceCapture(
+      buildWorker(db, { speech, speechConfigured: true })
+    );
+
+    expect(result).toEqual({ status: "failed", id: "cap-silent", code: "no_speech" });
+    expect((await readRow(db, "cap-silent")).failureReason).toBe("no_speech");
+  });
+
+  it("fails a capture with no saved audio path as recording_missing", async () => {
     await seedVoiceCapture(db, {
       id: "cap-noaudio",
       occurredAt: "2026-07-09T09:00:00.000Z",
@@ -344,7 +393,7 @@ describe("processNextVoiceCapture", () => {
 
     const result = await processNextVoiceCapture(buildWorker(db));
 
-    expect(result).toEqual({ status: "failed", id: "cap-noaudio", reason: "missing_audio" });
+    expect(result).toEqual({ status: "failed", id: "cap-noaudio", code: "recording_missing" });
   });
 
   it("re-runs cleanly when a ready capture is requeued (no proposal or duplicate side effect)", async () => {
@@ -459,7 +508,7 @@ describe("voice capture routes", () => {
       language: null,
       status: "queued",
       text: null,
-      failureReason: null
+      failure: null
     });
   });
 
@@ -548,7 +597,7 @@ describe("voice capture routes", () => {
     expect(code).toBe(404);
   });
 
-  it("exposes a failed capture's reason", async () => {
+  it("exposes a failed capture's stable category (never the raw adapter message)", async () => {
     await seedVoiceCapture(route.db, {
       id: "failed-cap",
       occurredAt: "2026-07-09T09:00:00.000Z",
@@ -559,8 +608,24 @@ describe("voice capture routes", () => {
 
     const { body } = await getStatus("failed-cap");
     expect(body.status).toBe("failed");
-    expect(body.failureReason).toBe("whisper crashed");
+    expect(body.failure).toEqual({ code: "transcription_failed", retryable: true });
     expect(body.text).toBeNull();
+  });
+
+  it("maps a legacy free-form failure reason to a safe category at read time (no migration)", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "legacy-cap",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed"
+    });
+    // Simulate a row persisted before the category migration: a legacy sentinel value.
+    await route.db
+      .update(diaryEntries)
+      .set({ failureReason: "empty_transcript" })
+      .where(eq(diaryEntries.entryId, "legacy-cap"));
+
+    const { body } = await getStatus("legacy-cap");
+    expect(body.failure).toEqual({ code: "no_speech", retryable: false });
   });
 
   it("retries a failed capture back to queued", async () => {
@@ -593,5 +658,96 @@ describe("voice capture routes", () => {
       url: "/api/diary/voice-captures/nope/retry"
     });
     expect(response.statusCode).toBe(404);
+  });
+
+  it("removes a failed capture: deletes its rows and its saved audio, and drops it from the list", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "remove-cap",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed",
+      rawAudioPath: "audio-remove-me"
+    });
+
+    const response = await route.server.inject({
+      method: "DELETE",
+      url: "/api/diary/voice-captures/remove-cap"
+    });
+
+    expect(response.statusCode).toBe(204);
+    // The audio file is best-effort unlinked…
+    expect(deletedAudioPaths).toEqual(["audio-remove-me"]);
+    // …and all three Entry facets are gone, so it no longer lists or resolves.
+    const { captures } = await listActive();
+    expect(captures.map((capture) => capture.id)).not.toContain("remove-cap");
+    const [gone] = await route.db
+      .select()
+      .from(entries)
+      .where(eq(entries.id, "remove-cap"))
+      .limit(1);
+    expect(gone).toBeUndefined();
+  });
+
+  it("removes a failed capture with no saved audio without attempting an unlink", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "remove-noaudio",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed",
+      rawAudioPath: null
+    });
+
+    const response = await route.server.inject({
+      method: "DELETE",
+      url: "/api/diary/voice-captures/remove-noaudio"
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(deletedAudioPaths).toEqual([]);
+  });
+
+  it("refuses to remove a capture that is not failed (409) and keeps its audio", async () => {
+    const accepted = await submit();
+
+    const response = await route.server.inject({
+      method: "DELETE",
+      url: `/api/diary/voice-captures/${accepted.id}`
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(deletedAudioPaths).toEqual([]);
+    // Still resolvable (not deleted).
+    expect((await getStatus(accepted.id)).code).toBe(200);
+  });
+
+  it("returns 404 when removing an unknown capture", async () => {
+    const response = await route.server.inject({
+      method: "DELETE",
+      url: "/api/diary/voice-captures/nope"
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("does not remove another user's failed capture", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "other-fail",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed",
+      rawAudioPath: "audio-other",
+      userId: OTHER_USER_ID
+    });
+
+    const response = await route.server.inject({
+      method: "DELETE",
+      url: "/api/diary/voice-captures/other-fail"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(deletedAudioPaths).toEqual([]);
+    // The other user's row survives.
+    const [survivor] = await route.db
+      .select()
+      .from(entries)
+      .where(eq(entries.id, "other-fail"))
+      .limit(1);
+    expect(survivor).toBeDefined();
   });
 });

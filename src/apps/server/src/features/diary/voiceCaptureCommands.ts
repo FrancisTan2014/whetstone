@@ -9,12 +9,16 @@ import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { diaryEntries, entries, personalEntries } from "../../db/schema.js";
+import { resolveVoiceCaptureFailure } from "./voiceCaptureFailure.js";
 
 // Real infrastructure boundaries (db, id generation, the durable audio store) are injected so the voice
 // capture commands stay deterministic and testable; `now` is passed in for the same reason.
 export type VoiceCaptureDependencies = Readonly<{
   createId: () => string;
   db: DbClient;
+  // Remove a saved raw-audio file by the path `saveAudio` returned, when a failed capture is discarded so
+  // its clip does not linger on disk. Best-effort at the caller: a missing file is not an error.
+  deleteAudio: (path: string) => Promise<void>;
   // Persist the raw audio bytes under a server-owned path and return that path. Durable (survives a
   // restart) so a queued capture is never lost before the worker transcribes it.
   saveAudio: (audio: Buffer) => Promise<string>;
@@ -26,6 +30,11 @@ export type GetVoiceCaptureStatusResult =
 
 export type RetryVoiceCaptureResult =
   | Readonly<{ status: "retried"; capture: VoiceCaptureStatusDto }>
+  | Readonly<{ status: "not_failed" }>
+  | Readonly<{ status: "not_found" }>;
+
+export type RemoveVoiceCaptureResult =
+  | Readonly<{ status: "removed" }>
   | Readonly<{ status: "not_failed" }>
   | Readonly<{ status: "not_found" }>;
 
@@ -53,9 +62,11 @@ const statusColumns = {
 
 // Project a persisted capture into its pollable status. `text` is the ready entry's plaintext body only
 // once `ready`; while pending or on failure it is null — never a fake placeholder that looks ready (#565).
+// `failure` is the stable, safe category (with its retry affordance) resolved from the persisted reason,
+// never the raw stored/adapter text (#675).
 function toVoiceCaptureStatusDto(row: VoiceCaptureRow): VoiceCaptureStatusDto {
   return {
-    failureReason: row.failureReason,
+    failure: resolveVoiceCaptureFailure(row.failureReason),
     id: row.entryId,
     language: row.language as CaptureLanguage | null,
     occurredAt: row.occurredAt.toISOString(),
@@ -187,10 +198,59 @@ export async function retryVoiceCapture(
   return {
     capture: {
       ...toVoiceCaptureStatusDto(existing),
-      failureReason: null,
+      failure: null,
       status: "queued",
       text: null
     },
     status: "retried"
   };
+}
+
+// Remove a failed voice capture and its saved recording: delete the diary facet, the shared
+// personal-entry facet, and the owning Entry in one transaction, then best-effort delete the raw audio
+// file so a discarded clip does not linger on disk. This is the terminal action for a failure the learner
+// cannot recover (no speech, a missing recording) and the alternative to retry for one they could — so
+// both retryable and non-retryable failed captures may be removed. Only a `failed` capture is removable
+// (a still-running or `ready` one returns `not_failed`, 409); scoped to the owner (an unknown or another
+// user's id returns not_found, 404), so removal can never touch an unowned or in-flight row.
+export async function removeFailedVoiceCapture(
+  dependencies: VoiceCaptureDependencies,
+  id: string,
+  userId: string
+): Promise<RemoveVoiceCaptureResult> {
+  const removed = await dependencies.db.transaction(async (tx) => {
+    const [owned] = await tx
+      .select({
+        processingStatus: diaryEntries.processingStatus,
+        rawAudioPath: diaryEntries.rawAudioPath
+      })
+      .from(diaryEntries)
+      .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+      .where(
+        and(
+          eq(diaryEntries.entryId, id),
+          eq(personalEntries.userId, userId),
+          isNotNull(diaryEntries.processingStatus)
+        )
+      )
+      .limit(1);
+
+    if (owned === undefined) {
+      return { status: "not_found" } as const;
+    }
+    if (owned.processingStatus !== "failed") {
+      return { status: "not_failed" } as const;
+    }
+
+    await tx.delete(diaryEntries).where(eq(diaryEntries.entryId, id));
+    await tx.delete(personalEntries).where(eq(personalEntries.entryId, id));
+    await tx.delete(entries).where(eq(entries.id, id));
+
+    return { rawAudioPath: owned.rawAudioPath, status: "removed" } as const;
+  });
+
+  if (removed.status === "removed" && removed.rawAudioPath !== null) {
+    await dependencies.deleteAudio(removed.rawAudioPath);
+  }
+  return removed.status === "removed" ? { status: "removed" } : removed;
 }

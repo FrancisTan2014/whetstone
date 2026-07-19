@@ -73,6 +73,7 @@ async function buildContext(): Promise<TestContext> {
   const diary: DiaryRouteDependencies = {
     createId: () => `diary-${(entrySequence += 1)}`,
     db,
+    deleteAudio: () => Promise.resolve(),
     now: () => now,
     saveAudio: () => Promise.resolve("voice-captures/test.audio")
   };
