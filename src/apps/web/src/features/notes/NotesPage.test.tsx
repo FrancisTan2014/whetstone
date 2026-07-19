@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./notesApi", () => ({
   fetchAllNotes: vi.fn()
@@ -112,31 +112,9 @@ import { NotesPage } from "./NotesPage";
 
 const mockedFetch = vi.mocked(fetchAllNotes);
 
-// Radix DropdownMenu (the header's overflow menu that now owns Import) reads pointer-capture and layout
-// APIs jsdom lacks; stub them so opening the menu during interaction tests does not throw.
-beforeAll(() => {
-  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
-    configurable: true,
-    value: () => false
-  });
-  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
-    configurable: true,
-    value: () => {}
-  });
-  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
-    configurable: true,
-    value: () => {}
-  });
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: () => {}
-  });
-});
-
-// Import is a secondary action behind the header overflow menu (#641): open the menu, then select Import.
+// Import is a secondary action in the page body (#641): its button opens the import panel directly.
 async function openImportPanel(): Promise<void> {
-  await userEvent.click(screen.getByRole("button", { name: "More note actions" }));
-  await userEvent.click(await screen.findByRole("menuitem", { name: "Import" }));
+  await userEvent.click(screen.getByRole("button", { name: "Import" }));
 }
 
 function note(entryId: string, body: string): NoteOverviewDto {
@@ -342,12 +320,11 @@ describe("NotesPage import (#661)", () => {
     expect(screen.queryByText("first")).toBeNull();
     expect(screen.queryByRole("searchbox", { name: "Search notes" })).toBeNull();
 
-    // Cancel restores the list and returns focus to the overflow menu trigger.
-    const importTrigger = screen.getByRole("button", { name: "More note actions" });
+    // Cancel restores the list and returns focus to the Import button (remounted with the list).
     await userEvent.click(screen.getByRole("button", { name: "stub-import-cancel" }));
     expect(screen.queryByTestId("import-panel")).toBeNull();
     expect(await screen.findByText("first")).toBeDefined();
-    expect(document.activeElement).toBe(importTrigger);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Import" }));
   });
 
   it("reports how many notes were imported, reloads, and focuses the first imported note", async () => {
