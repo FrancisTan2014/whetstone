@@ -783,7 +783,7 @@ describe("AdminLibraryPage", () => {
     ).toBeDefined();
   });
 
-  it("surfaces the empty-content message when a Markdown upload has no readable text", async () => {
+  it("surfaces the Manage-content empty-content message when a Markdown upload has no readable text (#673)", async () => {
     mockedCreateWork.mockResolvedValue(essayWorkItem);
     mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
     const user = await renderReady();
@@ -793,11 +793,19 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
+    // The Library upload lane must read identically to the Manage-content panel: "Markdown", not the
+    // generic "document" wording used for PDFs. Before #673 it reused the PDF message, so the learner
+    // was dropped into an empty Work with a message that never matched the panel's copy.
     expect(
       await screen.findByText(
-        "This document has no readable text to add. Images on their own aren’t supported yet."
+        "This Markdown has no readable text to add. Images on their own aren’t supported yet."
       )
     ).toBeDefined();
+    expect(
+      screen.queryByText(
+        "This document has no readable text to add. Images on their own aren’t supported yet."
+      )
+    ).toBeNull();
   });
 
   it("shows a generic error toast but still opens the new Work when the ingest throws", async () => {

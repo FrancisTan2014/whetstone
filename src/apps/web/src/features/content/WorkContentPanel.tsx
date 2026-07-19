@@ -6,6 +6,7 @@ import { workLanguageLabels, type WorkType } from "@whetstone/domain";
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
+import { markdownEmptyContentMessage } from "./contentMessages";
 import { summarizeWorkContent, workContentSummaryLabel } from "./workContentSummary";
 
 type ReadyData = Readonly<{
@@ -43,11 +44,6 @@ async function loadInitialState(focusWorkEntryId?: string): Promise<PanelState> 
 function formatWorkType(workType: WorkType): string {
   return workType.replace("_", " ");
 }
-
-// Shown when Markdown produced no readable blocks (the server's 422 `empty_content`), e.g. an
-// image-only paste — v0 has no image block, so there is nothing to add.
-const emptyContentMessage =
-  "This Markdown has no readable text to add. Images on their own aren’t supported yet.";
 
 function ingestedLabel(content: WorkContentDto): string {
   return `Ingested — ${workContentSummaryLabel(summarizeWorkContent(content))}.`;
@@ -106,7 +102,7 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
 
       if (outcome.status === "empty_content") {
         setResult(undefined);
-        setError(emptyContentMessage);
+        setError(markdownEmptyContentMessage);
         return;
       }
 
