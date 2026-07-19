@@ -659,8 +659,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   the `withReducedMotion` guard (behavior). The legacy `styles.css` is kept until screens migrate to tokens.
 - Shared editing: `src/shared/editor/` is the cross-feature rich-content boundary (#570).
   `RichContentEditor.tsx` mounts the single `@whetstone/document` extension set through Tiptap React,
-  exposes compact/full presentations over one live document (a chrome-free surface — no permanent
-  toolbar), and emits validated detached JSON on change/save; `editorDocument.ts` owns empty-document
+  exposes compact/full/workspace presentations over one live document (a chrome-free surface — no
+  permanent toolbar), and emits validated detached JSON on change/save; the presentation body sizes live
+  in `styles/theme.css` (`compact` = 6rem quick-input, `full` = 16rem page, `workspace` = a
+  composition-sized `clamp` band reusing the compact surface, #677 — used by both note editors);
+  `editorDocument.ts` owns empty-document
   creation, validation/cloning, equality, and safe authored-link normalization. Inline formatting is
   contextual (#589): a Tiptap `BubbleMenu` shows `EditorFormattingMenu.tsx` (Bold/Italic/inline-code +
   a Radix link form, toolbar roving focus, Escape-to-dismiss) beside a live text selection; its

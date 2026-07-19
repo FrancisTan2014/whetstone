@@ -169,7 +169,7 @@ async function renderReady({
 }: {
   ariaLabel?: string;
   document?: DocumentNodeJSON;
-  presentation?: "compact" | "full";
+  presentation?: "compact" | "full" | "workspace";
   withSave?: boolean;
 } = {}) {
   const onChange = vi.fn<DocumentListener>();
@@ -378,6 +378,20 @@ describe("RichContentEditor presentation", () => {
     });
 
     expect(container.querySelector("[data-presentation='compact']")).not.toBeNull();
+    expect(textbox.textContent).toBe("Note");
+    expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull();
+  });
+
+  it("marks the workspace presentation on the root without altering the content", async () => {
+    const { container, textbox } = await renderReady({
+      document: textDocument("Note"),
+      presentation: "workspace"
+    });
+
+    // Workspace is a composition-sized variant of the same editor, not a second surface: it carries the
+    // shared document contract and chrome-free surface; only its CSS body size differs (asserted in
+    // richContentEditorPresentationStyles.test.ts, since jsdom has no layout).
+    expect(container.querySelector("[data-presentation='workspace']")).not.toBeNull();
     expect(textbox.textContent).toBe("Note");
     expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull();
   });
