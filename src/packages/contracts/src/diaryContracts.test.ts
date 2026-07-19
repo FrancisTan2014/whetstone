@@ -91,7 +91,6 @@ describe("parseDiaryEntryDto", () => {
     bodyDoc,
     bodyText: "I went to the park.",
     createdAt: "2026-06-30T20:38:00.000Z",
-    failureReason: null,
     id: "diary-1",
     inputMode: "typed" as const,
     language: null,
@@ -115,13 +114,17 @@ describe("parseDiaryEntryDto", () => {
     expect(parseDiaryEntryDto(dto)).toEqual(dto);
   });
 
-  it("accepts a failed entry with a failure reason", () => {
+  it("accepts a failed voice entry (failure detail lives on the voice-capture DTO, not here)", () => {
     const dto = {
       ...base,
-      failureReason: "model unavailable",
+      inputMode: "voice" as const,
       processingStatus: "failed" as const
     };
     expect(parseDiaryEntryDto(dto)).toEqual(dto);
+  });
+
+  it("rejects a stray failureReason field (failure detail is not carried on a diary entry)", () => {
+    expect(() => parseDiaryEntryDto({ ...base, failureReason: "model unavailable" })).toThrow();
   });
 
   it("rejects an invalid processing status", () => {

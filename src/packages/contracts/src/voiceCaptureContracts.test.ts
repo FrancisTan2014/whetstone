@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isRetryableVoiceCaptureFailure,
+  makeVoiceCaptureFailure,
   parseVoiceCaptureAcceptedDto,
   parseVoiceCaptureListDto,
-  parseVoiceCaptureStatusDto
+  parseVoiceCaptureStatusDto,
+  voiceCaptureFailureCodes
 } from "./voiceCaptureContracts.js";
 
 describe("parseVoiceCaptureAcceptedDto", () => {
@@ -23,9 +26,37 @@ describe("parseVoiceCaptureAcceptedDto", () => {
   });
 });
 
+describe("isRetryableVoiceCaptureFailure", () => {
+  it("marks setup-required and transcription failures retryable (the saved audio survives)", () => {
+    expect(isRetryableVoiceCaptureFailure("voice_setup_required")).toBe(true);
+    expect(isRetryableVoiceCaptureFailure("transcription_failed")).toBe(true);
+  });
+
+  it("marks no-speech and missing-recording failures non-retryable (re-transcribing cannot win)", () => {
+    expect(isRetryableVoiceCaptureFailure("no_speech")).toBe(false);
+    expect(isRetryableVoiceCaptureFailure("recording_missing")).toBe(false);
+  });
+});
+
+describe("makeVoiceCaptureFailure", () => {
+  it("derives retryable from the code so the two can never drift", () => {
+    expect(makeVoiceCaptureFailure("voice_setup_required")).toEqual({
+      code: "voice_setup_required",
+      retryable: true
+    });
+    expect(makeVoiceCaptureFailure("no_speech")).toEqual({ code: "no_speech", retryable: false });
+  });
+
+  it("derives a consistent retryable flag for every known code", () => {
+    for (const code of voiceCaptureFailureCodes) {
+      expect(makeVoiceCaptureFailure(code).retryable).toBe(isRetryableVoiceCaptureFailure(code));
+    }
+  });
+});
+
 describe("parseVoiceCaptureStatusDto", () => {
   const ready = {
-    failureReason: null,
+    failure: null,
     id: "cap-1",
     language: "en" as const,
     occurredAt: "2026-07-09T10:00:00.000Z",
@@ -33,19 +64,56 @@ describe("parseVoiceCaptureStatusDto", () => {
     text: "the deploy is green"
   };
 
-  it("round-trips a ready capture", () => {
+  it("round-trips a ready capture with no failure", () => {
     expect(parseVoiceCaptureStatusDto(ready)).toEqual(ready);
   });
 
-  it("round-trips a failed capture with a reason and no text", () => {
+  it("round-trips a failed capture carrying a category and no text", () => {
     const failed = {
       ...ready,
-      status: "failed" as const,
-      failureReason: "empty_transcript",
+      failure: { code: "no_speech" as const, retryable: false },
       language: null,
+      status: "failed" as const,
       text: null
     };
     expect(parseVoiceCaptureStatusDto(failed)).toEqual(failed);
+  });
+
+  it("round-trips a retryable failed capture", () => {
+    const failed = {
+      ...ready,
+      failure: { code: "transcription_failed" as const, retryable: true },
+      language: null,
+      status: "failed" as const,
+      text: null
+    };
+    expect(parseVoiceCaptureStatusDto(failed)).toEqual(failed);
+  });
+
+  it("rejects an unknown failure code", () => {
+    expect(() =>
+      parseVoiceCaptureStatusDto({
+        ...ready,
+        failure: { code: "kaboom", retryable: true },
+        status: "failed"
+      })
+    ).toThrow();
+  });
+
+  it("rejects a failure missing its retryable flag", () => {
+    expect(() =>
+      parseVoiceCaptureStatusDto({ ...ready, failure: { code: "no_speech" }, status: "failed" })
+    ).toThrow();
+  });
+
+  it("rejects a failure carrying unknown fields", () => {
+    expect(() =>
+      parseVoiceCaptureStatusDto({
+        ...ready,
+        failure: { code: "no_speech", retryable: false, raw: "stderr" },
+        status: "failed"
+      })
+    ).toThrow();
   });
 
   it("rejects a missing occurredAt", () => {
@@ -64,7 +132,7 @@ describe("parseVoiceCaptureStatusDto", () => {
 
 describe("parseVoiceCaptureListDto", () => {
   const queued = {
-    failureReason: null,
+    failure: null,
     id: "cap-1",
     language: "en" as const,
     occurredAt: "2026-07-09T10:00:00.000Z",

@@ -32,6 +32,56 @@ export const voiceCaptureStatusSchema = z.enum(voiceCaptureStatuses);
 
 export type VoiceCaptureStatus = z.infer<typeof voiceCaptureStatusSchema>;
 
+// The stable, safe failure categories a `failed` capture exposes to the client. Operational detail
+// (raw adapter/process output) never crosses this boundary — only which category of thing went wrong,
+// so UI copy stays actionable and no stderr or path can leak into the browser:
+//   - `no_speech`             — transcription produced no text (silence / no utterance);
+//   - `voice_setup_required`  — local speech-to-text is not configured on this machine;
+//   - `transcription_failed`  — a transient failure while transcribing (the recording is intact);
+//   - `recording_missing`     — the saved recording could not be found.
+export const voiceCaptureFailureCodes = [
+  "no_speech",
+  "voice_setup_required",
+  "transcription_failed",
+  "recording_missing"
+] as const;
+
+export const voiceCaptureFailureCodeSchema = z.enum(voiceCaptureFailureCodes);
+
+export type VoiceCaptureFailureCode = z.infer<typeof voiceCaptureFailureCodeSchema>;
+
+// Which categories can be retried from the same saved recording. `voice_setup_required` and
+// `transcription_failed` leave the audio intact, so re-queuing it once STT is set up or a transient
+// fault clears can succeed. `no_speech` (nothing was said) and `recording_missing` (the audio is gone)
+// cannot be fixed by re-transcribing the same clip, so they are not retryable — the client offers
+// removal instead of a retry loop that cannot win.
+const retryableFailureCodes: ReadonlySet<VoiceCaptureFailureCode> = new Set([
+  "voice_setup_required",
+  "transcription_failed"
+]);
+
+export function isRetryableVoiceCaptureFailure(code: VoiceCaptureFailureCode): boolean {
+  return retryableFailureCodes.has(code);
+}
+
+// A `failed` capture's client-facing failure: the safe category plus whether the saved recording can be
+// retried. Kept as a discriminated value (not a free-form string) so the UI renders category-specific,
+// actionable copy and can never surface raw adapter text.
+export const voiceCaptureFailureSchema = z
+  .object({
+    code: voiceCaptureFailureCodeSchema,
+    retryable: z.boolean()
+  })
+  .strict();
+
+export type VoiceCaptureFailure = z.infer<typeof voiceCaptureFailureSchema>;
+
+// Build the client-facing failure from a category, deriving `retryable` from the code so the two can
+// never drift apart.
+export function makeVoiceCaptureFailure(code: VoiceCaptureFailureCode): VoiceCaptureFailure {
+  return { code, retryable: isRetryableVoiceCaptureFailure(code) };
+}
+
 // The prompt acceptance response: the pending capture's id and status (always `queued` on submit), so
 // the client can start polling immediately without waiting for STT.
 export const voiceCaptureAcceptedDtoSchema = z
@@ -44,14 +94,15 @@ export const voiceCaptureAcceptedDtoSchema = z
 export type VoiceCaptureAcceptedDto = z.infer<typeof voiceCaptureAcceptedDtoSchema>;
 
 // The pollable status of one voice capture. `text` is the tidied entry once ready (null while pending or
-// on failure — never a fake placeholder). `failureReason` is set only for `failed`. `language` is the
-// language Whisper auto-detected once transcription runs (null while queued, or when detection produced
-// no supported value, #647); `occurredAt` mirrors the persisted capture so the client can render the
-// pending row in place and, once ready, build the Timeline entry from it (its day is derived from
-// `occurredAt`).
+// on failure — never a fake placeholder). `failure` is set only for `failed` (null otherwise): a stable,
+// safe category plus whether the saved recording can be retried — never raw adapter/process text.
+// `language` is the language Whisper auto-detected once transcription runs (null while queued, or when
+// detection produced no supported value, #647); `occurredAt` mirrors the persisted capture so the client
+// can render the pending row in place and, once ready, build the Timeline entry from it (its day is
+// derived from `occurredAt`).
 export const voiceCaptureStatusDtoSchema = z
   .object({
-    failureReason: z.string().nullable(),
+    failure: voiceCaptureFailureSchema.nullable(),
     id: z.string(),
     language: captureLanguageSchema.nullable(),
     occurredAt: z.string(),
