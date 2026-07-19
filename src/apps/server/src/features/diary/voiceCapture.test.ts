@@ -634,6 +634,11 @@ describe("voice capture routes", () => {
       occurredAt: "2026-07-09T09:00:00.000Z",
       processingStatus: "failed"
     });
+    // A retryable failure (transcription failed) — re-queueing from the same audio can succeed.
+    await route.db
+      .update(diaryEntries)
+      .set({ failureReason: "transcription_failed" })
+      .where(eq(diaryEntries.entryId, "retry-cap"));
 
     const response = await route.server.inject({
       method: "POST",
@@ -641,6 +646,48 @@ describe("voice capture routes", () => {
     });
     expect(response.statusCode).toBe(200);
     expect((response.json() as VoiceCaptureStatusDto).status).toBe("queued");
+  });
+
+  it("refuses to retry a non-retryable failure and leaves it failed (no re-queue loop)", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "no-speech-cap",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed"
+    });
+    // `no_speech` is non-retryable: re-transcribing the same silent clip can only fail again, so a
+    // direct API retry must be refused rather than starting a loop that never succeeds (#675).
+    await route.db
+      .update(diaryEntries)
+      .set({ failureReason: "no_speech" })
+      .where(eq(diaryEntries.entryId, "no-speech-cap"));
+
+    const response = await route.server.inject({
+      method: "POST",
+      url: "/api/diary/voice-captures/no-speech-cap/retry"
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "not_retryable" });
+
+    // The row stays failed — it was not re-queued.
+    const { body } = await getStatus("no-speech-cap");
+    expect(body.status).toBe("failed");
+    expect(body.failure).toEqual({ code: "no_speech", retryable: false });
+  });
+
+  it("refuses to retry a failed capture with no recorded reason (cannot prove it is retryable)", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "reasonless-cap",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "failed"
+    });
+    // seedVoiceCapture leaves failureReason null; a failed row without a resolvable category is treated
+    // as non-retryable so an unknown-cause retry can never spin.
+    const response = await route.server.inject({
+      method: "POST",
+      url: "/api/diary/voice-captures/reasonless-cap/retry"
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "not_retryable" });
   });
 
   it("refuses to retry a capture that is not failed", async () => {

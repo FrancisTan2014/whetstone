@@ -25,6 +25,7 @@ import {
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
 const notFailed = { error: "not_failed" } as const;
+const notRetryable = { error: "not_retryable" } as const;
 
 // How many days the Timeline returns when the client does not specify a page size.
 const DEFAULT_TIMELINE_DAYS = 7;
@@ -124,6 +125,9 @@ export function registerDiaryRoutes(
       }
       if (result.status === "not_failed") {
         return reply.code(409).send(notFailed);
+      }
+      if (result.status === "not_retryable") {
+        return reply.code(409).send(notRetryable);
       }
       request.log.info(
         { route: "POST /api/diary/voice-captures/:id/retry", voiceCaptureId: request.params.id },

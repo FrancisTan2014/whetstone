@@ -31,6 +31,7 @@ export type GetVoiceCaptureStatusResult =
 export type RetryVoiceCaptureResult =
   | Readonly<{ status: "retried"; capture: VoiceCaptureStatusDto }>
   | Readonly<{ status: "not_failed" }>
+  | Readonly<{ status: "not_retryable" }>
   | Readonly<{ status: "not_found" }>;
 
 export type RemoveVoiceCaptureResult =
@@ -176,7 +177,10 @@ export async function getVoiceCaptureStatus(
 // Retry a failed voice capture: reset it to `queued` (clearing the failure reason) so the worker picks it
 // up again. The raw audio was never lost, so this re-transcribes from the same clip. Only a `failed`
 // capture is retryable — a still-running or already-`ready` one returns `not_failed` (409) rather than
-// re-queueing and risking a duplicate. Scoped to the owner; an unknown id returns not_found (404).
+// re-queueing and risking a duplicate. Retryability is category-derived and enforced here, not just in
+// the UI: a non-retryable failure (`no_speech`, `recording_missing` — a re-queue could never succeed)
+// returns `not_retryable` (409) so a direct API call cannot start a retry loop that always re-fails; the
+// learner removes those instead. Scoped to the owner; an unknown id returns not_found (404).
 export async function retryVoiceCapture(
   db: DbClient,
   id: string,
@@ -188,6 +192,10 @@ export async function retryVoiceCapture(
   }
   if (existing.processingStatus !== "failed") {
     return { status: "not_failed" };
+  }
+  const failure = resolveVoiceCaptureFailure(existing.failureReason);
+  if (failure === null || !failure.retryable) {
+    return { status: "not_retryable" };
   }
 
   await db
