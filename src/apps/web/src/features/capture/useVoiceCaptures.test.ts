@@ -12,7 +12,7 @@ import {
 
 function capture(overrides: Partial<VoiceCaptureStatusDto> = {}): VoiceCaptureStatusDto {
   return {
-    failureReason: null,
+    failure: null,
     id: "cap-1",
     language: "en",
     occurredAt: "2026-07-09T10:00:00.000Z",
@@ -28,6 +28,7 @@ function makeApi(overrides: Partial<VoiceCaptureApi> = {}): VoiceCaptureApi {
     fetchActive: vi.fn(async () => []),
     fetchStatus: vi.fn(async (id: string) => capture({ id })),
     retry: vi.fn(async (id: string) => capture({ id, status: "queued" })),
+    remove: vi.fn(async () => undefined),
     ...overrides
   };
 }
@@ -367,6 +368,47 @@ describe("useVoiceCaptures", () => {
 
     expect(result.current.captures.find((c) => c.id === "cap-1")?.status).toBe("queued");
     expect(result.current.captures.find((c) => c.id === "cap-2")?.status).toBe("failed");
+  });
+
+  it("removes a failed capture from the list on success", async () => {
+    const remove = vi.fn(async () => undefined);
+    const api = makeApi({
+      fetchActive: vi.fn(async () => [
+        capture({ id: "cap-1", occurredAt: "2026-07-09T10:00:00.000Z", status: "failed" }),
+        capture({ id: "cap-2", occurredAt: "2026-07-09T10:01:00.000Z", status: "failed" })
+      ]),
+      remove
+    });
+    const { result } = renderHook(() => useVoiceCaptures({ api, pollIntervalMs: POLL_MS }));
+    await flush();
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.remove("cap-1");
+    });
+
+    expect(ok).toBe(true);
+    expect(remove).toHaveBeenCalledWith("cap-1");
+    expect(result.current.captures.map((c) => c.id)).toEqual(["cap-2"]);
+  });
+
+  it("returns false and keeps the row when a remove fails", async () => {
+    const api = makeApi({
+      fetchActive: vi.fn(async () => [capture({ id: "cap-1", status: "failed" })]),
+      remove: vi.fn(async () => {
+        throw new Error("remove failed");
+      })
+    });
+    const { result } = renderHook(() => useVoiceCaptures({ api, pollIntervalMs: POLL_MS }));
+    await flush();
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.remove("cap-1");
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.captures.map((c) => c.id)).toEqual(["cap-1"]);
   });
 
   it("uses the default poll interval and real api bindings when none are injected", async () => {

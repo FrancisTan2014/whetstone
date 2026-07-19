@@ -11,7 +11,7 @@ import { Button } from "../../shared/ui/Button";
 import { submitDiaryCapture } from "../diary/diaryApi";
 import { createCaptureVoice } from "./captureVoice";
 import { useVoiceCaptures } from "./useVoiceCaptures";
-import { voiceCaptureStatusLabels } from "./voiceCaptureLabels.tokens";
+import { voiceCaptureFailureCopy, voiceCaptureStatusLabels } from "./voiceCaptureLabels.tokens";
 
 // One tap-and-talk recording: stop finalizes the audio and hands it back for STT. The browser audio
 // boundary (createCaptureVoice in captureVoice.ts) is injected so the card tests with a
@@ -34,7 +34,6 @@ function readyVoiceEntry(ready: VoiceCaptureStatusDto, text: string): DiaryEntry
     bodyDoc: createTextDocument(text),
     bodyText: text,
     createdAt: ready.occurredAt,
-    failureReason: null,
     id: ready.id,
     inputMode: "voice",
     language: ready.language,
@@ -64,6 +63,10 @@ export function CaptureCard({
   const [savingVoice, setSavingVoice] = useState(false);
   const [recording, setRecording] = useState<VoiceRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which failed capture is awaiting removal confirmation (inline two-step confirm): the id whose Remove
+  // button was tapped, or null when none is pending. A confirm step guards the irreversible discard
+  // without a modal dialog (#675).
+  const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null);
 
   // A background voice capture just became ready (#566): it now has its tidied text and is a real diary
   // Entry, so hand it to the Timeline (Diary inserts it in capture order). The hook drops it from the
@@ -167,6 +170,17 @@ export function CaptureCard({
     }
   }
 
+  // Discard a failed capture after the inline confirm (#675): remove the saved recording and its rows.
+  // The hook drops it from the list; on failure the row stays so it can be retried or removed again.
+  async function removeVoice(id: string): Promise<void> {
+    setError(null);
+    setConfirmingRemoval(null);
+    const ok = await voice.remove(id);
+    if (!ok) {
+      setError("Couldn't remove that capture. Please try again.");
+    }
+  }
+
   const voiceBusy = busy || savingVoice;
 
   return (
@@ -208,17 +222,52 @@ export function CaptureCard({
         <ul aria-label="Voice captures in progress" className="mt-3 flex flex-col gap-2">
           {voice.captures.map((pending) => (
             <li className="rounded border border-border bg-bg p-3" key={pending.id}>
-              {pending.status === "failed" ? (
-                <div className="flex flex-wrap items-center justify-between gap-2" role="alert">
-                  <span className="text-sm text-text-muted">{voiceCaptureStatusLabels.failed}</span>
-                  <Button
-                    onClick={() => void retryVoice(pending.id)}
-                    size="sm"
-                    type="button"
-                    variant="secondary"
-                  >
-                    Retry
-                  </Button>
+              {pending.failure !== null ? (
+                <div className="flex flex-col gap-2" role="alert">
+                  <span className="text-sm text-text-muted">
+                    {voiceCaptureFailureCopy[pending.failure.code]}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {pending.failure.retryable ? (
+                      <Button
+                        onClick={() => void retryVoice(pending.id)}
+                        size="sm"
+                        type="button"
+                        variant="secondary"
+                      >
+                        Retry transcription
+                      </Button>
+                    ) : null}
+                    {confirmingRemoval === pending.id ? (
+                      <>
+                        <Button
+                          onClick={() => void removeVoice(pending.id)}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                        >
+                          Remove
+                        </Button>
+                        <Button
+                          onClick={() => setConfirmingRemoval(null)}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Keep
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        onClick={() => setConfirmingRemoval(pending.id)}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Remove failed capture
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-text-muted" role="status">

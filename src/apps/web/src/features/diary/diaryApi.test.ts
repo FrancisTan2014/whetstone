@@ -11,7 +11,6 @@ const entry: DiaryEntryDto = {
   bodyDoc,
   bodyText: "today I read a book",
   createdAt: "2026-06-30T20:38:00.000Z",
-  failureReason: null,
   id: "diary-1",
   inputMode: "typed",
   language: null,
