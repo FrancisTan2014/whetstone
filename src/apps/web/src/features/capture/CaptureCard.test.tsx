@@ -35,23 +35,44 @@ vi.mock("../../shared/editor", async (importOriginal) => {
     ariaLabel?: string;
     document: unknown;
     onChange: (document: unknown) => void;
-    onSave?: () => void;
+    onSave?: (document: unknown) => void;
     presentation?: string;
   }): React.JSX.Element => {
     const [value, setValue] = React.useState(() => documentText(document as never));
+    // The real shared editor hands `onSave` its own live transaction document (`view.state.doc`), which
+    // updates synchronously on each keystroke — while the onChange-synced React `draft` only catches up on
+    // a later commit. `liveRef` models that authoritative live document so a save can legitimately carry a
+    // character the draft has not yet received, proving the component forwards the payload, not its draft.
+    const liveRef = React.useRef(value);
     React.useEffect(() => {
-      setValue(documentText(document as never));
+      const text = documentText(document as never);
+      setValue(text);
+      liveRef.current = text;
     }, [document]);
     return React.createElement("textarea", {
       "aria-label": ariaLabel,
       "data-presentation": presentation,
       onChange: (event: { target: { value: string } }) => {
+        liveRef.current = event.target.value;
         setValue(event.target.value);
         onChange(createTextDocument(event.target.value));
       },
-      onKeyDown: (event: { key: string; metaKey: boolean; ctrlKey: boolean }) => {
-        if (onSave && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-          onSave();
+      onKeyDown: (event: {
+        key: string;
+        metaKey: boolean;
+        ctrlKey: boolean;
+        altKey?: boolean;
+        preventDefault?: () => void;
+      }) => {
+        if (onSave && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+          event.preventDefault?.();
+          onSave(createTextDocument(liveRef.current));
+          return;
+        }
+        // A printable keystroke advances the editor's live document immediately; the draft lags until the
+        // next input event. Tests use this one-keystroke lead to distinguish the live payload from draft.
+        if (!event.metaKey && !event.ctrlKey && event.altKey !== true && event.key.length === 1) {
+          liveRef.current += event.key;
         }
       },
       value
@@ -224,26 +245,30 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
     expect(mockedSubmit).not.toHaveBeenCalled();
   });
 
-  it("saves via the editor's keyboard shortcut and hands the entry to the parent (#678)", async () => {
-    const entry = diaryEntry("saved by shortcut");
+  it("saves via the editor's Ctrl/Cmd+S shortcut, persisting the editor's live document not a stale draft (#678)", async () => {
+    const entry = diaryEntry("saved by shortcut!");
     mockedSubmit.mockResolvedValue(entry);
     const onCaptured = vi.fn();
     render(<CaptureCard onCaptured={onCaptured} />);
 
     const editor = screen.getByLabelText("Capture text");
     await userEvent.setup().type(editor, "saved by shortcut");
-    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+    // A final live keystroke the editor captures on keydown but React's draft has not flushed yet, so the
+    // editor's live document ("saved by shortcut!") leads the draft ("saved by shortcut") by one char.
+    fireEvent.keyDown(editor, { key: "!" });
+    // Ctrl+S must persist that live document verbatim — not the laggy draft.
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true });
 
     await waitFor(() =>
-      expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("saved by shortcut"))
+      expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("saved by shortcut!"))
     );
     expect(onCaptured).toHaveBeenCalledWith(entry);
   });
 
-  it("does not save via the keyboard shortcut when the draft has no readable text (#678)", () => {
+  it("does not save via the keyboard shortcut when the document has no readable text (#678)", () => {
     render(<CaptureCard />);
 
-    fireEvent.keyDown(screen.getByLabelText("Capture text"), { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(screen.getByLabelText("Capture text"), { key: "s", ctrlKey: true });
 
     expect(mockedSubmit).not.toHaveBeenCalled();
   });

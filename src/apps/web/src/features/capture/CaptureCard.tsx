@@ -132,8 +132,12 @@ export function CaptureCard({
     }
   }
 
-  async function captureTyped(): Promise<void> {
-    if (await runCapture(draft)) {
+  async function captureTyped(bodyDoc: DocumentNodeJSON = draft): Promise<void> {
+    // The shared editor hands its own live transaction document to `onSave` on Ctrl/Cmd+S; route that
+    // exact document through the capture path so a keyboard save persists what the editor shows, not a
+    // possibly-staler React `draft` snapshot. The Capture button, which has no editor payload, falls
+    // back to `draft` (the default) — the value its disabled/enabled state is already computed from.
+    if (await runCapture(bodyDoc)) {
       // Reset the surface only after the server has the entry: a fresh empty document changes the seed
       // identity, so the editor clears; a failed save leaves the seed (and the learner's content) intact.
       const empty = createEmptyDocument();
@@ -302,7 +306,7 @@ export function CaptureCard({
           ariaLabel="Capture text"
           document={seed}
           onChange={setDraft}
-          onSave={() => void captureTyped()}
+          onSave={(bodyDoc) => void captureTyped(bodyDoc)}
           presentation={presentation}
         />
         <div>
