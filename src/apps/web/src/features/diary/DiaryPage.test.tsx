@@ -825,12 +825,19 @@ describe("DiaryPage scroll restoration (#648)", () => {
     await screen.findByRole("heading", { level: 1, name: "Diary" });
     await screen.findByText("a remembered thought");
 
-    // The learner scrolls down; the passive listener remembers the offset for the session.
+    // While Diary owns the scroll container it opts out of the browser's scroll anchoring, so the
+    // capture editor's asynchronous mount (it grows above the restored offset) cannot be turned into a
+    // scroll shift that corrupts the restored position (#678).
     const scroller = screen.getByTestId("scroller");
+    expect(scroller.style.overflowAnchor).toBe("none");
+
+    // The learner scrolls down; the passive listener remembers the offset for the session.
     scroller.scrollTop = 240;
     fireEvent.scroll(scroller);
 
     first.unmount();
+    // Leaving Diary restores the container's prior anchoring so other surfaces are unaffected.
+    expect(scroller.style.overflowAnchor).toBe("");
 
     // Returning must restore from the remembered snapshot without refetching the first page.
     mockedTimeline.mockClear();

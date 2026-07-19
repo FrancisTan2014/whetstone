@@ -1,4 +1,28 @@
+import { type Locator, type Page } from "@playwright/test";
+
 import { expect, test } from "../fixtures";
+
+// The slash query cannot contain a space — the suggestion terminates on the first space — so a filter
+// must be a space-free label substring or alias (`h2`, `bulleted`) that narrows to exactly one command.
+async function chooseSlashCommand(
+  page: Page,
+  slashMenu: Locator,
+  filter: string,
+  optionName: string
+): Promise<void> {
+  await page.keyboard.type("/");
+  await expect(slashMenu).toBeVisible();
+  await page.keyboard.type(filter);
+  await expect(slashMenu.getByRole("option", { name: optionName })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(slashMenu).toBeHidden();
+}
+
+// A freshly created trailing paragraph must have committed (empty) before "/" is typed, or ProseMirror's
+// async transaction can drop the trigger where the suggestion rule never fires and the menu never opens.
+async function settleEmptyParagraph(editor: Locator): Promise<void> {
+  await expect(editor.locator("p").last()).toHaveText("");
+}
 
 // #678: typed Diary capture composes in the shared rich editor, not a plain textarea. This spec proves,
 // in a real browser against the real server, that a typed capture can author real block structure
@@ -23,23 +47,20 @@ test.describe("diary rich typed capture (#678)", () => {
     await editor.click();
     await expect(editor).toBeFocused();
 
-    // A heading via the slash menu (the menu portals to the page, not the region).
+    // A heading via the slash menu (the menu portals to the page, not the region). Clear to a settled
+    // empty paragraph first, then trigger — mirroring the robust slash pattern the editor specs use.
     const slashMenu = page.getByRole("listbox", { name: "Block commands" });
-    await page.keyboard.type("/");
-    await expect(slashMenu).toBeVisible();
-    await page.keyboard.type("Heading 2");
-    await page.keyboard.press("Enter");
-    await expect(slashMenu).toBeHidden();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Delete");
+    await expect(editor).toHaveText("");
+    await chooseSlashCommand(page, slashMenu, "h2", "Heading 2");
     await page.keyboard.type("A good day");
     await expect(editor.locator("h2")).toHaveText("A good day");
 
     // A bulleted-list item on the next line, authored via the slash menu.
     await page.keyboard.press("Enter");
-    await page.keyboard.type("/");
-    await expect(slashMenu).toBeVisible();
-    await page.keyboard.type("Bulleted list");
-    await page.keyboard.press("Enter");
-    await expect(slashMenu).toBeHidden();
+    await settleEmptyParagraph(editor);
+    await chooseSlashCommand(page, slashMenu, "bulleted", "Bulleted list");
     await page.keyboard.type("walked outside");
     await expect(editor.locator("li")).toHaveText("walked outside");
 
@@ -47,6 +68,7 @@ test.describe("diary rich typed capture (#678)", () => {
     // carries both emphasis and a link — applied last so the link mark never bleeds into a slash context.
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
+    await settleEmptyParagraph(editor);
     await page.keyboard.type("I felt grateful");
 
     const toolbar = page.getByRole("toolbar", { name: "Text formatting" });

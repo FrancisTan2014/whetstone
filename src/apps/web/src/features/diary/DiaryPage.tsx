@@ -212,12 +212,23 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
     if (container === null || container === undefined) {
       return;
     }
+    // The capture editor mounts asynchronously (RichContentEditor uses `immediatelyRender: false`, #678),
+    // so it grows from a short placeholder to its full height just above the restored scroll position.
+    // The browser's scroll anchoring would convert that late growth-above into a scroll shift, landing the
+    // learner on different entries than they left (the remembered offset would read too large). Opt this
+    // container out of anchoring while Diary owns it so the remembered offset lands on the same entries;
+    // the prior value is restored on unmount.
+    const previousOverflowAnchor = container.style.overflowAnchor;
+    container.style.overflowAnchor = "none";
     container.scrollTop = diaryScrollTop();
     const handleScroll = (): void => {
       rememberDiaryScrollTop(container.scrollTop);
     };
     container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
+    return () => {
+      container.style.overflowAnchor = previousOverflowAnchor;
+      container.removeEventListener("scroll", handleScroll);
+    };
   }, [load]);
 
   function fail(message: string): void {
