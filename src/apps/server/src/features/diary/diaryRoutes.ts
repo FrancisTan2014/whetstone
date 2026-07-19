@@ -16,6 +16,7 @@ import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
   getVoiceCaptureStatus,
   listActiveVoiceCaptures,
+  removeFailedVoiceCapture,
   retryVoiceCapture,
   submitVoiceCapture,
   type VoiceCaptureDependencies
@@ -24,6 +25,7 @@ import {
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
 const notFailed = { error: "not_failed" } as const;
+const notRetryable = { error: "not_retryable" } as const;
 
 // How many days the Timeline returns when the client does not specify a page size.
 const DEFAULT_TIMELINE_DAYS = 7;
@@ -124,11 +126,39 @@ export function registerDiaryRoutes(
       if (result.status === "not_failed") {
         return reply.code(409).send(notFailed);
       }
+      if (result.status === "not_retryable") {
+        return reply.code(409).send(notRetryable);
+      }
       request.log.info(
         { route: "POST /api/diary/voice-captures/:id/retry", voiceCaptureId: request.params.id },
         "voice_capture_retried"
       );
       return reply.code(200).send(result.capture);
+    }
+  );
+
+  // Remove a failed voice capture and its saved recording: the terminal action for an unrecoverable
+  // failure (no speech, missing recording) and the discard alternative to retry for a recoverable one.
+  // Only a `failed` capture is removable (409 otherwise); an unknown or another user's id is 404.
+  server.delete<{ Params: EntryParams }>(
+    "/api/diary/voice-captures/:id",
+    async (request, reply) => {
+      const result = await removeFailedVoiceCapture(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId()
+      );
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+      if (result.status === "not_failed") {
+        return reply.code(409).send(notFailed);
+      }
+      request.log.info(
+        { route: "DELETE /api/diary/voice-captures/:id", voiceCaptureId: request.params.id },
+        "voice_capture_removed"
+      );
+      return reply.code(204).send();
     }
   );
 

@@ -58,13 +58,14 @@ export type UpdateDiaryEntryRequest = z.infer<typeof updateDiaryEntryRequestSche
 // A persisted Diary Entry. `bodyDoc` is the durable ProseMirror/Tiptap document; `bodyText` is its
 // plaintext projection (preview/search). `occurredAt`/`createdAt`/`updatedAt` are ISO instants from the
 // shared personal-entry chronology facet. `processingStatus` is null for a synchronous typed capture that
-// is ready on write; only the queued voice path carries a status. `failureReason` is set only on failure.
+// is ready on write; only the queued voice path carries a status. A `failed` voice capture never reaches
+// the Timeline (its empty body is withheld), so a diary Entry surfaces no failure detail here — failure
+// categories are exposed by the voice-capture status DTO instead.
 export const diaryEntryDtoSchema = z
   .object({
     bodyDoc: documentJsonSchema,
     bodyText: z.string(),
     createdAt: z.string(),
-    failureReason: z.string().nullable(),
     id: z.string(),
     inputMode: captureInputModeSchema,
     language: z.string().nullable(),

@@ -1,29 +1,41 @@
-import { captureLanguageSchema } from "@whetstone/contracts";
+import { captureLanguageSchema, type VoiceCaptureFailureCode } from "@whetstone/contracts";
 import { createTextDocument, documentReadableText } from "@whetstone/document";
 import { asc, eq, inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { diaryEntries, personalEntries } from "../../db/schema.js";
+import { classifyEmptyTranscript } from "../../speech/speechFailure.js";
 import type { SpeechInput } from "../../speech/speechInput.js";
 import type { DiaryTidy } from "./diaryTidy.js";
+
+// The safe server log of a raw transcription failure: the untyped adapter/process message is recorded
+// here, with the capture id and the category it was classified as, so operational detail stays in server
+// logs and never crosses the status/list API into the browser (#675).
+export type VoiceCaptureFailureLogger = (
+  event: Readonly<{ captureId: string; category: VoiceCaptureFailureCode; rawMessage: string }>
+) => void;
 
 // Everything the background voice-capture worker needs: the STT seam and the diary tidy pass. A diary
 // capture journals only (#571) — there is no Make Durable proposal step — so the worker just fills the
 // durable body. One worker, one capture at a time (#565): no concurrency in v0 keeps ordering, model
-// load, and failure recovery simple.
+// load, and failure recovery simple. `speechConfigured` is the speech boundary's report of whether local
+// STT is set up on this machine, so an empty transcript is classified as genuine silence vs. missing
+// voice setup (#675). `logFailure` keeps raw adapter/process text in safe server logs only.
 export type VoiceCaptureWorkerDependencies = Readonly<{
   db: DbClient;
+  logFailure: VoiceCaptureFailureLogger;
   speech: SpeechInput;
+  speechConfigured: boolean;
   tidy: DiaryTidy;
 }>;
 
 // The outcome of one worker tick. `idle` = nothing was queued. `processed` = a capture reached `ready`
 // (its durable body is filled from the tidied transcript). `failed` = the worker gave up on the claimed
-// capture (its raw audio is kept for retry).
+// capture (its raw audio is kept for retry), carrying the stable failure category — never a raw message.
 export type VoiceCaptureProcessResult =
   | Readonly<{ status: "idle" }>
   | Readonly<{ id: string; status: "processed" }>
-  | Readonly<{ id: string; reason: string; status: "failed" }>;
+  | Readonly<{ code: VoiceCaptureFailureCode; id: string; status: "failed" }>;
 
 // The in-progress states a worker leaves behind when its process dies mid-tick. On restart they are
 // requeued so no capture is stranded (`requeueStalledVoiceCaptures`). `ready`/`failed` are terminal and
@@ -77,10 +89,14 @@ async function claimOldestQueued(db: DbClient): Promise<ClaimedCapture | undefin
   });
 }
 
-async function failCapture(db: DbClient, entryId: string, reason: string): Promise<void> {
+async function failCapture(
+  db: DbClient,
+  entryId: string,
+  code: VoiceCaptureFailureCode
+): Promise<void> {
   await db
     .update(diaryEntries)
-    .set({ failureReason: reason, processingStatus: "failed" })
+    .set({ failureReason: code, processingStatus: "failed" })
     .where(eq(diaryEntries.entryId, entryId));
 }
 
@@ -111,9 +127,8 @@ export async function processNextVoiceCapture(
   }
 
   if (claimed.rawAudioPath === null) {
-    const reason = "missing_audio";
-    await failCapture(dependencies.db, claimed.entryId, reason);
-    return { id: claimed.entryId, reason, status: "failed" };
+    await failCapture(dependencies.db, claimed.entryId, "recording_missing");
+    return { code: "recording_missing", id: claimed.entryId, status: "failed" };
   }
 
   let transcript: string;
@@ -123,18 +138,26 @@ export async function processNextVoiceCapture(
     transcript = transcription.transcript.trim();
     detectedLanguage = toSupportedLanguage(transcription.language);
   } catch (error) {
-    const reason = describeError(error);
-    await failCapture(dependencies.db, claimed.entryId, reason);
-    return { id: claimed.entryId, reason, status: "failed" };
+    // A transient transcription fault (a crashed/failing local adapter or process). The raw message is
+    // kept in safe server logs with the capture id; only the stable `transcription_failed` category is
+    // persisted and returned, so no stderr/path can leak to the browser (#675).
+    dependencies.logFailure({
+      captureId: claimed.entryId,
+      category: "transcription_failed",
+      rawMessage: describeError(error)
+    });
+    await failCapture(dependencies.db, claimed.entryId, "transcription_failed");
+    return { code: "transcription_failed", id: claimed.entryId, status: "failed" };
   }
 
-  // An empty transcript (silence, or an unconfigured/failed STT that yields no text) is a failure, not a
-  // ready — an empty diary entry is not a real capture, and marking it failed keeps the audio retryable
-  // once STT is configured, rather than persisting a hollow "ready" row.
+  // An empty transcript is a failure, not a ready — an empty diary entry is not a real capture, and
+  // marking it failed keeps the audio retryable. The speech boundary classifies whether this is genuine
+  // silence (`no_speech`) or missing local voice setup (`voice_setup_required`), which `pnpm setup:voice`
+  // fixes; either way the raw audio is kept rather than persisting a hollow "ready" row.
   if (transcript.length === 0) {
-    const reason = "empty_transcript";
-    await failCapture(dependencies.db, claimed.entryId, reason);
-    return { id: claimed.entryId, reason, status: "failed" };
+    const code = classifyEmptyTranscript(dependencies.speechConfigured);
+    await failCapture(dependencies.db, claimed.entryId, code);
+    return { code, id: claimed.entryId, status: "failed" };
   }
 
   await dependencies.db

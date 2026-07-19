@@ -70,7 +70,6 @@ export async function createDiaryEntry(
     bodyDoc,
     bodyText,
     createdAt: iso,
-    failureReason: null,
     id: entryId,
     inputMode,
     language: null,
@@ -98,7 +97,6 @@ export async function updateDiaryEntry(
     const [owned] = await tx
       .select({
         createdAt: personalEntries.createdAt,
-        failureReason: diaryEntries.failureReason,
         inputMode: diaryEntries.inputMode,
         language: diaryEntries.language,
         occurredAt: personalEntries.occurredAt,
@@ -126,7 +124,6 @@ export async function updateDiaryEntry(
         bodyDoc,
         bodyText,
         createdAt: owned.createdAt.toISOString(),
-        failureReason: owned.failureReason,
         id,
         inputMode: owned.inputMode,
         language: nextLanguage,

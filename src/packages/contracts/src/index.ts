@@ -101,7 +101,12 @@ export {
   parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto,
   audioContentType,
+  isRetryableVoiceCaptureFailure,
+  makeVoiceCaptureFailure,
   voiceCaptureAcceptedDtoSchema,
+  voiceCaptureFailureCodes,
+  voiceCaptureFailureCodeSchema,
+  voiceCaptureFailureSchema,
   voiceCaptureListDtoSchema,
   voiceCaptureStatuses,
   voiceCaptureStatusDtoSchema,
@@ -109,6 +114,8 @@ export {
 } from "./voiceCaptureContracts.js";
 export type {
   VoiceCaptureAcceptedDto,
+  VoiceCaptureFailure,
+  VoiceCaptureFailureCode,
   VoiceCaptureListDto,
   VoiceCaptureStatus,
   VoiceCaptureStatusDto

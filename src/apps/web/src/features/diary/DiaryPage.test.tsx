@@ -38,7 +38,8 @@ vi.mock("../capture/voiceCaptureApi", () => ({
   submitVoiceCapture: vi.fn(),
   fetchActiveVoiceCaptures: vi.fn(),
   fetchVoiceCaptureStatus: vi.fn(),
-  retryVoiceCapture: vi.fn()
+  retryVoiceCapture: vi.fn(),
+  removeVoiceCapture: vi.fn()
 }));
 
 // The page adopts the learner's server-owned timezone once on mount (#606); stub the preferences module
@@ -113,7 +114,6 @@ function entryDto(id: string, dayKey: string, text: string): DiaryEntryDto {
     bodyDoc: createTextDocument(text),
     bodyText: text,
     createdAt: occurredAt,
-    failureReason: null,
     id,
     inputMode: "typed",
     language: null,
@@ -380,7 +380,7 @@ describe("DiaryPage capture", () => {
     mockedVoiceSubmit.mockResolvedValue({ id: "vc-1", status: "queued" });
     mockedVoiceActive.mockResolvedValueOnce([]).mockResolvedValue([
       {
-        failureReason: null,
+        failure: null,
         id: "vc-1",
         language: "en",
         occurredAt: `${d(30)}T08:00:00.000Z`,

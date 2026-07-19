@@ -156,6 +156,7 @@ async function buildContext(): Promise<TestContext> {
   const diary: DiaryRouteDependencies = {
     createId: () => `diary-${(sequence += 1)}`,
     db,
+    deleteAudio: () => Promise.resolve(),
     now: () => now,
     saveAudio: () => Promise.resolve("voice-captures/test.audio")
   };
@@ -210,7 +211,6 @@ describe("POST /api/diary/entries", () => {
     expect(entry).toMatchObject({
       bodyText: "today I went to the park",
       createdAt: "2026-06-30T20:38:00.000Z",
-      failureReason: null,
       id: "diary-1",
       inputMode: "typed",
       language: null,

@@ -11,15 +11,21 @@ vi.mock("./voiceCaptureApi", () => ({
   submitVoiceCapture: vi.fn(),
   fetchActiveVoiceCaptures: vi.fn(),
   fetchVoiceCaptureStatus: vi.fn(),
-  retryVoiceCapture: vi.fn()
+  retryVoiceCapture: vi.fn(),
+  removeVoiceCapture: vi.fn()
 }));
 
-import type { DiaryEntryDto, VoiceCaptureStatusDto } from "@whetstone/contracts";
+import type {
+  DiaryEntryDto,
+  VoiceCaptureFailureCode,
+  VoiceCaptureStatusDto
+} from "@whetstone/contracts";
 import { createTextDocument, documentText } from "@whetstone/document";
 
 import {
   fetchActiveVoiceCaptures,
   fetchVoiceCaptureStatus,
+  removeVoiceCapture,
   retryVoiceCapture,
   submitVoiceCapture
 } from "./voiceCaptureApi";
@@ -31,6 +37,7 @@ const mockedVoiceSubmit = vi.mocked(submitVoiceCapture);
 const mockedVoiceActive = vi.mocked(fetchActiveVoiceCaptures);
 const mockedVoiceStatus = vi.mocked(fetchVoiceCaptureStatus);
 const mockedVoiceRetry = vi.mocked(retryVoiceCapture);
+const mockedVoiceRemove = vi.mocked(removeVoiceCapture);
 
 // A deterministic voice capture seam: `start()` opens a fake recording whose `stop()` resolves a stub
 // audio blob (the real MediaRecorder/Web Audio path is not exercisable in jsdom).
@@ -51,7 +58,6 @@ function diaryEntry(text: string, overrides: Partial<DiaryEntryDto> = {}): Diary
     bodyDoc: createTextDocument(text),
     bodyText: text,
     createdAt: "2026-07-06T09:30:00.000Z",
-    failureReason: null,
     id: "entry-1",
     inputMode: "typed",
     language: "en",
@@ -64,7 +70,7 @@ function diaryEntry(text: string, overrides: Partial<DiaryEntryDto> = {}): Diary
 
 function voiceStatus(overrides: Partial<VoiceCaptureStatusDto> = {}): VoiceCaptureStatusDto {
   return {
-    failureReason: null,
+    failure: null,
     id: "vc-1",
     language: "en",
     occurredAt: "2026-07-06T09:30:00.000Z",
@@ -72,6 +78,16 @@ function voiceStatus(overrides: Partial<VoiceCaptureStatusDto> = {}): VoiceCaptu
     text: null,
     ...overrides
   };
+}
+
+// A failed capture in a given category. `failed` status always carries a failure object (retryable
+// derived from the code), so tests render the real failed-row affordances.
+function failedStatus(
+  code: VoiceCaptureFailureCode,
+  retryable: boolean,
+  overrides: Partial<VoiceCaptureStatusDto> = {}
+): VoiceCaptureStatusDto {
+  return voiceStatus({ failure: { code, retryable }, status: "failed", text: null, ...overrides });
 }
 
 beforeEach(() => {
@@ -388,26 +404,111 @@ describe("CaptureCard voice capture (saved-first, #566)", () => {
     }
   });
 
-  it("shows a failed capture with a Retry that re-queues it", async () => {
-    mockedVoiceActive.mockResolvedValue([voiceStatus({ id: "vc-1", status: "failed" })]);
+  it("shows a retryable failure's category copy and re-queues it via Retry transcription", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("transcription_failed", true)]);
     mockedVoiceRetry.mockResolvedValue(voiceStatus({ id: "vc-1", status: "queued" }));
     render(<CaptureCard capture={fakeVoice()} />);
 
-    expect(await screen.findByText("Couldn't transcribe — your recording is safe.")).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByText(
+        "Transcription failed. Your recording is safe. Run `pnpm setup:doctor`, then retry transcription."
+      )
+    ).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry transcription" }));
 
     expect(mockedVoiceRetry).toHaveBeenCalledWith("vc-1");
     expect(await screen.findByText("Saved — waiting to transcribe…")).toBeTruthy();
   });
 
   it("surfaces a quiet error when a retry fails", async () => {
-    mockedVoiceActive.mockResolvedValue([voiceStatus({ id: "vc-1", status: "failed" })]);
+    mockedVoiceActive.mockResolvedValue([failedStatus("voice_setup_required", true)]);
     mockedVoiceRetry.mockRejectedValue(new Error("nope"));
     render(<CaptureCard capture={fakeVoice()} />);
 
-    await screen.findByText("Couldn't transcribe — your recording is safe.");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("button", { name: "Retry transcription" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry transcription" }));
 
     expect(await screen.findByText("Couldn't retry that capture. Please try again.")).toBeTruthy();
+  });
+
+  it("shows setup-required copy with a retry for a voice_setup_required failure", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("voice_setup_required", true)]);
+    render(<CaptureCard capture={fakeVoice()} />);
+
+    expect(
+      await screen.findByText(
+        "Voice transcription isn't set up. Run `pnpm setup:voice`, then retry transcription."
+      )
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry transcription" })).toBeTruthy();
+  });
+
+  it("offers no retry for a non-retryable failure (no_speech), only removal", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("no_speech", false)]);
+    render(<CaptureCard capture={fakeVoice()} />);
+
+    expect(
+      await screen.findByText(
+        "No speech was detected. Check your microphone and record the entry again."
+      )
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry transcription" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove failed capture" })).toBeTruthy();
+  });
+
+  it("shows recording-missing copy with no retry", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("recording_missing", false)]);
+    render(<CaptureCard capture={fakeVoice()} />);
+
+    expect(
+      await screen.findByText("The saved recording could not be found. Record this entry again.")
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry transcription" })).toBeNull();
+  });
+
+  it("removes a failed capture only after the inline confirm", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("no_speech", false)]);
+    mockedVoiceRemove.mockResolvedValue(undefined);
+    render(<CaptureCard capture={fakeVoice()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Remove failed capture" }));
+    // The first tap only reveals the confirm — nothing is removed yet.
+    expect(mockedVoiceRemove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(mockedVoiceRemove).toHaveBeenCalledWith("vc-1");
+    await waitFor(() =>
+      expect(
+        screen.queryByText(
+          "No speech was detected. Check your microphone and record the entry again."
+        )
+      ).toBeNull()
+    );
+  });
+
+  it("keeps the capture when the removal confirm is dismissed", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("no_speech", false)]);
+    render(<CaptureCard capture={fakeVoice()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Remove failed capture" }));
+    await user.click(screen.getByRole("button", { name: "Keep" }));
+
+    expect(mockedVoiceRemove).not.toHaveBeenCalled();
+    // Back to the single Remove trigger, capture still shown.
+    expect(screen.getByRole("button", { name: "Remove failed capture" })).toBeTruthy();
+  });
+
+  it("surfaces a quiet error when removing a failed capture fails", async () => {
+    mockedVoiceActive.mockResolvedValue([failedStatus("no_speech", false)]);
+    mockedVoiceRemove.mockRejectedValue(new Error("server down"));
+    render(<CaptureCard capture={fakeVoice()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Remove failed capture" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(await screen.findByText("Couldn't remove that capture. Please try again.")).toBeTruthy();
   });
 });

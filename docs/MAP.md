@@ -74,7 +74,7 @@ Current contracts: `entryContracts.ts`, `libraryContracts.ts`, `contentContracts
 (the `/api/search` query validator + the block-level `SearchResultsDto`), `diaryContracts.ts` (#571
 diary create/update + logical-Timeline DTOs: `DiaryEntryDto` carries the rich `bodyDoc`
 (ProseMirror/Tiptap document, validated against `@whetstone/document`) + `bodyText`, `occurredAt`/
-`createdAt`/`updatedAt`, `language`, `inputMode`, nullable `processingStatus`/`failureReason`; the
+`createdAt`/`updatedAt`, `language`, `inputMode`, nullable `processingStatus`; the
 Timeline is a `kind`-discriminated union DTO (`diary` | `note` | `work` | `recitation`) grouped into day/page DTOs, and Diary is
 the `kind === "diary"` filter — update edits the rich `bodyDoc`),
 `recitationContracts.ts` (#577/#643 direct Work-level maintenance: `recitationPhaseDtoSchema` (legacy,
@@ -88,7 +88,11 @@ the card's `dueAt` + FSRS `state`) + `recitationReviewResponseSchema` (review-or
 their `parse*` boundary helpers; the Timeline union keeps a `recitation` member carrying the Work title +
 phase),
 `voiceCaptureContracts.ts` (#565 — async Tap-and-Talk: the `processing_status` enum
-`queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs),
+`queued/transcribing/tidying/ready/failed`, the submit query validator, and the accepted/status DTOs;
+#675 the status DTO carries a discriminated `failure: { code, retryable } | null` over four safe
+categories `no_speech`/`voice_setup_required`/`transcription_failed`/`recording_missing`, with
+`retryable` derived from the code via `makeVoiceCaptureFailure`/`isRetryableVoiceCaptureFailure` — raw
+adapter/process error text never reaches the client),
 `hostRuntimeContracts.ts` (#445 — the host↔web-core runtime contract: `HostRuntimeConfig`
 (`platform` + `apiBaseUrl`) schema, `resolveHostRuntimeConfig` (validates the injected config, fails
 loud, defaults browser web to `/api`), and the pure `resolveApiUrl` base+path joiner), `health.ts`. Tests colocated.
@@ -313,14 +317,22 @@ can navigate them from another package.
   the server file boundary, then in one transaction inserts the `entries` (`diary_entry`) + `personal_entries`
   - `diary_entries` rows with `input_mode="voice"`, server-owned owner/instants, `processing_status="queued"`,
     a placeholder empty body, and no fake transcript — persisted BEFORE any STT; `listActiveVoiceCaptures`/
-    `getVoiceCaptureStatus`/`retryVoiceCapture` are user-scoped → 404, retry only a `failed` capture → 409
-    otherwise, clearing `failure_reason`). `voiceCaptureWorker.ts` (`processNextVoiceCapture` atomically claims
+    `getVoiceCaptureStatus`/`retryVoiceCapture`/`removeFailedVoiceCapture` are user-scoped → 404, retry only
+    a `failed` capture → 409 otherwise, clearing the stored failure code; remove only a `failed` capture → 409
+    otherwise, deleting its three Entry facets in a tx then best-effort unlinking the saved audio via the
+    server file boundary). `voiceCaptureWorker.ts` (`processNextVoiceCapture` atomically claims
     the oldest `queued` row → `transcribing` → `tidying`, transcribes via the STT seam, tidies, then commits
     `ready` — building `body_doc`/`body_text`/`tidied_text` from the tidied text via `@whetstone/document`;
-    **no proposal generation**; a throw/empty transcript/missing audio → `failed` + `failure_reason` with audio
-    kept; `requeueStalledVoiceCaptures` resets in-flight `transcribing`/`tidying` rows to `queued` at startup).
-    `diaryRoutes.ts` adds `POST /api/diary/voice-captures`, `GET /api/diary/voice-captures/:id`,
-    `POST /api/diary/voice-captures/:id/retry`, and `GET /api/diary/voice-captures` (`listActiveVoiceCaptures`
+    **no proposal generation**; a throw/empty transcript/missing audio → `failed` with a stable failure code
+    stored in `failure_reason` and audio kept — the code is chosen by category, never a raw error string: a
+    transcribe throw logs the raw message server-side then stores `transcription_failed`, an empty transcript
+    splits on whether local speech is configured (`speechFailure.ts` `classifyEmptyTranscript` →
+    `no_speech`/`voice_setup_required`), missing audio → `recording_missing`; `requeueStalledVoiceCaptures`
+    resets in-flight `transcribing`/`tidying` rows to `queued` at startup). `voiceCaptureFailure.ts`
+    (`resolveVoiceCaptureFailure` maps a stored code — or a legacy/raw `failure_reason` — to the client
+    `failure` DTO at read time, no migration). `diaryRoutes.ts` adds `POST /api/diary/voice-captures`,
+    `GET /api/diary/voice-captures/:id`, `POST /api/diary/voice-captures/:id/retry`,
+    `DELETE /api/diary/voice-captures/:id`, and `GET /api/diary/voice-captures` (`listActiveVoiceCaptures`
     — the user's diary captures with `processing_status IS NOT NULL AND != "ready"`, oldest-first — so the
     client can rebuild its pending/failed rows, #566). The Timeline query hides in-flight/failed captures
     (only `processing_status IS NULL OR = "ready"` surface). Wired in `index.ts`: `saveVoiceCaptureAudio`

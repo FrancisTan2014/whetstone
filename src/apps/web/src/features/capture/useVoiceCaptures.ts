@@ -9,6 +9,7 @@ import type {
 import {
   fetchActiveVoiceCaptures,
   fetchVoiceCaptureStatus,
+  removeVoiceCapture,
   retryVoiceCapture,
   submitVoiceCapture
 } from "./voiceCaptureApi";
@@ -60,13 +61,15 @@ export type VoiceCaptureApi = Readonly<{
   fetchActive: () => Promise<ReadonlyArray<VoiceCaptureStatusDto>>;
   fetchStatus: (id: string) => Promise<VoiceCaptureStatusDto>;
   retry: (id: string) => Promise<VoiceCaptureStatusDto>;
+  remove: (id: string) => Promise<void>;
 }>;
 
 const defaultApi: VoiceCaptureApi = {
   submit: submitVoiceCapture,
   fetchActive: fetchActiveVoiceCaptures,
   fetchStatus: fetchVoiceCaptureStatus,
-  retry: retryVoiceCapture
+  retry: retryVoiceCapture,
+  remove: removeVoiceCapture
 };
 
 // How often to poll while pending work exists. Calm by design (#566): a few seconds, not a tight loop
@@ -84,6 +87,7 @@ export type UseVoiceCapturesResult = Readonly<{
   submitting: boolean;
   submit: (audio: Blob) => Promise<boolean>;
   retry: (id: string) => Promise<boolean>;
+  remove: (id: string) => Promise<boolean>;
 }>;
 
 export function useVoiceCaptures(options: UseVoiceCapturesOptions = {}): UseVoiceCapturesResult {
@@ -188,5 +192,17 @@ export function useVoiceCaptures(options: UseVoiceCapturesOptions = {}): UseVoic
     }
   }, []);
 
-  return { captures, submitting, submit, retry };
+  // Discard a failed capture: remove it server-side, then drop it from the pending list so the row
+  // disappears. On failure the row stays so the learner can try removal (or retry) again.
+  const remove = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      await apiRef.current.remove(id);
+      setCaptures((current) => current.filter((capture) => capture.id !== id));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  return { captures, submitting, submit, retry, remove };
 }

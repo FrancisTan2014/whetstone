@@ -58,3 +58,14 @@ export async function retryVoiceCapture(id: string): Promise<VoiceCaptureStatusD
     })
   );
 }
+
+// Remove a failed capture: discard the saved recording and its diary rows (204, no body). The terminal
+// action for an unrecoverable failure and the discard alternative to retry for a recoverable one (#675).
+export async function removeVoiceCapture(id: string): Promise<void> {
+  const response = await fetch(apiUrl(`/diary/voice-captures/${encodeURIComponent(id)}`), {
+    method: "DELETE"
+  });
+  if (!response.ok) {
+    throw new Error(`Removing voice capture ${id} failed with status ${response.status}.`);
+  }
+}

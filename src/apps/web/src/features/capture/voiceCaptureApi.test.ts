@@ -5,12 +5,13 @@ import type { VoiceCaptureStatusDto } from "@whetstone/contracts";
 import {
   fetchActiveVoiceCaptures,
   fetchVoiceCaptureStatus,
+  removeVoiceCapture,
   retryVoiceCapture,
   submitVoiceCapture
 } from "./voiceCaptureApi";
 
 const queued: VoiceCaptureStatusDto = {
-  failureReason: null,
+  failure: null,
   id: "cap-1",
   language: "en",
   occurredAt: "2026-07-09T10:00:00.000Z",
@@ -98,5 +99,22 @@ describe("retryVoiceCapture", () => {
   it("throws on a non-ok response", async () => {
     stubFetch({ ok: false, status: 409 });
     await expect(retryVoiceCapture("cap-1")).rejects.toThrow();
+  });
+});
+
+describe("removeVoiceCapture", () => {
+  it("sends DELETE to the capture endpoint and resolves on a 204", async () => {
+    const fetchMock = stubFetch({ ok: true, status: 204 });
+
+    await expect(removeVoiceCapture("cap-1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/diary/voice-captures/cap-1"),
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  it("throws on a non-ok response", async () => {
+    stubFetch({ ok: false, status: 409 });
+    await expect(removeVoiceCapture("cap-1")).rejects.toThrow();
   });
 });
