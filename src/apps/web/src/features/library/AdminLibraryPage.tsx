@@ -25,6 +25,7 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
+import { markdownEmptyContentMessage } from "../content/contentMessages";
 import {
   createWork,
   deleteWork,
@@ -50,9 +51,10 @@ const invalidPdfMessage = "We couldn’t read this PDF. Please try a different f
 const pdfToolchainMissingMessage =
   "PDF ingestion isn’t set up on the server yet. Run `pnpm setup:pdf` (or `pnpm setup:doctor` to check), then try again.";
 
-// Shown when a PDF/Markdown produced no readable blocks (the server's 422 `empty_content`), e.g. an
-// image-only document — v0 has no image block, so there is nothing to add.
-const emptyContentMessage =
+// Shown when a PDF produced no readable blocks (the server's 422 `empty_content`), e.g. a
+// scanned/image-only PDF — v0 has no image block, so there is nothing to add. The Markdown upload lane
+// uses `markdownEmptyContentMessage` so it reads identically to the Manage-content panel (#673).
+const emptyPdfContentMessage =
   "This document has no readable text to add. Images on their own aren’t supported yet.";
 
 // Rejects a picked file that is none of the three supported document types before any ingest call.
@@ -331,7 +333,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       }
 
       if (outcome.status === "empty_content") {
-        return emptyContentMessage;
+        return emptyPdfContentMessage;
       }
 
       return undefined;
@@ -344,7 +346,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     });
 
     if (outcome.status === "empty_content") {
-      return emptyContentMessage;
+      return markdownEmptyContentMessage;
     }
 
     return undefined;
