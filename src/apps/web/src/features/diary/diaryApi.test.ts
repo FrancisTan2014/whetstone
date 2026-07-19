@@ -39,26 +39,30 @@ afterEach(() => {
 });
 
 describe("diaryApi", () => {
-  it("posts the transcript and input mode to create a diary Entry and parses it (#571)", async () => {
+  it("posts the canonical body document to create a diary Entry and parses it (#678)", async () => {
     const fetchMock = stubFetch({ body: entry, ok: true });
 
-    await expect(submitDiaryCapture("today I read a book", "typed")).resolves.toEqual(entry);
+    await expect(submitDiaryCapture(bodyDoc)).resolves.toEqual(entry);
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries", {
-      body: JSON.stringify({
-        inputMode: "typed",
-        transcript: "today I read a book"
-      }),
+      body: JSON.stringify({ bodyDoc }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });
   });
 
-  it("threads a voice input mode through to the capture request (#560)", async () => {
+  it("sends the rich document intact — never a flattened transcript (#678)", async () => {
+    const richDoc = {
+      content: [
+        { content: [{ text: "Heading", type: "text" }], type: "heading" },
+        { content: [{ text: "body", type: "text" }], type: "paragraph" }
+      ],
+      type: "doc"
+    };
     const fetchMock = stubFetch({ body: entry, ok: true });
 
-    await submitDiaryCapture("spoken out loud", "voice");
+    await submitDiaryCapture(richDoc);
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries", {
-      body: JSON.stringify({ inputMode: "voice", transcript: "spoken out loud" }),
+      body: JSON.stringify({ bodyDoc: richDoc }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });

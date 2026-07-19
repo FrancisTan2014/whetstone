@@ -13,6 +13,7 @@ import {
   resolveBrowserTimeZone
 } from "../../shared/preferences/preferencesApi.js";
 import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCard.js";
+import { PmDocument } from "../reader/PmDocument.js";
 import { deleteDiaryEntry, fetchTimeline, updateDiaryEntry } from "./diaryApi.js";
 import {
   diaryScrollTop,
@@ -332,7 +333,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   return (
     <Shell>
       <div className="flex flex-col gap-6" ref={rootRef}>
-        <CaptureCard capture={capture} onCaptured={handleCaptured} />
+        <CaptureCard capture={capture} onCaptured={handleCaptured} presentation="workspace" />
 
         {notice !== null ? (
           <p
@@ -382,7 +383,7 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                         />
                       ) : (
                         <div className="flex flex-col gap-2">
-                          <p className="whitespace-pre-wrap text-text">{entry.bodyText}</p>
+                          <PmDocument document={entry.bodyDoc} />
                           <div className="flex items-center gap-3">
                             <span className="text-xs text-text-muted">
                               {timeLabel(entry.occurredAt)}

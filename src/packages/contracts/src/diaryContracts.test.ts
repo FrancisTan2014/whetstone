@@ -26,40 +26,41 @@ describe("documentJsonSchema", () => {
 });
 
 describe("parseCreateDiaryEntryRequest", () => {
-  it("accepts a non-blank transcript with an input mode (no capture language, #647)", () => {
-    expect(
-      parseCreateDiaryEntryRequest({
-        inputMode: "typed",
-        transcript: "today I read a book"
-      })
-    ).toEqual({ inputMode: "typed", transcript: "today I read a book" });
+  it("accepts a body document (typed capture is server-owned, no input mode or language, #678)", () => {
+    expect(parseCreateDiaryEntryRequest({ bodyDoc })).toEqual({ bodyDoc });
   });
 
-  it("rejects a blank transcript", () => {
-    expect(() => parseCreateDiaryEntryRequest({ inputMode: "voice", transcript: "   " })).toThrow();
+  it("preserves a multi-block rich document byte-for-byte (#678)", () => {
+    const richDoc = {
+      content: [
+        { content: [{ text: "Title", type: "text" }], type: "heading" },
+        { content: [{ text: "body", type: "text" }], type: "paragraph" }
+      ],
+      type: "doc"
+    };
+    expect(parseCreateDiaryEntryRequest({ bodyDoc: richDoc })).toEqual({ bodyDoc: richDoc });
   });
 
-  it("rejects a missing or invalid input mode", () => {
-    expect(() => parseCreateDiaryEntryRequest({ transcript: "x" })).toThrow();
+  it("rejects a document with no readable text (only empty structural nodes, #678)", () => {
     expect(() =>
-      parseCreateDiaryEntryRequest({ inputMode: "handwritten", transcript: "x" })
+      parseCreateDiaryEntryRequest({ bodyDoc: { content: [{ type: "paragraph" }], type: "doc" } })
     ).toThrow();
   });
 
-  it("no longer accepts a capture language: a language key is rejected (#647)", () => {
+  it("rejects a malformed body document", () => {
     expect(() =>
-      parseCreateDiaryEntryRequest({ inputMode: "typed", language: "en", transcript: "x" })
+      parseCreateDiaryEntryRequest({ bodyDoc: { content: [{ type: "bogus" }], type: "doc" } })
+    ).toThrow();
+  });
+
+  it("no longer accepts the legacy transcript/inputMode shape (#678)", () => {
+    expect(() =>
+      parseCreateDiaryEntryRequest({ inputMode: "typed", transcript: "today I read a book" })
     ).toThrow();
   });
 
   it("rejects unknown keys", () => {
-    expect(() =>
-      parseCreateDiaryEntryRequest({
-        extra: 1,
-        inputMode: "typed",
-        transcript: "x"
-      })
-    ).toThrow();
+    expect(() => parseCreateDiaryEntryRequest({ bodyDoc, extra: 1 })).toThrow();
   });
 });
 

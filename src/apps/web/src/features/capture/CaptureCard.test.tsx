@@ -15,6 +15,43 @@ vi.mock("./voiceCaptureApi", () => ({
   removeVoiceCapture: vi.fn()
 }));
 
+// The shared rich editor is mocked as a controlled <textarea> (the real Tiptap surface is not
+// exercisable in jsdom): typing emits a single-paragraph document via `createTextDocument`, and the
+// authoritative `document` prop resets the field whenever its identity changes — so a fresh empty seed
+// after a successful save clears the box, while an unchanged seed after a failed save keeps the text.
+// `presentation` is surfaced as a data attribute so a test can assert which surface each host requests.
+vi.mock("../../shared/editor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shared/editor")>();
+  const { createTextDocument, documentText } = await import("@whetstone/document");
+  const React = await import("react");
+  const MockEditor = ({
+    ariaLabel,
+    document,
+    onChange,
+    presentation
+  }: {
+    ariaLabel?: string;
+    document: unknown;
+    onChange: (document: unknown) => void;
+    presentation?: string;
+  }): React.JSX.Element => {
+    const [value, setValue] = React.useState(() => documentText(document as never));
+    React.useEffect(() => {
+      setValue(documentText(document as never));
+    }, [document]);
+    return React.createElement("textarea", {
+      "aria-label": ariaLabel,
+      "data-presentation": presentation,
+      onChange: (event: { target: { value: string } }) => {
+        setValue(event.target.value);
+        onChange(createTextDocument(event.target.value));
+      },
+      value
+    });
+  };
+  return { ...actual, RichContentEditor: MockEditor };
+});
+
 import type {
   DiaryEntryDto,
   VoiceCaptureFailureCode,
@@ -142,7 +179,7 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
 
     await typeCapture("I couldn't say it");
 
-    expect(mockedSubmit).toHaveBeenCalledWith("I couldn't say it", "typed");
+    expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("I couldn't say it"));
     expect(onCaptured).toHaveBeenCalledWith(entry);
   });
 
@@ -157,7 +194,7 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
     );
   });
 
-  it("surfaces a quiet error when the capture fails", async () => {
+  it("surfaces a quiet error when the capture fails and keeps the composed text (#678)", async () => {
     mockedSubmit.mockRejectedValue(new Error("boom"));
     render(<CaptureCard />);
 
@@ -165,15 +202,29 @@ describe("CaptureCard (journal-only diary capture, #571)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Couldn't save your capture");
+    // The rich content survives a failed save so the learner can retry without retyping.
+    expect((screen.getByLabelText("Capture text") as HTMLTextAreaElement).value).toBe("try me");
   });
 
-  it("ignores a capture submit with no text", () => {
+  it("does not submit when the document has no readable text (#678)", () => {
     render(<CaptureCard />);
 
-    const form = screen.getByLabelText("Capture text").closest("form");
-    fireEvent.submit(form as HTMLFormElement);
+    const button = screen.getByRole("button", { name: "Capture" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
 
     expect(mockedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("gives Diary a workspace surface and Today's capture a compact one (#678)", () => {
+    const { unmount } = render(<CaptureCard presentation="workspace" />);
+    expect(screen.getByLabelText("Capture text").getAttribute("data-presentation")).toBe(
+      "workspace"
+    );
+    unmount();
+
+    render(<CaptureCard presentation="compact" />);
+    expect(screen.getByLabelText("Capture text").getAttribute("data-presentation")).toBe("compact");
   });
 });
 

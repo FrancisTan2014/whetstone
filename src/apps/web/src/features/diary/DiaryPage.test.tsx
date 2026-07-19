@@ -12,10 +12,12 @@ vi.mock("./diaryApi", () => ({
 
 // The shared rich editor (#570) is exercised in its own suite; here it stands in as a plain textarea so
 // the diary's editing behaviour (which document is saved) is asserted without driving Tiptap in jsdom.
-vi.mock("../../shared/editor/index.js", async () => {
+vi.mock("../../shared/editor/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../shared/editor/index.js")>();
   const { createTextDocument, documentText } = await import("@whetstone/document");
   const React = await import("react");
   return {
+    ...actual,
     RichContentEditor: ({
       ariaLabel,
       document,
@@ -373,6 +375,47 @@ describe("DiaryPage timeline", () => {
     expect(screen.getByText("a diary moment")).toBeTruthy();
     expect(screen.queryByText("a study note")).toBeNull();
   });
+
+  it("renders a timeline entry's rich structure through the document renderer, not flat text (#678)", async () => {
+    // A multi-block entry: a heading and a paragraph with an emphasized run. The pre-#678 timeline
+    // rendered `bodyText` inside a single <p>, dropping every block type and mark; the shared document
+    // renderer must reproduce the heading and the emphasis.
+    const richDoc = {
+      content: [
+        { attrs: { level: 2 }, content: [{ text: "A good day", type: "text" }], type: "heading" },
+        {
+          content: [
+            { text: "I felt ", type: "text" },
+            { marks: [{ type: "italic" }], text: "grateful", type: "text" }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [
+        tDay(d(30), [
+          {
+            bodyDoc: richDoc,
+            bodyText: "A good day I felt grateful",
+            entryId: "diary-rich",
+            kind: "diary",
+            language: null,
+            occurredAt: `${d(30)}T08:00:00.000Z`
+          }
+        ])
+      ]
+    });
+
+    await renderReady(makeCapture().capture);
+
+    const heading = screen.getByRole("heading", { name: "A good day" });
+    expect(heading.tagName).toBe("H2");
+    const emphasis = screen.getByText("grateful");
+    expect(emphasis.tagName).toBe("EM");
+  });
 });
 
 describe("DiaryPage capture", () => {
@@ -454,7 +497,7 @@ describe("DiaryPage capture", () => {
     act(() => resolveCreate(entryDto("typed-1", d(30), "a typed thought")));
 
     await screen.findByText("a typed thought");
-    expect(mockedSubmit).toHaveBeenCalledWith("a typed thought", "typed");
+    expect(mockedSubmit).toHaveBeenCalledWith(createTextDocument("a typed thought"));
   });
 
   it("scrolls a newly added entry into view so its actions clear the bottom nav (#506)", async () => {
