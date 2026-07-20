@@ -225,9 +225,16 @@ competing content stores.
   one active shared review card at requested retention **0.90**, due immediately. A retry reuses that
   same result; a failed or repeated request never leaves a half-card or duplicate. The action states
   plainly that it adds one recurring review.
-- Every saved note exposes **Cards**. Creating another card adds another learner-authored retrieval
-  contract against the same live reference note. Reader selection remains visible source context but
-  never silently becomes the Question or chooses a retrieval direction.
+- Editing a saved note opens the same responsive **Note workspace** from Reader and Notes. Its
+  top-level **Note** and **Cards** modes mirror durable ownership instead of stacking every capability
+  in one scrolling panel: Note contains optional source context, the canonical rich body, and its save
+  action; Cards is available only for a persisted note and manages retrieval contracts against that
+  saved Reference. Unsaved note changes must be saved before entering Cards.
+- Every saved note exposes **Cards**. Its initial view is a compact, stable-order contract list; opening
+  one contract replaces the list with one focused detail view, and Back returns to the same list
+  position. Creating another card adds another learner-authored retrieval contract against the same
+  live reference note. Reader selection remains visible source context but never silently becomes the
+  Question or chooses a retrieval direction.
 - Each retrieval contract has its own review card, schedule, and history. Recognition and production
   targets may share a reference while being learned and scheduled independently; Whetstone never
   auto-reverses them or shares one direction's performance with another.
@@ -244,8 +251,11 @@ competing content stores.
   its Question so a defective task never becomes false memory evidence. Again, Hard, Good, or Easy then
   appends one event, reschedules only that card, and shows the next scheduled local time. A short-term
   interval due on the current local day is labeled **Later today** with its exact time.
-- The learner may stop after any item. A note's Cards section owns question editing, pause/resume,
-  restart, removal, due state, and auditable history. Removing review never deletes the note.
+- The learner may stop after any item. One card detail owns question and grading-target editing,
+  pause/resume, restart, removal, due state, and auditable history; card rows never expand all controls
+  and history in place. Today and Notes Review own the rating routine, while Cards reports state and
+  manages the contract. Note deletion is a confirmed overflow action, never a permanent danger section
+  below the editor. Removing review never deletes the note.
 - Notes lists source-linked and unanchored notes together, supports search and editing, and owns
   paste-list import. Existing unanchored notes remain editable and reviewable; removing the generic
   creation action never deletes or migrates them. Import creates unanchored notes plus referencing
@@ -257,8 +267,8 @@ competing content stores.
   review is valid. A card's performance is evidence for that target only, never proof that the material
   is internalized or available in unprompted speech.
 
-Reader capture always creates and saves the note first, with exact selection and provenance. Creating
-a card from it remains an explicit learner action.
+Reader capture opens only Note, then creates and saves the note with exact selection and provenance.
+Cards becomes available only after that save; creating a card remains an explicit learner action.
 
 ## Library, ingestion, and Reader
 
