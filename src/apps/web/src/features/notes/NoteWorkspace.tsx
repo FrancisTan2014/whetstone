@@ -72,6 +72,10 @@ export function NoteWorkspace({
   // comparison is apples-to-apples: not dirty on mount, dirty after a real edit, not dirty right after a save.
   const [savedBody, setSavedBody] = useState<DocumentNodeJSON>(normalizedInitial);
   const [mode, setMode] = useState<"note" | "cards">("note");
+  // Cards fetches the note's prompts on mount, so it stays unmounted until the learner first opens the tab
+  // (a fresh capture never fetches) and then stays mounted — hidden when Note is active — so its list/detail/
+  // history position survives tab round-trips and the delete-confirm overlay.
+  const [cardsEverOpened, setCardsEverOpened] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [gateMessage, setGateMessage] = useState<string | null>(null);
@@ -106,6 +110,9 @@ export function NoteWorkspace({
     }
     setGateMessage(null);
     setMode(next === "cards" ? "cards" : "note");
+    if (next === "cards") {
+      setCardsEverOpened(true);
+    }
   }
 
   async function onSave(): Promise<void> {
@@ -270,11 +277,13 @@ export function NoteWorkspace({
               id="cards-panel"
               role="tabpanel"
             >
-              <CardsView
-                noteEntryId={persisted.entryId}
-                onReviewChanged={() => onReviewChanged?.()}
-                sourceSnapshot={persisted.anchored ? (activeSource?.snapshot ?? null) : null}
-              />
+              {cardsEverOpened ? (
+                <CardsView
+                  noteEntryId={persisted.entryId}
+                  onReviewChanged={() => onReviewChanged?.()}
+                  sourceSnapshot={persisted.anchored ? (activeSource?.snapshot ?? null) : null}
+                />
+              ) : null}
             </div>
           ) : null}
 

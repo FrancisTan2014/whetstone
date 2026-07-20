@@ -14,12 +14,12 @@ vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
   useLearnerTimeZone: () => "UTC"
 }));
 
-// The editor has its own suite; here it stands in as a controllable stub so the page's orchestration
-// (opening, reloading on save/delete, focus return) is asserted without driving the real sheet.
-vi.mock("./OwnedNoteEditor", async () => {
+// The workspace has its own suite; here it stands in as a controllable stub so the page's orchestration
+// (opening, reloading on save/delete/review, focus return) is asserted without driving the real sheet.
+vi.mock("./NoteWorkspace", async () => {
   const React = await import("react");
   return {
-    OwnedNoteEditor: (props: {
+    NoteWorkspace: (props: {
       onClose: () => void;
       onDeleted: (id: string) => void;
       onReviewChanged: () => void;
@@ -318,7 +318,7 @@ describe("NotesPage (#659)", () => {
     expect(screen.queryByTestId("editor")).toBeNull();
   });
 
-  it("closes the edit editor and reloads the list after a note is saved", async () => {
+  it("keeps the editor open and reloads the list after a note is saved", async () => {
     mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
     mockedFetch.mockResolvedValue({ notes: [note("note-1", "edited")] });
 
@@ -328,8 +328,10 @@ describe("NotesPage (#659)", () => {
     await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
     await userEvent.click(screen.getByRole("button", { name: "stub-save" }));
 
+    // The workspace owns the create->edit transition and its Cards tab, so it stays open after a save;
+    // Notes-home only refreshes the list behind it.
     expect(await screen.findByText("edited")).toBeDefined();
-    expect(screen.queryByTestId("editor")).toBeNull();
+    expect(screen.getByTestId("editor")).toBeDefined();
   });
 
   it("reloads the list after a note is deleted", async () => {
