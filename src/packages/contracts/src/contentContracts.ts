@@ -77,6 +77,11 @@ export type ReadingUnitDto = Readonly<{
   // so the field stays additive — pre-#312 payloads and test fixtures may omit it (read as empty).
   docBlocks?: ReadonlyArray<DocBlockDto>;
   entryId: EntryId;
+  // The Markdown heading level (mdast heading depth, 1-6) that starts this unit, derived from its first
+  // block for a Markdown-pipeline work (manual/.md/PDF). Absent for a unit that does not start at a
+  // heading (a leading preface unit) and for a format with no per-unit heading structure (EPUB). Lets a
+  // client derive the same heading outline the Reader shows without re-parsing the block content (#680).
+  headingLevel?: number;
   orderIndex: number;
   // The unit's source-file identity (EPUB spine href), so the reader can scope a cross-reference by
   // (sourceFile, anchor); absent for a format with no per-unit source file (#366).
@@ -103,6 +108,10 @@ export type ReadingUnitStructureDto = Readonly<{
   // unit rather than its cover (#394). Absent on a legacy payload; the reader then treats the unit as
   // substantive (fail safe — never hide real content).
   hasSubstantiveText?: boolean;
+  // The Markdown heading level (mdast heading depth, 1-6) that starts this unit for a Markdown-pipeline
+  // work (manual/.md/PDF); the source of the derived heading outline (#680). Absent for a leading
+  // preface unit and for a format with no per-unit heading structure (EPUB).
+  headingLevel?: number;
   orderIndex: number;
   sourceFile?: string;
   title?: string;
@@ -131,9 +140,11 @@ export type TocEntryDto = z.infer<typeof tocEntryDtoSchema>;
 
 export type WorkStructureDto = Readonly<{
   readingUnits: ReadonlyArray<ReadingUnitStructureDto>;
-  // The work's authored table of contents (#379), served additively alongside the spine-driven
-  // reading units. Present only for a work with an authored EPUB nav; absent for Markdown or a
-  // nav-less EPUB, where the reader falls back to the flat reading-unit list.
+  // The work's hierarchical table of contents, served additively alongside the reading units. Present
+  // for a work with an authored EPUB nav (#379) and for a Markdown-pipeline work whose heading structure
+  // yields an outline (#680, derived from unit heading levels — never persisted). Absent for a single-unit
+  // work, a headingless Markdown work, or a nav-less EPUB, where the reader falls back to the flat
+  // reading-unit list.
   tableOfContents?: ReadonlyArray<TocEntryDto>;
   workEntryId: EntryId;
 }>;
@@ -146,6 +157,11 @@ export type ReadingUnitContentDto = Readonly<{
   // `ReadingUnitDto.docBlocks`). The reader renders these when non-empty, else falls back to mdast.
   docBlocks?: ReadonlyArray<DocBlockDto>;
   entryId: EntryId;
+  // The Markdown heading level (mdast heading depth, 1-6) that starts this unit, derived from its first
+  // block for a Markdown-pipeline work (manual/.md/PDF); absent for a leading preface unit and for a
+  // format with no per-unit heading structure (EPUB). Mirrors `ReadingUnitDto.headingLevel` so a client
+  // that composes a work's content from per-unit fetches derives the same heading outline (#680).
+  headingLevel?: number;
   orderIndex: number;
   // The unit's source-file identity (EPUB spine href), so the reader resolves a same-unit marker's
   // cross-reference by (sourceFile, anchor); absent for a format with no per-unit source file (#366).

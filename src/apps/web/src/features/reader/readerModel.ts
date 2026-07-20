@@ -81,8 +81,9 @@ export type ReaderTocEntry = Readonly<{
 }>;
 
 // The work's structure: ordered unit metadata, fetched before any unit's blocks. `tableOfContents`
-// carries the authored nav tree (#379) when the work has one; absent for Markdown or a nav-less EPUB,
-// where the reader falls back to the flat reading-unit list.
+// carries a hierarchical outline when the work has one — an authored EPUB nav tree (#379) or a
+// Markdown heading outline (#680); absent for a single-unit/headingless Markdown work or a nav-less
+// EPUB, where the reader falls back to the flat reading-unit list.
 export type ReaderStructure = Readonly<{
   tableOfContents?: ReadonlyArray<ReaderTocEntry>;
   units: ReadonlyArray<ReaderUnitMeta>;
@@ -224,10 +225,10 @@ function toReaderTocEntry(entry: TocEntryDto): ReaderTocEntry {
 }
 
 // The reader structure built from a work's structure DTO: units sorted into reading order so
-// the 目录 and navigation read positionally without trusting the array order. When the work has an
-// authored table of contents (#379), it is carried through in pre-order (sorted by `orderIndex`) so
-// the drawer renders the authored nav tree; otherwise `tableOfContents` stays absent and the reader
-// falls back to the flat reading-unit list.
+// the 目录 and navigation read positionally without trusting the array order. When the work has a
+// table of contents — an authored EPUB nav (#379) or a derived Markdown heading outline (#680) — it is
+// carried through in pre-order (sorted by `orderIndex`) so the drawer renders the tree; otherwise
+// `tableOfContents` stays absent and the reader falls back to the flat reading-unit list.
 export function buildReaderStructure(structure: WorkStructureDto): ReaderStructure {
   const base = {
     units: [...structure.readingUnits].sort(byOrderIndex).map(toReaderUnitMeta),

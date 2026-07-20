@@ -49,6 +49,12 @@ export type { CreateEntryInput, Entry, EntryId, EntryType } from "./entry.js";
 export { normalizeEpubMetadata } from "./epubMetadata.js";
 export type { NormalizedEpubMetadata, RawEpubCreator, RawEpubMetadata } from "./epubMetadata.js";
 export { decomposeHtmlChapter } from "./htmlBlocks.js";
+export {
+  buildHeadingOutline,
+  HEADING_OUTLINE_PREFACE_LABEL,
+  HEADING_OUTLINE_UNTITLED_LABEL
+} from "./headingOutline.js";
+export type { HeadingOutlineEntry, HeadingOutlineUnit } from "./headingOutline.js";
 export { createEntryLink, isLinkType, linkTypes } from "./links.js";
 export type { EntryLink, LinkType } from "./links.js";
 export {

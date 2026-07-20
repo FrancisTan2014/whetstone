@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { ReadingUnitDto, WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
-import { workLanguageLabels, type WorkType } from "@whetstone/domain";
+import { buildHeadingOutline, workLanguageLabels, type WorkType } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
@@ -156,6 +156,7 @@ function renderReady(data: ReadyData, handlers: ReadyHandlers): React.JSX.Elemen
       {data.works.length > 1 ? renderWorkSwitcher(data, handlers) : null}
       {renderHeader(data)}
       {renderAddContent(data, handlers)}
+      {renderTableOfContents(data.content)}
       {renderOverview(data.content, handlers.showBlocks, handlers.onToggleBlocks)}
     </div>
   );
@@ -223,8 +224,13 @@ function renderAddContent(data: ReadyData, handlers: ReadyHandlers): React.JSX.E
             value={handlers.markdown}
           />
         </label>
+        <p className="text-sm text-text-muted">
+          Use <code className="font-mono">#</code> for chapters and{" "}
+          <code className="font-mono">##</code> or deeper headings for sections. The reader and this
+          panel build the table of contents from those headings.
+        </p>
         <Button className="self-start" size="sm" type="submit">
-          Add Markdown content
+          Save content
         </Button>
       </form>
 
@@ -238,6 +244,41 @@ function renderAddContent(data: ReadyData, handlers: ReadyHandlers): React.JSX.E
           {handlers.error}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+// A read-only preview of the heading-derived table of contents (#680), built with the same domain
+// projection the reader uses so the two never diverge. Absent for a single-unit or headingless work
+// (the projection returns nothing), matching the reader showing no 目录 there. Each entry is indented
+// by its depth so the nesting is visible; the reader owns the interactive tree.
+function renderTableOfContents(content: WorkContentDto): React.JSX.Element | null {
+  const outline = buildHeadingOutline(
+    content.readingUnits.map((unit) => ({
+      entryId: unit.entryId,
+      ...(unit.headingLevel === undefined ? {} : { headingLevel: unit.headingLevel }),
+      ...(unit.title === undefined ? {} : { title: unit.title })
+    }))
+  );
+
+  if (outline.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-lg font-medium text-text">Table of contents</h3>
+      <ul aria-label="Table of contents" className="flex flex-col gap-1">
+        {outline.map((entry) => (
+          <li
+            className="text-sm text-text"
+            key={entry.entryId}
+            style={{ paddingInlineStart: `${entry.depth * 1.25}rem` }}
+          >
+            {entry.label}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
