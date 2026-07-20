@@ -48,6 +48,9 @@ These invariants outrank individual features:
    learner cares about; a feature-owned review target defines one retrieval task against that
    material; a review card stores only scheduling policy/state and points to that target. Material
    never carries FSRS state, and pausing or removing a schedule never rewrites the material.
+10. **Retrieval direction is part of the target.** Recognizing material, recalling its meaning, and
+    producing it from a communicative intention are different retrieval tasks. Success in one never
+    clears another target's card or certifies another capability.
 
 ## v0 scope
 
@@ -223,6 +226,31 @@ competing content stores.
 
 Reader capture always creates and saves the note first, with exact selection and provenance. It never
 silently enrolls review.
+
+### Productive expression review (post-gate)
+
+After the base daily loop passes its manual gate, expression practice extends Notes and Review rather
+than turning Recitation into a language-learning system:
+
+- An expression note exposes one canonical **focus expression**. An anchored note resolves it from
+  the exact selected-source snapshot; a standalone note stores one learner-confirmed expression
+  separately from its rich explanatory body. Review targets reference that focus and never copy it.
+- Form → meaning and communicative intent → expression are explicit, opt-in prompt kinds with
+  independent shared cards at requested retention **0.90** under the same note. The prompt model
+  permits one current target of each kind and names the focus-expression reveal explicitly; it never
+  repurposes the preserved `legacy_custom` shape.
+- A productive target starts from a learner-confirmed purpose or situation, keeps the expression
+  hidden, asks the learner to answer aloud, then reveals the focus expression with its note and
+  source context.
+- A small set of confirmed practice cues rotates under one target and one schedule; an optional cue
+  withheld from normal rotation can provide a later transfer probe. Both remain controlled evidence:
+  recalling one reverse prompt, or even a reserved prompt, does not prove spontaneous access.
+- Again/Hard/Good/Easy rate whether this enrolled expression surfaced: absent, hint-assisted or
+  effortful, unaided, or immediate and natural. Producing a valid alternative is communicatively
+  correct but does not count as retrieving this target. Speech transcription and response time may
+  provide evidence but never grade or change the rating.
+- Whetstone does not label an expression **internalized** from Review performance alone. Unprompted
+  use in open speech is separate evidence, not something a cued card can certify.
 
 ## Library, ingestion, and Reader
 
@@ -587,6 +615,9 @@ The pivot is usable only when all are true:
 - **Review card:** scheduler policy/state for one review target; it contains no learning material.
 - **Review event:** one append-only learner rating or explicit schedule reset for a review card.
 - **Note review prompt:** one learner-confirmed question that references a canonical note.
+- **Productive expression target:** one feature-owned retrieval task that references a note's focus
+  expression, starts from a communicative purpose or situation, and asks the learner to say the
+  expression before reveal.
 - **Recitation plan:** one active/paused maintenance enrollment linked to a canonical Work.
 - **Recitation target:** the whole-Work retrieval task owned by a Recitation plan.
 - **Due:** an action whose deterministic schedule has arrived.
