@@ -29,7 +29,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 // all cleaning and matching, so the client never canonicalizes.
 export async function searchAuthors(query?: string): Promise<AuthorSearchDto> {
   const trimmed = query?.trim() ?? "";
-  const path = trimmed === "" ? apiUrl("/authors") : apiUrl(`/authors?query=${encodeURIComponent(query ?? "")}`);
+  const path =
+    trimmed === ""
+      ? apiUrl("/authors")
+      : apiUrl(`/authors?query=${encodeURIComponent(query ?? "")}`);
 
   return requestJson<AuthorSearchDto>(path);
 }

@@ -10,6 +10,10 @@ import { describe, expect, it } from "vitest";
 // These tests hand-build the pre-migration schema (authors had no `name_key`) and apply ONLY the new
 // SQL file, so they exercise the real merge logic in isolation.
 
+// A full-width (ideographic) space — a real name-key collision case NFKC folds to a plain space.
+// Interpolated instead of written literally so `no-irregular-whitespace` stays clean.
+const IDEO = "\u3000";
+
 const migrationFile = join(
   dirname(fileURLToPath(import.meta.url)),
   "migrations",
@@ -71,7 +75,7 @@ describe("0058 canonical author identity migration", () => {
     await pglite.exec(`
       INSERT INTO authors (id, name) VALUES
         ('oct-2', 'Octavia Butler'),
-        ('oct-1', ' octavia　butler ');
+        ('oct-1', ' octavia${IDEO}butler ');
     `);
     await seedWork(pglite, "w4", "oct-2");
     await seedWork(pglite, "w5", "oct-1");
@@ -153,7 +157,7 @@ describe("0058 canonical author identity migration", () => {
     await expect(
       pglite.exec(
         `INSERT INTO authors (id, name, name_key)
-         VALUES ('a-2', clean_author_name(' ANN　LECKIE '), author_name_key(' ANN　LECKIE '));`
+         VALUES ('a-2', clean_author_name(' ANN${IDEO}LECKIE '), author_name_key(' ANN${IDEO}LECKIE '));`
       )
     ).rejects.toThrow();
 
@@ -176,7 +180,7 @@ describe("0058 canonical author identity migration", () => {
     await pglite.exec(`
       INSERT INTO authors (id, name) VALUES
         ('good-1', '  Real   Name  '),
-        ('blank-1', '　　');
+        ('blank-1', '${IDEO}${IDEO}');
     `);
     await seedWork(pglite, "w1", "good-1");
     await seedWork(pglite, "w2", "blank-1");

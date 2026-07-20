@@ -33,7 +33,9 @@ function itemToString(item: ComboItem | null): string {
   return item.kind === "author" ? item.author.name : item.name;
 }
 
-export function AuthorSelectField({ onSelectionChange }: AuthorSelectFieldProps): React.JSX.Element {
+export function AuthorSelectField({
+  onSelectionChange
+}: AuthorSelectFieldProps): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ReadonlyArray<AuthorDto>>([]);
   const [exactMatchId, setExactMatchId] = useState<string | null>(null);
@@ -46,12 +48,14 @@ export function AuthorSelectField({ onSelectionChange }: AuthorSelectFieldProps)
   const errorId = useId();
 
   useEffect(() => {
-    setStatus("loading");
     // A monotonic request id: bumping it on cleanup supersedes any pending/in-flight search, so an
     // unmount or a newer query can never let a stale response overwrite the current results.
     const seq = requestSeq.current + 1;
     requestSeq.current = seq;
     const timer = setTimeout(() => {
+      // Flip to loading only once the debounced request actually starts (never synchronously in the
+      // effect body), so rapid typing keeps the prior results visible until a search is really in flight.
+      setStatus("loading");
       searchAuthors(query)
         .then((response) => {
           if (requestSeq.current !== seq) {

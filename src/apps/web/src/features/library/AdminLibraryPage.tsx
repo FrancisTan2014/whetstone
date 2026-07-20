@@ -2,11 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "r
 import { motion, type Variants } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
-import type {
-  CreateWorkRequest,
-  RecitationPlanDto,
-  WorkListItemDto
-} from "@whetstone/contracts";
+import type { CreateWorkRequest, RecitationPlanDto, WorkListItemDto } from "@whetstone/contracts";
 import {
   workLanguageLabels,
   workLanguages,

@@ -26,7 +26,7 @@ describe("createDbClient", () => {
     const entryRows = await db.select().from(entries);
     const workRows = await db.select().from(workMeta);
 
-    expect(authorRows).toEqual([{ id: "author-1", name: "Octavia Butler" }]);
+    expect(authorRows).toEqual([{ id: "author-1", name: "Octavia Butler", nameKey: null }]);
     expect(entryRows).toEqual([{ id: "work-1", type: "work" }]);
     expect(workRows).toEqual([
       {

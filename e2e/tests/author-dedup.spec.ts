@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+
 import { expect, test } from "../fixtures";
 
 // #694: adding two Works whose author names are canonically the same (differing only by case/width)
@@ -7,7 +9,7 @@ import { expect, test } from "../fixtures";
 
 const DESKTOP = { height: 900, width: 1280 } as const;
 
-async function openAddWorkSheet(page: import("@playwright/test").Page): Promise<void> {
+async function openAddWorkSheet(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menuitem", { name: "Add work manually" }).click();
   await expect(page.getByRole("dialog", { name: "Add work" })).toBeVisible();
