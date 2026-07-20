@@ -29,6 +29,7 @@ import {
   workMeta,
   workSources
 } from "../../db/schema.js";
+import { resolveNamedAuthor } from "./authorResolver.js";
 import { deleteRecitationReviewData } from "../recitation/recitationTeardown.js";
 
 // Real infrastructure boundaries (database client and id generation) are passed
@@ -42,6 +43,10 @@ export type LibraryDependencies = Readonly<{
 export type CreateWorkResult =
   | Readonly<{ status: "created"; work: WorkListItemDto }>
   | Readonly<{ status: "author_not_found"; authorId: AuthorId }>;
+
+// `createAuthor` resolves through the canonical identity boundary, so it reports whether it inserted a
+// new row or matched an existing one — the route turns this into a truthful 201-vs-200 response (#694).
+export type CreateAuthorResult = Readonly<{ author: AuthorDto; created: boolean }>;
 
 // Deleting a work needs the DB (for the cascade transaction) plus the ability to unlink its retained
 // source files after commit. The file unlink is injected as a narrow capability (not the whole store)
@@ -58,11 +63,10 @@ export type DeleteWorkResult = "deleted" | "not_found";
 export async function createAuthor(
   dependencies: LibraryDependencies,
   request: CreateAuthorRequest
-): Promise<AuthorDto> {
-  const id = toAuthorId(dependencies.createAuthorId());
-  await dependencies.db.insert(authors).values({ id, name: request.name });
-
-  return { id, name: request.name };
+): Promise<CreateAuthorResult> {
+  return dependencies.db.transaction((tx) =>
+    resolveNamedAuthor(tx, dependencies.createAuthorId, request.name)
+  );
 }
 
 export async function createWork(
@@ -111,10 +115,9 @@ async function resolveAuthor(
   selection: CreateWorkRequest["author"]
 ): Promise<ResolvedAuthor> {
   if (selection.mode === "new") {
-    const id = toAuthorId(dependencies.createAuthorId());
-    await tx.insert(authors).values({ id, name: selection.name });
+    const resolved = await resolveNamedAuthor(tx, dependencies.createAuthorId, selection.name);
 
-    return { found: true, author: { id, name: selection.name } };
+    return { found: true, author: resolved.author };
   }
 
   const existing = await tx

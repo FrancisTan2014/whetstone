@@ -14,10 +14,40 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 vi.mock("./libraryApi", () => ({
   createWork: vi.fn(),
   deleteWork: vi.fn(),
-  fetchAuthors: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
-  ingestEpub: vi.fn()
+  ingestEpub: vi.fn(),
+  searchAuthors: vi.fn()
+}));
+
+// The real create-or-select combobox is exercised in AuthorSelectField.test.tsx; here we stub it to a
+// minimal control that drives `onSelectionChange` directly, so page-level tests assert the form's own
+// behavior (validation, submit payload, reset, sheet lifecycle) without the debounced search/listbox.
+vi.mock("./AuthorSelectField", () => ({
+  AuthorSelectField: ({
+    onSelectionChange
+  }: {
+    onSelectionChange: (selection: WorkAuthorSelection | undefined) => void;
+  }) => (
+    <label>
+      New author or source name
+      <input
+        aria-label="New author or source name"
+        onChange={(event) => {
+          const value = (event.target as HTMLInputElement).value;
+          onSelectionChange(value === "" ? undefined : { mode: "new", name: value });
+        }}
+      />
+      <button
+        onClick={() =>
+          onSelectionChange({ authorId: "author-2", mode: "existing" } as WorkAuthorSelection)
+        }
+        type="button"
+      >
+        Use existing author
+      </button>
+    </label>
+  )
 }));
 
 vi.mock("../content/contentApi", () => ({
@@ -44,10 +74,10 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 import {
   createWork,
   deleteWork,
-  fetchAuthors,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  ingestEpub
+  ingestEpub,
+  searchAuthors
 } from "./libraryApi";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
 import { listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
@@ -60,6 +90,7 @@ import type {
   AuthorDto,
   AuthoredWorkSummaryDto,
   RecitationPlanDto,
+  WorkAuthorSelection,
   WorkListItemDto
 } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
@@ -82,7 +113,7 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
   return rtlRender(ui, { wrapper: ToastHost });
 }
 
-const mockedFetchAuthors = vi.mocked(fetchAuthors);
+const mockedSearchAuthors = vi.mocked(searchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
 const mockedCreateWork = vi.mocked(createWork);
@@ -173,7 +204,7 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockMatchMedia(false);
-  mockedFetchAuthors.mockResolvedValue({ authors: [] });
+  mockedSearchAuthors.mockResolvedValue({ authors: [], cleanedQuery: "", exactMatchId: null });
   mockedFetchWorks.mockResolvedValue({ works: [] });
   mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set());
   mockedListAuthoredWorks.mockResolvedValue({ works: [] });
@@ -239,7 +270,7 @@ describe("AdminLibraryPage", () => {
   });
 
   it("shows an error state when the initial load fails", async () => {
-    mockedFetchAuthors.mockRejectedValue(new Error("network"));
+    mockedFetchWorks.mockRejectedValue(new Error("network"));
 
     render(<AdminLibraryPage onManageContent={noop} />);
 
@@ -395,8 +426,7 @@ describe("AdminLibraryPage", () => {
     });
   });
 
-  it("creates a work for an existing author selected from the dropdown", async () => {
-    mockedFetchAuthors.mockResolvedValue({ authors: [dickens] });
+  it("creates a work for an existing author chosen from the author field", async () => {
     const user = await renderReady();
     const bookItem: WorkListItemDto = {
       author: dickens,
@@ -412,8 +442,7 @@ describe("AdminLibraryPage", () => {
     mockedFetchWorks.mockResolvedValue({ works: [bookItem] });
     await openAddWork(user);
 
-    await user.selectOptions(screen.getByLabelText("Author or source"), dickens.id);
-    expect(screen.queryByLabelText("New author or source name")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Use existing author" }));
     await user.type(screen.getByLabelText("Title"), "A Tale of Two Cities");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
@@ -463,9 +492,7 @@ describe("AdminLibraryPage", () => {
     const fields = [
       screen.getByLabelText("Title"),
       screen.getByLabelText("Type"),
-      screen.getByLabelText("Language"),
-      screen.getByLabelText("Author or source"),
-      screen.getByLabelText("New author or source name")
+      screen.getByLabelText("Language")
     ];
     for (const field of fields) {
       expect(field.className).toContain("min-h-11");

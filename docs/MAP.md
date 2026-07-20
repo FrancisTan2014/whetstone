@@ -746,7 +746,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   **Add work manually** — document creation now lives on the Write home (#679); class maps for both menus
   live in the coverage-excluded
   `libraryMenu.tokens.ts`. **Upload file** opens the same file front door as before — an EPUB ingests
-  straight to a Work, a PDF/Markdown opens the pre-filled **Add work** sheet. Creating a work auto-opens
+  straight to a Work, a PDF/Markdown opens the pre-filled **Add work** sheet. The **Add work** sheet's
+  author field is `AuthorSelectField.tsx` — a `downshift` create-or-select combobox over
+  `libraryApi.searchAuthors` (`GET /api/authors?query=`) that reuses an existing author by default and
+  only offers an explicit **Add** for a genuinely new name, so duplicates can't be created by accident
+  (#694). All author identity is **server-owned and canonical**: the `clean_author_name`/`author_name_key`
+  SQL functions (NFKC + whitespace-collapse + case-fold) back a partial unique index on `authors.name_key`,
+  `library/authorResolver.ts` `resolveNamedAuthor` resolves every writer (manual create, Work create, EPUB
+  ingest) to one row via `ON CONFLICT`, and `library/libraryQueries.ts` `searchAuthors` returns matches plus
+  the exact-match id and cleaned query; the client never canonicalizes. Creating a work auto-opens
   its Manage-content sheet (add content right after create); an EPUB import does not. Authored-document
   creation moved out of Library to the Write home (#679): the minimal title/type/language sheet now lives
   in `WritingHomePage` (**New essay**), which calls `authoredWorks/authoredWorkApi.createAuthoredWork`

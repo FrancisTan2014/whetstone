@@ -3,8 +3,9 @@ import type { IngestEpubResultDto, WorkDto } from "@whetstone/contracts";
 import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { authors, entries, workMeta, workSources } from "../../db/schema.js";
+import { entries, workMeta, workSources } from "../../db/schema.js";
 import { parseNavDocument } from "../../files/epubNav.js";
+import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { writeReadingUnits } from "./blockWriter.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import { applyContentFilters, defaultContentFilters } from "./contentFilters.js";
@@ -131,17 +132,9 @@ async function resolveAuthorByName(
   dependencies: ContentDependencies,
   name: string
 ): Promise<AuthorId> {
-  const existing = await tx.select().from(authors).where(eq(authors.name, name)).limit(1);
-  const found = existing[0];
+  const resolved = await resolveNamedAuthor(tx, dependencies.createAuthorId, name);
 
-  if (found !== undefined) {
-    return toAuthorId(found.id);
-  }
-
-  const id = toAuthorId(dependencies.createAuthorId());
-  await tx.insert(authors).values({ id, name });
-
-  return id;
+  return resolved.author.id;
 }
 
 async function findWorkBySha256(
