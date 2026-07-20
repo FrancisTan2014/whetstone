@@ -644,6 +644,29 @@ export const reviewEvents = pgTable(
   ]
 );
 
+// The idempotency ledger for retry-safe direct card creation (#689): one row per accepted submission,
+// keyed by the owner and the client's stable `submission_id`, so a replayed request resolves to its
+// original result instead of writing a second note/prompt/card. `payload_fingerprint` is a non-reversible
+// digest of the submitted question/answer/grading-target documents (never the learning content itself),
+// so a replay with a CHANGED payload under the same id is a detectable conflict rather than a silent
+// overwrite. `note_entry_id` and `prompt_entry_id` record the created result. They are deliberately PLAIN
+// text with NO foreign key to `entries`, so this receipt sits OUTSIDE the note delete cascade
+// (`deleteNoteInTx`) and survives as a non-resurrecting tombstone: once the note is deleted a replay
+// reports the result is gone and never recreates it. Owner-scoped (`user_id`) so different owners are
+// isolated even when they reuse the same `submission_id`.
+export const cardCreationReceipts = pgTable(
+  "card_creation_receipts",
+  {
+    userId: text("user_id").notNull(),
+    submissionId: text("submission_id").notNull(),
+    noteEntryId: text("note_entry_id").notNull(),
+    promptEntryId: text("prompt_entry_id").notNull(),
+    payloadFingerprint: text("payload_fingerprint").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.submissionId] })]
+);
+
 // The shared ownership + chronology facet for personal (owned) Entries (#571): owner and the three
 // timestamps a logical Timeline needs — `occurred_at` (when the entry happened, the Timeline sort key),
 // `created_at` (when it was captured), and `updated_at` (last edit). Every personal Entry carries exactly

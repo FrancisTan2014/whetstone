@@ -132,13 +132,52 @@ export async function insertNoteInTx(tx: Transaction, params: InsertNoteParams):
   }
 }
 
-// Insert ONE cardless current-note prompt under a note inside the caller's transaction — the single writer
-// of the note→prompt relationship (#658/#661). It creates the prompt Entry (`type: "memory_prompt"`), its
-// `memory_prompts` row (cue doc/text, no answer, `revealKind: "current_note"`, `lifecycle: "ready"`), and
-// the `contains` link from the note. It writes no review card or event, so the prompt is cardless until a
-// caller deliberately seeds a card. The `memory_prompts_one_current_note_per_note_uq` partial unique index
-// guarantees at most one current-note prompt per note. Both Notes-owned enrollment and import compose it,
-// so there is exactly one place a current-note prompt's rows are written.
+// Insert ONE cardless prompt under a note inside the caller's transaction — the single writer of the
+// note→prompt relationship (#658/#661/#689). It creates the prompt Entry (`type: "memory_prompt"`), its
+// `memory_prompts` row (cue doc/text, `lifecycle: "ready"`, the supplied `revealKind` and its resolved
+// answer columns), and the `contains` link from the note. It writes no review card or event, so the prompt
+// is cardless until a caller deliberately seeds a card. The database `memory_prompts_reveal_shape_ck` check
+// enforces the answer-column shape for the reveal kind (a `current_note` prompt is answerless; an
+// `expected_response` prompt carries the authored Success check), so the caller must pass columns already
+// resolved through the shared reveal-column policy. Every note-owned prompt writer composes it, so there is
+// exactly one place a prompt's rows are written.
+export async function insertNotePromptInTx(
+  tx: Transaction,
+  params: Readonly<{
+    cueDoc: DocumentNodeJSON;
+    cueText: string;
+    noteEntryId: string;
+    now: Date;
+    promptId: string;
+    revealKind: "current_note" | "expected_response";
+    answerDoc: DocumentNodeJSON | null;
+    answerText: string | null;
+  }>
+): Promise<void> {
+  await tx.insert(entries).values({ id: params.promptId, type: "memory_prompt" });
+  await tx.insert(memoryPrompts).values({
+    answerDoc: params.answerDoc,
+    answerText: params.answerText,
+    chunkId: null,
+    createdAt: params.now,
+    cueDoc: params.cueDoc,
+    cueText: params.cueText,
+    entryId: params.promptId,
+    lifecycle: "ready",
+    noteEntryId: params.noteEntryId,
+    revealKind: params.revealKind
+  });
+  await tx.insert(entryLinks).values({
+    fromEntryId: params.noteEntryId,
+    toEntryId: params.promptId,
+    type: "contains"
+  });
+}
+
+// Insert ONE cardless current-note prompt under a note inside the caller's transaction (#658/#661): the
+// answerless `current_note` case of `insertNotePromptInTx`, whose reveal is the live note body. The
+// `memory_prompts_one_current_note_per_note_uq` partial unique index guarantees at most one current-note
+// prompt per note. Both Notes-owned enrollment and import compose it.
 export async function insertCurrentNotePromptInTx(
   tx: Transaction,
   params: Readonly<{
@@ -149,23 +188,11 @@ export async function insertCurrentNotePromptInTx(
     promptId: string;
   }>
 ): Promise<void> {
-  await tx.insert(entries).values({ id: params.promptId, type: "memory_prompt" });
-  await tx.insert(memoryPrompts).values({
+  await insertNotePromptInTx(tx, {
+    ...params,
+    revealKind: "current_note",
     answerDoc: null,
-    answerText: null,
-    chunkId: null,
-    createdAt: params.now,
-    cueDoc: params.cueDoc,
-    cueText: params.cueText,
-    entryId: params.promptId,
-    lifecycle: "ready",
-    noteEntryId: params.noteEntryId,
-    revealKind: "current_note"
-  });
-  await tx.insert(entryLinks).values({
-    fromEntryId: params.noteEntryId,
-    toEntryId: params.promptId,
-    type: "contains"
+    answerText: null
   });
 }
 

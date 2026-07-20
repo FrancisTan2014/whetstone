@@ -1,10 +1,11 @@
 import type { NoteGradingTarget, NotePromptSettingsDto } from "@whetstone/contracts";
 import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
-import { createTextDocument, type DocumentNodeJSON, documentText } from "@whetstone/document";
+import { createTextDocument } from "@whetstone/document";
 import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts } from "../../db/schema.js";
+import { resolveGradingColumns } from "./noteGradingColumns.js";
 import { getPromptRowForUser, findConflictingCurrentNotePromptId } from "./notePromptQueries.js";
 import {
   applyResetToCardInTx,
@@ -206,35 +207,8 @@ export type SetNoteGradingTargetOutcome =
   | Readonly<{ status: "duplicate_current_note" }>
   | Readonly<{ status: "restart_requires_card" }>;
 
-// The persisted answer columns a grading target resolves to: a `current_note` target stores no answer (its
-// reveal is the live note body); an `expected_response` target stores the authored Success check as both a
-// rich doc and its server-derived plaintext. Deriving the text here (never trusting the client) is also the
-// non-blank gate — a Success check that renders to only whitespace is rejected as `invalid_success_check`.
-type ResolvedGradingColumns =
-  | Readonly<{ status: "ok"; revealKind: "current_note"; answerDoc: null; answerText: null }>
-  | Readonly<{
-      status: "ok";
-      revealKind: "expected_response";
-      answerDoc: DocumentNodeJSON;
-      answerText: string;
-    }>
-  | Readonly<{ status: "invalid_success_check" }>;
-
-function resolveGradingColumns(target: NoteGradingTarget): ResolvedGradingColumns {
-  if (target.kind === "current_note") {
-    return { status: "ok", revealKind: "current_note", answerDoc: null, answerText: null };
-  }
-  const answerText = documentText(target.successCheckDoc);
-  if (answerText.trim().length === 0) {
-    return { status: "invalid_success_check" };
-  }
-  return {
-    status: "ok",
-    revealKind: "expected_response",
-    answerDoc: target.successCheckDoc,
-    answerText
-  };
-}
+// The persisted answer columns a grading target resolves to live in `noteGradingColumns.ts`, the single
+// reveal-column policy shared by this command (#686) and the direct card command (#689).
 
 // Set a prompt's grading target (#686): declare whether it grades against the live note (`current_note`) or
 // an authored Success check (`expected_response`), and — atomically in ONE transaction — persist the reveal
