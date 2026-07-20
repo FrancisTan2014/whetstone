@@ -2,18 +2,17 @@ import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
-  enrollNoteRequestSchema,
+  authorNoteCardRequestSchema,
   noteGradingTargetSchema,
   noteRevealDtoSchema,
   noteReviewNextDtoSchema,
   noteReviewSummaryDtoSchema,
+  parseAuthorNoteCardRequest,
   parseEditNotePromptQuestionRequest,
-  parseEnrollNoteRequest,
   parseCreateDirectCardRequest,
   parseDirectCardResultDto,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
-  parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
@@ -219,53 +218,6 @@ describe("note-review rating contracts", () => {
   });
 });
 
-describe("noteReviewEnrollmentStatusDtoSchema", () => {
-  it("parses each objective enrollment status, and only scheduled carries a date", () => {
-    expect(parseNoteReviewEnrollmentStatusDto({ status: "not_enrolled" })).toEqual({
-      status: "not_enrolled"
-    });
-    expect(parseNoteReviewEnrollmentStatusDto({ status: "due" })).toEqual({ status: "due" });
-    expect(parseNoteReviewEnrollmentStatusDto({ status: "paused" })).toEqual({ status: "paused" });
-    expect(
-      parseNoteReviewEnrollmentStatusDto({
-        status: "scheduled",
-        nextReviewAt: "2026-07-11T00:00:00.000Z"
-      })
-    ).toEqual({ status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" });
-  });
-
-  it("requires a valid datetime for the scheduled status", () => {
-    expect(() => parseNoteReviewEnrollmentStatusDto({ status: "scheduled" })).toThrow();
-    expect(() =>
-      parseNoteReviewEnrollmentStatusDto({ status: "scheduled", nextReviewAt: "next week" })
-    ).toThrow();
-  });
-
-  it("rejects a date on a non-scheduled status and an unknown status", () => {
-    expect(() =>
-      parseNoteReviewEnrollmentStatusDto({
-        status: "due",
-        nextReviewAt: "2026-07-11T00:00:00.000Z"
-      })
-    ).toThrow();
-    expect(() => parseNoteReviewEnrollmentStatusDto({ status: "archived" })).toThrow();
-  });
-
-  it("carries an imported note's confirmed question on not_enrolled (#661), rejecting a blank one", () => {
-    expect(
-      parseNoteReviewEnrollmentStatusDto({ status: "not_enrolled", question: "What is a WAL?" })
-    ).toEqual({ status: "not_enrolled", question: "What is a WAL?" });
-    // The question is optional, and a blank string is not a real cue.
-    expect(() =>
-      parseNoteReviewEnrollmentStatusDto({ status: "not_enrolled", question: "" })
-    ).toThrow();
-    // No other status carries a question.
-    expect(() =>
-      parseNoteReviewEnrollmentStatusDto({ status: "due", question: "What is a WAL?" })
-    ).toThrow();
-  });
-});
-
 describe("noteReviewSummaryDtoSchema", () => {
   it("parses each rolled-up summary status, with due carrying a positive count", () => {
     expect(parseNoteReviewSummaryDto({ status: "not_enrolled" })).toEqual({
@@ -297,17 +249,68 @@ describe("noteReviewSummaryDtoSchema", () => {
   });
 });
 
-describe("enrollNoteRequestSchema", () => {
-  it("parses an anchored enrollment carrying no question, and a standalone one carrying a trimmed question", () => {
-    expect(parseEnrollNoteRequest({})).toEqual({});
-    expect(parseEnrollNoteRequest({ question: "  What is FSRS?  " })).toEqual({
-      question: "What is FSRS?"
+describe("authorNoteCardRequestSchema (#687)", () => {
+  const questionDoc = createTextDocument("What is a WAL?");
+  const successCheckDoc = createTextDocument("Names durability + ordering");
+
+  it("parses a current-note first-card request over an existing owned note", () => {
+    const parsed = parseAuthorNoteCardRequest({
+      submissionId: "sub-1",
+      noteEntryId: "note-1",
+      questionDoc,
+      target: { kind: "current_note" }
     });
+    expect(parsed.submissionId).toBe("sub-1");
+    expect(parsed.noteEntryId).toBe("note-1");
+    expect(parsed.target.kind).toBe("current_note");
   });
 
-  it("rejects a blank question and unexpected keys", () => {
-    expect(() => parseEnrollNoteRequest({ question: "   " })).toThrow();
-    expect(enrollNoteRequestSchema.safeParse({ question: "hi", extra: true }).success).toBe(false);
+  it("parses an expected-response request carrying the Success check, and never an answer", () => {
+    const parsed = parseAuthorNoteCardRequest({
+      submissionId: "sub-2",
+      noteEntryId: "note-2",
+      questionDoc,
+      target: { kind: "expected_response", successCheckDoc }
+    });
+    expect(parsed.target).toEqual({ kind: "expected_response", successCheckDoc });
+    // There is no answer document — the existing note is the reviewed material.
+    expect("answerDoc" in parsed).toBe(false);
+  });
+
+  it("rejects a blank submission id, a blank note id, a malformed question, and extra keys", () => {
+    expect(() =>
+      parseAuthorNoteCardRequest({
+        submissionId: "  ",
+        noteEntryId: "note-1",
+        questionDoc,
+        target: { kind: "current_note" }
+      })
+    ).toThrow();
+    expect(() =>
+      parseAuthorNoteCardRequest({
+        submissionId: "sub-3",
+        noteEntryId: "  ",
+        questionDoc,
+        target: { kind: "current_note" }
+      })
+    ).toThrow();
+    expect(() =>
+      parseAuthorNoteCardRequest({
+        submissionId: "sub-4",
+        noteEntryId: "note-1",
+        questionDoc: { not: "a document" },
+        target: { kind: "current_note" }
+      })
+    ).toThrow();
+    expect(
+      authorNoteCardRequestSchema.safeParse({
+        submissionId: "sub-5",
+        noteEntryId: "note-1",
+        questionDoc,
+        target: { kind: "current_note" },
+        answerDoc: questionDoc
+      }).success
+    ).toBe(false);
   });
 });
 
@@ -439,11 +442,11 @@ describe("note Review settings & history contracts (#660)", () => {
     ).toThrow();
   });
 
-  it("parses a trimmed non-blank question and rejects a blank one", () => {
-    expect(parseEditNotePromptQuestionRequest({ question: "  Define a WAL  " })).toEqual({
-      question: "Define a WAL"
-    });
-    expect(() => parseEditNotePromptQuestionRequest({ question: "   " })).toThrow();
+  it("parses a rich question document and rejects a malformed one and extra keys (#687)", () => {
+    const questionDoc = createTextDocument("Define a WAL");
+    expect(parseEditNotePromptQuestionRequest({ questionDoc })).toEqual({ questionDoc });
+    expect(() => parseEditNotePromptQuestionRequest({ questionDoc: { not: "a document" } })).toThrow();
+    expect(() => parseEditNotePromptQuestionRequest({ question: "Define a WAL" })).toThrow();
   });
 });
 

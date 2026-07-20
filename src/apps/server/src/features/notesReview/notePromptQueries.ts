@@ -1,5 +1,5 @@
 import { localDayBoundary, type TodayRoutineSummary } from "@whetstone/domain";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts, personalEntries, reviewCards } from "../../db/schema.js";
@@ -29,16 +29,15 @@ export async function getPromptRowForUser(
   return rows[0]?.prompt;
 }
 
-// Whether the given note already has a DIFFERENT `current_note` prompt (#686). At most one `current_note`
-// prompt may exist per note — the partial unique index `memory_prompts_one_current_note_per_note_uq`
-// enforces it — so converting a second prompt's grading target to `current_note` must be rejected as a
-// deterministic conflict BEFORE it reaches that index (otherwise it surfaces as an unhandled 500). The
-// prompt being edited is excluded so re-declaring an already-`current_note` prompt is a no-op, not a
-// self-conflict. Returns the conflicting prompt's id, or undefined when the target is free.
-export async function findConflictingCurrentNotePromptId(
-  db: DbClient,
-  noteEntryId: string,
-  excludePromptId: string
+// The id of the note's existing authored prompt, if any (#687). At most ONE authored prompt — a
+// `current_note` or an `expected_response` — may exist per note; the partial unique index
+// `memory_prompts_one_authored_prompt_per_note_uq` enforces it. The first-card command reads this inside
+// its creating transaction (under the note's row lock) to reject a second authored prompt as a deterministic
+// `already_authored` BEFORE it reaches that index (otherwise it surfaces as an unhandled 500). Legacy
+// non-authored prompts (imported cardless questions) are ignored — they never occupy the invariant.
+export async function findAuthoredPromptId(
+  db: Pick<DbClient, "select">,
+  noteEntryId: string
 ): Promise<string | undefined> {
   const rows = await db
     .select({ entryId: memoryPrompts.entryId })
@@ -46,8 +45,7 @@ export async function findConflictingCurrentNotePromptId(
     .where(
       and(
         eq(memoryPrompts.noteEntryId, noteEntryId),
-        eq(memoryPrompts.revealKind, "current_note"),
-        ne(memoryPrompts.entryId, excludePromptId)
+        inArray(memoryPrompts.revealKind, ["current_note", "expected_response"])
       )
     )
     .limit(1);

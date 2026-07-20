@@ -1,12 +1,12 @@
 import type { NoteGradingTarget, NotePromptSettingsDto } from "@whetstone/contracts";
 import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
-import { createTextDocument } from "@whetstone/document";
+import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document";
 import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts } from "../../db/schema.js";
 import { resolveGradingColumns } from "./noteGradingColumns.js";
-import { getPromptRowForUser, findConflictingCurrentNotePromptId } from "./notePromptQueries.js";
+import { getPromptRowForUser } from "./notePromptQueries.js";
 import {
   applyResetToCardInTx,
   deleteReviewCard,
@@ -35,32 +35,48 @@ export type NotePromptSettingsMutationOutcome =
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "conflict" }>;
 
-// Edit one prompt's retrieval question (#660). Owner-scoped through the prompt's note facet, it writes ONLY
-// the cue (rich doc + plaintext) — never the reveal policy, the card, its FSRS state, its due date, its
-// requested retention, or its history. A `current_note` and a `legacy_custom` prompt edit their question
-// identically; the reveal is untouched. Returns the refreshed row (the new question, the unchanged card
-// state). `not_found` when the prompt is not the caller's.
+// The outcome of editing a prompt's retrieval question (#660, made rich in #687). `ok` returns the
+// refreshed settings row. `not_found` (404) is a prompt that is not the caller's. `invalid_question` (400)
+// is a Question document whose server-derived text is blank — the wire never carries plaintext, so blankness
+// is judged here, and a blank cue is rejected before any write.
+export type EditNotePromptQuestionOutcome =
+  | Readonly<{ status: "ok"; value: NotePromptSettingsDto }>
+  | Readonly<{ status: "not_found" }>
+  | Readonly<{ status: "invalid_question" }>;
+
+// Edit one prompt's retrieval question (#660, rich in #687). Owner-scoped through the prompt's note facet, it
+// writes ONLY the cue (rich doc + derived plaintext) — never the reveal policy, the card, its FSRS state, its
+// due date, its requested retention, or its history. A `current_note`, an `expected_response`, and a
+// `legacy_custom` prompt edit their question identically; the reveal is untouched. The Question text is
+// derived here, never trusted from the client, and a blank document is rejected as `invalid_question`.
+// Returns the refreshed row (the new question, the unchanged card state). `not_found` when the prompt is not
+// the caller's.
 export async function editNotePromptQuestion(
   dependencies: NoteReviewSettingsDependencies,
   promptId: string,
   userId: string,
-  question: string
-): Promise<NotePromptSettingsMutationOutcome> {
+  questionDoc: unknown
+): Promise<EditNotePromptQuestionOutcome> {
   const prompt = await getPromptRowForUser(dependencies.db, promptId, userId);
   if (prompt === undefined) {
     return { status: "not_found" };
   }
 
-  const cueDoc = createTextDocument(question);
+  const cueDoc = questionDoc as DocumentNodeJSON;
+  const cueText = documentReadableText(cueDoc);
+  if (cueText.trim().length === 0) {
+    return { status: "invalid_question" };
+  }
+
   await dependencies.db
     .update(memoryPrompts)
-    .set({ cueDoc, cueText: question })
+    .set({ cueDoc, cueText })
     .where(eq(memoryPrompts.entryId, promptId));
 
   const card = await getReviewCardForUser(dependencies.db, promptId, userId);
   return {
     status: "ok",
-    value: projectPromptSettings({ ...prompt, cueDoc, cueText: question }, card, dependencies.now())
+    value: projectPromptSettings({ ...prompt, cueDoc, cueText }, card, dependencies.now())
   };
 }
 
@@ -194,17 +210,13 @@ export async function addNotePromptCard(
 // `not_found` (404) is a prompt that is not the caller's. `invalid_success_check` (400) is an
 // expected-response target whose Success check is blank once its text is derived server-side.
 // `legacy_read_only` (409) rejects any change through this boundary to a `legacy_custom` prompt — legacy
-// reveals are preserved, never converted (#657). `duplicate_current_note` (409) rejects converting a prompt
-// to `current_note` when the note already has a different `current_note` prompt — at most one may exist per
-// note (`memory_prompts_one_current_note_per_note_uq`), so the collision is reported deterministically
-// rather than surfacing as an unhandled index violation. `restart_requires_card` (409) rejects a `restart`
+// reveals are preserved, never converted (#657). `restart_requires_card` (409) rejects a `restart`
 // on a cardless prompt: a schedule reset needs a card, and this boundary never fabricates one.
 export type SetNoteGradingTargetOutcome =
   | Readonly<{ status: "ok"; value: NotePromptSettingsDto }>
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "invalid_success_check" }>
   | Readonly<{ status: "legacy_read_only" }>
-  | Readonly<{ status: "duplicate_current_note" }>
   | Readonly<{ status: "restart_requires_card" }>;
 
 // The persisted answer columns a grading target resolves to live in `noteGradingColumns.ts`, the single
@@ -215,11 +227,10 @@ export type SetNoteGradingTargetOutcome =
 // policy and, when `mode` is `restart`, reset the schedule through the shared Review boundary
 // (`applyResetToCardInTx`: one `reset` event, due now). `keep` writes only the policy and never touches the
 // card, due date, requested retention, or history. Owner-scoped through the prompt's note facet. A
-// `legacy_custom` prompt is read-only here (`legacy_read_only`); converting to `current_note` when the note
-// already has another `current_note` prompt is a `duplicate_current_note` conflict (at most one per note); a
-// `restart` on a cardless prompt is a `restart_requires_card` conflict (this boundary never fabricates a
-// card). A blank Success check is `invalid_success_check`. Any rejection returns BEFORE the transaction, so
-// content and schedule/history are left unchanged. Returns the refreshed settings row.
+// `legacy_custom` prompt is read-only here (`legacy_read_only`); a `restart` on a cardless prompt is a
+// `restart_requires_card` conflict (this boundary never fabricates a card). A blank Success check is
+// `invalid_success_check`. Any rejection returns BEFORE the transaction, so content and schedule/history are
+// left unchanged. Returns the refreshed settings row.
 export async function setNoteGradingTarget(
   dependencies: NoteReviewSettingsDependencies,
   promptId: string,
@@ -237,19 +248,6 @@ export async function setNoteGradingTarget(
   const resolved = resolveGradingColumns(request.target);
   if (resolved.status === "invalid_success_check") {
     return { status: "invalid_success_check" };
-  }
-
-  // At most one `current_note` prompt per note. Reject a collision with a sibling deterministically here,
-  // before the transaction, rather than letting the update trip the partial unique index as a 500 (#686).
-  if (resolved.revealKind === "current_note") {
-    const conflictId = await findConflictingCurrentNotePromptId(
-      dependencies.db,
-      prompt.noteEntryId,
-      promptId
-    );
-    if (conflictId !== undefined) {
-      return { status: "duplicate_current_note" };
-    }
   }
 
   const card = await getReviewCardForUser(dependencies.db, promptId, userId);

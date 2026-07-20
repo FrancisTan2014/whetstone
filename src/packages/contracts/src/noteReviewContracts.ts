@@ -113,27 +113,6 @@ export function parseNoteReviewRatingResultDto(value: unknown): NoteReviewRating
   return noteReviewRatingResultDtoSchema.parse(value);
 }
 
-// The objective review state the note sheet shows for a saved note (#658), discriminated by `status` so
-// the sheet renders on the persisted fact, never inferring from loose fields. `not_enrolled` offers the
-// "Add to review" control; `due` is enrolled and due now (offering "Review"); `scheduled` carries the
-// next review instant to localize as "Next review · <date>"; `paused` is enrolled but withheld from the
-// due scan. Only `scheduled` carries a date — a due card shows "Due now" and a paused card shows "Paused".
-// `not_enrolled` may carry a `question`: an imported note (#661) already owns a confirmed, cardless
-// current-note prompt, so its stored question is surfaced for the UI to show read-only and reuse on
-// "Add to review" instead of asking the learner to retype it. It is absent when no prompt exists yet.
-export const noteReviewEnrollmentStatusDtoSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("not_enrolled"), question: z.string().min(1).optional() }).strict(),
-  z.object({ status: z.literal("due") }).strict(),
-  z.object({ status: z.literal("scheduled"), nextReviewAt: z.string().datetime() }).strict(),
-  z.object({ status: z.literal("paused") }).strict()
-]);
-
-export type NoteReviewEnrollmentStatusDto = z.infer<typeof noteReviewEnrollmentStatusDtoSchema>;
-
-export function parseNoteReviewEnrollmentStatusDto(value: unknown): NoteReviewEnrollmentStatusDto {
-  return noteReviewEnrollmentStatusDtoSchema.parse(value);
-}
-
 // The single Review projection each row of the Notes home shows (#659), rolled up ONCE across all of a
 // note's prompt/cards with a fixed precedence so a note with several legacy prompts still shows one calm
 // state: any active due card → `due` with the due `count`; otherwise the earliest active future card →
@@ -151,20 +130,6 @@ export type NoteReviewSummaryDto = z.infer<typeof noteReviewSummaryDtoSchema>;
 
 export function parseNoteReviewSummaryDto(value: unknown): NoteReviewSummaryDto {
   return noteReviewSummaryDtoSchema.parse(value);
-}
-
-// Adding a saved note to Review from the Notes home (#659). An anchored note reuses its exact source as the
-// question server-side and carries no body; a standalone note has no source, so the learner supplies the
-// question ("What should Whetstone ask you?") — a required, non-blank string. The field is optional on the
-// wire because the anchored path omits it; the server rejects a standalone enrollment that carries none.
-export const enrollNoteRequestSchema = z
-  .object({ question: z.string().trim().min(1).optional() })
-  .strict();
-
-export type EnrollNoteRequest = z.infer<typeof enrollNoteRequestSchema>;
-
-export function parseEnrollNoteRequest(value: unknown): EnrollNoteRequest {
-  return enrollNoteRequestSchema.parse(value);
 }
 
 // The projected Review state of a single prompt's card, as the Notes-owned Review settings list shows it
@@ -266,11 +231,13 @@ export const reviewHistoryPageDtoSchema = z
 
 export type ReviewHistoryPageDto = z.infer<typeof reviewHistoryPageDtoSchema>;
 
-// Editing a prompt's retrieval question from Review settings (#660): the new question as a required,
-// non-blank string. Editing writes ONLY the cue — it never touches the prompt's reveal policy, its card, its
-// FSRS state, its due date, its requested retention, or its history.
+// Editing a prompt's retrieval question from Card detail (#660, #687): the new question as a rich document,
+// authored with the same retrieval-contract editor as first-card authoring. Its readable text is derived
+// server-side (never trusted from the client), which is also the non-blank gate — a question that renders to
+// only whitespace is rejected there, not here. Editing writes ONLY the cue — it never touches the prompt's
+// reveal policy, its card, its FSRS state, its due date, its requested retention, or its history.
 export const editNotePromptQuestionRequestSchema = z
-  .object({ question: z.string().trim().min(1) })
+  .object({ questionDoc: noteReviewDocumentSchema })
   .strict();
 
 export type EditNotePromptQuestionRequest = z.infer<typeof editNotePromptQuestionRequestSchema>;
@@ -332,6 +299,30 @@ export const directCardResultDtoSchema = z
   .strict();
 
 export type DirectCardResultDto = z.infer<typeof directCardResultDtoSchema>;
+
+// Author the FIRST rich review card for an already-saved, owned note from its Cards list (#687), retry-safe
+// via the client's stable `submissionId`. Unlike #689's createDirectCard — which mints a NEW standalone note
+// to review — this applies a retrieval contract to an EXISTING owned note: the note itself is the reviewed
+// material, so there is no `answerDoc` and the note is never copied or rewritten. `noteEntryId` is the owned
+// note; `questionDoc` is the rich retrieval prompt (its readable text derived server-side, where the
+// non-blank gate is applied); `target` is the discriminated grading policy (grade against the live note, or
+// against an authored Success check). At most one authored prompt may exist per note, so a genuine second
+// submission is a named conflict, never a database error. The result reuses `directCardResultDtoSchema` —
+// the created prompt/card ids plus the seeded FSRS state — with `noteId` being the existing owned note.
+export const authorNoteCardRequestSchema = z
+  .object({
+    submissionId: z.string().trim().min(1),
+    noteEntryId: z.string().trim().min(1),
+    questionDoc: noteReviewDocumentSchema,
+    target: noteGradingTargetSchema
+  })
+  .strict();
+
+export type AuthorNoteCardRequest = z.infer<typeof authorNoteCardRequestSchema>;
+
+export function parseAuthorNoteCardRequest(value: unknown): AuthorNoteCardRequest {
+  return authorNoteCardRequestSchema.parse(value);
+}
 
 export function parseCreateDirectCardRequest(value: unknown): CreateDirectCardRequest {
   return createDirectCardRequestSchema.parse(value);
