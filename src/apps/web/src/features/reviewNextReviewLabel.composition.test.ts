@@ -9,6 +9,11 @@ import { describe, expect, it } from "vitest";
 // `useLearnerTimeZone`. This structural guard locks that in place: no surface may reintroduce a
 // feature-local date-only formatter or a `dueAt.slice(0, 10)` truncation that hides a same-day short-term
 // interval behind a repeated calendar date — the exact defect this issue fixes.
+//
+// #700 consolidated the notes review surfaces (the old NoteReviewSettings / OwnedNoteReviewSection /
+// NoteReviewSection) into the shared Note/Cards workspace: the next-due phrase now renders through the
+// pure `cardState.ts` projection (a second indirection alongside the notes-list summary helper), and the
+// learner zone is resolved by CardsView and handed down to CardDetail as a prop.
 
 function read(relative: string): string {
   return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
@@ -22,40 +27,45 @@ function code(relative: string): string {
     .replace(/\/\/[^\n]*/gu, "");
 }
 
-// Surfaces that render a next-review calendar phrase. Each must route through the shared util (directly, or
-// via the notes summary helper) and carry the learner-zone hook, never a private formatter.
-const labelSurfaces = [
+// The pure projections that own the shared next-review util call directly. They are plain modules (not
+// components), so they carry no zone hook — the caller resolves the learner zone and passes it in.
+const labelHelpers = ["./notes/noteReviewSummaryLabel.ts", "./notes/cardState.ts"] as const;
+
+// Components that render a next-review calendar phrase in the learner's persisted zone. Each resolves the
+// zone through `useLearnerTimeZone` and routes the projection through a shared owner — the domain util
+// directly, or one of the pure helpers (the notes-list summary, or the card-state label).
+const zoneAwareSurfaces = [
   "./notesReview/NotesReviewPage.tsx",
   "./recitation/RecitationReviewPage.tsx",
   "./recitation/RecitePage.tsx",
-  "./notes/NoteReviewSettings.tsx",
-  "./notes/OwnedNoteReviewSection.tsx",
-  "./notes/NoteReviewSection.tsx",
-  "./today/TodayPage.tsx"
+  "./today/TodayPage.tsx",
+  "./notes/CardsView.tsx"
 ] as const;
 
-// The notes list renders its per-note summary through this pure helper, which is the one that must call the
-// shared util on the list's behalf.
-const summaryHelper = "./notes/noteReviewSummaryLabel.ts";
+// CardDetail also renders the card-state phrase, but receives the learner zone from CardsView as a prop
+// rather than resolving it itself, so it is guarded against private formatters without the hook assertion.
+const propZoneSurface = "./notes/CardDetail.tsx";
 
 describe("one shared next-review label across every review surface (#676)", () => {
-  for (const surface of labelSurfaces) {
+  for (const surface of zoneAwareSurfaces) {
     it(`${surface} renders the shared util, not a private date formatter`, () => {
       const source = code(surface);
-      expect(source).toContain("formatNextReviewLabel");
-      expect(source).toMatch(/from "@whetstone\/domain"/u);
+      // Routes through a shared owner: the domain util directly, or a pure projection helper.
+      expect(source).toMatch(/formatNextReviewLabel|cardStateLabel|noteReviewSummaryLabel/u);
       expect(source).toContain("useLearnerTimeZone");
     });
   }
 
-  it("the notes summary helper is the single indirection that calls the shared util", () => {
-    const source = code(summaryHelper);
-    expect(source).toContain("formatNextReviewLabel");
-    expect(source).toMatch(/from "@whetstone\/domain"/u);
-  });
+  for (const helper of labelHelpers) {
+    it(`${helper} is a pure indirection that calls the shared util`, () => {
+      const source = code(helper);
+      expect(source).toContain("formatNextReviewLabel");
+      expect(source).toMatch(/from "@whetstone\/domain"/u);
+    });
+  }
 
   it("the short-term prefix is owned by the domain util, not restated on any surface", () => {
-    for (const surface of labelSurfaces) {
+    for (const surface of [...zoneAwareSurfaces, ...labelHelpers, propZoneSurface]) {
       // Surfaces pass a `shortTerm` flag; the literal "Short-term review" text lives only in the util.
       expect(code(surface)).not.toContain("Short-term review");
     }
@@ -63,7 +73,7 @@ describe("one shared next-review label across every review surface (#676)", () =
 });
 
 describe("no surface reintroduces a date-only formatter or truncation (#676)", () => {
-  const guardedSurfaces = [...labelSurfaces, summaryHelper] as const;
+  const guardedSurfaces = [...zoneAwareSurfaces, ...labelHelpers, propZoneSurface] as const;
 
   for (const surface of guardedSurfaces) {
     it(`${surface} never truncates the instant with slice(0, 10)`, () => {
