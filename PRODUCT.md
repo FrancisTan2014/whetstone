@@ -203,54 +203,42 @@ competing content stores.
   optional source anchor/provenance. Reader notes, manually added words/phrases, imported answers, and
   free-form thoughts use this same model.
 - A note contains no copied answer, review lifecycle, or FSRS fields.
-- A feature-owned review prompt references a note and owns only the retrieval question. One note may
-  have zero, one, or several prompts; the v0 UI creates at most one active prompt while preserving
-  legacy multiple prompts.
-- **Add to review** uses the exact selected source text automatically for a Reader note. For a
-  standalone note it asks **What should Whetstone ask you?** The UI never calls this question a
-  "cue."
-- A new prompt reveals the current canonical note body; it never copies that body into prompt answer
-  fields. Editing the note changes future reveals without resetting the prompt, card, or history.
-  Legacy prompt-specific reveals remain readable and reviewable without silent conversion.
-- Confirmation creates one active shared review card at requested retention **0.90**, due immediately.
-  It is idempotent and is not itself a review event.
+- One user-facing card combines a rich **Question** prompt, the referenced note's current rich body as
+  its canonical **Answer**, and one shared review card that owns only FSRS state and history. These
+  remain separate durable concerns, not a monolithic card-content row.
+- Notes presents **New card** as its primary action; **New note** and **Import** remain visible secondary
+  actions. New card opens one composition-sized surface with stacked rich Question and Answer editors
+  and the single prompt **Ask for one clear response.**
+- Saving a new card atomically creates one manual note from Answer, one current-note prompt from
+  Question, and one active shared review card at requested retention **0.90**, due immediately. A
+  retry reuses that same result; a failed or repeated request never leaves a half-card or duplicate.
+- Every saved note exposes **Cards**. Creating another card adds another rich Question against the same
+  canonical Answer, never another answer copy. A Reader note starts its first Question from the exact
+  selected source text, but the learner may edit it before creating the card.
+- Each Question has its own prompt, review card, schedule, and history. Recognition and production
+  questions may reference one Answer while being learned and scheduled independently; Whetstone never
+  auto-reverses them or shares one direction's performance with another.
+- Imported cardless prompts keep their rich Questions and enter Review only when the learner explicitly
+  adds their existing card. Legacy prompt-specific reveals remain readable and reviewable without
+  silent conversion.
+- Editing a Question changes only that prompt's rich cue and server-derived readable text. Editing the
+  Answer changes only the canonical note body. Neither edit resets any schedule or history.
 - Review shows one question, keeps the note hidden until reveal, then shows the current note body and
   accepts Again, Hard, Good, or Easy. A rating appends one event, reschedules only that card, and shows
   the next scheduled local time. A short-term interval due on the current local day is labeled
   **Later today** with its exact time rather than repeating today's date.
-- The learner may stop after any item. Review settings own question editing, pause/resume, restart,
-  removal, due state, and auditable history. Removing review never deletes the note.
+- The learner may stop after any item. A note's Cards section owns question editing, pause/resume,
+  restart, removal, due state, and auditable history. Removing review never deletes the note.
 - Notes lists anchored and standalone notes together, supports search and editing, and owns paste-list
   import. Import creates standalone notes plus referencing prompts, never a second content row.
 - Old `/memory` and `/recall` links redirect to Notes and Notes-owned Review without losing due state.
+- Whetstone does not generate, grade, template, type, or police cards in v0. It provides a reliable
+  authoring and scheduling tool; understanding the material and choosing a precise retrieval target
+  remain the learner's work. A card's performance is evidence for that Question only, never proof that
+  the Answer is internalized or available in unprompted speech.
 
-Reader capture always creates and saves the note first, with exact selection and provenance. It never
-silently enrolls review.
-
-### Productive expression review (post-gate)
-
-After the base daily loop passes its manual gate, expression practice extends Notes and Review rather
-than turning Recitation into a language-learning system:
-
-- An expression note exposes one canonical **focus expression**. An anchored note resolves it from
-  the exact selected-source snapshot; a standalone note stores one learner-confirmed expression
-  separately from its rich explanatory body. Review targets reference that focus and never copy it.
-- Form → meaning and communicative intent → expression are explicit, opt-in prompt kinds with
-  independent shared cards at requested retention **0.90** under the same note. The prompt model
-  permits one current target of each kind and names the focus-expression reveal explicitly; it never
-  repurposes the preserved `legacy_custom` shape.
-- A productive target starts from a learner-confirmed purpose or situation, keeps the expression
-  hidden, asks the learner to answer aloud, then reveals the focus expression with its note and
-  source context.
-- A small set of confirmed practice cues rotates under one target and one schedule; an optional cue
-  withheld from normal rotation can provide a later transfer probe. Both remain controlled evidence:
-  recalling one reverse prompt, or even a reserved prompt, does not prove spontaneous access.
-- Again/Hard/Good/Easy rate whether this enrolled expression surfaced: absent, hint-assisted or
-  effortful, unaided, or immediate and natural. Producing a valid alternative is communicatively
-  correct but does not count as retrieving this target. Speech transcription and response time may
-  provide evidence but never grade or change the rating.
-- Whetstone does not label an expression **internalized** from Review performance alone. Unprompted
-  use in open speech is separate evidence, not something a cued card can certify.
+Reader capture always creates and saves the note first, with exact selection and provenance. Creating
+a card from it remains an explicit learner action.
 
 ## Library, ingestion, and Reader
 
@@ -549,7 +537,8 @@ Future intelligence earns a product surface only after:
 The pivot is usable only when all are true:
 
 - With model configuration absent, a learner can ingest/read, annotate, review notes, complete a
-  Recitation review, type/edit a diary entry, write, search, and clear Today.
+  Recitation review, create rich Question/Answer cards, type/edit a diary entry, write, search, and
+  clear Today.
 - An already-known Work can enter maintenance in one action, remain due if the learner leaves before
   rating, and later resurface from its whole-Work FSRS schedule.
 - Today includes every unpaused due Recitation Work and every due note prompt; neither recency nor a
@@ -579,10 +568,11 @@ The pivot is usable only when all are true:
 3. Replace the Recitation curriculum with direct whole-Work maintenance, truthful cross-Work due
    aggregation, and the direct reveal/rate session.
 4. Restore direct annotation editing and reliable rich-editor surfaces, then consolidate Notes and
-   Review without resetting schedules or history.
+   Review and add direct rich card authoring without resetting schedules or history.
 5. Remove manual speech-language configuration and reduce Diary to capture plus its paginated
    timeline.
-6. Recompose navigation around Today, Library, Recite, Notes, and Diary, with Search as a utility.
+6. Recompose navigation around Today, Library, Write, Recite, Notes, and Diary, with Search as a
+   utility.
 7. Manually click through the integrated product, then use that same runtime build normally for seven
    consecutive days before adding scope or extracting shared routine infrastructure.
 
@@ -615,9 +605,8 @@ The pivot is usable only when all are true:
 - **Review card:** scheduler policy/state for one review target; it contains no learning material.
 - **Review event:** one append-only learner rating or explicit schedule reset for a review card.
 - **Note review prompt:** one learner-confirmed question that references a canonical note.
-- **Productive expression target:** one feature-owned retrieval task that references a note's focus
-  expression, starts from a communicative purpose or situation, and asks the learner to say the
-  expression before reveal.
+- **User-facing card:** one note review prompt, its referenced note as the current answer, and that
+  prompt's independent review card.
 - **Recitation plan:** one active/paused maintenance enrollment linked to a canonical Work.
 - **Recitation target:** the whole-Work retrieval task owned by a Recitation plan.
 - **Due:** an action whose deterministic schedule has arrived.
