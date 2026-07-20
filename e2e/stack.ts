@@ -150,6 +150,7 @@ async function seedMarkdown(serverPort: number): Promise<WorkRef> {
     body: JSON.stringify({
       author: { mode: "new", name: "Smoke Author" },
       language: "en",
+      origin: "manual",
       title: "Smoke Markdown",
       workType: "essay"
     }),

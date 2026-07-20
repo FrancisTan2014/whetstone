@@ -64,7 +64,7 @@ async function createHeadingWork(
   markdown: string
 ): Promise<{ entryId: string; title: string }> {
   const created = await request.post(`${baseURL}api/works`, {
-    data: { author: { mode: "new", name: `${title} Author` }, language: "en", title, workType: "essay" }
+    data: { author: { mode: "new", name: `${title} Author` }, language: "en", origin: "manual", title, workType: "essay" }
   });
   expect(created.status(), `create → ${await created.text()}`).toBe(201);
   const { work } = (await created.json()) as { work: { entryId: string; title: string } };

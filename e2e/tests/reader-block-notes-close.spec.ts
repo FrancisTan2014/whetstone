@@ -33,6 +33,7 @@ test("mobile: the annotations chooser Close button is a >=44px hit target (#413)
     data: {
       author: { mode: "new", name: "Touch Target Author" },
       language: "en",
+      origin: "manual",
       title: "Touch Target Work",
       workType: "essay"
     }
