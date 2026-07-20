@@ -98,11 +98,9 @@ export function NoteWorkspace({
       return;
     }
     if (next === "cards") {
-      if (persisted === null) {
-        return;
-      }
       if (dirty) {
-        // Refuse the switch: cards are never managed against an unsaved note body.
+        // Refuse the switch: cards are never managed against an unsaved note body. (The Cards tab only
+        // exists once the note is persisted, so `next === "cards"` already implies a persisted note.)
         setGateMessage("Save note changes before managing cards.");
         saveRef.current?.focus();
         return;
@@ -197,13 +195,11 @@ export function NoteWorkspace({
             <span aria-hidden="true">⋯</span>
           </Button>
         </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content align="end" className={cx.overflowContent} sideOffset={4}>
-            <DropdownMenu.Item className={cx.overflowDestructiveItem} onSelect={openDelete}>
-              Delete note
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" className={cx.overflowContent} sideOffset={4}>
+          <DropdownMenu.Item className={cx.overflowDestructiveItem} onSelect={openDelete}>
+            Delete note
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
       </DropdownMenu.Root>
     );
 

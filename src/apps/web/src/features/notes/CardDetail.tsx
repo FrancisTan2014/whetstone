@@ -244,22 +244,20 @@ export function CardDetail({
                 <span aria-hidden="true">⋯</span>
               </Button>
             </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content align="end" className={cx.overflowContent} sideOffset={4}>
-                <DropdownMenu.Item
-                  className={cx.overflowItem}
-                  onSelect={() => setConfirming("restart")}
-                >
-                  Restart schedule
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  className={cx.overflowDestructiveItem}
-                  onSelect={() => setConfirming("remove")}
-                >
-                  Remove from review
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
+            <DropdownMenu.Content align="end" className={cx.overflowContent} sideOffset={4}>
+              <DropdownMenu.Item
+                className={cx.overflowItem}
+                onSelect={() => setConfirming("restart")}
+              >
+                Restart schedule
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className={cx.overflowDestructiveItem}
+                onSelect={() => setConfirming("remove")}
+              >
+                Remove from review
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
           </DropdownMenu.Root>
         ) : null}
       </div>
