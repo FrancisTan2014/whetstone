@@ -36,8 +36,9 @@ const failureMessages: Readonly<Record<CreateDirectCardErrorKind, string>> = {
 
 // The direct-card composer (#690): the primary Notes-home action opens this wide sheet to mint one recurring
 // review card straight from an authored Question/Answer pair — no saved note required first. It owns every
-// draft (Answer, Question, Success check) plus the stable `submissionId`, minted once when the sheet opens
-// and retained across recoverable failures so a retry is idempotent and never double-creates. The Answer is
+// draft (Answer, Question, Success check) plus a `submissionId`, minted when the sheet opens and kept across
+// a lost-response (`network`) retry so it is idempotent and never double-creates, but refreshed after a
+// `conflict`/`gone` outcome whose server receipt is already burned so the edited card is a new one. The Answer is
 // the workspace the reusable `RetrievalContractEditor` frames; the target-first order (Answer, then
 // Question, then the optional Success check) matches the review it produces. A blank required field blocks
 // creation inline; a failed create keeps everything on screen; a pending create prevents dismissal and a
@@ -46,9 +47,11 @@ export function DirectCardComposer({
   onClose,
   onCreated
 }: DirectCardComposerProps): React.JSX.Element {
-  // The stable retry identity: minted once for this composer instance so every attempt — including retries
-  // after a recoverable failure — carries the same id and the server replays one creation, never two.
-  const [submissionId] = useState(() => crypto.randomUUID());
+  // The retry identity: minted when the sheet opens and kept across a `network` failure so a lost-response
+  // retry replays one creation, never two. A `conflict` (the server recorded a receipt for this id with
+  // different wording) or `gone` (the receipt was tombstoned) burns the id — reusing it would loop forever
+  // against the same rejection — so those outcomes mint a fresh id for the next attempt (see `create`).
+  const [submissionId, setSubmissionId] = useState(() => crypto.randomUUID());
   const [answerDoc, setAnswerDoc] = useState<DocumentNodeJSON>(() => createEmptyDocument());
   const [questionDoc, setQuestionDoc] = useState<DocumentNodeJSON>(() => createEmptyDocument());
   const [successCheck, setSuccessCheck] = useState<SuccessCheckState>({ open: false });
@@ -92,8 +95,14 @@ export function DirectCardComposer({
         target: gradingTargetFor(successCheck)
       });
     } catch (error) {
-      // Keep every draft and the submission id; only surface why so the learner can retry as-is or edit.
-      setFailure(error instanceof CreateDirectCardError ? error.kind : "network");
+      // Keep every draft on screen; only surface why so the learner can retry as-is or edit. A `network`
+      // failure is retry-safe with the same id; a `conflict`/`gone` receipt is already burned server-side, so
+      // mint a fresh id or the suggested edit-and-retry would loop forever against the same rejected receipt.
+      const kind = error instanceof CreateDirectCardError ? error.kind : "network";
+      if (kind === "conflict" || kind === "gone") {
+        setSubmissionId(crypto.randomUUID());
+      }
+      setFailure(kind);
       return;
     } finally {
       setPending(false);

@@ -190,6 +190,36 @@ describe("DirectCardComposer", () => {
     expect(second).toBe(first);
   });
 
+  it("mints a fresh submission id after a conflict so the edited card is not trapped", async () => {
+    const user = userEvent.setup();
+    // The server burned the first id (a receipt with different wording already exists), then accepts the
+    // genuinely new card. `gone` behaves identically; `conflict` stands in for both burned-receipt paths.
+    vi.mocked(createDirectCard)
+      .mockRejectedValueOnce(new CreateDirectCardError("conflict"))
+      .mockResolvedValueOnce(result);
+    let minted = 0;
+    vi.mocked(crypto.randomUUID).mockImplementation(
+      () => `0000000${minted++}-0000-4000-8000-000000000000` as ReturnType<typeof crypto.randomUUID>
+    );
+    const { onCreated } = renderComposer();
+
+    await user.type(screen.getByLabelText("Answer"), "Paris.");
+    await user.type(screen.getByLabelText("Question"), "Capital?");
+    await user.click(screen.getByRole("button", { name: "Create card" }));
+    await waitFor(() =>
+      expect(screen.getByText(/This card was already started with different wording/)).toBeTruthy()
+    );
+
+    // The learner edits and retries exactly as the copy tells them to; the burned id must not be reused.
+    await user.type(screen.getByLabelText("Question"), " (of France)");
+    await user.click(screen.getByRole("button", { name: "Create card" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result));
+
+    const first = vi.mocked(createDirectCard).mock.calls[0]![0].submissionId;
+    const second = vi.mocked(createDirectCard).mock.calls[1]![0].submissionId;
+    expect(second).not.toBe(first);
+  });
+
   it("closes when the learner cancels", async () => {
     const user = userEvent.setup();
     const { onClose } = renderComposer();
