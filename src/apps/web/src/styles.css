@@ -835,6 +835,166 @@ code {
   margin-top: 0.5rem;
 }
 
+/* The shared Note/Cards workspace (#700). Layout and the mode tablist are styled here; most inner controls
+   reuse Tailwind utilities and the shared dropdown surface, so this stays structural. */
+.noteWorkspace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.noteWorkspaceTabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.noteWorkspaceTab {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.noteWorkspaceTab[aria-selected="true"] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.noteWorkspacePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Read-only source provenance above the note body: the exact selection collapses to three lines behind a
+   show/hide control so a long selection never pushes the editor off-screen. */
+.noteWorkspaceSource {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--color-bg);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.noteWorkspaceSourceText {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.noteWorkspaceSourceText--clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.noteWorkspaceSourceActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.noteWorkspaceActions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.noteWorkspaceDanger {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.noteWorkspaceAnnounce {
+  margin: 0;
+  min-height: 1.25rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* The Cards hierarchy (list -> detail -> history) inside the workspace. */
+.noteCardsList,
+.noteCardsHistory,
+.noteCardDetailScreen,
+.noteCardDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.noteCardsToolbar:empty {
+  display: none;
+}
+
+.noteCardsRows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.noteCardsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.noteCardsRowBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.noteCardsRowQuestion {
+  font-weight: 600;
+}
+
+.noteCardsRowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.noteCardsRowChevron {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.noteCardsEmpty {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.noteCardsHistoryHeading {
+  margin: 0;
+  font-size: 1rem;
+}
+
+
 /*
  * The inert base for an in-content link: a non-navigating source link — a Markdown/mdast fallback
  * link (#74), or an external/cross-work target — keeps the surrounding prose styling so a click

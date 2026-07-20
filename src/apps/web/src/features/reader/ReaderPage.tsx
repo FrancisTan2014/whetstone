@@ -10,10 +10,14 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { apiUrl } from "../../shared/runtime";
-import { NoteEditor } from "../notes/NoteEditor";
+import { NoteWorkspace } from "../notes/NoteWorkspace";
+import {
+  type NoteWorkspaceHandle,
+  type NoteWorkspaceOps
+} from "../notes/noteWorkspaceModel";
 import { NoteList } from "../notes/NoteList";
 import { draftToAnchor, type NoteDraft } from "../notes/noteCapture";
-import { createMark, deleteNote, fetchNotes } from "../notes/notesApi";
+import { createMark, createNote, deleteNote, fetchNotes, updateNote } from "../notes/notesApi";
 import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
@@ -1040,11 +1044,20 @@ export function ReaderPage({
     setPanel({ kind: "edit", note, workEntryId });
   }, []);
 
-  // On a successful save the rebuilt highlight's born underline animation is the only confirmation —
-  // no success toast (#300). A save failure still surfaces an error toast from the editor.
-  async function onSavedNote(workEntryId: string, note: AnchoredNoteDto): Promise<void> {
+  // On a successful save the rebuilt highlight's born underline animation is the only confirmation — no
+  // success toast (#300). The workspace stays open (it owns the create→edit transition and its Cards tab),
+  // so — unlike the old editor — this only lights the note's block and refreshes the highlights behind the
+  // Sheet; it never closes the panel. A save failure still surfaces its error inside the workspace.
+  async function onSavedNote(workEntryId: string, blockEntryId: string): Promise<void> {
+    setBornBlockEntryId(blockEntryId);
+    await refreshNotes(workEntryId);
+  }
+
+  // The workspace's own overflow Delete already ran the delete cascade through its injected op; this only
+  // reconciles the Reader: close the panel, confirm, and refresh the now-missing highlight.
+  async function onWorkspaceDeleted(workEntryId: string): Promise<void> {
     setPanel(undefined);
-    setBornBlockEntryId(note.blockEntryId);
+    toast.success("Note deleted.");
     await refreshNotes(workEntryId);
   }
 
@@ -1063,8 +1076,6 @@ export function ReaderPage({
 
   const handleDelete = (workEntryId: string, note: AnchoredNoteDto): void =>
     void onDeleteNote(workEntryId, note);
-  const handleSaved = (workEntryId: string, note: AnchoredNoteDto): void =>
-    void onSavedNote(workEntryId, note);
 
   // Re-apply the highlights when the rendered blocks change, not only when the notes do: the active
   // unit's block ids (a unit switch) and the briefly-remounted born block both change this key, so a
@@ -1198,7 +1209,8 @@ export function ReaderPage({
         onDeleteNote: handleDelete,
         onEditNote,
         onJumpToBlock: (note) => jumpToBlock(note.blockEntryId),
-        onSavedNote: handleSaved
+        onSavedNote: (workEntryId, blockEntryId) => void onSavedNote(workEntryId, blockEntryId),
+        onWorkspaceDeleted: (workEntryId) => void onWorkspaceDeleted(workEntryId)
       })}
     </section>
   );
@@ -1666,8 +1678,54 @@ type PanelHandlers = Readonly<{
   onDeleteNote: (workEntryId: string, note: AnchoredNoteDto) => void;
   onEditNote: (workEntryId: string, note: AnchoredNoteDto) => void;
   onJumpToBlock: (note: AnchoredNoteDto) => void;
-  onSavedNote: (workEntryId: string, note: AnchoredNoteDto) => void;
+  // Fired after each save with the note's anchored block, so the Reader lights the born underline and
+  // refreshes highlights without closing the workspace (which owns its create→edit transition and Cards).
+  onSavedNote: (workEntryId: string, blockEntryId: string) => void;
+  // Fired after the workspace's own Delete ran the cascade, so the Reader closes the panel and refreshes.
+  onWorkspaceDeleted: (workEntryId: string) => void;
 }>;
+
+// Build the origin-agnostic workspace handle from a Reader note, which is always anchored: its source
+// carries the exact selection, the anchored block, and the owning work, so "Open in Reader" resolves and
+// Cards enrollment can reuse the source. The body is always present (a Mark never opens the workspace).
+function readerNoteHandle(note: AnchoredNoteDto, workEntryId: string): NoteWorkspaceHandle {
+  return {
+    anchored: true,
+    bodyDoc: note.bodyDoc as DocumentNodeJSON,
+    entryId: note.entryId,
+    source: {
+      blockEntryId: note.blockEntryId,
+      snapshot: note.anchor.selectedTextSnapshot,
+      workEntryId
+    }
+  };
+}
+
+// The work-scoped persistence for a NEW capture: the first save (no persisted note yet) creates the note
+// at the draft's anchor; every later save updates it in place, so a fresh capture can be re-saved and then
+// managed as an existing note without closing. Delete runs the work-scoped cascade.
+function readerCreateOps(workEntryId: string, draft: NoteDraft): NoteWorkspaceOps {
+  return {
+    remove: (entryId) => deleteNote(workEntryId, entryId),
+    save: async (bodyDoc, current) =>
+      current === null
+        ? readerNoteHandle(
+            await createNote(workEntryId, { anchor: draftToAnchor(draft), bodyDoc }),
+            workEntryId
+          )
+        : readerNoteHandle(await updateNote(workEntryId, current.entryId, { bodyDoc }), workEntryId)
+  };
+}
+
+// The work-scoped persistence for an EXISTING note: save always updates the known note in place, and delete
+// runs the work-scoped cascade.
+function readerEditOps(workEntryId: string, noteEntryId: string): NoteWorkspaceOps {
+  return {
+    remove: (entryId) => deleteNote(workEntryId, entryId),
+    save: async (bodyDoc) =>
+      readerNoteHandle(await updateNote(workEntryId, noteEntryId, { bodyDoc }), workEntryId)
+  };
+}
 
 function renderPanel(
   panel: NotePanel | undefined,
@@ -1698,21 +1756,38 @@ function renderPanel(
     );
   }
 
+  // The anchored block a save lights: a create panel captures at its draft's block, an edit panel at the
+  // existing note's block. Known here (both non-null), so the born underline never depends on the handle.
+  const blockEntryId =
+    panel.kind === "create" ? panel.draft.blockEntryId : panel.note.blockEntryId;
+
   return (
-    <NoteEditor
+    <NoteWorkspace
       key={
         panel.kind === "create"
           ? `create-${panel.draft.blockEntryId}`
           : `edit-${panel.note.entryId}`
       }
       onClose={handlers.onClose}
-      onSaved={(note) => handlers.onSavedNote(panel.workEntryId, note)}
+      onDeleted={() => handlers.onWorkspaceDeleted(panel.workEntryId)}
+      onSaved={() => handlers.onSavedNote(panel.workEntryId, blockEntryId)}
+      ops={
+        panel.kind === "create"
+          ? readerCreateOps(panel.workEntryId, panel.draft)
+          : readerEditOps(panel.workEntryId, panel.note.entryId)
+      }
       target={
         panel.kind === "create"
-          ? { draft: panel.draft, kind: "create" }
-          : { kind: "edit", note: panel.note }
+          ? {
+              kind: "create",
+              source: {
+                blockEntryId: panel.draft.blockEntryId,
+                snapshot: panel.draft.selectedText,
+                workEntryId: panel.workEntryId
+              }
+            }
+          : { kind: "edit", note: readerNoteHandle(panel.note, panel.workEntryId) }
       }
-      workEntryId={panel.workEntryId}
     />
   );
 }
