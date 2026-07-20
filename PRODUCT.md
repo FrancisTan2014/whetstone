@@ -59,9 +59,10 @@ The usable personal-learning cycle contains:
 - **Library and ingestion:** create or upload Works (`.epub`, `.pdf`, `.md`) and retain the source for
   provenance.
 - **Reader and Notes:** read one unit at a time; select source text; look it up; save, revisit, edit,
-  and delete rich notes with optional source anchors.
-- **Notes and Review:** keep anchored and standalone notes in one surface; deliberately add a
-  retrieval question to a note; review the current note body with FSRS and a learner-supplied rating.
+  and delete rich notes linked to that source.
+- **Notes and Review:** keep captured learning material and its retrieval cards in one surface;
+  deliberately add a retrieval question to a note; review the current note body with FSRS and a
+  learner-supplied rating.
 - **Recitation:** enroll a Work the learner can already recite, reveal and self-rate whole-Work
   recall, and maintain it with recitation-specific FSRS.
 - **Diary:** type or speak; persist raw input first; optionally transcribe and tidy; edit and revisit
@@ -83,7 +84,7 @@ Primary navigation has **six** destinations:
 2. **Library** — source and authored Works.
 3. **Write** — authored essays and their editor.
 4. **Recite** — enrolled Works, due maintenance, and next review dates.
-5. **Notes** — anchored and standalone notes, review enrollment, and due Review.
+5. **Notes** — saved learning notes, retrieval cards, and due Review.
 6. **Diary** — typed/voice capture and the chronological journal.
 
 Search is a persistent one-action shell utility, not a primary destination. Reader belongs to
@@ -200,8 +201,9 @@ Notes and Review are one user-facing system over material the learner deliberate
 competing content stores.
 
 - A `note` is the single durable, owned note model: one canonical rich document body, timestamps, and
-  optional source anchor/provenance. Reader notes, manually added words/phrases, imported answers, and
-  free-form thoughts use this same model.
+  optional source anchor/provenance. Reader captures, imported answers, and direct-card Answers use
+  this same model. Unanchored notes remain valid for existing data, imports, and direct-card Answers;
+  they are not a blank-page authoring mode.
 - A note contains no copied answer, review lifecycle, or FSRS fields.
 - One user-facing card is a learner-authored retrieval contract: a rich **Question** that triggers the
   task, a grading target that says what counts as successful retrieval, a referenced note, and one
@@ -211,11 +213,12 @@ competing content stores.
   learner may define one concise rich **Success check**; Review reveals it first and shows the current
   note below as live Reference. A Success check is task-specific evidence, not a copied summary of the
   note, and preserved `legacy_custom` answers remain a separate historical shape.
-- Notes presents **New card** as its primary action; **New note** and **Import** remain visible secondary
-  actions. New card starts from **What do you want to be able to recall or do?**, then asks **What
-  should bring it to mind?** A simple card needs only rich Answer and Question editors; **Define a
-  specific success check** is optional. The standing guidance is **One target · clear trigger · enough
-  to judge**, never a validator or quality score.
+- Notes presents **New card** as its primary action and **Import** as a visible secondary action; it
+  has no **New note** action. Source-linked notes originate from Reader selection, while Diary and
+  Writing own blank-page capture and composition. New card starts from **What do you want to be able
+  to recall or do?**, then asks **What should bring it to mind?** A simple card needs only rich Answer
+  and Question editors; **Define a specific success check** is optional. The standing guidance is
+  **One target · clear trigger · enough to judge**, never a validator or quality score.
 - **Try card** previews the exact Question → attempt → reveal interaction before saving. It is optional
   and writes no card, event, or schedule.
 - Saving a new card atomically creates one manual note, one prompt with its chosen grading target, and
@@ -243,8 +246,10 @@ competing content stores.
   interval due on the current local day is labeled **Later today** with its exact time.
 - The learner may stop after any item. A note's Cards section owns question editing, pause/resume,
   restart, removal, due state, and auditable history. Removing review never deletes the note.
-- Notes lists anchored and standalone notes together, supports search and editing, and owns paste-list
-  import. Import creates standalone notes plus referencing prompts, never a second content row.
+- Notes lists source-linked and unanchored notes together, supports search and editing, and owns
+  paste-list import. Existing unanchored notes remain editable and reviewable; removing the generic
+  creation action never deletes or migrates them. Import creates unanchored notes plus referencing
+  prompts, never a second content row.
 - Old `/memory` and `/recall` links redirect to Notes and Notes-owned Review without losing due state.
 - Whetstone does not generate, grade, template, type, or police cards in v0. It provides a reliable
   authoring, preview, repair, and scheduling tool; understanding the material and choosing a precise
