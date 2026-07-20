@@ -1,5 +1,5 @@
 import { localDayBoundary, type TodayRoutineSummary } from "@whetstone/domain";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts, personalEntries, reviewCards } from "../../db/schema.js";
@@ -27,6 +27,32 @@ export async function getPromptRowForUser(
     .limit(1);
 
   return rows[0]?.prompt;
+}
+
+// Whether the given note already has a DIFFERENT `current_note` prompt (#686). At most one `current_note`
+// prompt may exist per note — the partial unique index `memory_prompts_one_current_note_per_note_uq`
+// enforces it — so converting a second prompt's grading target to `current_note` must be rejected as a
+// deterministic conflict BEFORE it reaches that index (otherwise it surfaces as an unhandled 500). The
+// prompt being edited is excluded so re-declaring an already-`current_note` prompt is a no-op, not a
+// self-conflict. Returns the conflicting prompt's id, or undefined when the target is free.
+export async function findConflictingCurrentNotePromptId(
+  db: DbClient,
+  noteEntryId: string,
+  excludePromptId: string
+): Promise<string | undefined> {
+  const rows = await db
+    .select({ entryId: memoryPrompts.entryId })
+    .from(memoryPrompts)
+    .where(
+      and(
+        eq(memoryPrompts.noteEntryId, noteEntryId),
+        eq(memoryPrompts.revealKind, "current_note"),
+        ne(memoryPrompts.entryId, excludePromptId)
+      )
+    )
+    .limit(1);
+
+  return rows[0]?.entryId;
 }
 
 // The learner's note-review routine as Today's board reads it (#610): one grouped summary over the user's

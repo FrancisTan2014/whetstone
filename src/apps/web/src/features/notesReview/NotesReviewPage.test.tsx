@@ -79,6 +79,14 @@ const currentNoteReveal: NoteRevealDto = {
   bodyText: "Paris, the live note body."
 };
 
+const expectedResponseReveal: NoteRevealDto = {
+  kind: "expected_response",
+  successCheckDoc: createTextDocument("Names durability and ordering."),
+  successCheckText: "Names durability and ordering.",
+  referenceDoc: createTextDocument("The live note reference."),
+  referenceText: "The live note reference."
+};
+
 function renderPage(): void {
   render(
     <MemoryRouter>
@@ -161,6 +169,24 @@ describe("NotesReviewPage", () => {
     await user.click(await screen.findByRole("button", { name: "Show note" }));
 
     expect(await screen.findByText("Paris, the live note body.")).toBeTruthy();
+  });
+
+  it("reveals an expected_response prompt's Success check plus Reference and focuses the Success check", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "expected_response" }));
+    mockedReveal.mockResolvedValue(expectedResponseReveal);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Show note" }));
+
+    const successCheck = await screen.findByLabelText("Success check");
+    expect(successCheck.textContent).toContain("Names durability and ordering.");
+    const reference = screen.getByLabelText("Reference");
+    expect(reference.textContent).toContain("The live note reference.");
+    await waitFor(() => expect(document.activeElement).toBe(successCheck));
+    for (const label of ["Again", "Hard", "Good", "Easy"]) {
+      expect(screen.getByRole("button", { name: label })).toBeTruthy();
+    }
   });
 
   it("keeps the question with a specific retry and no ratings when reveal fails", async () => {

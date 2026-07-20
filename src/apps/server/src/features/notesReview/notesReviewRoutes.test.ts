@@ -267,6 +267,48 @@ describe("GET /api/notes/review/prompts/:id/reveal", () => {
     ).json() as NoteRevealDto;
     expect(reveal).toMatchObject({ kind: "legacy_custom", answerText: "the preserved answer" });
   });
+
+  it("reveals an expected_response prompt as a separate Success check and live Reference", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "the live note body", at(-1));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "expected_response",
+      answerText: "names durability + ordering",
+      createdAt: at(-1),
+      card: { dueAt: at(-1), status: "active" }
+    });
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/notes/review/prompts/${promptId}/reveal`
+    });
+    expect(response.statusCode).toBe(200);
+    const reveal = response.json() as NoteRevealDto;
+    expect(reveal).toMatchObject({
+      kind: "expected_response",
+      successCheckText: "names durability + ordering",
+      referenceText: "the live note body"
+    });
+
+    // The Reference tracks the live note: editing the body changes the reveal in place, but the
+    // authored Success check is unchanged.
+    await context.db
+      .update(notes)
+      .set({ bodyDoc: createTextDocument("edited body"), bodyText: "edited body" })
+      .where(eq(notes.entryId, noteId));
+    const after = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/notes/review/prompts/${promptId}/reveal`
+      })
+    ).json() as NoteRevealDto;
+    expect(after).toMatchObject({
+      kind: "expected_response",
+      successCheckText: "names durability + ordering",
+      referenceText: "edited body"
+    });
+  });
 });
 
 describe("POST /api/notes/review/prompts/:id/rating", () => {
@@ -380,22 +422,22 @@ async function seedPromptOn(options: {
   noteId: string;
   cueText: string;
   createdAt: Date;
-  revealKind?: "current_note" | "legacy_custom";
+  revealKind?: "current_note" | "expected_response" | "legacy_custom";
   answerText?: string;
   card?: { dueAt: Date; status: "active" | "paused" };
   userId?: string;
 }): Promise<string> {
   const promptId = `p-${(sequence += 1)}`;
   const revealKind = options.revealKind ?? "legacy_custom";
+  const hasAnswer = revealKind === "legacy_custom" || revealKind === "expected_response";
   await context.db.insert(entries).values({ id: promptId, type: "memory_prompt" });
   await context.db.insert(memoryPrompts).values({
     entryId: promptId,
     noteEntryId: options.noteId,
     cueDoc: createTextDocument(options.cueText),
     cueText: options.cueText,
-    answerDoc:
-      revealKind === "legacy_custom" ? createTextDocument(options.answerText ?? "answer") : null,
-    answerText: revealKind === "legacy_custom" ? (options.answerText ?? "answer") : null,
+    answerDoc: hasAnswer ? createTextDocument(options.answerText ?? "answer") : null,
+    answerText: hasAnswer ? (options.answerText ?? "answer") : null,
     lifecycle: "ready",
     revealKind,
     chunkId: null,
@@ -920,5 +962,266 @@ describe("pause / resume / restart / remove / re-add", () => {
       });
       expect(response.statusCode).toBe(404);
     }
+  });
+});
+
+describe("POST /api/notes/review/prompts/:id/grading-target", () => {
+  async function promptRow(
+    promptId: string
+  ): Promise<{ revealKind: string; answerText: string | null } | undefined> {
+    const rows = await context.db
+      .select({ revealKind: memoryPrompts.revealKind, answerText: memoryPrompts.answerText })
+      .from(memoryPrompts)
+      .where(eq(memoryPrompts.entryId, promptId));
+    return rows[0];
+  }
+
+  async function dueAtOf(promptId: string): Promise<Date | undefined> {
+    const rows = await context.db
+      .select({ dueAt: reviewCards.dueAt })
+      .from(reviewCards)
+      .where(eq(reviewCards.targetEntryId, promptId));
+    return rows[0]?.dueAt;
+  }
+
+  async function post(promptId: string, body: unknown): ReturnType<typeof context.server.inject> {
+    return context.server.inject({
+      method: "POST",
+      url: `/api/notes/review/prompts/${promptId}/grading-target`,
+      payload: body
+    });
+  }
+
+  it("keep: converts current_note to an authored Success check, deriving text and leaving the card untouched", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      card: { dueAt: at(-1), status: "active" }
+    });
+    const dueBefore = await dueAtOf(promptId);
+
+    const response = await post(promptId, {
+      mode: "keep",
+      target: { kind: "expected_response", successCheckDoc: createTextDocument("names two rules") }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      reveal: { kind: "expected_response", successCheckText: "names two rules" },
+      cardState: { state: "due" }
+    });
+    // The policy and its server-derived text are persisted; the card/due/history are untouched.
+    expect(await promptRow(promptId)).toEqual({
+      revealKind: "expected_response",
+      answerText: "names two rules"
+    });
+    expect(await dueAtOf(promptId)).toEqual(dueBefore);
+    expect(await countEvents(promptId)).toBe(0);
+  });
+
+  it("keep: converts an expected_response prompt back to current_note, clearing the stored answer", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "expected_response",
+      answerText: "old success check",
+      createdAt: at(-5),
+      card: { dueAt: at(-1), status: "active" }
+    });
+
+    const response = await post(promptId, { mode: "keep", target: { kind: "current_note" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ reveal: { kind: "current_note" } });
+    expect(await promptRow(promptId)).toEqual({ revealKind: "current_note", answerText: null });
+    expect(await countEvents(promptId)).toBe(0);
+  });
+
+  it("restart: saves the policy AND resets the schedule with exactly one reset event, due now", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      card: { dueAt: at(5), status: "active" }
+    });
+
+    const response = await post(promptId, {
+      mode: "restart",
+      target: { kind: "expected_response", successCheckDoc: createTextDocument("names two rules") }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      reveal: { kind: "expected_response", successCheckText: "names two rules" },
+      cardState: { state: "due" }
+    });
+    expect(await countEvents(promptId)).toBe(1);
+    const events = await context.db
+      .select({ type: reviewEvents.type })
+      .from(reviewEvents)
+      .where(eq(reviewEvents.targetEntryId, promptId));
+    expect(events[0]?.type).toBe("reset");
+  });
+
+  it("keep: allows a cardless prompt to change policy without fabricating a card", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5)
+    });
+
+    const response = await post(promptId, {
+      mode: "keep",
+      target: { kind: "expected_response", successCheckDoc: createTextDocument("names two rules") }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      reveal: { kind: "expected_response" },
+      cardState: { state: "not_in_review" }
+    });
+    expect(await dueAtOf(promptId)).toBeUndefined();
+  });
+
+  it("409s a restart on a cardless prompt and leaves its policy unchanged", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5)
+    });
+
+    const response = await post(promptId, {
+      mode: "restart",
+      target: { kind: "expected_response", successCheckDoc: createTextDocument("names two rules") }
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "restart_requires_card" });
+    expect(await promptRow(promptId)).toEqual({ revealKind: "current_note", answerText: null });
+  });
+
+  it("409s any change to a legacy_custom prompt (read-only), leaving it unchanged", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "legacy_custom",
+      answerText: "preserved answer",
+      createdAt: at(-5),
+      card: { dueAt: at(-1), status: "active" }
+    });
+
+    for (const mode of ["keep", "restart"] as const) {
+      const response = await post(promptId, { mode, target: { kind: "current_note" } });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: "legacy_read_only" });
+    }
+    expect(await promptRow(promptId)).toEqual({
+      revealKind: "legacy_custom",
+      answerText: "preserved answer"
+    });
+    expect(await countEvents(promptId)).toBe(0);
+  });
+
+  it("400s a blank Success check, leaving the prompt's policy unchanged", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      card: { dueAt: at(-1), status: "active" }
+    });
+
+    const response = await post(promptId, {
+      mode: "keep",
+      target: { kind: "expected_response", successCheckDoc: createTextDocument("   ") }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_success_check" });
+    expect(await promptRow(promptId)).toEqual({ revealKind: "current_note", answerText: null });
+  });
+
+  it("409 duplicate_current_note: refuses to convert to current_note when the note already has one, leaving both prompts and the card/history unchanged", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    // The note's normal current_note prompt already occupies the one-per-note slot.
+    const existingId = await seedPromptOn({
+      noteId,
+      cueText: "existing cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      card: { dueAt: at(-3), status: "active" }
+    });
+    // A second prompt on the same note, authored with a Success check, that we try to convert back.
+    const successId = await seedPromptOn({
+      noteId,
+      cueText: "success cue",
+      revealKind: "expected_response",
+      answerText: "names two rules",
+      createdAt: at(-4),
+      card: { dueAt: at(-1), status: "active" }
+    });
+    const successDueBefore = await dueAtOf(successId);
+
+    const response = await post(successId, {
+      mode: "restart",
+      target: { kind: "current_note" }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "duplicate_current_note" });
+    // The existing current_note prompt is untouched, and the edited prompt keeps its expected_response
+    // policy and Success check — no partial write leaked out of the rejected transition.
+    expect(await promptRow(existingId)).toEqual({ revealKind: "current_note", answerText: null });
+    expect(await promptRow(successId)).toEqual({
+      revealKind: "expected_response",
+      answerText: "names two rules"
+    });
+    // Its card and history are left exactly as they were (no reset, despite mode: "restart").
+    expect(await dueAtOf(successId)).toEqual(successDueBefore);
+    expect(await countEvents(successId)).toBe(0);
+  });
+
+  it("400s a malformed request body", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      card: { dueAt: at(-1), status: "active" }
+    });
+    const response = await post(promptId, { target: { kind: "current_note" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("404s another user's prompt", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(otherUser, "theirs", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      userId: otherUser,
+      card: { dueAt: at(-1), status: "active" }
+    });
+    const response = await post(promptId, { mode: "keep", target: { kind: "current_note" } });
+    expect(response.statusCode).toBe(404);
   });
 });

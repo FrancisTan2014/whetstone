@@ -126,6 +126,34 @@ export async function applyRatingToCardInTx(
   return { card: { ...card, ...columns, updatedAt: now }, state };
 }
 
+// Reset a target's card to a brand-new FSRS schedule WITHIN a caller's transaction, so a feature can
+// compose a schedule restart with its own atomic content write (e.g. adopting a new grading target and
+// restarting in the SAME transaction, #686). It overwrites the card's FSRS state to a fresh state due now
+// (keeping owner, requested retention, and status), bumps `updatedAt`, and appends exactly one `reset`
+// review event with the caller-supplied `eventId` and no rating. Returns the updated card + new state. The
+// caller owns reading the card and opening the transaction, so this stays a pure composition primitive.
+export async function applyResetToCardInTx(
+  tx: Transaction,
+  card: ReviewCardRow,
+  now: Date,
+  eventId: string
+): Promise<{ card: ReviewCardRow; state: ReviewState }> {
+  const state = newReviewState(now);
+  const columns = reviewStateColumns(state);
+  await tx
+    .update(reviewCards)
+    .set({ ...columns, updatedAt: now })
+    .where(eq(reviewCards.targetEntryId, card.targetEntryId));
+  await tx.insert(reviewEvents).values({
+    id: eventId,
+    targetEntryId: card.targetEntryId,
+    type: "reset",
+    rating: null,
+    occurredAt: now
+  });
+  return { card: { ...card, ...columns, updatedAt: now }, state };
+}
+
 // Apply a learner's rating to a target's card (#617): schedule the next review with the card's OWN stored
 // requested retention (never a global assumption, never switching on target type), overwrite the card's
 // FSRS state, and append exactly one `rating` review event — atomically, in one transaction. A target
@@ -160,23 +188,10 @@ export async function restartReviewCard(
   if (card === undefined) {
     return { status: "not_found" };
   }
-  const state = newReviewState(now);
-  const columns = reviewStateColumns(state);
-  const eventId = dependencies.createId();
-  await dependencies.db.transaction(async (tx) => {
-    await tx
-      .update(reviewCards)
-      .set({ ...columns, updatedAt: now })
-      .where(eq(reviewCards.targetEntryId, targetEntryId));
-    await tx.insert(reviewEvents).values({
-      id: eventId,
-      targetEntryId,
-      type: "reset",
-      rating: null,
-      occurredAt: now
-    });
-  });
-  return { card: { ...card, ...columns, updatedAt: now }, state, status: "restarted" };
+  const result = await dependencies.db.transaction((tx) =>
+    applyResetToCardInTx(tx, card, now, dependencies.createId())
+  );
+  return { card: result.card, state: result.state, status: "restarted" };
 }
 
 // Defer a target's card OUT of today's batch by moving ONLY its `due_at` forward (default one day). It is

@@ -315,6 +315,7 @@ export {
   noteReviewRatingRequestSchema,
   noteReviewRatingResultDtoSchema,
   noteReviewSummaryDtoSchema,
+  noteGradingTargetSchema,
   parseEditNotePromptQuestionRequest,
   parseEnrollNoteRequest,
   parseNotePromptSettingsDto,
@@ -327,12 +328,15 @@ export {
   parseNoteReviewSummaryDto,
   parseNoteRevealDto,
   parseReviewHistoryPageDto,
+  parseSetNoteGradingTargetRequest,
   reviewHistoryEventDtoSchema,
-  reviewHistoryPageDtoSchema
+  reviewHistoryPageDtoSchema,
+  setNoteGradingTargetRequestSchema
 } from "./noteReviewContracts.js";
 export type {
   EditNotePromptQuestionRequest,
   EnrollNoteRequest,
+  NoteGradingTarget,
   NotePromptCardStateDto,
   NotePromptRevealPolicyDto,
   NotePromptSettingsDto,
@@ -346,7 +350,8 @@ export type {
   NoteReviewRatingResultDto,
   NoteReviewSummaryDto,
   ReviewHistoryEventDto,
-  ReviewHistoryPageDto
+  ReviewHistoryPageDto,
+  SetNoteGradingTargetRequest
 } from "./noteReviewContracts.js";
 export {
   glossSuggestionDtoSchema,

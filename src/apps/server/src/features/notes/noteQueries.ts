@@ -260,10 +260,11 @@ function escapeLikePattern(query: string): string {
 
 // The distinct ids of the user's notes matching a note-centric search (#659): a note matches when the
 // query text appears in its canonical body, its anchor's selected-text snapshot, ANY of its prompts'
-// questions, or ANY of its prompts' preserved legacy custom-reveal answers. All four sources are searched
-// in one pass with the prompt/anchor facets LEFT-joined (an unanchored or unenrolled note simply has no
-// matching facet); `selectDistinct` collapses a note that matches on several prompts to one id. The match
-// is case-insensitive (`ILIKE`) and wildcard-safe.
+// questions, or ANY of its prompts' learner-authored reveal answers (a preserved legacy custom answer or an
+// `expected_response` Success check — both are learner content stored in `answer_text`; a `current_note`
+// prompt has none). All four sources are searched in one pass with the prompt/anchor facets LEFT-joined (an
+// unanchored or unenrolled note simply has no matching facet); `selectDistinct` collapses a note that
+// matches on several prompts to one id. The match is case-insensitive (`ILIKE`) and wildcard-safe.
 async function searchNoteIds(
   db: DbClient,
   userId: string,
@@ -284,7 +285,7 @@ async function searchNoteIds(
           ilike(noteAnchors.selectedText, pattern),
           ilike(memoryPrompts.cueText, pattern),
           and(
-            eq(memoryPrompts.revealKind, "legacy_custom"),
+            inArray(memoryPrompts.revealKind, ["legacy_custom", "expected_response"]),
             ilike(memoryPrompts.answerText, pattern)
           )
         )

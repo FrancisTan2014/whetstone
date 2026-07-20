@@ -262,9 +262,13 @@ function PromptSettingsRow({
       <p className="noteReviewSettingsReveal">
         {prompt.reveal.kind === "current_note"
           ? "Reveals the current note"
-          : "Custom answer (read-only)"}
+          : prompt.reveal.kind === "expected_response"
+            ? "Success check"
+            : "Custom answer (read-only)"}
       </p>
-      {prompt.reveal.kind === "legacy_custom" ? (
+      {prompt.reveal.kind === "expected_response" ? (
+        <p className="noteReviewSettingsSuccessCheck">{prompt.reveal.successCheckText}</p>
+      ) : prompt.reveal.kind === "legacy_custom" ? (
         <p className="noteReviewSettingsLegacyAnswer">{prompt.reveal.answerText}</p>
       ) : null}
 

@@ -229,21 +229,38 @@ function RevealedView({
     }
   }
 
-  const revealDoc = reveal.kind === "current_note" ? reveal.bodyDoc : reveal.answerDoc;
-
-  return (
-    <div onKeyDown={handleKeyDown}>
-      <div className="text-lg text-text">
-        <PmDocument document={prompt.cueDoc} />
-      </div>
+  const revealContent =
+    reveal.kind === "expected_response" ? (
+      <>
+        <div
+          aria-label="Success check"
+          className="mt-3 border-t border-border pt-3 text-text focus-visible:outline-none"
+          ref={answerRef}
+          tabIndex={-1}
+        >
+          <PmDocument document={reveal.successCheckDoc} />
+        </div>
+        <div aria-label="Reference" className="mt-3 border-t border-border pt-3 text-text-muted">
+          <PmDocument document={reveal.referenceDoc} />
+        </div>
+      </>
+    ) : (
       <div
         aria-label="Note"
         className="mt-3 border-t border-border pt-3 text-text focus-visible:outline-none"
         ref={answerRef}
         tabIndex={-1}
       >
-        <PmDocument document={revealDoc} />
+        <PmDocument document={reveal.kind === "current_note" ? reveal.bodyDoc : reveal.answerDoc} />
       </div>
+    );
+
+  return (
+    <div onKeyDown={handleKeyDown}>
+      <div className="text-lg text-text">
+        <PmDocument document={prompt.cueDoc} />
+      </div>
+      {revealContent}
       {ratingFailed ? (
         <p className="mt-3 text-danger" role="alert">
           Could not save that rating. Please try again.

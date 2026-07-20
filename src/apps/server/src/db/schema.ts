@@ -524,16 +524,19 @@ export const chunks = pgTable(
 // prompt's `entry_id` (#617). `chunk_id` optionally links the direction to a practice chunk (#205),
 // retained Memory provenance after the Practice retirement (#603).
 //
-// `reveal_kind` (#657) is the explicit, persisted reveal discriminant that declares what a reveal
+// `reveal_kind` (#657, #686) is the explicit, persisted reveal discriminant that declares what a reveal
 // resolves — never inferred from the nullable answer columns. `legacy_custom` is the historical shape:
 // the reveal resolves the prompt's own stored `answer_doc`/`answer_text` custom answer (a `draft` legacy
 // prompt is not yet revealable, so both are NULL; a `ready` legacy prompt has both). `current_note` is
 // the durable reference shape (later Notes enrollment/import produce it): the prompt stores NO answer and
 // resolves its reveal live from the referenced note's canonical `body_doc`/`body_text` at read time, so a
-// note edit is always reflected and note content is never copied onto the prompt. The
-// `memory_prompts_reveal_shape_ck` check enforces the two shapes in the database: a `current_note` prompt
-// is always `ready` with no answer columns; a `ready` legacy prompt has both answer projections; a
-// `draft` legacy prompt has neither.
+// note edit is always reflected and note content is never copied onto the prompt. `expected_response`
+// (#686) is the explicit graded shape: `answer_doc`/`answer_text` hold the concise learner-authored Success
+// check (never a copied note body), and the reveal ALSO resolves the live note as Reference — so it grades
+// against an authored expectation while the note stays canonical. The `memory_prompts_reveal_shape_ck`
+// check enforces the shapes in the database: a `current_note` prompt is always `ready` with no answer
+// columns; an `expected_response` prompt is always `ready` with both answer projections (the Success
+// check); a `ready` legacy prompt has both answer projections; a `draft` legacy prompt has neither.
 export const memoryPrompts = pgTable(
   "memory_prompts",
   {
@@ -548,7 +551,9 @@ export const memoryPrompts = pgTable(
     answerDoc: jsonb("answer_doc"),
     answerText: text("answer_text"),
     lifecycle: text("lifecycle", { enum: ["draft", "ready"] as const }).notNull(),
-    revealKind: text("reveal_kind", { enum: ["current_note", "legacy_custom"] as const }).notNull(),
+    revealKind: text("reveal_kind", {
+      enum: ["current_note", "expected_response", "legacy_custom"] as const
+    }).notNull(),
     // Temporary retained Memory-provenance link (#603): optionally ties a prompt to the practice chunk
     // (#205) it was harvested from. Retained until a later issue migrates provenance off `chunk_id` and
     // drops `domains`/`cases`/`chunks`.
@@ -566,12 +571,13 @@ export const memoryPrompts = pgTable(
     uniqueIndex("memory_prompts_one_current_note_per_note_uq")
       .on(table.noteEntryId)
       .where(sql`${table.revealKind} = 'current_note'`),
-    // The two reveal shapes are enforced in the database, not only at the write boundary: a current-note
-    // prompt is ready and answerless (its reveal is the live note body); a ready legacy prompt has both
-    // answer projections; a draft legacy prompt has neither.
+    // The reveal shapes are enforced in the database, not only at the write boundary: a current-note
+    // prompt is ready and answerless (its reveal is the live note body); an expected-response prompt is
+    // ready with both answer projections (the authored Success check, revealed alongside the live note as
+    // Reference); a ready legacy prompt has both answer projections; a draft legacy prompt has neither.
     check(
       "memory_prompts_reveal_shape_ck",
-      sql`(${table.revealKind} = 'current_note' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is null and ${table.answerText} is null) or (${table.revealKind} = 'legacy_custom' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is not null and ${table.answerText} is not null) or (${table.revealKind} = 'legacy_custom' and ${table.lifecycle} = 'draft' and ${table.answerDoc} is null and ${table.answerText} is null)`
+      sql`(${table.revealKind} = 'current_note' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is null and ${table.answerText} is null) or (${table.revealKind} = 'expected_response' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is not null and ${table.answerText} is not null) or (${table.revealKind} = 'legacy_custom' and ${table.lifecycle} = 'ready' and ${table.answerDoc} is not null and ${table.answerText} is not null) or (${table.revealKind} = 'legacy_custom' and ${table.lifecycle} = 'draft' and ${table.answerDoc} is null and ${table.answerText} is null)`
     )
   ]
 );

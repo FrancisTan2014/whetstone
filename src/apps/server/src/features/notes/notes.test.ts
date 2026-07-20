@@ -1264,16 +1264,16 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
       answerText?: string;
       card?: Readonly<{ dueAt: Date; status?: "active" | "paused" }>;
       cueText: string;
-      revealKind?: "current_note" | "legacy_custom";
+      revealKind?: "current_note" | "expected_response" | "legacy_custom";
     }>
   ): Promise<void> {
     const revealKind = options.revealKind ?? "current_note";
-    const isLegacy = revealKind === "legacy_custom";
+    const hasAnswer = revealKind === "legacy_custom" || revealKind === "expected_response";
     const promptId = `prompt-seed-${(seedSequence += 1)}`;
     await context.db.insert(entries).values({ id: promptId, type: "memory_prompt" });
     await context.db.insert(memoryPrompts).values({
-      answerDoc: isLegacy ? createTextDocument(options.answerText ?? "") : null,
-      answerText: isLegacy ? (options.answerText ?? "") : null,
+      answerDoc: hasAnswer ? createTextDocument(options.answerText ?? "") : null,
+      answerText: hasAnswer ? (options.answerText ?? "") : null,
       cueDoc: createTextDocument(options.cueText),
       cueText: options.cueText,
       entryId: promptId,
@@ -1466,6 +1466,12 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
       cueText: "another",
       revealKind: "legacy_custom"
     });
+    const successNote = (await createStandalone("Systems set three.")).json() as NoteDto;
+    await seedPrompt(successNote.entryId, {
+      answerText: "names durability and ordering",
+      cueText: "what does a WAL guarantee",
+      revealKind: "expected_response"
+    });
 
     const byBody = (await ownerList("?search=peregrine")).json() as NotesOverviewListDto;
     expect(byBody.notes.map((note) => note.entryId)).toEqual([bodyNote.entryId]);
@@ -1479,6 +1485,10 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
     // Case-insensitive, and de-duplicated even though two prompts on the same note match.
     const byAnswer = (await ownerList("?search=FALCON")).json() as NotesOverviewListDto;
     expect(byAnswer.notes.map((note) => note.entryId)).toEqual([answerNote.entryId]);
+
+    // An expected_response prompt's authored Success check is learner content and is searchable too.
+    const bySuccessCheck = (await ownerList("?search=durability")).json() as NotesOverviewListDto;
+    expect(bySuccessCheck.notes.map((note) => note.entryId)).toEqual([successNote.entryId]);
   });
 
   it("ignores a blank search, returns nothing for a no-match query, and treats wildcards literally", async () => {
