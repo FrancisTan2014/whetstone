@@ -28,6 +28,7 @@ import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import { deleteNoteInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
+import { deleteReviewCard } from "../review/reviewCardCommands.js";
 import { createDirectCard, type CreateDirectCardDependencies } from "./createDirectCard.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
 
@@ -370,6 +371,32 @@ describe("createDirectCard", () => {
     expect(await listNotes()).toHaveLength(0);
     expect(await listCards()).toHaveLength(0);
     // The receipt tombstone survives the delete cascade.
+    expect(await listReceipts()).toHaveLength(1);
+  });
+
+  it("reports gone when only the review card was removed, keeping the note", async () => {
+    const request = currentNoteRequest();
+    const first = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
+    expect(first.status).toBe("ok");
+    if (first.status !== "ok") {
+      throw new Error("expected ok");
+    }
+
+    // Remove ONLY the seeded card through the existing unenroll boundary; the note, prompt, contains link,
+    // and review history all survive. A later replay must not dereference the now-missing card row.
+    await context.db.transaction((tx) => deleteReviewCard(tx, first.value.promptId));
+    expect(await listCards()).toHaveLength(0);
+    expect(await listNotes()).toHaveLength(1);
+    expect(await listPrompts()).toHaveLength(1);
+
+    context.setNow(later);
+    const replay = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
+
+    expect(replay).toEqual({ status: "gone" });
+    // Nothing is resurrected: no card is re-seeded and the surviving note/prompt/receipt are untouched.
+    expect(await listCards()).toHaveLength(0);
+    expect(await listNotes()).toHaveLength(1);
+    expect(await listPrompts()).toHaveLength(1);
     expect(await listReceipts()).toHaveLength(1);
   });
 

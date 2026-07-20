@@ -83,13 +83,15 @@ async function noteStillExists(
 }
 
 // Project the ORIGINAL result of a receipt on a same-payload replay: the recorded note/prompt ids plus the
-// live FSRS state of the seeded card. The card still exists (its note does), so the composer (#690) sees an
-// identical result whether it is the first call or a retry.
+// live FSRS state of the seeded card. Returns `null` when the seeded card no longer exists even though the
+// note does — a later lifecycle operation (e.g. `deleteReviewCard`, which unenrolls a target while keeping
+// its note, prompt, and review history) can drop the `review_cards` row on its own. The result cannot be
+// reconstructed without the card, so the caller reports `gone` rather than dereferencing a missing row.
 async function projectOriginalResult(
   tx: Transaction,
   receipt: Readonly<{ noteEntryId: string; promptEntryId: string }>,
   userId: string
-): Promise<DirectCardResultDto> {
+): Promise<DirectCardResultDto | null> {
   const cards = await tx
     .select()
     .from(reviewCards)
@@ -97,7 +99,10 @@ async function projectOriginalResult(
       and(eq(reviewCards.targetEntryId, receipt.promptEntryId), eq(reviewCards.userId, userId))
     )
     .limit(1);
-  const card = cards[0]!;
+  const card = cards[0];
+  if (card === undefined) {
+    return null;
+  }
   return {
     noteId: receipt.noteEntryId,
     promptId: receipt.promptEntryId,
@@ -181,7 +186,13 @@ export async function createDirectCard(
       if (!(await noteStillExists(tx, existing.noteEntryId, userId))) {
         return { status: "gone" };
       }
-      return { status: "ok", value: await projectOriginalResult(tx, existing, userId) };
+      const original = await projectOriginalResult(tx, existing, userId);
+      if (original === null) {
+        // The note survives but its seeded card was removed on its own (e.g. an unenroll). The original
+        // result no longer exists and the tombstone never resurrects it, so this replay is `gone`.
+        return { status: "gone" };
+      }
+      return { status: "ok", value: original };
     }
 
     await insertNoteInTx(tx, {
