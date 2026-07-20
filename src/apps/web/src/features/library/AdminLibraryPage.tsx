@@ -3,13 +3,11 @@ import { motion, type Variants } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
 import type {
-  AuthorDto,
   CreateWorkRequest,
   RecitationPlanDto,
   WorkListItemDto
 } from "@whetstone/contracts";
 import {
-  toAuthorId,
   workLanguageLabels,
   workLanguages,
   workTypes,
@@ -29,18 +27,16 @@ import { markdownEmptyContentMessage } from "../content/contentMessages";
 import {
   createWork,
   deleteWork,
-  fetchAuthors,
   fetchWorks,
   fetchWorksWithReadingPosition,
   ingestEpub
 } from "./libraryApi";
+import { AuthorSelectField } from "./AuthorSelectField";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 import { LibraryAddMenu } from "./LibraryAddMenu";
 import { WorkOverflowMenu } from "./WorkOverflowMenu";
 import { listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
-
-const newAuthorOption = "new-author-or-source";
 
 // Shown when the doc-AI worker could not read an uploaded PDF (the server's 422 `invalid_pdf`), e.g. a
 // scanned or corrupt file — mirrors the Manage-content panel's copy so the one front door reads the same.
@@ -82,7 +78,6 @@ type AdminLibraryPageProps = Readonly<{
 
 export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): React.JSX.Element {
   const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [authors, setAuthors] = useState<ReadonlyArray<AuthorDto>>([]);
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
   const [worksWithPosition, setWorksWithPosition] = useState<ReadonlySet<string>>(new Set());
   // Which works are user-authored documents (vs imported sources), so the shelf can badge them and
@@ -103,8 +98,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState<WorkLanguage>("en");
   const [workType, setWorkType] = useState<WorkType>("book");
-  const [authorChoice, setAuthorChoice] = useState<string>(newAuthorOption);
-  const [inlineAuthorName, setInlineAuthorName] = useState("");
+  const [authorSelection, setAuthorSelection] = useState<CreateWorkRequest["author"] | undefined>(
+    undefined
+  );
   const [workError, setWorkError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
 
@@ -129,14 +125,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function reload(): Promise<void> {
-    const [authorList, workList, withPosition, authored, recitation] = await Promise.all([
-      fetchAuthors(),
+    const [workList, withPosition, authored, recitation] = await Promise.all([
       fetchWorks(),
       fetchWorksWithReadingPosition(),
       listAuthoredWorks(),
       listRecitationPlans()
     ]);
-    setAuthors(authorList.authors);
     setWorks(workList.works);
     setWorksWithPosition(withPosition);
     setAuthoredWorkIds(new Set(authored.works.map((work) => work.entryId)));
@@ -156,22 +150,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     void load();
   }, []);
 
-  function buildAuthorSelection(): CreateWorkRequest["author"] | undefined {
-    if (authorChoice === newAuthorOption) {
-      const trimmed = inlineAuthorName.trim();
-
-      return trimmed.length === 0 ? undefined : { mode: "new", name: trimmed };
-    }
-
-    return { authorId: toAuthorId(authorChoice), mode: "existing" };
-  }
-
   function resetWorkForm(): void {
     setTitle("");
     setLanguage("en");
     setWorkType("book");
-    setAuthorChoice(newAuthorOption);
-    setInlineAuthorName("");
+    setAuthorSelection(undefined);
     setWorkError(undefined);
   }
 
@@ -218,7 +201,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    const author = buildAuthorSelection();
+    const author = authorSelection;
 
     if (author === undefined) {
       setWorkError("Select an existing author or source, or name a new one.");
@@ -477,34 +460,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
                 </select>
               </label>
 
-              <label className="flex flex-col gap-1" htmlFor="work-author">
-                Author or source
-                <select
-                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                  id="work-author"
-                  onChange={(event) => setAuthorChoice(event.currentTarget.value)}
-                  value={authorChoice}
-                >
-                  <option value={newAuthorOption}>New author or source…</option>
-                  {authors.map((author) => (
-                    <option key={author.id} value={author.id}>
-                      {author.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {authorChoice === newAuthorOption ? (
-                <label className="flex flex-col gap-1" htmlFor="inline-author-name">
-                  New author or source name
-                  <input
-                    className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                    id="inline-author-name"
-                    onChange={(event) => setInlineAuthorName(event.currentTarget.value)}
-                    value={inlineAuthorName}
-                  />
-                </label>
-              ) : null}
+              <AuthorSelectField onSelectionChange={setAuthorSelection} />
 
               <Button pending={submitting} type="submit">
                 Create work

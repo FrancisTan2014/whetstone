@@ -1,7 +1,7 @@
 import { epubContentType } from "@whetstone/contracts";
 import type {
   AuthorDto,
-  AuthorListDto,
+  AuthorSearchDto,
   CreateAuthorRequest,
   CreateWorkRequest,
   IngestEpubResultDto,
@@ -24,8 +24,14 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function fetchAuthors(): Promise<AuthorListDto> {
-  return requestJson<AuthorListDto>(apiUrl("/authors"));
+// Search the canonical author/source list (#694). A blank query returns the alphabetical list; a nonblank
+// one returns canonical-key substring matches plus the exact-match id and cleaned name. The server owns
+// all cleaning and matching, so the client never canonicalizes.
+export async function searchAuthors(query?: string): Promise<AuthorSearchDto> {
+  const trimmed = query?.trim() ?? "";
+  const path = trimmed === "" ? apiUrl("/authors") : apiUrl(`/authors?query=${encodeURIComponent(query ?? "")}`);
+
+  return requestJson<AuthorSearchDto>(path);
 }
 
 export async function fetchWorks(): Promise<WorkListDto> {

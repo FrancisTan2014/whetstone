@@ -4,10 +4,10 @@ import {
   createAuthor,
   createWork,
   deleteWork,
-  fetchAuthors,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  ingestEpub
+  ingestEpub,
+  searchAuthors
 } from "./libraryApi";
 
 function stubFetch(response: {
@@ -30,11 +30,32 @@ afterEach(() => {
 });
 
 describe("libraryApi", () => {
-  it("fetches authors from the authors endpoint", async () => {
-    const fetchMock = stubFetch({ ok: true, body: { authors: [] } });
+  it("searches authors with a blank query against the plain authors endpoint", async () => {
+    const body = { authors: [], cleanedQuery: "", exactMatchId: null };
+    const fetchMock = stubFetch({ ok: true, body });
 
-    await expect(fetchAuthors()).resolves.toEqual({ authors: [] });
+    await expect(searchAuthors()).resolves.toEqual(body);
     expect(fetchMock).toHaveBeenCalledWith("/api/authors", undefined);
+  });
+
+  it("treats a whitespace-only query as blank", async () => {
+    const body = { authors: [], cleanedQuery: "", exactMatchId: null };
+    const fetchMock = stubFetch({ ok: true, body });
+
+    await expect(searchAuthors("   ")).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledWith("/api/authors", undefined);
+  });
+
+  it("passes a nonblank query as an encoded querystring", async () => {
+    const body = {
+      authors: [{ id: "author-1", name: "Octavia Butler" }],
+      cleanedQuery: "octavia butler",
+      exactMatchId: "author-1"
+    };
+    const fetchMock = stubFetch({ ok: true, body });
+
+    await expect(searchAuthors("Octavia Butler")).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledWith("/api/authors?query=Octavia%20Butler", undefined);
   });
 
   it("fetches works from the works endpoint", async () => {
@@ -111,7 +132,7 @@ describe("libraryApi", () => {
   it("throws when the server responds with a non-ok status", async () => {
     stubFetch({ ok: false, status: 500, body: undefined });
 
-    await expect(fetchAuthors()).rejects.toThrow("failed with status 500");
+    await expect(searchAuthors()).rejects.toThrow("failed with status 500");
   });
 
   it("posts EPUB bytes to the epub endpoint and returns the result", async () => {

@@ -71,8 +71,15 @@ export type WorkListItemDto = Readonly<{
   work: WorkDto;
 }>;
 
-export type AuthorListDto = Readonly<{
+// The create-or-select author field's search boundary (#694). `authors` are the canonical-key substring
+// matches (alphabetical; owner-keyed "You" rows excluded). `exactMatchId` is the id whose canonical key
+// equals the query (case/width/whitespace-insensitive), authoritative for suppressing "Add". `cleanedQuery`
+// is the server-cleaned display name the client shows in the `Add "{name}"` affordance — canonicalization
+// never happens on the client.
+export type AuthorSearchDto = Readonly<{
   authors: ReadonlyArray<AuthorDto>;
+  cleanedQuery: string;
+  exactMatchId: AuthorId | null;
 }>;
 
 export type WorkListDto = Readonly<{

@@ -9,7 +9,7 @@ import {
   type DeleteWorkDependencies,
   type LibraryDependencies
 } from "./libraryCommands.js";
-import { listAuthors, listWorks } from "./libraryQueries.js";
+import { listWorks, searchAuthors } from "./libraryQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 
@@ -18,6 +18,9 @@ const invalidRequestBody = { error: "invalid_request" } as const;
 export type LibraryRouteDependencies = LibraryDependencies & DeleteWorkDependencies;
 
 type WorkParams = Readonly<{ workEntryId: string }>;
+
+// The author search field passes its raw query through; the server owns cleaning and matching.
+type AuthorSearchQuery = Readonly<{ query?: string }>;
 
 export function registerLibraryRoutes(
   server: FastifyInstance,
@@ -30,13 +33,18 @@ export function registerLibraryRoutes(
       return reply.code(400).send(invalidRequestBody);
     }
 
-    const author = await createAuthor(dependencies, parsed.data);
-    request.log.info({ authorId: author.id, route: "POST /api/authors" }, "author_created");
+    const { author, created } = await createAuthor(dependencies, parsed.data);
+    request.log.info(
+      { authorId: author.id, created, route: "POST /api/authors" },
+      created ? "author_created" : "author_resolved"
+    );
 
-    return reply.code(201).send(author);
+    return reply.code(created ? 201 : 200).send(author);
   });
 
-  server.get("/api/authors", async () => listAuthors(dependencies.db));
+  server.get<{ Querystring: AuthorSearchQuery }>("/api/authors", async (request) =>
+    searchAuthors(dependencies.db, request.query.query)
+  );
 
   server.post("/api/works", async (request, reply) => {
     const parsed = createWorkRequestSchema.safeParse(request.body);

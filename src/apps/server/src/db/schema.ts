@@ -36,10 +36,23 @@ export const entries = pgTable("entries", {
   }).notNull()
 });
 
-export const authors = pgTable("authors", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull()
-});
+export const authors = pgTable(
+  "authors",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    // Canonical identity key for a named external author/source (#694): the database Unicode lowercase
+    // of the NFKC-cleaned display name, computed by the `author_name_key` SQL function so migration and
+    // every runtime writer share one policy. NULL for `self-author:<userId>` rows, which stay distinct
+    // owner-keyed "You" identities and are excluded from the unique index below.
+    nameKey: text("name_key")
+  },
+  (table) => [
+    uniqueIndex("authors_name_key_unique")
+      .on(table.nameKey)
+      .where(sql`${table.nameKey} is not null`)
+  ]
+);
 
 export const workMeta = pgTable(
   "work_meta",

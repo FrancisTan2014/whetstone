@@ -223,7 +223,7 @@ export {
 } from "./libraryContracts.js";
 export type {
   AuthorDto,
-  AuthorListDto,
+  AuthorSearchDto,
   CreateAuthorRequest,
   CreateWorkRequest,
   WorkAuthorSelection,

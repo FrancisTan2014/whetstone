@@ -115,8 +115,134 @@ describe("library routes", () => {
       authors: [
         { id: "author-2", name: "Octavia Butler" },
         { id: "author-1", name: "Zadie Smith" }
-      ]
+      ],
+      cleanedQuery: "",
+      exactMatchId: null
     });
+  });
+
+  it("resolves a canonically-equivalent author name to the existing row (200, no duplicate)", async () => {
+    const created = await context.server.inject({
+      method: "POST",
+      url: "/api/authors",
+      payload: { name: "Octavia Butler" }
+    });
+    // Same identity, differently typed: full-width + non-breaking spaces, padding, and mixed case.
+    const resolved = await context.server.inject({
+      method: "POST",
+      url: "/api/authors",
+      payload: { name: "  octavia\u3000BUTLER \u00a0" }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(resolved.statusCode).toBe(200);
+    // The canonical name is preserved from the first insert; the variant does not overwrite it.
+    expect(resolved.json()).toEqual({ id: "author-1", name: "Octavia Butler" });
+
+    const list = await context.server.inject({ method: "GET", url: "/api/authors" });
+    expect(list.json()).toEqual({
+      authors: [{ id: "author-1", name: "Octavia Butler" }],
+      cleanedQuery: "",
+      exactMatchId: null
+    });
+  });
+
+  it("searches authors by canonical substring and reports the exact match and cleaned query", async () => {
+    await context.server.inject({
+      method: "POST",
+      url: "/api/authors",
+      payload: { name: "Martin Kleppmann" }
+    });
+    await context.server.inject({
+      method: "POST",
+      url: "/api/authors",
+      payload: { name: "Martin Fowler" }
+    });
+
+    const substring = await context.server.inject({
+      method: "GET",
+      url: "/api/authors?query=martin"
+    });
+    expect(substring.json()).toEqual({
+      authors: [
+        { id: "author-2", name: "Martin Fowler" },
+        { id: "author-1", name: "Martin Kleppmann" }
+      ],
+      cleanedQuery: "martin",
+      exactMatchId: null
+    });
+
+    // A case/width variant of a whole name resolves to the exact id so the UI suppresses "Add".
+    const exact = await context.server.inject({
+      method: "GET",
+      url: `/api/authors?query=${encodeURIComponent("  martin\u3000FOWLER ")}`
+    });
+    expect(exact.json()).toEqual({
+      authors: [{ id: "author-2", name: "Martin Fowler" }],
+      cleanedQuery: "martin FOWLER",
+      exactMatchId: "author-2"
+    });
+  });
+
+  it("creates a Work whose new author name matches an existing one without duplicating the author", async () => {
+    const first = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "George Orwell" },
+        language: "en",
+        title: "Animal Farm",
+        workType: "book"
+      }
+    });
+    // The #694 bug: a second Work whose author differs only by case/width must reuse the author row.
+    const second = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "george\u3000orwell" },
+        language: "en",
+        title: "1984",
+        workType: "book"
+      }
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(201);
+    expect(second.json().work.authorId).toBe("author-1");
+
+    const authors = await context.server.inject({ method: "GET", url: "/api/authors" });
+    expect(authors.json()).toEqual({
+      authors: [{ id: "author-1", name: "George Orwell" }],
+      cleanedQuery: "",
+      exactMatchId: null
+    });
+  });
+
+  it("resolves concurrent creations of the same author name to a single row", async () => {
+    const [a, b, c] = await Promise.all([
+      context.server.inject({
+        method: "POST",
+        url: "/api/authors",
+        payload: { name: "Ursula K. Le Guin" }
+      }),
+      context.server.inject({
+        method: "POST",
+        url: "/api/authors",
+        payload: { name: "ursula k. le guin" }
+      }),
+      context.server.inject({
+        method: "POST",
+        url: "/api/authors",
+        payload: { name: "URSULA K. LE GUIN" }
+      })
+    ]);
+
+    const ids = [a, b, c].map((response) => response.json().id as string);
+    expect(new Set(ids).size).toBe(1);
+
+    const list = await context.server.inject({ method: "GET", url: "/api/authors" });
+    expect(list.json().authors).toHaveLength(1);
   });
 
   it("creates a work with a new inline author and persists both", async () => {
@@ -144,7 +270,11 @@ describe("library routes", () => {
     });
 
     const authors = await context.server.inject({ method: "GET", url: "/api/authors" });
-    expect(authors.json()).toEqual({ authors: [{ id: "author-1", name: "George Orwell" }] });
+    expect(authors.json()).toEqual({
+      authors: [{ id: "author-1", name: "George Orwell" }],
+      cleanedQuery: "",
+      exactMatchId: null
+    });
 
     const works = await context.server.inject({ method: "GET", url: "/api/works" });
     expect(works.statusCode).toBe(200);
@@ -244,7 +374,7 @@ describe("library routes", () => {
     const authors = await context.server.inject({ method: "GET", url: "/api/authors" });
     const works = await context.server.inject({ method: "GET", url: "/api/works" });
 
-    expect(authors.json()).toEqual({ authors: [] });
+    expect(authors.json()).toEqual({ authors: [], cleanedQuery: "", exactMatchId: null });
     expect(works.json()).toEqual({ works: [] });
   });
 });
