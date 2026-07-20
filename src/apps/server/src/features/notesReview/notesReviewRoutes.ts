@@ -35,6 +35,7 @@ const questionRequired = { error: "question_required" } as const;
 const conflict = { error: "conflict" } as const;
 const invalidSuccessCheck = { error: "invalid_success_check" } as const;
 const legacyReadOnly = { error: "legacy_read_only" } as const;
+const duplicateCurrentNote = { error: "duplicate_current_note" } as const;
 const restartRequiresCard = { error: "restart_requires_card" } as const;
 
 type NoteReviewParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
@@ -377,7 +378,8 @@ export function registerNotesReviewRoutes(
   // or an authored Success check (`expected_response`), and choose `keep` (policy only) or `restart` (policy
   // + a schedule reset through the shared boundary, due now) — atomically. 404 when the prompt is not the
   // caller's; 400 on a malformed request or a blank Success check; 409 when the prompt is `legacy_custom`
-  // (read-only here) or a `restart` targets a cardless prompt. Returns the refreshed settings row.
+  // (read-only here), converting to `current_note` collides with the note's existing `current_note` prompt,
+  // or a `restart` targets a cardless prompt. Returns the refreshed settings row.
   server.post<{ Params: PromptParams }>(
     "/api/notes/review/prompts/:id/grading-target",
     async (request, reply) => {
@@ -398,6 +400,8 @@ export function registerNotesReviewRoutes(
           return reply.code(400).send(invalidSuccessCheck);
         case "legacy_read_only":
           return reply.code(409).send(legacyReadOnly);
+        case "duplicate_current_note":
+          return reply.code(409).send(duplicateCurrentNote);
         case "restart_requires_card":
           return reply.code(409).send(restartRequiresCard);
         case "ok":

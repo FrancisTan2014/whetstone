@@ -215,8 +215,10 @@ can navigate them from another package.
   `GET /api/notes/review/prompts/:id/history`, `PATCH .../question`, `POST .../pause|/resume|/restart|/card`,
   `DELETE .../card`. Toggling an authored prompt's grading between `current_note` and `expected_response` is
   `setNoteGradingTarget` (`notesReviewSettingsCommands.ts`, served at `POST /api/notes/review/prompts/:id/grading-target`,
-  `{ mode: keep|restart, target }`): owner-scoped, `legacy_custom` is read-only (409), a blank Success check is
-  rejected (400), `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: `OwnedNoteReviewSection.tsx` discloses `NoteReviewSettings.tsx` in place (state-driven
+  `{ mode: keep|restart, target }`): owner-scoped, `legacy_custom` is read-only (409), converting to
+  `current_note` when the note already has one is a `duplicate_current_note` conflict (409, at most one per
+  note), a blank Success check is rejected (400),
+  `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: `OwnedNoteReviewSection.tsx` discloses `NoteReviewSettings.tsx` in place (state-driven
   controls, inline keyboard confirmations, no-double-submit, stale-action list reload); client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).
