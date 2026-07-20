@@ -30,12 +30,17 @@ test("reuses one author across two Works added through the Library combobox (#69
   await authorField.fill("Ursula K. Le Guin");
   await page.getByRole("option", { name: /Add .Ursula K\. Le Guin./ }).click();
   await page.getByRole("button", { name: "Create work" }).click();
+  // Creating a work auto-opens its Manage-content sheet (a modal that aria-hides the shelf); dismiss it
+  // so the shelf's author grouping is back in the accessibility tree before asserting on it.
+  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeHidden();
 
-  const group = page.getByRole("region", { name: "Ursula K. Le Guin" });
-  await expect(group).toHaveCount(1);
-  await expect(
-    group.getByRole("heading", { name: "The Left Hand of Darkness" })
-  ).toBeVisible();
+  // Exactly one author group for this name, holding the first Work. (The group is an <h2> whose
+  // accessible name is the author plus its work count; the works are <h3> cards beneath it.)
+  await expect(page.getByRole("heading", { name: /Ursula K\. Le Guin/ })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: /Ursula K\. Le Guin\s+1 work\b/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The Left Hand of Darkness" })).toBeVisible();
 
   // Second Work: type the SAME author with different case. The server-canonical search surfaces the
   // existing author as a selectable option (no "Add"); picking it reuses the identity.
@@ -46,10 +51,13 @@ test("reuses one author across two Works added through the Library combobox (#69
   await expect(page.getByRole("option", { name: /Add /i })).toHaveCount(0);
   await page.getByRole("option", { name: "Ursula K. Le Guin" }).click();
   await page.getByRole("button", { name: "Create work" }).click();
+  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeHidden();
 
-  // One author group, both Works under it — the duplicate author was prevented end to end.
-  const finalGroup = page.getByRole("region", { name: "Ursula K. Le Guin" });
-  await expect(finalGroup).toHaveCount(1);
-  await expect(finalGroup.getByRole("heading", { name: "The Left Hand of Darkness" })).toBeVisible();
-  await expect(finalGroup.getByRole("heading", { name: "The Dispossessed" })).toBeVisible();
+  // Still ONE author group — the duplicate was prevented — now counting two Works, both listed.
+  await expect(page.getByRole("heading", { name: /Ursula K\. Le Guin/ })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: /Ursula K\. Le Guin\s+2 works\b/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The Left Hand of Darkness" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The Dispossessed" })).toBeVisible();
 });
