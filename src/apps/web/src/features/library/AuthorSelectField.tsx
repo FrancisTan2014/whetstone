@@ -39,6 +39,10 @@ export function AuthorSelectField({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ReadonlyArray<AuthorDto>>([]);
   const [exactMatchId, setExactMatchId] = useState<string | null>(null);
+  // The raw query the current results/exactMatchId belong to. It gates the effective selection so a
+  // stale exact match from a previous query can never resolve after the input is edited but before the
+  // debounced search for the new text completes.
+  const [searchedQuery, setSearchedQuery] = useState("");
   const [cleanedQuery, setCleanedQuery] = useState("");
   const [status, setStatus] = useState<SearchStatus>("loading");
   // A monotonic request id so a slow earlier search can never overwrite a newer result.
@@ -64,6 +68,7 @@ export function AuthorSelectField({
           setResults(response.authors);
           setExactMatchId(response.exactMatchId);
           setCleanedQuery(response.cleanedQuery);
+          setSearchedQuery(query);
           setStatus("ready");
         })
         .catch(() => {
@@ -126,8 +131,10 @@ export function AuthorSelectField({
   });
 
   // The effective selection: an explicit pick wins; otherwise an exact canonical match resolves as the
-  // existing selection (on submit as well as on blur). Unselected non-exact free text stays `undefined`,
-  // so the form's explicit-creation rule blocks an accidental duplicate.
+  // existing selection (on submit as well as on blur), but only while it belongs to the current input —
+  // `searchedQuery === query` gates it so a stale exact match from a prior query can never resolve after
+  // the text is edited but before the debounced search for the new text completes. Unselected non-exact
+  // free text stays `undefined`, so the form's explicit-creation rule blocks an accidental duplicate.
   useEffect(() => {
     let selection: WorkAuthorSelection | undefined;
     if (selectedItem !== null) {
@@ -135,11 +142,11 @@ export function AuthorSelectField({
         selectedItem.kind === "author"
           ? { authorId: selectedItem.author.id, mode: "existing" }
           : { mode: "new", name: selectedItem.name };
-    } else if (exactMatchId !== null) {
+    } else if (exactMatchId !== null && searchedQuery === query) {
       selection = { authorId: exactMatchId as AuthorDto["id"], mode: "existing" };
     }
     onSelectionChange(selection);
-  }, [selectedItem, exactMatchId, onSelectionChange]);
+  }, [selectedItem, exactMatchId, searchedQuery, query, onSelectionChange]);
 
   const showEmptyHint = status === "ready" && items.length === 0;
 

@@ -179,6 +179,50 @@ describe("AuthorSelectField", () => {
     });
   });
 
+  it("does not commit a stale exact match when the query is edited before the new search resolves", async () => {
+    const deferred: Array<(value: AuthorSearchDto) => void> = [];
+    mockedSearchAuthors.mockImplementation(
+      () =>
+        new Promise<AuthorSearchDto>((resolve) => {
+          deferred.push(resolve);
+        })
+    );
+    const { onSelectionChange, user } = renderField();
+    const input = screen.getByRole("combobox");
+
+    // Resolve the first (blank) search so the field is ready with no exact match.
+    await waitFor(() => {
+      expect(deferred.length).toBe(1);
+    });
+    await act(async () => {
+      deferred[0]?.({ authors: [kleppmann, fowler], cleanedQuery: "", exactMatchId: null });
+    });
+
+    // Type an exact existing author and let that search resolve -> existing selection committed.
+    await user.type(input, "Martin Fowler");
+    await waitFor(() => {
+      expect(deferred.length).toBe(2);
+    });
+    await act(async () => {
+      deferred[1]?.({ authors: [fowler], cleanedQuery: "Martin Fowler", exactMatchId: fowler.id });
+    });
+    await waitFor(() => {
+      expect(lastSelection(onSelectionChange)).toEqual({ authorId: fowler.id, mode: "existing" });
+    });
+
+    // Edit to a new non-exact name; the next search is enqueued but left in flight.
+    await user.type(input, "x");
+    await waitFor(() => {
+      expect(deferred.length).toBe(3);
+    });
+
+    // Before the search for the edited text completes, the stale exactMatchId must not resolve:
+    // submitting now would otherwise create the Work under the old author.
+    await waitFor(() => {
+      expect(lastSelection(onSelectionChange)).toBeUndefined();
+    });
+  });
+
   it("keeps the typed text and commits nothing when the field loses focus", async () => {
     const { onSelectionChange, user } = renderField();
     const input = screen.getByRole("combobox") as HTMLInputElement;
