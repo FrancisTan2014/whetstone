@@ -13,11 +13,12 @@ import { autosaveStatusClassNames, autosaveStatusLabels } from "./authoredWork.t
 import { useAutosave } from "./useAutosave.js";
 import { useUnsavedChangesWarning } from "./useUnsavedChangesWarning.js";
 
-// The authored-Work editor page (#576): an immersive writing surface reached at `#/write?work=<id>`,
+// The authored-Work editor page (#576, #679): an immersive writing surface reached at `#/write?work=<id>`,
 // mirroring the reader. It loads the owned Work's canonical ProseMirror/Tiptap document, edits it in the
 // shared rich editor with debounced latest-write-safe autosave, and reads it back through the very same
-// reader renderer (`PmDocument`) with no format conversion. A missing/failed load or unknown id falls
-// back to a calm inline state, never a blank page.
+// reader renderer (`PmDocument`) with no format conversion. The Write route supplies the work id (opening
+// the Writing home when there is none), so a failed load or unknown id falls back to a calm inline state,
+// never a blank page. Its back path returns to the Writing home.
 
 type LoadState =
   | Readonly<{ status: "error" }>
@@ -28,14 +29,10 @@ type Mode = "edit" | "read";
 
 export function AuthoredWorkPage({
   workEntryId
-}: Readonly<{ workEntryId: string | undefined }>): React.JSX.Element {
+}: Readonly<{ workEntryId: string }>): React.JSX.Element {
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
-    if (workEntryId === undefined) {
-      return;
-    }
-
     let active = true;
     fetchAuthoredWork(workEntryId).then(
       (work) => {
@@ -54,14 +51,6 @@ export function AuthoredWorkPage({
       active = false;
     };
   }, [workEntryId]);
-
-  if (workEntryId === undefined) {
-    return (
-      <WriteFrame>
-        <p className="text-text-muted">No document selected. Open one from your Library.</p>
-      </WriteFrame>
-    );
-  }
 
   if (load.status === "loading") {
     return (
@@ -84,9 +73,9 @@ export function AuthoredWorkPage({
   return <AuthoredWorkEditor key={load.work.entryId} work={load.work} />;
 }
 
-// The immersive shell around the writing surface: a Library parent link, the page title, an optional
-// status/mode-toggle action, and the content region. Kept separate so the loading/error/empty arms
-// share the same calm frame. The editor overrides the title with the document's own name.
+// The immersive shell around the writing surface: a Writing parent link, the page title, an optional
+// status/mode-toggle action, and the content region. Kept separate so the loading/error arms share the
+// same calm frame. The editor overrides the title with the document's own name.
 function WriteFrame({
   children,
   primaryAction,
@@ -98,7 +87,7 @@ function WriteFrame({
 }>): React.JSX.Element {
   return (
     <PageFrame
-      parentLink={{ label: "Library", to: "/library" }}
+      parentLink={{ label: "Writing", to: "/write" }}
       primaryAction={primaryAction}
       title={title}
     >

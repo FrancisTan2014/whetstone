@@ -10,8 +10,8 @@ import type { Page } from "@playwright/test";
 // the integration layer (notesReviewRoutes.test.ts); this spec covers the redirects and the current-note
 // review that a live session can seed.
 
-// The five retained primary destinations, in order. Memory and Recall are absent.
-const PRIMARY_LABELS = ["Today", "Library", "Recite", "Notes", "Diary"] as const;
+// The six retained primary destinations, in order. Memory and Recall are absent (Write added in #679).
+const PRIMARY_LABELS = ["Today", "Library", "Write", "Recite", "Notes", "Diary"] as const;
 
 // Reach a known theme from the shell's theme toggle (labelled by its DESTINATION: "Switch to Night" shows
 // in Day, "Switch to Day" shows in Night). Idempotent — only clicks when a flip is needed.
@@ -26,7 +26,7 @@ async function setTheme(page: Page, target: "day" | "night"): Promise<void> {
     .toBe(target === "night");
 }
 
-// The primary nav offers exactly the five retained destinations — no "Memory", no "Recall" — regardless
+// The primary nav offers exactly the six retained destinations — no "Memory", no "Recall" — regardless
 // of viewport width or theme.
 async function expectRetiredNav(page: Page): Promise<void> {
   const nav = page.getByRole("navigation", { name: "Primary" });

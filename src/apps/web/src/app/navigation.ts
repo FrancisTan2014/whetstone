@@ -5,26 +5,29 @@ export type NavDestination = Readonly<{
   to: string;
 }>;
 
-// The primary navigation destinations (#638): exactly five calm, product-facing modes that name durable
-// learner modes — Today (the proactive landing/index route), Library, Recite, Notes, and Diary. Search is
-// a persistent shell utility, not a destination; Reader/Write are secondary under Library, note Review is
-// secondary under Notes, and the Recitation review is secondary under Recite (see `activeDestination`).
+// The primary navigation destinations (#638, #679): exactly six calm, product-facing modes that name
+// durable learner modes — Today (the proactive landing/index route), Library, Write, Recite, Notes, and
+// Diary. Search is a persistent shell utility, not a destination; Reader is secondary under Library, the
+// authored-Work editor is secondary under Write, note Review is secondary under Notes, and the Recitation
+// review is secondary under Recite (see `activeDestination`).
 export const navDestinations: ReadonlyArray<NavDestination> = [
   { end: true, label: "Today", to: "/" },
   { label: "Library", to: "/library" },
+  { label: "Write", to: "/write" },
   { label: "Recite", to: "/recite" },
   { label: "Notes", to: "/notes" },
   { label: "Diary", to: "/diary" }
 ];
 
 // Every secondary route mapped to the one primary destination that owns it, so a secondary surface keeps
-// its parent visibly active (Reader/Write → Library, Recitation review → Recite, note Review → Notes). The
-// retired Memory/Recall links resolve to Notes, matching their redirect target, so the parent stays
-// truthful even for the render before the redirect settles. Prefixes never overlap, so order is irrelevant.
+// its parent visibly active (Reader → Library; the authored-Work editor → Write, #679; Recitation review →
+// Recite; note Review → Notes). The retired Memory/Recall links resolve to Notes, matching their redirect
+// target, so the parent stays truthful even for the render before the redirect settles. Prefixes never
+// overlap, so order is irrelevant.
 const routeParents: ReadonlyArray<readonly [string, string]> = [
   ["/library", "/library"],
   ["/reader", "/library"],
-  ["/write", "/library"],
+  ["/write", "/write"],
   ["/recite", "/recite"],
   ["/recitation", "/recite"],
   ["/notes", "/notes"],

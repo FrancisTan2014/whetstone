@@ -88,7 +88,7 @@ describe("WorkOverflowMenu", () => {
     );
   });
 
-  it("lists Open in Recite and Edit document for an enrolled, authored Work", async () => {
+  it("lists Open in Recite and Edit in Writing for an enrolled, authored Work", async () => {
     const { user } = setup({ authored: true, enrolled: true });
     const menu = await openMenu(user);
 
@@ -96,13 +96,13 @@ describe("WorkOverflowMenu", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((node) => node.textContent)
-    ).toEqual(["Open in Recite", "View notes", "Edit document", "Delete work"]);
+    ).toEqual(["Open in Recite", "View notes", "Edit in Writing", "Delete work"]);
     expect(
       within(menu).getByRole("menuitem", { name: "Open in Recite" }).getAttribute("href")
     ).toBe("#/recite");
-    expect(within(menu).getByRole("menuitem", { name: "Edit document" }).getAttribute("href")).toBe(
-      "#/write?work=work-1"
-    );
+    expect(
+      within(menu).getByRole("menuitem", { name: "Edit in Writing" }).getAttribute("href")
+    ).toBe("#/write?work=work-1");
   });
 
   it("enrolls the Work when 'I can recite this' is chosen", async () => {

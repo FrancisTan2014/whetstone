@@ -32,19 +32,17 @@ afterEach(() => {
 
 function setup(overrides: Partial<Parameters<typeof LibraryAddMenu>[0]> = {}) {
   const onUploadFile = vi.fn();
-  const onNewDocument = vi.fn();
   const onAddWorkManually = vi.fn();
   const user = userEvent.setup();
   render(
     <LibraryAddMenu
       busy={false}
       onAddWorkManually={onAddWorkManually}
-      onNewDocument={onNewDocument}
       onUploadFile={onUploadFile}
       {...overrides}
     />
   );
-  return { onAddWorkManually, onNewDocument, onUploadFile, user };
+  return { onAddWorkManually, onUploadFile, user };
 }
 
 async function openMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
@@ -54,36 +52,27 @@ async function openMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLE
 }
 
 describe("LibraryAddMenu", () => {
-  it("exposes exactly the three add actions with the upload format hint", async () => {
+  it("exposes exactly the two source add actions with the upload format hint", async () => {
     const { user } = setup();
     const menu = await openMenu(user);
 
     const items = within(menu).getAllByRole("menuitem");
+    // Creating an authored document moved to the Write destination (#679); Library only adds source
+    // material now — no "New document" item remains here.
     expect(items.map((item) => item.textContent)).toEqual([
       "Upload file.epub, .pdf, .md",
-      "New document",
       "Add work manually"
     ]);
   });
 
   it("runs the upload flow when Upload file is chosen", async () => {
-    const { onUploadFile, onNewDocument, onAddWorkManually, user } = setup();
+    const { onUploadFile, onAddWorkManually, user } = setup();
     const menu = await openMenu(user);
 
     await user.click(within(menu).getByRole("menuitem", { name: /Upload file/ }));
 
     expect(onUploadFile).toHaveBeenCalledTimes(1);
-    expect(onNewDocument).not.toHaveBeenCalled();
     expect(onAddWorkManually).not.toHaveBeenCalled();
-  });
-
-  it("runs the new-document flow when New document is chosen", async () => {
-    const { onNewDocument, user } = setup();
-    const menu = await openMenu(user);
-
-    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
-
-    expect(onNewDocument).toHaveBeenCalledTimes(1);
   });
 
   it("runs the manual add-work flow when Add work manually is chosen", async () => {

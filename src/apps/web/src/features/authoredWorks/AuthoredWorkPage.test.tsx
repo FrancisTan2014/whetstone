@@ -91,13 +91,6 @@ afterEach(() => {
 });
 
 describe("AuthoredWorkPage", () => {
-  it("prompts to open a document when no work is selected", () => {
-    renderWithRouter(<AuthoredWorkPage workEntryId={undefined} />);
-
-    expect(screen.getByText(/No document selected/i)).toBeDefined();
-    expect(mockedFetch).not.toHaveBeenCalled();
-  });
-
   it("loads the work and opens it in the editor", async () => {
     renderWithRouter(<AuthoredWorkPage workEntryId="work-1" />);
 

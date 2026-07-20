@@ -26,7 +26,6 @@ vi.mock("../content/contentApi", () => ({
 }));
 
 vi.mock("../authoredWorks/authoredWorkApi", () => ({
-  createAuthoredWork: vi.fn(),
   listAuthoredWorks: vi.fn()
 }));
 
@@ -51,7 +50,7 @@ import {
   ingestEpub
 } from "./libraryApi";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
-import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
+import { listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
@@ -59,12 +58,10 @@ import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
 import { MemoryRouter } from "react-router-dom";
 import type {
   AuthorDto,
-  AuthoredWorkDto,
   AuthoredWorkSummaryDto,
   RecitationPlanDto,
   WorkListItemDto
 } from "@whetstone/contracts";
-import { createTextDocument } from "@whetstone/document";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 // The library reports action results (work created, EPUB imported, and their failures)
@@ -94,7 +91,6 @@ const mockedIngestEpub = vi.mocked(ingestEpub);
 const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
 const mockedIngestPdf = vi.mocked(ingestPdf);
 const mockedListAuthoredWorks = vi.mocked(listAuthoredWorks);
-const mockedCreateAuthoredWork = vi.mocked(createAuthoredWork);
 const mockedListRecitationPlans = vi.mocked(listRecitationPlans);
 const mockedEnrollRecitation = vi.mocked(enrollRecitation);
 
@@ -1011,7 +1007,7 @@ describe("AdminLibraryPage", () => {
     expect(screen.getByRole("dialog", { name: "Delete work" })).toBeDefined();
   });
 
-  it("marks a Work authored with a badge, keeps the shared read action, and moves Edit document into overflow with no Markdown export (#576, #640)", async () => {
+  it("marks a Work authored with a badge, keeps the shared read action, and moves Edit in Writing into overflow with no Markdown export (#576, #640, #679)", async () => {
     const authoredSummary: AuthoredWorkSummaryDto = {
       createdAt: "2026-07-01T00:00:00.000Z",
       entryId: "work-1",
@@ -1036,13 +1032,15 @@ describe("AdminLibraryPage", () => {
     expect(authored.getByRole("link", { name: "Read" }).getAttribute("href")).toBe(
       "#/reader?work=work-1"
     );
-    expect(authored.queryByRole("menuitem", { name: "Edit document" })).toBeNull();
+    expect(authored.queryByRole("menuitem", { name: "Edit in Writing" })).toBeNull();
 
     const authoredOverflow = await openWorkOverflow(user, "Politics and the English Language");
     // Authored Works edit in the rich editor — never a "Manage content" surface — and never expose a
     // Markdown export.
     expect(
-      within(authoredOverflow).getByRole("menuitem", { name: "Edit document" }).getAttribute("href")
+      within(authoredOverflow)
+        .getByRole("menuitem", { name: "Edit in Writing" })
+        .getAttribute("href")
     ).toBe("#/write?work=work-1");
     expect(
       within(authoredOverflow).getByRole("menuitem", { name: "View notes" }).getAttribute("href")
@@ -1064,84 +1062,12 @@ describe("AdminLibraryPage", () => {
     expect(
       within(importedOverflow).getByRole("menuitem", { name: "Manage content" })
     ).toBeDefined();
-    expect(within(importedOverflow).queryByRole("menuitem", { name: "Edit document" })).toBeNull();
+    expect(
+      within(importedOverflow).queryByRole("menuitem", { name: "Edit in Writing" })
+    ).toBeNull();
     expect(
       within(importedOverflow).queryByRole("menuitem", { name: "Export Markdown" })
     ).toBeNull();
-  });
-
-  it("creates a new authored document and jumps into the editor (#576)", async () => {
-    window.location.hash = "";
-    const created: AuthoredWorkDto = {
-      createdAt: "2026-07-01T00:00:00.000Z",
-      document: createTextDocument(""),
-      entryId: "doc 42",
-      language: "zh-CN",
-      title: "My new essay",
-      unitEntryId: "unit-1",
-      updatedAt: "2026-07-01T00:00:00.000Z",
-      workType: "essay"
-    };
-    mockedCreateAuthoredWork.mockResolvedValue(created);
-    const user = await renderReady();
-
-    const menu = await openAddMenu(user);
-    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
-    await screen.findByRole("heading", { name: "New document" });
-    await user.type(screen.getByLabelText("Title"), "My new essay");
-    await user.selectOptions(screen.getByLabelText("Type"), "essay");
-    await user.selectOptions(screen.getByLabelText("Language"), "zh-CN");
-    await user.click(screen.getByRole("button", { name: "Create and write" }));
-
-    await waitFor(() => {
-      expect(mockedCreateAuthoredWork).toHaveBeenCalledWith({
-        language: "zh-CN",
-        title: "My new essay",
-        workType: "essay"
-      });
-    });
-    expect(window.location.hash).toBe("#/write?work=doc%2042");
-  });
-
-  it("validates that a new document needs a title before creating (#576)", async () => {
-    const user = await renderReady();
-
-    const menu = await openAddMenu(user);
-    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
-    await screen.findByRole("heading", { name: "New document" });
-    await user.click(screen.getByRole("button", { name: "Create and write" }));
-
-    expect(await screen.findByText("Enter a document title.")).toBeDefined();
-    expect(mockedCreateAuthoredWork).not.toHaveBeenCalled();
-  });
-
-  it("shows an error toast when creating a new document fails (#576)", async () => {
-    mockedCreateAuthoredWork.mockRejectedValue(new Error("boom"));
-    const user = await renderReady();
-
-    const menu = await openAddMenu(user);
-    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
-    await screen.findByRole("heading", { name: "New document" });
-    await user.type(screen.getByLabelText("Title"), "Doomed doc");
-    await user.click(screen.getByRole("button", { name: "Create and write" }));
-
-    expect(
-      await screen.findByText("Could not create the document. Please try again.")
-    ).toBeDefined();
-  });
-
-  it("dismisses the New document sheet without creating anything (#576)", async () => {
-    const user = await renderReady();
-
-    const menu = await openAddMenu(user);
-    await user.click(within(menu).getByRole("menuitem", { name: "New document" }));
-    await screen.findByRole("heading", { name: "New document" });
-    await user.click(screen.getByRole("button", { name: "Close" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("heading", { name: "New document" })).toBeNull();
-    });
-    expect(mockedCreateAuthoredWork).not.toHaveBeenCalled();
   });
 
   const recitationPlanFor = (workEntryId: string, title: string): RecitationPlanDto => ({
