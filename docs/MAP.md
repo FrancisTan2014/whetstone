@@ -201,7 +201,8 @@ can navigate them from another package.
   `enrollNoteInReviewForOwner`/`getNoteReviewStatusForOwner` in `notesReviewEnrollment.ts`): an anchored note
   reuses its exact source (no question), a standalone note supplies the learner's question. Web: `NotesPage.tsx`
   is the single Notes home (one continuous list via `NotesHomeList.tsx`, per-row Review projection via
-  `noteReviewSummaryLabel.ts`, debounced note-centric search, a 44px "New note" primary action). Opening any
+  `noteReviewSummaryLabel.ts`, debounced note-centric search, a "New card" primary action that composes a
+  retrieval card in place — see #690). Opening any
   body-bearing note edits it in the shared `RichContentEditor` through `OwnedNoteEditor.tsx` (named-delete
   cascade + owner-scoped `OwnedNoteReviewSection.tsx`); the owner-scoped client lives in `notes/notesApi.ts`
   (`fetchAllNotes({work,search})`/`createStandaloneNote`/`updateOwnedNote`/`deleteOwnedNote`) and
@@ -235,6 +236,19 @@ can navigate them from another package.
   deleted is `submission_gone` (410) — the receipt is a non-resurrecting tombstone (plain-text ids, no FK, so
   it sits OUTSIDE `deleteNoteInTx`'s cascade). The note→prompt write reuses the single
   `noteCommands.insertNotePromptInTx` primitive (which `insertCurrentNotePromptInTx` also delegates to).
+- Compose retrieval cards directly from Notes home (#690): `NotesPage.tsx`'s primary action is now
+  "New card" (Import stays a 44px secondary), opening `notes/DirectCardComposer.tsx` — a wide `Sheet` that
+  mints one `submissionId` (`crypto.randomUUID()`) up front, validates on Create, keeps the drafts + id on a
+  failure so a retry replays the SAME submission, and on success announces "Card created. Due now." then
+  focuses the new note's row (or offers "View card", which clears any active search/work filter via
+  `useNavigate("/notes")` to reveal a note the filter excluded). The composer's body is the reusable
+  `notes/RetrievalContractEditor.tsx` (the shared retrieval-contract editor: a workspace Answer↔Reference
+  slot, a compact rich Question, a collapsible Success-check disclosure that relabels the workspace and, when
+  non-empty, confirms before discard, plus an internal Try-preview that mirrors the Question→Reveal review
+  sequence without persisting; exports the pure `gradingTargetFor`/`isDocumentBlank` and `SuccessCheckState`).
+  The client boundary is `notesReview/notesReviewApi.ts`'s `createDirectCard` (raw `fetch`, mapping the #689
+  server outcomes to a discriminated `CreateDirectCardError` — `conflict`/`gone`/`invalid`/`network`) against
+  `POST /api/notes/review/direct-cards`; no new server or schema work (the #689 command is the whole backend).
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
   standalone Notes — the import surface replaced the retired Memory batch import (the Memory
   `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →

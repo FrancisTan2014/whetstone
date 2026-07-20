@@ -3,6 +3,8 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as ReactRouterDom from "react-router-dom";
+
 vi.mock("./notesApi", () => ({
   fetchAllNotes: vi.fn()
 }));
@@ -108,6 +110,42 @@ vi.mock("./NotesImport", async () => {
   };
 });
 
+// NotesPage now navigates to reveal a filtered-out new card; a hoisted stub captures the target without a
+// Router in the test tree.
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactRouterDom>();
+  return { ...actual, useNavigate: () => navigateMock };
+});
+
+// The direct-card composer has its own suite; here it stands in as a controllable stub so the page's
+// orchestration (opening, the created-card message, reload, focus / View card) is asserted in isolation.
+vi.mock("./DirectCardComposer", async () => {
+  const React = await import("react");
+  return {
+    DirectCardComposer: (props: {
+      onClose: () => void;
+      onCreated: (result: { noteId: string; promptId: string; review: unknown }) => void;
+    }) =>
+      React.createElement("div", { "data-testid": "composer" }, [
+        React.createElement(
+          "button",
+          {
+            key: "cr",
+            onClick: () => props.onCreated({ noteId: "note-9", promptId: "prompt-9", review: {} }),
+            type: "button"
+          },
+          "stub-create"
+        ),
+        React.createElement(
+          "button",
+          { key: "cl", onClick: () => props.onClose(), type: "button" },
+          "stub-composer-close"
+        )
+      ])
+  };
+});
+
 import type { NoteOverviewDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
@@ -150,14 +188,14 @@ afterEach(() => {
 });
 
 describe("NotesPage (#659)", () => {
-  it("loads the notes into one continuous list with a New note action and a search box", async () => {
+  it("loads the notes into one continuous list with a New card action and a search box", async () => {
     mockedFetch.mockResolvedValue({ notes: [note("note-1", "first"), note("note-2", "second")] });
 
     render(<NotesPage />);
 
     expect(await screen.findByText("first")).toBeDefined();
     expect(screen.getByText("second")).toBeDefined();
-    expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "New card" })).toBeDefined();
     expect(screen.getByRole("searchbox", { name: "Search notes" })).toBeDefined();
     expect(mockedFetch).toHaveBeenCalledWith({ search: undefined, workEntryId: undefined });
   });
@@ -167,7 +205,9 @@ describe("NotesPage (#659)", () => {
 
     render(<NotesPage />);
 
-    expect(await screen.findByText(/No notes yet\. Create one/)).toBeDefined();
+    expect(
+      await screen.findByText(/Notes appear from Reader capture, a new card, or Import/)
+    ).toBeDefined();
   });
 
   it("shows a no-match state when a search returns nothing, then restores on clear", async () => {
@@ -211,22 +251,57 @@ describe("NotesPage (#659)", () => {
     expect(await screen.findByText(/No notes yet for this work/)).toBeDefined();
   });
 
-  it("opens the create editor, reloads on save, and returns focus to New note", async () => {
+  it("opens the card composer, and on creation announces the card and focuses its new row", async () => {
     mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
-    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first"), note("note-2", "second")] });
+    mockedFetch.mockResolvedValue({ notes: [note("note-9", "ninth"), note("note-1", "first")] });
 
     render(<NotesPage />);
     await screen.findByText("first");
 
-    const newNote = screen.getByRole("button", { name: "New note" });
-    await userEvent.click(newNote);
-    expect(screen.getByTestId("editor").getAttribute("data-kind")).toBe("create");
+    await userEvent.click(screen.getByRole("button", { name: "New card" }));
+    expect(screen.getByTestId("composer")).toBeDefined();
 
-    await userEvent.click(screen.getByRole("button", { name: "stub-save" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-create" }));
 
-    await screen.findByText("second");
-    expect(screen.queryByTestId("editor")).toBeNull();
-    expect(document.activeElement).toBe(newNote);
+    expect(screen.queryByTestId("composer")).toBeNull();
+    expect(await screen.findByText("Card created. Due now.")).toBeDefined();
+    await screen.findByText("ninth");
+    // The new card's note is in the list, so focus lands on its row and no "View card" is offered.
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/ninth/)
+    );
+    expect(screen.queryByRole("button", { name: "View card" })).toBeNull();
+  });
+
+  it("offers View card when a filter hides the new card's note, and reveals it on click", async () => {
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first")] });
+
+    render(<NotesPage focusWorkEntryId="work-a" />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "New card" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-create" }));
+
+    // The new standalone note is excluded by the work filter, so a "View card" affordance appears.
+    expect(await screen.findByText("Card created. Due now.")).toBeDefined();
+    const viewCard = await screen.findByRole("button", { name: "View card" });
+
+    await userEvent.click(viewCard);
+    expect(navigateMock).toHaveBeenCalledWith("/notes");
+    expect(screen.queryByRole("button", { name: "View card" })).toBeNull();
+  });
+
+  it("closes the card composer without a message when cancelled", async () => {
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "New card" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-composer-close" }));
+
+    expect(screen.queryByTestId("composer")).toBeNull();
+    expect(screen.queryByText("Card created. Due now.")).toBeNull();
   });
 
   it("opens the edit editor for a row and closes it on cancel", async () => {
@@ -243,6 +318,20 @@ describe("NotesPage (#659)", () => {
     expect(screen.queryByTestId("editor")).toBeNull();
   });
 
+  it("closes the edit editor and reloads the list after a note is saved", async () => {
+    mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "edited")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-save" }));
+
+    expect(await screen.findByText("edited")).toBeDefined();
+    expect(screen.queryByTestId("editor")).toBeNull();
+  });
+
   it("reloads the list after a note is deleted", async () => {
     mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
     mockedFetch.mockResolvedValue({ notes: [] });
@@ -253,7 +342,9 @@ describe("NotesPage (#659)", () => {
     await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
     await userEvent.click(screen.getByRole("button", { name: "stub-delete" }));
 
-    expect(await screen.findByText(/No notes yet\. Create one/)).toBeDefined();
+    expect(
+      await screen.findByText(/Notes appear from Reader capture, a new card, or Import/)
+    ).toBeDefined();
   });
 
   it("refreshes the list when a note's review state changes, keeping the editor open", async () => {

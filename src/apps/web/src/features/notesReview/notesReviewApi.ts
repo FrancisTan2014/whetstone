@@ -1,4 +1,5 @@
 import {
+  parseDirectCardResultDto,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
   parseNoteRevealDto,
@@ -6,6 +7,8 @@ import {
   parseNoteReviewNextDto,
   parseNoteReviewRatingResultDto,
   parseReviewHistoryPageDto,
+  type CreateDirectCardRequest,
+  type DirectCardResultDto,
   type NotePromptSettingsDto,
   type NotePromptSettingsListDto,
   type NoteReviewEnrollmentStatusDto,
@@ -187,4 +190,53 @@ export function addNotePromptCardBack(promptId: string): Promise<NotePromptSetti
 
 export function removeNotePromptCard(promptId: string): Promise<NotePromptSettingsDto> {
   return mutateNotePromptCard(promptId, "card", "DELETE");
+}
+
+// Why a direct card creation failed, kept as a small closed set so the composer can decide whether a retry
+// is worthwhile (a `network` blip is recoverable with the SAME submission id) or the drafts must change (a
+// `conflict` is the same id replayed with an edited payload; `gone` is a tombstoned submission whose note
+// was deleted). Every case keeps the learner's drafts — the composer never blanks them on failure.
+export type CreateDirectCardErrorKind = "conflict" | "gone" | "invalid" | "network";
+
+export class CreateDirectCardError extends Error {
+  readonly kind: CreateDirectCardErrorKind;
+
+  constructor(kind: CreateDirectCardErrorKind) {
+    super(`Direct card creation failed: ${kind}.`);
+    this.name = "CreateDirectCardError";
+    this.kind = kind;
+  }
+}
+
+// Create one review card directly from an authored Question/Answer pair (#689, #690), retry-safe via the
+// composer's stable `submissionId`. A same-payload retry returns the ORIGINAL result (200), so a lost
+// response never double-creates. On failure this throws a `CreateDirectCardError` whose `kind` maps the
+// server outcome — 409 → `conflict`, 410 → `gone`, 4xx → `invalid`, anything else → `network` — so the
+// composer keeps every draft and offers the right recovery.
+export async function createDirectCard(
+  request: CreateDirectCardRequest
+): Promise<DirectCardResultDto> {
+  let response: Response;
+  try {
+    response = await fetch(apiUrl("/notes/review/direct-cards"), {
+      body: JSON.stringify(request),
+      headers: jsonHeaders,
+      method: "POST"
+    });
+  } catch {
+    throw new CreateDirectCardError("network");
+  }
+  if (!response.ok) {
+    if (response.status === 409) {
+      throw new CreateDirectCardError("conflict");
+    }
+    if (response.status === 410) {
+      throw new CreateDirectCardError("gone");
+    }
+    if (response.status >= 400 && response.status < 500) {
+      throw new CreateDirectCardError("invalid");
+    }
+    throw new CreateDirectCardError("network");
+  }
+  return parseDirectCardResultDto(await response.json());
 }
