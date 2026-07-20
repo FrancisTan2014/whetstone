@@ -263,14 +263,39 @@ Library has one **Add** menu with **Upload file** (`.epub`, `.pdf`, `.md`) and *
 manually**. Writing owns **New essay** and authored-Work creation. Each Library option enters its
 owning source flow:
 
+- **Add work manually** uses a compact metadata sheet for title, searchable create-or-select
+  author/source, type, and language, then **Create and edit** opens the new Work in a dedicated
+  full-page Library editor. The metadata sheet never becomes the content workspace.
 - EPUB reads OPF metadata and authored navigation, then creates a Work and ordered ReadingUnits.
 - Markdown uses confirmed title, author, and language and enters through the same block pipeline.
 - PDF confirms metadata, then uses the optional isolated Docling path; scanned PDFs receive an OCR
   pre-pass. Missing tooling produces a specific setup remedy, never a corrupt Work.
-- Manual and Markdown Works derive their Reader structure from the source's heading levels. `#`
-  headings create chapters, deeper headings create nested sections, and content management shows
-  the resulting outline. This hierarchy is projected from canonical source headings, not maintained
-  as a second editable TOC that can drift.
+- A manual Work is learner-owned, editable source material whose canonical content is its
+  ProseMirror blocks. Existing manual Markdown is migrated into that substrate with stable block ids;
+  retained Markdown is provenance, never a second current copy. Uploaded EPUB/PDF/Markdown remains
+  source-managed rather than silently becoming learner-authored content.
+- The manual-Work editor uses the shared rich editor with debounced, latest-write-safe autosave,
+  explicit Saving/Saved/Error state, `Ctrl/Cmd+S`, draft retention on failure, and a pending-save
+  navigation guard. Every saved block is directly editable; raw Markdown entry, block inspection,
+  and the old **Content overview** are not editing surfaces.
+- On desktop, the editor is a dedicated page with a persistent 15rem left **Outline** and a
+  42–48rem content canvas; mobile opens Outline in a drawer. The header provides Library return,
+  save state, and **Open in Reader**.
+- Outline is a live navigator derived only from canonical heading nodes. Heading 1/2/3 controls
+  structure, selection opens the corresponding section, and the active section is highlighted.
+  Whetstone stores no second editable TOC and offers no outline drag/reorder in v0.
+- A novel is edited one heading-delimited ReadingUnit at a time rather than mounted as one enormous
+  editor document. Adding/removing headings transactionally repartitions the affected contiguous
+  blocks; surviving block ids preserve notes, surviving section boundaries preserve unit ids, and a
+  reading position is remapped to the unit now containing its anchor (or the nearest surviving unit).
+- Uploaded Markdown/PDF derives Reader structure from source heading levels. Manual Works derive the
+  same Reader hierarchy from ProseMirror headings. Both use one outline projection rather than a
+  separately maintained tree.
+- Author/source is one reusable Library identity, chosen through a searchable create-or-select field.
+  An exact normalized match reuses that identity across manual creation and ingestion, so Whetstone
+  never presents indistinguishable duplicate choices. Supporting distinct people with the same name
+  requires explicit disambiguating metadata; the learner's **You** identity remains owner-keyed rather
+  than name-keyed.
 - The original uploaded file and sha256 are retained for provenance.
 - Ingestion is transactional and fail-loud: unknown source structures are preserved conservatively and
   emit evidence rather than disappearing silently.
@@ -458,7 +483,11 @@ entries, Recitation plans, and review targets.
 - Typed links include `contains`, `annotates`, `references`, `related_to`, and `derived_from`.
 - Stable block ids survive light edits/re-ingestion where matching is safe; removed blocks are
   retained or represented so anchors fail visibly rather than drifting.
-- An ingested Work is shared library content. An authored Work is owned canonical content.
+- Every Work declares its origin explicitly: `imported`, `manual`, or `authored`. Origin owns its
+  editing policy; provenance rows and ownership facets never double as an implicit type discriminator.
+- Imported Works are source-managed library content. Manual Works are learner-owned source material
+  edited in Library; authored Works are learner-owned writing edited in Writing. Both editable origins
+  use canonical ProseMirror content without becoming the same product concept.
 - A Recitation plan is one owner-scoped enrollment referencing a canonical Work. Its Work-level review
   target owns no source copy. Legacy passage Entries may remain for audit but are not active targets.
 - Review targets are Entries owned transitively through their material/plan and do not duplicate it on
