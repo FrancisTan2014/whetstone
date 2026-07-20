@@ -68,7 +68,7 @@ export function WorkOverflowMenu({
 
           {authored ? (
             <DropdownMenu.Item asChild className={cx.item}>
-              <a href={`#/write?work=${encoded}`}>Edit document</a>
+              <a href={`#/write?work=${encoded}`}>Edit in Writing</a>
             </DropdownMenu.Item>
           ) : (
             <DropdownMenu.Item className={cx.item} onSelect={onManageContent}>

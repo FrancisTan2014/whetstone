@@ -7,18 +7,20 @@ import { activeDestination, navDestinations } from "./navigation.js";
 
 function navLinkClassName(isActive: boolean): string {
   // Mobile: each destination is an equal-width tab in a single non-wrapping row, sized to a >=44px
-  // touch target (min-h/min-w) per #390. Desktop: a left-aligned sidebar row that sizes to content.
+  // touch target (min-h/min-w) per #390. Six destinations (#679) still fit one non-scrolling row at
+  // 320px because the label drops to 12px on mobile (`text-xs`) while desktop keeps 14px (`md:text-sm`).
+  // Desktop: a left-aligned sidebar row that sizes to content.
   const base =
-    "flex min-h-[44px] min-w-[44px] flex-1 items-center justify-center rounded px-1 py-2 text-sm font-medium whitespace-nowrap md:flex-none md:justify-start md:px-3";
+    "flex min-h-[44px] min-w-[44px] flex-1 items-center justify-center rounded px-1 py-2 text-xs font-medium whitespace-nowrap md:flex-none md:justify-start md:px-3 md:text-sm";
 
   return isActive
     ? `${base} bg-accent-selection text-accent`
     : `${base} text-text-muted hover:text-text`;
 }
 
-// The responsive app shell: one primary navigation (exactly five destinations, #638 — Today, Library,
-// Recite, Notes, Diary) rendered as a left sidebar on desktop/tablet and a single-row bottom tab bar on
-// mobile (a single nav landmark, repositioned with utilities), plus the routed content region. Wrapped in
+// The responsive app shell: one primary navigation (exactly six destinations, #638/#679 — Today, Library,
+// Write, Recite, Notes, Diary) rendered as a left sidebar on desktop/tablet and a single-row bottom tab bar
+// on mobile (a single nav landmark, repositioned with utilities), plus the routed content region. Wrapped in
 // SafeArea so it respects dynamic viewport height and device safe-area insets.
 //
 // A destination's active state is derived from the current route through `activeDestination`, not from
@@ -33,8 +35,8 @@ function navLinkClassName(isActive: boolean): string {
 // beside the theme toggle so it is always one action away without displacing a daily destination, and can
 // never push the mobile bottom nav into a second row (#390). Every routed surface — including the reader
 // and authored-work editor — is framed by this one shell so its parent destination stays visibly active
-// (Reader/Write keep Library highlighted, #638) and Search stays one action away; each secondary surface
-// additionally provides its own explicit back path to its parent.
+// (Reader keeps Library highlighted; the authored-Work editor keeps Write highlighted, #679) and Search
+// stays one action away; each secondary surface additionally provides its own explicit back path to its parent.
 export function AppShell(): React.JSX.Element {
   const location = useLocation();
 

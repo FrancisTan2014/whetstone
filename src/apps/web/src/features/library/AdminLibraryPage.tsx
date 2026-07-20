@@ -37,7 +37,7 @@ import {
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 import { LibraryAddMenu } from "./LibraryAddMenu";
 import { WorkOverflowMenu } from "./WorkOverflowMenu";
-import { createAuthoredWork, listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
+import { listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 
 const newAuthorOption = "new-author-or-source";
@@ -100,7 +100,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [enrollingWorkId, setEnrollingWorkId] = useState<string | undefined>(undefined);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [newDocOpen, setNewDocOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState<WorkLanguage>("en");
   const [workType, setWorkType] = useState<WorkType>("book");
@@ -182,37 +181,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setPendingUpload(undefined);
     resetWorkForm();
     setAddOpen(true);
-  }
-
-  // "New document" opens a minimal sheet (title, language, type only — the current user is the author) to
-  // create an owned Work, then jumps straight into the editor (#576).
-  function openNewDocument(): void {
-    resetWorkForm();
-    setNewDocOpen(true);
-  }
-
-  async function onSubmitNewDocument(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    const trimmedTitle = title.trim();
-
-    if (trimmedTitle.length === 0) {
-      setWorkError("Enter a document title.");
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const created = await createAuthoredWork({ language, title: trimmedTitle, workType });
-      resetWorkForm();
-      setNewDocOpen(false);
-      // Hash routing: open the immersive editor for the new document (mirrors the reader deep links).
-      window.location.hash = `#/write?work=${encodeURIComponent(created.entryId)}`;
-    } catch {
-      toast.error("Could not create the document. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   // The sheet is only rendered while open, and Radix only calls onOpenChange to request dismissal
@@ -427,7 +395,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         <LibraryAddMenu
           busy={uploadBusy}
           onAddWorkManually={openManualAddWork}
-          onNewDocument={openNewDocument}
           onUploadFile={() => fileInputRef.current?.click()}
         />
       }
@@ -541,66 +508,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
               <Button pending={submitting} type="submit">
                 Create work
-              </Button>
-              {workError !== undefined ? (
-                <p className="text-danger" role="alert">
-                  {workError}
-                </p>
-              ) : null}
-            </form>
-          </Sheet>
-        ) : null}
-
-        {newDocOpen ? (
-          <Sheet onOpenChange={() => setNewDocOpen(false)} open title="New document">
-            <form
-              className="flex flex-col gap-3"
-              onSubmit={(event) => void onSubmitNewDocument(event)}
-            >
-              <label className="flex flex-col gap-1" htmlFor="new-doc-title">
-                Title
-                <input
-                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                  id="new-doc-title"
-                  onChange={(event) => setTitle(event.currentTarget.value)}
-                  value={title}
-                />
-              </label>
-
-              <label className="flex flex-col gap-1" htmlFor="new-doc-type">
-                Type
-                <select
-                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                  id="new-doc-type"
-                  onChange={(event) => setWorkType(event.currentTarget.value as WorkType)}
-                  value={workType}
-                >
-                  {workTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {formatWorkType(type)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-1" htmlFor="new-doc-language">
-                Language
-                <select
-                  className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                  id="new-doc-language"
-                  onChange={(event) => setLanguage(event.currentTarget.value as WorkLanguage)}
-                  value={language}
-                >
-                  {workLanguages.map((code) => (
-                    <option key={code} value={code}>
-                      {workLanguageLabels[code]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <Button pending={submitting} type="submit">
-                Create and write
               </Button>
               {workError !== undefined ? (
                 <p className="text-danger" role="alert">

@@ -597,28 +597,32 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   (reads `?work=<id>` to narrow to a single work; also the target of the primary nav — see below),
   Review = `NotesReviewPage` at both `/notes/review` (canonical) and `/recall` (compat redirect, #662),
   Search = `SearchPage`, Recite = `RecitePage` at `/recite` — the Recite home listing enrolled Works with
-  their due/next-review state (#638), Diary = `DiaryPage`, Write =
-  `AuthoredWorkPage` at `/write` — the immersive authored-Work editor, reads `?work=<id>`; `/memory`
+  their due/next-review state (#638), Diary = `DiaryPage`, Write = `WriteRoute` at `/write` —
+  `WritingHomePage` (the Writing home: **New essay** + the user's authored Works, most-recently-edited
+  first, each with **Continue writing**/**Read**) when no `?work`, else the immersive `AuthoredWorkPage`
+  editor for `?work=<id>` (#679); `/memory`
   redirects (history-replace) to `/notes` and `/recall` to `/notes/review` (#662 retired the standalone
   Memory/Recall pages — the redirects read live due/card state from the DB, never reset it); a trailing
   `path="*"` catch-all renders `NotFoundPage` so any unknown hash route — including the retired
   `#/practice` — resolves to the calm not-found page inside the shell); `AppShell.tsx` is the responsive
   frame (one `Primary` `<nav>` styled as a desktop sidebar / mobile bottom-bar, wrapped in `SafeArea`, plus
-  the single `ToastViewport` live region). `navigation.ts` holds the **five** primary destinations — Today,
-  Library, **Recite** (`/recite`), **Notes** (`/notes`), **Diary** (`/diary`) (#638) — plus the pure
-  `activeDestination(pathname)` mapping every secondary route to its owning parent so the parent tab stays
-  truthfully active (Reader/Write → Library, Recitation review → Recite, note Review + retired Memory/Recall
-  → Notes); the destinations render as a **single non-wrapping row of ≥44px targets** on mobile
+  the single `ToastViewport` live region). `navigation.ts` holds the **six** primary destinations — Today,
+  Library, **Write** (`/write`), **Recite** (`/recite`), **Notes** (`/notes`), **Diary** (`/diary`)
+  (#638, #679) — plus the pure `activeDestination(pathname)` mapping every secondary route to its owning
+  parent so the parent tab stays truthfully active (Reader → Library, the `/write?work=` editor → Write,
+  Recitation review → Recite, note Review + retired Memory/Recall → Notes); the destinations render as a
+  **single non-wrapping row of ≥44px targets** on mobile
   (#390, #662, #638). **Search is a persistent shell utility** (a `Link` to `/search` in the top bar beside
   the `ThemeToggle`), not a primary destination. Reader, Review, and the Recitation review keep their routes
-  but are NOT primary: Reader/Write are secondary surfaces under Library opened from context, the note Review is reached
+  but are NOT primary: Reader is a secondary surface under Library opened from context, the note Review is reached
   from Notes/Today, and the whole-Work Recitation review is reached from Recite (its "Back to Recite"
   control) or a contextual `?work=` deep link. Each secondary route's parent stays visibly active via
-  `activeDestination` (e.g. `/reader` and `/write` keep Library active, `/notes/review` keeps Notes active,
+  `activeDestination` (e.g. `/reader` keeps Library active, `/write` keeps Write active, `/notes/review` keeps Notes active,
   `/recitation` keeps Recite active). The `ThemeToggle` is shell chrome in a slim top bar (never a tab, so it cannot
   wrap the mobile row). Every routed surface — including `/reader` and `/write` — is framed by the one shell
-  (#638): the primary nav and Search utility stay present with the parent (Library) visibly active, and each
-  secondary surface additionally provides its own explicit back path (e.g. the reader's "Back to Library").
+  (#638): the primary nav and Search utility stay present with the owning destination visibly active
+  (Reader under Library; the `/write` editor under Write, #679), and each secondary surface additionally
+  provides its own explicit back path (e.g. the reader's "Back to Library", the editor's "Writing").
   Routing is hash-based (origin-independent for file/Capacitor/Tauri); tests use
   `MemoryRouter`.
 - Base UI primitives: `src/shared/ui/` — `SafeArea` (`100dvh`/`svh` + safe-area insets, never
@@ -707,19 +711,21 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `GET /api/reading-position/works` → the set of work ids with a position) — and folds the rest into one
   ≥44px overflow menu (`WorkOverflowMenu.tsx`, Radix `DropdownMenu`, `modal={false}`, accessible name
   `More actions for <title>`): **I can recite this** / **Open in Recite** (`#/recite`) → **View notes**
-  (`#/notes?work=<entryId>`) → **Edit document** (`#/write?work=`) for authored works else **Manage
+  (`#/notes?work=<entryId>`) → **Edit in Writing** (`#/write?work=`) for authored works else **Manage
   content** (emits `onManageContent`) → separator → **Delete work** (destructive). Recitation _status_
   never appears in Library — Recite owns it. The header's file-and-create controls collapse into one
-  ≥44px **Add** menu (`LibraryAddMenu.tsx`): **Upload file** (`.epub, .pdf, .md`), **New document**,
-  **Add work manually**; class maps for both menus live in the coverage-excluded
+  ≥44px **Add** menu (`LibraryAddMenu.tsx`): **Upload file** (`.epub, .pdf, .md`) and
+  **Add work manually** — document creation now lives on the Write home (#679); class maps for both menus
+  live in the coverage-excluded
   `libraryMenu.tokens.ts`. **Upload file** opens the same file front door as before — an EPUB ingests
   straight to a Work, a PDF/Markdown opens the pre-filled **Add work** sheet. Creating a work auto-opens
-  its Manage-content sheet (add content right after create); an EPUB import does not. **New document**
-  (#576) opens a minimal sheet (title/type/language — the current user is the author) that calls
-  `authoredWorks/authoredWorkApi.createAuthoredWork` and hash-navigates into the editor
-  (`#/write?work=<id>`); works the current user authored (loaded via `listAuthoredWorks`) carry an
-  **Authored** badge and use the same read-first primary action (Read/Continue → `#/reader`), with
-  editing available as the overflow's **Edit document** rather than competing on the card (#640). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
+  its Manage-content sheet (add content right after create); an EPUB import does not. Authored-document
+  creation moved out of Library to the Write home (#679): the minimal title/type/language sheet now lives
+  in `WritingHomePage` (**New essay**), which calls `authoredWorks/authoredWorkApi.createAuthoredWork`
+  and hash-navigates into the editor (`#/write?work=<id>`). Works the current user authored (loaded via
+  `listAuthoredWorks`) still carry an **Authored** badge in Library and use the same read-first primary
+  action (Read/Continue → `#/reader`), with editing available as the overflow's **Edit in Writing**
+  rather than competing on the card (#640). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
   transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
   each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
   `fetchUnitContent` / `locateBlockUnit` / `fetchWorkAnchorIndex`), with an explicit per-unit loading
@@ -955,8 +961,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   deep-linked feature shows a freshly recomputed board. Pure routine-kind → title/action/path maps live in
   `today.tokens.ts` (coverage-excluded). The board persists no Today state; it is a pure read/compose over
   feature-owned canonical state.
-  `authoredWorks/` is the owned-Work editor slice (#576): `AuthoredWorkPage.tsx` is the immersive
-  `/write?work=<id>` surface that loads a user-authored Work's canonical ProseMirror document
+  `authoredWorks/` is the owned-Work Writing slice (#576, #679): `WritingHomePage.tsx` is the `/write`
+  home (**New essay** creation via `createAuthoredWork` + the user's authored Works from `listAuthoredWorks`,
+  most-recently-edited first, each with **Continue writing**/**Read**); `AuthoredWorkPage.tsx` is the immersive
+  `/write?work=<id>` editor that loads a user-authored Work's canonical ProseMirror document
   (`authoredWorkApi.fetchAuthoredWork`), edits it in the shared `RichContentEditor`, and reads it back
   through the same reader renderer (`reader/PmDocument`) with no format conversion — a missing/failed
   load falls back to a calm inline state. `useAutosave.ts` is a debounced (800ms), serialized,

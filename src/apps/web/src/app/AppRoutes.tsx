@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 
 import { createCaptureVoice } from "../features/capture/captureVoice.js";
 import { AuthoredWorkPage } from "../features/authoredWorks/AuthoredWorkPage.js";
+import { WritingHomePage } from "../features/authoredWorks/WritingHomePage.js";
 import { DiaryPage } from "../features/diary/DiaryPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
@@ -28,15 +29,19 @@ function ReaderRoute(): React.JSX.Element {
   );
 }
 
-// The authoring route opens the immersive rich editor for an owned Work passed as `?work=<entryId>`.
-// Without a work param the page shows a calm prompt to open a document from the Library.
+// The Write destination (#679). Without a `?work` param it opens the Writing home (New essay + recent
+// documents); with `?work=<entryId>` it opens the immersive rich editor for that owned Work.
 function WriteRoute(): React.JSX.Element {
   const [searchParams] = useSearchParams();
   const workEntryId = searchParams.get("work") ?? undefined;
 
+  if (workEntryId === undefined) {
+    return <WritingHomePage />;
+  }
+
   // Key by the work so switching documents remounts the editor to its initial loading state, letting the
   // load effect set state only from its async callbacks (no synchronous setState in an effect).
-  return <AuthoredWorkPage key={workEntryId ?? "none"} workEntryId={workEntryId} />;
+  return <AuthoredWorkPage key={workEntryId} workEntryId={workEntryId} />;
 }
 
 // The Library's contextual "Notes" action routes to `#/notes?work=<entryId>`; the route reads that

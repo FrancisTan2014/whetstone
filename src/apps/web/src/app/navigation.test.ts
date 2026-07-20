@@ -3,10 +3,11 @@ import { describe, expect, it } from "vitest";
 import { activeDestination, navDestinations } from "./navigation";
 
 describe("navDestinations", () => {
-  it("lists exactly the five primary destinations in order (#638)", () => {
+  it("lists exactly the six primary destinations in order (#638, #679)", () => {
     expect(navDestinations.map((destination) => destination.label)).toEqual([
       "Today",
       "Library",
+      "Write",
       "Recite",
       "Notes",
       "Diary"
@@ -14,6 +15,7 @@ describe("navDestinations", () => {
     expect(navDestinations.map((destination) => destination.to)).toEqual([
       "/",
       "/library",
+      "/write",
       "/recite",
       "/notes",
       "/diary"
@@ -33,15 +35,17 @@ describe("activeDestination", () => {
 
   it("keeps each primary destination active on its own route", () => {
     expect(activeDestination("/library")).toBe("/library");
+    expect(activeDestination("/write")).toBe("/write");
     expect(activeDestination("/recite")).toBe("/recite");
     expect(activeDestination("/notes")).toBe("/notes");
     expect(activeDestination("/diary")).toBe("/diary");
   });
 
-  it("maps secondary Reader and Write routes to Library (#638)", () => {
+  it("keeps Reader under Library but the authored-Work editor under its own Write parent (#679)", () => {
     expect(activeDestination("/reader")).toBe("/library");
     expect(activeDestination("/reader/work-1")).toBe("/library");
-    expect(activeDestination("/write")).toBe("/library");
+    expect(activeDestination("/write")).toBe("/write");
+    expect(activeDestination("/write/anything")).toBe("/write");
   });
 
   it("maps the secondary Recitation review to Recite (#638)", () => {

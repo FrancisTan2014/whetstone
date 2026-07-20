@@ -1,13 +1,13 @@
 import { expect, test } from "../fixtures";
 
-// At a phone width the primary navigation is exactly five destinations (Today, Library, Recite, Notes,
-// Diary) laid out as a SINGLE non-wrapping row of >=44px touch targets — the theme toggle and Search
-// utility are shell chrome, not tabs, so they can never push the row onto a second line (#390, #573, #638).
-// This replaces the pre-#390 behaviour where nine destinations + the toggle were allowed to wrap.
+// At a phone width the primary navigation is exactly six destinations (Today, Library, Write, Recite,
+// Notes, Diary) laid out as a SINGLE non-wrapping row of >=44px touch targets — the theme toggle and Search
+// utility are shell chrome, not tabs, so they can never push the row onto a second line (#390, #573, #638,
+// #679). This replaces the pre-#390 behaviour where nine destinations + the toggle were allowed to wrap.
 
 const MOBILE = { height: 844, width: 390 } as const;
 const MIN_TARGET = 44;
-const PRIMARY_LABELS = ["Today", "Library", "Recite", "Notes", "Diary"] as const;
+const PRIMARY_LABELS = ["Today", "Library", "Write", "Recite", "Notes", "Diary"] as const;
 
 const horizontalOverflow = () =>
   ({
@@ -17,7 +17,7 @@ const horizontalOverflow = () =>
 
 test.describe("mobile app shell (390px)", () => {
   for (const route of ["/", "/library"] as const) {
-    test(`#${route} shows the five primary destinations as one non-wrapping row of >=44px targets (#390, #573, #638)`, async ({
+    test(`#${route} shows the six primary destinations as one non-wrapping row of >=44px targets (#390, #573, #638, #679)`, async ({
       page,
       setup
     }) => {
@@ -27,7 +27,7 @@ test.describe("mobile app shell (390px)", () => {
       const nav = page.getByRole("navigation", { name: "Primary" });
       await expect(nav).toBeVisible();
 
-      // Exactly the five primary destinations, in order.
+      // Exactly the six primary destinations, in order.
       await expect(nav.getByRole("link")).toHaveText([...PRIMARY_LABELS]);
 
       // No horizontal page overflow: the document never grows wider than the viewport (allow 1px for

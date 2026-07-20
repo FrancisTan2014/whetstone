@@ -41,14 +41,14 @@ afterEach(() => {
 });
 
 describe("App shell and routes", () => {
-  it("shows exactly the five primary destinations in order in the nav (#638)", () => {
+  it("shows exactly the six primary destinations in order in the nav (#638, #679)", () => {
     const { getByRole } = renderLiveAt("/");
     const nav = getByRole("navigation", { name: "Primary" });
 
     const labels = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(labels).toEqual(["Today", "Library", "Recite", "Notes", "Diary"]);
+    expect(labels).toEqual(["Today", "Library", "Write", "Recite", "Notes", "Diary"]);
   });
 
   it("keeps Reader, Review, and Search out of the primary nav (#638)", () => {
@@ -212,20 +212,26 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Every note you have saved");
   });
 
-  it("shows the empty write route when no work is selected", () => {
+  it("opens the Writing home at the write route when no work is selected (#679)", () => {
     const markup = renderAt("/write");
 
-    expect(markup).toContain("No document selected");
+    // Without a work id, the Write route is the Writing home (its header primary action is New essay),
+    // not the old "return to Library" recovery. Under static render (no effects) it is in its loading arm.
+    expect(markup).toContain(">Write</h1>");
+    expect(markup).toContain("New essay");
+    expect(markup).toContain("Loading your writing…");
+    expect(markup).not.toContain("No document selected");
   });
 
-  it("frames the authored-work editor within the shell with Library active at the write route (#638)", () => {
+  it("frames the authored-work editor within the shell with Write active at the write route (#679)", () => {
     const { getByRole, container } = renderLiveAt("/write?work=work-1");
     const nav = getByRole("navigation", { name: "Primary" });
 
-    // The editor mounts in its loading arm (effects do not run under static render), and the write route
-    // is a secondary surface under Library: the primary nav is present with Library the active parent.
+    // The editor mounts in its loading arm (effects do not run under static render), and the authored-Work
+    // editor is a secondary surface under the Write destination: the primary nav is present with Write the
+    // active parent (#679).
     expect(container.innerHTML).toContain("Opening your document…");
-    expect(within(nav).getByRole("link", { name: "Library" }).getAttribute("aria-current")).toBe(
+    expect(within(nav).getByRole("link", { name: "Write" }).getAttribute("aria-current")).toBe(
       "page"
     );
   });
