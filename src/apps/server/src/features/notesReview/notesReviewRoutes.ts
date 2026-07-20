@@ -1,7 +1,8 @@
 import {
   editNotePromptQuestionRequestSchema,
   enrollNoteRequestSchema,
-  noteReviewRatingRequestSchema
+  noteReviewRatingRequestSchema,
+  setNoteGradingTargetRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -22,6 +23,7 @@ import {
   removeNotePromptCard,
   restartNotePrompt,
   resumeNotePrompt,
+  setNoteGradingTarget,
   type NotePromptSettingsMutationOutcome
 } from "./notesReviewSettingsCommands.js";
 import { listNotePromptSettings, loadNoteReviewHistoryPage } from "./notesReviewSettingsQueries.js";
@@ -31,6 +33,9 @@ const notFound = { error: "not_found" } as const;
 const notEnrollable = { error: "not_enrollable" } as const;
 const questionRequired = { error: "question_required" } as const;
 const conflict = { error: "conflict" } as const;
+const invalidSuccessCheck = { error: "invalid_success_check" } as const;
+const legacyReadOnly = { error: "legacy_read_only" } as const;
+const restartRequiresCard = { error: "restart_requires_card" } as const;
 
 type NoteReviewParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 
@@ -365,6 +370,46 @@ export function registerNotesReviewRoutes(
         request.server.currentUser.getCurrentUserId()
       );
       return sendSettingsMutation(reply, result, request, "DELETE /card");
+    }
+  );
+
+  // Set one prompt's grading target (#686): declare whether it grades against the live note (`current_note`)
+  // or an authored Success check (`expected_response`), and choose `keep` (policy only) or `restart` (policy
+  // + a schedule reset through the shared boundary, due now) — atomically. 404 when the prompt is not the
+  // caller's; 400 on a malformed request or a blank Success check; 409 when the prompt is `legacy_custom`
+  // (read-only here) or a `restart` targets a cardless prompt. Returns the refreshed settings row.
+  server.post<{ Params: PromptParams }>(
+    "/api/notes/review/prompts/:id/grading-target",
+    async (request, reply) => {
+      const parsed = setNoteGradingTargetRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequest);
+      }
+      const result = await setNoteGradingTarget(
+        dependencies,
+        request.params.id,
+        request.server.currentUser.getCurrentUserId(),
+        parsed.data
+      );
+      switch (result.status) {
+        case "not_found":
+          return reply.code(404).send(notFound);
+        case "invalid_success_check":
+          return reply.code(400).send(invalidSuccessCheck);
+        case "legacy_read_only":
+          return reply.code(409).send(legacyReadOnly);
+        case "restart_requires_card":
+          return reply.code(409).send(restartRequiresCard);
+        case "ok":
+          request.log.info(
+            {
+              promptId: request.params.id,
+              route: "POST /api/notes/review/prompts/:id/grading-target"
+            },
+            "note_review_settings_changed"
+          );
+          return reply.code(200).send(result.value);
+      }
     }
   );
 }

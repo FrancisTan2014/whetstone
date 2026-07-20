@@ -104,7 +104,7 @@ describe("NoteReviewSettings list lifecycle (#660)", () => {
     expect(await screen.findByText("This note has no review prompts yet.")).toBeDefined();
   });
 
-  it("renders every projected state and both reveal policies", async () => {
+  it("renders every projected state and all three reveal policies", async () => {
     resolveList(
       prompt({ promptId: "due", cardState: { state: "due" } }),
       prompt({
@@ -116,6 +116,15 @@ describe("NoteReviewSettings list lifecycle (#660)", () => {
           kind: "legacy_custom"
         }
       }),
+      prompt({
+        promptId: "success",
+        cardState: { nextReviewAt: "2026-07-12T00:00:00.000Z", state: "scheduled" },
+        reveal: {
+          kind: "expected_response",
+          successCheckDoc: createTextDocument("names durability and ordering"),
+          successCheckText: "names durability and ordering"
+        }
+      }),
       prompt({ promptId: "paused", cardState: { state: "paused" } }),
       prompt({ promptId: "gone", cardState: { state: "not_in_review" } })
     );
@@ -125,10 +134,13 @@ describe("NoteReviewSettings list lifecycle (#660)", () => {
     expect(screen.getByText("Next review · July 11, 2026 at 12:00 AM")).toBeDefined();
     expect(screen.getByText("Paused")).toBeDefined();
     expect(screen.getByText("Not in review")).toBeDefined();
-    // Reveal policies: current_note carries no answer; legacy custom shows a read-only answer.
+    // Reveal policies: current_note carries no answer; legacy custom shows a read-only answer;
+    // expected_response shows its authored Success check.
     expect(screen.getAllByText("Reveals the current note").length).toBe(3);
     expect(screen.getByText("Custom answer (read-only)")).toBeDefined();
     expect(screen.getByText("a write-ahead log")).toBeDefined();
+    expect(screen.getByText("Success check")).toBeDefined();
+    expect(screen.getByText("names durability and ordering")).toBeDefined();
     // A cardless prompt offers only re-adding — no restart/remove.
     const goneRow = screen.getByText("Not in review").closest("li") as HTMLElement;
     expect(within(goneRow).getByRole("button", { name: "Add to review" })).toBeDefined();

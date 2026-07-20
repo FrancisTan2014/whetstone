@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   enrollNoteRequestSchema,
+  noteGradingTargetSchema,
   noteRevealDtoSchema,
   noteReviewNextDtoSchema,
   noteReviewSummaryDtoSchema,
@@ -17,7 +18,9 @@ import {
   parseNoteReviewRatingResultDto,
   parseNoteReviewSummaryDto,
   parseNoteRevealDto,
-  parseReviewHistoryPageDto
+  parseReviewHistoryPageDto,
+  parseSetNoteGradingTargetRequest,
+  setNoteGradingTargetRequestSchema
 } from "./noteReviewContracts.js";
 
 const review = {
@@ -137,6 +140,45 @@ describe("noteRevealDtoSchema", () => {
         kind: "current_note",
         answerDoc: createTextDocument("Paris"),
         answerText: "Paris"
+      })
+    ).toThrow();
+  });
+
+  it("parses an expected_response reveal carrying a separate Success check and Reference", () => {
+    const successCheckDoc = createTextDocument("Names the two rules.");
+    const referenceDoc = createTextDocument("The full note body.");
+    const parsed = parseNoteRevealDto({
+      kind: "expected_response",
+      successCheckDoc,
+      successCheckText: "Names the two rules.",
+      referenceDoc,
+      referenceText: "The full note body."
+    });
+    expect(parsed).toEqual({
+      kind: "expected_response",
+      successCheckDoc,
+      successCheckText: "Names the two rules.",
+      referenceDoc,
+      referenceText: "The full note body."
+    });
+  });
+
+  it("rejects an expected_response reveal that conflates the answer under the storage name", () => {
+    expect(() =>
+      noteRevealDtoSchema.parse({
+        kind: "expected_response",
+        answerDoc: createTextDocument("x"),
+        answerText: "x"
+      })
+    ).toThrow();
+  });
+
+  it("rejects an expected_response reveal missing its Reference", () => {
+    expect(() =>
+      noteRevealDtoSchema.parse({
+        kind: "expected_response",
+        successCheckDoc: createTextDocument("Names the two rules."),
+        successCheckText: "Names the two rules."
       })
     ).toThrow();
   });
@@ -270,8 +312,9 @@ describe("enrollNoteRequestSchema", () => {
 describe("note Review settings & history contracts (#660)", () => {
   const questionDoc = createTextDocument("What is a WAL?");
   const answerDoc = createTextDocument("a write-ahead log");
+  const successCheckDoc = createTextDocument("Names durability + ordering");
 
-  it("parses a settings list carrying both reveal policies and every card state", () => {
+  it("parses a settings list carrying every reveal policy and every card state", () => {
     const parsed = parseNotePromptSettingsListDto({
       prompts: [
         {
@@ -301,15 +344,49 @@ describe("note Review settings & history contracts (#660)", () => {
           questionText: "What is a WAL?",
           reveal: { kind: "current_note" },
           cardState: { state: "not_in_review" }
+        },
+        {
+          promptId: "p5",
+          questionDoc,
+          questionText: "What is a WAL?",
+          reveal: {
+            kind: "expected_response",
+            successCheckDoc,
+            successCheckText: "Names durability + ordering"
+          },
+          cardState: { state: "due" }
         }
       ]
     });
-    expect(parsed.prompts).toHaveLength(4);
+    expect(parsed.prompts).toHaveLength(5);
     expect(parsed.prompts[1]?.reveal).toEqual({
       kind: "legacy_custom",
       answerDoc,
       answerText: "a write-ahead log"
     });
+    expect(parsed.prompts[4]?.reveal).toEqual({
+      kind: "expected_response",
+      successCheckDoc,
+      successCheckText: "Names durability + ordering"
+    });
+  });
+
+  it("rejects an expected_response policy that leaks the live Reference into the row", () => {
+    expect(() =>
+      parseNotePromptSettingsDto({
+        promptId: "p1",
+        questionDoc,
+        questionText: "q",
+        reveal: {
+          kind: "expected_response",
+          successCheckDoc,
+          successCheckText: "Names durability + ordering",
+          referenceDoc: answerDoc,
+          referenceText: "a write-ahead log"
+        },
+        cardState: { state: "due" }
+      })
+    ).toThrow();
   });
 
   it("rejects a current_note reveal that leaks an answer and a scheduled state without a date", () => {
@@ -365,5 +442,61 @@ describe("note Review settings & history contracts (#660)", () => {
       question: "Define a WAL"
     });
     expect(() => parseEditNotePromptQuestionRequest({ question: "   " })).toThrow();
+  });
+});
+
+describe("setNoteGradingTargetRequestSchema (#686)", () => {
+  const successCheckDoc = createTextDocument("Names durability + ordering");
+
+  it("parses a current_note target under keep and restart", () => {
+    expect(
+      parseSetNoteGradingTargetRequest({ mode: "keep", target: { kind: "current_note" } })
+    ).toEqual({ mode: "keep", target: { kind: "current_note" } });
+    expect(
+      parseSetNoteGradingTargetRequest({ mode: "restart", target: { kind: "current_note" } })
+    ).toEqual({ mode: "restart", target: { kind: "current_note" } });
+  });
+
+  it("parses an expected_response target carrying only the Success check document", () => {
+    expect(
+      parseSetNoteGradingTargetRequest({
+        mode: "keep",
+        target: { kind: "expected_response", successCheckDoc }
+      })
+    ).toEqual({ mode: "keep", target: { kind: "expected_response", successCheckDoc } });
+  });
+
+  it("rejects an unknown mode, an unknown target kind, and extra keys", () => {
+    expect(
+      setNoteGradingTargetRequestSchema.safeParse({
+        mode: "reschedule",
+        target: { kind: "current_note" }
+      }).success
+    ).toBe(false);
+    expect(() =>
+      parseSetNoteGradingTargetRequest({ mode: "keep", target: { kind: "invented" } })
+    ).toThrow();
+    expect(
+      setNoteGradingTargetRequestSchema.safeParse({
+        mode: "keep",
+        target: { kind: "current_note" },
+        extra: true
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a current_note target that smuggles a Success check, and an expected_response missing it", () => {
+    expect(
+      noteGradingTargetSchema.safeParse({ kind: "current_note", successCheckDoc }).success
+    ).toBe(false);
+    expect(() =>
+      parseSetNoteGradingTargetRequest({ mode: "keep", target: { kind: "expected_response" } })
+    ).toThrow();
+    expect(() =>
+      parseSetNoteGradingTargetRequest({
+        mode: "keep",
+        target: { kind: "expected_response", successCheckDoc: { not: "a document" } }
+      })
+    ).toThrow();
   });
 });

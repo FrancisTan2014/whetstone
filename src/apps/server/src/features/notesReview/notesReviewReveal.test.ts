@@ -59,4 +59,35 @@ describe("resolveNoteReveal", () => {
       })
     ).toThrow(/reveal_shape/);
   });
+
+  it("resolves an expected_response prompt into a separately labeled Success check and Reference", () => {
+    const successCheckDoc = createTextDocument("Names the two rules.");
+    expect(
+      resolveNoteReveal({
+        revealKind: "expected_response",
+        answerDoc: successCheckDoc,
+        answerText: "Names the two rules.",
+        noteBodyDoc,
+        noteBodyText
+      })
+    ).toEqual({
+      kind: "expected_response",
+      successCheckDoc,
+      successCheckText: "Names the two rules.",
+      referenceDoc: noteBodyDoc,
+      referenceText: noteBodyText
+    });
+  });
+
+  it("fails loud when an expected_response prompt is missing its Success check document", () => {
+    expect(() =>
+      resolveNoteReveal({
+        revealKind: "expected_response",
+        answerDoc: null,
+        answerText: "orphaned success check",
+        noteBodyDoc,
+        noteBodyText
+      })
+    ).toThrow(/reveal_shape/);
+  });
 });

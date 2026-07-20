@@ -9,10 +9,11 @@ const noteReviewDocumentSchema = z.custom<DocumentNodeJSON>(isValidDocument, {
   message: "must be a valid document."
 });
 
-// The persisted reveal discriminant a Notes-owned review prompt declares (#657). `current_note` resolves
-// the referenced note's live canonical body; `legacy_custom` resolves the prompt's own preserved custom
-// answer. A consumer switches on this — never on nullable answer fields.
-export const noteRevealKindSchema = z.enum(["current_note", "legacy_custom"]);
+// The persisted reveal discriminant a Notes-owned review prompt declares (#657, #686). `current_note`
+// resolves the referenced note's live canonical body; `expected_response` grades against one authored rich
+// Success check and additionally resolves the live note as Reference; `legacy_custom` resolves the prompt's
+// own preserved custom answer. A consumer switches on this — never on nullable answer fields.
+export const noteRevealKindSchema = z.enum(["current_note", "expected_response", "legacy_custom"]);
 
 export type NoteRevealKind = z.infer<typeof noteRevealKindSchema>;
 
@@ -42,14 +43,26 @@ export const noteReviewNextDtoSchema = z
 export type NoteReviewNextDto = z.infer<typeof noteReviewNextDtoSchema>;
 
 // The resolved reveal, discriminated by the persisted `kind` so a consumer never infers the reveal shape
-// from nullable answer fields (#657): a `current_note` reveal is the note's live canonical rich body; a
-// `legacy_custom` reveal is the prompt's own preserved rich custom answer. Exactly one shape is present.
+// from nullable answer fields (#657, #686): a `current_note` reveal is the note's live canonical rich body;
+// an `expected_response` reveal is the authored rich Success check (`successCheck*`) PLUS the live note as
+// Reference (`reference*`) — two separately labeled documents, never conflated under the storage-column
+// name `answerDoc`; a `legacy_custom` reveal is the prompt's own preserved rich custom answer. Exactly one
+// shape is present.
 export const noteRevealDtoSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("current_note"),
       bodyDoc: noteReviewDocumentSchema,
       bodyText: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("expected_response"),
+      successCheckDoc: noteReviewDocumentSchema,
+      successCheckText: z.string(),
+      referenceDoc: noteReviewDocumentSchema,
+      referenceText: z.string()
     })
     .strict(),
   z
@@ -169,13 +182,22 @@ export const notePromptCardStateDtoSchema = z.discriminatedUnion("state", [
 
 export type NotePromptCardStateDto = z.infer<typeof notePromptCardStateDtoSchema>;
 
-// How a prompt reveals its answer, as the settings list declares it (#660), discriminated by the persisted
-// `kind`. A `current_note` prompt follows the note's live canonical body — it carries no answer content
-// because editing the note edits the reveal. A `legacy_custom` prompt preserves its own rich custom answer,
-// carried here so the settings row can render it READ-ONLY (#657: legacy reveals are never editable or
-// converted). A consumer switches on `kind`, never on nullable answer fields.
+// How a prompt reveals its answer, as the settings list declares it (#660, #686), discriminated by the
+// persisted `kind`. A `current_note` prompt follows the note's live canonical body — it carries no answer
+// content because editing the note edits the reveal. An `expected_response` prompt carries its authored rich
+// Success check (`successCheck*`) so the settings row can render it; its Reference is the live note and is
+// not copied here. A `legacy_custom` prompt preserves its own rich custom answer, carried here so the
+// settings row can render it READ-ONLY (#657: legacy reveals are never editable or converted). A consumer
+// switches on `kind`, never on nullable answer fields.
 export const notePromptRevealPolicyDtoSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("current_note") }).strict(),
+  z
+    .object({
+      kind: z.literal("expected_response"),
+      successCheckDoc: noteReviewDocumentSchema,
+      successCheckText: z.string()
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("legacy_custom"),
@@ -253,6 +275,32 @@ export const editNotePromptQuestionRequestSchema = z
 
 export type EditNotePromptQuestionRequest = z.infer<typeof editNotePromptQuestionRequestSchema>;
 
+// The authored grading target a prompt should adopt (#686), discriminated by `kind`. `current_note` grades
+// against the live note body and carries no authored content. `expected_response` grades against one
+// authored rich Success check, supplied here as a document; its readable text is derived server-side (never
+// trusted from the client) and the Reference is resolved live from the note, so it is not carried. The
+// wire never uses the storage-column name `answerDoc`, which would conflate the Success check with the
+// Reference.
+export const noteGradingTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("current_note") }).strict(),
+  z
+    .object({ kind: z.literal("expected_response"), successCheckDoc: noteReviewDocumentSchema })
+    .strict()
+]);
+
+export type NoteGradingTarget = z.infer<typeof noteGradingTargetSchema>;
+
+// Set a prompt's grading target from Review settings (#686). `target` is the desired grading policy;
+// `mode` explicitly chooses what happens to the card: `keep` saves the policy without touching card state,
+// due date, requested retention, or history; `restart` additionally resets the schedule through the shared
+// Review boundary (one `reset` event, due now). Whetstone never infers whether the trained capability
+// changed — the learner declares it. A cardless prompt accepts only `keep`.
+export const setNoteGradingTargetRequestSchema = z
+  .object({ mode: z.enum(["keep", "restart"]), target: noteGradingTargetSchema })
+  .strict();
+
+export type SetNoteGradingTargetRequest = z.infer<typeof setNoteGradingTargetRequestSchema>;
+
 export function parseNotePromptSettingsListDto(value: unknown): NotePromptSettingsListDto {
   return notePromptSettingsListDtoSchema.parse(value);
 }
@@ -267,4 +315,8 @@ export function parseReviewHistoryPageDto(value: unknown): ReviewHistoryPageDto 
 
 export function parseEditNotePromptQuestionRequest(value: unknown): EditNotePromptQuestionRequest {
   return editNotePromptQuestionRequestSchema.parse(value);
+}
+
+export function parseSetNoteGradingTargetRequest(value: unknown): SetNoteGradingTargetRequest {
+  return setNoteGradingTargetRequestSchema.parse(value);
 }

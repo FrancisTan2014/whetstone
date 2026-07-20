@@ -169,10 +169,13 @@ can navigate them from another package.
   owned with an active card), `POST /prompts/:id/rating` (`{ rating }` → advances only that prompt's shared
   card via `rateNotePrompt`, returning its next `review` state; 400 malformed, 404 not-owned/cardless). Wired
   in `http/createServer.ts` (the `notesReview` dependency option). The reveal is a persisted discriminated
-  shape: `memory_prompts.reveal_kind` ∈ {`legacy_custom`, `current_note`}, enforced by the
-  `memory_prompts_reveal_shape_ck` check (migration `0054_notes_review_reveal.sql`, fail-loud). `legacy_custom`
+  shape: `memory_prompts.reveal_kind` ∈ {`legacy_custom`, `current_note`, `expected_response`}, enforced by the
+  `memory_prompts_reveal_shape_ck` check (migrations `0054_notes_review_reveal.sql`, widened by
+  `0056_last_rachel_grey.sql`, fail-loud). `legacy_custom`
   reveals the prompt's OWN preserved answer columns; `current_note` carries no answer columns and reveals the
-  note's LIVE canonical `body_doc`/`body_text` (editing the note changes the reveal in place). The pure
+  note's LIVE canonical `body_doc`/`body_text` (editing the note changes the reveal in place); `expected_response`
+  stores an authored Success check in the `answer_doc`/`answer_text` columns and reveals it alongside the live
+  note as Reference (#686). The pure
   `resolveNoteReveal` (`notesReviewReveal.ts`) switches on the discriminant; queries in `notesReviewQueries.ts`,
   the rating command reuses the shared review boundary (`rateReviewCard`) in `notesReviewCommands.ts`. All
   legacy write paths deposit `legacy_custom`; `current_note` prompts are produced by note enrollment (#658):
@@ -210,7 +213,10 @@ can navigate them from another package.
   `reviewCardCommands` for edit-question/pause/resume/restart/remove/re-add; history is keyset-paginated
   (opaque cursor) over `review_events`. Routes (`notesReviewRoutes.ts`): `GET /api/notes/:noteEntryId/review/settings`,
   `GET /api/notes/review/prompts/:id/history`, `PATCH .../question`, `POST .../pause|/resume|/restart|/card`,
-  `DELETE .../card`. Web: `OwnedNoteReviewSection.tsx` discloses `NoteReviewSettings.tsx` in place (state-driven
+  `DELETE .../card`. Toggling an authored prompt's grading between `current_note` and `expected_response` is
+  `setNoteGradingTarget` (`notesReviewSettingsCommands.ts`, served at `POST /api/notes/review/prompts/:id/grading-target`,
+  `{ mode: keep|restart, target }`): owner-scoped, `legacy_custom` is read-only (409), a blank Success check is
+  rejected (400), `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: `OwnedNoteReviewSection.tsx` discloses `NoteReviewSettings.tsx` in place (state-driven
   controls, inline keyboard confirmations, no-double-submit, stale-action list reload); client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).

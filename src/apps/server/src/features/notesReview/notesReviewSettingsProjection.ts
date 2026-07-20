@@ -9,13 +9,14 @@ import { type ReviewCardRow } from "../review/reviewCardQueries.js";
 
 // The prompt fields the Review-settings projection needs: its identity, its editable retrieval question
 // (cue), and its persisted reveal policy. A `current_note` prompt carries null answers (its reveal is the
-// live note body); a `legacy_custom` prompt carries its own preserved rich answer. Both queries and
-// commands build the settings DTO from exactly this shape, so there is one projection.
+// live note body); an `expected_response` prompt carries its authored rich Success check; a `legacy_custom`
+// prompt carries its own preserved rich answer. Both queries and commands build the settings DTO from
+// exactly this shape, so there is one projection.
 export type NotePromptProjectionRow = Readonly<{
   entryId: string;
   cueDoc: unknown;
   cueText: string;
-  revealKind: "current_note" | "legacy_custom";
+  revealKind: "current_note" | "expected_response" | "legacy_custom";
   answerDoc: unknown;
   answerText: string | null;
 }>;
@@ -41,12 +42,21 @@ export function projectPromptCardState(
 
 // Project a prompt's persisted reveal discriminant into the settings policy DTO. A `current_note` prompt
 // declares only its kind — its reveal follows the note's live body, so editing the note edits the reveal
-// and the settings row never carries a stale copy. A `legacy_custom` prompt carries its own preserved rich
-// answer so the row can render it READ-ONLY (#657: legacy reveals are never editable or converted). The
-// answer columns are non-null by construction for a legacy prompt.
+// and the settings row never carries a stale copy. An `expected_response` prompt carries its authored rich
+// Success check so the row can render it (its Reference is the live note and is not copied here). A
+// `legacy_custom` prompt carries its own preserved rich answer so the row can render it READ-ONLY (#657:
+// legacy reveals are never editable or converted). The answer columns are non-null by construction for an
+// expected-response or legacy prompt.
 export function projectPromptRevealPolicy(row: NotePromptProjectionRow): NotePromptRevealPolicyDto {
   if (row.revealKind === "current_note") {
     return { kind: "current_note" };
+  }
+  if (row.revealKind === "expected_response") {
+    return {
+      kind: "expected_response",
+      successCheckDoc: row.answerDoc as DocumentNodeJSON,
+      successCheckText: row.answerText as string
+    };
   }
   return {
     kind: "legacy_custom",
