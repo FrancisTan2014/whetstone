@@ -386,25 +386,40 @@ Recommended levels:
 
 ## Content and file storage
 
-Content is stored as discrete `Block` rows in PostgreSQL (the source of truth). Markdown is an
-import/export format, not the stored form. The original uploaded file is retained for provenance.
+Addressable content is represented by discrete `Block` rows in PostgreSQL. Reflowable blocks carry
+canonical ProseMirror content; for fixed-layout PDF, the retained source page is visual truth and its
+page block carries the deterministic plaintext/selection projection used by search and notes.
+Markdown is an import/export format, not the stored form. Original uploads are retained for
+provenance.
 
 Block storage rules:
 
-- Each `Block` is a row: stable id, owning `ReadingUnit`, order, block type, plaintext (for search),
-  and the block's **ProseMirror node** (JSON) for rendering/export (mdast superseded — see `docs/DECISIONS.md` D1).
+- Each reflowable `Block` is a row: stable id, owning `ReadingUnit`, order, block type, plaintext (for
+  search), and the block's **ProseMirror node** (JSON) for rendering/export (mdast superseded — see
+  `docs/DECISIONS.md` D1).
+- A fixed-layout PDF page has one stable ReadingUnit and one page block. A PDF-page facet owns page
+  number/geometry plus canonical plaintext and its projection version/hash; the shared PDF.js
+  projection recreates text-item offsets from immutable source bytes, which own pixels. PDF rendering
+  never creates a second editable content copy or routes through Markdown.
+- Stream PDF uploads to a bounded staged file. Run server projection one import at a time in a
+  disposable, memory-limited worker and terminate it on every outcome; serve retained sources through
+  bounded byte ranges so the API does not buffer uploads and the browser never mounts every page.
 - Block ids are stable (UUIDv7/cuid2) and preserved across re-ingestion via a content-similarity diff;
   removed blocks are soft-deleted so note anchors stay valid.
 - Multi-step writes (Work + ReadingUnits + Blocks) that must stay consistent use transactions.
-- Markdown export serializes the document model (Markdown stays import/export only).
+- Markdown export serializes reflowable documents; PDF export returns the retained original.
 - **Fidelity fixtures mirror real publisher markup.** Verify ingestion/rendering against real-world
   EPUBs (the DDIA / O'Reilly corpus is the reference) locally; commit **synthetic fixtures that
   reproduce their real construct shapes** — nested `<figure><div><img><h6>`, `<dl><dt><dd>`, O'Reilly
   callouts, bracketed noterefs — never idealized HTML, and never the copyrighted books themselves.
+- **PDF fixtures preserve the hard cases.** Pressure-test the local real-book corpus, but commit only
+  synthetic born-digital, scanned, mixed-text, encrypted, malformed, outlined, multi-column, and
+  punctuation-sensitive fixtures. Test page/text/anchor invariants through the shared PDF.js adapter;
+  do not hand-roll a second parser around selected examples.
 
 Original-file storage rules:
 
-- The uploaded source file (`.md`/`.epub`/later `.pdf`) is stored under the configured server data
+- The uploaded source file (`.md`/`.epub`/`.pdf`) is stored under the configured server data
   directory / object storage, addressed by server-generated path plus content sha256.
 - User input is never used directly as a path; normalize and verify paths cannot escape the data
   directory; prefer write-temp-then-rename.
@@ -546,6 +561,9 @@ Performance splits into what a gate can enforce deterministically and what it ca
   - **React render-safety lint.** `eslint-plugin-react-hooks` (React Compiler rules) runs inside `pnpm lint`, which is already `--max-warnings 0` in CI — so rules-of-React violations and compiler-ineligible code fail the build.
   - **React Compiler enabled in the build.** Its automatic memoization is the systematic defense against unnecessary re-renders, so manual `memo`/`useMemo`/`useCallback` are escape hatches, not routine.
   - **Bundle-size budget.** A size check (e.g. `size-limit`) fails CI when a web bundle exceeds its budget, catching dependency bloat before it ships.
+    Heavy optional runtimes are self-hosted, lazy-loaded, and receive separate named budgets for
+    feature code and workers; adding one never just raises the core app budget or hides an emitted
+    asset outside the gate.
 - **Runtime perf — do NOT hard-gate (flaky on shared runners).** Lighthouse CI and Playwright long-task timings vary run to run; run them as an **informational report** (median of N runs), never a merge block. This matches the screenshot/dev-smoke precedent.
 - **Production truth is RUM — deferred for v0.** Large teams gate on real-user Core Web Vitals — especially **INP** (interaction responsiveness, the metric behind reader jank), not CI lab numbers. whetstone is a single-user, local-first app, so full RUM is out of scope for v0; the local long-task harness + realistic-scale fixtures + in-PR before/after stand in for it. Revisit a lightweight `web-vitals` log if whetstone becomes multi-user.
 
@@ -589,7 +607,10 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Module APIs expose the smallest useful surface and do not leak internal mutable state.
 - Web-core TypeScript direction is preserved.
 - Server-centered source of truth is preserved.
-- PostgreSQL is the content source of truth: content is stored as `Block` rows; Markdown is import/export. Original uploaded files are retained for provenance (path + sha256), not as the content store.
+- PostgreSQL owns content identity and every addressable target as a `Block` row. Reflowable content
+  stores canonical ProseMirror nodes; fixed-layout PDF stores canonical page/text projections while
+  the retained source owns pixels. Markdown is import/export, and other original uploads remain
+  provenance rather than a parallel content store.
 - Entry/link model is preserved; notes and blocks are entries, not ad-hoc child records that cannot participate in future links.
 - Templates are read from database seed data, not hard-coded in UI components.
 - Shared domain rules live in `src/packages/domain`; shared API contracts live in `src/packages/contracts`.
@@ -668,9 +689,13 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 
 ### Block storage and original-file quality
 
-- Block rows carry a stable id, order, type, plaintext, and the ProseMirror node (JSON) content; multi-step Work/ReadingUnit/Block writes use transactions.
+- Reflowable block rows carry a stable id, order, type, plaintext, and ProseMirror node JSON. A PDF
+  page block instead carries the validated fixed-layout facet defined above; both remain stable
+  addressable Entries. Multi-step Work/ReadingUnit/Block writes use transactions.
 - Stable block ids are preserved across re-ingestion (content-similarity diff); removed blocks are soft-deleted so note anchors stay valid.
 - Retained original-file paths are generated or normalized by server code and cannot escape the configured data directory; user input is never used directly as a filesystem path.
+- Large uploads are streamed with explicit byte/page bounds and served with bounded range reads; no
+  route buffers an entire 128 MiB source merely to hash or persist it.
 - Writes are safe against partial files where practical: write temp file then rename, or document why the simpler write is acceptable for v0.
 - Database rows and any retained file stay consistent; if one side fails, the PR handles cleanup or returns an explicit failure.
 - File reads/writes are asynchronous.

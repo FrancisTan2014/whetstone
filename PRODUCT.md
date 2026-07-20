@@ -283,8 +283,23 @@ owning source flow:
   full-page Library editor. The metadata sheet never becomes the content workspace.
 - EPUB reads OPF metadata and authored navigation, then creates a Work and ordered ReadingUnits.
 - Markdown uses confirmed title, author, and language and enters through the same block pipeline.
-- PDF confirms metadata, then uses the optional isolated Docling path; scanned PDFs receive an OCR
-  pre-pass. Missing tooling produces a specific setup remedy, never a corrupt Work.
+- PDF is the fixed-layout exception to reflowable ingestion. Whetstone retains the original source
+  and uses PDF.js through one shared adapter for bounded validation, page rendering, embedded outline,
+  and deterministic text projection; a born-digital PDF is never converted to Markdown and requires
+  no Docling/document-AI lane.
+- Each PDF page is one stable ReadingUnit with one addressable page block. The retained page is visual
+  truth; its text projection supports search, selection, notes, and accessible fallback without
+  pretending that inferred Markdown preserves tables, figures, columns, or typography.
+- PDF upload is streamed and bounded at 128 MiB / 3,000 pages, covering the pressure corpus while
+  avoiding a whole-file request buffer. Range serving and page-at-a-time loading minimize first-page
+  transfer and never mount the whole book; a non-linearized PDF may still require most source bytes,
+  bounded by the same upload limit.
+- The self-hosted PDF.js runtime and worker load only when a PDF page opens. They have separate bundle
+  budgets and never consume the core app's JavaScript budget.
+- A valid scanned/image-only PDF is still readable immediately. Pages without usable native text
+  may enter a learner-started, durable OCR job that adds a derived text layer; OCR progress/failure
+  never turns the retained readable Work into an invalid PDF. The original bytes remain immutable
+  visual source and provenance.
 - A manual Work is learner-owned, editable source material whose canonical content is its
   ProseMirror blocks. Existing manual Markdown is migrated into that substrate with stable block ids;
   retained Markdown is provenance, never a second current copy. Uploaded EPUB/PDF/Markdown remains
@@ -303,17 +318,25 @@ owning source flow:
   editor document. Adding/removing headings transactionally repartitions the affected contiguous
   blocks; surviving block ids preserve notes, surviving section boundaries preserve unit ids, and a
   reading position is remapped to the unit now containing its anchor (or the nearest surviving unit).
-- Uploaded Markdown/PDF derives Reader structure from source heading levels. Manual Works derive the
-  same Reader hierarchy from ProseMirror headings. Both use one outline projection rather than a
-  separately maintained tree.
+- Uploaded Markdown derives Reader structure from source heading levels. Manual Works derive the same
+  hierarchy from ProseMirror headings. PDF preserves authored page order and its embedded outline;
+  Whetstone does not invent a heading tree from visual guesses.
 - Author/source is one reusable Library identity, chosen through a searchable create-or-select field.
   An exact normalized match reuses that identity across manual creation and ingestion, so Whetstone
   never presents indistinguishable duplicate choices. Supporting distinct people with the same name
   requires explicit disambiguating metadata; the learner's **You** identity remains owner-keyed rather
   than name-keyed.
+- Exact uploaded source bytes are idempotent by sha256 and reopen the existing Work. Metadata
+  similarity is only a duplicate-candidate signal: the server normalizes title case/width/whitespace
+  conservatively while preserving meaningful punctuation, retrieves a small set using canonical
+  author and Damerau-Levenshtein title similarity, and shows language/type plus edition/language
+  differences for review. The learner chooses **Open existing** or **Keep separate**. No fuzzy match
+  auto-merges Works or becomes a uniqueness constraint; every creation path rechecks the same policy
+  before commit.
 - The original uploaded file and sha256 are retained for provenance.
-- Ingestion is transactional and fail-loud: unknown source structures are preserved conservatively and
-  emit evidence rather than disappearing silently.
+- Ingestion is transactional and fail-loud: invalid input creates no empty Work, operational
+  import/OCR state never doubles as content identity, and unknown source structures are preserved
+  conservatively or emit evidence rather than disappearing silently.
 
 The Library is a read-first shelf:
 
@@ -536,11 +559,17 @@ expose the app publicly.
 - Boundaries: Zod contracts; pure domain rules; Vitest; Playwright smoke.
 - Rich content: ProseMirror via Tiptap, stored as decomposed block rows carrying node JSON and
   separator-free plaintext.
+- Fixed-layout PDF: retained source pages rendered through PDF.js, with stable page-block Entries and
+  a deterministic plaintext/selection projection in the shared content hierarchy.
 
-The ProseMirror document is the canonical model for new ingestion and authored content. The current
-Reader/Search still contain a legacy mdast fallback for units not yet represented by `doc_blocks`.
-That fallback is **migration debt**: preserve it until old content is safely migrated, but do not add
-new feature behavior to it or claim it has already disappeared.
+The ProseMirror document is canonical for reflowable ingestion and authored content. PDF is the one
+fixed-layout exception because page geometry is authored content: its retained source is visual truth,
+while its page block remains the stable addressable/searchable target used by the same notes and Entry
+contracts. This is a representation facet, not a second Work identity or an editable content copy.
+
+The current Reader/Search still contain a legacy mdast fallback for units not yet represented by
+`doc_blocks`. That fallback is **migration debt**: preserve it until old content is safely migrated,
+but do not add new feature behavior to it or claim it has already disappeared.
 
 Personal overlays—notes, comments, and review provenance—stay outside shared content and render as
 decorations or linked Entries. Intrinsic source links may be ProseMirror marks; personal annotations
