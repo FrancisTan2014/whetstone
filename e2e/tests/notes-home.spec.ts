@@ -49,7 +49,9 @@ test.describe("notes home", () => {
     await openEditor
       .getByRole("textbox", { name: "Note body" })
       .fill("Distributed systems WAL note (revised)");
-    await page.getByRole("button", { name: "Save note" }).click();
+    await openEditor.getByRole("button", { name: "Save note" }).click();
+    await openEditor.getByRole("button", { name: "Close" }).click();
+    await expect(openEditor).toBeHidden();
     await expect(row.getByText("Distributed systems WAL note (revised)")).toBeVisible();
 
     // Grade the due prompt back to "Due complete" so the shared queue stays clean for other specs.
@@ -77,7 +79,9 @@ test.describe("notes home", () => {
     await page.getByRole("button", { name: "New card" }).click();
     const composer = page.getByRole("dialog");
     await composer.getByRole("textbox", { name: "Answer" }).fill("Raft leader election note");
-    await composer.getByRole("textbox", { name: "Question" }).fill("What triggers a Raft election?");
+    await composer
+      .getByRole("textbox", { name: "Question" })
+      .fill("What triggers a Raft election?");
     await composer.getByRole("button", { name: "Create card" }).click();
     await expect(page.getByText("Card created. Due now.")).toBeVisible();
 
@@ -86,43 +90,48 @@ test.describe("notes home", () => {
     await expect(row).toBeVisible();
 
     await row.getByRole("button", { name: /Open note/ }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog.getByText("Due now")).toBeVisible();
-
-    await dialog.getByRole("button", { name: "Review settings" }).click();
-    const settingsRow = dialog
-      .getByRole("listitem")
-      .filter({ hasText: "What triggers a Raft election?" });
-    await expect(settingsRow).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "Edit note" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("tab", { name: "Cards" }).click();
+    const cardsPanel = dialog.getByRole("tabpanel", { name: "Cards" });
+    await cardsPanel.getByRole("button", { name: /What triggers a Raft election\?/ }).click();
+    await expect(cardsPanel.getByText("Due now")).toBeVisible();
 
     // Pause withholds the card from the due scan; resume restores it — neither writes a history event.
-    await settingsRow.getByRole("button", { name: "Pause" }).click();
-    await expect(settingsRow.getByText("Paused")).toBeVisible();
-    await settingsRow.getByRole("button", { name: "Resume" }).click();
-    await expect(settingsRow.getByText("Due now")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Pause" }).click();
+    await expect(cardsPanel.getByText("Paused")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Resume" }).click();
+    await expect(cardsPanel.getByText("Due now")).toBeVisible();
 
     // Restart writes exactly one reset event and pulls the next review to now.
-    await settingsRow.getByRole("button", { name: "Restart" }).click();
-    await settingsRow.getByRole("button", { name: "Confirm restart" }).click();
-    await expect(settingsRow.getByText("Due now")).toBeVisible();
-    await settingsRow.getByRole("button", { name: "Review history" }).click();
-    await expect(settingsRow.getByText("Schedule restarted")).toBeVisible();
-    await settingsRow.getByRole("button", { name: "Hide review history" }).click();
+    await cardsPanel.getByRole("button", { name: "More card actions" }).click();
+    await page.getByRole("menuitem", { name: "Restart schedule" }).click();
+    await cardsPanel.getByRole("button", { name: "Confirm restart" }).click();
+    await expect(cardsPanel.getByText("Due now")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Review history" }).click();
+    await expect(cardsPanel.getByRole("heading", { name: "Review history" })).toBeVisible();
+    await expect(cardsPanel.getByText("Schedule restarted")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Back to card" }).click();
 
     // Remove drops the card but keeps the note and its history; re-adding brings the card back, due now.
-    await settingsRow.getByRole("button", { name: "Remove" }).click();
-    await settingsRow.getByRole("button", { name: "Confirm remove" }).click();
-    await expect(settingsRow.getByText("Not in review")).toBeVisible();
-    await settingsRow.getByRole("button", { name: "Review history" }).click();
-    await expect(settingsRow.getByText("Schedule restarted")).toBeVisible();
-    await settingsRow.getByRole("button", { name: "Hide review history" }).click();
-    await settingsRow.getByRole("button", { name: "Add to review" }).click();
-    await expect(settingsRow.getByText("Due now")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "More card actions" }).click();
+    await page.getByRole("menuitem", { name: "Remove from review" }).click();
+    await cardsPanel.getByRole("button", { name: "Confirm remove" }).click();
+    await expect(cardsPanel.getByText("Not in review")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Review history" }).click();
+    await expect(cardsPanel.getByRole("heading", { name: "Review history" })).toBeVisible();
+    await expect(cardsPanel.getByText("Schedule restarted")).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Back to card" }).click();
+    await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+    await expect(cardsPanel.getByText("Due now")).toBeVisible();
 
     // The note body itself was never rewritten by any settings action.
+    await dialog.getByRole("tab", { name: "Note" }).click();
     await expect(dialog.getByRole("textbox", { name: "Note body" })).toContainText(
       "Raft leader election note"
     );
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(dialog).toBeHidden();
 
     // Grade the re-added due prompt back to "Due complete" so the shared queue stays clean.
     await page.goto(`${setup.baseURL}#/notes/review`);

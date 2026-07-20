@@ -41,7 +41,11 @@ vi.mock("../../shared/editor/index.js", async () => {
 vi.mock("./CardsView", async () => {
   const React = await import("react");
   return {
-    CardsView: (props: { noteEntryId: string; onReviewChanged: () => void; sourceSnapshot: string | null }) =>
+    CardsView: (props: {
+      noteEntryId: string;
+      onReviewChanged: () => void;
+      sourceSnapshot: string | null;
+    }) =>
       React.createElement("div", null, [
         React.createElement("span", { key: "id" }, `cards-view:${props.noteEntryId}`),
         React.createElement("span", { key: "src" }, `cards-source:${String(props.sourceSnapshot)}`),
@@ -55,6 +59,8 @@ vi.mock("./CardsView", async () => {
 });
 
 import { NoteWorkspace } from "./NoteWorkspace";
+
+type WorkspaceProps = Parameters<typeof NoteWorkspace>[0];
 import {
   type NoteWorkspaceHandle,
   type NoteWorkspaceOps,
@@ -96,31 +102,42 @@ const editTarget: NoteWorkspaceTarget = { kind: "edit", note: handle() };
 
 function renderWorkspace(
   overrides: {
-    onClose?: ReturnType<typeof vi.fn>;
-    onDeleted?: ReturnType<typeof vi.fn>;
-    onReviewChanged?: ReturnType<typeof vi.fn>;
-    onSaved?: ReturnType<typeof vi.fn>;
+    onClose?: WorkspaceProps["onClose"];
+    onDeleted?: WorkspaceProps["onDeleted"];
+    onReviewChanged?: WorkspaceProps["onReviewChanged"];
+    onSaved?: WorkspaceProps["onSaved"];
     ops?: NoteWorkspaceOps;
     target?: NoteWorkspaceTarget;
   } = {}
 ) {
-  const onClose = overrides.onClose ?? vi.fn();
-  render(
-    <NoteWorkspace
-      onClose={onClose}
-      onDeleted={overrides.onDeleted}
-      onReviewChanged={overrides.onReviewChanged}
-      onSaved={overrides.onSaved}
-      ops={overrides.ops ?? makeOps().ops}
-      target={overrides.target ?? createTarget}
-    />
-  );
+  const onClose = overrides.onClose ?? vi.fn<() => void>();
+  // Compose props with conditional spreads: with exactOptionalPropertyTypes, an optional callback prop may be
+  // omitted but not passed an explicit `undefined`, so only include a key when the override is provided.
+  const props: WorkspaceProps = {
+    onClose,
+    ops: overrides.ops ?? makeOps().ops,
+    target: overrides.target ?? createTarget,
+    ...(overrides.onDeleted !== undefined ? { onDeleted: overrides.onDeleted } : {}),
+    ...(overrides.onReviewChanged !== undefined
+      ? { onReviewChanged: overrides.onReviewChanged }
+      : {}),
+    ...(overrides.onSaved !== undefined ? { onSaved: overrides.onSaved } : {})
+  };
+  render(<NoteWorkspace {...props} />);
   return { onClose };
 }
 
 beforeAll(() => {
-  for (const method of ["hasPointerCapture", "setPointerCapture", "releasePointerCapture", "scrollIntoView"]) {
-    Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => false });
+  for (const method of [
+    "hasPointerCapture",
+    "setPointerCapture",
+    "releasePointerCapture",
+    "scrollIntoView"
+  ]) {
+    Object.defineProperty(HTMLElement.prototype, method, {
+      configurable: true,
+      value: () => false
+    });
   }
 });
 
@@ -141,13 +158,15 @@ describe("NoteWorkspace create flow", () => {
 
   it("persists the first save, transitions create->edit, and reveals Cards", async () => {
     const { ops, save } = makeOps();
-    const onSaved = vi.fn();
+    const onSaved = vi.fn<NonNullable<WorkspaceProps["onSaved"]>>();
     renderWorkspace({ onSaved, ops });
 
     await userEvent.type(screen.getByLabelText("Note body"), "a captured note");
     await userEvent.click(screen.getByRole("button", { name: "Save note" }));
 
-    await waitFor(() => expect(save).toHaveBeenCalledWith(createTextDocument("a captured note"), null));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(createTextDocument("a captured note"), null)
+    );
     expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Cards" })).toBeDefined();
     expect(onSaved).toHaveBeenCalledWith(handle());
@@ -166,8 +185,8 @@ describe("NoteWorkspace create flow", () => {
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     // The first save creates (current === null); the second updates the now-persisted note.
-    expect(save.mock.calls[0][1]).toBeNull();
-    expect(save.mock.calls[1][1]).toEqual(handle());
+    expect(save.mock.calls[0]?.[1]).toBeNull();
+    expect(save.mock.calls[1]?.[1]).toEqual(handle());
   });
 
   it("saves without an onSaved handler", async () => {
@@ -197,7 +216,7 @@ describe("NoteWorkspace create flow", () => {
 
 describe("NoteWorkspace Note|Cards gating", () => {
   it("opens Cards for a clean persisted note and forwards review changes", async () => {
-    const onReviewChanged = vi.fn();
+    const onReviewChanged = vi.fn<NonNullable<WorkspaceProps["onReviewChanged"]>>();
     renderWorkspace({ onReviewChanged, target: editTarget });
 
     await userEvent.click(screen.getByRole("tab", { name: "Cards" }));
@@ -271,7 +290,7 @@ describe("NoteWorkspace delete", () => {
 
   it("confirms a delete, naming the source, and runs the cascade", async () => {
     const { ops, remove } = makeOps();
-    const onDeleted = vi.fn();
+    const onDeleted = vi.fn<NonNullable<WorkspaceProps["onDeleted"]>>();
     renderWorkspace({ onDeleted, ops, target: editTarget });
 
     await openDelete();

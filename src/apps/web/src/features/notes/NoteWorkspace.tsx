@@ -91,8 +91,7 @@ export function NoteWorkspace({
   // The source shown as read-only provenance: a persisted note's own source, or a not-yet-saved capture's.
   // `captureSource` is derived unconditionally so both arms are exercised (an `edit` target evaluates the
   // `null` arm even though `activeSource` then prefers `persisted.source`), leaving no dead branch.
-  const captureSource: NoteWorkspaceSource | null =
-    target.kind === "create" ? target.source : null;
+  const captureSource: NoteWorkspaceSource | null = target.kind === "create" ? target.source : null;
   const activeSource: NoteWorkspaceSource | null =
     persisted !== null ? persisted.source : captureSource;
   const tabs: ReadonlyArray<WorkspaceTab> = persisted === null ? [NOTE_TAB] : [NOTE_TAB, CARDS_TAB];
@@ -212,7 +211,13 @@ export function NoteWorkspace({
     );
 
   return (
-    <Sheet headerAction={headerAction} onOpenChange={handleOpenChange} open size="wide" title={heading}>
+    <Sheet
+      headerAction={headerAction}
+      onOpenChange={handleOpenChange}
+      open
+      size="wide"
+      title={heading}
+    >
       {deleteView ? (
         <section aria-label="Delete note" className="noteWorkspaceDanger">
           <p>

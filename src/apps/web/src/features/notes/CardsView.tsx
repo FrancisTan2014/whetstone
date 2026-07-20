@@ -115,7 +115,9 @@ export function CardsView({
     return (
       <div className="noteCardsHistory">
         <Button
-          onClick={() => setScreen({ kind: "detail", fromHistory: true, promptId: screen.promptId })}
+          onClick={() =>
+            setScreen({ kind: "detail", fromHistory: true, promptId: screen.promptId })
+          }
           size="sm"
           type="button"
           variant="ghost"
@@ -137,12 +139,7 @@ export function CardsView({
     }
     return (
       <div className="noteCardDetailScreen">
-        <Button
-          onClick={() => backToList(prompt.promptId)}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
+        <Button onClick={() => backToList(prompt.promptId)} size="sm" type="button" variant="ghost">
           Back to cards
         </Button>
         <CardDetail
@@ -179,7 +176,9 @@ export function CardsView({
               <li key={prompt.promptId}>
                 <button
                   className="noteCardsRow min-h-11"
-                  onClick={() => setScreen({ kind: "detail", fromHistory: false, promptId: prompt.promptId })}
+                  onClick={() =>
+                    setScreen({ kind: "detail", fromHistory: false, promptId: prompt.promptId })
+                  }
                   ref={(node) => {
                     rowRefs.current.set(prompt.promptId, node);
                   }}
@@ -188,13 +187,20 @@ export function CardsView({
                   <span className="noteCardsRowBody">
                     <span className="noteCardsRowQuestion">{prompt.questionText}</span>
                     <span className="noteCardsRowMeta">
-                      <span className="noteCardsRowReveal">{revealSummaryLabel(prompt.reveal)}</span>
+                      <span className="noteCardsRowReveal">
+                        {revealSummaryLabel(prompt.reveal)}
+                      </span>
                       <span className="noteCardsRowState">
                         {cardStateLabel(prompt.cardState, new Date(), timeZone)}
                       </span>
                     </span>
                   </span>
-                  <ChevronRight aria-hidden className="noteCardsRowChevron" size={18} strokeWidth={1.75} />
+                  <ChevronRight
+                    aria-hidden
+                    className="noteCardsRowChevron"
+                    size={18}
+                    strokeWidth={1.75}
+                  />
                 </button>
               </li>
             ))}

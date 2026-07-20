@@ -994,7 +994,6 @@ code {
   font-size: 1rem;
 }
 
-
 /*
  * The inert base for an in-content link: a non-navigating source link — a Markdown/mdast fallback
  * link (#74), or an external/cross-work target — keeps the surrounding prose styling so a click

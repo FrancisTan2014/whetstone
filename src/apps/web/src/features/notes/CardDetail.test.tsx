@@ -15,6 +15,8 @@ vi.mock("../notesReview/notesReviewApi", () => ({
 }));
 
 import { CardDetail } from "./CardDetail";
+
+type CardDetailProps = Parameters<typeof CardDetail>[0];
 import {
   addNotePromptCardBack,
   editNotePromptQuestion,
@@ -45,15 +47,15 @@ function prompt(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSetti
 function renderDetail(
   overrides: {
     focusHistoryButton?: boolean;
-    onOpenHistory?: ReturnType<typeof vi.fn>;
-    onRefreshed?: ReturnType<typeof vi.fn>;
-    onReload?: ReturnType<typeof vi.fn>;
+    onOpenHistory?: CardDetailProps["onOpenHistory"];
+    onRefreshed?: CardDetailProps["onRefreshed"];
+    onReload?: CardDetailProps["onReload"];
     prompt?: NotePromptSettingsDto;
   } = {}
 ) {
-  const onOpenHistory = overrides.onOpenHistory ?? vi.fn();
-  const onRefreshed = overrides.onRefreshed ?? vi.fn();
-  const onReload = overrides.onReload ?? vi.fn();
+  const onOpenHistory = overrides.onOpenHistory ?? vi.fn<CardDetailProps["onOpenHistory"]>();
+  const onRefreshed = overrides.onRefreshed ?? vi.fn<CardDetailProps["onRefreshed"]>();
+  const onReload = overrides.onReload ?? vi.fn<CardDetailProps["onReload"]>();
   render(
     <CardDetail
       focusHistoryButton={overrides.focusHistoryButton ?? false}
@@ -73,8 +75,16 @@ async function openOverflow(): Promise<HTMLElement> {
 }
 
 beforeAll(() => {
-  for (const method of ["hasPointerCapture", "setPointerCapture", "releasePointerCapture", "scrollIntoView"]) {
-    Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => false });
+  for (const method of [
+    "hasPointerCapture",
+    "setPointerCapture",
+    "releasePointerCapture",
+    "scrollIntoView"
+  ]) {
+    Object.defineProperty(HTMLElement.prototype, method, {
+      configurable: true,
+      value: () => false
+    });
   }
 });
 
@@ -127,7 +137,7 @@ describe("CardDetail", () => {
 
   it("edits the question, trimming and handing the refreshed card up", async () => {
     mockedEdit.mockResolvedValue(prompt({ questionText: "What is durability?" }));
-    const onRefreshed = vi.fn();
+    const onRefreshed = vi.fn<CardDetailProps["onRefreshed"]>();
     renderDetail({ onRefreshed });
 
     await userEvent.click(screen.getByRole("button", { name: "Edit question" }));
@@ -136,9 +146,7 @@ describe("CardDetail", () => {
     await userEvent.type(input, "  What is durability?  ");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() =>
-      expect(mockedEdit).toHaveBeenCalledWith("prompt-1", "What is durability?")
-    );
+    await waitFor(() => expect(mockedEdit).toHaveBeenCalledWith("prompt-1", "What is durability?"));
     expect(onRefreshed).toHaveBeenCalled();
   });
 
@@ -162,7 +170,7 @@ describe("CardDetail", () => {
 
   it("pauses a due card", async () => {
     mockedPause.mockResolvedValue(prompt({ cardState: { state: "paused" } }));
-    const onRefreshed = vi.fn();
+    const onRefreshed = vi.fn<CardDetailProps["onRefreshed"]>();
     renderDetail({ onRefreshed });
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
     await waitFor(() => expect(mockedPause).toHaveBeenCalledWith("prompt-1"));
@@ -186,7 +194,7 @@ describe("CardDetail", () => {
   });
 
   it("opens the per-card history", async () => {
-    const onOpenHistory = vi.fn();
+    const onOpenHistory = vi.fn<CardDetailProps["onOpenHistory"]>();
     renderDetail({ onOpenHistory });
     await userEvent.click(screen.getByRole("button", { name: "Review history" }));
     expect(onOpenHistory).toHaveBeenCalled();
@@ -195,7 +203,9 @@ describe("CardDetail", () => {
   it("restarts the schedule from the overflow and returns focus to the trigger", async () => {
     mockedRestart.mockResolvedValue(prompt({ cardState: { state: "due" } }));
     renderDetail({
-      prompt: prompt({ cardState: { nextReviewAt: "2026-07-11T00:00:00.000Z", state: "scheduled" } })
+      prompt: prompt({
+        cardState: { nextReviewAt: "2026-07-11T00:00:00.000Z", state: "scheduled" }
+      })
     });
 
     const menu = await openOverflow();
@@ -211,7 +221,9 @@ describe("CardDetail", () => {
 
   it("cancels a restart without calling the API and restores focus", async () => {
     renderDetail({
-      prompt: prompt({ cardState: { nextReviewAt: "2026-07-11T00:00:00.000Z", state: "scheduled" } })
+      prompt: prompt({
+        cardState: { nextReviewAt: "2026-07-11T00:00:00.000Z", state: "scheduled" }
+      })
     });
     const menu = await openOverflow();
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Restart schedule" }));
@@ -224,7 +236,7 @@ describe("CardDetail", () => {
 
   it("removes the card from review, keeping the note and history", async () => {
     mockedRemove.mockResolvedValue(prompt({ cardState: { state: "not_in_review" } }));
-    const onRefreshed = vi.fn();
+    const onRefreshed = vi.fn<CardDetailProps["onRefreshed"]>();
     renderDetail({ onRefreshed });
     const menu = await openOverflow();
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Remove from review" }));
@@ -247,7 +259,7 @@ describe("CardDetail", () => {
 
   it("reports a failed action and reloads the list to correct a stale row", async () => {
     mockedPause.mockRejectedValueOnce(new Error("offline"));
-    const onReload = vi.fn();
+    const onReload = vi.fn<CardDetailProps["onReload"]>();
     renderDetail({ onReload });
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
 

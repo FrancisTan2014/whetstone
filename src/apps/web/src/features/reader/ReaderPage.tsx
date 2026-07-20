@@ -11,10 +11,7 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { apiUrl } from "../../shared/runtime";
 import { NoteWorkspace } from "../notes/NoteWorkspace";
-import {
-  type NoteWorkspaceHandle,
-  type NoteWorkspaceOps
-} from "../notes/noteWorkspaceModel";
+import { type NoteWorkspaceHandle, type NoteWorkspaceOps } from "../notes/noteWorkspaceModel";
 import { NoteList } from "../notes/NoteList";
 import { draftToAnchor, type NoteDraft } from "../notes/noteCapture";
 import { createMark, createNote, deleteNote, fetchNotes, updateNote } from "../notes/notesApi";
@@ -1757,8 +1754,7 @@ function renderPanel(
 
   // The anchored block a save lights: a create panel captures at its draft's block, an edit panel at the
   // existing note's block. Known here (both non-null), so the born underline never depends on the handle.
-  const blockEntryId =
-    panel.kind === "create" ? panel.draft.blockEntryId : panel.note.blockEntryId;
+  const blockEntryId = panel.kind === "create" ? panel.draft.blockEntryId : panel.note.blockEntryId;
 
   return (
     <NoteWorkspace

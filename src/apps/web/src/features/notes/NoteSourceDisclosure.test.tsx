@@ -7,7 +7,12 @@ import { NoteSourceDisclosure } from "./NoteSourceDisclosure";
 import { type NoteWorkspaceSource } from "./noteWorkspaceModel";
 
 function source(overrides: Partial<NoteWorkspaceSource> = {}): NoteWorkspaceSource {
-  return { blockEntryId: "block-1", snapshot: "the exact source", workEntryId: "work-1", ...overrides };
+  return {
+    blockEntryId: "block-1",
+    snapshot: "the exact source",
+    workEntryId: "work-1",
+    ...overrides
+  };
 }
 
 afterEach(() => cleanup());

@@ -13,7 +13,12 @@ const tabs: ReadonlyArray<WorkspaceTab> = [
 function renderTabs(activeId = "note"): { onActivate: ReturnType<typeof vi.fn> } {
   const onActivate = vi.fn();
   render(
-    <NoteWorkspaceTabs activeId={activeId} label="Note workspace" onActivate={onActivate} tabs={tabs} />
+    <NoteWorkspaceTabs
+      activeId={activeId}
+      label="Note workspace"
+      onActivate={onActivate}
+      tabs={tabs}
+    />
   );
   return { onActivate };
 }

@@ -35,7 +35,10 @@ export type NoteWorkspaceTarget =
 // the `onSaved`/`onDeleted` notifications.
 export type NoteWorkspaceOps = Readonly<{
   remove: (entryId: string) => Promise<void>;
-  save: (bodyDoc: DocumentNodeJSON, current: NoteWorkspaceHandle | null) => Promise<NoteWorkspaceHandle>;
+  save: (
+    bodyDoc: DocumentNodeJSON,
+    current: NoteWorkspaceHandle | null
+  ) => Promise<NoteWorkspaceHandle>;
 }>;
 
 // The Reader deep-link for a source, or `null` when the work or block is unknown (a standalone note, or a

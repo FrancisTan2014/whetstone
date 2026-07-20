@@ -73,8 +73,10 @@ function prompt(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSetti
   };
 }
 
-function renderView(overrides: { onReviewChanged?: ReturnType<typeof vi.fn>; sourceSnapshot?: string | null } = {}) {
-  const onReviewChanged = overrides.onReviewChanged ?? vi.fn();
+function renderView(
+  overrides: { onReviewChanged?: () => void; sourceSnapshot?: string | null } = {}
+) {
+  const onReviewChanged = overrides.onReviewChanged ?? vi.fn<() => void>();
   render(
     <CardsView
       noteEntryId="note-1"
@@ -110,7 +112,9 @@ describe("CardsView", () => {
     mockedList.mockResolvedValue({ prompts: [] });
     renderView({ sourceSnapshot: "the exact source" });
 
-    expect(await screen.findByRole("button", { name: "stub-add:note-1:the exact source" })).toBeDefined();
+    expect(
+      await screen.findByRole("button", { name: "stub-add:note-1:the exact source" })
+    ).toBeDefined();
     expect(screen.getByText("This note has no review cards yet.")).toBeDefined();
   });
 

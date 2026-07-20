@@ -188,7 +188,9 @@ export function CardDetail({
         <p className="noteReviewSettingsLegacyAnswer">{prompt.reveal.answerText}</p>
       ) : null}
 
-      <p className="noteReviewSettingsState">{cardStateLabel(prompt.cardState, new Date(), timeZone)}</p>
+      <p className="noteReviewSettingsState">
+        {cardStateLabel(prompt.cardState, new Date(), timeZone)}
+      </p>
 
       <div className="noteReviewSettingsActions">
         {state === "due" || state === "scheduled" ? (

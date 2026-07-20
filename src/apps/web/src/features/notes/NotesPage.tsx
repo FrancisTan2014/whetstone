@@ -18,10 +18,7 @@ import { deleteOwnedNote, fetchAllNotes, updateOwnedNote } from "./notesApi";
 import { NotesHomeList } from "./NotesHomeList";
 import { NotesImport } from "./NotesImport";
 import { NoteWorkspace } from "./NoteWorkspace";
-import {
-  type NoteWorkspaceHandle,
-  type NoteWorkspaceOps
-} from "./noteWorkspaceModel";
+import { type NoteWorkspaceHandle, type NoteWorkspaceOps } from "./noteWorkspaceModel";
 
 type NotesState =
   | Readonly<{ status: "loading" }>
@@ -366,7 +363,6 @@ function ownedNoteOps(noteEntryId: string, workEntryId: string | null): NoteWork
       handleFromOwnedNote(await updateOwnedNote(noteEntryId, { bodyDoc }), workEntryId)
   };
 }
-
 
 function renderState(
   state: NotesState,

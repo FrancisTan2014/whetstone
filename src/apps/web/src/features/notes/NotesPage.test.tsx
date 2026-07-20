@@ -59,7 +59,11 @@ vi.mock("./NoteWorkspace", async () => {
         ),
         React.createElement(
           "button",
-          { key: "d", onClick: () => props.onDeleted(props.target.note?.entryId ?? ""), type: "button" },
+          {
+            key: "d",
+            onClick: () => props.onDeleted(props.target.note?.entryId ?? ""),
+            type: "button"
+          },
           "stub-delete"
         ),
         React.createElement(
@@ -210,6 +214,7 @@ function anchoredNote(entryId: string, body: string): NoteOverviewDto {
     anchor: {
       blockEntryId: toEntryId("block-1"),
       contextSnapshot: "the surrounding sentence",
+      endBlockEntryId: toEntryId("block-1"),
       selectedTextSnapshot: "anchored snippet"
     },
     blockEntryId: toEntryId("block-1"),

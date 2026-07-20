@@ -31,8 +31,8 @@ test.describe("notes import", () => {
     );
     await panel.getByRole("button", { name: "Import 2" }).click();
 
-    // Both land in the single Notes list, un-enrolled (cardless) — each shows "Add to review", not a due
-    // projection. Scope every assertion to the row's own note body.
+    // Both land in the single Notes list, un-enrolled (cardless) — each row shows the rolled-up
+    // "Add to review" state, not a due projection. Scope every assertion to the row's own note body.
     await expect(page.getByText("Imported 2 notes.")).toBeVisible();
     const list = page.getByRole("list", { name: "Your notes" });
     const first = list.getByRole("listitem").filter({ hasText: "a fortunate discovery" });
@@ -50,18 +50,25 @@ test.describe("notes import", () => {
     await dialog
       .getByRole("textbox", { name: "Note body" })
       .fill("a fortunate discovery (revised)");
-    await page.getByRole("button", { name: "Save note" }).click();
+    await dialog.getByRole("button", { name: "Save note" }).click();
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(dialog).toBeHidden();
     await expect(first.getByText("a fortunate discovery (revised)")).toBeVisible();
 
     // Add it to Review. An imported note reuses its confirmed question read-only: the exact cue is shown,
     // and there is no "what should Whetstone ask you?" input to retype it.
     await first.getByRole("button", { name: /Open note/ }).click();
-    const reviewDialog = page.getByRole("dialog");
-    await reviewDialog.getByRole("button", { name: "Add to review" }).click();
-    await expect(reviewDialog.getByText("serendipity")).toBeVisible();
-    await expect(reviewDialog.getByLabel("What should Whetstone ask you?")).toHaveCount(0);
-    await reviewDialog.getByRole("button", { name: "Add to review" }).click();
-    await expect(reviewDialog.getByText("Due now")).toBeVisible();
+    const reviewDialog = page.getByRole("dialog", { name: "Edit note" });
+    await reviewDialog.getByRole("tab", { name: "Cards" }).click();
+    const cardsPanel = reviewDialog.getByRole("tabpanel", { name: "Cards" });
+    await cardsPanel.getByRole("button", { name: /serendipity/ }).click();
+    await expect(cardsPanel.getByText("Not in review")).toBeVisible();
+    await expect(cardsPanel.getByText("serendipity", { exact: true })).toBeVisible();
+    await expect(cardsPanel.getByLabel("What should Whetstone ask you?")).toHaveCount(0);
+    await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+    await expect(cardsPanel.getByText("Due now")).toBeVisible();
+    await reviewDialog.getByRole("button", { name: "Close" }).click();
+    await expect(reviewDialog).toBeHidden();
 
     // Grade the due prompt back to "Due complete" so the shared review queue stays clean. The revealed
     // note reflects the edit, while the cue is still the untouched imported question.
