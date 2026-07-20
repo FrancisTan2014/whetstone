@@ -113,6 +113,7 @@ describe("libraryApi", () => {
       createWork({
         author: { mode: "new", name: "Ada Lovelace" },
         language: "en",
+        origin: "manual",
         title: "Notes",
         workType: "essay"
       })
@@ -121,6 +122,7 @@ describe("libraryApi", () => {
       body: JSON.stringify({
         author: { mode: "new", name: "Ada Lovelace" },
         language: "en",
+        origin: "manual",
         title: "Notes",
         workType: "essay"
       }),

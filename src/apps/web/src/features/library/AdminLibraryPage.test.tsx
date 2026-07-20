@@ -55,10 +55,6 @@ vi.mock("../content/contentApi", () => ({
   ingestPdf: vi.fn()
 }));
 
-vi.mock("../authoredWorks/authoredWorkApi", () => ({
-  listAuthoredWorks: vi.fn()
-}));
-
 vi.mock("../recitation/recitationApi", () => ({
   enrollRecitation: vi.fn(),
   listRecitationPlans: vi.fn()
@@ -80,7 +76,6 @@ import {
   searchAuthors
 } from "./libraryApi";
 import { ingestMarkdown, ingestPdf } from "../content/contentApi";
-import { listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
@@ -88,7 +83,6 @@ import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
 import { MemoryRouter } from "react-router-dom";
 import type {
   AuthorDto,
-  AuthoredWorkSummaryDto,
   RecitationPlanDto,
   WorkAuthorSelection,
   WorkListItemDto
@@ -121,7 +115,6 @@ const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
 const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
 const mockedIngestPdf = vi.mocked(ingestPdf);
-const mockedListAuthoredWorks = vi.mocked(listAuthoredWorks);
 const mockedListRecitationPlans = vi.mocked(listRecitationPlans);
 const mockedEnrollRecitation = vi.mocked(enrollRecitation);
 
@@ -134,6 +127,7 @@ const essayWorkItem: WorkListItemDto = {
     authorId: orwell.id,
     entryId: toEntryId("work-1"),
     language: "en",
+    origin: "imported",
     title: "Politics and the English Language",
     workType: "essay"
   }
@@ -145,6 +139,7 @@ const animalFarmItem: WorkListItemDto = {
     authorId: orwell.id,
     entryId: toEntryId("work-2"),
     language: "en",
+    origin: "imported",
     title: "Animal Farm",
     workType: "book"
   }
@@ -207,7 +202,6 @@ beforeEach(() => {
   mockedSearchAuthors.mockResolvedValue({ authors: [], cleanedQuery: "", exactMatchId: null });
   mockedFetchWorks.mockResolvedValue({ works: [] });
   mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set());
-  mockedListAuthoredWorks.mockResolvedValue({ works: [] });
   mockedListRecitationPlans.mockResolvedValue({ plans: [] });
 });
 
@@ -397,6 +391,7 @@ describe("AdminLibraryPage", () => {
       expect(mockedCreateWork).toHaveBeenCalledWith({
         author: { mode: "new", name: "吳楚材" },
         language: "zh-TW",
+        origin: "manual",
         title: "古文觀止",
         workType: "book"
       });
@@ -421,6 +416,7 @@ describe("AdminLibraryPage", () => {
     expect(mockedCreateWork).toHaveBeenCalledWith({
       author: { mode: "new", name: "George Orwell" },
       language: "en",
+      origin: "manual",
       title: "Politics and the English Language",
       workType: "essay"
     });
@@ -434,6 +430,7 @@ describe("AdminLibraryPage", () => {
         authorId: dickens.id,
         entryId: toEntryId("work-9"),
         language: "en",
+        origin: "manual",
         title: "A Tale of Two Cities",
         workType: "book"
       }
@@ -450,6 +447,7 @@ describe("AdminLibraryPage", () => {
     expect(mockedCreateWork).toHaveBeenCalledWith({
       author: { authorId: dickens.id, mode: "existing" },
       language: "en",
+      origin: "manual",
       title: "A Tale of Two Cities",
       workType: "book"
     });
@@ -540,6 +538,7 @@ describe("AdminLibraryPage", () => {
         authorId: epubAuthor.id,
         entryId: toEntryId("work-epub"),
         language: "zh-CN",
+        origin: "imported",
         title: "史记选读",
         workType: "book"
       }
@@ -569,6 +568,7 @@ describe("AdminLibraryPage", () => {
         authorId: epubAuthor.id,
         entryId: toEntryId("work-epub"),
         language: "zh-CN",
+        origin: "imported",
         title: "史记选读",
         workType: "book"
       }
@@ -633,6 +633,7 @@ describe("AdminLibraryPage", () => {
         authorId: epubAuthor.id,
         entryId: toEntryId("work-epub"),
         language: "zh-CN",
+        origin: "imported",
         title: "史记选读",
         workType: "book"
       }
@@ -693,6 +694,7 @@ describe("AdminLibraryPage", () => {
       expect(mockedCreateWork).toHaveBeenCalledWith({
         author: { mode: "new", name: "George Orwell" },
         language: "en",
+        origin: "imported",
         title: "Politics and the English Language",
         workType: "book"
       });
@@ -733,6 +735,7 @@ describe("AdminLibraryPage", () => {
       expect(mockedCreateWork).toHaveBeenCalledWith({
         author: { mode: "new", name: "Nobody" },
         language: "en",
+        origin: "imported",
         title: "Report",
         workType: "book"
       });
@@ -911,6 +914,7 @@ describe("AdminLibraryPage", () => {
         authorId: toAuthorId("author-9"),
         entryId: toEntryId("work-epub"),
         language: "en",
+        origin: "imported",
         title: "Book",
         workType: "book"
       }
@@ -1035,16 +1039,11 @@ describe("AdminLibraryPage", () => {
   });
 
   it("marks a Work authored with a badge, keeps the shared read action, and moves Edit in Writing into overflow with no Markdown export (#576, #640, #679)", async () => {
-    const authoredSummary: AuthoredWorkSummaryDto = {
-      createdAt: "2026-07-01T00:00:00.000Z",
-      entryId: "work-1",
-      language: "en",
-      title: "Politics and the English Language",
-      updatedAt: "2026-07-02T00:00:00.000Z",
-      workType: "essay"
+    const authoredEssayItem: WorkListItemDto = {
+      ...essayWorkItem,
+      work: { ...essayWorkItem.work, origin: "authored" }
     };
-    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem, animalFarmItem] });
-    mockedListAuthoredWorks.mockResolvedValue({ works: [authoredSummary] });
+    mockedFetchWorks.mockResolvedValue({ works: [authoredEssayItem, animalFarmItem] });
     const user = await renderReady();
 
     const group = await screen.findByRole("region", { name: "George Orwell" });

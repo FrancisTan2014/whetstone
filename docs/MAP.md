@@ -385,7 +385,9 @@ can navigate them from another package.
 - Config: `src/config/serverConfig.ts`.
 - Data: `src/db/` — `schema.ts` (Drizzle), `dbClient.ts`, `migrate.ts`, `migrations/`. Tables include
   `entries` (the addressable-id spine; `type` ∈ work/reading_unit/block/note/toc_entry/**diary_entry**/**recitation_plan**/**recitation_passage** —
-  `timeline_entry` retired, #571), works/authors, `reading_units`, mdast `blocks` + PM `doc_blocks`,
+  `timeline_entry` retired, #571), works/authors (`work_meta.origin` — a required
+  `imported`|`manual`|`authored` discriminator (#695) recording how a Work entered the Library, the
+  authority for whether the Writing path owns it), `reading_units`, mdast `blocks` + PM `doc_blocks`,
   `notes` (a pure content facet now: `answers_json`/`markdown_body`/`template_id` — ownership + chronology
   moved out), `personal_entries` (the shared owner+chronology facet for owned Entries — `entry_id` PK,
   `user_id`, `occurred_at`/`created_at`/`updated_at`, indexed `(user_id, occurred_at)`; a row for each
@@ -772,10 +774,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   its Manage-content sheet (add content right after create); an EPUB import does not. Authored-document
   creation moved out of Library to the Write home (#679): the minimal title/type/language sheet now lives
   in `WritingHomePage` (**New essay**), which calls `authoredWorks/authoredWorkApi.createAuthoredWork`
-  and hash-navigates into the editor (`#/write?work=<id>`). Works the current user authored (loaded via
-  `listAuthoredWorks`) still carry an **Authored** badge in Library and use the same read-first primary
-  action (Read/Continue → `#/reader`), with editing available as the overflow's **Edit in Writing**
-  rather than competing on the card (#640). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
+  and hash-navigates into the editor (`#/write?work=<id>`). Works the current user authored carry an
+  **Authored** badge in Library — derived from the Work's `origin` on the shared library projection
+  (`fetchWorksWithReadingPosition`), not a separate `listAuthoredWorks` fetch (#695) — and use the same
+  read-first primary action (Read/Continue → `#/reader`), with editing available as the overflow's
+  **Edit in Writing** rather than competing on the card (#640). `reader/` is **目录-driven and lazy-loads one reading unit at a time** (no whole-book
   transfer or freeze): it fetches the lightweight `…/structure` first (`buildReaderStructure`) and pulls
   each unit's blocks on demand via `…/units/:id/content` (`readerApi.ts`: `fetchWorkStructure` /
   `fetchUnitContent` / `locateBlockUnit` / `fetchWorkAnchorIndex`), with an explicit per-unit loading

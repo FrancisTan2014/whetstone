@@ -111,6 +111,7 @@ async function seedWork(
       authorId: `${workEntryId}-author`,
       entryId: workEntryId,
       language: "en",
+      origin: "imported",
       title,
       workType: "book"
     });

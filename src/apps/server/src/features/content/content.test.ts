@@ -88,7 +88,8 @@ async function buildContext(): Promise<TestContext> {
   const library: LibraryDependencies = {
     createAuthorId: () => `author-${(authorSequence += 1)}`,
     createEntryId: () => `work-${(workSequence += 1)}`,
-    db
+    db,
+    now: () => new Date()
   };
   const content: ContentDependencies = {
     createAuthorId: () => `epub-author-${(contentAuthorSequence += 1)}`,
@@ -118,6 +119,7 @@ async function createWork(): Promise<string> {
     payload: {
       author: { mode: "new", name: "George Orwell" },
       language: "en",
+      origin: "imported",
       title: "Politics and the English Language",
       workType: "essay"
     },

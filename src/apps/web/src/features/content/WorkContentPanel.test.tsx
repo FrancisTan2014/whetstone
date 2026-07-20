@@ -26,6 +26,7 @@ const workA: WorkListItemDto = {
     authorId: author.id,
     entryId: toEntryId("work-1"),
     language: "en",
+    origin: "imported",
     title: "Work A",
     workType: "essay"
   }
@@ -37,6 +38,7 @@ const workB: WorkListItemDto = {
     authorId: author.id,
     entryId: toEntryId("work-2"),
     language: "zh-CN",
+    origin: "imported",
     title: "Work B",
     workType: "classical_text"
   }

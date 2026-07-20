@@ -7,8 +7,10 @@ import type { DbClient } from "../../db/dbClient.js";
 import { docBlocks, personalEntries, readingUnits, workMeta } from "../../db/schema.js";
 
 // The columns a lightweight authored-Work summary is built from, shared by the list and continue queries.
-// Authored (owned) Works are exactly the `work_meta` rows that also carry a `personal_entries` facet for
-// the user — an imported/shared Work has no such facet — so the inner join IS the authored discriminator.
+// Authored Works are the `work_meta` rows with `origin = 'authored'` that also carry the user's
+// `personal_entries` ownership facet (#695). Origin is the authority discriminator — a `manual` Work also
+// carries `personal_entries`, so the ownership join alone is NOT enough to tell owned writing from
+// learner-curated source; the `origin = 'authored'` predicate is what keeps them apart.
 const summaryColumns = {
   createdAt: personalEntries.createdAt,
   entryId: workMeta.entryId,
@@ -40,8 +42,9 @@ function toSummaryDto(row: SummaryRow): AuthoredWorkSummaryDto {
 
 // The authored Work with its reassembled canonical document — what the editor loads to edit or read. The
 // document is rebuilt from the ordered `doc_blocks` rows (each a top-level node), so the reader renders it
-// through the same PM pipeline as imported content. Scoped to the owner via `personal_entries`: an unknown
-// id, another user's Work, or an imported Work returns `undefined` (→ 404).
+// through the same PM pipeline as imported content. Scoped by `origin = 'authored'` PLUS the owner
+// `personal_entries` facet (#695): an unknown id, another user's Work, an imported Work, or a `manual`
+// Work (which also carries `personal_entries` but is not owned writing) returns `undefined` (→ 404).
 export async function loadAuthoredWorkForEditing(
   db: DbClient,
   workEntryId: EntryId,
@@ -59,7 +62,13 @@ export async function loadAuthoredWorkForEditing(
     .from(workMeta)
     .innerJoin(personalEntries, eq(personalEntries.entryId, workMeta.entryId))
     .innerJoin(readingUnits, eq(readingUnits.workEntryId, workMeta.entryId))
-    .where(and(eq(workMeta.entryId, workEntryId), eq(personalEntries.userId, userId)))
+    .where(
+      and(
+        eq(workMeta.entryId, workEntryId),
+        eq(workMeta.origin, "authored"),
+        eq(personalEntries.userId, userId)
+      )
+    )
     .limit(1);
 
   if (owned === undefined) {
@@ -99,7 +108,7 @@ export async function listAuthoredWorks(
     .select(summaryColumns)
     .from(workMeta)
     .innerJoin(personalEntries, eq(personalEntries.entryId, workMeta.entryId))
-    .where(eq(personalEntries.userId, userId))
+    .where(and(eq(workMeta.origin, "authored"), eq(personalEntries.userId, userId)))
     .orderBy(desc(personalEntries.updatedAt), asc(workMeta.entryId));
 
   return rows.map(toSummaryDto);

@@ -31,7 +31,6 @@ import { AuthorSelectField } from "./AuthorSelectField";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 import { LibraryAddMenu } from "./LibraryAddMenu";
 import { WorkOverflowMenu } from "./WorkOverflowMenu";
-import { listAuthoredWorks } from "../authoredWorks/authoredWorkApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 
 // Shown when the doc-AI worker could not read an uploaded PDF (the server's 422 `invalid_pdf`), e.g. a
@@ -76,10 +75,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [works, setWorks] = useState<ReadonlyArray<WorkListItemDto>>([]);
   const [worksWithPosition, setWorksWithPosition] = useState<ReadonlySet<string>>(new Set());
-  // Which works are user-authored documents (vs imported sources), so the shelf can badge them and
-  // surface **Edit document** in overflow — one library, no separate silo (#576); the card's primary
-  // action stays read-first for authored and imported works alike (#640).
-  const [authoredWorkIds, setAuthoredWorkIds] = useState<ReadonlySet<string>>(new Set());
   // The learner's recitation plans keyed by source Work: a Work already enrolled offers **Open in
   // Recite** in overflow, an un-enrolled one offers **I can recite this** (#643) — a Work enrolls once.
   // Library shows no recitation status/phase/due; Recite owns all maintenance state (#640).
@@ -121,15 +116,13 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function reload(): Promise<void> {
-    const [workList, withPosition, authored, recitation] = await Promise.all([
+    const [workList, withPosition, recitation] = await Promise.all([
       fetchWorks(),
       fetchWorksWithReadingPosition(),
-      listAuthoredWorks(),
       listRecitationPlans()
     ]);
     setWorks(workList.works);
     setWorksWithPosition(withPosition);
-    setAuthoredWorkIds(new Set(authored.works.map((work) => work.entryId)));
     setRecitationByWork(new Map(recitation.plans.map((plan) => [plan.workEntryId, plan])));
   }
 
@@ -208,7 +201,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setSubmitting(true);
 
     try {
-      const created = await createWork({ author, language, title: trimmedTitle, workType });
+      // The learner's create intent decides the Work's content authority (#695): a plain manual entry is
+      // `manual` (owned, editable from the Library), while a held file is an `imported` shell that
+      // ingestion then fills. The server stamps origin (and, for manual, the ownership facet); the client
+      // only declares which path this is.
+      const origin = heldUpload === undefined ? "manual" : "imported";
+      const created = await createWork({ author, language, origin, title: trimmedTitle, workType });
       resetWorkForm();
       setPendingUpload(undefined);
       setAddOpen(false);
@@ -399,7 +397,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
         {loadState === "ready"
           ? renderLibrary(groups, {
-              authoredWorkIds,
               cardVariants,
               listVariants,
               onDelete: setPendingDelete,
@@ -503,7 +500,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 }
 
 type RenderLibraryOptions = Readonly<{
-  authoredWorkIds: ReadonlySet<string>;
   cardVariants: Variants;
   enrollingWorkId: string | undefined;
   listVariants: Variants;
@@ -563,8 +559,9 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
   // Authored documents are first-class in the shared reader: reading opens `#/reader` (selection → note
   // capture, search deep-links, highlights — identical to imported works), while editing opens the full
   // rich editor at `#/write`. They carry a badge so the one shelf distinguishes them from imported
-  // sources without a separate silo (#576).
-  const authored = options.authoredWorkIds.has(workEntryId);
+  // sources without a separate silo (#576). Ownership is read straight off the projected `origin` (#695),
+  // so the shelf never issues a second ownership request to tell authored Works apart.
+  const authored = item.work.origin === "authored";
 
   return (
     <motion.li

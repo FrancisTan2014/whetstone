@@ -32,13 +32,13 @@ describe("0005 work_meta language normalization", () => {
       INSERT INTO entries (id, type) VALUES
         ('w-hant', 'work'), ('w-cn', 'work'), ('w-en', 'work'),
         ('w-fr', 'work'), ('w-und', 'work'), ('w-zh', 'work');
-      INSERT INTO work_meta (entry_id, author_id, language, title, work_type) VALUES
-        ('w-hant', 'author-mig', ' zh-Hant ', 'A', 'book'),
-        ('w-cn', 'author-mig', 'zh-CN ', 'B', 'book'),
-        ('w-en', 'author-mig', ' EN ', 'C', 'book'),
-        ('w-fr', 'author-mig', 'fr', 'D', 'book'),
-        ('w-und', 'author-mig', 'und', 'E', 'book'),
-        ('w-zh', 'author-mig', 'zh', 'F', 'book');
+      INSERT INTO work_meta (entry_id, author_id, language, origin, title, work_type) VALUES
+        ('w-hant', 'author-mig', ' zh-Hant ', 'imported', 'A', 'book'),
+        ('w-cn', 'author-mig', 'zh-CN ', 'imported', 'B', 'book'),
+        ('w-en', 'author-mig', ' EN ', 'imported', 'C', 'book'),
+        ('w-fr', 'author-mig', 'fr', 'imported', 'D', 'book'),
+        ('w-und', 'author-mig', 'und', 'imported', 'E', 'book'),
+        ('w-zh', 'author-mig', 'zh', 'imported', 'F', 'book');
     `);
 
     await applyMigrationFile(pglite);

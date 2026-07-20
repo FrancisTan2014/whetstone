@@ -60,6 +60,7 @@ export async function listWorks(db: DbClient): Promise<WorkListDto> {
       authorName: authors.name,
       entryId: workMeta.entryId,
       language: workMeta.language,
+      origin: workMeta.origin,
       title: workMeta.title,
       workType: workMeta.workType
     })
@@ -73,6 +74,7 @@ export async function listWorks(db: DbClient): Promise<WorkListDto> {
       authorId: toAuthorId(row.authorId),
       entryId: toEntryId(row.entryId),
       language: row.language,
+      origin: row.origin,
       title: row.title,
       workType: row.workType
     }

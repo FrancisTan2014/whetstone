@@ -129,3 +129,10 @@ export {
   workLanguages
 } from "./work.js";
 export type { WorkLanguage, WorkType } from "./work.js";
+export {
+  isLibraryCreateOrigin,
+  isWorkOrigin,
+  libraryCreateOrigins,
+  workOrigins
+} from "./workOrigin.js";
+export type { LibraryCreateOrigin, WorkOrigin } from "./workOrigin.js";

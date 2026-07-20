@@ -38,6 +38,7 @@ const item: WorkListItemDto = {
     authorId: toAuthorId("author-1"),
     entryId: toEntryId("work-1"),
     language: "en",
+    origin: "imported",
     title: "Politics and the English Language",
     workType: "essay"
   }

@@ -35,8 +35,8 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
   await pglite.exec(`
     INSERT INTO authors (id, name) VALUES ('a1', 'Author One');
     INSERT INTO entries (id, type) VALUES ('w1', 'work');
-    INSERT INTO work_meta (author_id, entry_id, language, title, work_type)
-      VALUES ('a1', 'w1', 'en', 'My Work', 'book');
+    INSERT INTO work_meta (author_id, entry_id, language, origin, title, work_type)
+      VALUES ('a1', 'w1', 'en', 'imported', 'My Work', 'book');
     INSERT INTO work_sources (id, file_name, file_path, kind, sha256, source_text, work_entry_id)
       VALUES ('src1', 'my.pdf', 'w1source.pdf', 'upload', '${sourceSha}', NULL, 'w1');
     INSERT INTO entries (id, type) VALUES ('n1', 'note');
@@ -142,7 +142,9 @@ describe("backup/restore round-trip", () => {
     const verifyPglite = new PGlite(join(targetDir, "database"));
     await verifyPglite.waitReady;
     const authors = await verifyPglite.query<{ name: string }>("select name from authors");
-    const work = await verifyPglite.query<{ title: string }>("select title from work_meta");
+    const work = await verifyPglite.query<{ title: string; origin: string }>(
+      "select title, origin from work_meta"
+    );
     const note = await verifyPglite.query<{ body_text: string }>("select body_text from notes");
     const prompts = await verifyPglite.query<{ reveal_kind: string; answer_text: string | null }>(
       "select reveal_kind, answer_text from memory_prompts order by reveal_kind"
@@ -163,7 +165,7 @@ describe("backup/restore round-trip", () => {
     await verifyPglite.close();
 
     expect(authors.rows).toEqual([{ name: "Author One" }]);
-    expect(work.rows).toEqual([{ title: "My Work" }]);
+    expect(work.rows).toEqual([{ title: "My Work", origin: "imported" }]);
     expect(note.rows).toEqual([{ body_text: "a note body" }]);
     // All three reveal kinds — including the new expected_response Success check — survive the round-trip.
     expect(prompts.rows).toEqual([

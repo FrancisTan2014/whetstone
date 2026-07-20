@@ -71,6 +71,7 @@ export async function ingestEpub(
       authorId: resolvedAuthorId,
       entryId: workEntryId,
       language: parsed.metadata.language,
+      origin: "imported",
       title: parsed.metadata.title,
       workType: "book"
     });
@@ -109,6 +110,7 @@ export async function ingestEpub(
     authorId,
     entryId: workEntryId,
     language: parsed.metadata.language,
+    origin: "imported",
     title: parsed.metadata.title,
     workType: "book"
   };
@@ -146,6 +148,7 @@ async function findWorkBySha256(
       authorId: workMeta.authorId,
       entryId: workMeta.entryId,
       language: workMeta.language,
+      origin: workMeta.origin,
       title: workMeta.title,
       workType: workMeta.workType
     })
@@ -164,6 +167,7 @@ async function findWorkBySha256(
     authorId: toAuthorId(row.authorId),
     entryId: workEntryId,
     language: row.language,
+    origin: row.origin,
     title: row.title,
     workType: row.workType
   };

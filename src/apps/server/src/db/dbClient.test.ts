@@ -18,6 +18,7 @@ describe("createDbClient", () => {
       authorId: "author-1",
       entryId: "work-1",
       language: "en",
+      origin: "imported",
       title: "Parable of the Sower",
       workType: "book"
     });
@@ -33,6 +34,7 @@ describe("createDbClient", () => {
         authorId: "author-1",
         entryId: "work-1",
         language: "en",
+        origin: "imported",
         title: "Parable of the Sower",
         workType: "book"
       }
