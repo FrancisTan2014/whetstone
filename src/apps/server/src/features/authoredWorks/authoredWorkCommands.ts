@@ -105,6 +105,7 @@ export async function createAuthoredWork(
       authorId: selfAuthorId,
       entryId: workEntryId,
       language: request.language,
+      origin: "authored",
       title: request.title,
       workType: request.workType
     });
@@ -163,7 +164,9 @@ export async function createAuthoredWork(
 // edge deleted. A removed block's `entries` row is deleted too UNLESS a note still anchors it — then the
 // row is kept so the note's FK stays valid and the note survives (its anchor simply no longer resolves to
 // rendered content). Before deleting a block Entry, any recall item / harvested chunk that referenced it
-// is detached (provenance is nullable by design), mirroring the work-delete cascade.
+// is detached (provenance is nullable by design), mirroring the work-delete cascade. Scoped by
+// `origin = 'authored'` + owner (#695): a forged id, another user's Work, an imported Work, or a `manual`
+// Work (which also carries `personal_entries`) is rejected (404) before any write.
 export async function updateAuthoredWorkContent(
   dependencies: AuthoredWorkDependencies,
   workEntryId: EntryId,
@@ -184,7 +187,13 @@ export async function updateAuthoredWorkContent(
       .from(workMeta)
       .innerJoin(personalEntries, eq(personalEntries.entryId, workMeta.entryId))
       .innerJoin(readingUnits, eq(readingUnits.workEntryId, workMeta.entryId))
-      .where(and(eq(workMeta.entryId, workEntryId), eq(personalEntries.userId, userId)))
+      .where(
+        and(
+          eq(workMeta.entryId, workEntryId),
+          eq(workMeta.origin, "authored"),
+          eq(personalEntries.userId, userId)
+        )
+      )
       .limit(1);
 
     if (owned === undefined) {

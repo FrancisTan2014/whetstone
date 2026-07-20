@@ -66,12 +66,14 @@ describe("parseCreateWorkRequest", () => {
       parseCreateWorkRequest({
         author: { mode: "new", name: "George Orwell" },
         language: "en",
+        origin: "manual",
         title: "Politics and the English Language",
         workType: "essay"
       })
     ).toEqual({
       author: { mode: "new", name: "George Orwell" },
       language: "en",
+      origin: "manual",
       title: "Politics and the English Language",
       workType: "essay"
     });
@@ -82,12 +84,14 @@ describe("parseCreateWorkRequest", () => {
       parseCreateWorkRequest({
         author: { authorId: "author-1", mode: "existing" },
         language: "zh-CN",
+        origin: "imported",
         title: "史记",
         workType: "classical_text"
       })
     ).toEqual({
       author: { authorId: "author-1", mode: "existing" },
       language: "zh-CN",
+      origin: "imported",
       title: "史记",
       workType: "classical_text"
     });

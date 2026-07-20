@@ -217,6 +217,7 @@ export {
   authorIdDtoSchema,
   createAuthorRequestSchema,
   createWorkRequestSchema,
+  libraryCreateOriginDtoSchema,
   parseCreateAuthorRequest,
   parseCreateWorkRequest,
   workAuthorSelectionSchema
@@ -226,6 +227,7 @@ export type {
   AuthorSearchDto,
   CreateAuthorRequest,
   CreateWorkRequest,
+  LibraryCreateOriginDto,
   WorkAuthorSelection,
   WorkDto,
   WorkListDto,

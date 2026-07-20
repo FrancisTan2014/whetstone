@@ -35,6 +35,7 @@ import {
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
 import { insertCurrentNotePromptInTx, insertNoteInTx } from "../notes/noteCommands.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
+import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { createServer } from "../../http/createServer.js";
 
 type TestContext = Readonly<{
@@ -71,7 +72,8 @@ async function buildContext(): Promise<TestContext> {
         throw failUnlinkWith.error;
       }
     },
-    logSourceUnlinkFailure: (info) => unlinkFailures.push(info)
+    logSourceUnlinkFailure: (info) => unlinkFailures.push(info),
+    now: () => new Date()
   };
 
   return {
@@ -191,6 +193,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
+        origin: "manual",
         title: "Animal Farm",
         workType: "book"
       }
@@ -202,6 +205,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "george\u3000orwell" },
         language: "en",
+        origin: "manual",
         title: "1984",
         workType: "book"
       }
@@ -252,6 +256,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
+        origin: "manual",
         title: "Politics and the English Language",
         workType: "essay"
       }
@@ -264,6 +269,7 @@ describe("library routes", () => {
         authorId: "author-1",
         entryId: "work-1",
         language: "en",
+        origin: "manual",
         title: "Politics and the English Language",
         workType: "essay"
       }
@@ -286,6 +292,7 @@ describe("library routes", () => {
             authorId: "author-1",
             entryId: "work-1",
             language: "en",
+            origin: "manual",
             title: "Politics and the English Language",
             workType: "essay"
           }
@@ -308,6 +315,7 @@ describe("library routes", () => {
       payload: {
         author: { authorId, mode: "existing" },
         language: "en",
+        origin: "manual",
         title: "A Tale of Two Cities",
         workType: "book"
       }
@@ -320,6 +328,7 @@ describe("library routes", () => {
         authorId: "author-1",
         entryId: "work-1",
         language: "en",
+        origin: "manual",
         title: "A Tale of Two Cities",
         workType: "book"
       }
@@ -333,6 +342,7 @@ describe("library routes", () => {
       payload: {
         author: { authorId: "missing-author", mode: "existing" },
         language: "en",
+        origin: "manual",
         title: "Orphan Work",
         workType: "book"
       }
@@ -361,6 +371,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "x" },
         language: "en",
+        origin: "manual",
         title: "t",
         workType: "magazine"
       }
@@ -376,6 +387,91 @@ describe("library routes", () => {
 
     expect(authors.json()).toEqual({ authors: [], cleanedQuery: "", exactMatchId: null });
     expect(works.json()).toEqual({ works: [] });
+  });
+
+  it("rejects a Work create whose origin is authored (only the Writing path mints owned Works)", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "Sneaky Author" },
+        language: "en",
+        origin: "authored",
+        title: "Not via the Library",
+        workType: "book"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+
+    const works = await context.server.inject({ method: "GET", url: "/api/works" });
+    expect(works.json()).toEqual({ works: [] });
+  });
+
+  it("rejects a Work create that omits origin", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "Nameless Origin" },
+        language: "en",
+        title: "No origin",
+        workType: "book"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("seeds the current user's ownership facet when a manual Work is created", async () => {
+    const created = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "George Orwell" },
+        language: "en",
+        origin: "manual",
+        title: "Politics and the English Language",
+        workType: "essay"
+      }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json().work.origin).toBe("manual");
+    const entryId = created.json().work.entryId as string;
+
+    const owners = await context.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, entryId));
+    expect(owners).toHaveLength(1);
+    expect(owners[0]?.userId).toBe(DEFAULT_USER_ID);
+  });
+
+  it("leaves an imported Work shell unowned (no ownership facet is seeded)", async () => {
+    const created = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "George Orwell" },
+        language: "en",
+        origin: "imported",
+        title: "Animal Farm",
+        workType: "book"
+      }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json().work.origin).toBe("imported");
+    const entryId = created.json().work.entryId as string;
+
+    const owners = await context.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, entryId));
+    expect(owners).toHaveLength(0);
   });
 });
 
@@ -402,8 +498,22 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
     { id: "work-2", type: "work" }
   ]);
   await db.insert(workMeta).values([
-    { authorId: "author-1", entryId: "work-1", language: "en", title: "Doomed", workType: "book" },
-    { authorId: "author-1", entryId: "work-2", language: "en", title: "Kept", workType: "book" }
+    {
+      authorId: "author-1",
+      entryId: "work-1",
+      language: "en",
+      origin: "imported",
+      title: "Doomed",
+      workType: "book"
+    },
+    {
+      authorId: "author-1",
+      entryId: "work-2",
+      language: "en",
+      origin: "imported",
+      title: "Kept",
+      workType: "book"
+    }
   ]);
   await db.insert(readingUnits).values({ entryId: "unit-1", orderIndex: 0, workEntryId: "work-1" });
   await db.insert(blocks).values({
@@ -786,6 +896,7 @@ describe("DELETE /api/works/:workEntryId", () => {
       authorId: "author-1",
       entryId: "work-1",
       language: "en",
+      origin: "imported",
       title: "Empty",
       workType: "book"
     });

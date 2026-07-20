@@ -1,8 +1,11 @@
 import {
   toAuthorId,
+  libraryCreateOrigins,
   type AuthorId,
   type EntryId,
+  type LibraryCreateOrigin,
   type WorkLanguage,
+  type WorkOrigin,
   type WorkType
 } from "@whetstone/domain";
 import { z } from "zod";
@@ -40,10 +43,18 @@ export const workAuthorSelectionSchema = z.discriminatedUnion("mode", [
     .strict()
 ]);
 
+// Library create carries the caller's explicit content-authority intent (#695): `manual` (a
+// learner-curated Work edited from the Library) or `imported` (an upload shell ingestion later fills).
+// `authored` is not accepted here — an owned Work is minted only by the Writing path — so a client can
+// never forge an owned Work through this endpoint. The server stamps the origin (and, for `manual`, the
+// ownership facet) in one transaction from this declared intent.
+export const libraryCreateOriginDtoSchema = z.enum(libraryCreateOrigins);
+
 export const createWorkRequestSchema = z
   .object({
     author: workAuthorSelectionSchema,
     language: workLanguageDtoSchema,
+    origin: libraryCreateOriginDtoSchema,
     title: z.string().refine(isNonBlank, { message: "Work title must be non-empty." }),
     workType: workTypeDtoSchema
   })
@@ -52,16 +63,21 @@ export const createWorkRequestSchema = z
 export type CreateAuthorRequest = z.infer<typeof createAuthorRequestSchema>;
 export type WorkAuthorSelection = z.infer<typeof workAuthorSelectionSchema>;
 export type CreateWorkRequest = z.infer<typeof createWorkRequestSchema>;
+export type LibraryCreateOriginDto = LibraryCreateOrigin;
 
 export type AuthorDto = Readonly<{
   id: AuthorId;
   name: string;
 }>;
 
+// A Work's projected identity for Library and route composition. `origin` is projected here once (#695)
+// so consumers read the content authority directly instead of inferring it with extra provenance or
+// ownership queries.
 export type WorkDto = Readonly<{
   authorId: AuthorId;
   entryId: EntryId;
   language: WorkLanguage;
+  origin: WorkOrigin;
   title: string;
   workType: WorkType;
 }>;

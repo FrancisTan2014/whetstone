@@ -101,6 +101,7 @@ const work: WorkListItemDto = {
     authorId: author.id,
     entryId: toEntryId("work-1"),
     language: "en",
+    origin: "imported",
     title: "Illustrated",
     workType: "book"
   }

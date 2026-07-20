@@ -67,9 +67,20 @@ export const workMeta = pgTable(
     title: text("title").notNull(),
     workType: text("work_type", {
       enum: ["book", "essay", "blog_post", "classical_text"] as const
-    }).notNull()
+    }).notNull(),
+    // A Work's explicit content authority and editing policy (#695). `imported` = externally sourced
+    // EPUB/PDF/Markdown (replacement/re-ingestion); `manual` = learner-curated source, edited from the
+    // Library; `authored` = the learner's own writing, edited from Writing. Required and orthogonal to
+    // `work_type`. Mirrors `domain`'s `workOrigins`; duplicated here (like the other enums) so migration
+    // generation never depends on the domain package building first.
+    origin: text("origin", { enum: ["imported", "manual", "authored"] as const }).notNull()
   },
-  (table) => [index("work_meta_author_idx").on(table.authorId)]
+  (table) => [
+    index("work_meta_author_idx").on(table.authorId),
+    // Enforce the closed origin set in the database, not only at the contract boundary, so no writer
+    // (or restored dump) can land a Work with an unknown authority.
+    check("work_meta_origin_ck", sql`${table.origin} in ('imported', 'manual', 'authored')`)
+  ]
 );
 
 // Ordered reading units within a work. The work containment edge is also recorded

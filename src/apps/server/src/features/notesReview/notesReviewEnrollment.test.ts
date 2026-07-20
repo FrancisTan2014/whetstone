@@ -61,7 +61,8 @@ async function buildContext(): Promise<TestContext> {
   const library: LibraryDependencies = {
     createAuthorId: () => `author-${(sequence += 1)}`,
     createEntryId: () => `work-${(sequence += 1)}`,
-    db
+    db,
+    now: () => new Date()
   };
   const content: ContentDependencies = {
     createEntryId: () => `content-${(sequence += 1)}`,
@@ -93,6 +94,7 @@ async function createWorkWithBlock(): Promise<{ blockEntryId: string; workEntryI
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
+      origin: "manual",
       title: "Fables",
       workType: "classical_text"
     },

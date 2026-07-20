@@ -40,6 +40,7 @@ async function seedWork(
     data: {
       author: { mode: "new", name: `${title} Author` },
       language: "en",
+      origin: "manual",
       title,
       workType: "essay"
     }

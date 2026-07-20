@@ -78,14 +78,23 @@ async function seed(database: DbClient): Promise<void> {
       authorId: "author-1",
       entryId: "work-1",
       language: "en",
+      origin: "imported",
       title: "Animal Farm",
       workType: "book"
     },
-    { authorId: "author-2", entryId: "work-2", language: "en", title: "Fables", workType: "book" },
+    {
+      authorId: "author-2",
+      entryId: "work-2",
+      language: "en",
+      origin: "imported",
+      title: "Fables",
+      workType: "book"
+    },
     {
       authorId: "author-3",
       entryId: "work-3",
       language: "zh-CN",
+      origin: "imported",
       title: "寓言",
       workType: "classical_text"
     }
@@ -350,7 +359,8 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
     const library: LibraryDependencies = {
       createAuthorId: () => `author-${(workSequence += 1)}`,
       createEntryId: () => `work-${workSequence}`,
-      db: database
+      db: database,
+      now: () => new Date()
     };
     const content: ContentDependencies = {
       createAuthorId: () => `epub-author-${(authorSequence += 1)}`,

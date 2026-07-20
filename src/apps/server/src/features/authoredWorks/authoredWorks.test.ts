@@ -17,7 +17,8 @@ import {
   entries,
   noteAnchors,
   notes,
-  personalEntries
+  personalEntries,
+  workMeta
 } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { loadWorkContent, loadWorkStructure } from "../content/contentQueries.js";
@@ -382,6 +383,46 @@ describe("GET /api/authored-works and /continue", () => {
     expect(listed).toEqual(["first", "second"]);
     expect((response.json() as AuthoredWorkListDto).works[0]?.entryId).toBe(first.entryId);
     void second;
+  });
+
+  it("omits and refuses a manual Work the learner owns, since origin — not ownership — decides", async () => {
+    // A manual Library Work also carries an ownership facet, so the owner join alone is not enough to
+    // isolate authored Works; origin='authored' is the real discriminator. Seed one owned by the
+    // current user directly, then prove list, load, and continue all refuse it.
+    context.setUser(DEFAULT_USER_ID);
+    const when = new Date("2026-07-01T12:00:00.000Z");
+    await context.db.insert(entries).values({ id: "manual-1", type: "work" });
+    await context.db.insert(authors).values({ id: "curated-author", name: "Curated Source" });
+    await context.db.insert(workMeta).values({
+      authorId: "curated-author",
+      entryId: "manual-1",
+      language: "en",
+      origin: "manual",
+      title: "A Curated Manual Work",
+      workType: "book"
+    });
+    await context.db.insert(personalEntries).values({
+      entryId: "manual-1",
+      userId: DEFAULT_USER_ID,
+      occurredAt: when,
+      createdAt: when,
+      updatedAt: when
+    });
+
+    const list = await context.server.inject({ method: "GET", url: "/api/authored-works" });
+    expect((list.json() as AuthoredWorkListDto).works).toEqual([]);
+
+    const load = await context.server.inject({
+      method: "GET",
+      url: "/api/authored-works/manual-1"
+    });
+    expect(load.statusCode).toBe(404);
+
+    const continued = await context.server.inject({
+      method: "GET",
+      url: "/api/authored-works/continue"
+    });
+    expect((continued.json() as ContinueWritingDto).work).toBeNull();
   });
 
   it("continues the most recently edited Work, or null when none exist", async () => {

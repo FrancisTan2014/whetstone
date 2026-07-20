@@ -204,6 +204,7 @@ const server = createServer({
     createAuthorId: () => randomUUID(),
     createEntryId: () => randomUUID(),
     db,
+    now: () => new Date(),
     deleteSourceFile: (relativePath) => sourceFileStore.deleteSourceFile(relativePath),
     // A retained source file that could not be unlinked on work delete (#541) is logged as one
     // structured warn — the DB delete has already committed, so this never fails the request.

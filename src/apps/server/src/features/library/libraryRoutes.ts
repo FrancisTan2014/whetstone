@@ -53,7 +53,11 @@ export function registerLibraryRoutes(
       return reply.code(400).send(invalidRequestBody);
     }
 
-    const result = await createWork(dependencies, parsed.data);
+    const result = await createWork(
+      dependencies,
+      parsed.data,
+      request.server.currentUser.getCurrentUserId()
+    );
 
     if (result.status === "author_not_found") {
       return reply.code(400).send({ error: "author_not_found", authorId: result.authorId });

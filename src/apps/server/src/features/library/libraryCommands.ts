@@ -38,6 +38,7 @@ export type LibraryDependencies = Readonly<{
   createAuthorId: () => string;
   createEntryId: () => string;
   db: DbClient;
+  now: () => Date;
 }>;
 
 export type CreateWorkResult =
@@ -69,9 +70,17 @@ export async function createAuthor(
   );
 }
 
+// Create a Work from the caller's explicit content-authority intent (#695), replacing the one ambiguous
+// command that served both manual metadata and pending uploads. The request's `origin` is `manual` (a
+// learner-curated Work) or `imported` (an upload shell ingestion later fills); it is stamped on the Work
+// in the same transaction. A `manual` Work is the learner's own curation, so it also gets a
+// `personal_entries` ownership/chronology facet (server-owned timestamps, so the client cannot backdate
+// it) — imported shells get none. `authored` is never created here (only the Writing path mints owned
+// writing), so this endpoint cannot forge an owned Work.
 export async function createWork(
   dependencies: LibraryDependencies,
-  request: CreateWorkRequest
+  request: CreateWorkRequest,
+  userId: string
 ): Promise<CreateWorkResult> {
   return dependencies.db.transaction(async (tx) => {
     const resolved = await resolveAuthor(dependencies, tx, request.author);
@@ -87,14 +96,23 @@ export async function createWork(
       authorId: author.id,
       entryId,
       language: request.language,
+      origin: request.origin,
       title: request.title,
       workType: request.workType
     });
+
+    if (request.origin === "manual") {
+      const now = dependencies.now();
+      await tx
+        .insert(personalEntries)
+        .values({ createdAt: now, entryId, occurredAt: now, updatedAt: now, userId });
+    }
 
     const work: WorkDto = {
       authorId: author.id,
       entryId,
       language: request.language,
+      origin: request.origin,
       title: request.title,
       workType: request.workType
     };

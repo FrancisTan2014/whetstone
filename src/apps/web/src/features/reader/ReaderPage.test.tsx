@@ -137,6 +137,7 @@ const workA: WorkListItemDto = {
     authorId: author.id,
     entryId: toEntryId("work-1"),
     language: "en",
+    origin: "imported",
     title: "Politics and the English Language",
     workType: "essay"
   }
@@ -148,6 +149,7 @@ const workB: WorkListItemDto = {
     authorId: author.id,
     entryId: toEntryId("work-2"),
     language: "en",
+    origin: "imported",
     title: "A Tale of Two Cities",
     workType: "book"
   }
@@ -159,6 +161,7 @@ const chineseWork: WorkListItemDto = {
     authorId: author.id,
     entryId: toEntryId("work-zh"),
     language: "zh-CN",
+    origin: "imported",
     title: "中文测试",
     workType: "essay"
   }

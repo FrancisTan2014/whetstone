@@ -59,7 +59,8 @@ async function buildContext(): Promise<TestContext> {
   const library: LibraryDependencies = {
     createAuthorId: () => `author-${(workSequence += 1)}`,
     createEntryId: () => `work-${workSequence}`,
-    db
+    db,
+    now: () => new Date()
   };
   const content: ContentDependencies = {
     createEntryId: () => `content-${(contentSequence += 1)}`,
@@ -97,6 +98,7 @@ async function createWorkWithBlock(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
+      origin: "manual",
       title: "Fables",
       workType: "classical_text"
     },
@@ -128,7 +130,13 @@ async function createWorkTitled(
 ): Promise<{ blockEntryId: string; plaintext: string; workEntryId: string }> {
   const workResponse = await context.server.inject({
     method: "POST",
-    payload: { author: { mode: "new", name: author }, language: "en", title, workType: "book" },
+    payload: {
+      author: { mode: "new", name: author },
+      language: "en",
+      origin: "manual",
+      title,
+      workType: "book"
+    },
     url: "/api/works"
   });
   const workEntryId = workResponse.json().work.entryId as string;
@@ -162,6 +170,7 @@ async function createWorkWithTwoBlocks(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
+      origin: "manual",
       title: "Two Paragraphs",
       workType: "classical_text"
     },
@@ -200,6 +209,7 @@ async function createWorkWithTwoUnits(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
+      origin: "manual",
       title: "Two Units",
       workType: "classical_text"
     },

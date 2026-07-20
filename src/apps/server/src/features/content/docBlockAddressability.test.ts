@@ -75,7 +75,8 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
   const library: LibraryDependencies = {
     createAuthorId: () => `author-${(workSequence += 1)}`,
     createEntryId: () => `work-${workSequence}`,
-    db
+    db,
+    now: () => new Date()
   };
   const content: ContentDependencies = {
     createAuthorId: () => `epub-author-${(authorSequence += 1)}`,

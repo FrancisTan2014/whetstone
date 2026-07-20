@@ -414,6 +414,13 @@
       "when": 1784543032591,
       "tag": "0058_green_nomad",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1784567310686,
+      "tag": "0059_complete_leo",
+      "breakpoints": true
     }
   ]
 }

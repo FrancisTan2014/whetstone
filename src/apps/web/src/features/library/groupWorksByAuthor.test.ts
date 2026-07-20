@@ -10,6 +10,7 @@ function work(authorId: string, authorName: string, entryId: string): WorkListIt
       authorId: toAuthorId(authorId),
       entryId: toEntryId(entryId),
       language: "en",
+      origin: "imported",
       title: entryId,
       workType: "book"
     }
