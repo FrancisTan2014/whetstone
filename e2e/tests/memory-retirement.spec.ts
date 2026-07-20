@@ -77,26 +77,15 @@ test.describe("Memory experience retirement (#662)", () => {
     page,
     setup
   }) => {
-    // Create a standalone note and enrol it in Review with a learner-authored question — the only way a
-    // live session seeds a due prompt now that the Memory quick-add is gone.
+    // Compose a card so the note lands already enrolled with one due prompt — the only way a live session
+    // seeds a due note prompt now that the Memory quick-add and the standalone note composer are gone.
     await page.goto(`${setup.baseURL}#/notes`);
-    await page.getByRole("button", { name: "New note" }).click();
-    const newEditor = page.getByRole("dialog");
-    await newEditor.getByRole("textbox", { name: "Note body" }).fill("kanmusu is a ship girl");
-    await page.getByRole("button", { name: "Save note" }).click();
-
-    const row = page
-      .getByRole("list", { name: "Your notes" })
-      .getByRole("listitem")
-      .filter({ hasText: "kanmusu is a ship girl" });
-    await expect(row).toBeVisible();
-    await row.getByRole("button", { name: /Open note/ }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByRole("button", { name: "Add to review" }).click();
-    await dialog.getByLabel("What should Whetstone ask you?").fill("What is a kanmusu?");
-    await dialog.getByRole("button", { name: "Add to review" }).click();
-    await expect(dialog.getByText("Due now")).toBeVisible();
-    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "New card" }).click();
+    const composer = page.getByRole("dialog");
+    await composer.getByRole("textbox", { name: "Answer" }).fill("kanmusu is a ship girl");
+    await composer.getByRole("textbox", { name: "Question" }).fill("What is a kanmusu?");
+    await composer.getByRole("button", { name: "Create card" }).click();
+    await expect(page.getByText("Card created. Due now.")).toBeVisible();
 
     // Reach the review session through the HISTORICAL /recall hash (the compat redirect), and grade the
     // due prompt to "Due complete" — proving the legacy entry mounts the same working session and keeps

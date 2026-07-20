@@ -13,6 +13,8 @@ import {
   addNotePromptCardBack,
   addNoteToReview,
   addOwnedNoteToReview,
+  createDirectCard,
+  CreateDirectCardError,
   editNotePromptQuestion,
   fetchNotePromptHistory,
   fetchNotePromptSettings,
@@ -92,6 +94,65 @@ describe("fetchNextNotePrompt", () => {
     stubFetch({ ok: false, status: 500 });
 
     await expect(fetchNextNotePrompt()).rejects.toThrow("status 500");
+  });
+});
+
+describe("createDirectCard", () => {
+  const request = {
+    answerDoc: createTextDocument("Paris is the capital of France."),
+    questionDoc: createTextDocument("What is the capital of France?"),
+    submissionId: "submission-1",
+    target: { kind: "current_note" as const }
+  };
+
+  it("POSTs the request as JSON and returns the parsed result", async () => {
+    const result = { noteId: "note-1", promptId: "prompt-1", review };
+    const fetchMock = stubFetch({ body: result, ok: true });
+
+    await expect(createDirectCard(request)).resolves.toEqual(result);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/direct-cards", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("throws a conflict error on a 409 (same id, changed payload)", async () => {
+    stubFetch({ ok: false, status: 409 });
+
+    await expect(createDirectCard(request)).rejects.toMatchObject({
+      kind: "conflict",
+      name: "CreateDirectCardError"
+    });
+  });
+
+  it("throws a gone error on a 410 (the submission's note was deleted)", async () => {
+    stubFetch({ ok: false, status: 410 });
+
+    await expect(createDirectCard(request)).rejects.toMatchObject({ kind: "gone" });
+  });
+
+  it("throws an invalid error on any other 4xx", async () => {
+    stubFetch({ ok: false, status: 400 });
+
+    await expect(createDirectCard(request)).rejects.toMatchObject({ kind: "invalid" });
+  });
+
+  it("throws a network error on a 5xx", async () => {
+    stubFetch({ ok: false, status: 500 });
+
+    await expect(createDirectCard(request)).rejects.toMatchObject({ kind: "network" });
+  });
+
+  it("throws a network error when fetch itself rejects", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await createDirectCard(request).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(CreateDirectCardError);
+    expect((error as CreateDirectCardError).kind).toBe("network");
   });
 });
 
