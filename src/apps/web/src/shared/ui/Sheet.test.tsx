@@ -233,6 +233,46 @@ describe("Sheet", () => {
     });
   });
 
+  it("renders a headerAction slot before the close control (#700)", () => {
+    mockMatchMedia({});
+    render(
+      <Sheet
+        headerAction={
+          <button data-testid="header-action" type="button">
+            Note actions
+          </button>
+        }
+        onOpenChange={vi.fn()}
+        open
+        title="Note"
+      >
+        <p>panel body</p>
+      </Sheet>
+    );
+
+    const action = screen.getByTestId("header-action");
+    const close = screen.getByRole("button", { name: "Close" });
+
+    // The action and the close control share the header's trailing cluster, and the action precedes
+    // Close in DOM order so it reads before the dismissal affordance.
+    expect(action.parentElement).toBe(close.parentElement);
+    expect(action.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders no headerAction cluster content when the slot is omitted (#700)", () => {
+    mockMatchMedia({});
+    render(
+      <Sheet onOpenChange={vi.fn()} open title="Note">
+        <p>panel body</p>
+      </Sheet>
+    );
+
+    const close = screen.getByRole("button", { name: "Close" });
+
+    // With no headerAction, the trailing cluster holds only the Close control.
+    expect(close.parentElement?.childElementCount).toBe(1);
+  });
+
   it("hosts an above-overlay floating layer inside the dialog for editor menus (#645)", () => {
     mockMatchMedia({});
     render(

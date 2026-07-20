@@ -966,6 +966,11 @@ beforeEach(() => {
   window.getSelection()?.removeAllRanges();
   // jsdom does not implement scrollIntoView; the jump-back affordance calls it.
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  // Radix's DropdownMenu (the workspace's header overflow) drives its trigger through Pointer Events,
+  // which jsdom does not implement; shim the capture methods so the menu opens under userEvent.
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  Element.prototype.setPointerCapture = vi.fn();
+  Element.prototype.releasePointerCapture = vi.fn();
   // jsdom does not implement scrollTo; keep it stubbed so any library scroll call is a no-op.
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn(), writable: true });
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
@@ -1824,7 +1829,7 @@ describe("ReaderPage", () => {
     await user.click(await screen.findByRole("button", { name: "Add note" }));
 
     expect(await screen.findByRole("heading", { name: "New note" })).toBeDefined();
-    expect(screen.getByText(/Selected: Intro/)).toBeDefined();
+    expect(screen.getByText(/Source:.*Intro/)).toBeDefined();
   });
 
   it("captures a cross-block selection and saves a span note via Mark (#257)", async () => {
@@ -1982,9 +1987,9 @@ describe("ReaderPage", () => {
     expect(screen.queryByRole("toolbar", { name: "Annotate selection" })).toBeNull();
   });
 
-  it("confirms and closes the editor after a note is saved", async () => {
+  it("keeps the workspace open as an edit after a captured note is saved", async () => {
     seedWorkContent(multiUnitContent);
-    mockedCreateNote.mockResolvedValue({ entryId: "note-1" } as unknown as AnchoredNoteDto);
+    mockedCreateNote.mockResolvedValue(makeNote({ entryId: toEntryId("note-1") }));
     const user = userEvent.setup();
     const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
     await screen.findByText("Intro paragraph.");
@@ -1996,8 +2001,10 @@ describe("ReaderPage", () => {
     await user.type(await screen.findByLabelText("Note body"), "the start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    // No success toast (#300): the editor simply closes once the save resolves.
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "New note" })).toBeNull());
+    // No success toast (#300): the first save turns the capture into an editable note (create->edit) and
+    // the workspace stays open so the learner can go straight to its Cards — it no longer closes.
+    expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
   });
 
   it("marks the selection in one tap: born highlight, no editor (#255)", async () => {
@@ -2443,11 +2450,80 @@ describe("ReaderPage note management", () => {
     await user.type(field, "a fresh start");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    // No success toast (#300): the editor closes once the update resolves.
+    // The edit persists and the workspace stays open (no toast, no close), so the field now shows the
+    // saved body and the learner can jump to Cards without reopening.
+    await waitFor(() =>
+      expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
+        bodyDoc: createTextDocument("a fresh start")
+      })
+    );
+    expect(screen.getByRole("heading", { name: "Edit note" })).toBeDefined();
+    expect((screen.getByLabelText("Note body") as HTMLTextAreaElement).value).toBe("a fresh start");
+  });
+
+  it("re-saves then deletes a freshly captured note through the workspace, closing the panel (#700)", async () => {
+    seedWorkContent(multiUnitContent);
+    const created = subBlockNote({ entryId: toEntryId("note-created") });
+    mockedCreateNote.mockResolvedValue(created);
+    mockedUpdateNote.mockResolvedValue(created);
+    mockedDeleteNote.mockResolvedValue(undefined);
+    mockedFetchNotes.mockResolvedValue({ notes: [] });
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    await screen.findByText("Intro paragraph.");
+
+    const block = blockElement(container, "b-1");
+    selectTextDeep(block, "Intro");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Add note" }));
+    await user.type(await screen.findByLabelText("Note body"), "captured");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    // The first save creates the note; the fresh capture then persists and stays open as an edit.
+    await waitFor(() =>
+      expect(mockedCreateNote).toHaveBeenCalledWith(
+        "work-1",
+        expect.objectContaining({ bodyDoc: createTextDocument("captured") })
+      )
+    );
+    // A second save updates the just-created note in place through the SAME create-origin ops — the
+    // re-save path a fresh capture takes without ever closing the workspace.
+    await user.type(screen.getByLabelText("Note body"), " more");
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+    await waitFor(() =>
+      expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-created", {
+        bodyDoc: createTextDocument("captured more")
+      })
+    );
+
+    // The workspace's own header-overflow Delete runs the work-scoped cascade, then the Reader closes
+    // the panel and confirms.
+    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete note" }));
+    await user.click(await screen.findByRole("button", { name: "Delete note" }));
+
+    await waitFor(() => expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "note-created"));
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull());
-    expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
-      bodyDoc: createTextDocument("a fresh start")
-    });
+    expect(await screen.findByText("Note deleted.")).toBeDefined();
+  });
+
+  it("deletes an existing note through the workspace overflow, closing the panel (#700)", async () => {
+    const container = await openWorkWithSubBlockNotes([subBlockNote()]);
+    mockedDeleteNote.mockResolvedValue(undefined);
+    mockedFetchNotes.mockResolvedValue({ notes: [] });
+    const user = userEvent.setup();
+
+    const block = blockElement(container, "b-1");
+    await waitFor(() => expect(block.querySelector(".noteMark")).not.toBeNull());
+    await user.click(noteMarkFor(block, "Intro"));
+    expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete note" }));
+    await user.click(await screen.findByRole("button", { name: "Delete note" }));
+
+    await waitFor(() => expect(mockedDeleteNote).toHaveBeenCalledWith("work-1", "note-1"));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit note" })).toBeNull());
   });
 
   it("opens the chooser only where two notes genuinely overlap, and deletes one (#644)", async () => {
@@ -2582,14 +2658,18 @@ describe("ReaderPage note management", () => {
     await user.click(within(panel).getByRole("button", { name: "Edit note: Intro" }));
 
     expect(await screen.findByRole("heading", { name: "Edit note" })).toBeDefined();
+    const field = screen.getByLabelText("Note body") as HTMLTextAreaElement;
+    await user.clear(field);
+    await user.type(field, "edited");
     await user.click(screen.getByRole("button", { name: "Save note" }));
 
-    // No success toast (#300): the per-work edit closes silently on success.
+    // The per-work edit persists in place and the workspace stays open (no toast, no close).
     await waitFor(() =>
       expect(mockedUpdateNote).toHaveBeenCalledWith("work-1", "note-1", {
-        bodyDoc: createTextDocument("the beginning")
+        bodyDoc: createTextDocument("edited")
       })
     );
+    expect(screen.getByRole("heading", { name: "Edit note" })).toBeDefined();
   });
 
   it("deletes a note from the per-work note list", async () => {

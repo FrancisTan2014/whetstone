@@ -12,6 +12,10 @@ type SheetSize = "default" | "wide";
 
 export type SheetProps = Readonly<{
   children: React.ReactNode;
+  // An optional narrow action rendered in the Sheet header, left of the Close control — e.g. an overflow
+  // menu for infrequent, destructive actions. Absent by default, so a Sheet with no header action reads
+  // exactly as before.
+  headerAction?: React.ReactNode;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   // Overrides the responsive default (right on desktop, bottom on mobile).
@@ -29,6 +33,7 @@ export type SheetProps = Readonly<{
 // the global `MotionConfig reducedMotion="user"`).
 export function Sheet({
   children,
+  headerAction,
   onOpenChange,
   open,
   side,
@@ -117,12 +122,15 @@ export function Sheet({
             >
               <header className="sheet-header flex items-center justify-between gap-4">
                 <Dialog.Title className="text-lg font-semibold text-text">{title}</Dialog.Title>
-                <Dialog.Close
-                  aria-label="Close"
-                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text"
-                >
-                  <X aria-hidden size={20} strokeWidth={1.75} />
-                </Dialog.Close>
+                <div className="flex items-center gap-1">
+                  {headerAction}
+                  <Dialog.Close
+                    aria-label="Close"
+                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-text-muted hover:text-text"
+                  >
+                    <X aria-hidden size={20} strokeWidth={1.75} />
+                  </Dialog.Close>
+                </div>
               </header>
               <div className="sheet-body">
                 <FloatingLayerProvider container={floatingHost}>{children}</FloatingLayerProvider>

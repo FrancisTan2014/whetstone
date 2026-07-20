@@ -203,8 +203,9 @@ can navigate them from another package.
   is the single Notes home (one continuous list via `NotesHomeList.tsx`, per-row Review projection via
   `noteReviewSummaryLabel.ts`, debounced note-centric search, a "New card" primary action that composes a
   retrieval card in place — see #690). Opening any
-  body-bearing note edits it in the shared `RichContentEditor` through `OwnedNoteEditor.tsx` (named-delete
-  cascade + owner-scoped `OwnedNoteReviewSection.tsx`); the owner-scoped client lives in `notes/notesApi.ts`
+  body-bearing note edits it in the one shared Note/Cards workspace `NoteWorkspace.tsx` (#700): Note mode
+  hosts the `RichContentEditor`, and a header-overflow "Delete note" replaces the old inline delete; the
+  origin-specific persistence adapters live in `noteWorkspaceModel.ts`. The owner-scoped client lives in `notes/notesApi.ts`
   (`fetchAllNotes({work,search})`/`createStandaloneNote`/`updateOwnedNote`/`deleteOwnedNote`) and
   `notesReview/notesReviewApi.ts` (`fetchOwnedNoteReviewStatus`/`addOwnedNoteToReview`).
 - Notes-owned Review settings & history (#660): the same owner-scoped boundary manages each note prompt's
@@ -219,8 +220,9 @@ can navigate them from another package.
   `{ mode: keep|restart, target }`): owner-scoped, `legacy_custom` is read-only (409), converting to
   `current_note` when the note already has one is a `duplicate_current_note` conflict (409, at most one per
   note), a blank Success check is rejected (400),
-  `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: `OwnedNoteReviewSection.tsx` discloses `NoteReviewSettings.tsx` in place (state-driven
-  controls, inline keyboard confirmations, no-double-submit, stale-action list reload); client fns in
+  `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: the workspace's **Cards** tab `CardsView.tsx` lists each prompt and drills into `CardDetail.tsx` (state-driven
+  edit-question/pause/resume/restart/remove/re-add, overflow confirmations, no-double-submit, stale-action list reload)
+  and a per-card `CardHistory.tsx` view; client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).
 - Retry-safe direct card creation (#689): `notesReview/createDirectCard.ts` (`createDirectCard`, served at
@@ -261,7 +263,7 @@ can navigate them from another package.
   action) pastes → previews the deterministic split → refines rows, driven by the pure draft state machine
   `notesImportDrafts.ts` (parse/fold via domain `notebookImport.ts`, undo-split/merge/split-off, offline
   gloss fill); `notesApi.ts` adds `importNotes`/`suggestGloss`. An imported note enrolls by reusing its
-  cardless prompt's confirmed question read-only (`OwnedNoteReviewSection.tsx`, `notesReviewEnrollment.ts`
+  cardless prompt's confirmed question read-only (the Cards-toolbar `AddToReviewFlow.tsx`, `notesReviewEnrollment.ts`
   surfaces it on the `not_enrolled` status).
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
@@ -919,8 +921,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `notes/` is the note feature: `noteCapture.ts` holds the `NoteDraft` type and `draftToAnchor`
   (the captured draft → note-anchor payload; the reader captures the draft from the DOM in
   `reader/selectionCapture.ts`), `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.tokens.ts` maps a template to
-  its control swatch, `NoteEditor.tsx` is the template-based create/edit editor hosted in the shared
-  `Sheet` with a hued segmented template control, `NoteList.tsx` renders notes as hued cards
+  its control swatch, the shared `NoteWorkspace.tsx` (Note/Cards) is the create/edit surface hosted in the shared
+    `Sheet`, `NoteList.tsx` renders notes as hued cards
   (template chip + snippet + answers) with jump-back/edit/delete,
   `notesApi.ts` calls the templates/notes endpoints. The Notes mode page is `NotesPage.tsx`: it
   fetches the cross-work overview (`notesApi.fetchAllNotes`), groups it by work (`groupNotesByWork.ts`),
@@ -985,9 +987,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   the question with a specific retry; a failed rating keeps the reveal and its grades in place with a
   retryable alert. `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
   and parses via `noteReviewContracts`. Enrollment (#658) is surfaced from the note sheet, not this session:
-  `notes/NoteReviewSection.tsx` (rendered by `NoteEditor.tsx` for a saved anchored note) loads the note's
+  the Cards-toolbar `AddToReviewFlow.tsx` (in the shared `NoteWorkspace.tsx` for a saved note) loads the note's
   objective status and lets the learner add it to Review by confirming the exact anchor snapshot as a
-  read-only Question; `notesReviewApi.ts` also exposes `fetchNoteReviewStatus`/`addNoteToReview` for it.
+  read-only Question; `notesReviewApi.ts` also exposes `fetchOwnedNoteReviewStatus`/`addOwnedNoteToReview` for it.
   The standalone `memory/` web mode (#573) was retired in #662: its browse/capture/manage clients
   (`MemoryPage`/`MemoryList`/`MemoryQuickAdd`/`MemoryAddDirection`/`MemoryNoteDetail`/`MemoryPromptRow`/
   `MemoryImport`), their tokens/labels, and `memoryApi.ts` are gone, and `/memory` now redirects to

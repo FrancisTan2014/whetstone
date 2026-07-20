@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ReactRouterDom from "react-router-dom";
 
 vi.mock("./notesApi", () => ({
-  fetchAllNotes: vi.fn()
+  deleteOwnedNote: vi.fn(),
+  fetchAllNotes: vi.fn(),
+  updateOwnedNote: vi.fn()
 }));
 
 // A fixed learner zone so the notes list's review summaries are deterministic (#676).
@@ -14,16 +16,21 @@ vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
   useLearnerTimeZone: () => "UTC"
 }));
 
-// The editor has its own suite; here it stands in as a controllable stub so the page's orchestration
-// (opening, reloading on save/delete, focus return) is asserted without driving the real sheet.
-vi.mock("./OwnedNoteEditor", async () => {
+// The workspace has its own suite; here it stands in as a controllable stub so the page's orchestration
+// (opening, reloading on save/delete/review, focus return) is asserted without driving the real sheet.
+vi.mock("./NoteWorkspace", async () => {
   const React = await import("react");
+  const { createTextDocument } = await import("@whetstone/document");
   return {
-    OwnedNoteEditor: (props: {
+    NoteWorkspace: (props: {
       onClose: () => void;
       onDeleted: (id: string) => void;
       onReviewChanged: () => void;
       onSaved: () => void;
+      ops: {
+        remove: (id: string) => Promise<void>;
+        save: (doc: unknown, current: unknown) => Promise<unknown>;
+      };
       target: { kind: string; note?: { entryId: string } };
     }) =>
       React.createElement("div", { "data-testid": "editor", "data-kind": props.target.kind }, [
@@ -31,6 +38,24 @@ vi.mock("./OwnedNoteEditor", async () => {
           "button",
           { key: "s", onClick: () => props.onSaved(), type: "button" },
           "stub-save"
+        ),
+        React.createElement(
+          "button",
+          {
+            key: "os",
+            onClick: () => void props.ops.save(createTextDocument("saved body"), null),
+            type: "button"
+          },
+          "stub-ops-save"
+        ),
+        React.createElement(
+          "button",
+          {
+            key: "or",
+            onClick: () => void props.ops.remove(props.target.note?.entryId ?? ""),
+            type: "button"
+          },
+          "stub-ops-remove"
         ),
         React.createElement(
           "button",
@@ -150,10 +175,12 @@ import type { NoteOverviewDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 import { toEntryId } from "@whetstone/domain";
 
-import { fetchAllNotes } from "./notesApi";
+import { deleteOwnedNote, fetchAllNotes, updateOwnedNote } from "./notesApi";
 import { NotesPage } from "./NotesPage";
 
 const mockedFetch = vi.mocked(fetchAllNotes);
+const mockedUpdate = vi.mocked(updateOwnedNote);
+const mockedDelete = vi.mocked(deleteOwnedNote);
 
 // Import is a secondary action in the page body (#641): its button opens the import panel directly.
 async function openImportPanel(): Promise<void> {
@@ -176,6 +203,23 @@ function note(entryId: string, body: string): NoteOverviewDto {
     updatedAt: "2024-01-01T00:00:00.000Z",
     workEntryId: null,
     workTitle: null
+  };
+}
+
+// An anchored owned note: it carries a Reader source (block + selected text + work), so opening it exercises
+// the workspace handle's anchored branch that a standalone `note()` does not.
+function anchoredNote(entryId: string, body: string): NoteOverviewDto {
+  return {
+    ...note(entryId, body),
+    anchor: {
+      blockEntryId: toEntryId("block-1"),
+      contextSnapshot: "the surrounding sentence",
+      endBlockEntryId: toEntryId("block-1"),
+      selectedTextSnapshot: "anchored snippet"
+    },
+    blockEntryId: toEntryId("block-1"),
+    workEntryId: toEntryId("work-1"),
+    workTitle: "A Work"
   };
 }
 
@@ -318,7 +362,7 @@ describe("NotesPage (#659)", () => {
     expect(screen.queryByTestId("editor")).toBeNull();
   });
 
-  it("closes the edit editor and reloads the list after a note is saved", async () => {
+  it("keeps the editor open and reloads the list after a note is saved", async () => {
     mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
     mockedFetch.mockResolvedValue({ notes: [note("note-1", "edited")] });
 
@@ -328,8 +372,10 @@ describe("NotesPage (#659)", () => {
     await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
     await userEvent.click(screen.getByRole("button", { name: "stub-save" }));
 
+    // The workspace owns the create->edit transition and its Cards tab, so it stays open after a save;
+    // Notes-home only refreshes the list behind it.
     expect(await screen.findByText("edited")).toBeDefined();
-    expect(screen.queryByTestId("editor")).toBeNull();
+    expect(screen.getByTestId("editor")).toBeDefined();
   });
 
   it("reloads the list after a note is deleted", async () => {
@@ -345,6 +391,39 @@ describe("NotesPage (#659)", () => {
     expect(
       await screen.findByText(/Notes appear from Reader capture, a new card, or Import/)
     ).toBeDefined();
+  });
+
+  it("drives the workspace's owner-scoped save and delete ops against the notes API", async () => {
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first")] });
+    // The refreshed handle the save resolves is an anchored note, so the ops path also builds the
+    // anchored workspace handle (source present) that the standalone-note render path never reaches.
+    mockedUpdate.mockResolvedValue(anchoredNote("note-1", "saved body"));
+    mockedDelete.mockResolvedValue();
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
+
+    await userEvent.click(screen.getByRole("button", { name: "stub-ops-save" }));
+    await waitFor(() =>
+      expect(mockedUpdate).toHaveBeenCalledWith("note-1", {
+        bodyDoc: createTextDocument("saved body")
+      })
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "stub-ops-remove" }));
+    await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith("note-1"));
+  });
+
+  it("opens an anchored owned note, disclosing its Reader source in the workspace handle", async () => {
+    mockedFetch.mockResolvedValue({ notes: [anchoredNote("note-1", "first")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: /Open note/ }));
+    expect(screen.getByTestId("editor").getAttribute("data-kind")).toBe("edit");
   });
 
   it("refreshes the list when a note's review state changes, keeping the editor open", async () => {

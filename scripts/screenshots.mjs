@@ -88,7 +88,9 @@ async function waitForHttp(url, { label, timeoutMs = 30000 }) {
     }
     await sleep(300);
   }
-  fail(`${label} did not become ready at ${url} within ${timeoutMs}ms (last status ${lastStatus}).`);
+  fail(
+    `${label} did not become ready at ${url} within ${timeoutMs}ms (last status ${lastStatus}).`
+  );
 }
 
 function run(command, args, options) {
@@ -444,6 +446,106 @@ async function captureNoteEditorWidths(browser, base, work) {
   }
 }
 
+// The saved-note Note/Cards workspace (#700). The issue requires the visual gate to cover the new
+// workspace beyond new-note capture: a saved *anchored* note's Note mode, its Cards list, a card's
+// detail, that card's review history, and the delete confirmation — each at 1280px and 390px in Day
+// and Night. This runs AFTER `captureAnnotation`, which leaves exactly one saved anchored note on the
+// English work; we reopen that note directly from its inline underline (#644) and walk the workspace,
+// enrolling a card on the first pass (later passes reuse the persisted card) and always cancelling the
+// delete with "Keep note" so the note survives every subsequent pass.
+const workspaceViewports = [
+  { height: 800, name: "desktop", width: 1280 },
+  { height: 844, name: "mobile", width: 390 }
+];
+
+async function captureNoteWorkspace(browser, base, work) {
+  const noteMark = 'article[aria-label="Reading"] span.noteMark';
+  for (const viewport of workspaceViewports) {
+    for (const theme of themes) {
+      const context = await browser.newContext({
+        colorScheme: "light",
+        hasTouch: viewport.name === "mobile",
+        isMobile: viewport.name === "mobile",
+        viewport: { height: viewport.height, width: viewport.width }
+      });
+      try {
+        await applyTheme(context, base, theme);
+        const page = await context.newPage();
+        await page.goto(`${base}#/reader?work=${encodeURIComponent(work.entryId)}`, {
+          waitUntil: "load"
+        });
+        await waitForTheme(page, theme);
+        const label = `${theme}/${viewport.name}`;
+        await waitForStage(page.locator(noteMark).first(), {
+          route: "#/reader (workspace)",
+          stage: `Saved-note underline (${label})`
+        });
+
+        // Reopen the saved anchored note directly from its inline underline; a single non-overlapping
+        // note opens its editor with no chooser (#644).
+        await page.locator(noteMark).first().click();
+        const editor = page.getByRole("dialog", { name: "Edit note" });
+        await waitForStage(editor, { route: "workspace", stage: `Edit note dialog (${label})` });
+
+        // 1) Saved anchored Note mode (the default tab).
+        await settle(page);
+        await shot(page, `note-workspace-note.${theme}.${viewport.name}`);
+
+        // 2) Cards list — enroll a card on the first pass; later passes reuse the persisted card.
+        await editor.getByRole("tab", { name: "Cards" }).click();
+        const cardsPanel = editor.getByRole("tabpanel", { name: "Cards" });
+        await cardsPanel.locator("p.noteCardsEmpty, ul.noteCardsRows").first().waitFor({
+          timeout: 15000
+        });
+        if (await cardsPanel.locator("p.noteCardsEmpty").isVisible()) {
+          // An anchored note confirms the exact snapshot as a read-only Question — two clicks of the
+          // one "Add to review" affordance (open the confirm, then confirm) enroll a single due card.
+          await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+          await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+        }
+        await cardsPanel.locator("ul.noteCardsRows button").first().waitFor({ timeout: 15000 });
+        await settle(page);
+        await shot(page, `note-workspace-cards.${theme}.${viewport.name}`);
+
+        // 3) Card detail.
+        await cardsPanel.locator("ul.noteCardsRows button").first().click();
+        await waitForStage(cardsPanel.getByRole("button", { name: "Back to cards" }), {
+          route: "workspace/cards",
+          stage: `Card detail (${label})`
+        });
+        await settle(page);
+        await shot(page, `note-workspace-card-detail.${theme}.${viewport.name}`);
+
+        // 4) Card review history.
+        await cardsPanel.getByRole("button", { name: "Review history" }).click();
+        await waitForStage(cardsPanel.getByRole("heading", { name: "Review history" }), {
+          route: "workspace/cards/history",
+          stage: `Card history (${label})`
+        });
+        await settle(page);
+        await shot(page, `note-workspace-card-history.${theme}.${viewport.name}`);
+        await cardsPanel.getByRole("button", { name: "Back to card" }).click();
+
+        // 5) Delete confirmation — captured, then cancelled with "Keep note" so the note survives the
+        // remaining passes (the header overflow persists across the Cards sub-screens).
+        await editor.getByRole("button", { name: "Note actions" }).click();
+        await page.getByRole("menuitem", { name: "Delete note" }).click();
+        await waitForStage(editor.getByRole("region", { name: "Delete note" }), {
+          route: "workspace",
+          stage: `Delete confirmation (${label})`
+        });
+        await settle(page);
+        await shot(page, `note-workspace-delete.${theme}.${viewport.name}`);
+        await editor.getByRole("button", { name: "Keep note" }).click();
+
+        await editor.getByRole("button", { name: "Close" }).click();
+      } finally {
+        await context.close();
+      }
+    }
+  }
+}
+
 async function main() {
   await buildWorkspace();
   await rm(outDir, { recursive: true, force: true });
@@ -475,6 +577,9 @@ async function main() {
   // selection (#163).
   await captureNoteEditorWidths(browser, base, englishWork);
   await captureAnnotation(browser, base, englishWork);
+  // The annotation walkthrough leaves one saved anchored note; the workspace captures reopen it and
+  // walk the new Note/Cards states (#700).
+  await captureNoteWorkspace(browser, base, englishWork);
 
   console.log(`\nAll screenshots written to ${path.relative(root, outDir)}`);
 }

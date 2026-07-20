@@ -4,18 +4,21 @@ import { useNavigate } from "react-router-dom";
 import type {
   DirectCardResultDto,
   ImportNotesResultDto,
+  NoteDto,
   NoteOverviewDto
 } from "@whetstone/contracts";
+import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { PageFrame } from "../../shared/ui/PageFrame";
 import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
 import { DirectCardComposer } from "./DirectCardComposer";
-import { fetchAllNotes } from "./notesApi";
+import { deleteOwnedNote, fetchAllNotes, updateOwnedNote } from "./notesApi";
 import { NotesHomeList } from "./NotesHomeList";
 import { NotesImport } from "./NotesImport";
-import { OwnedNoteEditor } from "./OwnedNoteEditor";
+import { NoteWorkspace } from "./NoteWorkspace";
+import { type NoteWorkspaceHandle, type NoteWorkspaceOps } from "./noteWorkspaceModel";
 
 type NotesState =
   | Readonly<{ status: "loading" }>
@@ -198,7 +201,8 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   }
 
   function onSaved(): void {
-    setEditNote(null);
+    // The workspace owns the create→edit transition and stays open after a save; Notes-home only refreshes
+    // the list behind it so the edited row's rolled-up summary stays current.
     setReloadNonce((nonce) => nonce + 1);
   }
 
@@ -308,13 +312,14 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
         )}
 
         {editNote !== null ? (
-          <OwnedNoteEditor
+          <NoteWorkspace
             key={editNote.entryId}
             onClose={requestClose}
             onDeleted={onDeleted}
             onReviewChanged={onReviewChanged}
             onSaved={onSaved}
-            target={{ kind: "edit", note: editNote }}
+            ops={ownedNoteOps(editNote.entryId, editNote.workEntryId)}
+            target={{ kind: "edit", note: handleFromOwnedNote(editNote, editNote.workEntryId) }}
           />
         ) : null}
 
@@ -331,6 +336,33 @@ type ListHandlers = Readonly<{
   openRef: React.Ref<HTMLButtonElement>;
   openTargetEntryId: string | undefined;
 }>;
+
+// Adapt an owned note (a `NoteDto`, or the `NoteOverviewDto` the list already holds) to the origin-agnostic
+// workspace handle. Notes-home only ever edits real notes (Marks carry no body and never open here), so the
+// body is always present. `workEntryId` is supplied by the caller because a plain `NoteDto` (the update
+// response) does not carry it, but it is fixed for the note's lifetime.
+function handleFromOwnedNote(note: NoteDto, workEntryId: string | null): NoteWorkspaceHandle {
+  const { anchor } = note;
+  return {
+    bodyDoc: note.bodyDoc as DocumentNodeJSON,
+    entryId: note.entryId,
+    source:
+      anchor !== null
+        ? { blockEntryId: note.blockEntryId, snapshot: anchor.selectedTextSnapshot, workEntryId }
+        : null
+  };
+}
+
+// The owner-scoped persistence the workspace calls: update the note's body, or delete it. Notes-home never
+// creates through the workspace (blank notes arrive from capture, direct cards, or import), so `save` always
+// updates the known note and returns its refreshed handle.
+function ownedNoteOps(noteEntryId: string, workEntryId: string | null): NoteWorkspaceOps {
+  return {
+    remove: (entryId) => deleteOwnedNote(entryId),
+    save: async (bodyDoc) =>
+      handleFromOwnedNote(await updateOwnedNote(noteEntryId, { bodyDoc }), workEntryId)
+  };
+}
 
 function renderState(
   state: NotesState,
