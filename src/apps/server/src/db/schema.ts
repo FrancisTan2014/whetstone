@@ -587,14 +587,15 @@ export const memoryPrompts = pgTable(
   (table) => [
     index("memory_prompts_note_idx").on(table.noteEntryId),
     index("memory_prompts_chunk_idx").on(table.chunkId),
-    // At most one `current_note` prompt per note (#658): enrollment applies retrieval to an already-saved
-    // note exactly once, so the note→current-note-prompt relationship is one-to-one. Enforced as a partial
-    // unique index (only `current_note` rows participate) so retried/concurrent "Add to review" attempts
-    // can never create a second current-note prompt, while historical `legacy_custom` siblings — which may
-    // legitimately be many per note — are unconstrained.
-    uniqueIndex("memory_prompts_one_current_note_per_note_uq")
+    // At most one AUTHORED prompt per note (#658, widened by #687): a note carries at most one authored
+    // retrieval contract — either the `current_note` reveal (the live note IS the answer) or the
+    // `expected_response` reveal (a narrower Success check grades it). Enforced as a partial unique index
+    // over exactly those two authored reveal kinds so retried/concurrent first-card authoring can never
+    // create a second authored prompt, while historical `legacy_custom` siblings — which may legitimately
+    // be many per note — stay unconstrained. #688 later relaxes this multiplicity.
+    uniqueIndex("memory_prompts_one_authored_prompt_per_note_uq")
       .on(table.noteEntryId)
-      .where(sql`${table.revealKind} = 'current_note'`),
+      .where(sql`${table.revealKind} in ('current_note', 'expected_response')`),
     // The reveal shapes are enforced in the database, not only at the write boundary: a current-note
     // prompt is ready and answerless (its reveal is the live note body); an expected-response prompt is
     // ready with both answer projections (the authored Success check, revealed alongside the live note as
