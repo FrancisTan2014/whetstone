@@ -28,11 +28,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 // one returns canonical-key substring matches plus the exact-match id and cleaned name. The server owns
 // all cleaning and matching, so the client never canonicalizes.
 export async function searchAuthors(query?: string): Promise<AuthorSearchDto> {
-  const trimmed = query?.trim() ?? "";
+  const raw = query ?? "";
   const path =
-    trimmed === ""
-      ? apiUrl("/authors")
-      : apiUrl(`/authors?query=${encodeURIComponent(query ?? "")}`);
+    raw.trim() === "" ? apiUrl("/authors") : apiUrl(`/authors?query=${encodeURIComponent(raw)}`);
 
   return requestJson<AuthorSearchDto>(path);
 }
