@@ -222,6 +222,19 @@ can navigate them from another package.
   controls, inline keyboard confirmations, no-double-submit, stale-action list reload); client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion`/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`).
+- Retry-safe direct card creation (#689): `notesReview/createDirectCard.ts` (`createDirectCard`, served at
+  `POST /api/notes/review/direct-cards` in `notesReviewRoutes.ts`, current-user scoped) turns an authored
+  question/answer pair into exactly ONE manual standalone note + ONE `contains`-linked prompt (its reveal
+  columns resolved through the shared `noteGradingColumns.resolveGradingColumns`, reused with #686) + ONE
+  active shared card (retention 0.90, due now) + ONE owner-scoped `card_creation_receipts` row — all in one
+  transaction, writing NO review event. Every readable text is derived server-side (`documentReadableText`/
+  `documentText`); a blank question/answer/Success check is rejected (400 `invalid_question`/`invalid_answer`/
+  `invalid_success_check`) before any write. Idempotency is keyed by `(user_id, submission_id)`: an
+  `onConflictDoNothing` insert serializes concurrent/sequential retries, an identical replay returns the
+  ORIGINAL result, a changed-payload replay is a `submission_conflict` (409), and a replay whose note was
+  deleted is `submission_gone` (410) — the receipt is a non-resurrecting tombstone (plain-text ids, no FK, so
+  it sits OUTSIDE `deleteNoteInTx`'s cascade). The note→prompt write reuses the single
+  `noteCommands.insertNotePromptInTx` primitive (which `insertCurrentNotePromptInTx` also delegates to).
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
   standalone Notes — the import surface replaced the retired Memory batch import (the Memory
   `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →

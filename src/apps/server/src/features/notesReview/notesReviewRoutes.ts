@@ -1,6 +1,7 @@
 import {
   editNotePromptQuestionRequestSchema,
   enrollNoteRequestSchema,
+  createDirectCardRequestSchema,
   noteReviewRatingRequestSchema,
   setNoteGradingTargetRequestSchema
 } from "@whetstone/contracts";
@@ -8,6 +9,7 @@ import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { DbClient } from "../../db/dbClient.js";
+import { createDirectCard } from "./createDirectCard.js";
 import {
   enrollNoteInReview,
   enrollNoteInReviewForOwner,
@@ -37,6 +39,10 @@ const invalidSuccessCheck = { error: "invalid_success_check" } as const;
 const legacyReadOnly = { error: "legacy_read_only" } as const;
 const duplicateCurrentNote = { error: "duplicate_current_note" } as const;
 const restartRequiresCard = { error: "restart_requires_card" } as const;
+const invalidQuestion = { error: "invalid_question" } as const;
+const invalidAnswer = { error: "invalid_answer" } as const;
+const submissionConflict = { error: "submission_conflict" } as const;
+const submissionGone = { error: "submission_gone" } as const;
 
 type NoteReviewParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 
@@ -416,4 +422,42 @@ export function registerNotesReviewRoutes(
       }
     }
   );
+
+  // Create one review card directly from an authored question/answer pair (#689), retry-safe via the
+  // client's stable `submissionId`. One success atomically writes a manual standalone note (from
+  // `answerDoc`), one prompt with the chosen reveal kind (its cue is the rich `questionDoc`), one active
+  // shared card at the recall retention due now, and one owner-scoped creation receipt — no review event.
+  // 400 on a malformed body or a blank Question/Answer/Success-check document; 409 when the same
+  // `submissionId` is replayed with a CHANGED payload; 410 when the original note has since been deleted
+  // (the receipt is a non-resurrecting tombstone). A same-payload replay returns 200 with the ORIGINAL
+  // result. Owner-scoped through the current user, so different owners' submissions are isolated.
+  server.post("/api/notes/review/direct-cards", async (request, reply) => {
+    const parsed = createDirectCardRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+    const result = await createDirectCard(
+      dependencies,
+      request.server.currentUser.getCurrentUserId(),
+      parsed.data
+    );
+    switch (result.status) {
+      case "invalid_question":
+        return reply.code(400).send(invalidQuestion);
+      case "invalid_answer":
+        return reply.code(400).send(invalidAnswer);
+      case "invalid_success_check":
+        return reply.code(400).send(invalidSuccessCheck);
+      case "conflict":
+        return reply.code(409).send(submissionConflict);
+      case "gone":
+        return reply.code(410).send(submissionGone);
+      case "ok":
+        request.log.info(
+          { noteId: result.value.noteId, route: "POST /api/notes/review/direct-cards" },
+          "note_review_direct_card_created"
+        );
+        return reply.code(200).send(result.value);
+    }
+  });
 }

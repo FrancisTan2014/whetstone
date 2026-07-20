@@ -301,6 +301,46 @@ export const setNoteGradingTargetRequestSchema = z
 
 export type SetNoteGradingTargetRequest = z.infer<typeof setNoteGradingTargetRequestSchema>;
 
+// Create one review card directly from an authored question/answer pair (#689), retry-safe via the
+// client's stable `submissionId`. `questionDoc` is the rich retrieval prompt; `answerDoc` is the rich body
+// of the standalone note the card reviews; `target` is the discriminated grading policy (grade against the
+// live note, or against an authored Success check). Every readable text (Question, Answer, Reference,
+// Success check) is derived from these documents server-side — the wire never carries client plaintext, so
+// a caller can neither desynchronize the projections nor smuggle a Reference into the Success check. A
+// blank document (one whose derived text is only whitespace) is rejected server-side, not here.
+export const createDirectCardRequestSchema = z
+  .object({
+    submissionId: z.string().trim().min(1),
+    questionDoc: noteReviewDocumentSchema,
+    answerDoc: noteReviewDocumentSchema,
+    target: noteGradingTargetSchema
+  })
+  .strict();
+
+export type CreateDirectCardRequest = z.infer<typeof createDirectCardRequestSchema>;
+
+// The result of a retry-safe direct card creation (#689): the created standalone note's id, the created
+// prompt's id, and the complete FSRS state of the freshly seeded shared review card (due now, at the recall
+// retention). A replay of the same submission returns this SAME result untouched, so the follow-on composer
+// (#690) can rely on identical ids/state whether it is the first call or a retry.
+export const directCardResultDtoSchema = z
+  .object({
+    noteId: z.string(),
+    promptId: z.string(),
+    review: reviewStateDtoSchema
+  })
+  .strict();
+
+export type DirectCardResultDto = z.infer<typeof directCardResultDtoSchema>;
+
+export function parseCreateDirectCardRequest(value: unknown): CreateDirectCardRequest {
+  return createDirectCardRequestSchema.parse(value);
+}
+
+export function parseDirectCardResultDto(value: unknown): DirectCardResultDto {
+  return directCardResultDtoSchema.parse(value);
+}
+
 export function parseNotePromptSettingsListDto(value: unknown): NotePromptSettingsListDto {
   return notePromptSettingsListDtoSchema.parse(value);
 }

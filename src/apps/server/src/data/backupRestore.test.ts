@@ -52,6 +52,10 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
       VALUES ('p-er', 'user-1', 'active', 0.9, 1, 5, 0, 0, 0, 0, 0, 'new', '2026-01-05T00:00:00.000Z');
     INSERT INTO review_events (id, target_entry_id, type, rating, occurred_at)
       VALUES ('be-1', 'p-er', 'rating', 'good', '2026-01-04T00:00:00.000Z'), ('be-2', 'p-er', 'reset', NULL, '2026-01-03T00:00:00.000Z');
+    INSERT INTO card_creation_receipts (user_id, submission_id, note_entry_id, prompt_entry_id, payload_fingerprint, created_at)
+      VALUES
+        ('user-1', 'sub-live', 'n1', 'p-er', 'fp-live', '2026-01-02T00:00:00.000Z'),
+        ('user-1', 'sub-gone', 'deleted-note', 'deleted-prompt', 'fp-gone', '2026-01-01T00:00:00.000Z');
   `);
 }
 
@@ -149,6 +153,13 @@ describe("backup/restore round-trip", () => {
     const events = await verifyPglite.query<{ type: string }>(
       "select type from review_events order by type"
     );
+    const receipts = await verifyPglite.query<{
+      submission_id: string;
+      note_entry_id: string;
+      payload_fingerprint: string;
+    }>(
+      "select submission_id, note_entry_id, payload_fingerprint from card_creation_receipts order by submission_id"
+    );
     await verifyPglite.close();
 
     expect(authors.rows).toEqual([{ name: "Author One" }]);
@@ -162,5 +173,11 @@ describe("backup/restore round-trip", () => {
     ]);
     expect(cards.rows).toEqual([{ target_entry_id: "p-er", state: "new" }]);
     expect(events.rows).toEqual([{ type: "rating" }, { type: "reset" }]);
+    // Both a live receipt and a tombstoned one (whose note/prompt ids no longer exist — the receipt has
+    // no foreign key into the note cascade) round-trip intact, so replay-idempotency survives a restore.
+    expect(receipts.rows).toEqual([
+      { submission_id: "sub-gone", note_entry_id: "deleted-note", payload_fingerprint: "fp-gone" },
+      { submission_id: "sub-live", note_entry_id: "n1", payload_fingerprint: "fp-live" }
+    ]);
   }, 60000);
 });

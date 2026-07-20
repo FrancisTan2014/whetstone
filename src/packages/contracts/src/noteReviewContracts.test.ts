@@ -9,6 +9,8 @@ import {
   noteReviewSummaryDtoSchema,
   parseEditNotePromptQuestionRequest,
   parseEnrollNoteRequest,
+  parseCreateDirectCardRequest,
+  parseDirectCardResultDto,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
   parseNoteReviewEnrollmentStatusDto,
@@ -498,5 +500,56 @@ describe("setNoteGradingTargetRequestSchema (#686)", () => {
         target: { kind: "expected_response", successCheckDoc: { not: "a document" } }
       })
     ).toThrow();
+  });
+});
+
+describe("direct card contracts (#689)", () => {
+  const questionDoc = createTextDocument("Which sorting algorithm is stable?");
+  const answerDoc = createTextDocument("Merge sort is stable.");
+  const successCheckDoc = createTextDocument("Names merge sort.");
+
+  it("parses a current-note direct card request", () => {
+    const parsed = parseCreateDirectCardRequest({
+      submissionId: "sub-1",
+      questionDoc,
+      answerDoc,
+      target: { kind: "current_note" }
+    });
+    expect(parsed.submissionId).toBe("sub-1");
+    expect(parsed.target.kind).toBe("current_note");
+  });
+
+  it("parses an expected-response direct card request", () => {
+    const parsed = parseCreateDirectCardRequest({
+      submissionId: "sub-2",
+      questionDoc,
+      answerDoc,
+      target: { kind: "expected_response", successCheckDoc }
+    });
+    expect(parsed.target).toEqual({ kind: "expected_response", successCheckDoc });
+  });
+
+  it("rejects a blank submission id or a malformed document", () => {
+    expect(() =>
+      parseCreateDirectCardRequest({
+        submissionId: "  ",
+        questionDoc,
+        answerDoc,
+        target: { kind: "current_note" }
+      })
+    ).toThrow();
+    expect(() =>
+      parseCreateDirectCardRequest({
+        submissionId: "sub-3",
+        questionDoc: { not: "a document" },
+        answerDoc,
+        target: { kind: "current_note" }
+      })
+    ).toThrow();
+  });
+
+  it("parses a direct card result dto", () => {
+    const parsed = parseDirectCardResultDto({ noteId: "n1", promptId: "p1", review });
+    expect(parsed).toEqual({ noteId: "n1", promptId: "p1", review });
   });
 });
