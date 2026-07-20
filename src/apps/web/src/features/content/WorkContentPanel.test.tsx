@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -107,6 +107,58 @@ const contentB: WorkContentDto = {
   workEntryId: toEntryId("work-2")
 };
 
+// A Markdown-pipeline work whose units carry heading levels: a leading preface unit (no heading), an
+// H1 chapter, and an H2 section — so the derived table-of-contents preview exercises "Start", a
+// chapter, and a nested section.
+const contentWithHeadings: WorkContentDto = {
+  readingUnits: [
+    {
+      blocks: [
+        {
+          blockType: "paragraph",
+          entryId: toEntryId("h-b0"),
+          mdast: { type: "paragraph" },
+          orderIndex: 0,
+          plaintext: "Preface text."
+        }
+      ],
+      entryId: toEntryId("h-u0"),
+      orderIndex: 0
+    },
+    {
+      blocks: [
+        {
+          blockType: "heading",
+          entryId: toEntryId("h-b1"),
+          mdast: { depth: 1, type: "heading" },
+          orderIndex: 0,
+          plaintext: "Chapter One"
+        }
+      ],
+      entryId: toEntryId("h-u1"),
+      headingLevel: 1,
+      orderIndex: 1,
+      title: "Chapter One"
+    },
+    {
+      blocks: [
+        {
+          blockType: "heading",
+          entryId: toEntryId("h-b2"),
+          mdast: { depth: 2, type: "heading" },
+          orderIndex: 0,
+          plaintext: "Section 1.1"
+        }
+      ],
+      entryId: toEntryId("h-u2"),
+      headingLevel: 2,
+      orderIndex: 2,
+      title: "Section 1.1"
+    }
+  ],
+  workEntryId: toEntryId("work-1")
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockedFetchWorks.mockResolvedValue({ works: [workA] });
@@ -206,7 +258,7 @@ describe("WorkContentPanel", () => {
     mockedIngestMarkdown.mockResolvedValue({ content: contentA, status: "ingested" });
 
     await user.type(screen.getByLabelText("Markdown"), "# Hi");
-    await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
+    await user.click(screen.getByRole("button", { name: "Save content" }));
 
     expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
     expect(screen.getByText("2 reading units · 3 blocks")).toBeDefined();
@@ -221,7 +273,7 @@ describe("WorkContentPanel", () => {
     mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
 
     await user.type(screen.getByLabelText("Markdown"), "image only paste");
-    await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
+    await user.click(screen.getByRole("button", { name: "Save content" }));
 
     expect(
       await screen.findByText(
@@ -238,7 +290,7 @@ describe("WorkContentPanel", () => {
   it("validates that Markdown is provided", async () => {
     const user = await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
+    await user.click(screen.getByRole("button", { name: "Save content" }));
 
     expect(screen.getByText("Enter some Markdown to add.")).toBeDefined();
     expect(mockedIngestMarkdown).not.toHaveBeenCalled();
@@ -249,7 +301,7 @@ describe("WorkContentPanel", () => {
     mockedIngestMarkdown.mockRejectedValue(new Error("boom"));
 
     await user.type(screen.getByLabelText("Markdown"), "# Hi");
-    await user.click(screen.getByRole("button", { name: "Add Markdown content" }));
+    await user.click(screen.getByRole("button", { name: "Save content" }));
 
     expect(
       await screen.findByText("Could not add the Markdown content. Please try again.")
@@ -323,5 +375,58 @@ describe("WorkContentPanel", () => {
 
     expect(await screen.findByRole("heading", { level: 3, name: "Work A" })).toBeDefined();
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-1");
+  });
+
+  it("shows heading guidance next to the content editor", async () => {
+    await renderReady();
+
+    expect(
+      screen.getByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          (el.textContent ?? "").includes("for chapters and") &&
+          (el.textContent ?? "").includes("or deeper headings for sections")
+      )
+    ).toBeDefined();
+  });
+
+  it("previews the heading-derived table of contents in reading order", async () => {
+    mockedFetchWorkContent.mockResolvedValue(contentWithHeadings);
+
+    await renderReady();
+
+    const toc = screen.getByRole("list", { name: "Table of contents" });
+    const labels = within(toc)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(labels).toEqual(["Start", "Chapter One", "Section 1.1"]);
+  });
+
+  it("omits the table of contents for a headingless multi-unit work", async () => {
+    mockedFetchWorkContent.mockResolvedValue(contentA);
+
+    await renderReady();
+
+    expect(screen.queryByRole("list", { name: "Table of contents" })).toBeNull();
+  });
+
+  it("refreshes the table of contents after saving new content", async () => {
+    const user = await renderReady();
+    // No outline before the save (the work starts empty).
+    expect(screen.queryByRole("list", { name: "Table of contents" })).toBeNull();
+    mockedIngestMarkdown.mockResolvedValue({
+      content: contentWithHeadings,
+      status: "ingested"
+    });
+
+    await user.type(screen.getByLabelText("Markdown"), "# Chapter One");
+    await user.click(screen.getByRole("button", { name: "Save content" }));
+
+    const toc = await screen.findByRole("list", { name: "Table of contents" });
+    expect(
+      within(toc)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent)
+    ).toEqual(["Start", "Chapter One", "Section 1.1"]);
   });
 });

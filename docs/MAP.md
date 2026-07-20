@@ -443,7 +443,14 @@ can navigate them from another package.
   one (`tableOfContents?: TocEntryDto[]` — pre-order authored entries with `depth`/`parentEntryId`/`label`
   and a `targetUnitEntryId` resolved from each entry's `target_source_file` via `reading_units.source_file`,
   plus an optional `targetAnchor`; omitted, never empty, for a nav-less work, so `readingUnits` is
-  unchanged and the reader falls back to the flat unit list, #379). A block id is resolved over **both**
+  unchanged and the reader falls back to the flat unit list, #379). When a Markdown-pipeline work
+  (`source_file IS NULL` units: manual/`.md`/PDF) has no authored `toc_entries`, `/structure` instead
+  derives the `tableOfContents` at query time from the units' heading levels via the pure
+  `domain/headingOutline.ts` `buildHeadingOutline` (first-block `heading` mdast `depth` → nested
+  entries, each `targetUnitEntryId` = its own unit, no anchor; a headingless preface → a root "Start"
+  entry). Nothing is persisted, so re-ingestion recomputes with no stale entry; single-unit or
+  headingless works yield no TOC (#680). `ReadingUnitDto`/`ReadingUnitStructureDto` also carry the
+  derived `headingLevel?`. A block id is resolved over **both**
   substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
   union (`addressableBlocks`), so `locateBlockUnit`, `findBlockInWork`, and the note-listing joins
   resolve a PM-rendered block id wherever a legacy block id resolves (#312). Search resolves the same
@@ -739,8 +746,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   computed server-side; #394); a de-emphasized `FrontMatterNotice.tsx` renders a "Start reading"
   affordance when the reader is intentionally on front matter; `ReaderToc.tsx` is the 目录 — a controlled,
   dismissable drawer (opened from the ReadingHeader 目录 tool over a backdrop, never a persistent
-  sidebar). When the structure carries a nav-derived `tableOfContents` (#379) it renders the **authored
-  nav tree** as a **collapsible hierarchy** (#380) — indented by `depth` (as `data-depth`/`--toc-depth`),
+  sidebar). When the structure carries a `tableOfContents` — authored EPUB nav (#379) or a Markdown
+  work's heading-derived outline (#680) — it renders it as a **collapsible hierarchy** (#380) — indented by `depth` (as `data-depth`/`--toc-depth`),
   a per-parent disclosure control (`aria-expanded`, ≥44px, Enter/Space) that hides descendants when
   collapsed, with the active entry's ancestors auto-expanded (local UI state, not persisted) and the
   current entry `aria-current` — and selecting an entry navigates via the #366 resolver (`resolveTocEntryNavigation` in

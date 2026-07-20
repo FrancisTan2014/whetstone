@@ -1960,3 +1960,177 @@ function refsEpubNoNav(): ParsedEpub {
     metadata: { author: "Anon", language: "en", title: "No Nav" }
   };
 }
+
+describe("heading-derived table of contents (#680)", () => {
+  async function getStructure(workEntryId: string): Promise<WorkStructureDto> {
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/structure`
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json() as WorkStructureDto;
+  }
+
+  it("derives a hierarchical outline from a manual Markdown work's heading levels", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, {
+      kind: "manual",
+      markdown: "Intro.\n\n# Chapter One\n\n## Section 1.1\n\n# Chapter Two"
+    });
+
+    const structure = await getStructure(workEntryId);
+
+    // The structure exposes each unit's starting heading level; the leading preface unit has none.
+    expect(structure.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined, 1, 2, 1]);
+
+    const toc = structure.tableOfContents ?? [];
+    expect(toc.map((entry) => [entry.label, entry.depth])).toEqual([
+      ["Start", 0],
+      ["Chapter One", 0],
+      ["Section 1.1", 1],
+      ["Chapter Two", 0]
+    ]);
+    // Section 1.1 nests under Chapter One; the chapters and Start are roots.
+    const byLabel = new Map(toc.map((entry) => [entry.label, entry]));
+    expect(byLabel.get("Section 1.1")?.parentEntryId).toBe(byLabel.get("Chapter One")?.entryId);
+    expect(byLabel.get("Chapter One")?.parentEntryId).toBeUndefined();
+    // Each entry opens its own unit's top (targetUnitEntryId is the unit at its order index).
+    for (const entry of toc) {
+      expect(entry.targetUnitEntryId).toBe(structure.readingUnits[entry.orderIndex]?.entryId);
+      expect(entry.targetAnchor).toBeUndefined();
+    }
+
+    // The heading level also travels on the on-demand content DTO, so the client derives the same
+    // outline without re-parsing blocks.
+    const content = await getContent(workEntryId);
+    expect(content.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined, 1, 2, 1]);
+
+    // The per-unit content endpoint — the route the web panel composes a work's content from —
+    // carries the same heading level, so its client-side outline matches the Reader's.
+    const chapterUnit = structure.readingUnits[1];
+    const prefaceUnit = structure.readingUnits[0];
+    const chapterContent = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/units/${chapterUnit?.entryId}/content`
+    });
+    const prefaceContent = await context.server.inject({
+      method: "GET",
+      url: `/api/works/${workEntryId}/units/${prefaceUnit?.entryId}/content`
+    });
+    expect((chapterContent.json() as ReadingUnitContentDto).headingLevel).toBe(1);
+    expect((prefaceContent.json() as ReadingUnitContentDto).headingLevel).toBeUndefined();
+  });
+
+  it("compresses a skipped heading level to one nesting step", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: "# One\n\n### Deep" });
+
+    const toc = (await getStructure(workEntryId)).tableOfContents ?? [];
+
+    expect(toc.map((entry) => [entry.label, entry.depth])).toEqual([
+      ["One", 0],
+      ["Deep", 1]
+    ]);
+  });
+
+  it("omits the table of contents for a single-unit Markdown work", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: "Just one paragraph of prose." });
+
+    const structure = await getStructure(workEntryId);
+
+    expect(structure.tableOfContents).toBeUndefined();
+    expect(structure.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined]);
+  });
+
+  it("derives the outline for a PDF-converted work through the same Markdown pipeline", async () => {
+    pdfResponder = async () => "# Chapter One\n\n## Section A\n\n# Chapter Two";
+    const workEntryId = await createWork();
+    const response = await ingestPdf(workEntryId, Buffer.from("pdf-bytes"));
+    expect(response.statusCode).toBe(201);
+
+    const toc = (await getStructure(workEntryId)).tableOfContents ?? [];
+
+    expect(toc.map((entry) => [entry.label, entry.depth])).toEqual([
+      ["Chapter One", 0],
+      ["Section A", 1],
+      ["Chapter Two", 0]
+    ]);
+  });
+
+  it("recomputes the outline on re-ingestion and never persists toc_entries rows", async () => {
+    const workEntryId = await createWork();
+    await ingest(workEntryId, { kind: "manual", markdown: "# Old One\n\n## Old Section" });
+    await ingest(workEntryId, { kind: "manual", markdown: "# New One\n\n# New Two" });
+
+    const toc = (await getStructure(workEntryId)).tableOfContents ?? [];
+    expect(toc.map((entry) => entry.label)).toEqual(["New One", "New Two"]);
+
+    // The outline is derived at query time, so no authored toc_entries rows are written for it.
+    const tocRows = await context.db
+      .select()
+      .from(tocEntries)
+      .where(eq(tocEntries.workEntryId, toEntryId(workEntryId)));
+    expect(tocRows).toEqual([]);
+  });
+
+  it("surfaces authored and depth-less units without deriving a heading level for them", async () => {
+    // Two units that both defeat heading derivation: an authored unit whose content lives only in PM
+    // `doc_blocks` (no mdast block, so there is no first block to read a level from), and a unit whose
+    // first block is a heading persisted without a numeric mdast depth (malformed/legacy data). Both
+    // must still surface, and neither may yield a heading level or a derived table of contents.
+    const workEntryId = await createWork();
+    let nextId = 0;
+    await context.db.transaction(async (tx) => {
+      await writeReadingUnits(tx, {
+        createEntryId: () => `depthless-${(nextId += 1)}`,
+        startOrder: 0,
+        units: [
+          {
+            blocks: [],
+            docBlocks: [
+              {
+                anchorId: null,
+                anchors: [],
+                id: "authored-doc-block",
+                node: { content: [{ text: "Authored body.", type: "text" }], type: "paragraph" },
+                type: "paragraph"
+              }
+            ],
+            evidence: [],
+            sourceFile: null,
+            title: "Authored"
+          },
+          {
+            blocks: [
+              {
+                alt: null,
+                anchorId: null,
+                backlinkAnchorId: null,
+                blockType: "heading",
+                imageResourceId: null,
+                mdast: { type: "heading" },
+                plaintext: "Depth-less heading"
+              }
+            ],
+            docBlocks: [],
+            evidence: [],
+            sourceFile: null,
+            title: "Depth-less heading"
+          }
+        ],
+        workEntryId: toEntryId(workEntryId)
+      });
+    });
+
+    // Both units surface (from PM doc_blocks and from the mdast heading block respectively), but
+    // neither carries a derived heading level.
+    const content = await getContent(workEntryId);
+    expect(content.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined, undefined]);
+
+    const structure = await getStructure(workEntryId);
+    expect(structure.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined, undefined]);
+    // No unit contributes a level, so there is nothing to nest — the outline stays absent.
+    expect(structure.tableOfContents).toBeUndefined();
+  });
+});

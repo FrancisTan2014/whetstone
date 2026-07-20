@@ -1,4 +1,4 @@
-import { toEntryId, type EntryId } from "@whetstone/domain";
+import { buildHeadingOutline, toEntryId, type EntryId } from "@whetstone/domain";
 import type {
   BlockDto,
   DocBlockDto,
@@ -26,6 +26,7 @@ import {
 type ReadingUnitRow = Readonly<{
   entryId: string;
   orderIndex: number;
+  sourceFile: string | null;
   title: string | null;
 }>;
 
@@ -101,6 +102,7 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
     .select({
       entryId: readingUnits.entryId,
       orderIndex: readingUnits.orderIndex,
+      sourceFile: readingUnits.sourceFile,
       title: readingUnits.title
     })
     .from(readingUnits)
@@ -140,23 +142,58 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
     // before. A unit with neither has nothing the reader can render.
     const surfaces = unitBlocks.length > 0 || (authored && hasRenderableDocBlock);
     return surfaces
-      ? [toReadingUnitDto(unit, unitBlocks.map(toBlockDto), unitDocBlocks.map(toDocBlockDto))]
+      ? [
+          toReadingUnitDto(
+            unit,
+            unitBlocks.map(toBlockDto),
+            unitDocBlocks.map(toDocBlockDto),
+            firstBlockHeadingLevel(unit.sourceFile, unitBlocks)
+          )
+        ]
       : [];
   });
 
   return { readingUnits: readingUnitDtos, workEntryId };
 }
 
+// The Markdown heading level (mdast heading depth) that starts a unit, or `undefined` when the unit
+// is not the start of a section the heading outline should list: a unit with a per-unit source file
+// (EPUB, whose hierarchy is its authored nav, not derived headings), or a unit whose first block is
+// not a heading (the leading run of content before a work's first heading). The first block is the one
+// at the lowest order index, which the block query returns first for the unit (#680).
+function firstBlockHeadingLevel(
+  sourceFile: string | null,
+  unitBlocks: ReadonlyArray<BlockRow>
+): number | undefined {
+  if (sourceFile !== null) {
+    return undefined;
+  }
+  const first = unitBlocks[0];
+  if (first === undefined || first.blockType !== "heading") {
+    return undefined;
+  }
+  return mdastHeadingDepth(first.mdast);
+}
+
+// The `depth` of an mdast heading node (1-6), read defensively from the persisted node JSON; absent
+// when the node is not a heading with a numeric depth.
+function mdastHeadingDepth(mdast: unknown): number | undefined {
+  const depth = (mdast as { depth?: unknown } | null | undefined)?.depth;
+  return typeof depth === "number" ? depth : undefined;
+}
+
 function toReadingUnitDto(
   unit: ReadingUnitRow,
   unitBlocks: ReadonlyArray<BlockDto>,
-  unitDocBlocks: ReadonlyArray<DocBlockDto>
+  unitDocBlocks: ReadonlyArray<DocBlockDto>,
+  headingLevel: number | undefined
 ): ReadingUnitDto {
   const base = {
     blocks: unitBlocks,
     docBlocks: unitDocBlocks,
     entryId: toEntryId(unit.entryId),
-    orderIndex: unit.orderIndex
+    orderIndex: unit.orderIndex,
+    ...(headingLevel === undefined ? {} : { headingLevel })
   };
 
   return unit.title === null ? base : { ...base, title: unit.title };
@@ -241,6 +278,34 @@ export async function loadWorkStructure(
     ? new Map(docRows.map((row) => [row.readingUnitEntryId, row]))
     : new Map<string, (typeof docRows)[number]>();
 
+  // The heading level that starts each Markdown-pipeline unit (#680): the mdast depth of its first
+  // block when that block is a heading. Scoped to units with no per-unit source file, so an EPUB —
+  // whose hierarchy is its authored nav — is never given a heading-derived outline; its nav (or the
+  // flat fallback) still governs. The first block is the one at order index 0.
+  const headingRows = await db
+    .select({
+      mdast: blocks.mdastJson,
+      readingUnitEntryId: readingUnits.entryId
+    })
+    .from(blocks)
+    .innerJoin(readingUnits, eq(blocks.readingUnitEntryId, readingUnits.entryId))
+    .where(
+      and(
+        eq(readingUnits.workEntryId, workEntryId),
+        isNull(readingUnits.sourceFile),
+        isNull(blocks.deletedAt),
+        eq(blocks.blockType, "heading"),
+        eq(blocks.orderIndex, 0)
+      )
+    );
+  const headingLevelByUnit = new Map<string, number>();
+  for (const row of headingRows) {
+    const depth = mdastHeadingDepth(row.mdast);
+    if (depth !== undefined) {
+      headingLevelByUnit.set(row.readingUnitEntryId, depth);
+    }
+  }
+
   // A unit is readable when it has content in the substrate that owns it. Mdast is authoritative for
   // count and substantiveness when present (EPUB/Markdown behavior unchanged). With no mdast, only an
   // authored unit surfaces (via `docByUnit`); an imported chapter with no mdast — an unknown-only or
@@ -252,6 +317,7 @@ export async function loadWorkStructure(
           blockCount: row.mdastCount,
           entryId: row.entryId,
           hasSubstantiveText: row.hasSubstantiveMdast,
+          headingLevel: headingLevelByUnit.get(row.entryId),
           orderIndex: row.orderIndex,
           sourceFile: row.sourceFile,
           title: row.title
@@ -267,21 +333,56 @@ export async function loadWorkStructure(
         blockCount: doc.docCount,
         entryId: row.entryId,
         hasSubstantiveText: doc.hasSubstantiveDoc,
+        headingLevel: headingLevelByUnit.get(row.entryId),
         orderIndex: row.orderIndex,
         sourceFile: row.sourceFile,
         title: row.title
       }
     ];
   });
-  const tableOfContents = await loadTableOfContents(db, workEntryId, structureUnits);
+  // An authored EPUB nav (#379) is the first-priority table of contents and is never overridden by
+  // derived headings. Only when a work has no authored nav does the heading structure supply one (#680),
+  // derived at query time from the units — nothing is persisted, so re-ingestion always yields a fresh
+  // outline with no stale rows.
+  const authoredToc = await loadTableOfContents(db, workEntryId, structureUnits);
+  const tableOfContents = authoredToc.length > 0 ? authoredToc : headingOutlineToc(structureUnits);
 
   return {
     readingUnits: structureUnits.map(toStructureDto),
     workEntryId,
-    // Additive nav-derived TOC (#379): present only for a work with an authored nav; omitted (never
-    // an empty array) otherwise, so the reader falls back to the flat reading-unit list.
+    // Additive hierarchical TOC: an authored EPUB nav, else a Markdown heading outline; omitted (never
+    // an empty array) when neither applies, so the reader falls back to the flat reading-unit list.
     ...(tableOfContents.length === 0 ? {} : { tableOfContents })
   };
+}
+
+// A Markdown-pipeline work's heading-derived table of contents (#680): the shared domain projection
+// over the units' heading levels, mapped to the served TOC shape. Each entry opens its own unit's top
+// (no sub-unit anchor), so `targetUnitEntryId` is the unit's own id. Empty for a single-unit or
+// headingless work — the reader then uses the flat reading-unit list.
+function headingOutlineToc(
+  structureUnits: ReadonlyArray<{
+    entryId: string;
+    headingLevel: number | undefined;
+    title: string | null;
+  }>
+): ReadonlyArray<TocEntryDto> {
+  const outline = buildHeadingOutline(
+    structureUnits.map((unit) => ({
+      entryId: unit.entryId,
+      ...(unit.headingLevel === undefined ? {} : { headingLevel: unit.headingLevel }),
+      ...(unit.title === null ? {} : { title: unit.title })
+    }))
+  );
+
+  return outline.map((entry) => ({
+    depth: entry.depth,
+    entryId: entry.entryId,
+    label: entry.label,
+    orderIndex: entry.orderIndex,
+    ...(entry.parentEntryId === undefined ? {} : { parentEntryId: entry.parentEntryId }),
+    targetUnitEntryId: entry.targetUnitEntryId
+  }));
 }
 
 // The work's authored table of contents (#379): its persisted `toc_entries` in pre-order, each with
@@ -349,14 +450,15 @@ function toStructureDto(
   unit: ReadingUnitRow & {
     blockCount: number;
     hasSubstantiveText: boolean;
-    sourceFile: string | null;
+    headingLevel: number | undefined;
   }
 ): ReadingUnitStructureDto {
   const base = {
     blockCount: unit.blockCount,
     entryId: toEntryId(unit.entryId),
     hasSubstantiveText: unit.hasSubstantiveText,
-    orderIndex: unit.orderIndex
+    orderIndex: unit.orderIndex,
+    ...(unit.headingLevel === undefined ? {} : { headingLevel: unit.headingLevel })
   };
   const withTitle = unit.title === null ? base : { ...base, title: unit.title };
 
@@ -398,10 +500,12 @@ export async function loadReadingUnitContent(
     .where(eq(docBlocks.readingUnitEntryId, unitEntryId))
     .orderBy(asc(docBlocks.orderIndex));
 
+  const headingLevel = firstBlockHeadingLevel(unit.sourceFile, blockRows);
   const base = {
     blocks: blockRows.map(toBlockDto),
     docBlocks: docBlockRows.map(toDocBlockDto),
     entryId: toEntryId(unit.entryId),
+    ...(headingLevel === undefined ? {} : { headingLevel }),
     orderIndex: unit.orderIndex
   };
   const withTitle = unit.title === null ? base : { ...base, title: unit.title };
