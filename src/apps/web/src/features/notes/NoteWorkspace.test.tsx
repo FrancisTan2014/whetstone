@@ -41,9 +41,10 @@ vi.mock("../../shared/editor/index.js", async () => {
 vi.mock("./CardsView", async () => {
   const React = await import("react");
   return {
-    CardsView: (props: { noteEntryId: string; onReviewChanged: () => void }) =>
+    CardsView: (props: { noteEntryId: string; onReviewChanged: () => void; sourceSnapshot: string | null }) =>
       React.createElement("div", null, [
         React.createElement("span", { key: "id" }, `cards-view:${props.noteEntryId}`),
+        React.createElement("span", { key: "src" }, `cards-source:${String(props.sourceSnapshot)}`),
         React.createElement(
           "button",
           { key: "rc", onClick: () => props.onReviewChanged(), type: "button" },
@@ -62,7 +63,6 @@ import {
 
 function handle(overrides: Partial<NoteWorkspaceHandle> = {}): NoteWorkspaceHandle {
   return {
-    anchored: true,
     bodyDoc: createTextDocument("saved body"),
     entryId: "note-1",
     source: { blockEntryId: "block-1", snapshot: "the source", workEntryId: "work-1" },
@@ -202,9 +202,32 @@ describe("NoteWorkspace Note|Cards gating", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: "Cards" }));
     expect(await screen.findByText("cards-view:note-1")).toBeDefined();
+    // An anchored note forwards its source snapshot so Cards enrollment can reuse it.
+    expect(screen.getByText("cards-source:the source")).toBeDefined();
 
     await userEvent.click(screen.getByRole("button", { name: "stub-review-changed" }));
     expect(onReviewChanged).toHaveBeenCalled();
+  });
+
+  it("passes no source snapshot when a standalone note opens Cards", async () => {
+    const standalone: NoteWorkspaceTarget = { kind: "edit", note: handle({ source: null }) };
+    renderWorkspace({ target: standalone });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Cards" }));
+    // A standalone note has no source, so enrollment gets a null snapshot.
+    expect(await screen.findByText("cards-source:null")).toBeDefined();
+  });
+
+  it("returns to Note from Cards, keeping the mounted Cards panel hidden", async () => {
+    renderWorkspace({ target: editTarget });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Cards" }));
+    expect(await screen.findByText("cards-view:note-1")).toBeDefined();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Note" }));
+    // Back in Note: its editor is shown again and reports the active tab.
+    expect(screen.getByLabelText("Note body")).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Note" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens Cards without an onReviewChanged handler", async () => {
@@ -290,7 +313,7 @@ describe("NoteWorkspace delete", () => {
   it("names no source when deleting a standalone note", async () => {
     const standalone: NoteWorkspaceTarget = {
       kind: "edit",
-      note: handle({ anchored: false, source: null })
+      note: handle({ source: null })
     };
     renderWorkspace({ target: standalone });
     // A standalone note shows no source disclosure.

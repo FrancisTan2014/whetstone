@@ -9,12 +9,12 @@ export type NoteWorkspaceSource = Readonly<{
   workEntryId: string | null;
 }>;
 
-// A persisted note the workspace drives: its stable entry id, its canonical body, whether it carries a
-// source anchor (which decides source disclosure and whether enrollment reuses the source), and that
-// source. The Cards hierarchy needs only `entryId` (owner-scoped, prompt-id based) so this one handle
-// serves an anchored Reader note and a standalone Notes-home note identically.
+// A persisted note the workspace drives: its stable entry id, its canonical body, and the source it was
+// captured from (`null` for a standalone note). The source's presence is the single signal for source
+// disclosure and whether Cards enrollment reuses the source. The Cards hierarchy needs only `entryId`
+// (owner-scoped, prompt-id based) so this one handle serves an anchored Reader note and a standalone
+// Notes-home note identically.
 export type NoteWorkspaceHandle = Readonly<{
-  anchored: boolean;
   bodyDoc: DocumentNodeJSON;
   entryId: string;
   source: NoteWorkspaceSource | null;

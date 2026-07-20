@@ -347,7 +347,6 @@ type ListHandlers = Readonly<{
 function handleFromOwnedNote(note: NoteDto, workEntryId: string | null): NoteWorkspaceHandle {
   const { anchor } = note;
   return {
-    anchored: anchor !== null,
     bodyDoc: note.bodyDoc as DocumentNodeJSON,
     entryId: note.entryId,
     source:

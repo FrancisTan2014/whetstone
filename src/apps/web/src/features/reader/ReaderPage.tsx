@@ -1685,12 +1685,11 @@ type PanelHandlers = Readonly<{
   onWorkspaceDeleted: (workEntryId: string) => void;
 }>;
 
-// Build the origin-agnostic workspace handle from a Reader note, which is always anchored: its source
-// carries the exact selection, the anchored block, and the owning work, so "Open in Reader" resolves and
-// Cards enrollment can reuse the source. The body is always present (a Mark never opens the workspace).
+// Build the origin-agnostic workspace handle from a Reader note, which always carries a source: the exact
+// selection, the anchored block, and the owning work, so "Open in Reader" resolves and Cards enrollment can
+// reuse the source. The body is always present (a Mark never opens the workspace).
 function readerNoteHandle(note: AnchoredNoteDto, workEntryId: string): NoteWorkspaceHandle {
   return {
-    anchored: true,
     bodyDoc: note.bodyDoc as DocumentNodeJSON,
     entryId: note.entryId,
     source: {

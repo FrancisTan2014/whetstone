@@ -167,6 +167,21 @@ describe("CardsView", () => {
     expect(screen.getByText("refreshed question")).toBeDefined();
   });
 
+  it("leaves sibling rows untouched when one row is refreshed", async () => {
+    const other = prompt({ promptId: "prompt-2", questionText: "What is fsync?" });
+    mockedList.mockResolvedValue({ prompts: [prompt(), other] });
+    renderView();
+
+    await userEvent.click(await screen.findByText("What is a WAL?"));
+    await userEvent.click(screen.getByRole("button", { name: "stub-refresh" }));
+    await userEvent.click(screen.getByRole("button", { name: "Back to cards" }));
+
+    // The mutated row shows its refreshed question; the sibling row is returned unchanged (the map's
+    // non-matching branch), so its original question survives.
+    expect(screen.getByText("refreshed question")).toBeDefined();
+    expect(screen.getByText("What is fsync?")).toBeDefined();
+  });
+
   it("reloads the list after a mutation, falling back to the list when the card is gone", async () => {
     mockedList.mockResolvedValueOnce({ prompts: [prompt()] });
     mockedList.mockResolvedValueOnce({ prompts: [] });

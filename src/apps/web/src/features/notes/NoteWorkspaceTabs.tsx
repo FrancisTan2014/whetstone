@@ -24,6 +24,8 @@ export function NoteWorkspaceTabs({
 
   function focusTab(index: number): void {
     const target = tabs[index];
+    /* c8 ignore next 3 -- unreachable: every caller passes a modulo/clamped index into a non-empty
+       tabs array, so the slot is always present; the guard only satisfies noUncheckedIndexedAccess. */
     if (target === undefined) {
       return;
     }

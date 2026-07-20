@@ -89,8 +89,12 @@ export function NoteWorkspace({
   const blank = documentText(draft).trim().length === 0;
   const dirty = !editorDocumentsEqual(savedBody, draft);
   // The source shown as read-only provenance: a persisted note's own source, or a not-yet-saved capture's.
+  // `captureSource` is derived unconditionally so both arms are exercised (an `edit` target evaluates the
+  // `null` arm even though `activeSource` then prefers `persisted.source`), leaving no dead branch.
+  const captureSource: NoteWorkspaceSource | null =
+    target.kind === "create" ? target.source : null;
   const activeSource: NoteWorkspaceSource | null =
-    persisted !== null ? persisted.source : target.kind === "create" ? target.source : null;
+    persisted !== null ? persisted.source : captureSource;
   const tabs: ReadonlyArray<WorkspaceTab> = persisted === null ? [NOTE_TAB] : [NOTE_TAB, CARDS_TAB];
 
   function activateMode(next: string): void {
@@ -152,6 +156,8 @@ export function NoteWorkspace({
   }
 
   function confirmDelete(): void {
+    /* c8 ignore next 3 -- unreachable: the Delete affordance (header overflow + confirm view) only
+       renders when persisted !== null, so confirmDelete never runs on a not-yet-saved note. */
     if (persisted === null) {
       return;
     }
@@ -171,6 +177,8 @@ export function NoteWorkspace({
   }
 
   function handleOpenChange(open: boolean): void {
+    /* c8 ignore next 3 -- unreachable: the Sheet's open prop is fixed true (the parent unmounts to
+       close), so Radix only ever invokes onOpenChange for dismissal (open === false). */
     if (open) {
       return;
     }
@@ -277,7 +285,7 @@ export function NoteWorkspace({
                 <CardsView
                   noteEntryId={persisted.entryId}
                   onReviewChanged={() => onReviewChanged?.()}
-                  sourceSnapshot={persisted.anchored ? (activeSource?.snapshot ?? null) : null}
+                  sourceSnapshot={activeSource?.snapshot ?? null}
                 />
               ) : null}
             </div>
