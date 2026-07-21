@@ -44,7 +44,7 @@ async function seedWorkWithNote(
     data: {
       author: { mode: "new", name: `${title} Author` },
       language: "en",
-      origin: "manual",
+      origin: "imported",
       title,
       workType: "essay"
     }
