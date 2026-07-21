@@ -98,7 +98,7 @@ async function createWorkWithBlock(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
-      origin: "manual",
+      origin: "imported",
       title: "Fables",
       workType: "classical_text"
     },
@@ -133,7 +133,7 @@ async function createWorkTitled(
     payload: {
       author: { mode: "new", name: author },
       language: "en",
-      origin: "manual",
+      origin: "imported",
       title,
       workType: "book"
     },
@@ -170,7 +170,7 @@ async function createWorkWithTwoBlocks(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
-      origin: "manual",
+      origin: "imported",
       title: "Two Paragraphs",
       workType: "classical_text"
     },
@@ -209,7 +209,7 @@ async function createWorkWithTwoUnits(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
-      origin: "manual",
+      origin: "imported",
       title: "Two Units",
       workType: "classical_text"
     },
