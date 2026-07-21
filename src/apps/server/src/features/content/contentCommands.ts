@@ -11,7 +11,7 @@ import { workSources } from "../../db/schema.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
 import { assertContentPersisted } from "./insertBatching.js";
-import { loadWorkContent, workExists, workHasSource } from "./contentQueries.js";
+import { loadWorkContent, loadWorkOrigin, workExists, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store, EPUB
 // parser, image-resource store, PDF worker) are passed in so ingestion stays
@@ -35,6 +35,7 @@ export type ContentDependencies = Readonly<{
 export type IngestMarkdownResult =
   | Readonly<{ content: WorkContentDto; status: "ingested" }>
   | Readonly<{ status: "empty_content" }>
+  | Readonly<{ status: "manual_work_unsupported" }>
   | Readonly<{ status: "work_not_found" }>;
 
 export type IngestPdfResult =
@@ -109,8 +110,16 @@ export async function ingestMarkdown(
   sourceIdOverride?: string,
   buildProvenanceOverride?: () => Promise<Provenance>
 ): Promise<IngestMarkdownResult> {
-  if (!(await workExists(dependencies.db, workEntryId))) {
+  const origin = await loadWorkOrigin(dependencies.db, workEntryId);
+  if (origin === undefined) {
     return { status: "work_not_found" };
+  }
+
+  // A manual-origin Work owns a canonical ProseMirror document edited only through the manual-Work editor
+  // (#720). Legacy Markdown ingestion (and PDF, which converges here) into it is refused so the two content
+  // formats never mix and corrupt the document; imported Works are unaffected.
+  if (origin === "manual") {
+    return { status: "manual_work_unsupported" };
   }
 
   const decomposed = decomposeMarkdown(source.markdown);

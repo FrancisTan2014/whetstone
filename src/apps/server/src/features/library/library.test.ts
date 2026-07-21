@@ -1,8 +1,8 @@
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { createTextDocument } from "@whetstone/document";
-import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
+import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
+import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -33,6 +33,8 @@ import {
   workSources
 } from "../../db/schema.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
+import { updateManualWorkContent } from "./manualWorkContentCommands.js";
+import { loadManualWorkForEditing } from "./manualWorkContentQueries.js";
 import { insertCurrentNotePromptInTx, insertNoteInTx } from "../notes/noteCommands.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
@@ -920,5 +922,250 @@ describe("DELETE /api/works/:workEntryId", () => {
     // The failure was logged, not thrown.
     expect(context.unlinkFailures).toHaveLength(1);
     expect(context.unlinkFailures[0]?.filePath).toBe("work-1.epub");
+  });
+});
+
+describe("manual work editor (#720)", () => {
+  async function createManualWork(
+    payload?: Partial<{ language: string; title: string; workType: string }>
+  ): Promise<string> {
+    const created = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "George Orwell" },
+        language: payload?.language ?? "en",
+        origin: "manual",
+        title: payload?.title ?? "Reading notes",
+        workType: payload?.workType ?? "book"
+      }
+    });
+    expect(created.statusCode).toBe(201);
+    return created.json().work.entryId as string;
+  }
+
+  async function createImportedWork(): Promise<string> {
+    const created = await context.server.inject({
+      method: "POST",
+      url: "/api/works",
+      payload: {
+        author: { mode: "new", name: "Imported Author" },
+        language: "en",
+        origin: "imported",
+        title: "An upload shell",
+        workType: "book"
+      }
+    });
+    expect(created.statusCode).toBe(201);
+    return created.json().work.entryId as string;
+  }
+
+  function paragraph(text: string): DocumentNodeJSON {
+    return { content: [{ text, type: "text" }], type: "paragraph" };
+  }
+
+  it("initializes a manual Work with one empty paragraph the editor can load", async () => {
+    const workEntryId = await createManualWork();
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/manual-works/${workEntryId}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dto = response.json();
+    expect(dto.entryId).toBe(workEntryId);
+    expect(dto.title).toBe("Reading notes");
+    expect(dto.language).toBe("en");
+    expect(dto.workType).toBe("book");
+    expect(typeof dto.revision).toBe("string");
+    expect(dto.revision).toBe(dto.updatedAt);
+    expect(dto.document.type).toBe("doc");
+    expect(dto.document.content).toHaveLength(1);
+    expect(dto.document.content[0].type).toBe("paragraph");
+    expect(documentText(dto.document)).toBe("");
+  });
+
+  it("returns 404 for an unknown, imported, or non-manual Work", async () => {
+    const importedEntryId = await createImportedWork();
+
+    const unknown = await context.server.inject({
+      method: "GET",
+      url: "/api/manual-works/work-missing"
+    });
+    const imported = await context.server.inject({
+      method: "GET",
+      url: `/api/manual-works/${importedEntryId}`
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ error: "not_found" });
+    expect(imported.statusCode).toBe(404);
+  });
+
+  it("does not load another user's manual Work", async () => {
+    const workEntryId = await createManualWork();
+
+    const asOwner = await loadManualWorkForEditing(
+      context.db,
+      toEntryId(workEntryId),
+      DEFAULT_USER_ID
+    );
+    const asStranger = await loadManualWorkForEditing(
+      context.db,
+      toEntryId(workEntryId),
+      "another-user"
+    );
+
+    expect(asOwner).toBeDefined();
+    expect(asStranger).toBeUndefined();
+  });
+
+  it("saves an edit, returns a new revision, and reopens the persisted document", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+
+    const document = { content: [paragraph("First line"), paragraph("Second line")], type: "doc" };
+    const save = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/content`,
+      payload: { document, revision: loaded.revision }
+    });
+
+    expect(save.statusCode).toBe(200);
+    const saved = save.json();
+    expect(saved.revision).not.toBe(loaded.revision);
+    expect(documentText(saved.document)).toBe("First lineSecond line");
+
+    const reopened = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+    expect(reopened.revision).toBe(saved.revision);
+    expect(documentText(reopened.document)).toBe("First lineSecond line");
+    expect(reopened.document.content).toHaveLength(2);
+  });
+
+  it("preserves stable block ids across a save so anchored notes stay valid", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+
+    const firstBlock = loaded.document.content[0];
+    const originalId = firstBlock.attrs.id;
+    expect(typeof originalId).toBe("string");
+
+    const document = { content: [firstBlock, paragraph("A new second block")], type: "doc" };
+    const save = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/content`,
+      payload: { document, revision: loaded.revision }
+    });
+
+    expect(save.statusCode).toBe(200);
+    expect(save.json().document.content[0].attrs.id).toBe(originalId);
+  });
+
+  it("rejects a stale save with 409 and writes nothing", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+
+    const first = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/content`,
+      payload: {
+        document: { content: [paragraph("Winner")], type: "doc" },
+        revision: loaded.revision
+      }
+    });
+    expect(first.statusCode).toBe(200);
+
+    const stale = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/content`,
+      payload: {
+        document: { content: [paragraph("Loser")], type: "doc" },
+        revision: loaded.revision
+      }
+    });
+
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({ error: "revision_conflict" });
+
+    const reopened = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+    expect(documentText(reopened.document)).toBe("Winner");
+  });
+
+  it("returns 404 when saving an unknown or imported Work", async () => {
+    const importedEntryId = await createImportedWork();
+    const document = { content: [paragraph("x")], type: "doc" };
+
+    const unknown = await context.server.inject({
+      method: "PUT",
+      url: "/api/manual-works/work-missing/content",
+      payload: { document, revision: "2026-01-01T00:00:00.000Z" }
+    });
+    const imported = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${importedEntryId}/content`,
+      payload: { document, revision: "2026-01-01T00:00:00.000Z" }
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(imported.statusCode).toBe(404);
+  });
+
+  it("does not save another user's manual Work", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+
+    const result = await updateManualWorkContent(
+      { db: context.db, now: () => new Date() },
+      toEntryId(workEntryId),
+      { content: [paragraph("Intruder")], type: "doc" },
+      loaded.revision,
+      "another-user"
+    );
+
+    expect(result.status).toBe("not_found");
+  });
+
+  it("rejects a malformed save body with 400", async () => {
+    const workEntryId = await createManualWork();
+
+    const response = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/content`,
+      payload: { document: { type: "not-a-doc" }, revision: "r" }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
   });
 });

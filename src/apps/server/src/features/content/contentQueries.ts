@@ -85,6 +85,22 @@ export async function workExists(db: DbClient, workEntryId: EntryId): Promise<bo
   return rows[0] !== undefined;
 }
 
+// The origin of a Work, or `undefined` when no such Work exists. Markdown/PDF ingestion consults this to
+// refuse writing legacy Markdown into a `manual`-origin Work, whose content is a canonical ProseMirror
+// document edited only through the manual-Work editor (#720) — mixing the two formats would corrupt it.
+export async function loadWorkOrigin(
+  db: DbClient,
+  workEntryId: EntryId
+): Promise<"imported" | "manual" | "authored" | undefined> {
+  const rows = await db
+    .select({ origin: workMeta.origin })
+    .from(workMeta)
+    .where(eq(workMeta.entryId, workEntryId))
+    .limit(1);
+
+  return rows[0]?.origin;
+}
+
 // Whether the work has ever been ingested. Used to distinguish a first ingestion
 // (always proceeds, recording provenance) from an idempotent re-ingestion no-op.
 export async function workHasSource(db: DbClient, workEntryId: EntryId): Promise<boolean> {

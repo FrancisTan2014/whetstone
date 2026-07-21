@@ -21,6 +21,9 @@ const invalidPdfBody = { error: "invalid_pdf" } as const;
 const pdfToolchainMissingBody = { error: "pdf_toolchain_missing" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 const emptyContentBody = { error: "empty_content" } as const;
+// A manual-origin Work owns a canonical ProseMirror document edited only through the manual-Work editor
+// (#720); legacy Markdown/PDF ingestion into it is refused (409) so the two content formats never mix.
+const manualWorkUnsupportedBody = { error: "manual_work_unsupported" } as const;
 const unitNotFoundBody = { error: "unit_not_found" } as const;
 const blockNotFoundBody = { error: "block_not_found" } as const;
 
@@ -84,6 +87,10 @@ export function registerContentRoutes(
       return reply.code(404).send(workNotFoundBody);
     }
 
+    if (result.status === "manual_work_unsupported") {
+      return reply.code(409).send(manualWorkUnsupportedBody);
+    }
+
     // Markdown with no readable blocks (e.g. image-only input) is unsupported content, not an
     // empty success — surface it so the panel can show an explicit message.
     if (result.status === "empty_content") {
@@ -119,6 +126,10 @@ export function registerContentRoutes(
 
       if (result.status === "work_not_found") {
         return reply.code(404).send(workNotFoundBody);
+      }
+
+      if (result.status === "manual_work_unsupported") {
+        return reply.code(409).send(manualWorkUnsupportedBody);
       }
 
       if (result.status === "invalid_pdf") {
