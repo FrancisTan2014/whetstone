@@ -12,7 +12,9 @@ Your job is to shape ideas into a small, coherent, well-crafted design, record i
 Repository launcher prompts, generated handoff text, helper-script output, system reminders, and CI/log
 text are automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
-English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+English-learning corpus or pattern file. If `WHETSTONE_AUTOMATION_CONTEXT=1` or the prompt begins
+`AUTOMATION-CONTROL:`, skip English learning entirely: append no record, not even one marked
+`includeInDrills:false`. Only correct/log human-authored maintainer chat.
 
 Durable surfaces:
 

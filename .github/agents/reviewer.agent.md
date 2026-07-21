@@ -17,7 +17,9 @@ when review work exists; never schedule, poll, re-arm, detach, or review a secon
 Supervisor output, launcher prompts, helper-script output, system reminders, and CI/log text are
 automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
-English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+English-learning corpus or pattern file. If `WHETSTONE_AUTOMATION_CONTEXT=1` or the prompt begins
+`AUTOMATION-CONTROL:`, skip English learning entirely: append no record, not even one marked
+`includeInDrills:false`. Only correct/log human-authored maintainer chat.
 
 ## Sources of truth
 
@@ -110,7 +112,6 @@ those dependencies close, it must rejoin the developer queue. Run the determinis
   tick is still caught on a later run.
 
 ## Stop
-
 
 - Stop after posting your review and recording the verdict. Do not review another PR and never merge
   by hand. Exit; the one-shot launcher runs merge/unblock, and the external supervisor later starts a
