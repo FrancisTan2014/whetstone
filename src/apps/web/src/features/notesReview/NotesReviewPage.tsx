@@ -126,9 +126,17 @@ function NotesReviewPageComponent(): React.JSX.Element {
   }
 
   // A committed repair: re-attempt the same prompt from a fresh Question phase with the clarified cue. The
-  // schedule is untouched (the repair appended no rating), so the card is still due.
+  // schedule is untouched (the repair appended no rating), so the card is normally still due. But a
+  // concurrent rating/pause/removal in another tab can leave the just-saved card no longer due; never
+  // fabricate a due prompt from stale in-session state — only re-attempt when the refreshed row is still an
+  // active due card, otherwise reload whatever is actually due next (or complete).
   function repaired(prior: NoteReviewPromptDto, refreshed: NotePromptSettingsDto): void {
-    setState({ prompt: repairedPrompt(prior, refreshed), revealFailed: false, step: "question" });
+    if (refreshed.cardState.state === "due") {
+      setState({ prompt: repairedPrompt(prior, refreshed), revealFailed: false, step: "question" });
+      return;
+    }
+    setState({ step: "loading" });
+    loadNext();
   }
 
   // Edit the shared note body in the existing editor: navigate to the note, opened for editing (#659).

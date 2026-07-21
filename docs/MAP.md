@@ -993,7 +993,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `RepairCardView.tsx` (the `repairing` step) to repair the Question or grading target WITHOUT rating (#691):
   it loads the prompt settings + live reveal, reuses the shared `notes/gradingTarget.ts` helpers and #686's
   Keep-schedule/Restart contract for a grading-target change, and appends NO review event — so the card stays
-  due. A committed fix re-attempts the SAME prompt from a fresh Question phase with the clarified cue; Cancel
+  due. A committed fix re-attempts the SAME prompt from a fresh Question phase with the clarified cue when the
+  refreshed row is still an active due card; if a concurrent rating/pause/removal left it no-longer-due it
+  reloads whatever is actually due next instead of resurrecting a stale card. Cancel
   restores the exact prior phase. Editing the shared note body instead is a one-way **Open note** deep link to
   `/notes?open=<entryId>` (handled by `notes/NotesPage.tsx`, which opens that note's editor once on first
   load). `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)

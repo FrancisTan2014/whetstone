@@ -440,6 +440,37 @@ describe("NotesReviewPage", () => {
     expect(mockedRate).not.toHaveBeenCalled();
   });
 
+  it("reloads the next due prompt instead of resurrecting a card made not-due while repair was open", async () => {
+    const user = userEvent.setup();
+    // Mount loads the due card under repair; after the save the session must re-ask what is actually due.
+    mockedNext
+      .mockResolvedValueOnce(makePrompt({ revealKind: "current_note" }))
+      .mockResolvedValueOnce(null);
+    mockedSettings.mockResolvedValue(settingsList());
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    // The card was rated/paused/removed in another tab: the refreshed row comes back no longer due.
+    mockedEdit.mockResolvedValue({
+      ...refreshedRow,
+      cardState: { state: "scheduled", nextReviewAt: "2026-07-30T00:00:00.000Z" }
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Fix card" }));
+    const question = await screen.findByRole("textbox", { name: "Question" });
+    await user.clear(question);
+    await user.type(question, "Which city is the capital of France?");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // The just-saved-but-no-longer-due card is NEVER presented for another reveal/rating: the session reloads
+    // whatever is actually due (here nothing), and the stale clarified cue never appears — no early duplicate.
+    expect(await screen.findByText(/Due complete/)).toBeTruthy();
+    expect(screen.queryByText("Which city is the capital of France?")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show note" })).toBeNull();
+    expect(mockedEdit).toHaveBeenCalledTimes(1);
+    expect(mockedRate).not.toHaveBeenCalled();
+    expect(mockedNext).toHaveBeenCalledTimes(2);
+  });
+
   it("navigates to open the shared note for editing", async () => {
     const user = userEvent.setup();
     mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
