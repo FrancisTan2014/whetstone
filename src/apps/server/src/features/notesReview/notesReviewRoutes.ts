@@ -33,7 +33,6 @@ const legacyReadOnly = { error: "legacy_read_only" } as const;
 const restartRequiresCard = { error: "restart_requires_card" } as const;
 const invalidQuestion = { error: "invalid_question" } as const;
 const invalidAnswer = { error: "invalid_answer" } as const;
-const alreadyAuthored = { error: "already_authored" } as const;
 const submissionConflict = { error: "submission_conflict" } as const;
 const submissionGone = { error: "submission_gone" } as const;
 
@@ -361,11 +360,11 @@ export function registerNotesReviewRoutes(
   // `submissionId`. Unlike direct-cards this never inserts or copies a note — it authors over the learner's
   // already-owned note in place. One success atomically writes one prompt with the chosen reveal kind (its
   // cue is the rich `questionDoc`) and its `contains` link, one active shared card at the recall retention
-  // due now, and one owner-scoped creation receipt — no review event, no note write. 400 on a malformed body
+  // due now, and one owner-scoped creation receipt — no review event, no note write. A note may own many
+  // authored cards, so a distinct submission always creates a NEW card. 400 on a malformed body
   // or a blank Question/Success-check document; 404 when the note is not the caller's or is a Mark; 409 when
-  // the note already owns an authored prompt (`already_authored`) or the same `submissionId` is replayed with
-  // a CHANGED payload; 410 when the note has since been deleted. A same-payload replay returns 200 with the
-  // ORIGINAL result. Owner-scoped through the current user.
+  // the same `submissionId` is replayed with a CHANGED payload; 410 when the note has since been deleted. A
+  // same-payload replay returns 200 with the ORIGINAL result. Owner-scoped through the current user.
   server.post("/api/notes/review/author-cards", async (request, reply) => {
     const parsed = authorNoteCardRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -383,8 +382,6 @@ export function registerNotesReviewRoutes(
         return reply.code(400).send(invalidSuccessCheck);
       case "not_found":
         return reply.code(404).send(notFound);
-      case "already_authored":
-        return reply.code(409).send(alreadyAuthored);
       case "conflict":
         return reply.code(409).send(submissionConflict);
       case "gone":

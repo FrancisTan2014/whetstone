@@ -428,6 +428,13 @@
       "when": 1784588873553,
       "tag": "0060_brown_raza",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1784608230251,
+      "tag": "0061_gigantic_killraven",
+      "breakpoints": true
     }
   ]
 }

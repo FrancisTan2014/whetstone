@@ -187,20 +187,21 @@ describe("CardsView", () => {
     expect(screen.getByText("This note has no review cards yet.")).toBeDefined();
   });
 
-  it("lists each card's question, reveal summary, and state, with no Add card", async () => {
+  it("lists each card's question, reveal summary, and state, and STILL offers Add card", async () => {
+    // #688: a note may own many authored cards, so an existing authored `current_note` prompt no longer
+    // hides Add card — every non-Mark note can always add another independently-scheduled direction.
     mockedList.mockResolvedValue({ prompts: [prompt()] });
     renderView();
 
     expect(await screen.findByText("What is a WAL?")).toBeDefined();
     expect(screen.getByText("Whole note")).toBeDefined();
     expect(screen.getByText("Due now")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "Add card" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add card" })).toBeDefined();
   });
 
   it("offers Add card for a legacy-only note while still showing its legacy row", async () => {
-    // A `legacy_custom` prompt is read-only and is excluded from the one-authored-prompt-per-note
-    // invariant, so it never occupies the first-card slot: the note still owns no authored
-    // current_note/expected_response prompt and must still offer Add card alongside its legacy row.
+    // A `legacy_custom` prompt is read-only, and Add card is offered for every non-Mark note regardless of
+    // which prompts already exist (#688), so the legacy row renders alongside an available Add card.
     mockedList.mockResolvedValue({
       prompts: [
         prompt({
@@ -219,7 +220,7 @@ describe("CardsView", () => {
 
     // The legacy row renders...
     expect(await screen.findByText("Legacy cue?")).toBeDefined();
-    // ...and Add card is still offered because no authored prompt exists yet.
+    // ...and Add card is still offered for the non-Mark note.
     expect(screen.getByRole("button", { name: "Add card" })).toBeDefined();
     // The legacy-only note is not the true empty state.
     expect(screen.queryByText("This note has no review cards yet.")).toBeNull();

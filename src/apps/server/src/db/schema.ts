@@ -587,16 +587,14 @@ export const memoryPrompts = pgTable(
   (table) => [
     index("memory_prompts_note_idx").on(table.noteEntryId),
     index("memory_prompts_chunk_idx").on(table.chunkId),
-    // At most one AUTHORED prompt per note (#658, widened by #687): a note carries at most one authored
-    // retrieval contract — either the `current_note` reveal (the live note IS the answer) or the
-    // `expected_response` reveal (a narrower Success check grades it). Enforced as a partial unique index
-    // over exactly those two authored reveal kinds so retried/concurrent first-card authoring can never
-    // create a second authored prompt, while historical `legacy_custom` siblings — which may legitimately
-    // be many per note — stay unconstrained. #688 later relaxes this multiplicity.
-    uniqueIndex("memory_prompts_one_authored_prompt_per_note_uq")
-      .on(table.noteEntryId)
-      .where(sql`${table.revealKind} in ('current_note', 'expected_response')`),
-    // The reveal shapes are enforced in the database, not only at the write boundary: a current-note
+    // Independent card directions per note (#688): a note may own ZERO OR MORE authored retrieval contracts
+    // — recognition, production, and other capabilities — each a distinct `current_note` or
+    // `expected_response` prompt with its own review card and history, alongside any preserved
+    // `legacy_custom` siblings. #687's one-authored-prompt-per-note partial unique index is deliberately
+    // dropped: multiplicity is the contract now, so two distinct authoring submissions create two distinct
+    // cards over the same shared note. Per-submission idempotency is enforced by the creation receipt
+    // (owner + `submissionId`), not by a uniqueness constraint on the note.
+    // The reveal shapes are still enforced in the database, not only at the write boundary: a current-note
     // prompt is ready and answerless (its reveal is the live note body); an expected-response prompt is
     // ready with both answer projections (the authored Success check, revealed alongside the live note as
     // Reference); a ready legacy prompt has both answer projections; a draft legacy prompt has neither.

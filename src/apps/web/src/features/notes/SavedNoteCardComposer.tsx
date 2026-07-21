@@ -20,7 +20,7 @@ import { Button } from "../../shared/ui/Button";
 
 type SavedNoteCardComposerProps = Readonly<{
   noteEntryId: string;
-  // The saved note body, framed as the read-only Answer/Reference the first card grades against. Never
+  // The saved note body, framed as the read-only Answer/Reference the card grades against. Never
   // mutated here — the canonical note write stays in the Note tab (#700).
   noteBodyDoc: DocumentNodeJSON;
   // An anchored Reader note's exact selected source, shown verbatim as Reference context. `null` for a
@@ -33,10 +33,9 @@ type SavedNoteCardComposerProps = Readonly<{
 
 // The failure copy for each recoverable outcome. Every case keeps the learner's rich drafts on screen; the
 // message only says whether to retry as-is (`network`), that the drafts must change (`conflict`, `invalid`),
-// or that the note can no longer take a first card here (`already_authored`, `gone`, `not_found`) so Back is
-// the right move. Kept exhaustive so a new error kind is a type error, not a silent blank.
+// or that the note can no longer take a card here (`gone`, `not_found`) so Back is the right move. Kept
+// exhaustive so a new error kind is a type error, not a silent blank.
 const failureMessages: Readonly<Record<AuthorNoteCardErrorKind, string>> = {
-  already_authored: "This note already has a card. Go back to manage it.",
   conflict: "This card was already started with different wording. Edit a field and try again.",
   gone: "This note is no longer available. Go back to the cards list.",
   invalid: "Whetstone could not accept this card. Check the question, then try again.",
@@ -44,9 +43,9 @@ const failureMessages: Readonly<Record<AuthorNoteCardErrorKind, string>> = {
   not_found: "This note is no longer available. Go back to the cards list."
 };
 
-// The saved-note first-card composer (#687): opened from the Cards list of a non-Mark note that has no
-// authored prompt, it authors ONE rich retrieval card over the EXISTING note in place — never a second
-// editor, never copying or rewriting the note. It reuses #690's `RetrievalContractEditor` with the persisted
+// The saved-note card composer (#687; independent directions in #688): opened from the Cards list of any
+// non-Mark note, it authors ONE more rich retrieval card over the EXISTING note in place — never a second
+// editor, never copying or rewriting the note. A note may own many such independently-scheduled cards. It reuses #690's `RetrievalContractEditor` with the persisted
 // note as the read-only Answer/Reference, a blank Question, and the optional Success check + Try preview. It
 // owns every rich draft (Question, Success check) plus a `submissionId`, minted on open and kept across a
 // lost-response (`network`) retry so authoring is idempotent and never double-creates, but refreshed after a

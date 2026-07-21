@@ -187,7 +187,6 @@ describe("SavedNoteCardComposer", () => {
   });
 
   it.each([
-    ["already_authored", "This note already has a card. Go back to manage it."],
     [
       "conflict",
       "This card was already started with different wording. Edit a field and try again."

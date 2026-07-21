@@ -10,7 +10,6 @@ import { getNoteForOwner } from "../notes/noteQueries.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { claimReceipt, fingerprintPayload, resolveReceiptReplay } from "./cardCreationReceipt.js";
 import { resolveGradingColumns } from "./noteGradingColumns.js";
-import { findAuthoredPromptId } from "./notePromptQueries.js";
 
 // The transaction handle drizzle passes into `db.transaction`, so the whole claim-or-replay decision runs
 // in ONE atomic write.
@@ -24,28 +23,27 @@ export type AuthorNoteCardDependencies = Readonly<{
   now: () => Date;
 }>;
 
-// The outcome of authoring the first review card over an EXISTING saved note (#687). `ok` carries the
-// created — or, on a same-payload replay, the ORIGINAL — result. `invalid_question`/`invalid_success_check`
-// reject a document whose server-derived text is blank (the wire never carries plaintext). `not_found` is a
-// forged, cross-user, or since-deleted note, or a bodyless Mark that cannot hold a recall card.
-// `already_authored` is a note that already owns an authored prompt — the one-authored-prompt-per-note
-// invariant, reported deterministically instead of as a unique-index 500. `conflict` is a replay of the
-// same `submissionId` with a CHANGED payload; `gone` is a replay whose note has since been deleted.
+// The outcome of authoring a rich review card over an EXISTING saved note (#687, multiplicity in #688).
+// `ok` carries the created — or, on a same-payload replay, the ORIGINAL — result. A note may own many
+// authored cards, so a distinct submission always creates a NEW card; there is no one-prompt-per-note
+// conflict. `invalid_question`/`invalid_success_check` reject a document whose server-derived text is blank
+// (the wire never carries plaintext). `not_found` is a forged, cross-user, or since-deleted note, or a
+// bodyless Mark that cannot hold a recall card. `conflict` is a replay of the same `submissionId` with a
+// CHANGED payload; `gone` is a replay whose note has since been deleted.
 export type AuthorNoteCardOutcome =
   | Readonly<{ status: "ok"; value: DirectCardResultDto }>
   | Readonly<{ status: "invalid_question" }>
   | Readonly<{ status: "invalid_success_check" }>
   | Readonly<{ status: "not_found" }>
-  | Readonly<{ status: "already_authored" }>
   | Readonly<{ status: "conflict" }>
   | Readonly<{ status: "gone" }>;
 
 // A thrown sentinel that rolls the creating transaction back while preserving the outcome to return. Unlike
 // the direct-card command — whose genuine-create path always succeeds once the receipt is claimed — this
-// command can legitimately fail AFTER claiming the receipt (the note was deleted between authorize and lock,
-// or a concurrent submission already authored the note's one allowed prompt). Returning from the transaction
-// callback would COMMIT the freshly claimed receipt, stranding a tombstone that points at a prompt that was
-// never created; throwing rolls the receipt back so a later retry re-decides cleanly.
+// command can legitimately fail AFTER claiming the receipt (the note was deleted between authorize and
+// lock). Returning from the transaction callback would COMMIT the freshly claimed receipt, stranding a
+// tombstone that points at a prompt that was never created; throwing rolls the receipt back so a later retry
+// re-decides cleanly.
 class AuthorNoteCardRollback extends Error {
   constructor(readonly outcome: AuthorNoteCardOutcome) {
     super("author_note_card_rollback");
@@ -53,18 +51,20 @@ class AuthorNoteCardRollback extends Error {
   }
 }
 
-// Author the FIRST review card over an existing saved note (#687), retry-safe via the client's stable
-// `submissionId`. Unlike the standalone direct card (#689) this NEVER inserts or copies a note — it operates
-// on the learner's already-owned note in place. One success writes EXACTLY: one prompt with the chosen reveal
-// kind, its `contains` link back to the note, and the rich Question as its cue; one active shared review card
-// at the recall retention, due at the command clock; and one owner-scoped creation receipt. No review event
-// and no note write. The Question and Success-check texts are derived here, never trusted from the client,
-// and a blank document is rejected before any write.
+// Author a rich review card over an existing saved note (#687; independent directions in #688), retry-safe
+// via the client's stable `submissionId`. Unlike the standalone direct card (#689) this NEVER inserts or
+// copies a note — it operates on the learner's already-owned note in place. One success writes EXACTLY: one
+// prompt with the chosen reveal kind, its `contains` link back to the note, and the rich Question as its
+// cue; one active shared review card at the recall retention, due at the command clock; and one owner-scoped
+// creation receipt. No review event and no note write. The Question and Success-check texts are derived
+// here, never trusted from the client, and a blank document is rejected before any write.
 //
-// Concurrency and the one-authored-prompt-per-note invariant: the receipt claim serializes retries of the
-// same `submissionId`; the genuine-create branch then locks the note row (`FOR UPDATE`) and re-reads the
-// note's authored prompt under that lock, so two DIFFERENT submissions racing to author the same note resolve
-// to exactly one winner and an `already_authored` loser — never a unique-index 500 or a duplicate card.
+// Multiplicity and idempotency (#688): a note may own many authored prompts, so two DIFFERENT submissions
+// against the same note intentionally create two DISTINCT cards even when their text matches — there is no
+// one-authored-prompt-per-note conflict. Idempotency is per submission: the receipt claim serializes retries
+// of the same `submissionId` to one result. The genuine-create branch still locks the note row
+// (`FOR UPDATE`) and re-confirms it exists under that lock, so a note deleted between authorize and insert
+// resolves to `not_found` rather than a foreign-key 500.
 export async function authorNoteCard(
   dependencies: AuthorNoteCardDependencies,
   userId: string,
@@ -121,10 +121,6 @@ export async function authorNoteCard(
       }
 
       await lockOwnedNote(tx, request.noteEntryId, userId);
-      const existingPromptId = await findAuthoredPromptId(tx, request.noteEntryId);
-      if (existingPromptId !== undefined) {
-        throw new AuthorNoteCardRollback({ status: "already_authored" });
-      }
 
       await insertNotePromptInTx(tx, {
         answerDoc: reveal.answerDoc,
@@ -153,10 +149,10 @@ export async function authorNoteCard(
   }
 }
 
-// Take the note's row lock and confirm it still exists for this owner, so the authored-prompt re-read and
-// the prompt insert run under a serialized view of the note. A note deleted between the up-front authorize
-// and this lock yields no row: the create cannot proceed against a missing note, so it rolls back to
-// `not_found` (the freshly claimed receipt is discarded with it).
+// Take the note's row lock and confirm it still exists for this owner, so the prompt insert runs under a
+// serialized view of the note. A note deleted between the up-front authorize and this lock yields no row:
+// the create cannot proceed against a missing note, so it rolls back to `not_found` (the freshly claimed
+// receipt is discarded with it).
 async function lockOwnedNote(tx: Transaction, noteEntryId: string, userId: string): Promise<void> {
   const rows = await tx
     .select({ entryId: personalEntries.entryId })
