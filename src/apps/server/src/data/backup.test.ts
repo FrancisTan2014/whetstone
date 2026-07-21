@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,6 +58,31 @@ function collect(path: string): CollectedRoot {
 }
 
 describe("backupData", () => {
+  it("uses the real filesystem and root collector defaults", async () => {
+    const sourcesDir = scratch();
+    writeFileSync(join(sourcesDir, "a.txt"), "hi");
+    const outputPath = join(scratch(), "out.zip");
+
+    const summary = await backupData({
+      dumpDatabase: async () => strToU8("DUMP"),
+      roots: [{ name: "sources", configuredPath: sourcesDir }],
+      version,
+      outputPath,
+      now: () => new Date("2026-01-01T00:00:00.000Z")
+    });
+
+    expect(nodeBackupFs.exists(outputPath)).toBe(true);
+    expect(summary.roots).toEqual([
+      {
+        name: "sources",
+        configuredPath: sourcesDir,
+        present: true,
+        fileCount: 1,
+        totalBytes: 2
+      }
+    ]);
+  });
+
   it("writes a verified archive, records each root, and returns a summary", async () => {
     const { fs, files, dirs } = fakeFs();
     const summary = await backupData({
