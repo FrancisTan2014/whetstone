@@ -16,7 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 
-import { mergeGateFailures } from "./delivery-workflow.mjs";
+import { mergeGateFailures, mergePullRequestArgs } from "./delivery-workflow.mjs";
 
 const argv = process.argv.slice(2);
 const DRY_RUN = argv.includes("--dry-run");
@@ -126,7 +126,7 @@ for (const n of numbers) {
   }
 
   try {
-    gh(["pr", "merge", String(pr.number), "--repo", repo, "--merge", "--delete-branch"]);
+    gh(mergePullRequestArgs(pr, repo));
     merged++;
     console.log(`MERGED #${pr.number} ${pr.title}`);
   } catch (err) {

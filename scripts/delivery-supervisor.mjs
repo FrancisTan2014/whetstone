@@ -24,11 +24,11 @@ export function parseSupervisorArgs(argv) {
   return { role, intervalSeconds };
 }
 
-export function runSupervisorCycle(role, spawn = spawnSync) {
+export function runSupervisorCycle(role, runtime) {
   const launcher = resolve(scriptsDir, launchers[role]);
-  const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : launcher;
-  const args = process.platform === "win32" ? ["/d", "/c", launcher] : [];
-  const result = spawn(command, args, {
+  const command = runtime.platform === "win32" ? (runtime.comSpec ?? "cmd.exe") : launcher;
+  const args = runtime.platform === "win32" ? ["/d", "/c", launcher] : [];
+  const result = runtime.spawn(command, args, {
     cwd: resolve(scriptsDir, ".."),
     encoding: "utf8",
     stdio: "inherit"
@@ -43,7 +43,7 @@ export function runSupervisorCycle(role, spawn = spawnSync) {
   };
 }
 
-function waitForNextCycle(milliseconds) {
+export function waitForNextCycle(milliseconds) {
   return new Promise((resolveWait) => {
     const stop = () => {
       clearTimeout(timer);
@@ -58,34 +58,54 @@ function waitForNextCycle(milliseconds) {
   });
 }
 
-async function run() {
-  const { role, intervalSeconds } = parseSupervisorArgs(process.argv.slice(2));
-  console.log(
+export async function runSupervisor(argv, runtime) {
+  const { role, intervalSeconds } = parseSupervisorArgs(argv);
+  runtime.log(
     `Delivery supervisor: ${role}; fresh one-shot workers; poll=${intervalSeconds}s; Ctrl+C stops.`
   );
 
   while (true) {
-    const result = runSupervisorCycle(role);
+    const result = runSupervisorCycle(role, runtime);
     if (!result.ok) {
-      console.error(
+      runtime.error(
         `Delivery supervisor: ${role} worker failed with exit ${result.status}. ` +
           `The loop stopped to avoid an expensive retry. Resolve the reported failure, run ` +
           `\`${result.resumeCommand}\` once to resume the current unit, then restart this supervisor.`
       );
-      process.exitCode = result.status;
-      return;
+      return result.status;
     }
 
-    if (!(await waitForNextCycle(intervalSeconds * 1_000))) {
-      console.log(`Delivery supervisor: ${role} stopped.`);
-      return;
+    if (!(await runtime.wait(intervalSeconds * 1_000))) {
+      runtime.log(`Delivery supervisor: ${role} stopped.`);
+      return 0;
     }
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  run().catch((error) => {
-    console.error(`delivery-supervisor: ${error.message}`);
-    process.exit(1);
-  });
+export async function runCli(argv, runtime, processRef) {
+  try {
+    processRef.exitCode = await runSupervisor(argv, runtime);
+  } catch (error) {
+    runtime.error(`delivery-supervisor: ${error.message}`);
+    processRef.exitCode = 1;
+  }
 }
+
+export async function runIfMain(metaUrl, argv1, start) {
+  if (metaUrl === pathToFileURL(argv1).href) await start();
+}
+
+const runtime = {
+  comSpec: process.env.ComSpec,
+  error: console.error,
+  log: console.log,
+  platform: process.platform,
+  spawn: spawnSync,
+  wait: waitForNextCycle
+};
+
+await runIfMain(
+  import.meta.url,
+  String(process.argv[1]),
+  runCli.bind(null, process.argv.slice(2), runtime, process)
+);

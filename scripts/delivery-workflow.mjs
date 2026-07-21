@@ -35,7 +35,7 @@ export function blockingCheckState(rollup) {
 }
 
 export function reviewedSha(comments) {
-  const marker = /reviewer-run-reviewed:\s*([0-9a-f]{7,40})/gi;
+  const marker = /reviewer-run-reviewed:\s*([0-9a-f]{40})(?![0-9a-f])/gi;
   let sha = null;
   for (const comment of comments ?? []) {
     marker.lastIndex = 0;
@@ -50,7 +50,21 @@ export function reviewedHeadMatches(pullRequest) {
   if (marker == null) return false;
   const head = (pullRequest.headRefOid ?? "").toLowerCase();
   const reviewed = marker.toLowerCase();
-  return head === reviewed || head.startsWith(reviewed);
+  return head === reviewed;
+}
+
+export function mergePullRequestArgs(pullRequest, repo) {
+  return [
+    "pr",
+    "merge",
+    String(pullRequest.number),
+    "--repo",
+    repo,
+    "--merge",
+    "--delete-branch",
+    "--match-head-commit",
+    pullRequest.headRefOid
+  ];
 }
 
 export function workflowPullRequests(pullRequests) {

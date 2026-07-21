@@ -12,10 +12,22 @@ if not "%~1"=="" (
 echo === Selecting the next PR to review ^(oldest needs-review, non-draft^) ===
 set "ACTION="
 set "NUM="
-for /f "usebackq tokens=1,2 delims= " %%a in (`node scripts\reviewer-next-action.mjs`) do (
+set "ACTION_FILE=%TEMP%\whetstone-reviewer-action-%RANDOM%-%RANDOM%.txt"
+if defined WHETSTONE_SELECTOR_COMMAND (
+  call "%WHETSTONE_SELECTOR_COMMAND%" > "%ACTION_FILE%"
+) else (
+  node scripts\reviewer-next-action.mjs > "%ACTION_FILE%"
+)
+set "SELECTOR_STATUS=%ERRORLEVEL%"
+if not "%SELECTOR_STATUS%"=="0" (
+  del /q "%ACTION_FILE%" >nul 2>&1
+  exit /b %SELECTOR_STATUS%
+)
+for /f "usebackq tokens=1,2 delims= " %%a in ("%ACTION_FILE%") do (
   set "ACTION=%%a"
   set "NUM=%%b"
 )
+del /q "%ACTION_FILE%" >nul 2>&1
 
 if "%ACTION%"=="review" (
   set "TASK=Run the whetstone reviewer role per your agent instructions. Review pull request #%NUM% against GUIDELINES.md, then stop."

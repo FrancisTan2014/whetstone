@@ -33,7 +33,7 @@ Tie-breakers:
 - **Fakes share the real contract.** Where a seam has a fake and a real adapter (coach, speech, dictionary), both must pass one shared contract suite; the real adapter's run skips cleanly without creds so the keyless gate stays green. 100% coverage proves code ran, not that a fake matches reality — pin them to the same behaviour.
 - **Mature, ecosystem-native solutions beat ad-hoc patches.** Solve a problem through the designed seams of a library already in the stack (e.g. `unified`/`rehype-remark` handlers, `unist-util-visit` traversal) rather than hand-rolling a partial reimplementation around it. When a fix touches an area built on a bespoke workaround, retire the workaround instead of stacking another special-case on top.
 - **A bug fix ships a regression test that reproduces the bug.** Every `[Bug]` fix includes a test that **fails on the pre-fix code and passes after**, exercising the actual reported scenario — including composition/wiring roots (e.g. `index.ts`), not only an isolated unit. Maintaining 100% coverage is not enough: coverage proves the line ran, a regression test proves the bug cannot silently return.
-- **A recurring class becomes a systemic invariant, not N per-instance tests.** When a defect is the *second* instance of a class — a sub-44px control on a new surface, a drawer that fails to restore focus or close on Escape, a TOC target that doesn't scroll, an ingestion construct that shatters — the fix adds or extends **one cross-surface invariant guard** that fails for the whole class on every surface, not only a local regression test for this instance. The per-instance test proves *this* bug is dead; the invariant proves the class cannot reappear elsewhere. Concrete standing guards: a single target-size sweep over every interactive control, and an ingestion-fidelity invariant over the fixture corpus.
+- **A recurring class becomes a systemic invariant, not N per-instance tests.** When a defect is the _second_ instance of a class — a sub-44px control on a new surface, a drawer that fails to restore focus or close on Escape, a TOC target that doesn't scroll, an ingestion construct that shatters — the fix adds or extends **one cross-surface invariant guard** that fails for the whole class on every surface, not only a local regression test for this instance. The per-instance test proves _this_ bug is dead; the invariant proves the class cannot reappear elsewhere. Concrete standing guards: a single target-size sweep over every interactive control, and an ingestion-fidelity invariant over the fixture corpus.
 - **The Tester's repro seeds the regression test; a failing regression is triaged, never silently deleted.** When a `[Bug]` carries a Tester repro (a runnable script that fails on the tested SHA, asserting the product contract), the fix **promotes that repro** into the committed fail-before/pass-after regression test rather than authoring a weaker one. When a **pre-existing** regression fails, classify before acting: a **real regression** (the change broke the contract) is fixed in code; a **legitimate contract change** (a documented `PRODUCT.md` change) updates the test **with a PR justification** for why the old assertion no longer holds. Because a regression asserts the contract, a legitimate "the test is stale" is rare and always tied to a product change — never a convenience to make the gate green.
 - **Safe observability beats verbose logs.** Log useful operational context, but never log secrets, full Markdown, note bodies, selected text snapshots, or template answers.
 - **Server source of truth beats client convenience.** Client storage/caches must not become v0's authority.
@@ -44,7 +44,7 @@ Whetstone must stay fast to pick up as it grows. An agent should reach the code 
 
 - **The always-read tier is bounded and edited in place.** `PRODUCT.md`, `GUIDELINES.md`, and the `whetstone-engineering` skill are the constitution. Keep them current by editing, not by appending change logs; net growth in this tier is a review smell, and new detail belongs in a lower tier.
 - **Growth goes into a read-on-demand map.** `docs/MAP.md` indexes subsystems to their locations — pointers and invariants, never restated code behavior. An agent reads the constitution, then the map, then only the one feature slice it needs.
-- **Area docs are lazy, pointer-only, and event-driven.** A folder gets its own colocated `AGENTS.md` only when it outgrows a single `docs/MAP.md` entry; never seed one per folder up front. Maps and area docs are updated by the same PR that changes an area's *shape* — what it owns, its entry points, or an invariant — not on every change and never as a separate documentation pass. A fix or test inside an existing module touches no doc. A surface that restates code (and so rots) is worse than none; delete it when upkeep outweighs the reading it saves.
+- **Area docs are lazy, pointer-only, and event-driven.** A folder gets its own colocated `AGENTS.md` only when it outgrows a single `docs/MAP.md` entry; never seed one per folder up front. Maps and area docs are updated by the same PR that changes an area's _shape_ — what it owns, its entry points, or an invariant — not on every change and never as a separate documentation pass. A fix or test inside an existing module touches no doc. A surface that restates code (and so rots) is worse than none; delete it when upkeep outweighs the reading it saves.
 - **Capture each fact in one home.** Route it: product/scope to `PRODUCT.md`; engineering or review rule to `GUIDELINES.md`; how-to-act summary to the skill; where-things-live to `docs/MAP.md` or an area doc; cross-cutting gotchas to agent memory; the what/why of a single change to its PR, issue, and git history. Other surfaces point; they do not copy.
 - **Navigate, do not linear-read.** Reach the slice through the map and targeted search; reading unrelated code is waste, not diligence.
 - **Bound the working context for the whole run, not just at startup.** An agent's live context is its dominant cost — reasoning slows sharply as it grows. Read the slice, not whole files; run `pnpm validate`/build/test quietly and inspect only failures instead of pouring verbose output into context; delegate bulky or exploratory reading to a subagent that returns conclusions, not raw dumps. A run whose context keeps growing past its slice signals an oversized issue to split, not a cue to read more.
@@ -191,21 +191,21 @@ Rules:
 Prefer:
 
 ```ts
-createReadingUnit
-writeMarkdownFile
-buildNoteAnchor
-renderTemplateMarkdown
-listWorksForAuthor
+createReadingUnit;
+writeMarkdownFile;
+buildNoteAnchor;
+renderTemplateMarkdown;
+listWorksForAuthor;
 ```
 
 Avoid:
 
 ```ts
-processData
-handleSubmit
-entryManager
-markdownHelper
-noteService
+processData;
+handleSubmit;
+entryManager;
+markdownHelper;
+noteService;
 ```
 
 ## Comments and documentation
@@ -551,7 +551,7 @@ Correct-but-naive code passes the gate (tests + coverage) yet falls over at real
 - **Measure hot paths; do not guess.** For performance-sensitive changes (reader rendering, ingestion, search, retrieval), measure at realistic scale and record **before/after** in the PR (main-thread long-task duration, rendered/visible counts, query timings). A hot path should have a stated budget (e.g. "no single main-thread task over ~100 ms; render only the visible/active unit").
 - **Foundations get extra scrutiny.** Shared boundaries — the rendering pipeline, data access, and the coming learner-model/retrieval — are reviewed for performance and stability because everything builds on them; a regression there is systemic, not local.
 
-Keep heavy or flaky performance *tests* out of the merge gate (as with the screenshot/dev-smoke harness); rely instead on realistic-scale fixtures, in-PR measurement for hot paths, and review.
+Keep heavy or flaky performance _tests_ out of the merge gate (as with the screenshot/dev-smoke harness); rely instead on realistic-scale fixtures, in-PR measurement for hot paths, and review.
 
 ### Performance gates (CI)
 
@@ -771,7 +771,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 
 - Any change that introduces a **runtime dependency or external tool the app needs to run** (beyond what `pnpm install` provides — e.g. a browser, a local model, a system binary) MUST add a setup step under `scripts/setup/steps/` that **fails loud with an actionable remedy** (a `StepResult` carrying `what` + `remedy`, never a bare throw), is covered by `pnpm setup:doctor`, has tests for its failure paths, and is documented.
 - The reviewer **blocks** a change that adds such a dependency without a compliant setup step.
-- Steps stay independent and declarative (`{ id, title, optional?, check, provision?, verify? }`); the runner is not edited merely to register a step (steps are auto-discovered — a framework-level capability such as a consent prompt or a new flag is a legitimate runner change). Heavy/optional capabilities are opt-in (an `optional` step behind a `--<capability>` flag), so the base `pnpm setup` stays fast with no heavy downloads. System prerequisites are never *silently* installed: a step may install one **only after an explicit Y/N consent prompt** (`ctx.confirm`), and MUST fall back to an instruct-only remedy when consent is declined, when no package manager is present, or when running non-interactively without `--yes`. Node and pnpm themselves stay instruct-only (the runner needs them to run).
+- Steps stay independent and declarative (`{ id, title, optional?, check, provision?, verify? }`); the runner is not edited merely to register a step (steps are auto-discovered — a framework-level capability such as a consent prompt or a new flag is a legitimate runner change). Heavy/optional capabilities are opt-in (an `optional` step behind a `--<capability>` flag), so the base `pnpm setup` stays fast with no heavy downloads. System prerequisites are never _silently_ installed: a step may install one **only after an explicit Y/N consent prompt** (`ctx.confirm`), and MUST fall back to an instruct-only remedy when consent is declined, when no package manager is present, or when running non-interactively without `--yes`. Node and pnpm themselves stay instruct-only (the runner needs them to run).
 
 ### Durable-surface upkeep
 
@@ -782,8 +782,9 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 ### Validation
 
 - PR body lists the commands run.
-- The full local gate passes (`pnpm validate`: typecheck, lint, 100%-coverage tests, build,
-  bundle-size budget, smoke, and E2E).
+- Developer handoff passes `pnpm validate:changed` plus the issue's named E2E evidence. The full
+  local `pnpm validate` run is optional.
+- Exact-head CI passes every exhaustive blocking check before merge.
 - If validation cannot run because tooling does not exist yet, the PR says so and the issue scope justifies it.
 - Behavior changed by the PR has tests when test infrastructure exists.
 - Data/file changes include at least one validation path for failure cases, not only happy paths.
