@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deriveWorkOutline, WorkOutline } from "./WorkOutline";
+import { deriveWorkOutline, projectDraftOutline, WorkOutline } from "./WorkOutline";
+import type { DocumentNodeJSON } from "@whetstone/document";
 
 function mockMatchMedia(matches: boolean): void {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -71,6 +72,76 @@ describe("deriveWorkOutline", () => {
     ]);
 
     expect(entries.map((entry) => entry.label)).toEqual(["Start", "Untitled section"]);
+  });
+});
+
+describe("projectDraftOutline", () => {
+  function docOf(...nodes: ReadonlyArray<DocumentNodeJSON>): DocumentNodeJSON {
+    return { content: [...nodes], type: "doc" };
+  }
+  function heading(level: number, text: string): DocumentNodeJSON {
+    return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
+  }
+  function para(text: string): DocumentNodeJSON {
+    return { content: [{ text, type: "text" }], type: "paragraph" };
+  }
+
+  it("reflects the active section's draft heading rename immediately", () => {
+    const entries = projectDraftOutline(multiSections, "unit-b", docOf(heading(1, "Renamed")));
+
+    expect(entries.map((entry) => entry.label)).toEqual(["Start", "Renamed"]);
+    expect(entries.map((entry) => entry.targetUnitEntryId)).toEqual(["unit-a", "unit-b"]);
+  });
+
+  it("previews a heading typed inside the active section as a nested, non-navigating entry", () => {
+    // A hard break in the sub-heading's inline content exercises non-text children in the label read.
+    const subHeading: DocumentNodeJSON = {
+      attrs: { level: 2 },
+      content: [{ text: "A Subsection", type: "text" }, { type: "hardBreak" }],
+      type: "heading"
+    };
+    const entries = projectDraftOutline(
+      multiSections,
+      "unit-b",
+      docOf(heading(1, "Chapter One"), para("body"), subHeading)
+    );
+
+    expect(entries.map((entry) => entry.label)).toEqual(["Start", "Chapter One", "A Subsection"]);
+    expect(entries.map((entry) => entry.depth)).toEqual([0, 0, 1]);
+    // The preview sub-entry has its own key but targets the active unit, so a click keeps it open.
+    const preview = entries[2]!;
+    expect(preview.entryId).not.toBe("unit-b");
+    expect(preview.targetUnitEntryId).toBe("unit-b");
+  });
+
+  it("keeps the active section headless when its draft opens without a heading", () => {
+    const entries = projectDraftOutline(multiSections, "unit-a", docOf(para("A lead line")));
+
+    expect(entries.map((entry) => entry.label)).toEqual(["Start", "Chapter One"]);
+    expect(entries.map((entry) => entry.targetUnitEntryId)).toEqual(["unit-a", "unit-b"]);
+  });
+
+  it("labels an empty draft heading (no inline content) as an untitled section", () => {
+    const emptyHeading: DocumentNodeJSON = { attrs: { level: 1 }, type: "heading" };
+    const entries = projectDraftOutline(multiSections, "unit-b", docOf(emptyHeading));
+
+    expect(entries.map((entry) => entry.label)).toEqual(["Start", "Untitled section"]);
+  });
+
+  it("treats a draft heading with no level as headless (defensive)", () => {
+    const noLevel: DocumentNodeJSON = { content: [{ text: "No level", type: "text" }], type: "heading" };
+    const entries = projectDraftOutline(multiSections, "unit-a", docOf(noLevel));
+
+    // unit-a's malformed heading carries no level, so it stays the leading "Start".
+    expect(entries.map((entry) => entry.label)).toEqual(["Start", "Chapter One"]);
+  });
+
+  it("yields no draft units when the active section's draft has no content (defensive)", () => {
+    // A malformed draft with no `content` array collapses the active section to zero units, leaving a lone
+    // remaining section — which produces an empty outline rather than throwing.
+    const entries = projectDraftOutline(multiSections, "unit-a", { type: "doc" });
+
+    expect(entries).toEqual([]);
   });
 });
 

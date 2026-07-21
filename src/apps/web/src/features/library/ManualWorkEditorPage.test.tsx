@@ -117,6 +117,19 @@ function unitB(): ManualWorkUnitDto {
   return { document: sectionBDocument, unitEntryId: "unit-b" };
 }
 
+// The leading section's own (headless) document, so navigating back to it keeps its "Start" outline
+// label — the Outline now reflects the active section's loaded document (#698), not a static label.
+function unitA(): ManualWorkUnitDto {
+  return { document: loadedDocument, unitEntryId: "unit-a" };
+}
+
+// A freshly added section's document: a single empty heading, exactly what "Add section" inserts. The
+// live-draft Outline projects it as an "Untitled section" until the learner names it.
+const emptyHeadingDocument: DocumentNodeJSON = {
+  type: "doc",
+  content: [{ type: "heading", attrs: { id: "blk-c1", anchorId: null, level: 1 }, content: [] }]
+};
+
 function renderPage(): void {
   render(
     <MemoryRouter>
@@ -508,7 +521,9 @@ describe("ManualWorkEditorPage", () => {
 
   it("focuses the section heading on each successive navigation", async () => {
     mockedFetch.mockResolvedValue(makeMultiWork());
-    mockedFetchUnit.mockResolvedValue(unitB());
+    mockedFetchUnit.mockImplementation(async (_workEntryId, unitEntryId) =>
+      unitEntryId === "unit-b" ? unitB() : unitA()
+    );
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
@@ -617,6 +632,7 @@ describe("ManualWorkEditorPage", () => {
   it("adds a new section and opens it", async () => {
     mockedFetch.mockResolvedValue(makeMultiWork());
     const added = makeMultiWork({
+      document: emptyHeadingDocument,
       revision: "r2",
       sections: [
         { orderIndex: 0, unitEntryId: "unit-a" },
@@ -812,5 +828,82 @@ describe("ManualWorkEditorPage", () => {
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
     });
     expect(document.activeElement).toBe(toggle);
+  });
+
+  it("reflects the active section's draft headings in the Outline, not just persisted sections", async () => {
+    // The persisted section list names unit-b once ("Chapter One"), but its loaded document carries an
+    // extra sub-heading. The live Outline projects the draft, so the subsection appears immediately with
+    // no save — proving the Outline is driven by the active draft, not only the persisted sections.
+    const richUnitB: ManualWorkUnitDto = {
+      unitEntryId: "unit-b",
+      document: {
+        type: "doc",
+        content: [
+          { type: "heading", attrs: { id: "blk-b1", level: 1 }, content: [{ type: "text", text: "Chapter One" }] },
+          { type: "paragraph", attrs: { id: "blk-b2" }, content: [{ type: "text", text: "Body." }] },
+          { type: "heading", attrs: { id: "blk-b3", level: 2 }, content: [{ type: "text", text: "A Subsection" }] }
+        ]
+      }
+    };
+    mockedFetch.mockResolvedValue(makeMultiWork());
+    mockedFetchUnit.mockResolvedValue(richUnitB);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
+
+    await user.click(screen.getByRole("button", { name: "Chapter One" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "A Subsection" })).toBeDefined();
+    });
+    // The projection is a live preview — nothing was saved to produce the extra outline entry.
+    expect(mockedSave).not.toHaveBeenCalled();
+  });
+
+  it("follows the server-reconciled active section after a repartition merge save", async () => {
+    // Open at the middle section (unit-b). Saving returns a repartition that merged unit-b into unit-a and
+    // dropped it — the active section the editor must adopt is the server's returned unit-a, not the now-
+    // deleted unit-b.
+    const threeSectionWork = makeWork({
+      unitEntryId: "unit-b",
+      document: {
+        type: "doc",
+        content: [{ type: "heading", attrs: { id: "blk-b1", anchorId: null, level: 2 }, content: [{ type: "text", text: "Chapter" }] }]
+      },
+      sections: [
+        { headingLevel: 1, orderIndex: 0, title: "Part", unitEntryId: "unit-a" },
+        { headingLevel: 2, orderIndex: 1, title: "Chapter", unitEntryId: "unit-b" },
+        { headingLevel: 1, orderIndex: 2, title: "Part Two", unitEntryId: "unit-c" }
+      ]
+    });
+    const mergedWork = makeWork({
+      revision: "r2",
+      unitEntryId: "unit-a",
+      document: {
+        type: "doc",
+        content: [{ type: "heading", attrs: { id: "blk-a1", anchorId: null, level: 1 }, content: [{ type: "text", text: "Part" }] }]
+      },
+      sections: [
+        { headingLevel: 1, orderIndex: 0, title: "Part", unitEntryId: "unit-a" },
+        { headingLevel: 1, orderIndex: 1, title: "Part Two", unitEntryId: "unit-c" }
+      ]
+    });
+    mockedFetch.mockResolvedValue(threeSectionWork);
+    mockedSave.mockResolvedValue({ status: "saved", work: mergedWork });
+    const user = userEvent.setup();
+    renderPage();
+    const textbox = await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
+
+    await user.click(textbox);
+    await user.type(textbox, "x");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+    // The merged-away section is gone and focus/active follows the server's reconciled unit-a ("Part").
+    expect(screen.queryByRole("button", { name: "Chapter" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Part" }).getAttribute("aria-current")).toBe("true");
+    expect(screen.getByRole("button", { name: "Part Two" }).getAttribute("aria-current")).toBeNull();
   });
 });
