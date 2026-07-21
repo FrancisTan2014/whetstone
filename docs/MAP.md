@@ -224,7 +224,9 @@ can navigate them from another package.
   `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: the workspace's **Cards** tab `CardsView.tsx` lists each prompt and drills into `CardDetail.tsx` (state-driven
   rich edit-question/pause/resume/restart/remove/re-add, overflow confirmations, no-double-submit, stale-action list reload)
   and a per-card `CardHistory.tsx` view; when the note carries a reflowable body its toolbar
-  offers Add card → the inline `SavedNoteCardComposer.tsx` (card authoring, #687/#688 multiplicity). Client fns in
+  offers Add card → the inline `SavedNoteCardComposer.tsx` (card authoring, #687/#688 multiplicity). Its
+  grading-target helpers (`sameGradingTarget`/`seedSuccessCheck`/failure messages) live in the shared
+  `notes/gradingTarget.ts`, reused by the in-Review `RepairCardView.tsx` (#691). Client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion` (rich `questionDoc`)/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`/`authorNoteCard`).
 - Retry-safe direct card creation (#689): `notesReview/createDirectCard.ts` (`createDirectCard`, served at
@@ -980,14 +982,21 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `NotesReviewPage.tsx` reviews DUE note prompts ONE at a time and mounts at `/notes/review` (the
   canonical entry point); the legacy `/recall` route redirects (history-replace) onto it (#662), so legacy
   links recover into the same session. It is an explicit two-phase session driven by one discriminated `SessionState`
-  (loading/error/empty/question/revealed/rated) so an empty or failed read can never masquerade as
+  (loading/error/empty/question/revealed/rated/repairing) so an empty or failed read can never masquerade as
   completion: phase 1 shows the prompt's cue + a single **Show note** affordance (no answer, no grades);
   after an explicit reveal it renders the note (a `legacy_custom` prompt's preserved answer, or a
   `current_note` prompt's live body — both via the shared `PmDocument`), moves focus to the Note region,
   and exposes the four self-ratings (Again/Hard/Good/Easy, also keys 1–4). Nothing advances automatically —
   after rating, the learner sees the next scheduled date and chooses **Review next**. A failed reveal keeps
   the question with a specific retry; a failed rating keeps the reveal and its grades in place with a
-  retryable alert. `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
+  retryable alert. When a card reads as unclear, a **Fix card** action in either phase enters
+  `RepairCardView.tsx` (the `repairing` step) to repair the Question or grading target WITHOUT rating (#691):
+  it loads the prompt settings + live reveal, reuses the shared `notes/gradingTarget.ts` helpers and #686's
+  Keep-schedule/Restart contract for a grading-target change, and appends NO review event — so the card stays
+  due. A committed fix re-attempts the SAME prompt from a fresh Question phase with the clarified cue; Cancel
+  restores the exact prior phase. Editing the shared note body instead is a one-way **Open note** deep link to
+  `/notes?open=<entryId>` (handled by `notes/NotesPage.tsx`, which opens that note's editor once on first
+  load). `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
   and parses via `noteReviewContracts`. A saved note's review cards are authored from the note sheet, not
   this session: the Cards-toolbar Add card (in the shared `NoteWorkspace.tsx` for any bodied note)
   opens `SavedNoteCardComposer.tsx` (#687/#688), which authors one more independently-scheduled card in place

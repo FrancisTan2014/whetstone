@@ -1,14 +1,23 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./notesReviewApi", () => ({
-  fetchNextNotePrompt: vi.fn(),
-  fetchNoteReveal: vi.fn(),
-  rateNotePrompt: vi.fn()
-}));
+import type * as NotesReviewApi from "./notesReviewApi";
+
+vi.mock("./notesReviewApi", async () => {
+  const actual = await vi.importActual<typeof NotesReviewApi>("./notesReviewApi");
+  return {
+    ...actual,
+    editNotePromptQuestion: vi.fn(),
+    fetchNextNotePrompt: vi.fn(),
+    fetchNotePromptSettings: vi.fn(),
+    fetchNoteReveal: vi.fn(),
+    rateNotePrompt: vi.fn(),
+    setNoteGradingTarget: vi.fn()
+  };
+});
 
 vi.mock("../reader/PmDocument.js", async () => {
   const { documentText } = await import("@whetstone/document");
@@ -19,20 +28,55 @@ vi.mock("../reader/PmDocument.js", async () => {
   };
 });
 
+// The editable editor stands in as a textarea keyed by its aria-label so a repair's Question/Success
+// check can be driven and read as plain text (only the repair path renders it).
+vi.mock("../../shared/editor/index.js", async () => {
+  const React = await import("react");
+  const { createTextDocument: make, documentText: read } = await import("@whetstone/document");
+  return {
+    RichContentEditor: ({
+      ariaLabel,
+      document,
+      onChange
+    }: {
+      ariaLabel?: string;
+      document: unknown;
+      onChange: (document: unknown) => void;
+    }) =>
+      React.createElement("textarea", {
+        "aria-label": ariaLabel,
+        onChange: (event: { target: { value: string } }) => onChange(make(event.target.value)),
+        value: read(document as never)
+      })
+  };
+});
+
 // A fixed learner zone so the rated confirmation's next-review label is deterministic (#676).
 vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
   useLearnerTimeZone: () => "UTC"
 }));
 
-import type { NoteReviewPromptDto, NoteRevealDto } from "@whetstone/contracts";
+import type {
+  NotePromptSettingsDto,
+  NoteReviewPromptDto,
+  NoteRevealDto
+} from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
-import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
+import {
+  editNotePromptQuestion,
+  fetchNextNotePrompt,
+  fetchNotePromptSettings,
+  fetchNoteReveal,
+  rateNotePrompt
+} from "./notesReviewApi";
 import { NotesReviewPage } from "./NotesReviewPage";
 
 const mockedNext = vi.mocked(fetchNextNotePrompt);
 const mockedReveal = vi.mocked(fetchNoteReveal);
 const mockedRate = vi.mocked(rateNotePrompt);
+const mockedSettings = vi.mocked(fetchNotePromptSettings);
+const mockedEdit = vi.mocked(editNotePromptQuestion);
 
 const review = {
   due: "2026-07-11T12:00:00.000Z",
@@ -85,6 +129,31 @@ const expectedResponseReveal: NoteRevealDto = {
   successCheckText: "Names durability and ordering.",
   referenceDoc: createTextDocument("The live note reference."),
   referenceText: "The live note reference."
+};
+
+// The settings row RepairCardView loads when the learner opens Fix card on the current prompt.
+function settingsList(reveal: NotePromptSettingsDto["reveal"] = { kind: "current_note" }): {
+  prompts: NotePromptSettingsDto[];
+} {
+  return {
+    prompts: [
+      {
+        cardState: { state: "due" },
+        promptId: "prompt-1",
+        questionDoc: createTextDocument("What is the capital of France?"),
+        questionText: "What is the capital of France?",
+        reveal
+      }
+    ]
+  };
+}
+
+const refreshedRow: NotePromptSettingsDto = {
+  cardState: { state: "due" },
+  promptId: "prompt-1",
+  questionDoc: createTextDocument("Which city is the capital of France?"),
+  questionText: "Which city is the capital of France?",
+  reveal: { kind: "current_note" }
 };
 
 function renderPage(): void {
@@ -301,5 +370,97 @@ describe("NotesReviewPage", () => {
     await user.click(await screen.findByRole("button", { name: "Review next" }));
 
     expect(await screen.findByText(/Due complete/u)).toBeTruthy();
+  });
+
+  it("offers Fix card before reveal and enters repair without recording a rating", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedSettings.mockResolvedValue(settingsList());
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Fix card" }));
+
+    expect(await screen.findByRole("heading", { name: "Fix this card" })).toBeTruthy();
+    expect(mockedRate).not.toHaveBeenCalled();
+  });
+
+  it("returns to the same question, still unrated, when a repair is cancelled", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedSettings.mockResolvedValue(settingsList());
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Fix card" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(await screen.findByText("What is the capital of France?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show note" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Fix this card" })).toBeNull();
+    expect(mockedRate).not.toHaveBeenCalled();
+  });
+
+  it("offers Fix card after reveal and returns to the revealed note on cancel", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedSettings.mockResolvedValue(settingsList());
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Show note" }));
+    await screen.findByText("Paris, the live note body.");
+    await user.click(screen.getByRole("button", { name: "Fix card" }));
+    expect(await screen.findByRole("heading", { name: "Fix this card" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(await screen.findByText("Paris, the live note body.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Good" })).toBeTruthy();
+    expect(mockedRate).not.toHaveBeenCalled();
+  });
+
+  it("re-attempts from a fresh question with the clarified cue after a repair saves, never rating", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedSettings.mockResolvedValue(settingsList());
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    mockedEdit.mockResolvedValue(refreshedRow);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Fix card" }));
+    const question = await screen.findByRole("textbox", { name: "Question" });
+    await user.clear(question);
+    await user.type(question, "Which city is the capital of France?");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Which city is the capital of France?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show note" })).toBeTruthy();
+    expect(mockedEdit).toHaveBeenCalledTimes(1);
+    expect(mockedRate).not.toHaveBeenCalled();
+  });
+
+  it("navigates to open the shared note for editing", async () => {
+    const user = userEvent.setup();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedSettings.mockResolvedValue(settingsList());
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    let location = "";
+    function LocationProbe(): null {
+      const current = useLocation();
+      location = `${current.pathname}${current.search}`;
+      return null;
+    }
+    render(
+      <MemoryRouter>
+        <NotesReviewPage />
+        <LocationProbe />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Fix card" }));
+    await user.click(await screen.findByRole("button", { name: "Open note" }));
+
+    expect(location).toBe("/notes?open=note-1");
   });
 });
