@@ -33,8 +33,8 @@ import {
   workSources
 } from "../../db/schema.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
-import { updateManualWorkContent } from "./manualWorkContentCommands.js";
-import { loadManualWorkForEditing } from "./manualWorkContentQueries.js";
+import { updateManualWorkContent, addManualWorkSection } from "./manualWorkContentCommands.js";
+import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
 import { insertCurrentNotePromptInTx, insertNoteInTx } from "../notes/noteCommands.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
@@ -925,7 +925,7 @@ describe("DELETE /api/works/:workEntryId", () => {
   });
 });
 
-describe("manual work editor (#720)", () => {
+describe("manual work editor (#720, sections #697)", () => {
   async function createManualWork(
     payload?: Partial<{ language: string; title: string; workType: string }>
   ): Promise<string> {
@@ -964,7 +964,28 @@ describe("manual work editor (#720)", () => {
     return { content: [{ text, type: "text" }], type: "paragraph" };
   }
 
-  it("initializes a manual Work with one empty paragraph the editor can load", async () => {
+  function heading(level: number, text: string): DocumentNodeJSON {
+    return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
+  }
+
+  // The command dependencies for a direct (non-HTTP) call. `createEntryId` mints unique ids for an
+  // appended section; the update path never mints, but the shared deps type requires it.
+  function commandDeps(now: () => Date = () => new Date()): {
+    createEntryId: () => string;
+    db: DbClient;
+    now: () => Date;
+  } {
+    let sequence = 0;
+    return { createEntryId: () => `direct-unit-${(sequence += 1)}`, db: context.db, now };
+  }
+
+  async function load(workEntryId: string): Promise<Record<string, unknown>> {
+    return (
+      await context.server.inject({ method: "GET", url: `/api/manual-works/${workEntryId}` })
+    ).json();
+  }
+
+  it("initializes a manual Work with one section the editor can load", async () => {
     const workEntryId = await createManualWork();
 
     const response = await context.server.inject({
@@ -984,6 +1005,12 @@ describe("manual work editor (#720)", () => {
     expect(dto.document.content).toHaveLength(1);
     expect(dto.document.content[0].type).toBe("paragraph");
     expect(documentText(dto.document)).toBe("");
+    // A single-section Work opens at that section and lists exactly it (headingless — no heading yet).
+    expect(dto.sections).toHaveLength(1);
+    expect(dto.sections[0].unitEntryId).toBe(dto.unitEntryId);
+    expect(dto.sections[0].orderIndex).toBe(0);
+    expect(dto.sections[0].headingLevel).toBeUndefined();
+    expect(dto.sections[0].title).toBeUndefined();
   });
 
   it("returns 404 for an unknown, imported, or non-manual Work", async () => {
@@ -1023,17 +1050,12 @@ describe("manual work editor (#720)", () => {
 
   it("saves an edit, returns a new revision, and reopens the persisted document", async () => {
     const workEntryId = await createManualWork();
-    const loaded = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
+    const loaded = await load(workEntryId);
 
     const document = { content: [paragraph("First line"), paragraph("Second line")], type: "doc" };
     const save = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${workEntryId}/content`,
+      url: `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`,
       payload: { document, revision: loaded.revision }
     });
 
@@ -1042,34 +1064,24 @@ describe("manual work editor (#720)", () => {
     expect(saved.revision).not.toBe(loaded.revision);
     expect(documentText(saved.document)).toBe("First lineSecond line");
 
-    const reopened = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
+    const reopened = await load(workEntryId);
     expect(reopened.revision).toBe(saved.revision);
-    expect(documentText(reopened.document)).toBe("First lineSecond line");
-    expect(reopened.document.content).toHaveLength(2);
+    expect(documentText(reopened.document as DocumentNodeJSON)).toBe("First lineSecond line");
+    expect((reopened.document as { content: unknown[] }).content).toHaveLength(2);
   });
 
   it("preserves stable block ids across a save so anchored notes stay valid", async () => {
     const workEntryId = await createManualWork();
-    const loaded = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
+    const loaded = await load(workEntryId);
 
-    const firstBlock = loaded.document.content[0];
+    const firstBlock = (loaded.document as { content: Array<{ attrs: { id: string } }> }).content[0];
     const originalId = firstBlock.attrs.id;
     expect(typeof originalId).toBe("string");
 
     const document = { content: [firstBlock, paragraph("A new second block")], type: "doc" };
     const save = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${workEntryId}/content`,
+      url: `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`,
       payload: { document, revision: loaded.revision }
     });
 
@@ -1079,65 +1091,43 @@ describe("manual work editor (#720)", () => {
 
   it("rejects a stale save with 409 and writes nothing", async () => {
     const workEntryId = await createManualWork();
-    const loaded = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
+    const loaded = await load(workEntryId);
+    const unitUrl = `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`;
 
     const first = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${workEntryId}/content`,
-      payload: {
-        document: { content: [paragraph("Winner")], type: "doc" },
-        revision: loaded.revision
-      }
+      url: unitUrl,
+      payload: { document: { content: [paragraph("Winner")], type: "doc" }, revision: loaded.revision }
     });
     expect(first.statusCode).toBe(200);
 
     const stale = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${workEntryId}/content`,
-      payload: {
-        document: { content: [paragraph("Loser")], type: "doc" },
-        revision: loaded.revision
-      }
+      url: unitUrl,
+      payload: { document: { content: [paragraph("Loser")], type: "doc" }, revision: loaded.revision }
     });
 
     expect(stale.statusCode).toBe(409);
     expect(stale.json()).toEqual({ error: "revision_conflict" });
 
-    const reopened = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
-    expect(documentText(reopened.document)).toBe("Winner");
+    const reopened = await load(workEntryId);
+    expect(documentText(reopened.document as DocumentNodeJSON)).toBe("Winner");
   });
 
   it("lets only one of two saves that loaded the same revision win", async () => {
     const workEntryId = await createManualWork();
-    const loaded = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
+    const loaded = await load(workEntryId);
+    const unitUrl = `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`;
 
-    // Both saves start from the SAME loaded revision — the lost-update setup the reviewer flagged. The
-    // atomic revision claim (a single conditional UPDATE) must let exactly one land and reject the other,
-    // never let both pass and silently overwrite the earlier write.
     const [a, b] = await Promise.all([
       context.server.inject({
         method: "PUT",
-        url: `/api/manual-works/${workEntryId}/content`,
+        url: unitUrl,
         payload: { document: { content: [paragraph("A")], type: "doc" }, revision: loaded.revision }
       }),
       context.server.inject({
         method: "PUT",
-        url: `/api/manual-works/${workEntryId}/content`,
+        url: unitUrl,
         payload: { document: { content: [paragraph("B")], type: "doc" }, revision: loaded.revision }
       })
     ]);
@@ -1145,36 +1135,24 @@ describe("manual work editor (#720)", () => {
     expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409]);
 
     const winner = a.statusCode === 200 ? a : b;
-    const reopened = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
-    expect(documentText(reopened.document)).toBe(documentText(winner.json().document));
-    expect(["A", "B"]).toContain(documentText(reopened.document));
+    const reopened = await load(workEntryId);
+    expect(documentText(reopened.document as DocumentNodeJSON)).toBe(
+      documentText(winner.json().document)
+    );
+    expect(["A", "B"]).toContain(documentText(reopened.document as DocumentNodeJSON));
   });
 
   it("bumps the revision past a non-advancing clock so a stale save cannot be replayed", async () => {
     const workEntryId = await createManualWork();
-    const loaded = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
-
-    // Freeze the clock at exactly the loaded revision so `now` does NOT advance beyond it — the same-
-    // millisecond case the reviewer flagged. If the save wrote `now` back verbatim, the new stored revision
-    // would equal the loaded one, and a second request carrying that same (now stale) revision could still
-    // match and overwrite the first save. The written revision must be bumped strictly forward.
-    const frozenClock = (): Date => new Date(loaded.revision);
+    const loaded = await load(workEntryId);
+    const frozenClock = (): Date => new Date(loaded.revision as string);
 
     const first = await updateManualWorkContent(
-      { db: context.db, now: frozenClock },
+      commandDeps(frozenClock),
       toEntryId(workEntryId),
+      toEntryId(loaded.unitEntryId as string),
       { content: [paragraph("Winner")], type: "doc" },
-      loaded.revision,
+      loaded.revision as string,
       DEFAULT_USER_ID
     );
 
@@ -1183,40 +1161,32 @@ describe("manual work editor (#720)", () => {
       throw new Error("expected the first save to land");
     }
     expect(new Date(first.work.revision).getTime()).toBeGreaterThan(
-      new Date(loaded.revision).getTime()
+      new Date(loaded.revision as string).getTime()
     );
 
-    // Replay the ORIGINAL loaded revision (now stale) against the same non-advancing clock. With a reusable
-    // token this would still match and overwrite "Winner"; the monotonic bump makes it a conflict.
     const replay = await updateManualWorkContent(
-      { db: context.db, now: frozenClock },
+      commandDeps(frozenClock),
       toEntryId(workEntryId),
+      toEntryId(loaded.unitEntryId as string),
       { content: [paragraph("Loser")], type: "doc" },
-      loaded.revision,
+      loaded.revision as string,
       DEFAULT_USER_ID
     );
 
     expect(replay.status).toBe("conflict");
 
-    const reopened = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
-    expect(documentText(reopened.document)).toBe("Winner");
+    const reopened = await load(workEntryId);
+    expect(documentText(reopened.document as DocumentNodeJSON)).toBe("Winner");
   });
 
   it("treats a non-timestamp revision as a conflict rather than crashing", async () => {
     const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
 
     const response = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${workEntryId}/content`,
-      payload: {
-        document: { content: [paragraph("x")], type: "doc" },
-        revision: "not-a-timestamp"
-      }
+      url: `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`,
+      payload: { document: { content: [paragraph("x")], type: "doc" }, revision: "not-a-timestamp" }
     });
 
     expect(response.statusCode).toBe(409);
@@ -1229,12 +1199,12 @@ describe("manual work editor (#720)", () => {
 
     const unknown = await context.server.inject({
       method: "PUT",
-      url: "/api/manual-works/work-missing/content",
+      url: "/api/manual-works/work-missing/units/unit-x/content",
       payload: { document, revision: "2026-01-01T00:00:00.000Z" }
     });
     const imported = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${importedEntryId}/content`,
+      url: `/api/manual-works/${importedEntryId}/units/unit-x/content`,
       payload: { document, revision: "2026-01-01T00:00:00.000Z" }
     });
 
@@ -1242,20 +1212,32 @@ describe("manual work editor (#720)", () => {
     expect(imported.statusCode).toBe(404);
   });
 
+  it("returns 404 when saving a section that is not part of the Work", async () => {
+    const workEntryId = await createManualWork();
+    const otherWorkId = await createManualWork({ title: "Another" });
+    const other = await load(otherWorkId);
+    const loaded = await load(workEntryId);
+
+    // A section id that belongs to a DIFFERENT owned manual Work must not be writable through this Work.
+    const response = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${other.unitEntryId}/content`,
+      payload: { document: { content: [paragraph("x")], type: "doc" }, revision: loaded.revision }
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
   it("does not save another user's manual Work", async () => {
     const workEntryId = await createManualWork();
-    const loaded = (
-      await context.server.inject({
-        method: "GET",
-        url: `/api/manual-works/${workEntryId}`
-      })
-    ).json();
+    const loaded = await load(workEntryId);
 
     const result = await updateManualWorkContent(
-      { db: context.db, now: () => new Date() },
+      commandDeps(),
       toEntryId(workEntryId),
+      toEntryId(loaded.unitEntryId as string),
       { content: [paragraph("Intruder")], type: "doc" },
-      loaded.revision,
+      loaded.revision as string,
       "another-user"
     );
 
@@ -1264,11 +1246,201 @@ describe("manual work editor (#720)", () => {
 
   it("rejects a malformed save body with 400", async () => {
     const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
 
     const response = await context.server.inject({
       method: "PUT",
-      url: `/api/manual-works/${workEntryId}/content`,
+      url: `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`,
       payload: { document: { type: "not-a-doc" }, revision: "r" }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("appends a heading-led section, opens it, and lists both sections in order", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+
+    const added = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: loaded.revision }
+    });
+
+    expect(added.statusCode).toBe(201);
+    const dto = added.json();
+    // The response opens AT the new section: its document is a Heading 1 + a paragraph, and the outline
+    // now lists two sections in source order.
+    expect(dto.unitEntryId).not.toBe(loaded.unitEntryId);
+    expect(dto.document.content[0].type).toBe("heading");
+    expect(dto.document.content[0].attrs.level).toBe(1);
+    expect(new Date(dto.revision).getTime()).toBeGreaterThan(new Date(loaded.revision as string).getTime());
+    expect(dto.sections).toHaveLength(2);
+    expect(dto.sections[0].unitEntryId).toBe(loaded.unitEntryId);
+    expect(dto.sections[1].unitEntryId).toBe(dto.unitEntryId);
+    expect(dto.sections[1].orderIndex).toBe(1);
+    // The new section starts at an EMPTY heading, so it carries a level but no title until named.
+    expect(dto.sections[1].headingLevel).toBe(1);
+    expect(dto.sections[1].title).toBeUndefined();
+  });
+
+  it("derives each section's outline title from its heading text after saves", async () => {
+    const workEntryId = await createManualWork();
+    let loaded = await load(workEntryId);
+
+    // Name the first section by saving a Heading 1 into it.
+    const savedFirst = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`,
+      payload: {
+        document: { content: [heading(1, "Part One"), paragraph("Body")], type: "doc" },
+        revision: loaded.revision
+      }
+    });
+    expect(savedFirst.statusCode).toBe(200);
+
+    // Add a second section and name it.
+    const added = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: savedFirst.json().revision }
+    });
+    expect(added.statusCode).toBe(201);
+    const secondUnitId = added.json().unitEntryId as string;
+
+    const savedSecond = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${secondUnitId}/content`,
+      payload: {
+        document: { content: [heading(2, "Chapter A")], type: "doc" },
+        revision: added.json().revision
+      }
+    });
+    expect(savedSecond.statusCode).toBe(200);
+
+    const sections = savedSecond.json().sections as Array<Record<string, unknown>>;
+    expect(sections).toHaveLength(2);
+    expect(sections[0]).toMatchObject({ headingLevel: 1, title: "Part One" });
+    expect(sections[1]).toMatchObject({ headingLevel: 2, title: "Chapter A" });
+  });
+
+  it("loads one section's document on demand, owner- and work-scoped", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+    const added = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: loaded.revision }
+    });
+    const secondUnitId = added.json().unitEntryId as string;
+
+    const unit = await context.server.inject({
+      method: "GET",
+      url: `/api/manual-works/${workEntryId}/units/${secondUnitId}`
+    });
+    expect(unit.statusCode).toBe(200);
+    expect(unit.json().unitEntryId).toBe(secondUnitId);
+    expect(unit.json().document.content[0].type).toBe("heading");
+
+    // A section id from another Work is a 404 through this Work's path.
+    const otherWorkId = await createManualWork({ title: "Another" });
+    const other = await load(otherWorkId);
+    const crossWork = await context.server.inject({
+      method: "GET",
+      url: `/api/manual-works/${workEntryId}/units/${other.unitEntryId}`
+    });
+    expect(crossWork.statusCode).toBe(404);
+
+    // A stranger cannot read the section directly.
+    const asStranger = await loadManualWorkUnit(
+      context.db,
+      toEntryId(workEntryId),
+      toEntryId(secondUnitId),
+      "another-user"
+    );
+    expect(asStranger).toBeUndefined();
+  });
+
+  it("returns 404 when a section GET targets an unknown or imported Work", async () => {
+    const importedEntryId = await createImportedWork();
+
+    const unknown = await context.server.inject({
+      method: "GET",
+      url: "/api/manual-works/work-missing/units/unit-x"
+    });
+    const imported = await context.server.inject({
+      method: "GET",
+      url: `/api/manual-works/${importedEntryId}/units/unit-x`
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(imported.statusCode).toBe(404);
+  });
+
+  it("rejects adding a section on a stale revision with 409 and writes nothing", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+
+    const first = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: loaded.revision }
+    });
+    expect(first.statusCode).toBe(201);
+
+    const stale = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: loaded.revision }
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({ error: "revision_conflict" });
+
+    // Exactly one section was added (the winner), not two.
+    const reopened = await load(workEntryId);
+    expect((reopened.sections as unknown[]).length).toBe(2);
+  });
+
+  it("returns 404 when adding a section to an unknown or imported Work", async () => {
+    const importedEntryId = await createImportedWork();
+
+    const unknown = await context.server.inject({
+      method: "POST",
+      url: "/api/manual-works/work-missing/units",
+      payload: { revision: "2026-01-01T00:00:00.000Z" }
+    });
+    const imported = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${importedEntryId}/units`,
+      payload: { revision: "2026-01-01T00:00:00.000Z" }
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(imported.statusCode).toBe(404);
+  });
+
+  it("does not add a section to another user's manual Work", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+
+    const result = await addManualWorkSection(
+      commandDeps(),
+      toEntryId(workEntryId),
+      loaded.revision as string,
+      "another-user"
+    );
+
+    expect(result.status).toBe("not_found");
+  });
+
+  it("rejects a malformed add-section body with 400", async () => {
+    const workEntryId = await createManualWork();
+
+    const response = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { unexpected: true }
     });
 
     expect(response.statusCode).toBe(400);

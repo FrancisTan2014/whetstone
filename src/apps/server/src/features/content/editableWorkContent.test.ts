@@ -25,6 +25,7 @@ import {
   workSources
 } from "../../db/schema.js";
 import {
+  appendEditableWorkSection,
   initializeEditableWorkContent,
   reconcileEditableWorkContent
 } from "./editableWorkContent.js";
@@ -436,5 +437,63 @@ describe("reconcileEditableWorkContent transaction and input safety", () => {
 
     expect(input).toEqual(snapshot);
     expect(returned).not.toBe(input);
+  });
+});
+
+function heading(level: number, text: string): DocumentNodeJSON {
+  return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
+}
+
+describe("appendEditableWorkSection", () => {
+  it("appends a reading unit at the given order index seeded from a heading-led document", async () => {
+    const { unitEntryId: firstUnit } = await seedWorkWithContent();
+
+    const appended = await db.transaction(async (tx) =>
+      appendEditableWorkSection(tx, {
+        createEntryId,
+        document: doc(heading(2, "Chapter One"), para("Body")),
+        orderIndex: 1,
+        workEntryId: WORK_ID
+      })
+    );
+
+    // A second reading unit exists, ordered after the first, with no source file.
+    const units = await db
+      .select()
+      .from(readingUnits)
+      .where(eq(readingUnits.workEntryId, WORK_ID))
+      .orderBy(readingUnits.orderIndex);
+    expect(units).toEqual([
+      { entryId: firstUnit, orderIndex: 0, sourceFile: null, title: null, workEntryId: WORK_ID },
+      {
+        entryId: appended.unitEntryId,
+        orderIndex: 1,
+        sourceFile: null,
+        title: null,
+        workEntryId: WORK_ID
+      }
+    ]);
+
+    // The section's blocks are its own id-stamped heading and paragraph, in order, under the new unit.
+    const storedBlocks = await db
+      .select({
+        id: docBlocks.id,
+        orderIndex: docBlocks.orderIndex,
+        type: docBlocks.type
+      })
+      .from(docBlocks)
+      .where(eq(docBlocks.readingUnitEntryId, appended.unitEntryId))
+      .orderBy(docBlocks.orderIndex);
+    expect(storedBlocks.map((row) => row.type)).toEqual(["heading", "paragraph"]);
+    expect(storedBlocks[0]?.id).toBe(blockId(appended.document, 0));
+    expect(storedBlocks[0]?.id).not.toBe("");
+
+    // The new unit and its blocks are linked under the work.
+    expect(await entryExists(appended.unitEntryId)).toBe(true);
+    const links = await db
+      .select()
+      .from(entryLinks)
+      .where(eq(entryLinks.fromEntryId, appended.unitEntryId));
+    expect(links.map((link) => link.type)).toEqual(["contains", "contains"]);
   });
 });

@@ -39,6 +39,21 @@ export type InitializeEditableWorkContentResult = Readonly<{
   unitEntryId: string;
 }>;
 
+// The already-authorized Work context an appended section runs under. The caller has verified ownership
+// and origin and computed the next `orderIndex`; this boundary writes one more reading unit and its
+// blocks from `document` (a manual Work's new section starts at a heading block — issue #697).
+export type AppendEditableWorkSectionContext = Readonly<{
+  createEntryId: () => string;
+  document: DocumentNodeJSON;
+  orderIndex: number;
+  workEntryId: EntryId;
+}>;
+
+export type AppendEditableWorkSectionResult = Readonly<{
+  document: DocumentNodeJSON;
+  unitEntryId: string;
+}>;
+
 // The already-authorized Work+unit context a reconciliation runs under. The caller has verified ownership
 // and origin and looked up the Work's single reading unit; this boundary only reconciles that unit's blocks
 // against `document`. Block ids come from the document nodes (id-stamped), so no id generator is needed.
@@ -92,13 +107,40 @@ export async function initializeEditableWorkContent(
   tx: Transaction,
   context: InitializeEditableWorkContentContext
 ): Promise<InitializeEditableWorkContentResult> {
+  return writeEditableWorkSection(tx, {
+    createEntryId: context.createEntryId,
+    document: createTextDocument(""),
+    orderIndex: 0,
+    workEntryId: context.workEntryId
+  });
+}
+
+// Append one more reading unit to an editable Work at `orderIndex`, seeded from `document` — the manual
+// Work's "Add section" (#697) hands in a heading-led document so the new section is a real, navigable
+// outline node from the first save. Same graph as an initialization (an `entries` row, a `reading_units`
+// row, a `contains` link, one `doc_blocks` row per top-level node), written in the caller's transaction.
+// The caller owns ownership/origin/concurrency; this boundary only writes the section's content.
+export async function appendEditableWorkSection(
+  tx: Transaction,
+  context: AppendEditableWorkSectionContext
+): Promise<AppendEditableWorkSectionResult> {
+  return writeEditableWorkSection(tx, context);
+}
+
+// Insert one reading unit (its Entry, `reading_units` row, and `contains` link) plus its id-stamped
+// blocks, at `orderIndex`. Shared by the initial section and every appended section so their graph is
+// written identically.
+async function writeEditableWorkSection(
+  tx: Transaction,
+  context: AppendEditableWorkSectionContext
+): Promise<AppendEditableWorkSectionResult> {
   const unitEntryId = context.createEntryId();
-  const { blocks, document } = documentToBlocks(createTextDocument(""));
+  const { blocks, document } = documentToBlocks(context.document);
 
   await tx.insert(entries).values({ id: unitEntryId, type: "reading_unit" });
   await tx.insert(readingUnits).values({
     entryId: unitEntryId,
-    orderIndex: 0,
+    orderIndex: context.orderIndex,
     sourceFile: null,
     title: null,
     workEntryId: context.workEntryId

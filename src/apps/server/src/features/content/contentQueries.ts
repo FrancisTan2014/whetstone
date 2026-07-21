@@ -1,4 +1,9 @@
 import { buildHeadingOutline, toEntryId, type EntryId } from "@whetstone/domain";
+import {
+  documentBlockHeading,
+  type DocumentBlockHeading,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 import type {
   BlockDto,
   DocBlockDto,
@@ -198,6 +203,34 @@ function mdastHeadingDepth(mdast: unknown): number | undefined {
   return typeof depth === "number" ? depth : undefined;
 }
 
+// The heading each authored unit starts at, derived from its FIRST persisted PM block (order index 0) —
+// the manual-Work Reader-parity path (#697). A manual Work stores its content only in `doc_blocks` with a
+// null `reading_units.title`, so — unlike a Markdown unit whose outline heading comes from its first
+// mdast heading — its outline heading level AND title must come from that first block. Recomputed on
+// every read from the same blocks the editor persists; never a stored, second TOC copy. Scoped by the
+// caller to authored Works (no `work_sources`), so an imported chapter — whose hierarchy is its authored
+// nav and whose leading `doc_blocks` are `unknown` PM nodes — is untouched. A unit whose first block is
+// not a heading (a pre-heading lead section) contributes no entry, and the outline projection maps that
+// absence to the root "Start" label.
+async function loadDocHeadingByUnit(
+  db: DbClient,
+  workEntryId: EntryId
+): Promise<Map<string, DocumentBlockHeading>> {
+  const rows = await db
+    .select({ node: docBlocks.nodeJson, readingUnitEntryId: docBlocks.readingUnitEntryId })
+    .from(docBlocks)
+    .where(and(eq(docBlocks.workEntryId, workEntryId), eq(docBlocks.orderIndex, 0)));
+
+  const byUnit = new Map<string, DocumentBlockHeading>();
+  for (const row of rows) {
+    const heading = documentBlockHeading(row.node as DocumentNodeJSON);
+    if (heading !== undefined) {
+      byUnit.set(row.readingUnitEntryId, heading);
+    }
+  }
+  return byUnit;
+}
+
 function toReadingUnitDto(
   unit: ReadingUnitRow,
   unitBlocks: ReadonlyArray<BlockDto>,
@@ -322,6 +355,18 @@ export async function loadWorkStructure(
     }
   }
 
+  // Reader parity for manual Works (#697): a manual Work's content lives only in `doc_blocks` with a null
+  // `reading_units.title`, so its outline heading level and title come from each section's first block —
+  // the same source the editor's live Outline derives from — instead of the mdast/nav path above. Scoped
+  // to authored Works (like `docByUnit`), so imported hierarchy is unchanged.
+  const docHeadingByUnit = authored
+    ? await loadDocHeadingByUnit(db, workEntryId)
+    : new Map<string, DocumentBlockHeading>();
+  const resolveHeadingLevel = (entryId: string): number | undefined =>
+    headingLevelByUnit.get(entryId) ?? docHeadingByUnit.get(entryId)?.level;
+  const resolveTitle = (entryId: string, title: string | null): string | null =>
+    title ?? docHeadingByUnit.get(entryId)?.title ?? null;
+
   // A unit is readable when it has content in the substrate that owns it. Mdast is authoritative for
   // count and substantiveness when present (EPUB/Markdown behavior unchanged). With no mdast, only an
   // authored unit surfaces (via `docByUnit`); an imported chapter with no mdast — an unknown-only or
@@ -333,10 +378,10 @@ export async function loadWorkStructure(
           blockCount: row.mdastCount,
           entryId: row.entryId,
           hasSubstantiveText: row.hasSubstantiveMdast,
-          headingLevel: headingLevelByUnit.get(row.entryId),
+          headingLevel: resolveHeadingLevel(row.entryId),
           orderIndex: row.orderIndex,
           sourceFile: row.sourceFile,
-          title: row.title
+          title: resolveTitle(row.entryId, row.title)
         }
       ];
     }
@@ -349,10 +394,10 @@ export async function loadWorkStructure(
         blockCount: doc.docCount,
         entryId: row.entryId,
         hasSubstantiveText: doc.hasSubstantiveDoc,
-        headingLevel: headingLevelByUnit.get(row.entryId),
+        headingLevel: resolveHeadingLevel(row.entryId),
         orderIndex: row.orderIndex,
         sourceFile: row.sourceFile,
-        title: row.title
+        title: resolveTitle(row.entryId, row.title)
       }
     ];
   });

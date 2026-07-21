@@ -1,4 +1,5 @@
 import {
+  addManualWorkSectionRequestSchema,
   createAuthorRequestSchema,
   createWorkRequestSchema,
   updateManualWorkContentRequestSchema
@@ -13,8 +14,11 @@ import {
   type DeleteWorkDependencies,
   type LibraryDependencies
 } from "./libraryCommands.js";
-import { updateManualWorkContent } from "./manualWorkContentCommands.js";
-import { loadManualWorkForEditing } from "./manualWorkContentQueries.js";
+import {
+  addManualWorkSection,
+  updateManualWorkContent
+} from "./manualWorkContentCommands.js";
+import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
 import { listWorks, searchAuthors } from "./libraryQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
@@ -25,6 +29,8 @@ const notFound = { error: "not_found" } as const;
 export type LibraryRouteDependencies = LibraryDependencies & DeleteWorkDependencies;
 
 type WorkParams = Readonly<{ workEntryId: string }>;
+
+type WorkUnitParams = Readonly<{ unitEntryId: string; workEntryId: string }>;
 
 // The author search field passes its raw query through; the server owns cleaning and matching.
 type AuthorSearchQuery = Readonly<{ query?: string }>;
@@ -99,7 +105,8 @@ export function registerLibraryRoutes(
     return reply.code(204).send();
   });
 
-  // Load one manual Work with its reassembled canonical document, for the Library editor to open (#720).
+  // Load one manual Work opened at its first section, with that section's reassembled canonical document
+  // and the ordered section list the Outline is derived from, for the Library editor to open (#697).
   // Owner-scoped and origin-scoped: an unknown id, another user's Work, an imported Work, or an authored
   // Work is 404.
   server.get<{ Params: WorkParams }>("/api/manual-works/:workEntryId", async (request, reply) => {
@@ -116,12 +123,73 @@ export function registerLibraryRoutes(
     return reply.code(200).send(work);
   });
 
-  // Save a manual Work's canonical document with revision protection (#720): id-preserving replace scoped
-  // to the owner and `origin = 'manual'` (404 otherwise). A malformed/unsafe document is rejected at the
-  // boundary (400); a stale revision — another session saved in between — is a 409 and writes nothing, so
-  // the editor keeps its local document and can reload.
-  server.put<{ Params: WorkParams }>(
-    "/api/manual-works/:workEntryId/content",
+  // Load one section's reassembled canonical document, for the editor to open a section the learner
+  // navigated to in the Outline (#697). Owner/origin-scoped like the parent Work, and the section must
+  // belong to that Work — otherwise 404.
+  server.get<{ Params: WorkUnitParams }>(
+    "/api/manual-works/:workEntryId/units/:unitEntryId",
+    async (request, reply) => {
+      const unit = await loadManualWorkUnit(
+        dependencies.db,
+        toEntryId(request.params.workEntryId),
+        toEntryId(request.params.unitEntryId),
+        request.server.currentUser.getCurrentUserId()
+      );
+
+      if (unit === undefined) {
+        return reply.code(404).send(notFound);
+      }
+
+      return reply.code(200).send(unit);
+    }
+  );
+
+  // Append a new section (a new reading unit seeded with a heading block) to a manual Work and return it
+  // opened at that section (#697). Owner/origin-scoped (404 otherwise); a stale revision is a 409 that
+  // writes nothing, so the editor keeps its state and can reload.
+  server.post<{ Params: WorkParams }>(
+    "/api/manual-works/:workEntryId/units",
+    async (request, reply) => {
+      const parsed = addManualWorkSectionRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const result = await addManualWorkSection(
+        dependencies,
+        toEntryId(request.params.workEntryId),
+        parsed.data.revision,
+        request.server.currentUser.getCurrentUserId()
+      );
+
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+
+      if (result.status === "conflict") {
+        return reply.code(409).send({ error: "revision_conflict" });
+      }
+
+      request.log.info(
+        {
+          route: "POST /api/manual-works/:workEntryId/units",
+          unitEntryId: result.work.unitEntryId,
+          workEntryId: result.work.entryId
+        },
+        "manual_work_section_added"
+      );
+
+      return reply.code(201).send(result.work);
+    }
+  );
+
+  // Save one section's canonical document with work-level revision protection (#697): id-preserving
+  // replace scoped to the owner and `origin = 'manual'` (404 otherwise), and the section must belong to
+  // the Work (404). A malformed/unsafe document is rejected at the boundary (400); a stale revision —
+  // another session saved in between — is a 409 and writes nothing, so the editor keeps its local
+  // document and can reload.
+  server.put<{ Params: WorkUnitParams }>(
+    "/api/manual-works/:workEntryId/units/:unitEntryId/content",
     async (request, reply) => {
       const parsed = updateManualWorkContentRequestSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -131,6 +199,7 @@ export function registerLibraryRoutes(
       const result = await updateManualWorkContent(
         dependencies,
         toEntryId(request.params.workEntryId),
+        toEntryId(request.params.unitEntryId),
         parsed.data.document,
         parsed.data.revision,
         request.server.currentUser.getCurrentUserId()
@@ -145,7 +214,11 @@ export function registerLibraryRoutes(
       }
 
       request.log.info(
-        { route: "PUT /api/manual-works/:workEntryId/content", workEntryId: result.work.entryId },
+        {
+          route: "PUT /api/manual-works/:workEntryId/units/:unitEntryId/content",
+          unitEntryId: result.work.unitEntryId,
+          workEntryId: result.work.entryId
+        },
         "manual_work_saved"
       );
 
