@@ -973,18 +973,29 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   no longer paste Markdown here (#720 retired the legacy manual-Markdown ingestion; the server rejects
   `POST /api/works/:id/content` with `kind:"manual"` as `manual_markdown_unsupported`) — this panel is
   inspection-only for them and their content is authored in the dedicated manual editor below.
-  `ManualWorkEditorPage.tsx` (#720) is the owner-only manual-Work editor at `/library/works/:id/edit`,
-  reached from the Library shelf's **Edit content** action on a manual Work (`WorkOverflowMenu` routes
-  manual origins there; imported → Manage content, authored → Writing). Manual creation writes one
-  canonical empty ProseMirror document (#696's initializer), so the editor opens immediately editable; it
-  loads the exact `doc_blocks` (`manualWorkApi.fetchManualWork`), edits them in the shared
-  `RichContentEditor` with a **persistent** `shared/editor/EditorToolbar` (block-type select + lists,
-  quote, code block, marks, undo/redo via `blockCommands.runBlockCommandById`), and saves explicitly with
-  revision-conflict protection (`saveManualWorkContent` → `PUT /api/manual-works/:id/content`; a stale
-  revision returns 409 and the page surfaces a reload-and-retry). Reader/search/notes read the same blocks
-  — no projection or dual write. Server: `library/manualWorkContentQueries.loadManualWorkDocument` +
-  `manualWorkContentCommands.updateManualWorkContent` own the owner/origin guard and revision check;
-  `manualWorkContracts.ts` (in `@whetstone/contracts`) holds the `ManualWorkDto` + update request.
+  `ManualWorkEditorPage.tsx` (#720, sections #697) is the owner-only manual-Work editor at
+  `/library/works/:id/edit`, reached from the Library shelf's **Edit content** action on a manual Work
+  (`WorkOverflowMenu` routes manual origins there; imported → Manage content, authored → Writing). A
+  manual Work is now **N ordered ReadingUnits (sections)**, each section's first block a heading; the page
+  is a responsive workspace whose **live Outline** (`WorkOutline.tsx` `deriveWorkOutline` over
+  `domain/headingOutline.buildHeadingOutline`) is derived only from the persisted section headings — no
+  stored TOC tree. The Outline is a sticky 15rem sidebar ≥48rem and a 44px-toggle drawer <48rem
+  (Escape/backdrop dismiss + focus restore). It loads the section list (`manualWorkApi.fetchManualWork`),
+  edits one section at a time in the shared `RichContentEditor` (`fetchManualWorkUnit`) with a
+  **persistent** `shared/editor/EditorToolbar` (block-type select incl. Heading 1/2/3, lists, quote, code
+  block, marks, undo/redo), navigates sections with save-before-switch and stale-revision conflict
+  retention (`saveManualWorkContent(workEntryId, unitEntryId, document, revision)` → `PUT
+  /api/manual-works/:id/units/:unitId/content`), and **Add section** appends a heading-seeded section
+  (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is
+  work-level (`personal_entries.updatedAt`), bumped atomically by both save and add. Reader/search/notes
+  read the same blocks — no projection or dual write — and `content/contentQueries.loadWorkStructure`
+  derives each unit's heading level + title from its first `doc_block` so the Reader hierarchy matches the
+  editor Outline. Server: `library/manualWorkContentQueries` (`loadManualWorkForEditing` +
+  `loadManualWorkUnit`, deriving section outline from first blocks) + `manualWorkContentCommands`
+  (`updateManualWorkContent` per unit + `addManualWorkSection` via
+  `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard and revision check;
+  `manualWorkContracts.ts` (in `@whetstone/contracts`) holds the `ManualWorkDto` (with `sections`), the
+  per-unit update request, and the section/unit DTOs.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
   `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
   the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the

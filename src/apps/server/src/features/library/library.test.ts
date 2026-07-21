@@ -35,6 +35,7 @@ import {
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
 import { updateManualWorkContent, addManualWorkSection } from "./manualWorkContentCommands.js";
 import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
+import { loadWorkStructure } from "../content/contentQueries.js";
 import { insertCurrentNotePromptInTx, insertNoteInTx } from "../notes/noteCommands.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
@@ -1445,5 +1446,77 @@ describe("manual work editor (#720, sections #697)", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("derives the same heading hierarchy for the Reader as the live Outline (#697 parity)", async () => {
+    const workEntryId = await createManualWork();
+    const initial = await load(workEntryId);
+
+    // Section A stays headless — a lead paragraph with no heading.
+    const savedA = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${initial.unitEntryId}/content`,
+      payload: {
+        document: { content: [paragraph("A lead paragraph before any heading.")], type: "doc" },
+        revision: initial.revision
+      }
+    });
+    expect(savedA.statusCode).toBe(200);
+
+    // Section B: a level-1 "Part One" heading.
+    const addedB = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: savedA.json().revision }
+    });
+    const unitB = addedB.json().unitEntryId as string;
+    const savedB = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${unitB}/content`,
+      payload: {
+        document: { content: [heading(1, "Part One"), paragraph("Body.")], type: "doc" },
+        revision: addedB.json().revision
+      }
+    });
+    expect(savedB.statusCode).toBe(200);
+
+    // Section C: a level-2 "Chapter One" heading that nests under Part One.
+    const addedC = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: savedB.json().revision }
+    });
+    const unitC = addedC.json().unitEntryId as string;
+    const savedC = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${unitC}/content`,
+      payload: {
+        document: { content: [heading(2, "Chapter One"), paragraph("Body.")], type: "doc" },
+        revision: addedC.json().revision
+      }
+    });
+    expect(savedC.statusCode).toBe(200);
+
+    const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+    const units = structure.readingUnits;
+    expect(units).toHaveLength(3);
+
+    // The Reader structure derives each unit's heading level and title from its first persisted
+    // doc_block — the same source the editor's live Outline reads — leaving the headless lead bare.
+    const byId = new Map(units.map((unit) => [unit.entryId as string, unit]));
+    const lead = byId.get(initial.unitEntryId as string);
+    expect(lead?.orderIndex).toBe(0);
+    expect(lead?.headingLevel).toBeUndefined();
+    expect(lead?.title).toBeUndefined();
+    expect(byId.get(unitB)).toMatchObject({ headingLevel: 1, title: "Part One" });
+    expect(byId.get(unitC)).toMatchObject({ headingLevel: 2, title: "Chapter One" });
+
+    // The derived table of contents nests Chapter One under Part One, the headless lead as "Start".
+    const toc = structure.tableOfContents ?? [];
+    expect(toc.map((entry) => ({ depth: entry.depth, label: entry.label }))).toEqual([
+      { depth: 0, label: "Start" },
+      { depth: 0, label: "Part One" },
+      { depth: 1, label: "Chapter One" }
+    ]);
   });
 });
