@@ -791,6 +791,19 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     expect(response.json()).toEqual({ error: "invalid_question" });
   });
 
+  it("rejects a malformed body with 400 invalid_request", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "body", at(-1));
+    const promptId = await seedPromptOn({ noteId, cueText: "cue", createdAt: at(-1) });
+    const response = await context.server.inject({
+      method: "PATCH",
+      url: `/api/notes/review/prompts/${promptId}/question`,
+      payload: { questionDoc: "not a document" }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
   it("404s when the prompt is not the caller's", async () => {
     context.setNow(at(0));
     const noteId = await seedNote(otherUser, "theirs", at(-1));

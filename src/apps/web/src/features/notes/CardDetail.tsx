@@ -165,12 +165,16 @@ export function CardDetail({
   ): Promise<void> {
     setBusy(true);
     setFailure(null);
-    let refreshed: NotePromptSettingsDto | null = null;
+    let refreshed: NotePromptSettingsDto;
     try {
       if (target !== null) {
         refreshed = await setNoteGradingTarget(prompt.promptId, { mode, target });
-      }
-      if (questionChanged) {
+        if (questionChanged) {
+          refreshed = await editNotePromptQuestion(prompt.promptId, questionDoc);
+        }
+      } else {
+        // persist runs only when the target or the Question changed; with no target change the Question is
+        // the change, so its refreshed row is the one handed up.
         refreshed = await editNotePromptQuestion(prompt.promptId, questionDoc);
       }
     } catch (error) {
@@ -187,9 +191,7 @@ export function CardDetail({
     setBusy(false);
     setPendingTarget(null);
     setEditing(false);
-    if (refreshed !== null) {
-      onRefreshed(refreshed);
-    }
+    onRefreshed(refreshed);
   }
 
   // Validate and resolve a Save from the rich editor. A grading-target change on a card that already has a

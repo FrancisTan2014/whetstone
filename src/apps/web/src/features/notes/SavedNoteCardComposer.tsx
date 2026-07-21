@@ -70,15 +70,6 @@ export function SavedNoteCardComposer({
 
   const workspaceBlank = isDocumentBlank(noteBodyDoc);
 
-  function requestCancel(): void {
-    // A create in flight owns the composer: dismissing mid-request could strand a card the retry-safe id
-    // would otherwise recover, so Cancel is ignored until it settles.
-    if (pending) {
-      return;
-    }
-    onCancel();
-  }
-
   async function create(): Promise<void> {
     const questionBlank = isDocumentBlank(questionDoc);
     const successCheckBlank = successCheck.open ? isDocumentBlank(successCheck.doc) : false;
@@ -122,7 +113,9 @@ export function SavedNoteCardComposer({
             <Button onClick={() => void create()} pending={pending} type="button">
               Add card
             </Button>
-            <Button disabled={pending} onClick={requestCancel} type="button" variant="secondary">
+            {/* disabled while a create is in flight so the composer can't be dismissed mid-request and
+                strand a card the retry-safe id would recover. */}
+            <Button disabled={pending} onClick={onCancel} type="button" variant="secondary">
               Cancel
             </Button>
           </>

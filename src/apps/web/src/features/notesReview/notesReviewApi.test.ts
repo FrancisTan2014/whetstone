@@ -442,6 +442,21 @@ describe("setNoteGradingTarget (#686)", () => {
     });
   });
 
+  it("treats an unparseable error body as a network failure", async () => {
+    const rejectingJson = vi.fn(async () => ({
+      json: async () => {
+        throw new Error("not json");
+      },
+      ok: false,
+      status: 400
+    }));
+    vi.stubGlobal("fetch", rejectingJson);
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
+    });
+  });
+
   it("throws network when fetch itself rejects", async () => {
     const fetchMock = vi.fn(async () => {
       throw new Error("offline");

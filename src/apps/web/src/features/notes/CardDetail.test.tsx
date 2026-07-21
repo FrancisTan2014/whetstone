@@ -269,6 +269,54 @@ describe("CardDetail", () => {
     expect(mockedSetTarget).not.toHaveBeenCalled();
   });
 
+  it("edits only the Question on an expected-response card, leaving the unchanged success check alone", async () => {
+    mockedEdit.mockResolvedValue(prompt({ questionText: "What does durability guarantee?" }));
+    const onRefreshed = vi.fn<CardDetailProps["onRefreshed"]>();
+    renderDetail({
+      onRefreshed,
+      prompt: prompt({
+        reveal: {
+          kind: "expected_response",
+          successCheckDoc: createTextDocument("Must mention durability."),
+          successCheckText: "Must mention durability."
+        }
+      })
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit question" }));
+    const input = screen.getByLabelText("Question");
+    await userEvent.clear(input);
+    await userEvent.type(input, "What does durability guarantee?");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // The success check is untouched, so the grading target is compared structurally, found equal, and
+    // left alone: no Keep/Restart prompt and no target write, only the Question is sent.
+    await waitFor(() => expect(mockedEdit).toHaveBeenCalled());
+    expect(screen.queryByText(/You changed how this card is graded/)).toBeNull();
+    expect(mockedSetTarget).not.toHaveBeenCalled();
+    expect(onRefreshed).toHaveBeenCalled();
+  });
+
+  it("blocks Save on a legacy card when the Question is cleared, showing the reminder", async () => {
+    renderDetail({
+      prompt: prompt({
+        reveal: {
+          answerDoc: createTextDocument("a write-ahead log"),
+          answerText: "a write-ahead log",
+          kind: "legacy_custom"
+        }
+      })
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit question" }));
+    await userEvent.clear(screen.getByLabelText("Question"));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // The legacy editor has no grading-target controls, so its own blank-question guard must fire.
+    expect(screen.getByText("Write what should bring it to mind.")).toBeDefined();
+    expect(mockedEdit).not.toHaveBeenCalled();
+  });
+
   it("requires the Keep/Restart decision before writing a grading-target change on a scheduled card", async () => {
     mockedSetTarget.mockResolvedValue(prompt());
     const onRefreshed = vi.fn<CardDetailProps["onRefreshed"]>();
