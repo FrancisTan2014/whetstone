@@ -27,12 +27,23 @@ export type {
   UpdateAuthoredWorkContentRequest
 } from "./authoredWorkContracts.js";
 export {
+  addManualWorkSectionRequestSchema,
   manualWorkDtoSchema,
+  manualWorkSectionDtoSchema,
+  manualWorkUnitDtoSchema,
+  parseAddManualWorkSectionRequest,
   parseManualWorkDto,
+  parseManualWorkUnitDto,
   parseUpdateManualWorkContentRequest,
   updateManualWorkContentRequestSchema
 } from "./manualWorkContracts.js";
-export type { ManualWorkDto, UpdateManualWorkContentRequest } from "./manualWorkContracts.js";
+export type {
+  AddManualWorkSectionRequest,
+  ManualWorkDto,
+  ManualWorkSectionDto,
+  ManualWorkUnitDto,
+  UpdateManualWorkContentRequest
+} from "./manualWorkContracts.js";
 export {
   enrollRecitationRequestSchema,
   parseEnrollRecitationRequest,

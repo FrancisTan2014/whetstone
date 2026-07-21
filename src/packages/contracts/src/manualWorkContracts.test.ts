@@ -1,7 +1,12 @@
 import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
-import { parseManualWorkDto, parseUpdateManualWorkContentRequest } from "./manualWorkContracts.js";
+import {
+  parseAddManualWorkSectionRequest,
+  parseManualWorkDto,
+  parseManualWorkUnitDto,
+  parseUpdateManualWorkContentRequest
+} from "./manualWorkContracts.js";
 
 const document = createTextDocument("A curated passage.");
 
@@ -11,6 +16,10 @@ const dto = {
   entryId: "work-1",
   language: "en" as const,
   revision: "2026-07-01T11:00:00.000Z",
+  sections: [
+    { orderIndex: 0, unitEntryId: "unit-1" },
+    { headingLevel: 1, orderIndex: 1, title: "Chapter One", unitEntryId: "unit-2" }
+  ],
   title: "My source",
   unitEntryId: "unit-1",
   updatedAt: "2026-07-01T11:00:00.000Z",
@@ -41,7 +50,7 @@ describe("parseUpdateManualWorkContentRequest", () => {
 });
 
 describe("parseManualWorkDto", () => {
-  it("round-trips a full manual work with its document and revision", () => {
+  it("round-trips a full manual work with its document, revision, and sections", () => {
     expect(parseManualWorkDto(dto)).toEqual(dto);
   });
 
@@ -52,5 +61,43 @@ describe("parseManualWorkDto", () => {
   it("rejects a missing revision", () => {
     const { revision: _revision, ...withoutRevision } = dto;
     expect(() => parseManualWorkDto(withoutRevision)).toThrow();
+  });
+
+  it("rejects a missing sections list", () => {
+    const { sections: _sections, ...withoutSections } = dto;
+    expect(() => parseManualWorkDto(withoutSections)).toThrow();
+  });
+
+  it("rejects an unknown field inside a section", () => {
+    expect(() =>
+      parseManualWorkDto({ ...dto, sections: [{ extra: true, orderIndex: 0, unitEntryId: "u" }] })
+    ).toThrow();
+  });
+});
+
+describe("parseManualWorkUnitDto", () => {
+  it("round-trips one section's document", () => {
+    const unit = { document, unitEntryId: "unit-2" };
+    expect(parseManualWorkUnitDto(unit)).toEqual(unit);
+  });
+
+  it("rejects a malformed document", () => {
+    expect(() =>
+      parseManualWorkUnitDto({ document: { type: "not-a-doc" }, unitEntryId: "u" })
+    ).toThrow();
+  });
+});
+
+describe("parseAddManualWorkSectionRequest", () => {
+  it("accepts the loaded revision token", () => {
+    expect(parseAddManualWorkSectionRequest({ revision: "r" })).toEqual({ revision: "r" });
+  });
+
+  it("rejects a request missing its revision", () => {
+    expect(() => parseAddManualWorkSectionRequest({})).toThrow();
+  });
+
+  it("rejects an unknown extra field", () => {
+    expect(() => parseAddManualWorkSectionRequest({ extra: true, revision: "r" })).toThrow();
   });
 });

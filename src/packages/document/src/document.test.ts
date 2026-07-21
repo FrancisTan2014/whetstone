@@ -4,6 +4,7 @@ import {
   assignNodeIds,
   type DocumentNodeJSON,
   createTextDocument,
+  documentBlockHeading,
   documentMarkNames,
   documentNodeNames,
   documentReadableText,
@@ -515,6 +516,50 @@ describe("validation failures", () => {
     const fragment = { content: [{ text: "hi", type: "text" }], type: "paragraph" };
     expect(isValidDocument(fragment)).toBe(false);
     expect(() => parseDocument(fragment)).toThrow(DocumentValidationError);
+  });
+});
+
+describe("documentBlockHeading", () => {
+  it("reads a heading block's level and text", () => {
+    const node: DocumentNodeJSON = {
+      attrs: { level: 2 },
+      content: [{ text: "Chapter One", type: "text" }],
+      type: "heading"
+    };
+    expect(documentBlockHeading(node)).toEqual({ level: 2, title: "Chapter One" });
+  });
+
+  it("concatenates a heading's inline runs into its title", () => {
+    const node: DocumentNodeJSON = {
+      attrs: { level: 1 },
+      content: [
+        { marks: [{ type: "bold" }], text: "Bold", type: "text" },
+        { text: " tail", type: "text" }
+      ],
+      type: "heading"
+    };
+    expect(documentBlockHeading(node)).toEqual({ level: 1, title: "Bold tail" });
+  });
+
+  it("omits the title for an empty heading so the outline can fall back to its untitled label", () => {
+    expect(documentBlockHeading({ attrs: { level: 3 }, type: "heading" })).toEqual({ level: 3 });
+  });
+
+  it("defaults a heading with a missing or non-numeric level to level 1", () => {
+    expect(documentBlockHeading({ type: "heading" })).toEqual({ level: 1 });
+    expect(
+      documentBlockHeading({
+        attrs: { level: "2" },
+        content: [{ text: "x", type: "text" }],
+        type: "heading"
+      })
+    ).toEqual({ level: 1, title: "x" });
+  });
+
+  it("returns undefined for a non-heading block", () => {
+    expect(
+      documentBlockHeading({ content: [{ text: "body", type: "text" }], type: "paragraph" })
+    ).toBeUndefined();
   });
 });
 
