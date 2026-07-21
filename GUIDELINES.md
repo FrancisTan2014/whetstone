@@ -582,8 +582,10 @@ A **foundation PR** is the one allowed exception to vertical-only: it may delive
 
 ### Landability gate
 
-The unit of delivery is one fresh developer run ending in one reviewable PR that passes the full gate
-at 100% coverage. One issue owns one primary user journey or one stable foundation boundary. A
+The unit of delivery is one fresh developer process ending in one reviewable PR that passes the
+changed-scope handoff gate with 100% coverage over changed production files. Exact-head CI is the
+sole exhaustive gate and must pass before merge. One issue owns one primary user journey or one stable
+foundation boundary. A
 vertical journey may legitimately touch schema, contracts, server, and UI; it must still be split
 when it also owns an independently shippable migration, legacy retirement, operational lifecycle, or
 second end-to-end journey.
@@ -597,9 +599,25 @@ inseparable invariant, why an earlier cut would be unusable or unsafe, and the e
 boundary. Boilerplate does not satisfy the gate.
 
 If implementation crosses a warning unexpectedly, the developer stops after a coherent commit and
-returns the issue to design before opening a PR. Architecture or warned changes receive one
-fresh-context, read-only adversarial preflight review after targeted tests and before the full gate.
-This is a bounded shift-left check, not a second iterative review loop.
+returns the issue to design before opening a PR. The developer maps acceptance criteria to concrete
+evidence; the independent reviewer is the sole fresh-context code review and starts concurrently with
+CI. Do not duplicate that review inside the developer process.
+
+### Validation scopes and orchestration
+
+- **Changed-scope handoff:** after fetching `origin/main`, `pnpm validate:changed` runs typecheck,
+  lint, build, size, smoke, workflow tests, and Vitest's related tests with coverage restricted to
+  changed production files. Changed files remain at 100% statements, branches, functions, and lines.
+  Run the issue's named E2E spec separately.
+- **Exact-head merge authority:** CI runs the exhaustive required lanes on the PR head. A local full
+  run is optional, not duplicated on every handoff. Merge still requires all blocking checks, the
+  exact reviewed SHA, valid labels, mergeability, and a linked issue.
+- **Concurrent review:** pending checks do not block code review. A reviewer may approve the exact
+  head while CI runs; the deterministic merge step waits. Completed failed blocking checks route back
+  through `fix-ci`; pending, neutral, skipped, and explicitly non-blocking checks do not.
+- **Fresh-context supervisor:** auto launchers poll deterministically without a model and start a new
+  one-shot process only for real work. Waiting creates no model turn, workers never overlap, and no
+  model context survives into the next unit.
 
 ### Flow measurement
 

@@ -139,18 +139,18 @@ Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
 ```powershell
 .\scripts\run-design.cmd            # shape ideas into PRODUCT.md + issues (interactive)
 .\scripts\run-developer.cmd 12      # one-shot: implement issue #12 (omit the number to auto-decide: fix an open changes-requested PR, else the next ready issue — ready [Bug]s before [Task]s)
-.\scripts\run-developer-auto.cmd    # auto: foreground loop — the developer schedules itself and does one unit per tick until you stop it (Ctrl+C)
+.\scripts\run-developer-auto.cmd    # auto: deterministic supervisor — fresh one-shot developer per real unit; idle polling uses no model
 .\scripts\run-reviewer.cmd 17       # one-shot: review PR #17 (omit the number to auto-pick the oldest needs-review PR), then run the merge step
-.\scripts\run-reviewer-auto.cmd     # auto: foreground loop — the reviewer schedules itself, reviews one PR per tick + runs the merge step, until you stop it (Ctrl+C)
+.\scripts\run-reviewer-auto.cmd     # auto: deterministic supervisor — fresh one-shot reviewer per PR; idle polling uses no model
 .\scripts\run-tester.cmd            # one-shot: explore the booted app on main beyond the E2E smoke and file high-signal, de-duplicated [Bug]s (or nothing)
 .\scripts\run-tester-auto.cmd       # auto: foreground loop — the Tester (QA) schedules itself, explores one session per tick + files bugs, until you stop it (Ctrl+C)
 ```
 
-The developer and reviewer each run two ways: a **one-shot** run that handles a single unit/PR, or an
-`*-auto.cmd` **foreground** loop where the role schedules itself (Copilot's scheduled-task feature) and
-does one unit per tick — the developer fixes a sent-back PR or implements the next ready issue; the
-reviewer reviews the next `needs-review` PR and runs the deterministic merge step — until you stop it
-(Ctrl+C). The design role you trigger yourself.
+The developer and reviewer each run two ways: a **one-shot** run that handles one unit/PR, or an
+`*-auto.cmd` deterministic **foreground supervisor**. The supervisor polls GitHub without a model,
+blocks while a one-shot worker runs, and launches every implementation, fix, or review in a fresh
+Copilot process. No timer tick enters an active worker's context; Ctrl+C stops the supervisor. The
+design role you trigger yourself.
 
 The **Tester (QA)** is the exploratory discovery layer above the deterministic E2E gate
 ([GUIDELINES.md](./GUIDELINES.md) "Functional verification"). It runs **independently** of the

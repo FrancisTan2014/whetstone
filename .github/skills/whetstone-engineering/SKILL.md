@@ -68,19 +68,20 @@ the issue needs it and the PR explains why.
 
 ## Validate before marking work ready
 
-Run the full gate, which mirrors CI (`.github/workflows/ci.yml`):
+Before opening or updating a PR, fetch `origin/main` and run the changed-scope handoff gate:
 
 ```
-pnpm validate   # typecheck, lint, 100%-coverage tests, build, size budget, smoke, and E2E
+pnpm validate:changed   # typecheck, lint, changed-source 100% coverage, build, size, smoke
 ```
 
-On Windows workers, prefer the bundled `validate.ps1` in this skill directory: it runs `pnpm validate`
-encoding-safely, writes the full log under `.agent-logs/`, and prints PASS/FAIL with the tail.
-Never lower coverage thresholds or skip steps to make validation pass.
+Run the issue's named E2E spec separately. On Windows workers, use `validate.ps1 -Changed`; it writes
+the full log under `.agent-logs/`. Exact-head CI is the sole exhaustive gate and must pass before
+merge. `pnpm validate` remains available for an optional full local run. Never lower coverage
+thresholds or skip evidence to make a handoff pass.
 
-Before the full gate, architecture or landability-warned diffs receive one fresh-context read-only
-code-review preflight after targeted tests. A warning is more than 15 production files or 1,500
-non-generated changed lines unless the issue carries a substantive `## Landability` rationale.
+Do the landability and acceptance-to-evidence self-check yourself. Do not launch a duplicate
+fresh-context preflight: the independent reviewer is the sole code review and runs concurrently with
+CI.
 
 ## Pull request conventions
 

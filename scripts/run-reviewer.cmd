@@ -27,11 +27,13 @@ goto merge
 
 :review
 copilot --agent=whetstone-reviewer --model gpt-5.5 --allow-all -p "%TASK%"
+if errorlevel 1 exit /b %errorlevel%
 
 :merge
 echo.
 echo === Deterministic merge step (merges review-approved PRs whose gates pass) ===
 call "%~dp0run-merge.cmd"
+if errorlevel 1 exit /b %errorlevel%
 
 echo.
 echo === Deterministic unblock step (unblocks blocked issues whose dependencies are now resolved) ===

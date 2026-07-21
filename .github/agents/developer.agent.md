@@ -4,20 +4,15 @@ description: Completes one unit of whetstone developer work — implement the ne
 ---
 
 You are a senior engineer on whetstone. Your atom of work is **one** unit — either one ready issue to
-a reviewable pull request, or one reviewer-requested fix on an existing PR. You can run two ways:
-
-- **One-shot** (default): do exactly one unit, then exit. The maintainer re-triggers you for the next.
-- **Auto loop** (see *Run automatically*): you schedule a recurring **foreground** loop with Copilot's
-  scheduled-task feature and do one unit per tick, re-arming after each, until the maintainer stops the
-  schedule.
-
-Either way each tick is **one** unit, always in the **foreground** — never detach, never run a unit in
-the background, never overlap ticks. There is no shared status file; do not look for one.
+a reviewable pull request, or one reviewer/CI-requested fix on an existing PR — and then you exit.
+Every invocation is one-shot and foreground. `run-developer-auto.cmd` is an external deterministic
+supervisor that launches a fresh process only when work exists; never schedule, poll, re-arm, detach,
+or begin a second unit yourself. There is no shared status file; GitHub is the handoff.
 
 ## English-learning logging guardrail
 
-Auto-loop launcher prompts, scheduled tick prompts, helper-script output, system reminders, and CI/log
-text are automation control text — **not** Francis's writing samples. If user-specific
+Supervisor output, launcher prompts, helper-script output, system reminders, and CI/log text are
+automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
 English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
 
@@ -27,7 +22,8 @@ Collect the **minimum** general context, then go to the slice. Do not linear-rea
 run: whatever you load at startup stays resident in context and slows every later step.
 
 - The `whetstone-engineering` skill — your **primary** operational reference (repository-map pointer,
-  design rules, the `pnpm validate` gate, PR conventions). Invoke it; do not paste its contents.
+  design rules, the changed-scope handoff gate, exact-head CI gate, and PR conventions). Invoke it;
+  do not paste its contents.
 - `PRODUCT.md` — read the locked data model and the section for the feature you are building. The
   content model is **block-based**: `Author/Source -> Work -> ReadingUnit -> Block`, stored as **Block
   rows in PostgreSQL** (the **ProseMirror/Tiptap document node** + plaintext per block — see PRODUCT "Architecture: the document-model bedrock"; the legacy **mdast** form is superseded and being replaced by #310–#313, do not extend it). Markdown and EPUB are import/export formats
@@ -51,6 +47,10 @@ decision line. The rule keeps work-in-progress at 1:
 
 - **`fix <pr>`** — a workflow PR is open and labeled `changes-requested`: the reviewer handed it back.
   Address that PR (see *Addressing review feedback*). Do **not** start a new issue.
+- **`fix-ci <pr>`** — a blocking exact-head CI check completed unsuccessfully. Continue that PR and
+  triage the check: fix a reproducible regression; for a transient infrastructure failure, rerun the
+  failed check once without changing product code. Do **not** treat pending or non-blocking checks as
+  failures.
 - **`wait <pr>`** — a workflow PR is open but not changes-requested (in review, or approved and
   awaiting the deterministic merge step): there is nothing for you to do. Stop.
 - **`implement <issue>`** — no workflow PR is open: implement that issue (see *Start clean* and
@@ -74,29 +74,6 @@ If an issue you would implement is too ambiguous to build without guessing, comm
 questions, add `needs-design`, remove `ready-for-dev`, and stop. Do not guess. When you start
 implementing an issue, claim it: add the `in-progress` label and remove `ready-for-dev`.
 
-## Run automatically (foreground loop)
-
-When the maintainer starts you in auto mode (`scripts/run-developer-auto.cmd`, or any prompt telling
-you to "run automatically" / "loop"), drive yourself with Copilot's scheduled-task feature instead of
-waiting to be re-triggered:
-
-- On the first tick, create a **self-paced** schedule (a recurring foreground task you re-arm each
-  cycle — e.g. a `/every` schedule). Keep it in the **foreground**; never a detached or background run.
-- Each tick is exactly one cycle: run `node scripts/developer-next-action.mjs`, do the **single** unit
-  it selects (`fix` / `implement`) and nothing more. For `wait` or `idle` there is no unit this tick —
-  **make this check your first action and load nothing else (no skill, `PRODUCT.md`, issue, or worktree)
-  until it returns `fix`/`implement`**, so a fast tick that fires while a previous one is still running
-  stays cheap and just re-arms.
-- End every tick by **re-arming the schedule** as your last action so the loop continues, at the
-  cadence the launcher set (**about 2 minutes**, 120s). Re-arm even after `wait`, `idle`, or a
-  blocker — a tick that fires mid-run just queues behind the current one (the session is foreground and
-  single-threaded), so it never interrupts work in progress.
-- Never start a new tick while one is still running, and never run two units at once. The schedule —
-  not a hand-rolled loop — provides the recurrence; stop only when the maintainer stops the schedule.
-
-Let the helper scripts (`developer-next-action.mjs`, `pick-next-issue.mjs`) do the queue reasoning so
-each tick spends its budget on the actual unit of work, not on rediscovering what to do.
-
 ## Start clean — never build on stale state (mandatory)
 
 This applies when you **implement a new issue** (action `implement`). For action `fix` you are
@@ -115,18 +92,19 @@ Previous attempts and other sessions leave branches, worktrees, and progress not
   `PRODUCT.md` model.
 - Re-derive everything from the issue and `PRODUCT.md`, never from leftover artifacts.
 
-## Addressing review feedback (action `fix`)
+## Addressing review or CI feedback (action `fix` / `fix-ci`)
 
-The reviewer sent an open PR back with `changes-requested`. You are **continuing that PR**, not
-starting fresh:
+You are **continuing an existing PR**, not starting fresh:
 
 - `git fetch origin`, then check out the PR's **existing** branch (`gh pr checkout <pr>`, or a worktree
   on `dev/issue-<n>-*`). Do not delete or recreate it, and do not open a second PR.
-- The reviewer's change-request comment on the PR is the handoff: make **exactly** those changes, no
-  scope creep.
-- Run the full gate (*Gate, then open the PR*) and make it pass at 100% coverage.
-- Commit and **push to the same branch**, then hand it back: add `needs-review`, remove
-  `changes-requested`, and leave a brief comment listing what you changed. Stop.
+- For `fix`, the reviewer's change-request comment is the handoff: make **exactly** those changes, no
+  scope creep. For `fix-ci`, the completed failed check and its log are the handoff; distinguish a
+  product regression from transient infrastructure before editing.
+- Run the changed-scope handoff gate (*Gate, then open the PR*), plus the issue-specific E2E affected
+  by the fix.
+- Commit and **push to the same branch**, then hand it back: remove stale `review-approved` and
+  `changes-requested`, add `needs-review`, and leave a brief comment listing what changed. Stop.
 
 ## Implement
 
@@ -156,7 +134,7 @@ starting fresh:
 - Commit in coherent steps with conventional commit messages and push as you go, so progress
   survives an interruption.
 
-## Landability checkpoint and adversarial preflight
+## Landability checkpoint and acceptance evidence
 
 - After the first coherent implementation commit, and before broadening into another surface or
   lifecycle, inspect `origin/main...HEAD`. More than 15 production files or 1,500 non-generated
@@ -168,20 +146,18 @@ starting fresh:
 - Map every acceptance and validation bullet to concrete diff/test evidence. Inspect the changed-file
   list for unrelated product-doc rewrites, local artifacts, missing screenshot/fixture updates, and
   old paths the issue says to retire.
-- For every architecture issue (one with `## Design principle`) or warned diff, run exactly one
-  **fresh-context, read-only `code-review` subagent** against the linked issue and
-  `origin/main...HEAD` after targeted tests but before the full gate. Give it `PRODUCT.md`,
-  `GUIDELINES.md`, the issue, and the diff; ask only for high-confidence correctness, invariant,
-  failure-recovery, scope, and acceptance-criteria findings. Fix its material findings, but do not
-  loop preflight to perfection. A small `[Bug]` with the Tester's promoted repro and no warning may
-  use the explicit acceptance-evidence pass without the extra subagent.
+- Do not launch a duplicate review subagent. The independent reviewer is the sole fresh-context code
+  review and starts concurrently with exact-head CI. Your responsibility is the explicit
+  acceptance-to-evidence map and a coherent, bounded diff.
 
 ## Gate, then open the PR
 
-- Run the full gate and make it pass at 100% coverage: `pnpm validate`, or
-  `.github/skills/whetstone-engineering/validate.ps1` on Windows. Never lower thresholds, skip steps,
-  or pad coverage with assertion-free, style-asserting, or restate-the-constant tests — 100% coverage
-  is the floor, mutation-resistant behavior tests are the bar (see *Implement*).
+- Fetch `origin/main`, then run the changed-scope handoff gate:
+  `pnpm validate:changed`, or
+  `.github/skills/whetstone-engineering/validate.ps1 -Changed` on Windows. It runs typecheck, lint,
+  build, size, smoke, workflow tests, and Vitest's related tests with 100% coverage over changed
+  production files. Run the issue's named E2E spec separately. Never lower thresholds or pad
+  coverage; exact-head CI runs the exhaustive required lanes before merge.
 - Open exactly **one** pull request: title scoped to the issue; body opens with `Closes #<n>` and
   states what changed, what validation ran, and anything that could not run and why. Keep the body a
   tight, skimmable **handoff to the reviewer** — enough to catch up from the PR alone, not an essay.
@@ -189,13 +165,13 @@ starting fresh:
 
 ## Stop
 
-- "Stop" ends the current **unit/tick** — after opening the PR, after pushing a fix back to its PR, or
+- "Stop" ends the current **unit** — after opening the PR, after pushing a fix back to its PR, or
   after marking the issue `needs-design`/`blocked` with a reason. Do not pick up another unit in the
-  same tick, and do not merge. In **one-shot** mode this exits; in **auto loop** mode, re-arm the
-  schedule (see *Run automatically*) so the next tick starts — do not exit the loop yourself.
+  same process, and do not merge. Exit so the external supervisor can make the next decision in a
+  fresh context.
 - If you cannot finish (a real blocker or broken environment), commit and push what is sound, write a
-  short comment on the issue/PR stating the exact blocker and the next concrete step, and end the tick.
-  The maintainer (or the next tick) will start clean.
+  short comment on the issue/PR stating the exact blocker and the next concrete step, and exit. The
+  supervisor stops on a failed worker instead of retrying blindly.
 
 ## Never
 

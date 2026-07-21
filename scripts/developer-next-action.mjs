@@ -7,7 +7,8 @@
 // decides merges in code. The rule keeps work-in-progress at 1:
 //
 //   * a workflow PR is open and labeled `changes-requested`  -> fix that PR (reviewer handed it back)
-//   * a workflow PR is open but not changes-requested        -> wait (in review or awaiting merge)
+//   * a workflow PR has a completed failing blocking check   -> fix/triage that exact-head CI failure
+//   * a workflow PR is otherwise open                         -> wait (in review or awaiting merge)
 //   * no workflow PR, but an issue is still `in-progress`     -> resume THAT issue (a prior run started it
 //                                                               but stopped before opening a PR). This is
 //                                                               the work-in-progress guard: without it,
@@ -29,6 +30,7 @@
 //
 // stdout: exactly one decision line -- one of:
 //   fix <pr>        address the reviewer's change requests on this PR, then stop
+//   fix-ci <pr>     triage a completed failing blocking check on this PR, then stop
 //   wait <pr>       a PR is open and awaiting review/merge; do not start new work
 //   implement <n>   no PR is open; implement this issue end to end
 //   idle            nothing to do
@@ -37,41 +39,22 @@
 //
 // Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-developer.cmd).
 
-import { ghJson, selectNextIssue } from './pick-next-issue.mjs';
-
-const REVIEW_LABELS = new Set(['needs-review', 'changes-requested', 'review-approved']);
-
-function labelNames(pr) {
-  return (pr.labels ?? []).map((l) => l.name);
-}
-
-// PRs this loop owns, sorted by the issue they close (then PR number) so a fix follows the same
-// lowest-issue-first order as issue selection.
-function workflowPrs(prs) {
-  return prs
-    .filter(
-      (pr) =>
-        (pr.headRefName ?? '').startsWith('dev/') ||
-        labelNames(pr).some((n) => REVIEW_LABELS.has(n)),
-    )
-    .map((pr) => ({
-      number: pr.number,
-      labels: labelNames(pr),
-      issue: pr.closingIssuesReferences?.[0]?.number ?? Infinity,
-    }))
-    .sort((a, b) => a.issue - b.issue || a.number - b.number);
-}
+import { ghJson, selectNextIssue } from "./pick-next-issue.mjs";
+import { selectDeveloperPrAction } from "./delivery-workflow.mjs";
 
 function decide() {
   const prs = ghJson([
-    'pr', 'list', '--state', 'open', '--limit', '200',
-    '--json', 'number,labels,headRefName,closingIssuesReferences',
+    "pr",
+    "list",
+    "--state",
+    "open",
+    "--limit",
+    "200",
+    "--json",
+    "number,labels,headRefName,isDraft,closingIssuesReferences,statusCheckRollup"
   ]);
-  const mine = workflowPrs(prs);
-
-  const changesRequested = mine.filter((pr) => pr.labels.includes('changes-requested'));
-  if (changesRequested.length > 0) return { action: 'fix', pr: changesRequested[0].number, open: mine };
-  if (mine.length > 0) return { action: 'wait', pr: mine[0].number, open: mine };
+  const pullRequestDecision = selectDeveloperPrAction(prs);
+  if (pullRequestDecision.action !== "none") return pullRequestDecision;
 
   // Work-in-progress guard (keeps WIP = 1). With no workflow PR open, an issue still labeled
   // `in-progress` was started by a prior run that stopped before opening a PR (crash/abort). Resume
@@ -79,16 +62,25 @@ function decide() {
   // start a second one. Skipping is exactly what leaves two issues `in-progress` at once and strands
   // the first (it is no longer `ready-for-dev`, so it would never be picked again).
   const inProgress = ghJson([
-    'issue', 'list', '--state', 'open', '--label', 'in-progress',
-    '--limit', '200', '--json', 'number',
+    "issue",
+    "list",
+    "--state",
+    "open",
+    "--label",
+    "in-progress",
+    "--limit",
+    "200",
+    "--json",
+    "number"
   ])
     .map((i) => i.number)
     .sort((a, b) => a - b);
-  if (inProgress.length > 0) return { action: 'implement', issue: inProgress[0], open: mine, resume: true };
+  if (inProgress.length > 0)
+    return { action: "implement", issue: inProgress[0], open: [], resume: true };
 
   const { next } = selectNextIssue();
-  if (next != null) return { action: 'implement', issue: next, open: [] };
-  return { action: 'idle', open: [] };
+  if (next != null) return { action: "implement", issue: next, open: [] };
+  return { action: "idle", open: [] };
 }
 
 let d;
@@ -100,30 +92,38 @@ try {
 }
 
 const openSummary = d.open.length
-  ? `open workflow PRs: ${d.open.map((p) => `#${p.number}[${p.labels.join(',') || 'no-label'}]`).join(', ')}`
-  : 'no open workflow PRs';
+  ? `open workflow PRs: ${d.open.map((p) => `#${p.number}[${p.labels.join(",") || "no-label"}]`).join(", ")}`
+  : "no open workflow PRs";
 
 switch (d.action) {
-  case 'fix':
+  case "fix":
     console.error(`developer-next-action: ${openSummary} -> fix PR #${d.pr} (changes-requested).`);
     console.log(`fix ${d.pr}`);
     break;
-  case 'wait':
+  case "fix-ci":
     console.error(
-      `developer-next-action: ${openSummary} -> wait (PR #${d.pr} in review / awaiting merge); not starting new work.`,
+      `developer-next-action: ${openSummary} -> fix-ci PR #${d.pr} (completed blocking check failed).`
+    );
+    console.log(`fix-ci ${d.pr}`);
+    break;
+  case "wait":
+    console.error(
+      `developer-next-action: ${openSummary} -> wait (PR #${d.pr} in review / awaiting merge); not starting new work.`
     );
     console.log(`wait ${d.pr}`);
     break;
-  case 'implement':
+  case "implement":
     console.error(
       `developer-next-action: ${openSummary} -> ${
         d.resume ? `resume in-progress issue #${d.issue}` : `implement issue #${d.issue}`
-      }.`,
+      }.`
     );
     console.log(`implement ${d.issue}`);
     break;
   default:
-    console.error('developer-next-action: nothing to do (no workflow PR, no dependency-ready issue).');
-    console.log('idle');
+    console.error(
+      "developer-next-action: nothing to do (no workflow PR, no dependency-ready issue)."
+    );
+    console.log("idle");
 }
 process.exit(0);
