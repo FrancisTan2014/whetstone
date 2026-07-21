@@ -1117,6 +1117,60 @@ describe("manual work editor (#720)", () => {
     expect(documentText(reopened.document)).toBe("Winner");
   });
 
+  it("lets only one of two saves that loaded the same revision win", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+
+    // Both saves start from the SAME loaded revision — the lost-update setup the reviewer flagged. The
+    // atomic revision claim (a single conditional UPDATE) must let exactly one land and reject the other,
+    // never let both pass and silently overwrite the earlier write.
+    const [a, b] = await Promise.all([
+      context.server.inject({
+        method: "PUT",
+        url: `/api/manual-works/${workEntryId}/content`,
+        payload: { document: { content: [paragraph("A")], type: "doc" }, revision: loaded.revision }
+      }),
+      context.server.inject({
+        method: "PUT",
+        url: `/api/manual-works/${workEntryId}/content`,
+        payload: { document: { content: [paragraph("B")], type: "doc" }, revision: loaded.revision }
+      })
+    ]);
+
+    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409]);
+
+    const winner = a.statusCode === 200 ? a : b;
+    const reopened = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+    expect(documentText(reopened.document)).toBe(documentText(winner.json().document));
+    expect(["A", "B"]).toContain(documentText(reopened.document));
+  });
+
+  it("treats a non-timestamp revision as a conflict rather than crashing", async () => {
+    const workEntryId = await createManualWork();
+
+    const response = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/content`,
+      payload: {
+        document: { content: [paragraph("x")], type: "doc" },
+        revision: "not-a-timestamp"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "revision_conflict" });
+  });
+
   it("returns 404 when saving an unknown or imported Work", async () => {
     const importedEntryId = await createImportedWork();
     const document = { content: [paragraph("x")], type: "doc" };

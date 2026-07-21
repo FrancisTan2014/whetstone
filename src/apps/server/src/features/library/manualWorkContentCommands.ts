@@ -32,10 +32,12 @@ export type UpdateManualWorkContentResult =
 // id of every surviving block so notes anchored to an unchanged block stay valid across saves and no
 // review scheduling/history or learner-owned material is reset. Scoped to the owner via `personal_entries`
 // AND `origin = 'manual'`: a forged id, another user's Work, an imported Work, or an authored Work is
-// rejected (404) before any write. The loaded `revision` (the owner's last-write timestamp) must match the
-// stored one, or the save is a conflict and nothing is written. The whole read-check-reconcile-bump runs
-// in one transaction, so a save never lands half-applied and the revision check cannot race a concurrent
-// save.
+// rejected (404) before any write. The loaded `revision` (the owner's last-write timestamp) must still be
+// the stored one, or the save is a conflict and nothing is written. The revision check is the revision
+// bump: a single conditional `UPDATE ... WHERE updated_at = revision` claims the write atomically, so two
+// saves that loaded the same revision cannot both win — the loser matches zero rows and is a conflict
+// (see the claim step). The whole claim-reconcile runs in one transaction, so a save never lands
+// half-applied.
 export async function updateManualWorkContent(
   dependencies: ManualWorkContentDependencies,
   workEntryId: EntryId,
@@ -52,7 +54,6 @@ export async function updateManualWorkContent(
         language: workMeta.language,
         title: workMeta.title,
         unitEntryId: readingUnits.entryId,
-        updatedAt: personalEntries.updatedAt,
         workType: workMeta.workType
       })
       .from(workMeta)
@@ -71,7 +72,32 @@ export async function updateManualWorkContent(
       return { status: "not_found" };
     }
 
-    if (owned.updatedAt.toISOString() !== revision) {
+    // The revision is the owner's last-write timestamp; a value that is not a timestamp can never match a
+    // stored one, so it is definitionally stale — a conflict, never a crash on `new Date("…")`.
+    const revisionInstant = new Date(revision);
+    if (Number.isNaN(revisionInstant.getTime())) {
+      return { status: "conflict" };
+    }
+
+    // Claim the write atomically: the revision bump IS the stale-revision check. Folding both into one
+    // conditional `UPDATE ... WHERE updated_at = revision` closes the lost-update window a separate
+    // read-then-check leaves open. Under PostgreSQL read-committed, two saves that loaded the same revision
+    // would both pass a plain read, but only one wins this UPDATE — the loser's `updated_at = revision`
+    // predicate is re-evaluated (EvalPlanQual) against the winner's committed row and matches zero rows.
+    // Zero affected rows is a conflict, and because this precedes the reconcile, a conflict writes nothing.
+    const claimed = await tx
+      .update(personalEntries)
+      .set({ updatedAt: now })
+      .where(
+        and(
+          eq(personalEntries.entryId, workEntryId),
+          eq(personalEntries.userId, userId),
+          eq(personalEntries.updatedAt, revisionInstant)
+        )
+      )
+      .returning({ entryId: personalEntries.entryId });
+
+    if (claimed.length === 0) {
       return { status: "conflict" };
     }
 
@@ -80,11 +106,6 @@ export async function updateManualWorkContent(
       unitEntryId: owned.unitEntryId,
       workEntryId
     });
-
-    await tx
-      .update(personalEntries)
-      .set({ updatedAt: now })
-      .where(eq(personalEntries.entryId, workEntryId));
 
     const blockRows = await tx
       .select({ node: docBlocks.nodeJson, orderIndex: docBlocks.orderIndex })
