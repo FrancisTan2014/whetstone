@@ -5,7 +5,7 @@ import {
   documentText,
   type DocumentNodeJSON
 } from "@whetstone/document";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -162,7 +162,9 @@ export async function reconcileEditableWorkContent(
     await tx.delete(docBlocks).where(inArray(docBlocks.id, removedIds));
     await tx
       .delete(entryLinks)
-      .where(and(eq(entryLinks.fromEntryId, unitEntryId), inArray(entryLinks.toEntryId, removedIds)));
+      .where(
+        and(eq(entryLinks.fromEntryId, unitEntryId), inArray(entryLinks.toEntryId, removedIds))
+      );
 
     const referencedIds = await stillReferencedBlockEntryIds(tx, removedIds);
     const deletableIds = removedIds.filter((id) => !referencedIds.has(id));
@@ -226,11 +228,9 @@ async function stillReferencedBlockEntryIds(
 ): Promise<ReadonlySet<string>> {
   const ids = [...removedIds];
   const referenced = new Set<string>();
-  const collect = (rows: ReadonlyArray<Readonly<{ id: string | null }>>): void => {
+  const collect = (rows: ReadonlyArray<Readonly<{ id: string }>>): void => {
     for (const row of rows) {
-      if (row.id !== null) {
-        referenced.add(row.id);
-      }
+      referenced.add(row.id);
     }
   };
 
@@ -259,8 +259,10 @@ async function stillReferencedBlockEntryIds(
       .where(inArray(recitationPassages.endBlockEntryId, ids))
   );
   collect(
+    // `anchor_block_entry_id` is nullable, but `inArray` over the removed ids already excludes NULLs, so
+    // the projection is asserted non-null — avoiding a per-row null guard that could never be exercised.
     await tx
-      .selectDistinct({ id: readingPositions.anchorBlockEntryId })
+      .selectDistinct({ id: sql<string>`${readingPositions.anchorBlockEntryId}` })
       .from(readingPositions)
       .where(inArray(readingPositions.anchorBlockEntryId, ids))
   );

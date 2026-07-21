@@ -52,7 +52,9 @@ function blockId(document: DocumentNodeJSON, index: number): string {
 }
 
 // Seed a bare Work Entry (the caller's responsibility), then initialize its content through the boundary.
-async function seedWorkWithContent(): Promise<Readonly<{ document: DocumentNodeJSON; unitEntryId: string }>> {
+async function seedWorkWithContent(): Promise<
+  Readonly<{ document: DocumentNodeJSON; unitEntryId: string }>
+> {
   return db.transaction(async (tx) => {
     await tx.insert(entries).values({ id: WORK_ID, type: "work" });
     return initializeEditableWorkContent(tx, { createEntryId, workEntryId: WORK_ID });
@@ -111,10 +113,7 @@ describe("initializeEditableWorkContent", () => {
     expect(paragraphId).not.toBe("");
 
     // One reading unit exists for the work, ordered first with no source file.
-    const units = await db
-      .select()
-      .from(readingUnits)
-      .where(eq(readingUnits.workEntryId, WORK_ID));
+    const units = await db.select().from(readingUnits).where(eq(readingUnits.workEntryId, WORK_ID));
     expect(units).toEqual([
       { entryId: unitEntryId, orderIndex: 0, sourceFile: null, title: null, workEntryId: WORK_ID }
     ]);
@@ -189,10 +188,7 @@ describe("reconcileEditableWorkContent stable-id diff", () => {
     expect(id1).not.toBe("");
     expect(id1).not.toBe(id0);
     expect(await entryExists(id1)).toBe(true);
-    const links = await db
-      .select()
-      .from(entryLinks)
-      .where(eq(entryLinks.toEntryId, id1));
+    const links = await db.select().from(entryLinks).where(eq(entryLinks.toEntryId, id1));
     expect(links).toEqual([{ fromEntryId: unitEntryId, toEntryId: id1, type: "contains" }]);
   });
 
@@ -204,9 +200,7 @@ describe("reconcileEditableWorkContent stable-id diff", () => {
 
     await reconcile(unitEntryId, doc(para("keep", id0)));
 
-    expect(
-      await db.select().from(docBlocks).where(eq(docBlocks.id, droppedId))
-    ).toHaveLength(0);
+    expect(await db.select().from(docBlocks).where(eq(docBlocks.id, droppedId))).toHaveLength(0);
     expect(await entryExists(droppedId)).toBe(false);
     expect(
       await db.select().from(entryLinks).where(eq(entryLinks.toEntryId, droppedId))
