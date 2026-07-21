@@ -197,6 +197,34 @@ describe("CardsView", () => {
     expect(screen.queryByRole("button", { name: "Add card" })).toBeNull();
   });
 
+  it("offers Add card for a legacy-only note while still showing its legacy row", async () => {
+    // A `legacy_custom` prompt is read-only and is excluded from the one-authored-prompt-per-note
+    // invariant, so it never occupies the first-card slot: the note still owns no authored
+    // current_note/expected_response prompt and must still offer Add card alongside its legacy row.
+    mockedList.mockResolvedValue({
+      prompts: [
+        prompt({
+          promptId: "legacy-1",
+          questionDoc: createTextDocument("Legacy cue?"),
+          questionText: "Legacy cue?",
+          reveal: {
+            kind: "legacy_custom",
+            answerDoc: createTextDocument("Legacy answer."),
+            answerText: "Legacy answer."
+          }
+        })
+      ]
+    });
+    renderView();
+
+    // The legacy row renders...
+    expect(await screen.findByText("Legacy cue?")).toBeDefined();
+    // ...and Add card is still offered because no authored prompt exists yet.
+    expect(screen.getByRole("button", { name: "Add card" })).toBeDefined();
+    // The legacy-only note is not the true empty state.
+    expect(screen.queryByText("This note has no review cards yet.")).toBeNull();
+  });
+
   it("drills list -> detail -> history and back, restoring the row's focus", async () => {
     mockedList.mockResolvedValue({ prompts: [prompt()] });
     renderView();

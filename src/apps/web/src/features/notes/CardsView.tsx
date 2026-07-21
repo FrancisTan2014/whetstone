@@ -186,10 +186,19 @@ export function CardsView({
   return renderList();
 
   function renderList(): React.JSX.Element {
+    // Add card opens the first-card composer, so it is offered only when the note has no AUTHORED prompt
+    // (a `current_note` or `expected_response` reveal) — never gated on total prompt count. A note may
+    // carry read-only `legacy_custom` prompts while still owning no authored first card (#657/#687's
+    // migration excludes `legacy_custom` from the one-authored-prompt-per-note invariant), so such a note
+    // still shows its legacy row(s) AND offers Add card.
+    const hasAuthoredPrompt = prompts.some(
+      (prompt) =>
+        prompt.reveal.kind === "current_note" || prompt.reveal.kind === "expected_response"
+    );
     return (
       <div className="noteCardsList">
         <div className="noteCardsToolbar">
-          {prompts.length === 0 && noteBodyDoc !== null ? (
+          {!hasAuthoredPrompt && noteBodyDoc !== null ? (
             <Button onClick={() => setScreen({ kind: "compose" })} type="button">
               Add card
             </Button>
