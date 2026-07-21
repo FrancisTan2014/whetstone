@@ -4,26 +4,29 @@ import type {
   NotePromptSettingsDto,
   NoteReviewPromptDto,
   NoteRevealDto,
-  ReviewHistoryPageDto
+  ReviewHistoryPageDto,
+  SetNoteGradingTargetRequest
 } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
-import { fetchNextNotePrompt, fetchNoteReveal, rateNotePrompt } from "./notesReviewApi";
 import {
   addNotePromptCardBack,
-  addNoteToReview,
-  addOwnedNoteToReview,
+  authorNoteCard,
+  AuthorNoteCardError,
   createDirectCard,
   CreateDirectCardError,
   editNotePromptQuestion,
+  fetchNextNotePrompt,
   fetchNotePromptHistory,
   fetchNotePromptSettings,
-  fetchNoteReviewStatus,
-  fetchOwnedNoteReviewStatus,
+  fetchNoteReveal,
   pauseNotePromptCard,
+  rateNotePrompt,
   removeNotePromptCard,
   restartNotePromptCard,
-  resumeNotePromptCard
+  resumeNotePromptCard,
+  setNoteGradingTarget,
+  SetNoteGradingTargetError
 } from "./notesReviewApi";
 
 const review = {
@@ -156,6 +159,90 @@ describe("createDirectCard", () => {
   });
 });
 
+describe("authorNoteCard (#687)", () => {
+  const request = {
+    noteEntryId: "note-7",
+    questionDoc: createTextDocument("What guarantee does a WAL give?"),
+    submissionId: "submission-1",
+    target: { kind: "current_note" as const }
+  };
+
+  it("POSTs the request as JSON and returns the parsed result", async () => {
+    const result = { noteId: "note-7", promptId: "prompt-1", review };
+    const fetchMock = stubFetch({ body: result, ok: true });
+
+    await expect(authorNoteCard(request)).resolves.toEqual(result);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/author-cards", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("throws already_authored when a 409 carries that error body", async () => {
+    stubFetch({ body: { error: "already_authored" }, ok: false, status: 409 });
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({
+      kind: "already_authored",
+      name: "AuthorNoteCardError"
+    });
+  });
+
+  it("throws conflict for any other 409", async () => {
+    stubFetch({ body: { error: "submission_conflict" }, ok: false, status: 409 });
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "conflict" });
+  });
+
+  it("throws conflict for a 409 whose body cannot be read", async () => {
+    const fetchMock = vi.fn(async () => ({
+      json: async () => {
+        throw new Error("no body");
+      },
+      ok: false,
+      status: 409
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "conflict" });
+  });
+
+  it("throws gone on a 410", async () => {
+    stubFetch({ ok: false, status: 410 });
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "gone" });
+  });
+
+  it("throws not_found on a 404", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "not_found" });
+  });
+
+  it("throws invalid on any other 4xx", async () => {
+    stubFetch({ ok: false, status: 400 });
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "invalid" });
+  });
+
+  it("throws network on a 5xx", async () => {
+    stubFetch({ ok: false, status: 500 });
+
+    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "network" });
+  });
+
+  it("throws network when fetch itself rejects", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await authorNoteCard(request).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(AuthorNoteCardError);
+    expect((error as AuthorNoteCardError).kind).toBe("network");
+  });
+});
+
 describe("fetchNoteReveal", () => {
   it("requests the reveal endpoint with an encoded prompt id", async () => {
     const fetchMock = stubFetch({ body: legacyReveal, ok: true });
@@ -193,104 +280,7 @@ describe("rateNotePrompt", () => {
   });
 });
 
-describe("fetchNoteReviewStatus", () => {
-  it("GETs the note's review status from the encoded work/note endpoint", async () => {
-    const fetchMock = stubFetch({ body: { status: "not_enrolled" }, ok: true });
-
-    await expect(fetchNoteReviewStatus("work 1", "note 7")).resolves.toEqual({
-      status: "not_enrolled"
-    });
-    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes/note%207/review", undefined);
-  });
-
-  it("parses the scheduled status carrying its next-review date", async () => {
-    stubFetch({
-      body: { status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" },
-      ok: true
-    });
-
-    await expect(fetchNoteReviewStatus("work-1", "note-7")).resolves.toEqual({
-      status: "scheduled",
-      nextReviewAt: "2026-07-11T00:00:00.000Z"
-    });
-  });
-
-  it("throws when the status read fails", async () => {
-    stubFetch({ ok: false, status: 404 });
-
-    await expect(fetchNoteReviewStatus("work-1", "note-7")).rejects.toThrow("status 404");
-  });
-});
-
-describe("addNoteToReview", () => {
-  it("POSTs to the encoded enrollment endpoint and returns the resulting status", async () => {
-    const fetchMock = stubFetch({ body: { status: "due" }, ok: true });
-
-    await expect(addNoteToReview("work 1", "note 7")).resolves.toEqual({ status: "due" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/notes/note%207/review/enrollment", {
-      method: "POST"
-    });
-  });
-
-  it("throws when the enrollment request fails", async () => {
-    stubFetch({ ok: false, status: 409 });
-
-    await expect(addNoteToReview("work-1", "note-7")).rejects.toThrow("status 409");
-  });
-});
-
-describe("fetchOwnedNoteReviewStatus (#659)", () => {
-  it("GETs the owner-scoped note review status", async () => {
-    const fetchMock = stubFetch({ body: { status: "not_enrolled" }, ok: true });
-
-    await expect(fetchOwnedNoteReviewStatus("note 7")).resolves.toEqual({
-      status: "not_enrolled"
-    });
-    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review", undefined);
-  });
-
-  it("throws when the owner-scoped status read fails", async () => {
-    stubFetch({ ok: false, status: 404 });
-
-    await expect(fetchOwnedNoteReviewStatus("note-7")).rejects.toThrow("status 404");
-  });
-});
-
-describe("addOwnedNoteToReview (#659)", () => {
-  it("POSTs an anchored enrollment with no body so the server reuses the exact source", async () => {
-    const fetchMock = stubFetch({ body: { status: "due" }, ok: true });
-
-    await expect(addOwnedNoteToReview("note 7")).resolves.toEqual({ status: "due" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review/enrollment", {
-      method: "POST"
-    });
-  });
-
-  it("POSTs a standalone enrollment carrying the learner's question", async () => {
-    const fetchMock = stubFetch({
-      body: { status: "scheduled", nextReviewAt: "2026-07-11T00:00:00.000Z" },
-      ok: true
-    });
-
-    await expect(addOwnedNoteToReview("note 7", "What is a WAL?")).resolves.toEqual({
-      status: "scheduled",
-      nextReviewAt: "2026-07-11T00:00:00.000Z"
-    });
-    expect(fetchMock).toHaveBeenCalledWith("/api/notes/note%207/review/enrollment", {
-      body: JSON.stringify({ question: "What is a WAL?" }),
-      headers: { "content-type": "application/json" },
-      method: "POST"
-    });
-  });
-
-  it("throws when the owner-scoped enrollment fails", async () => {
-    stubFetch({ ok: false, status: 409 });
-
-    await expect(addOwnedNoteToReview("note-7")).rejects.toThrow("status 409");
-  });
-});
-
-describe("note Review settings client (#660)", () => {
+describe("note Review settings client (#660, rich in #687)", () => {
   const settingsDto: NotePromptSettingsDto = {
     cardState: { state: "due" },
     promptId: "prompt-1",
@@ -331,12 +321,13 @@ describe("note Review settings client (#660)", () => {
     );
   });
 
-  it("PATCHes the edited question as JSON to the encoded question endpoint", async () => {
+  it("PATCHes the rich Question document as JSON to the encoded question endpoint", async () => {
+    const questionDoc = createTextDocument("Define a WAL");
     const fetchMock = stubFetch({ body: settingsDto, ok: true });
 
-    await expect(editNotePromptQuestion("prompt 1", "Define a WAL")).resolves.toEqual(settingsDto);
+    await expect(editNotePromptQuestion("prompt 1", questionDoc)).resolves.toEqual(settingsDto);
     expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/prompts/prompt%201/question", {
-      body: JSON.stringify({ question: "Define a WAL" }),
+      body: JSON.stringify({ questionDoc }),
       headers: { "content-type": "application/json" },
       method: "PATCH"
     });
@@ -370,5 +361,100 @@ describe("note Review settings client (#660)", () => {
     stubFetch({ ok: false, status: 409 });
 
     await expect(pauseNotePromptCard("prompt-1")).rejects.toThrow("status 409");
+  });
+});
+
+describe("setNoteGradingTarget (#686)", () => {
+  const settingsDto: NotePromptSettingsDto = {
+    cardState: { state: "due" },
+    promptId: "prompt-1",
+    questionDoc: createTextDocument("What is a WAL?"),
+    questionText: "What is a WAL?",
+    reveal: { kind: "current_note" }
+  };
+  const request: SetNoteGradingTargetRequest = { mode: "keep", target: { kind: "current_note" } };
+
+  it("POSTs the request as JSON to the encoded grading-target endpoint", async () => {
+    const fetchMock = stubFetch({ body: settingsDto, ok: true });
+
+    await expect(setNoteGradingTarget("prompt 1", request)).resolves.toEqual(settingsDto);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/notes/review/prompts/prompt%201/grading-target",
+      {
+        body: JSON.stringify(request),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }
+    );
+  });
+
+  it("throws invalid_success_check on a 400 with that error body", async () => {
+    stubFetch({ body: { error: "invalid_success_check" }, ok: false, status: 400 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "invalid_success_check",
+      name: "SetNoteGradingTargetError"
+    });
+  });
+
+  it("throws network on a 400 without the invalid_success_check error", async () => {
+    stubFetch({ body: { error: "other" }, ok: false, status: 400 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
+    });
+  });
+
+  it("throws not_found on a 404", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "not_found"
+    });
+  });
+
+  it("throws legacy_read_only on a 409 with that error body", async () => {
+    stubFetch({ body: { error: "legacy_read_only" }, ok: false, status: 409 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "legacy_read_only"
+    });
+  });
+
+  it("throws restart_requires_card on a 409 with that error body", async () => {
+    stubFetch({ body: { error: "restart_requires_card" }, ok: false, status: 409 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "restart_requires_card"
+    });
+  });
+
+  it("throws network on a 409 whose error body is unrecognized", async () => {
+    stubFetch({ body: { error: "mystery" }, ok: false, status: 409 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
+    });
+  });
+
+  it("throws network on a 5xx", async () => {
+    stubFetch({ ok: false, status: 500 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
+    });
+  });
+
+  it("throws network when fetch itself rejects", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await setNoteGradingTarget("prompt-1", request).catch(
+      (thrown: unknown) => thrown
+    );
+    expect(error).toBeInstanceOf(SetNoteGradingTargetError);
+    expect((error as SetNoteGradingTargetError).kind).toBe("network");
   });
 });
