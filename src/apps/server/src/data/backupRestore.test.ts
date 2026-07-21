@@ -42,11 +42,14 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
     INSERT INTO entries (id, type) VALUES ('n1', 'note');
     INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind)
       VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a note body"}]}]}', 'a note body', 'reader', 'n1', 'note');
+    INSERT INTO entries (id, type) VALUES ('n2', 'note');
+    INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind)
+      VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"another note body"}]}]}', 'another note body', 'reader', 'n2', 'note');
     INSERT INTO entries (id, type) VALUES ('p-cn', 'memory_prompt'), ('p-er', 'memory_prompt'), ('p-lc', 'memory_prompt');
     INSERT INTO memory_prompts (entry_id, note_entry_id, cue_doc, cue_text, answer_doc, answer_text, lifecycle, reveal_kind)
       VALUES
         ('p-cn', 'n1', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"cue cn"}]}]}', 'cue cn', NULL, NULL, 'ready', 'current_note'),
-        ('p-er', 'n1', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"cue er"}]}]}', 'cue er', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"success check"}]}]}', 'success check', 'ready', 'expected_response'),
+        ('p-er', 'n2', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"cue er"}]}]}', 'cue er', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"success check"}]}]}', 'success check', 'ready', 'expected_response'),
         ('p-lc', 'n1', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"cue lc"}]}]}', 'cue lc', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"legacy answer"}]}]}', 'legacy answer', 'ready', 'legacy_custom');
     INSERT INTO review_cards (target_entry_id, user_id, status, requested_retention, stability, difficulty, elapsed_days, scheduled_days, learning_steps, reps, lapses, state, due_at)
       VALUES ('p-er', 'user-1', 'active', 0.9, 1, 5, 0, 0, 0, 0, 0, 'new', '2026-01-05T00:00:00.000Z');
@@ -54,7 +57,7 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
       VALUES ('be-1', 'p-er', 'rating', 'good', '2026-01-04T00:00:00.000Z'), ('be-2', 'p-er', 'reset', NULL, '2026-01-03T00:00:00.000Z');
     INSERT INTO card_creation_receipts (user_id, submission_id, note_entry_id, prompt_entry_id, payload_fingerprint, created_at)
       VALUES
-        ('user-1', 'sub-live', 'n1', 'p-er', 'fp-live', '2026-01-02T00:00:00.000Z'),
+        ('user-1', 'sub-live', 'n2', 'p-er', 'fp-live', '2026-01-02T00:00:00.000Z'),
         ('user-1', 'sub-gone', 'deleted-note', 'deleted-prompt', 'fp-gone', '2026-01-01T00:00:00.000Z');
   `);
 }
@@ -145,7 +148,9 @@ describe("backup/restore round-trip", () => {
     const work = await verifyPglite.query<{ title: string; origin: string }>(
       "select title, origin from work_meta"
     );
-    const note = await verifyPglite.query<{ body_text: string }>("select body_text from notes");
+    const note = await verifyPglite.query<{ body_text: string }>(
+      "select body_text from notes order by body_text"
+    );
     const prompts = await verifyPglite.query<{ reveal_kind: string; answer_text: string | null }>(
       "select reveal_kind, answer_text from memory_prompts order by reveal_kind"
     );
@@ -166,7 +171,7 @@ describe("backup/restore round-trip", () => {
 
     expect(authors.rows).toEqual([{ name: "Author One" }]);
     expect(work.rows).toEqual([{ title: "My Work", origin: "imported" }]);
-    expect(note.rows).toEqual([{ body_text: "a note body" }]);
+    expect(note.rows).toEqual([{ body_text: "a note body" }, { body_text: "another note body" }]);
     // All three reveal kinds — including the new expected_response Success check — survive the round-trip.
     expect(prompts.rows).toEqual([
       { reveal_kind: "current_note", answer_text: null },
@@ -179,7 +184,7 @@ describe("backup/restore round-trip", () => {
     // no foreign key into the note cascade) round-trip intact, so replay-idempotency survives a restore.
     expect(receipts.rows).toEqual([
       { submission_id: "sub-gone", note_entry_id: "deleted-note", payload_fingerprint: "fp-gone" },
-      { submission_id: "sub-live", note_entry_id: "n1", payload_fingerprint: "fp-live" }
+      { submission_id: "sub-live", note_entry_id: "n2", payload_fingerprint: "fp-live" }
     ]);
   }, 60000);
 });
