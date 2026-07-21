@@ -54,6 +54,15 @@ export async function ingestPdf(
   fileName: string,
   bytes: Uint8Array
 ): Promise<IngestPdfResult> {
+  // Reject a manual-origin Work before converting: PDF (like Markdown) ingestion into a manual Work
+  // is a retired legacy path (#720), so it must return the deterministic manual_work_unsupported
+  // regardless of whether the PDF toolchain is installed — and never pay for an expensive/optional
+  // conversion just to refuse the upload at the boundary. A missing work stays undefined here and
+  // falls through to the post-convert workExists gate, preserving the existing 404 behavior.
+  if ((await loadWorkOrigin(dependencies.db, workEntryId)) === "manual") {
+    return { status: "manual_work_unsupported" };
+  }
+
   let markdown: string;
 
   try {
