@@ -12,6 +12,7 @@ export {
 export {
   createEmptyDocument,
   editorDocumentsEqual,
+  editorDocumentsEqualIgnoringIds,
   normalizeEditorLinkHref,
   validateEditorDocument
 } from "./editorDocument.js";

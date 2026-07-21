@@ -154,6 +154,27 @@ describe("block command catalog", () => {
     }
   });
 
+  it("applies a block command under a whole-document (select-all) selection without crashing", () => {
+    const seeded: DocumentNodeJSON = {
+      content: [
+        {
+          attrs: { id: "p-original" },
+          content: [{ text: "body", type: "text" }],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    const editor = makeEditor(seeded);
+    // Ctrl/Cmd+A creates an AllSelection whose $from sits at the document boundary (depth 0). The
+    // persistent toolbar can run a block command from here; the always-caret slash menu never does.
+    editor.commands.selectAll();
+
+    expect(runBlockCommandById(editor, "heading-1")).toBe(true);
+    expect(topNode(editor)).toEqual({ level: 1, type: "heading" });
+    expect((editor.getJSON() as DocumentNodeJSON).content?.[0]?.attrs?.["id"]).toBe("p-original");
+  });
+
   it("runs a catalog command by id and reports an unknown id as not run", () => {
     const editor = makeEditor(paragraph("body"));
 
