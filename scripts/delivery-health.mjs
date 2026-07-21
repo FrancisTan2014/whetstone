@@ -110,6 +110,41 @@ export function summarizeFlow(records) {
   };
 }
 
+function validationLane(jobName) {
+  const normalized = jobName.toLowerCase();
+  if (normalized.startsWith("quality")) return "quality";
+  if (normalized.startsWith("runtime")) return "runtime";
+  if (normalized.startsWith("isolated")) return "isolated";
+  return "legacy";
+}
+
+export function summarizeGateRuns(runs) {
+  const lanes = {};
+  for (const run of runs) {
+    for (const job of run.jobs ?? []) {
+      const lane = validationLane(job.name);
+      const started = Date.parse(job.startedAt);
+      const completed = Date.parse(job.completedAt);
+      const duration = minutesBetween(started, completed);
+      const current = (lanes[lane] ??= { durations: [], failures: 0, runs: 0 });
+      if (duration != null) current.durations.push(duration);
+      current.runs++;
+      if (!["success", "neutral", "skipped"].includes(job.conclusion)) current.failures++;
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(lanes).map(([lane, value]) => [
+      lane,
+      {
+        durationMinutes: stats(value.durations),
+        failures: value.failures,
+        runs: value.runs
+      }
+    ])
+  );
+}
+
 export function summarizeQueue(issues, pullRequests) {
   const counts = {
     ready: 0,
@@ -190,6 +225,15 @@ function printReport(report) {
       `${flow.changesRequestedRounds} rounds`
   );
   console.log(`  landability warn:  ${flow.warnedPrs}/${flow.sample} PRs (raw churn signal)`);
+  console.log("Validation lanes");
+  for (const lane of ["quality", "runtime", "isolated", "legacy"]) {
+    const value = report.gates[lane];
+    if (value == null) continue;
+    console.log(
+      `  ${lane.padEnd(8)} ${formatStats(value.durationMinutes)}; ` +
+        `failures=${value.failures}/${value.runs}`
+    );
+  }
   console.log("Current queue");
   console.log(
     `  ready=${queue.ready} in-progress=${queue.inProgress} awaiting-review=${queue.awaitingReview} ` +
@@ -261,9 +305,30 @@ async function run() {
       "--limit",
       String(Math.min(500, options.limit * 5)),
       "--json",
-      "displayTitle,headBranch,createdAt,updatedAt,conclusion"
+      "databaseId,displayTitle,headBranch,createdAt,updatedAt,conclusion"
     ])
   ]);
+
+  const measuredBranches = new Set(pullRequests.map((pullRequest) => pullRequest.headRefName));
+  const measuredRuns = ciRuns.filter((run) => measuredBranches.has(run.headBranch));
+  const measuredJobs = new Map(
+    await mapLimit(measuredRuns, 6, async (run) => {
+      const details = await ghJson([
+        "run",
+        "view",
+        String(run.databaseId),
+        "--repo",
+        repo,
+        "--json",
+        "jobs"
+      ]);
+      return [run.databaseId, details.jobs ?? []];
+    })
+  );
+  const enrichedRuns = ciRuns.map((run) => ({
+    ...run,
+    jobs: measuredJobs.get(run.databaseId) ?? []
+  }));
 
   const records = await mapLimit(pullRequests, 6, async (pr) => {
     const issue = pr.closingIssuesReferences?.[0]?.number;
@@ -273,7 +338,7 @@ async function run() {
         : ghApiPages(`repos/${repo}/issues/${issue}/events?per_page=100`),
       ghApiPages(`repos/${repo}/issues/${pr.number}/events?per_page=100`)
     ]);
-    const matchingRuns = ciRuns.filter(
+    const matchingRuns = enrichedRuns.filter(
       (run) =>
         run.headBranch === pr.headRefName ||
         (run.displayTitle === pr.title &&
@@ -287,6 +352,7 @@ async function run() {
     repository: repo,
     generatedAt: new Date().toISOString(),
     flow: summarizeFlow(records),
+    gates: summarizeGateRuns(enrichedRuns.filter((run) => measuredBranches.has(run.headBranch))),
     queue: summarizeQueue(issues, openPullRequests)
   };
 

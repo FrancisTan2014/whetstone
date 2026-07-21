@@ -75,9 +75,10 @@ pnpm validate:changed   # typecheck, lint, changed-source 100% coverage, build, 
 ```
 
 Run the issue's named E2E spec separately. On Windows workers, use `validate.ps1 -Changed`; it writes
-the full log under `.agent-logs/`. Exact-head CI is the sole exhaustive gate and must pass before
-merge. `pnpm validate` remains available for an optional full local run. Never lower coverage
-thresholds or skip evidence to make a handoff pass.
+the full log under `.agent-logs/`. Exact-head CI is the sole exhaustive gate and must pass every
+required lane (quality coverage, runtime/E2E, and isolated contracts) before merge. `pnpm validate`
+composes those lanes sequentially for an optional full local run. Never lower coverage thresholds or
+skip evidence to make a handoff pass.
 
 Do the landability and acceptance-to-evidence self-check yourself. Do not launch a duplicate
 fresh-context preflight: the independent reviewer is the sole code review and runs concurrently with

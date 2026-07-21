@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { flowRecord, percentile, summarizeFlow, summarizeQueue } from "./delivery-health.mjs";
+import {
+  flowRecord,
+  percentile,
+  summarizeFlow,
+  summarizeGateRuns,
+  summarizeQueue
+} from "./delivery-health.mjs";
 
 test("percentile interpolates a sorted sample without mutating it", () => {
   const values = [30, 10, 20];
@@ -136,4 +142,35 @@ test("queue summary follows workflow labels and dependency clauses", () => {
     changesRequested: 1,
     dependencyBlocked: 1
   });
+});
+
+test("gate summary separates lane duration and failure class", () => {
+  const summary = summarizeGateRuns([
+    {
+      jobs: [
+        {
+          name: "Quality (typecheck, lint, 100% coverage)",
+          startedAt: "2026-07-21T00:00:00Z",
+          completedAt: "2026-07-21T00:08:00Z",
+          conclusion: "success"
+        },
+        {
+          name: "Runtime (build, size, smoke, E2E)",
+          startedAt: "2026-07-21T00:00:00Z",
+          completedAt: "2026-07-21T00:03:00Z",
+          conclusion: "failure"
+        },
+        {
+          name: "Isolated contracts",
+          startedAt: "2026-07-21T00:00:00Z",
+          completedAt: "2026-07-21T00:01:00Z",
+          conclusion: "success"
+        }
+      ]
+    }
+  ]);
+
+  assert.equal(summary.quality.durationMinutes.median, 8);
+  assert.equal(summary.runtime.failures, 1);
+  assert.equal(summary.isolated.runs, 1);
 });
