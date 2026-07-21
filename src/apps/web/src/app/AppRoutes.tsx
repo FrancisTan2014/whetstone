@@ -45,11 +45,18 @@ function WriteRoute(): React.JSX.Element {
 }
 
 // The Library's contextual "Notes" action routes to `#/notes?work=<entryId>`; the route reads that
-// param so the Notes list can narrow to a single work. Without it, Notes shows every saved note.
+// param so the Notes list can narrow to a single work. Without it, Notes shows every saved note. The
+// in-Review repair view's "Open note" routes to `#/notes?open=<entryId>` so the shared note body opens
+// straight into the editor (#691).
 function NotesRoute(): React.JSX.Element {
   const [searchParams] = useSearchParams();
 
-  return <NotesPage focusWorkEntryId={searchParams.get("work") ?? undefined} />;
+  return (
+    <NotesPage
+      focusWorkEntryId={searchParams.get("work") ?? undefined}
+      openNoteEntryId={searchParams.get("open") ?? undefined}
+    />
+  );
 }
 
 // A contextual Recitation entry (Reader header, Library card, Today) routes to

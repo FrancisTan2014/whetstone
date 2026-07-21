@@ -19,6 +19,7 @@ export type NotePromptProjectionRow = Readonly<{
   revealKind: "current_note" | "expected_response" | "legacy_custom";
   answerDoc: unknown;
   answerText: string | null;
+  revision: number;
 }>;
 
 // Project a prompt's card into the settings state the list shows, discriminated so a row renders on the
@@ -75,6 +76,7 @@ export function projectPromptSettings(
 ): NotePromptSettingsDto {
   return {
     promptId: row.entryId,
+    revision: row.revision,
     questionDoc: row.cueDoc as DocumentNodeJSON,
     questionText: row.cueText,
     reveal: projectPromptRevealPolicy(row),

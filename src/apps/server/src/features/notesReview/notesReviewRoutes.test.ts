@@ -755,7 +755,7 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { questionDoc: createTextDocument("new question") }
+      payload: { expectedRevision: 0, questionDoc: createTextDocument("new question") }
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
@@ -778,6 +778,57 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     expect(await countEvents(promptId)).toBe(1);
   });
 
+  it("rejects a stale Question revision at the real HTTP/database boundary and preserves the newer edit", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "question loaded by repair",
+      createdAt: at(-5),
+      card: { dueAt: at(-1), status: "active" }
+    });
+    const loaded = await context.server.inject({
+      method: "GET",
+      url: `/api/notes/${noteId}/review/settings`
+    });
+    const expectedRevision = loaded.json().prompts[0].revision as number;
+    expect(expectedRevision).toBe(0);
+
+    const concurrent = await context.server.inject({
+      method: "PATCH",
+      url: `/api/notes/review/prompts/${promptId}/question`,
+      payload: {
+        expectedRevision,
+        questionDoc: createTextDocument("newer Question from another editor")
+      }
+    });
+    expect(concurrent.statusCode).toBe(200);
+    expect(concurrent.json()).toMatchObject({
+      questionText: "newer Question from another editor",
+      revision: 1
+    });
+
+    const staleRepair = await context.server.inject({
+      method: "PATCH",
+      url: `/api/notes/review/prompts/${promptId}/question`,
+      payload: {
+        expectedRevision,
+        questionDoc: createTextDocument("learner's stale repair draft")
+      }
+    });
+    expect(staleRepair.statusCode).toBe(409);
+    expect(staleRepair.json()).toEqual({ error: "prompt_conflict" });
+    const persisted = await context.db
+      .select({ cueText: memoryPrompts.cueText, revision: memoryPrompts.revision })
+      .from(memoryPrompts)
+      .where(eq(memoryPrompts.entryId, promptId));
+    expect(persisted[0]).toEqual({
+      cueText: "newer Question from another editor",
+      revision: 1
+    });
+    expect(await countEvents(promptId)).toBe(0);
+  });
+
   it("rejects a blank question with 400", async () => {
     context.setNow(at(0));
     const noteId = await seedNote(DEFAULT_USER_ID, "body", at(-1));
@@ -785,7 +836,7 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { questionDoc: createTextDocument("   ") }
+      payload: { expectedRevision: 0, questionDoc: createTextDocument("   ") }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_question" });
@@ -798,7 +849,7 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { questionDoc: "not a document" }
+      payload: { expectedRevision: 0, questionDoc: "not a document" }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_request" });
@@ -816,7 +867,7 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { questionDoc: createTextDocument("mine now") }
+      payload: { expectedRevision: 0, questionDoc: createTextDocument("mine now") }
     });
     expect(response.statusCode).toBe(404);
   });
@@ -1002,7 +1053,7 @@ describe("POST /api/notes/review/prompts/:id/grading-target", () => {
     return context.server.inject({
       method: "POST",
       url: `/api/notes/review/prompts/${promptId}/grading-target`,
-      payload: body
+      payload: { expectedRevision: 0, ...(body as Record<string, unknown>) }
     });
   }
 
@@ -1081,6 +1132,56 @@ describe("POST /api/notes/review/prompts/:id/grading-target", () => {
       .from(reviewEvents)
       .where(eq(reviewEvents.targetEntryId, promptId));
     expect(events[0]?.type).toBe("reset");
+  });
+
+  it("rejects a stale grading-target revision before any overwrite or schedule reset", async () => {
+    context.setNow(at(0));
+    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
+    const promptId = await seedPromptOn({
+      noteId,
+      cueText: "cue",
+      revealKind: "current_note",
+      createdAt: at(-5),
+      card: { dueAt: at(5), status: "active" }
+    });
+    const dueBefore = await dueAtOf(promptId);
+    const loaded = await context.server.inject({
+      method: "GET",
+      url: `/api/notes/${noteId}/review/settings`
+    });
+    const expectedRevision = loaded.json().prompts[0].revision as number;
+    expect(expectedRevision).toBe(0);
+
+    const concurrent = await post(promptId, {
+      expectedRevision,
+      mode: "keep",
+      target: {
+        kind: "expected_response",
+        successCheckDoc: createTextDocument("newer target from another editor")
+      }
+    });
+    expect(concurrent.statusCode).toBe(200);
+    expect(concurrent.json()).toMatchObject({
+      revision: 1,
+      reveal: {
+        kind: "expected_response",
+        successCheckText: "newer target from another editor"
+      }
+    });
+
+    const staleRepair = await post(promptId, {
+      expectedRevision,
+      mode: "restart",
+      target: { kind: "current_note" }
+    });
+    expect(staleRepair.statusCode).toBe(409);
+    expect(staleRepair.json()).toEqual({ error: "prompt_conflict" });
+    expect(await promptRow(promptId)).toEqual({
+      revealKind: "expected_response",
+      answerText: "newer target from another editor"
+    });
+    expect(await dueAtOf(promptId)).toEqual(dueBefore);
+    expect(await countEvents(promptId)).toBe(0);
   });
 
   it("keep: allows a cardless prompt to change policy without fabricating a card", async () => {

@@ -31,6 +31,7 @@ const conflict = { error: "conflict" } as const;
 const invalidSuccessCheck = { error: "invalid_success_check" } as const;
 const legacyReadOnly = { error: "legacy_read_only" } as const;
 const restartRequiresCard = { error: "restart_requires_card" } as const;
+const promptConflict = { error: "prompt_conflict" } as const;
 const invalidQuestion = { error: "invalid_question" } as const;
 const invalidAnswer = { error: "invalid_answer" } as const;
 const submissionConflict = { error: "submission_conflict" } as const;
@@ -190,11 +191,13 @@ export function registerNotesReviewRoutes(
         dependencies,
         request.params.id,
         request.server.currentUser.getCurrentUserId(),
-        parsed.data.questionDoc
+        parsed.data
       );
       switch (result.status) {
         case "not_found":
           return reply.code(404).send(notFound);
+        case "conflict":
+          return reply.code(409).send(promptConflict);
         case "invalid_question":
           return reply.code(400).send(invalidQuestion);
         case "ok":
@@ -305,6 +308,8 @@ export function registerNotesReviewRoutes(
           return reply.code(409).send(legacyReadOnly);
         case "restart_requires_card":
           return reply.code(409).send(restartRequiresCard);
+        case "conflict":
+          return reply.code(409).send(promptConflict);
         case "ok":
           request.log.info(
             {

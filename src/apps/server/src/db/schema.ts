@@ -578,6 +578,9 @@ export const memoryPrompts = pgTable(
     revealKind: text("reveal_kind", {
       enum: ["current_note", "expected_response", "legacy_custom"] as const
     }).notNull(),
+    // Optimistic content revision for Question / grading-target writes. Repair and Card detail submit the
+    // revision they loaded; a conditional update rejects a stale editor instead of overwriting newer work.
+    revision: integer("revision").notNull().default(0),
     // Temporary retained Memory-provenance link (#603): optionally ties a prompt to the practice chunk
     // (#205) it was harvested from. Retained until a later issue migrates provenance off `chunk_id` and
     // drops `domains`/`cases`/`chunks`.

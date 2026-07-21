@@ -33,50 +33,58 @@ vi.mock("./NoteWorkspace", async () => {
       };
       target: { kind: string; note?: { entryId: string } };
     }) =>
-      React.createElement("div", { "data-testid": "editor", "data-kind": props.target.kind }, [
-        React.createElement(
-          "button",
-          { key: "s", onClick: () => props.onSaved(), type: "button" },
-          "stub-save"
-        ),
-        React.createElement(
-          "button",
-          {
-            key: "os",
-            onClick: () => void props.ops.save(createTextDocument("saved body"), null),
-            type: "button"
-          },
-          "stub-ops-save"
-        ),
-        React.createElement(
-          "button",
-          {
-            key: "or",
-            onClick: () => void props.ops.remove(props.target.note?.entryId ?? ""),
-            type: "button"
-          },
-          "stub-ops-remove"
-        ),
-        React.createElement(
-          "button",
-          {
-            key: "d",
-            onClick: () => props.onDeleted(props.target.note?.entryId ?? ""),
-            type: "button"
-          },
-          "stub-delete"
-        ),
-        React.createElement(
-          "button",
-          { key: "r", onClick: () => props.onReviewChanged(), type: "button" },
-          "stub-review"
-        ),
-        React.createElement(
-          "button",
-          { key: "c", onClick: () => props.onClose(), type: "button" },
-          "stub-close"
-        )
-      ])
+      React.createElement(
+        "div",
+        {
+          "data-entry": props.target.note?.entryId ?? "",
+          "data-testid": "editor",
+          "data-kind": props.target.kind
+        },
+        [
+          React.createElement(
+            "button",
+            { key: "s", onClick: () => props.onSaved(), type: "button" },
+            "stub-save"
+          ),
+          React.createElement(
+            "button",
+            {
+              key: "os",
+              onClick: () => void props.ops.save(createTextDocument("saved body"), null),
+              type: "button"
+            },
+            "stub-ops-save"
+          ),
+          React.createElement(
+            "button",
+            {
+              key: "or",
+              onClick: () => void props.ops.remove(props.target.note?.entryId ?? ""),
+              type: "button"
+            },
+            "stub-ops-remove"
+          ),
+          React.createElement(
+            "button",
+            {
+              key: "d",
+              onClick: () => props.onDeleted(props.target.note?.entryId ?? ""),
+              type: "button"
+            },
+            "stub-delete"
+          ),
+          React.createElement(
+            "button",
+            { key: "r", onClick: () => props.onReviewChanged(), type: "button" },
+            "stub-review"
+          ),
+          React.createElement(
+            "button",
+            { key: "c", onClick: () => props.onClose(), type: "button" },
+            "stub-close"
+          )
+        ]
+      )
   };
 });
 
@@ -359,6 +367,32 @@ describe("NotesPage (#659)", () => {
     expect(editor.getAttribute("data-kind")).toBe("edit");
 
     await userEvent.click(within(editor).getByRole("button", { name: "stub-close" }));
+    expect(screen.queryByTestId("editor")).toBeNull();
+  });
+
+  it("opens the deep-linked note once and does not reopen it after a reload", async () => {
+    mockedFetch.mockResolvedValue({
+      notes: [note("note-1", "first"), note("note-2", "second")]
+    });
+
+    render(<NotesPage openNoteEntryId="note-2" />);
+
+    const editor = await screen.findByTestId("editor");
+    expect(editor.getAttribute("data-kind")).toBe("edit");
+    expect(editor.getAttribute("data-entry")).toBe("note-2");
+
+    // A save reloads the list; the deep link is one-shot and must not re-drive the editor.
+    await userEvent.click(within(editor).getByRole("button", { name: "stub-save" }));
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("editor").getAttribute("data-entry")).toBe("note-2");
+  });
+
+  it("ignores a deep link whose note is absent from the list", async () => {
+    mockedFetch.mockResolvedValue({ notes: [note("note-1", "first")] });
+
+    render(<NotesPage openNoteEntryId="note-missing" />);
+    await screen.findByText("first");
+
     expect(screen.queryByTestId("editor")).toBeNull();
   });
 

@@ -9,6 +9,7 @@ import {
   type AuthorNoteCardRequest,
   type CreateDirectCardRequest,
   type DirectCardResultDto,
+  type EditNotePromptQuestionRequest,
   type NotePromptSettingsDto,
   type NotePromptSettingsListDto,
   type NoteReviewPromptDto,
@@ -18,7 +19,6 @@ import {
   type SetNoteGradingTargetRequest
 } from "@whetstone/contracts";
 import { type ReviewRating } from "@whetstone/domain";
-import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { apiUrl } from "../../shared/runtime";
 
@@ -85,19 +85,52 @@ export async function fetchNotePromptHistory(
   return parseReviewHistoryPageDto(await requestJson(path));
 }
 
-// Edit one prompt's retrieval question (#660, rich in #687): sends the rich Question document and returns
-// the refreshed settings row. The server derives the plaintext and rejects a blank document.
+// Edit one prompt's retrieval question (#660, rich in #687): sends the rich Question document plus the
+// settings revision the editor loaded and returns the incremented row. The server derives plaintext,
+// rejects a blank document, and answers `prompt_conflict` instead of overwriting a newer prompt revision.
 export async function editNotePromptQuestion(
   promptId: string,
-  questionDoc: DocumentNodeJSON
+  request: EditNotePromptQuestionRequest
 ): Promise<NotePromptSettingsDto> {
-  return parseNotePromptSettingsDto(
-    await requestJson(apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/question`), {
-      body: JSON.stringify({ questionDoc }),
-      headers: jsonHeaders,
-      method: "PATCH"
-    })
-  );
+  let response: Response;
+  try {
+    response = await fetch(
+      apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/question`),
+      { body: JSON.stringify(request), headers: jsonHeaders, method: "PATCH" }
+    );
+  } catch {
+    throw new EditNotePromptQuestionError("network");
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (response.status === 400 && body?.error === "invalid_question") {
+      throw new EditNotePromptQuestionError("invalid_question");
+    }
+    if (response.status === 404) {
+      throw new EditNotePromptQuestionError("not_found");
+    }
+    if (response.status === 409 && body?.error === "prompt_conflict") {
+      throw new EditNotePromptQuestionError("conflict");
+    }
+    throw new EditNotePromptQuestionError("network");
+  }
+  return parseNotePromptSettingsDto(await response.json());
+}
+
+export type EditNotePromptQuestionErrorKind =
+  | "conflict"
+  | "invalid_question"
+  | "network"
+  | "not_found";
+
+export class EditNotePromptQuestionError extends Error {
+  readonly kind: EditNotePromptQuestionErrorKind;
+
+  constructor(kind: EditNotePromptQuestionErrorKind) {
+    super(`Editing the Question failed: ${kind}.`);
+    this.name = "EditNotePromptQuestionError";
+    this.kind = kind;
+  }
 }
 
 // Why setting a prompt's grading target failed (#686), kept as a small closed set so Card detail can report
@@ -106,6 +139,7 @@ export async function editNotePromptQuestion(
 // a `restart` on a cardless prompt; `not_found` is a prompt that is no longer the learner's; `network` is a
 // lost response, retry-safe with the same intent.
 export type SetNoteGradingTargetErrorKind =
+  | "conflict"
   | "invalid_success_check"
   | "legacy_read_only"
   | "network"
@@ -126,8 +160,8 @@ export class SetNoteGradingTargetError extends Error {
 // schedule) or `restart` (also reset the schedule, due now) so Whetstone never infers whether the trained
 // capability changed. Returns the refreshed settings row. On failure this throws a
 // `SetNoteGradingTargetError` whose `kind` maps the server outcome by status and error body — 400
-// `invalid_success_check`, 404 `not_found`, 409 `legacy_read_only`/`restart_requires_card`, anything else
-// `network` — so Card detail keeps every draft and reports the right reason.
+// `invalid_success_check`, 404 `not_found`, 409 `legacy_read_only`/`restart_requires_card`/
+// `prompt_conflict`, anything else `network` — so Card detail keeps every draft and reports the right reason.
 export async function setNoteGradingTarget(
   promptId: string,
   request: SetNoteGradingTargetRequest
@@ -154,6 +188,9 @@ export async function setNoteGradingTarget(
     }
     if (response.status === 409 && body?.error === "restart_requires_card") {
       throw new SetNoteGradingTargetError("restart_requires_card");
+    }
+    if (response.status === 409 && body?.error === "prompt_conflict") {
+      throw new SetNoteGradingTargetError("conflict");
     }
     throw new SetNoteGradingTargetError("network");
   }

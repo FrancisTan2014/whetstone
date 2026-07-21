@@ -8,6 +8,13 @@ import { Button } from "../../shared/ui/Button";
 import { RichContentEditor } from "../../shared/editor/index.js";
 import { PmDocument } from "../reader/PmDocument.js";
 import { cardStateLabel } from "./cardState";
+import {
+  genericGradingFailure,
+  gradingFailureMessages,
+  questionFailureMessages,
+  sameGradingTarget,
+  seedSuccessCheck
+} from "./gradingTarget";
 import { noteWorkspaceClassNames as cx } from "./noteWorkspace.tokens";
 import {
   RetrievalContractEditor,
@@ -16,6 +23,7 @@ import {
   type SuccessCheckState
 } from "./RetrievalContractEditor";
 import {
+  EditNotePromptQuestionError,
   SetNoteGradingTargetError,
   addNotePromptCardBack,
   editNotePromptQuestion,
@@ -44,39 +52,6 @@ type CardDetailProps = Readonly<{
 // A stable empty ProseMirror document for the Try preview when a note carries no body — the preview simply
 // has nothing to reveal.
 const emptyDocument: DocumentNodeJSON = { content: [{ type: "paragraph" }], type: "doc" };
-
-// The failure copy for a settings mutation. A grading-target rejection is named so the learner knows what to
-// change; every other failure is the shared retry message.
-const gradingFailureMessages: Readonly<Record<SetNoteGradingTargetError["kind"], string>> = {
-  invalid_success_check: "Write the success check, or grade against the whole note.",
-  legacy_read_only: "This card keeps its original answer and cannot change its grading target.",
-  network: "That change could not be saved. The list was refreshed — please try again.",
-  not_found: "This card is no longer available. The list was refreshed.",
-  restart_requires_card: "Start reviewing this card before restarting its schedule."
-};
-
-const genericFailure =
-  "That action could not be completed. The list was refreshed — please try again.";
-
-// Whether two grading targets describe the same policy: same kind, and for a Success check the same rich
-// document. Compared structurally so a re-opened-then-restored Success check is not treated as a change.
-function sameGradingTarget(a: NoteGradingTarget, b: NoteGradingTarget): boolean {
-  if (a.kind !== b.kind) {
-    return false;
-  }
-  if (a.kind === "expected_response" && b.kind === "expected_response") {
-    return JSON.stringify(a.successCheckDoc) === JSON.stringify(b.successCheckDoc);
-  }
-  return true;
-}
-
-// The Success-check disclosure state a prompt's reveal policy seeds: an `expected_response` reveal opens the
-// disclosure on its stored Success check; any other reveal starts closed (grade against the whole note).
-function seedSuccessCheck(reveal: NotePromptSettingsDto["reveal"]): SuccessCheckState {
-  return reveal.kind === "expected_response"
-    ? { doc: reveal.successCheckDoc, open: true }
-    : { open: false };
-}
 
 // One card's focused detail (#700, rich in #687): the current retrieval Question and grading target
 // (editable through #690's rich editor with the live note as read-only Reference), the projected schedule
@@ -168,21 +143,33 @@ export function CardDetail({
     let refreshed: NotePromptSettingsDto;
     try {
       if (target !== null) {
-        refreshed = await setNoteGradingTarget(prompt.promptId, { mode, target });
+        refreshed = await setNoteGradingTarget(prompt.promptId, {
+          expectedRevision: prompt.revision,
+          mode,
+          target
+        });
         if (questionChanged) {
-          refreshed = await editNotePromptQuestion(prompt.promptId, questionDoc);
+          refreshed = await editNotePromptQuestion(prompt.promptId, {
+            expectedRevision: refreshed.revision,
+            questionDoc
+          });
         }
       } else {
         // persist runs only when the target or the Question changed; with no target change the Question is
         // the change, so its refreshed row is the one handed up.
-        refreshed = await editNotePromptQuestion(prompt.promptId, questionDoc);
+        refreshed = await editNotePromptQuestion(prompt.promptId, {
+          expectedRevision: prompt.revision,
+          questionDoc
+        });
       }
     } catch (error) {
       setBusy(false);
       setFailure(
         error instanceof SetNoteGradingTargetError
           ? gradingFailureMessages[error.kind]
-          : genericFailure
+          : error instanceof EditNotePromptQuestionError
+            ? questionFailureMessages[error.kind]
+            : genericGradingFailure
       );
       setPendingTarget(null);
       onReload();
@@ -236,7 +223,7 @@ export function CardDetail({
       },
       () => {
         setBusy(false);
-        setFailure(genericFailure);
+        setFailure(genericGradingFailure);
         onReload();
       }
     );

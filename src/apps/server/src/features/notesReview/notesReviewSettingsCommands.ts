@@ -1,7 +1,11 @@
-import type { NoteGradingTarget, NotePromptSettingsDto } from "@whetstone/contracts";
+import type {
+  EditNotePromptQuestionRequest,
+  NotePromptSettingsDto,
+  SetNoteGradingTargetRequest
+} from "@whetstone/contracts";
 import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts } from "../../db/schema.js";
@@ -38,10 +42,12 @@ export type NotePromptSettingsMutationOutcome =
 // The outcome of editing a prompt's retrieval question (#660, made rich in #687). `ok` returns the
 // refreshed settings row. `not_found` (404) is a prompt that is not the caller's. `invalid_question` (400)
 // is a Question document whose server-derived text is blank — the wire never carries plaintext, so blankness
-// is judged here, and a blank cue is rejected before any write.
+// is judged here, and a blank cue is rejected before any write. `conflict` (409) means the prompt content
+// revision changed after the editor loaded it; the newer row is left untouched.
 export type EditNotePromptQuestionOutcome =
   | Readonly<{ status: "ok"; value: NotePromptSettingsDto }>
   | Readonly<{ status: "not_found" }>
+  | Readonly<{ status: "conflict" }>
   | Readonly<{ status: "invalid_question" }>;
 
 // Edit one prompt's retrieval question (#660, rich in #687). Owner-scoped through the prompt's note facet, it
@@ -49,34 +55,42 @@ export type EditNotePromptQuestionOutcome =
 // due date, its requested retention, or its history. A `current_note`, an `expected_response`, and a
 // `legacy_custom` prompt edit their question identically; the reveal is untouched. The Question text is
 // derived here, never trusted from the client, and a blank document is rejected as `invalid_question`.
-// Returns the refreshed row (the new question, the unchanged card state). `not_found` when the prompt is not
-// the caller's.
+// The update compares `expectedRevision` and increments it atomically, so a concurrent Question or grading
+// target edit returns `conflict` without an overwrite. Returns the refreshed row (the new question, the
+// unchanged card state). `not_found` when the prompt is not the caller's.
 export async function editNotePromptQuestion(
   dependencies: NoteReviewSettingsDependencies,
   promptId: string,
   userId: string,
-  questionDoc: unknown
+  request: EditNotePromptQuestionRequest
 ): Promise<EditNotePromptQuestionOutcome> {
   const prompt = await getPromptRowForUser(dependencies.db, promptId, userId);
   if (prompt === undefined) {
     return { status: "not_found" };
   }
 
-  const cueDoc = questionDoc as DocumentNodeJSON;
+  const cueDoc = request.questionDoc as DocumentNodeJSON;
   const cueText = documentReadableText(cueDoc);
   if (cueText.trim().length === 0) {
     return { status: "invalid_question" };
   }
 
-  await dependencies.db
+  const updated = await dependencies.db
     .update(memoryPrompts)
-    .set({ cueDoc, cueText })
-    .where(eq(memoryPrompts.entryId, promptId));
+    .set({ cueDoc, cueText, revision: request.expectedRevision + 1 })
+    .where(
+      and(eq(memoryPrompts.entryId, promptId), eq(memoryPrompts.revision, request.expectedRevision))
+    )
+    .returning();
+  const updatedPrompt = updated[0];
+  if (updatedPrompt === undefined) {
+    return { status: "conflict" };
+  }
 
   const card = await getReviewCardForUser(dependencies.db, promptId, userId);
   return {
     status: "ok",
-    value: projectPromptSettings({ ...prompt, cueDoc, cueText }, card, dependencies.now())
+    value: projectPromptSettings(updatedPrompt, card, dependencies.now())
   };
 }
 
@@ -211,10 +225,12 @@ export async function addNotePromptCard(
 // expected-response target whose Success check is blank once its text is derived server-side.
 // `legacy_read_only` (409) rejects any change through this boundary to a `legacy_custom` prompt — legacy
 // reveals are preserved, never converted (#657). `restart_requires_card` (409) rejects a `restart`
-// on a cardless prompt: a schedule reset needs a card, and this boundary never fabricates one.
+// on a cardless prompt: a schedule reset needs a card, and this boundary never fabricates one. `conflict`
+// (409) means the prompt's Question or grading target changed after this editor loaded it.
 export type SetNoteGradingTargetOutcome =
   | Readonly<{ status: "ok"; value: NotePromptSettingsDto }>
   | Readonly<{ status: "not_found" }>
+  | Readonly<{ status: "conflict" }>
   | Readonly<{ status: "invalid_success_check" }>
   | Readonly<{ status: "legacy_read_only" }>
   | Readonly<{ status: "restart_requires_card" }>;
@@ -229,13 +245,14 @@ export type SetNoteGradingTargetOutcome =
 // card, due date, requested retention, or history. Owner-scoped through the prompt's note facet. A
 // `legacy_custom` prompt is read-only here (`legacy_read_only`); a `restart` on a cardless prompt is a
 // `restart_requires_card` conflict (this boundary never fabricates a card). A blank Success check is
-// `invalid_success_check`. Any rejection returns BEFORE the transaction, so content and schedule/history are
-// left unchanged. Returns the refreshed settings row.
+// `invalid_success_check`. The prompt update compares and increments `expectedRevision` inside the same
+// transaction as a requested reset; a stale revision returns `conflict` before any reset, so content and
+// schedule/history are left unchanged. Returns the refreshed settings row.
 export async function setNoteGradingTarget(
   dependencies: NoteReviewSettingsDependencies,
   promptId: string,
   userId: string,
-  request: Readonly<{ mode: "keep" | "restart"; target: NoteGradingTarget }>
+  request: SetNoteGradingTargetRequest
 ): Promise<SetNoteGradingTargetOutcome> {
   const prompt = await getPromptRowForUser(dependencies.db, promptId, userId);
   if (prompt === undefined) {
@@ -260,28 +277,37 @@ export async function setNoteGradingTarget(
     revealKind: resolved.revealKind,
     answerDoc: resolved.answerDoc,
     answerText: resolved.answerText,
-    lifecycle: "ready" as const
+    lifecycle: "ready" as const,
+    revision: request.expectedRevision + 1
   };
-  let finalCard = card;
-  await dependencies.db.transaction(async (tx) => {
-    await tx.update(memoryPrompts).set(nextColumns).where(eq(memoryPrompts.entryId, promptId));
+  const mutation = await dependencies.db.transaction(async (tx) => {
+    const updated = await tx
+      .update(memoryPrompts)
+      .set(nextColumns)
+      .where(
+        and(
+          eq(memoryPrompts.entryId, promptId),
+          eq(memoryPrompts.revision, request.expectedRevision)
+        )
+      )
+      .returning();
+    const updatedPrompt = updated[0];
+    if (updatedPrompt === undefined) {
+      return { status: "conflict" as const };
+    }
+    let finalCard = card;
     if (request.mode === "restart" && card !== undefined) {
       const reset = await applyResetToCardInTx(tx, card, now, dependencies.createId());
       finalCard = reset.card;
     }
+    return { card: finalCard, prompt: updatedPrompt, status: "ok" as const };
   });
+  if (mutation.status === "conflict") {
+    return mutation;
+  }
 
   return {
     status: "ok",
-    value: projectPromptSettings(
-      {
-        ...prompt,
-        revealKind: resolved.revealKind,
-        answerDoc: resolved.answerDoc,
-        answerText: resolved.answerText
-      },
-      finalCard,
-      now
-    )
+    value: projectPromptSettings(mutation.prompt, mutation.card, now)
   };
 }

@@ -34,9 +34,15 @@ type NotesState =
 // rich editor (with its owner-scoped Review controls and a named-delete cascade). When `focusWorkEntryId`
 // is set (the Library's contextual "Notes" action passes `#/notes?work=<id>`), the list narrows to that one
 // work without changing the order.
-type NotesPageProps = Readonly<{ focusWorkEntryId?: string | undefined }>;
+type NotesPageProps = Readonly<{
+  focusWorkEntryId?: string | undefined;
+  openNoteEntryId?: string | undefined;
+}>;
 
-export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Element {
+export function NotesPage({
+  focusWorkEntryId,
+  openNoteEntryId
+}: NotesPageProps): React.JSX.Element {
   const navigate = useNavigate();
   const [state, setState] = useState<NotesState>({ status: "loading" });
   const [input, setInput] = useState("");
@@ -75,6 +81,11 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
   // never re-renders and it survives the reload triggered alongside the close.
   const pendingFocus = useRef<"new" | "row" | null>(null);
 
+  // The deep-link note ("#/notes?open=<id>", from Review's Open note) is opened once, after the list first
+  // settles and only when present. A ref, not state, so arming/disarming it never re-renders and it never
+  // re-opens the editor after the learner closes it.
+  const deepLinkOpened = useRef(false);
+
   // Debounce the search box so typing does not fire a request per keystroke; the trimmed value drives the
   // fetch. A blank box restores the full list (no `search` param). The transition happens in the timer
   // callback, never synchronously in the effect body.
@@ -95,6 +106,18 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
       (response) => {
         if (active) {
           setState({ notes: response.notes, status: "ready" });
+          // Open the deep-linked note exactly once, the first time the list settles with it present.
+          if (!deepLinkOpened.current && openNoteEntryId !== undefined) {
+            deepLinkOpened.current = true;
+            const deepLinked = response.notes.find(
+              (candidate) => candidate.entryId === openNoteEntryId
+            );
+            if (deepLinked !== undefined) {
+              setFocusEntryId(deepLinked.entryId);
+              pendingFocus.current = "row";
+              setEditNote(deepLinked);
+            }
+          }
         }
       },
       () => {
@@ -106,7 +129,7 @@ export function NotesPage({ focusWorkEntryId }: NotesPageProps): React.JSX.Eleme
     return () => {
       active = false;
     };
-  }, [query, focusWorkEntryId, reloadNonce]);
+  }, [query, focusWorkEntryId, openNoteEntryId, reloadNonce]);
 
   // After the editor closes, return focus to the control the learner came from, once the list has settled.
   useEffect(() => {

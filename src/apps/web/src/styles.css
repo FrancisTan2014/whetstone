@@ -931,6 +931,27 @@ code {
   gap: 0.5rem;
 }
 
+/* The in-Review repair view (#691): the same calm column rhythm as Card detail, with a read-only
+   Reference stack and a quiet heading. Tokenized colours keep Day/Night correct. */
+.noteReviewRepair,
+.noteReviewRepairReference,
+.noteReviewRepairFailure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.noteReviewRepairHeading {
+  margin: 0;
+  font-size: 1.125rem;
+  color: var(--color-text);
+}
+
+.noteReviewRepairSharedWarning {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
 .noteCardsToolbar:empty {
   display: none;
 }

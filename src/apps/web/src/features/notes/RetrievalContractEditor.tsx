@@ -52,6 +52,9 @@ type RetrievalContractEditorProps = Readonly<{
   // The parent's primary actions (e.g. Create card + Cancel), shown only while editing and hidden during
   // the Try preview so the learner rehearses the card without a stray commit control.
   actions: React.ReactNode;
+  // Freeze every authored field and local preview control while the parent is resolving a pending
+  // decision or write. The read-only workspace remains readable.
+  editable?: boolean;
 }>;
 
 // The reusable Notes-owned retrieval-contract editor (#690): it authors the retrieval prompt (Question) and
@@ -63,6 +66,7 @@ type RetrievalContractEditorProps = Readonly<{
 export function RetrievalContractEditor({
   actions,
   answerLabel = "Answer",
+  editable = true,
   onQuestionChange,
   onSuccessCheckChange,
   questionDoc,
@@ -132,6 +136,7 @@ export function RetrievalContractEditor({
         <RichContentEditor
           ariaLabel="Question"
           document={questionDoc}
+          editable={editable}
           onChange={onQuestionChange}
           presentation="compact"
         />
@@ -149,6 +154,7 @@ export function RetrievalContractEditor({
       <section aria-label="Grading target" className="retrievalContractSection">
         <Button
           aria-expanded={successCheck.open}
+          disabled={!editable}
           onClick={toggleSuccessCheck}
           type="button"
           variant="ghost"
@@ -163,6 +169,7 @@ export function RetrievalContractEditor({
             <RichContentEditor
               ariaLabel="Success check"
               document={successCheck.doc}
+              editable={editable}
               onChange={(doc) => onSuccessCheckChange({ doc, open: true })}
               presentation="compact"
             />
@@ -177,10 +184,20 @@ export function RetrievalContractEditor({
           <div className="retrievalContractConfirm">
             <p>Remove the success check you wrote? This cannot be undone.</p>
             <div className="retrievalContractConfirmActions">
-              <Button onClick={discardSuccessCheck} type="button" variant="primary">
+              <Button
+                disabled={!editable}
+                onClick={discardSuccessCheck}
+                type="button"
+                variant="primary"
+              >
                 Remove it
               </Button>
-              <Button onClick={() => setConfirmingDiscard(false)} type="button" variant="secondary">
+              <Button
+                disabled={!editable}
+                onClick={() => setConfirmingDiscard(false)}
+                type="button"
+                variant="secondary"
+              >
                 Keep it
               </Button>
             </div>
@@ -190,7 +207,7 @@ export function RetrievalContractEditor({
 
       <div className="retrievalContractActions">
         <Button
-          disabled={!previewReady}
+          disabled={!editable || !previewReady}
           onClick={() => setPreviewing(true)}
           type="button"
           variant="secondary"

@@ -82,6 +82,7 @@ function prompt(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSetti
   return {
     cardState: { state: "due" },
     promptId: "prompt-1",
+    revision: 0,
     questionDoc: createTextDocument("What is a WAL?"),
     questionText: "What is a WAL?",
     reveal: { kind: "current_note" },
