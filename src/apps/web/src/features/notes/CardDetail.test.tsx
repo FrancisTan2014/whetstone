@@ -61,6 +61,7 @@ import { CardDetail } from "./CardDetail";
 type CardDetailProps = Parameters<typeof CardDetail>[0];
 import {
   addNotePromptCardBack,
+  EditNotePromptQuestionError,
   editNotePromptQuestion,
   pauseNotePromptCard,
   removeNotePromptCard,
@@ -84,6 +85,7 @@ function prompt(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSetti
   return {
     cardState: { state: "due" },
     promptId: "prompt-1",
+    revision: 0,
     questionDoc: createTextDocument("What is a WAL?"),
     questionText: "What is a WAL?",
     reveal: { kind: "current_note" },
@@ -198,9 +200,10 @@ describe("CardDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(mockedEdit).toHaveBeenCalled());
-    const [id, doc] = mockedEdit.mock.calls[0]!;
+    const [id, request] = mockedEdit.mock.calls[0]!;
     expect(id).toBe("prompt-1");
-    expect(documentText(doc)).toBe("What is durability?");
+    expect(request.expectedRevision).toBe(0);
+    expect(documentText(request.questionDoc)).toBe("What is durability?");
     // No grading-target change, so only the question is sent.
     expect(mockedSetTarget).not.toHaveBeenCalled();
     expect(onRefreshed).toHaveBeenCalled();
@@ -335,6 +338,7 @@ describe("CardDetail", () => {
     await waitFor(() => expect(mockedSetTarget).toHaveBeenCalled());
     const [id, request] = mockedSetTarget.mock.calls[0]!;
     expect(id).toBe("prompt-1");
+    expect(request.expectedRevision).toBe(0);
     expect(request.mode).toBe("keep");
     expect(request.target.kind).toBe("expected_response");
     expect(onRefreshed).toHaveBeenCalled();
@@ -383,8 +387,8 @@ describe("CardDetail", () => {
   });
 
   it("applies both a grading-target change and a question edit, keeping the last refreshed row", async () => {
-    mockedSetTarget.mockResolvedValue(prompt({ questionText: "stale" }));
-    mockedEdit.mockResolvedValue(prompt({ questionText: "final question" }));
+    mockedSetTarget.mockResolvedValue(prompt({ questionText: "stale", revision: 1 }));
+    mockedEdit.mockResolvedValue(prompt({ questionText: "final question", revision: 2 }));
     const onRefreshed = vi.fn<CardDetailProps["onRefreshed"]>();
     renderDetail({ onRefreshed });
 
@@ -399,6 +403,7 @@ describe("CardDetail", () => {
 
     await waitFor(() => expect(mockedEdit).toHaveBeenCalled());
     expect(mockedSetTarget).toHaveBeenCalled();
+    expect(mockedEdit.mock.calls[0]![1]).toMatchObject({ expectedRevision: 1 });
     // The question send runs after the target send, so its row is the one handed up.
     expect(onRefreshed).toHaveBeenCalledWith(
       expect.objectContaining({ questionText: "final question" })
@@ -438,6 +443,25 @@ describe("CardDetail", () => {
     expect(
       await screen.findByText(/That action could not be completed\. The list was refreshed/)
     ).toBeDefined();
+    expect(onReload).toHaveBeenCalled();
+  });
+
+  it("reports a stale Question conflict and reloads without discarding the draft", async () => {
+    mockedEdit.mockRejectedValue(new EditNotePromptQuestionError("conflict"));
+    const onReload = vi.fn<CardDetailProps["onReload"]>();
+    renderDetail({ onReload });
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit question" }));
+    const question = screen.getByLabelText("Question");
+    await userEvent.type(question, " revised");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(
+        "This card changed elsewhere. Your draft is still here — reload the card before saving."
+      )
+    ).toBeDefined();
+    expect((question as HTMLTextAreaElement).value).toBe("What is a WAL? revised");
     expect(onReload).toHaveBeenCalled();
   });
 

@@ -10,6 +10,7 @@ import { PmDocument } from "../reader/PmDocument.js";
 import {
   genericGradingFailure,
   gradingFailureMessages,
+  questionFailureMessages,
   sameGradingTarget,
   seedSuccessCheck
 } from "../notes/gradingTarget";
@@ -20,6 +21,7 @@ import {
   type SuccessCheckState
 } from "../notes/RetrievalContractEditor";
 import {
+  EditNotePromptQuestionError,
   SetNoteGradingTargetError,
   editNotePromptQuestion,
   fetchNoteReveal,
@@ -187,12 +189,22 @@ export function RepairCardView({
     try {
       let refreshed: NotePromptSettingsDto;
       if (target !== null) {
-        refreshed = await setNoteGradingTarget(promptId, { mode, target });
+        refreshed = await setNoteGradingTarget(promptId, {
+          expectedRevision: prompt.revision,
+          mode,
+          target
+        });
         if (questionChanged) {
-          refreshed = await editNotePromptQuestion(promptId, questionDoc);
+          refreshed = await editNotePromptQuestion(promptId, {
+            expectedRevision: refreshed.revision,
+            questionDoc
+          });
         }
       } else {
-        refreshed = await editNotePromptQuestion(promptId, questionDoc);
+        refreshed = await editNotePromptQuestion(promptId, {
+          expectedRevision: prompt.revision,
+          questionDoc
+        });
       }
       setBusy(false);
       setPendingTarget(null);
@@ -203,7 +215,9 @@ export function RepairCardView({
       setFailure(
         error instanceof SetNoteGradingTargetError
           ? gradingFailureMessages[error.kind]
-          : genericGradingFailure
+          : error instanceof EditNotePromptQuestionError
+            ? questionFailureMessages[error.kind]
+            : genericGradingFailure
       );
     }
   }
@@ -237,10 +251,15 @@ export function RepairCardView({
 
   const actions = (
     <>
-      <Button onClick={saveEdits} pending={busy} type="button">
+      <Button disabled={pendingTarget !== null} onClick={saveEdits} pending={busy} type="button">
         Save
       </Button>
-      <Button disabled={busy} onClick={onCancel} type="button" variant="secondary">
+      <Button
+        disabled={busy || pendingTarget !== null}
+        onClick={onCancel}
+        type="button"
+        variant="secondary"
+      >
         Cancel
       </Button>
     </>
@@ -260,6 +279,7 @@ export function RepairCardView({
         <RetrievalContractEditor
           actions={actions}
           answerLabel="Answer"
+          editable={!busy && pendingTarget === null}
           onQuestionChange={(doc) => {
             setQuestionDoc(doc);
             setQuestionInvalid(false);
@@ -284,6 +304,7 @@ export function RepairCardView({
               ) : null}
               <Button
                 className="min-h-11"
+                disabled={busy || pendingTarget !== null}
                 onClick={() => onOpenNote(noteId)}
                 size="sm"
                 type="button"
@@ -303,6 +324,7 @@ export function RepairCardView({
             <RichContentEditor
               ariaLabel="Question"
               document={questionDoc}
+              editable={!busy}
               onChange={(doc) => {
                 setQuestionDoc(doc);
                 setQuestionInvalid(false);

@@ -324,6 +324,7 @@ describe("note Review settings & history contracts (#660)", () => {
       prompts: [
         {
           promptId: "p1",
+          revision: 0,
           questionDoc,
           questionText: "What is a WAL?",
           reveal: { kind: "current_note" },
@@ -331,6 +332,7 @@ describe("note Review settings & history contracts (#660)", () => {
         },
         {
           promptId: "p2",
+          revision: 1,
           questionDoc,
           questionText: "What is a WAL?",
           reveal: { kind: "legacy_custom", answerDoc, answerText: "a write-ahead log" },
@@ -338,6 +340,7 @@ describe("note Review settings & history contracts (#660)", () => {
         },
         {
           promptId: "p3",
+          revision: 2,
           questionDoc,
           questionText: "What is a WAL?",
           reveal: { kind: "current_note" },
@@ -345,6 +348,7 @@ describe("note Review settings & history contracts (#660)", () => {
         },
         {
           promptId: "p4",
+          revision: 3,
           questionDoc,
           questionText: "What is a WAL?",
           reveal: { kind: "current_note" },
@@ -352,6 +356,7 @@ describe("note Review settings & history contracts (#660)", () => {
         },
         {
           promptId: "p5",
+          revision: 4,
           questionDoc,
           questionText: "What is a WAL?",
           reveal: {
@@ -380,6 +385,7 @@ describe("note Review settings & history contracts (#660)", () => {
     expect(() =>
       parseNotePromptSettingsDto({
         promptId: "p1",
+        revision: 0,
         questionDoc,
         questionText: "q",
         reveal: {
@@ -398,6 +404,7 @@ describe("note Review settings & history contracts (#660)", () => {
     expect(() =>
       parseNotePromptSettingsDto({
         promptId: "p1",
+        revision: 0,
         questionDoc,
         questionText: "q",
         reveal: { kind: "current_note", answerText: "leaked" },
@@ -407,6 +414,7 @@ describe("note Review settings & history contracts (#660)", () => {
     expect(() =>
       parseNotePromptSettingsDto({
         promptId: "p1",
+        revision: 0,
         questionDoc,
         questionText: "q",
         reveal: { kind: "current_note" },
@@ -444,11 +452,25 @@ describe("note Review settings & history contracts (#660)", () => {
 
   it("parses a rich question document and rejects a malformed one and extra keys (#687)", () => {
     const questionDoc = createTextDocument("Define a WAL");
-    expect(parseEditNotePromptQuestionRequest({ questionDoc })).toEqual({ questionDoc });
+    expect(parseEditNotePromptQuestionRequest({ expectedRevision: 2, questionDoc })).toEqual({
+      expectedRevision: 2,
+      questionDoc
+    });
     expect(() =>
-      parseEditNotePromptQuestionRequest({ questionDoc: { not: "a document" } })
+      parseEditNotePromptQuestionRequest({
+        expectedRevision: 2,
+        questionDoc: { not: "a document" }
+      })
     ).toThrow();
-    expect(() => parseEditNotePromptQuestionRequest({ question: "Define a WAL" })).toThrow();
+    expect(() =>
+      parseEditNotePromptQuestionRequest({
+        expectedRevision: 2,
+        question: "Define a WAL"
+      })
+    ).toThrow();
+    expect(() =>
+      parseEditNotePromptQuestionRequest({ expectedRevision: -1, questionDoc })
+    ).toThrow();
   });
 });
 
@@ -457,34 +479,53 @@ describe("setNoteGradingTargetRequestSchema (#686)", () => {
 
   it("parses a current_note target under keep and restart", () => {
     expect(
-      parseSetNoteGradingTargetRequest({ mode: "keep", target: { kind: "current_note" } })
-    ).toEqual({ mode: "keep", target: { kind: "current_note" } });
+      parseSetNoteGradingTargetRequest({
+        expectedRevision: 2,
+        mode: "keep",
+        target: { kind: "current_note" }
+      })
+    ).toEqual({ expectedRevision: 2, mode: "keep", target: { kind: "current_note" } });
     expect(
-      parseSetNoteGradingTargetRequest({ mode: "restart", target: { kind: "current_note" } })
-    ).toEqual({ mode: "restart", target: { kind: "current_note" } });
+      parseSetNoteGradingTargetRequest({
+        expectedRevision: 3,
+        mode: "restart",
+        target: { kind: "current_note" }
+      })
+    ).toEqual({ expectedRevision: 3, mode: "restart", target: { kind: "current_note" } });
   });
 
   it("parses an expected_response target carrying only the Success check document", () => {
     expect(
       parseSetNoteGradingTargetRequest({
+        expectedRevision: 4,
         mode: "keep",
         target: { kind: "expected_response", successCheckDoc }
       })
-    ).toEqual({ mode: "keep", target: { kind: "expected_response", successCheckDoc } });
+    ).toEqual({
+      expectedRevision: 4,
+      mode: "keep",
+      target: { kind: "expected_response", successCheckDoc }
+    });
   });
 
   it("rejects an unknown mode, an unknown target kind, and extra keys", () => {
     expect(
       setNoteGradingTargetRequestSchema.safeParse({
+        expectedRevision: 0,
         mode: "reschedule",
         target: { kind: "current_note" }
       }).success
     ).toBe(false);
     expect(() =>
-      parseSetNoteGradingTargetRequest({ mode: "keep", target: { kind: "invented" } })
+      parseSetNoteGradingTargetRequest({
+        expectedRevision: 0,
+        mode: "keep",
+        target: { kind: "invented" }
+      })
     ).toThrow();
     expect(
       setNoteGradingTargetRequestSchema.safeParse({
+        expectedRevision: 0,
         mode: "keep",
         target: { kind: "current_note" },
         extra: true
@@ -497,12 +538,24 @@ describe("setNoteGradingTargetRequestSchema (#686)", () => {
       noteGradingTargetSchema.safeParse({ kind: "current_note", successCheckDoc }).success
     ).toBe(false);
     expect(() =>
-      parseSetNoteGradingTargetRequest({ mode: "keep", target: { kind: "expected_response" } })
+      parseSetNoteGradingTargetRequest({
+        expectedRevision: 0,
+        mode: "keep",
+        target: { kind: "expected_response" }
+      })
     ).toThrow();
     expect(() =>
       parseSetNoteGradingTargetRequest({
+        expectedRevision: 0,
         mode: "keep",
         target: { kind: "expected_response", successCheckDoc: { not: "a document" } }
+      })
+    ).toThrow();
+    expect(() =>
+      parseSetNoteGradingTargetRequest({
+        expectedRevision: -1,
+        mode: "keep",
+        target: { kind: "current_note" }
       })
     ).toThrow();
   });

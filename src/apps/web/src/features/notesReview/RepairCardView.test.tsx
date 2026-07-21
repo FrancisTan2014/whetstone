@@ -33,14 +33,17 @@ vi.mock("../../shared/editor/index.js", async () => {
     RichContentEditor: ({
       ariaLabel,
       document,
+      editable = true,
       onChange
     }: {
       ariaLabel?: string;
       document: unknown;
+      editable?: boolean;
       onChange: (document: unknown) => void;
     }) =>
       React.createElement("textarea", {
         "aria-label": ariaLabel,
+        disabled: !editable,
         onChange: (event: { target: { value: string } }) => onChange(make(event.target.value)),
         value: read(document as never)
       })
@@ -59,6 +62,7 @@ vi.mock("../reader/PmDocument.js", async () => {
 
 import { RepairCardView } from "./RepairCardView";
 import {
+  EditNotePromptQuestionError,
   editNotePromptQuestion,
   fetchNotePromptSettings,
   fetchNoteReveal,
@@ -75,6 +79,7 @@ function promptRow(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSe
   return {
     cardState: { state: "due" },
     promptId: "prompt-1",
+    revision: 0,
     questionDoc: createTextDocument("What is a WAL?"),
     questionText: "What is a WAL?",
     reveal: { kind: "current_note" },
@@ -178,10 +183,10 @@ describe("RepairCardView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(onRepaired).toHaveBeenCalledTimes(1));
-    expect(mockedEdit).toHaveBeenCalledWith(
-      "prompt-1",
-      createTextDocument("What is a write-ahead log?")
-    );
+    expect(mockedEdit).toHaveBeenCalledWith("prompt-1", {
+      expectedRevision: 0,
+      questionDoc: createTextDocument("What is a write-ahead log?")
+    });
     expect(mockedSetTarget).not.toHaveBeenCalled();
   });
 
@@ -245,6 +250,7 @@ describe("RepairCardView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Keep schedule" }));
     await waitFor(() => expect(onRepaired).toHaveBeenCalledTimes(1));
     expect(mockedSetTarget).toHaveBeenCalledWith("prompt-1", {
+      expectedRevision: 0,
       mode: "keep",
       target: {
         kind: "expected_response",
@@ -270,6 +276,7 @@ describe("RepairCardView", () => {
 
     await waitFor(() =>
       expect(mockedSetTarget).toHaveBeenCalledWith("prompt-1", {
+        expectedRevision: 0,
         mode: "restart",
         target: {
           kind: "expected_response",
@@ -296,9 +303,42 @@ describe("RepairCardView", () => {
     expect(mockedSetTarget).not.toHaveBeenCalled();
   });
 
+  it("freezes every draft while Keep/Restart is pending so the target snapshot cannot go stale", async () => {
+    mockedSetTarget.mockResolvedValue(promptRow({ revision: 1 }));
+    renderView();
+    await loaded();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add a specific success check" }));
+    const successCheck = screen.getByRole("textbox", { name: "Success check" });
+    await userEvent.type(successCheck, "Names durability.");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      (screen.getByRole("textbox", { name: "Question" }) as HTMLTextAreaElement).disabled
+    ).toBe(true);
+    expect((successCheck as HTMLTextAreaElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Remove success check" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+
+    await userEvent.type(successCheck, " Newer visible draft.");
+    await userEvent.click(screen.getByRole("button", { name: "Keep schedule" }));
+
+    await waitFor(() => expect(mockedSetTarget).toHaveBeenCalledTimes(1));
+    expect(mockedSetTarget).toHaveBeenCalledWith("prompt-1", {
+      expectedRevision: 0,
+      mode: "keep",
+      target: {
+        kind: "expected_response",
+        successCheckDoc: createTextDocument("Names durability.")
+      }
+    });
+  });
+
   it("a target change plus a question edit sends both writes", async () => {
-    mockedSetTarget.mockResolvedValue(promptRow());
-    mockedEdit.mockResolvedValue(promptRow({ questionText: "Define a WAL." }));
+    mockedSetTarget.mockResolvedValue(promptRow({ revision: 1 }));
+    mockedEdit.mockResolvedValue(promptRow({ questionText: "Define a WAL.", revision: 2 }));
     const { onRepaired } = renderView();
     await loaded();
 
@@ -312,7 +352,10 @@ describe("RepairCardView", () => {
 
     await waitFor(() => expect(onRepaired).toHaveBeenCalledTimes(1));
     expect(mockedSetTarget).toHaveBeenCalledTimes(1);
-    expect(mockedEdit).toHaveBeenCalledWith("prompt-1", createTextDocument("Define a WAL."));
+    expect(mockedEdit).toHaveBeenCalledWith("prompt-1", {
+      expectedRevision: 1,
+      questionDoc: createTextDocument("Define a WAL.")
+    });
   });
 
   it("a cardless prompt saves a target change immediately, without Keep/Restart", async () => {
@@ -330,6 +373,7 @@ describe("RepairCardView", () => {
     await waitFor(() => expect(onRepaired).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("button", { name: "Keep schedule" })).toBeNull();
     expect(mockedSetTarget).toHaveBeenCalledWith("prompt-1", {
+      expectedRevision: 0,
       mode: "keep",
       target: { kind: "expected_response", successCheckDoc: createTextDocument("Ordering.") }
     });
@@ -358,8 +402,8 @@ describe("RepairCardView", () => {
     expect(mockedSetTarget).not.toHaveBeenCalled();
   });
 
-  it("keeps the draft, names the reason, and offers Reload card when a target save is rejected", async () => {
-    mockedSetTarget.mockRejectedValue(new SetNoteGradingTargetError("not_found"));
+  it("keeps the target draft, names a stale-write conflict, and offers Reload card", async () => {
+    mockedSetTarget.mockRejectedValue(new SetNoteGradingTargetError("conflict"));
     renderView();
     await loaded();
 
@@ -369,7 +413,9 @@ describe("RepairCardView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Keep schedule" }));
 
     expect(
-      await screen.findByText("This card is no longer available. The list was refreshed.")
+      await screen.findByText(
+        "This card changed elsewhere. Your draft is still here — reload the card before saving."
+      )
     ).toBeTruthy();
     // The draft survives the failure.
     expect(screen.getByRole("textbox", { name: "Success check" }).textContent ?? "").toContain(
@@ -395,6 +441,24 @@ describe("RepairCardView", () => {
         "That action could not be completed. The list was refreshed — please try again."
       )
     ).toBeTruthy();
+  });
+
+  it("keeps the Question draft and names a stale-write conflict until Reload card", async () => {
+    mockedEdit.mockRejectedValue(new EditNotePromptQuestionError("conflict"));
+    renderView();
+    await loaded();
+
+    const question = screen.getByRole("textbox", { name: "Question" });
+    await userEvent.type(question, " revised");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(
+        "This card changed elsewhere. Your draft is still here — reload the card before saving."
+      )
+    ).toBeTruthy();
+    expect((question as HTMLTextAreaElement).value).toBe("What is a WAL? revised");
+    expect(screen.getByRole("button", { name: "Reload card" })).toBeTruthy();
   });
 
   it("seeds an expected-response prompt with its success check open and the note as Reference", async () => {

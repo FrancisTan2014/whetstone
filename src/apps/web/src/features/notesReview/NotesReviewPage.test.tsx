@@ -140,6 +140,7 @@ function settingsList(reveal: NotePromptSettingsDto["reveal"] = { kind: "current
       {
         cardState: { state: "due" },
         promptId: "prompt-1",
+        revision: 0,
         questionDoc: createTextDocument("What is the capital of France?"),
         questionText: "What is the capital of France?",
         reveal
@@ -151,6 +152,7 @@ function settingsList(reveal: NotePromptSettingsDto["reveal"] = { kind: "current
 const refreshedRow: NotePromptSettingsDto = {
   cardState: { state: "due" },
   promptId: "prompt-1",
+  revision: 1,
   questionDoc: createTextDocument("Which city is the capital of France?"),
   questionText: "Which city is the capital of France?",
   reveal: { kind: "current_note" }
@@ -385,23 +387,29 @@ describe("NotesReviewPage", () => {
     expect(mockedRate).not.toHaveBeenCalled();
   });
 
-  it("returns to the same question, still unrated, when a repair is cancelled", async () => {
+  it("returns to the same question and restores its Fix card focus when Escape cancels", async () => {
     const user = userEvent.setup();
     mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
     mockedSettings.mockResolvedValue(settingsList());
     mockedReveal.mockResolvedValue(currentNoteReveal);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Fix card" }));
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    const fix = await screen.findByRole("button", { name: "Fix card" });
+    fix.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("heading", { name: "Fix this card" });
+    await user.keyboard("{Escape}");
 
     expect(await screen.findByText("What is the capital of France?")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Show note" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Fix this card" })).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Fix card" }))
+    );
     expect(mockedRate).not.toHaveBeenCalled();
   });
 
-  it("offers Fix card after reveal and returns to the revealed note on cancel", async () => {
+  it("returns to the revealed Fix card when Cancel is keyboard-activated", async () => {
     const user = userEvent.setup();
     mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
     mockedSettings.mockResolvedValue(settingsList());
@@ -410,13 +418,20 @@ describe("NotesReviewPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "Show note" }));
     await screen.findByText("Paris, the live note body.");
-    await user.click(screen.getByRole("button", { name: "Fix card" }));
+    const fix = screen.getByRole("button", { name: "Fix card" });
+    fix.focus();
+    await user.keyboard("{Enter}");
     expect(await screen.findByRole("heading", { name: "Fix this card" })).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    await user.keyboard("{Enter}");
 
     expect(await screen.findByText("Paris, the live note body.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Good" })).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Fix card" }))
+    );
     expect(mockedRate).not.toHaveBeenCalled();
   });
 

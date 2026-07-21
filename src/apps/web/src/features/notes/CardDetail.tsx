@@ -11,6 +11,7 @@ import { cardStateLabel } from "./cardState";
 import {
   genericGradingFailure,
   gradingFailureMessages,
+  questionFailureMessages,
   sameGradingTarget,
   seedSuccessCheck
 } from "./gradingTarget";
@@ -22,6 +23,7 @@ import {
   type SuccessCheckState
 } from "./RetrievalContractEditor";
 import {
+  EditNotePromptQuestionError,
   SetNoteGradingTargetError,
   addNotePromptCardBack,
   editNotePromptQuestion,
@@ -141,21 +143,33 @@ export function CardDetail({
     let refreshed: NotePromptSettingsDto;
     try {
       if (target !== null) {
-        refreshed = await setNoteGradingTarget(prompt.promptId, { mode, target });
+        refreshed = await setNoteGradingTarget(prompt.promptId, {
+          expectedRevision: prompt.revision,
+          mode,
+          target
+        });
         if (questionChanged) {
-          refreshed = await editNotePromptQuestion(prompt.promptId, questionDoc);
+          refreshed = await editNotePromptQuestion(prompt.promptId, {
+            expectedRevision: refreshed.revision,
+            questionDoc
+          });
         }
       } else {
         // persist runs only when the target or the Question changed; with no target change the Question is
         // the change, so its refreshed row is the one handed up.
-        refreshed = await editNotePromptQuestion(prompt.promptId, questionDoc);
+        refreshed = await editNotePromptQuestion(prompt.promptId, {
+          expectedRevision: prompt.revision,
+          questionDoc
+        });
       }
     } catch (error) {
       setBusy(false);
       setFailure(
         error instanceof SetNoteGradingTargetError
           ? gradingFailureMessages[error.kind]
-          : genericGradingFailure
+          : error instanceof EditNotePromptQuestionError
+            ? questionFailureMessages[error.kind]
+            : genericGradingFailure
       );
       setPendingTarget(null);
       onReload();

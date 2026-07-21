@@ -213,21 +213,23 @@ can navigate them from another package.
 - Notes-owned Review settings & history (#660): the same owner-scoped boundary manages each note prompt's
   Review lifecycle over the shared Review commands (never re-implementing FSRS). Server
   `notesReview/notesReviewSettings{Projection,Queries,Commands}.ts` project a per-prompt settings row
-  (reveal policy + `not_in_review`/`due`/`scheduled`/`paused` card state, never persisted) and compose
+  (Question/grading-target content `revision` + reveal policy +
+  `not_in_review`/`due`/`scheduled`/`paused` card state) and compose
   `reviewCardCommands` for edit-question/pause/resume/restart/remove/re-add; history is keyset-paginated
   (opaque cursor) over `review_events`. Routes (`notesReviewRoutes.ts`): `GET /api/notes/:noteEntryId/review/settings`,
   `GET /api/notes/review/prompts/:id/history`, `PATCH .../question`, `POST .../pause|/resume|/restart|/card`,
   `DELETE .../card`. Toggling an authored prompt's grading between `current_note` and `expected_response` is
   `setNoteGradingTarget` (`notesReviewSettingsCommands.ts`, served at `POST /api/notes/review/prompts/:id/grading-target`,
-  `{ mode: keep|restart, target }`): owner-scoped, `legacy_custom` is read-only (409), a blank Success check
-  is rejected (400),
-  `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: the workspace's **Cards** tab `CardsView.tsx` lists each prompt and drills into `CardDetail.tsx` (state-driven
+  `{ expectedRevision, mode: keep|restart, target }`): owner-scoped, `legacy_custom` is read-only (409), a
+  blank Success check is rejected (400), and Question / grading-target writes compare-and-increment the
+  loaded revision (`409 prompt_conflict` leaves the newer row untouched);
+  `restart` composes the shared `applyResetToCardInTx` only after that compare succeeds (409 if cardless), all in one transaction (#686). Web: the workspace's **Cards** tab `CardsView.tsx` lists each prompt and drills into `CardDetail.tsx` (state-driven
   rich edit-question/pause/resume/restart/remove/re-add, overflow confirmations, no-double-submit, stale-action list reload)
   and a per-card `CardHistory.tsx` view; when the note carries a reflowable body its toolbar
   offers Add card → the inline `SavedNoteCardComposer.tsx` (card authoring, #687/#688 multiplicity). Its
   grading-target helpers (`sameGradingTarget`/`seedSuccessCheck`/failure messages) live in the shared
   `notes/gradingTarget.ts`, reused by the in-Review `RepairCardView.tsx` (#691). Client fns in
-  `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion` (rich `questionDoc`)/
+  `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion` (rich `questionDoc` + `expectedRevision`)/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`/`authorNoteCard`).
 - Retry-safe direct card creation (#689): `notesReview/createDirectCard.ts` (`createDirectCard`, served at
   `POST /api/notes/review/direct-cards` in `notesReviewRoutes.ts`, current-user scoped) turns an authored
@@ -926,7 +928,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   (the captured draft → note-anchor payload; the reader captures the draft from the DOM in
   `reader/selectionCapture.ts`), `SelectionToolbar.tsx` is the anchored capture toolbar, `templateHue.tokens.ts` maps a template to
   its control swatch, the shared `NoteWorkspace.tsx` (Note/Cards) is the create/edit surface hosted in the shared
-    `Sheet`, `NoteList.tsx` renders notes as hued cards
+  `Sheet`, `NoteList.tsx` renders notes as hued cards
   (template chip + snippet + answers) with jump-back/edit/delete,
   `notesApi.ts` calls the templates/notes endpoints. The Notes mode page is `NotesPage.tsx`: it
   fetches the cross-work overview (`notesApi.fetchAllNotes`), groups it by work (`groupNotesByWork.ts`),
@@ -995,8 +997,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   Keep-schedule/Restart contract for a grading-target change, and appends NO review event — so the card stays
   due. A committed fix re-attempts the SAME prompt from a fresh Question phase with the clarified cue when the
   refreshed row is still an active due card; if a concurrent rating/pause/removal left it no-longer-due it
-  reloads whatever is actually due next instead of resurrecting a stale card. Cancel
-  restores the exact prior phase. Editing the shared note body instead is a one-way **Open note** deep link to
+  reloads whatever is actually due next instead of resurrecting a stale card. Question/grading-target saves
+  carry the revision loaded on entry, retain drafts and offer **Reload card** on `prompt_conflict`, and freeze
+  the rich editor while Keep/Restart is pending so its target snapshot cannot go stale. Cancel/Escape
+  restores the exact prior phase and focus to that phase's **Fix card** control. Editing the shared note body instead is a one-way **Open note** deep link to
   `/notes?open=<entryId>` (handled by `notes/NotesPage.tsx`, which opens that note's editor once on first
   load). `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
   and parses via `noteReviewContracts`. A saved note's review cards are authored from the note sheet, not

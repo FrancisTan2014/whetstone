@@ -262,6 +262,7 @@ describe("note Review settings client (#660, rich in #687)", () => {
   const settingsDto: NotePromptSettingsDto = {
     cardState: { state: "due" },
     promptId: "prompt-1",
+    revision: 0,
     questionDoc: createTextDocument("What is a WAL?"),
     questionText: "What is a WAL?",
     reveal: { kind: "current_note" }
@@ -303,11 +304,75 @@ describe("note Review settings client (#660, rich in #687)", () => {
     const questionDoc = createTextDocument("Define a WAL");
     const fetchMock = stubFetch({ body: settingsDto, ok: true });
 
-    await expect(editNotePromptQuestion("prompt 1", questionDoc)).resolves.toEqual(settingsDto);
+    const request = { expectedRevision: 3, questionDoc };
+    await expect(editNotePromptQuestion("prompt 1", request)).resolves.toEqual(settingsDto);
     expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/prompts/prompt%201/question", {
-      body: JSON.stringify({ questionDoc }),
+      body: JSON.stringify(request),
       headers: { "content-type": "application/json" },
       method: "PATCH"
+    });
+  });
+
+  it("names stale Question writes as conflicts", async () => {
+    stubFetch({ body: { error: "prompt_conflict" }, ok: false, status: 409 });
+
+    await expect(
+      editNotePromptQuestion("prompt-1", {
+        expectedRevision: 2,
+        questionDoc: createTextDocument("Define a WAL")
+      })
+    ).rejects.toMatchObject({ kind: "conflict", name: "EditNotePromptQuestionError" });
+  });
+
+  it("maps Question validation, ownership, and network failures", async () => {
+    const request = {
+      expectedRevision: 2,
+      questionDoc: createTextDocument("Define a WAL")
+    };
+
+    stubFetch({ body: { error: "invalid_question" }, ok: false, status: 400 });
+    await expect(editNotePromptQuestion("prompt-1", request)).rejects.toMatchObject({
+      kind: "invalid_question"
+    });
+
+    stubFetch({ ok: false, status: 404 });
+    await expect(editNotePromptQuestion("prompt-1", request)).rejects.toMatchObject({
+      kind: "not_found"
+    });
+
+    stubFetch({ body: { error: "mystery" }, ok: false, status: 409 });
+    await expect(editNotePromptQuestion("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
+    });
+  });
+
+  it("maps an unreadable Question error response and a rejected fetch to network", async () => {
+    const request = {
+      expectedRevision: 2,
+      questionDoc: createTextDocument("Define a WAL")
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        json: async () => {
+          throw new Error("not json");
+        },
+        ok: false,
+        status: 409
+      }))
+    );
+    await expect(editNotePromptQuestion("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      })
+    );
+    await expect(editNotePromptQuestion("prompt-1", request)).rejects.toMatchObject({
+      kind: "network"
     });
   });
 
@@ -346,11 +411,16 @@ describe("setNoteGradingTarget (#686)", () => {
   const settingsDto: NotePromptSettingsDto = {
     cardState: { state: "due" },
     promptId: "prompt-1",
+    revision: 0,
     questionDoc: createTextDocument("What is a WAL?"),
     questionText: "What is a WAL?",
     reveal: { kind: "current_note" }
   };
-  const request: SetNoteGradingTargetRequest = { mode: "keep", target: { kind: "current_note" } };
+  const request: SetNoteGradingTargetRequest = {
+    expectedRevision: 3,
+    mode: "keep",
+    target: { kind: "current_note" }
+  };
 
   it("POSTs the request as JSON to the encoded grading-target endpoint", async () => {
     const fetchMock = stubFetch({ body: settingsDto, ok: true });
@@ -401,6 +471,14 @@ describe("setNoteGradingTarget (#686)", () => {
 
     await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
       kind: "restart_requires_card"
+    });
+  });
+
+  it("throws conflict on a stale prompt revision", async () => {
+    stubFetch({ body: { error: "prompt_conflict" }, ok: false, status: 409 });
+
+    await expect(setNoteGradingTarget("prompt-1", request)).rejects.toMatchObject({
+      kind: "conflict"
     });
   });
 

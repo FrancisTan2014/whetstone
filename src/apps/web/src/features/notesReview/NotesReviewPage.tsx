@@ -30,8 +30,18 @@ const ratingButtons: ReadonlyArray<Readonly<{ label: string; rating: ReviewRatin
 
 // The two review steps that expose a "Fix card" affordance and that a cancelled repair returns to exactly.
 type RepairableState =
-  | Readonly<{ step: "question"; prompt: NoteReviewPromptDto; revealFailed: boolean }>
-  | Readonly<{ step: "revealed"; prompt: NoteReviewPromptDto; reveal: NoteRevealDto }>;
+  | Readonly<{
+      step: "question";
+      prompt: NoteReviewPromptDto;
+      revealFailed: boolean;
+      restoreFixFocus?: true;
+    }>
+  | Readonly<{
+      step: "revealed";
+      prompt: NoteReviewPromptDto;
+      reveal: NoteRevealDto;
+      restoreFixFocus?: true;
+    }>;
 
 // The whole session hinges on which step the single current prompt is in. Kept as one explicit
 // discriminated state so an empty/error read can never masquerade as completion.
@@ -125,6 +135,10 @@ function NotesReviewPageComponent(): React.JSX.Element {
     setState({ prior, step: "repairing" });
   }
 
+  function cancelRepair(prior: RepairableState): void {
+    setState({ ...prior, restoreFixFocus: true });
+  }
+
   // A committed repair: re-attempt the same prompt from a fresh Question phase with the clarified cue. The
   // schedule is untouched (the repair appended no rating), so the card is normally still due. But a
   // concurrent rating/pause/removal in another tab can leave the just-saved card no longer due; never
@@ -147,7 +161,7 @@ function NotesReviewPageComponent(): React.JSX.Element {
   return (
     <PageFrame parentLink={{ label: "Notes", to: "/notes" }} title="Review">
       <SessionBody
-        onCancelRepair={setState}
+        onCancelRepair={cancelRepair}
         onFix={startRepair}
         onOpenNote={openNote}
         onRate={rate}
@@ -242,6 +256,7 @@ function SessionBody({
         prompt={state.prompt}
         ratingFailed={ratingFailed}
         reveal={state.reveal}
+        restoreFixFocus={state.restoreFixFocus === true}
       />
     );
   }
@@ -251,6 +266,7 @@ function SessionBody({
       onReveal={onReveal}
       prompt={state.prompt}
       revealFailed={state.revealFailed}
+      restoreFixFocus={state.restoreFixFocus === true}
     />
   );
 }
@@ -261,13 +277,23 @@ function QuestionView({
   onFix,
   onReveal,
   prompt,
-  revealFailed
+  revealFailed,
+  restoreFixFocus
 }: Readonly<{
   onFix: () => void;
   onReveal: (prompt: NoteReviewPromptDto) => void;
   prompt: NoteReviewPromptDto;
   revealFailed: boolean;
+  restoreFixFocus: boolean;
 }>): React.JSX.Element {
+  const fixRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (restoreFixFocus) {
+      fixRef.current?.focus();
+    }
+  }, [restoreFixFocus]);
+
   return (
     <div>
       <div className="text-lg text-text">
@@ -282,7 +308,14 @@ function QuestionView({
         <Button onClick={() => onReveal(prompt)} variant="primary">
           {revealFailed ? "Retry showing note" : "Show note"}
         </Button>
-        <Button className="min-h-11" onClick={onFix} size="sm" type="button" variant="ghost">
+        <Button
+          className="min-h-11"
+          onClick={onFix}
+          ref={fixRef}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           Fix card
         </Button>
       </div>
@@ -298,19 +331,22 @@ function RevealedView({
   onRate,
   prompt,
   ratingFailed,
-  reveal
+  reveal,
+  restoreFixFocus
 }: Readonly<{
   onFix: () => void;
   onRate: (rating: ReviewRating, prompt: NoteReviewPromptDto) => void;
   prompt: NoteReviewPromptDto;
   ratingFailed: boolean;
   reveal: NoteRevealDto;
+  restoreFixFocus: boolean;
 }>): React.JSX.Element {
   const answerRef = useRef<HTMLDivElement>(null);
+  const fixRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    answerRef.current?.focus();
-  }, []);
+    (restoreFixFocus ? fixRef.current : answerRef.current)?.focus();
+  }, [restoreFixFocus]);
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
     const index = ["1", "2", "3", "4"].indexOf(event.key);
@@ -373,7 +409,14 @@ function RevealedView({
         ))}
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button className="min-h-11" onClick={onFix} size="sm" type="button" variant="ghost">
+        <Button
+          className="min-h-11"
+          onClick={onFix}
+          ref={fixRef}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           Fix card
         </Button>
       </div>

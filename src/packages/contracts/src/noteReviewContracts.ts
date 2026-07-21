@@ -176,12 +176,15 @@ export type NotePromptRevealPolicyDto = z.infer<typeof notePromptRevealPolicyDto
 
 // One row of the Notes-owned Review settings list (#660): a prompt's identity, its editable retrieval
 // question (the rich cue and its readable projection), its reveal policy (current-note vs read-only legacy
-// custom), and its projected card state. The list is ordered by creation so a note with several legacy
-// prompts reads stably. It carries the question (editable) but never a `current_note` reveal body — that
-// lives on the note — so the settings view cannot drift from the canonical note.
+// custom), its optimistic content revision, and its projected card state. The list is ordered by creation
+// so a note with several legacy prompts reads stably. It carries the question (editable) but never a
+// `current_note` reveal body — that lives on the note — so the settings view cannot drift from the
+// canonical note. Question / grading-target writes echo `revision` as `expectedRevision`; stale editors get
+// a named conflict instead of overwriting newer work.
 export const notePromptSettingsDtoSchema = z
   .object({
     promptId: z.string(),
+    revision: z.number().int().nonnegative(),
     questionDoc: noteReviewDocumentSchema,
     questionText: z.string(),
     reveal: notePromptRevealPolicyDtoSchema,
@@ -236,8 +239,12 @@ export type ReviewHistoryPageDto = z.infer<typeof reviewHistoryPageDtoSchema>;
 // server-side (never trusted from the client), which is also the non-blank gate — a question that renders to
 // only whitespace is rejected there, not here. Editing writes ONLY the cue — it never touches the prompt's
 // reveal policy, its card, its FSRS state, its due date, its requested retention, or its history.
+// `expectedRevision` is the settings row loaded by the editor and makes the write compare-and-swap.
 export const editNotePromptQuestionRequestSchema = z
-  .object({ questionDoc: noteReviewDocumentSchema })
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    questionDoc: noteReviewDocumentSchema
+  })
   .strict();
 
 export type EditNotePromptQuestionRequest = z.infer<typeof editNotePromptQuestionRequestSchema>;
@@ -261,9 +268,14 @@ export type NoteGradingTarget = z.infer<typeof noteGradingTargetSchema>;
 // `mode` explicitly chooses what happens to the card: `keep` saves the policy without touching card state,
 // due date, requested retention, or history; `restart` additionally resets the schedule through the shared
 // Review boundary (one `reset` event, due now). Whetstone never infers whether the trained capability
-// changed — the learner declares it. A cardless prompt accepts only `keep`.
+// changed — the learner declares it. A cardless prompt accepts only `keep`. `expectedRevision` protects
+// both policy-only and policy-plus-reset writes from replacing a newer Question or grading target.
 export const setNoteGradingTargetRequestSchema = z
-  .object({ mode: z.enum(["keep", "restart"]), target: noteGradingTargetSchema })
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    mode: z.enum(["keep", "restart"]),
+    target: noteGradingTargetSchema
+  })
   .strict();
 
 export type SetNoteGradingTargetRequest = z.infer<typeof setNoteGradingTargetRequestSchema>;

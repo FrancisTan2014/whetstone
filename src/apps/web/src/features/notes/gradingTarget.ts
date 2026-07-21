@@ -1,6 +1,9 @@
 import type { NoteGradingTarget, NotePromptSettingsDto } from "@whetstone/contracts";
 
-import type { SetNoteGradingTargetError } from "../notesReview/notesReviewApi";
+import type {
+  EditNotePromptQuestionError,
+  SetNoteGradingTargetError
+} from "../notesReview/notesReviewApi";
 import type { SuccessCheckState } from "./RetrievalContractEditor";
 
 // Whether two grading targets describe the same policy: same kind, and for a Success check the same rich
@@ -28,11 +31,23 @@ export function seedSuccessCheck(reveal: NotePromptSettingsDto["reveal"]): Succe
 // The failure copy for a settings mutation. A grading-target rejection is named so the learner knows what to
 // change; every other failure is the shared retry message. Shared by Card detail and the repair view.
 export const gradingFailureMessages: Readonly<Record<SetNoteGradingTargetError["kind"], string>> = {
+  conflict:
+    "This card changed elsewhere. Your draft is still here — reload the card before saving.",
   invalid_success_check: "Write the success check, or grade against the whole note.",
   legacy_read_only: "This card keeps its original answer and cannot change its grading target.",
   network: "That change could not be saved. The list was refreshed — please try again.",
   not_found: "This card is no longer available. The list was refreshed.",
   restart_requires_card: "Start reviewing this card before restarting its schedule."
+};
+
+export const questionFailureMessages: Readonly<
+  Record<EditNotePromptQuestionError["kind"], string>
+> = {
+  conflict:
+    "This card changed elsewhere. Your draft is still here — reload the card before saving.",
+  invalid_question: "Write what should bring it to mind.",
+  network: "That change could not be saved. Please try again.",
+  not_found: "This card is no longer available."
 };
 
 export const genericGradingFailure =

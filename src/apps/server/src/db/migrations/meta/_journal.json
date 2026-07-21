@@ -435,6 +435,13 @@
       "when": 1784608230251,
       "tag": "0061_gigantic_killraven",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1784633226480,
+      "tag": "0062_strong_goliath",
+      "breakpoints": true
     }
   ]
 }
