@@ -59,19 +59,34 @@ describe("planSectionRepartition", () => {
     expect(plan.blockUnitEntryId.get("h3")).toBe("new-2");
   });
 
-  it("mints a new unit and removes the old identity when the leading heading is a new block", () => {
-    // The learner deleted the old heading (h1) and typed a fresh one (hx): identity is anchored to the
-    // block, so u1 does not survive and a new unit owns the moved body blocks.
+  it("keeps the edited section's identity when its leading heading is replaced in place", () => {
+    // The learner rewrote the section's heading (h1 -> hx) in place. The section keeps its identity on its
+    // first partition even though the leading block id changed, so u1 survives and no unit is minted.
     const plan = planSectionRepartition({
       affectedUnits: [unit("u1", "h1", "b1")],
       mintUnitId: minter(),
       streamBlocks: [heading("hx"), body("b1")]
     });
 
-    expect(plan.units).toEqual([{ blockIds: ["hx", "b1"], entryId: "new-1", isNew: true }]);
-    expect(plan.removedUnitEntryIds).toEqual(["u1"]);
-    // The removed unit's surviving body block moved into the new unit, so a top-of-unit position follows it.
-    expect(plan.removedUnitFallback.get("u1")).toBe("new-1");
+    expect(plan.units).toEqual([{ blockIds: ["hx", "b1"], entryId: "u1", isNew: false }]);
+    expect(plan.removedUnitEntryIds).toEqual([]);
+    expect(plan.blockUnitEntryId.get("hx")).toBe("u1");
+  });
+
+  it("mints a new opening unit and keeps the section's identity when a heading is inserted above it", () => {
+    // The learner inserted a new heading (hx) ABOVE the section's original heading (h1). h1 still leads its
+    // own partition, so it keeps u1; the new opening partition mints a fresh unit rather than stealing u1.
+    const plan = planSectionRepartition({
+      affectedUnits: [unit("u1", "h1", "b1")],
+      mintUnitId: minter(),
+      streamBlocks: [heading("hx"), heading("h1"), body("b1")]
+    });
+
+    expect(plan.units).toEqual([
+      { blockIds: ["hx"], entryId: "new-1", isNew: true },
+      { blockIds: ["h1", "b1"], entryId: "u1", isNew: false }
+    ]);
+    expect(plan.removedUnitEntryIds).toEqual([]);
   });
 
   it("merges a section whose leading heading was removed into the preceding unit", () => {

@@ -1,9 +1,11 @@
 // The pure repartition plan for a manual Work (#698). Blocks are the durable content identity;
 // ReadingUnits are bounded groupings projected from the ordered block stream. When a manual section is
 // saved, its draft blocks are substituted into the Work's logical block stream and the affected contiguous
-// span is partitioned at every heading node — the same boundary rule the Outline reads. A surviving
-// leading heading keeps its unit's identity; a new leading heading mints a new unit; removing a section's
-// leading heading merges its blocks into the preceding unit (the caller extends the span to include it).
+// span is partitioned at every heading node — the same boundary rule the Outline reads. The edited
+// section keeps its identity on its first resulting partition (its head rewritten in place); every further
+// heading opens a freshly minted unit; a heading inserted ABOVE the section pushes the section's identity
+// down to the partition its old heading still leads; and removing a section's leading heading merges its
+// blocks into the preceding unit (the caller extends the span to include it).
 //
 // This module owns ONLY the identity/containment arithmetic over block ids — no ProseMirror, database, or
 // heading-level detail. The caller stamps block ids, decides which blocks are headings, computes the
@@ -73,13 +75,33 @@ export function planSectionRepartition(input: RepartitionInput): RepartitionPlan
   }
 
   const reusedEntryIds = new Set<string>();
-  const units: PlannedUnit[] = partitions.map((blockIds) => {
+  // First, every partition that still leads with an existing unit's leading block keeps that unit's id
+  // (id-survival), consuming each unit at most once.
+  const assigned: (string | null)[] = partitions.map((blockIds) => {
     const inherited = identityByLeadBlock.get(blockIds[0] as string);
     if (inherited !== undefined && !reusedEntryIds.has(inherited)) {
       reusedEntryIds.add(inherited);
-      return { blockIds, entryId: inherited, isNew: false };
+      return inherited;
     }
-    return { blockIds, entryId: input.mintUnitId(), isNew: true };
+    return null;
+  });
+
+  // The span's first unit keeps its identity on the span's first partition even when its leading block id
+  // did not survive — the learner rewrote that section's head in place (retyped or replaced the heading).
+  // Skipped only when a later partition already claimed that unit by id-survival (its old heading moved
+  // down, so the section keeps its identity at its new position and the new opening mints instead).
+  const spanFirstEntryId = (input.affectedUnits[0] as RepartitionUnit).entryId;
+  if (assigned[0] === null && !reusedEntryIds.has(spanFirstEntryId)) {
+    assigned[0] = spanFirstEntryId;
+    reusedEntryIds.add(spanFirstEntryId);
+  }
+
+  const units: PlannedUnit[] = assigned.map((entryId, index) => {
+    const blockIds = partitions[index] as string[];
+    if (entryId === null) {
+      return { blockIds, entryId: input.mintUnitId(), isNew: true };
+    }
+    return { blockIds, entryId, isNew: false };
   });
 
   const blockUnitEntryId = new Map<string, string>();

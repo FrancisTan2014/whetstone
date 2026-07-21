@@ -1529,11 +1529,11 @@ describe("manual work editor (#720, sections #697)", () => {
     ]);
   });
 
-  it("keeps a non-leading section heading-led when its first block is saved as non-heading (#697)", async () => {
+  it("merges a non-leading section into the preceding unit when its heading is removed (#698)", async () => {
     const workEntryId = await createManualWork();
     const initial = await load(workEntryId);
 
-    // The leading section stays a legitimate headless "Start" — it must NOT be coerced.
+    // The leading section stays a legitimate headless "Start".
     const savedLead = await context.server.inject({
       method: "PUT",
       url: `/api/manual-works/${workEntryId}/units/${initial.unitEntryId}/content`,
@@ -1544,8 +1544,7 @@ describe("manual work editor (#720, sections #697)", () => {
     });
     expect(savedLead.statusCode).toBe(200);
 
-    // A second (non-leading) section, then a save that strips its heading down to a plain paragraph —
-    // exactly what the shared toolbar's "Paragraph" transform produces.
+    // A second, heading-led section — two bounded units at this point.
     const added = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
@@ -1556,31 +1555,42 @@ describe("manual work editor (#720, sections #697)", () => {
       method: "PUT",
       url: `/api/manual-works/${workEntryId}/units/${secondUnitId}/content`,
       payload: {
-        document: { content: [paragraph("Section Two"), paragraph("Body.")], type: "doc" },
+        document: { content: [heading(1, "Section Two"), paragraph("Body.")], type: "doc" },
         revision: added.json().revision
       }
     });
     expect(savedSecond.statusCode).toBe(200);
+    expect(savedSecond.json().sections).toHaveLength(2);
 
-    // The save response's recomputed Outline restores the second section as a heading (not headless),
-    // while the leading section keeps its headless "Start" identity.
-    const sections = savedSecond.json().sections as Array<Record<string, unknown>>;
-    expect(sections).toHaveLength(2);
+    // Saving the non-leading section with a non-heading first block removes its boundary: under #698 it
+    // merges into the preceding "Start" instead of being coerced back into a heading.
+    const merged = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${secondUnitId}/content`,
+      payload: {
+        document: { content: [paragraph("Body only now.")], type: "doc" },
+        revision: savedSecond.json().revision
+      }
+    });
+    expect(merged.statusCode).toBe(200);
+
+    // One section remains — the headless lead — and the editor opens at it (the merged-into unit).
+    const sections = merged.json().sections as Array<Record<string, unknown>>;
+    expect(sections).toHaveLength(1);
     expect(sections[0].headingLevel).toBeUndefined();
     expect(sections[0].title).toBeUndefined();
-    expect(sections[1]).toMatchObject({ headingLevel: 1, title: "Section Two" });
+    expect(sections[0].unitEntryId).toBe(initial.unitEntryId);
+    expect(merged.json().unitEntryId).toBe(initial.unitEntryId);
+    expect(documentText(merged.json().document)).toBe("A lead paragraph before any heading.Body only now.");
 
-    // Reader parity: the same persisted blocks yield the same structure, so there is exactly one
-    // "Start" (the lead) — never a second, mid-work "Start" for the non-leading section.
+    // Reader parity: exactly one unit and one "Start"; the merged-away section id is gone.
     const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+    expect(structure.readingUnits).toHaveLength(1);
     const byId = new Map(structure.readingUnits.map((unit) => [unit.entryId as string, unit]));
     expect(byId.get(initial.unitEntryId as string)?.headingLevel).toBeUndefined();
-    expect(byId.get(secondUnitId)).toMatchObject({ headingLevel: 1, title: "Section Two" });
+    expect(byId.get(secondUnitId)).toBeUndefined();
 
-    const toc = structure.tableOfContents ?? [];
-    expect(toc.map((entry) => ({ depth: entry.depth, label: entry.label }))).toEqual([
-      { depth: 0, label: "Start" },
-      { depth: 0, label: "Section Two" }
-    ]);
+    // A lone headless unit needs no table of contents (a "Start" label only appears alongside headings).
+    expect(structure.tableOfContents ?? []).toEqual([]);
   });
 });
