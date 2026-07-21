@@ -36,8 +36,9 @@ export type UpdateManualWorkContentResult =
 // the stored one, or the save is a conflict and nothing is written. The revision check is the revision
 // bump: a single conditional `UPDATE ... WHERE updated_at = revision` claims the write atomically, so two
 // saves that loaded the same revision cannot both win — the loser matches zero rows and is a conflict
-// (see the claim step). The whole claim-reconcile runs in one transaction, so a save never lands
-// half-applied.
+// (see the claim step). The new revision is written strictly greater than the loaded one, so a save whose
+// clock did not advance cannot reuse the same token and let a stale replay overwrite it. The whole
+// claim-reconcile runs in one transaction, so a save never lands half-applied.
 export async function updateManualWorkContent(
   dependencies: ManualWorkContentDependencies,
   workEntryId: EntryId,
@@ -79,6 +80,14 @@ export async function updateManualWorkContent(
       return { status: "conflict" };
     }
 
+    // The written revision must be STRICTLY greater than the loaded one, or the token is reusable: if the
+    // clock did not advance past the loaded revision — two saves in the same millisecond of `Date`
+    // precision, or a fixed/test clock — writing `now` back stores the same timestamp the claim just
+    // matched, so a second request carrying that same stale revision would still match and silently
+    // overwrite this save. Bumping to at least 1ms past the claimed revision makes every successful save's
+    // revision monotonic and non-reusable, so a stale revision can never be replayed.
+    const nextRevisionInstant = new Date(Math.max(now.getTime(), revisionInstant.getTime() + 1));
+
     // Claim the write atomically: the revision bump IS the stale-revision check. Folding both into one
     // conditional `UPDATE ... WHERE updated_at = revision` closes the lost-update window a separate
     // read-then-check leaves open. Under PostgreSQL read-committed, two saves that loaded the same revision
@@ -87,7 +96,7 @@ export async function updateManualWorkContent(
     // Zero affected rows is a conflict, and because this precedes the reconcile, a conflict writes nothing.
     const claimed = await tx
       .update(personalEntries)
-      .set({ updatedAt: now })
+      .set({ updatedAt: nextRevisionInstant })
       .where(
         and(
           eq(personalEntries.entryId, workEntryId),
@@ -125,10 +134,10 @@ export async function updateManualWorkContent(
         document: stored,
         entryId: toEntryId(workEntryId),
         language: owned.language,
-        revision: now.toISOString(),
+        revision: nextRevisionInstant.toISOString(),
         title: owned.title,
         unitEntryId: owned.unitEntryId,
-        updatedAt: now.toISOString(),
+        updatedAt: nextRevisionInstant.toISOString(),
         workType: owned.workType
       }
     };

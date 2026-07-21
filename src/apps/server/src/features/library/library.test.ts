@@ -1155,6 +1155,58 @@ describe("manual work editor (#720)", () => {
     expect(["A", "B"]).toContain(documentText(reopened.document));
   });
 
+  it("bumps the revision past a non-advancing clock so a stale save cannot be replayed", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+
+    // Freeze the clock at exactly the loaded revision so `now` does NOT advance beyond it — the same-
+    // millisecond case the reviewer flagged. If the save wrote `now` back verbatim, the new stored revision
+    // would equal the loaded one, and a second request carrying that same (now stale) revision could still
+    // match and overwrite the first save. The written revision must be bumped strictly forward.
+    const frozenClock = (): Date => new Date(loaded.revision);
+
+    const first = await updateManualWorkContent(
+      { db: context.db, now: frozenClock },
+      toEntryId(workEntryId),
+      { content: [paragraph("Winner")], type: "doc" },
+      loaded.revision,
+      DEFAULT_USER_ID
+    );
+
+    expect(first.status).toBe("updated");
+    if (first.status !== "updated") {
+      throw new Error("expected the first save to land");
+    }
+    expect(new Date(first.work.revision).getTime()).toBeGreaterThan(
+      new Date(loaded.revision).getTime()
+    );
+
+    // Replay the ORIGINAL loaded revision (now stale) against the same non-advancing clock. With a reusable
+    // token this would still match and overwrite "Winner"; the monotonic bump makes it a conflict.
+    const replay = await updateManualWorkContent(
+      { db: context.db, now: frozenClock },
+      toEntryId(workEntryId),
+      { content: [paragraph("Loser")], type: "doc" },
+      loaded.revision,
+      DEFAULT_USER_ID
+    );
+
+    expect(replay.status).toBe("conflict");
+
+    const reopened = (
+      await context.server.inject({
+        method: "GET",
+        url: `/api/manual-works/${workEntryId}`
+      })
+    ).json();
+    expect(documentText(reopened.document)).toBe("Winner");
+  });
+
   it("treats a non-timestamp revision as a conflict rather than crashing", async () => {
     const workEntryId = await createManualWork();
 
