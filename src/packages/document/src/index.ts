@@ -11,6 +11,7 @@ export { documentSchema } from "./schema.js";
 export {
   assignNodeIds,
   createTextDocument,
+  documentBlockHeading,
   documentReadableText,
   documentText,
   DocumentValidationError,
@@ -18,4 +19,4 @@ export {
   parseDocument,
   serializeDocument
 } from "./document.js";
-export type { DocumentMarkJSON, DocumentNodeJSON } from "./document.js";
+export type { DocumentBlockHeading, DocumentMarkJSON, DocumentNodeJSON } from "./document.js";

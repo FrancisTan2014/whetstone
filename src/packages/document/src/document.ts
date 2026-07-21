@@ -88,6 +88,32 @@ export function documentText(node: DocumentNodeJSON): string {
   return (node.content ?? []).map(documentText).join("");
 }
 
+// A top-level block's heading identity: the level (1-6) it starts at and its trimmed text, or absent
+// when the block is not a heading. A manual Work's outline and its Reader hierarchy are BOTH derived
+// from this — a stored `heading` `doc_blocks` node is the single source of a section's level and label,
+// so no second, editable tree is persisted (issue #697). Pure and DOM-free: the server reads a stored
+// block's node JSON, the derivation is unit-testable without the editor or the database. `title` is
+// omitted for an empty heading (`#` with no text) so the outline can fall back to its untitled label.
+export interface DocumentBlockHeading {
+  level: number;
+  title?: string;
+}
+
+export function documentBlockHeading(node: DocumentNodeJSON): DocumentBlockHeading | undefined {
+  if (node.type !== "heading") {
+    return undefined;
+  }
+
+  // The heading node defaults `level` to 1 and only ever stores 1-6; a missing or non-numeric attr is
+  // read as level 1 rather than trusted blindly, so a hand-forged node can never yield a NaN depth that
+  // would corrupt the outline's nesting math.
+  const rawLevel = (node.attrs as { level?: unknown } | undefined)?.level;
+  const level = typeof rawLevel === "number" ? rawLevel : 1;
+  const title = documentText(node);
+
+  return title === "" ? { level } : { level, title };
+}
+
 // The node types whose content is a single inline run (text + inline nodes): their descendant text is
 // one continuous line, so the readable projection joins their children with no separator. Every other
 // node is a block CONTAINER whose children are block-level (list items, table rows/cells, nested
