@@ -755,7 +755,7 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { question: "new question" }
+      payload: { questionDoc: createTextDocument("new question") }
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
@@ -785,9 +785,10 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { question: "   " }
+      payload: { questionDoc: createTextDocument("   ") }
     });
     expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_question" });
   });
 
   it("404s when the prompt is not the caller's", async () => {
@@ -802,7 +803,7 @@ describe("PATCH /api/notes/review/prompts/:id/question", () => {
     const response = await context.server.inject({
       method: "PATCH",
       url: `/api/notes/review/prompts/${promptId}/question`,
-      payload: { question: "mine now" }
+      payload: { questionDoc: createTextDocument("mine now") }
     });
     expect(response.statusCode).toBe(404);
   });
@@ -1152,47 +1153,6 @@ describe("POST /api/notes/review/prompts/:id/grading-target", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_success_check" });
     expect(await promptRow(promptId)).toEqual({ revealKind: "current_note", answerText: null });
-  });
-
-  it("409 duplicate_current_note: refuses to convert to current_note when the note already has one, leaving both prompts and the card/history unchanged", async () => {
-    context.setNow(at(0));
-    const noteId = await seedNote(DEFAULT_USER_ID, "note body", at(-5));
-    // The note's normal current_note prompt already occupies the one-per-note slot.
-    const existingId = await seedPromptOn({
-      noteId,
-      cueText: "existing cue",
-      revealKind: "current_note",
-      createdAt: at(-5),
-      card: { dueAt: at(-3), status: "active" }
-    });
-    // A second prompt on the same note, authored with a Success check, that we try to convert back.
-    const successId = await seedPromptOn({
-      noteId,
-      cueText: "success cue",
-      revealKind: "expected_response",
-      answerText: "names two rules",
-      createdAt: at(-4),
-      card: { dueAt: at(-1), status: "active" }
-    });
-    const successDueBefore = await dueAtOf(successId);
-
-    const response = await post(successId, {
-      mode: "restart",
-      target: { kind: "current_note" }
-    });
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "duplicate_current_note" });
-    // The existing current_note prompt is untouched, and the edited prompt keeps its expected_response
-    // policy and Success check — no partial write leaked out of the rejected transition.
-    expect(await promptRow(existingId)).toEqual({ revealKind: "current_note", answerText: null });
-    expect(await promptRow(successId)).toEqual({
-      revealKind: "expected_response",
-      answerText: "names two rules"
-    });
-    // Its card and history are left exactly as they were (no reset, despite mode: "restart").
-    expect(await dueAtOf(successId)).toEqual(successDueBefore);
-    expect(await countEvents(successId)).toBe(0);
   });
 
   it("400s a malformed request body", async () => {

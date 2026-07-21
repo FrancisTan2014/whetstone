@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { DocumentNodeJSON, NotePromptSettingsDto } from "@whetstone/contracts";
-import { createTextDocument } from "@whetstone/document";
+import type { NotePromptSettingsDto } from "@whetstone/contracts";
+import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../notesReview/notesReviewApi", () => ({
