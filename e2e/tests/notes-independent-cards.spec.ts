@@ -91,7 +91,8 @@ test.describe("notes independent card directions", () => {
     await expect(dialog).toBeHidden();
 
     // Both cards are due. Each reveal reads the live note body as its Reference/whole-note reveal, and
-    // grading ONE must leave the OTHER due — independent schedules, no shared target.
+    // grading ONE must leave the OTHER due — the session offers "Review next" (server remainingDue > 0)
+    // rather than completing, proving the two cards are scheduled independently, with no shared target.
     await page.goto(`${setup.baseURL}#/notes/review`);
     await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
 
@@ -101,11 +102,14 @@ test.describe("notes independent card directions", () => {
     await expect(page.getByText("after the prepare phase").first()).toBeVisible();
     await page.getByRole("button", { name: "Good" }).click();
 
-    // A second due card remains: the Good control is still present rather than the empty "Due complete".
-    await expect(page.getByRole("button", { name: "Good" })).toBeVisible();
+    // A second due card remains: the session offers to continue rather than showing the empty board.
+    await expect(page.getByRole("button", { name: "Review next" })).toBeVisible();
+    await page.getByRole("button", { name: "Review next" }).click();
     await page.getByRole("button", { name: "Show note" }).click();
     await expect(page.getByText("after the prepare phase").first()).toBeVisible();
     await page.getByRole("button", { name: "Good" }).click();
+
+    // With both independent cards graded, nothing else is due.
     await expect(page.getByText(/Due complete/)).toBeVisible();
   });
 });
