@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ManualWorkDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
@@ -7,19 +7,27 @@ import { RichContentEditor, editorDocumentsEqualIgnoringIds } from "../../shared
 import { Button } from "../../shared/ui/Button.js";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator.js";
 import { PageFrame } from "../../shared/ui/PageFrame.js";
-import { fetchManualWork, saveManualWorkContent } from "./manualWorkApi.js";
+import {
+  addManualWorkSection,
+  fetchManualWork,
+  fetchManualWorkUnit,
+  saveManualWorkContent
+} from "./manualWorkApi.js";
 import {
   manualEditorSaveStatusClassNames,
   manualEditorSaveStatusLabels
 } from "./manualWorkEditor.tokens.js";
+import { deriveWorkOutline, WorkOutline } from "./WorkOutline.js";
 
-// The Library manual-Work editor (#720): the dedicated surface a learner reaches from a manual Work's
-// "Edit content" action to edit its canonical ProseMirror/Tiptap document. It loads the owned Work,
-// edits it in the shared rich editor with a persistent formatting toolbar, and saves EXPLICITLY (a Save
-// button and Ctrl/Cmd+S) — never autosaves — carrying the loaded revision so a stale save is refused
-// rather than silently overwriting a change made in another session. On a conflict the learner's local
-// edits are kept and a repeat save overwrites the newer version. The reader/search/notes read the same
-// blocks, so a saved passage reopens exactly as written.
+// The Library manual-Work editor (#720, live Outline #697): the responsive workspace a learner reaches
+// from a manual Work's "Edit content" action to edit its ordered sections. A live Outline — derived only
+// from the persisted heading blocks, never a stored tree — sits beside the shared rich editor with its
+// persistent formatting toolbar. Selecting a section loads that ReadingUnit and focuses its heading;
+// "Add section" appends a new heading-led ReadingUnit and opens it. Every write is EXPLICIT (a Save
+// button and Ctrl/Cmd+S) and carries the work-level revision, so a stale save/add is refused rather than
+// silently overwriting another session; navigation saves the current section first and, on a
+// failure/conflict, leaves the current draft, section, and active item unchanged. Browser history and
+// refresh resolve only persisted state — an unsaved draft never survives a reload.
 
 // The learner always sees which state their edits are in: saved, unsaved, in flight, conflicted, or
 // failed. `unsaved` covers local edits not yet sent; `conflict` and `error` are the two alert states.
@@ -36,6 +44,10 @@ type LoadState =
   | Readonly<{ status: "error" }>
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "ready"; work: ManualWorkDto }>;
+
+// The outcome of a canonical save, used both by the Save action and by navigation/add (which only
+// proceed after a clean save). `busy` is a save attempted while one is already in flight.
+type SaveOutcome = "saved" | "conflict" | "invalid" | "error" | "busy";
 
 // Warn before the browser unloads while edits the server has not confirmed would be lost, so an explicit
 // save the learner has not made yet is never discarded silently on reload/close.
@@ -106,7 +118,7 @@ export function ManualWorkEditorPage({
 }
 
 // The editor shell: a Library parent link, the work title, the save status + Save action, and the
-// centered editing column. Shared by the loading/error arms so every state uses the same calm frame.
+// workspace. Shared by the loading/error arms so every state uses the same calm frame.
 function EditorFrame({
   children,
   primaryAction,
@@ -131,33 +143,58 @@ function ManualWorkEditor({
   work: initialWork
 }: Readonly<{ work: ManualWorkDto }>): React.JSX.Element {
   const [work, setWork] = useState<ManualWorkDto>(initialWork);
+  const [activeUnitEntryId, setActiveUnitEntryId] = useState<string>(initialWork.unitEntryId);
   const [draft, setDraft] = useState<DocumentNodeJSON>(initialWork.document);
-  // The last document the server confirmed. `dirty` is derived against it, so the status is truthful
-  // even after an undo back to the saved content; it is also the editor's `document` prop, so adopting
-  // the server's canonical (possibly normalized) document after a save re-syncs the visible editor.
+  // The last document the server confirmed for the ACTIVE section. `dirty` is derived against it, so the
+  // status is truthful even after an undo back to the saved content; it is also the editor's `document`
+  // prop, so adopting the server's canonical (possibly normalized) document after a save re-syncs the
+  // visible editor.
   const [savedDocument, setSavedDocument] = useState<DocumentNodeJSON>(initialWork.document);
   const [status, setStatus] = useState<ManualEditorSaveStatus>("saved");
+  const [addPending, setAddPending] = useState(false);
+  // Bumped to a number to focus the active section's heading after a user-driven open (selection/add);
+  // `undefined` on first load so opening the work does not steal focus into the editor.
+  const [focusSignal, setFocusSignal] = useState<number | undefined>(undefined);
+
   // A single in-flight save at a time: a rapid second Save/Ctrl+S while one is pending is ignored rather
   // than racing two writes.
   const savingRef = useRef(false);
-  // The shared editor emits an onChange on mount (its normalization echo) and the latest confirmed
-  // document changes after each save, so `handleChange` reads the saved baseline through a ref to stay a
-  // stable callback while still comparing against the current baseline.
+  // Async navigation/add read the latest values through refs so their awaited continuations never act on
+  // a stale render snapshot (the shared editor also re-emits an onChange on mount).
+  const workRef = useRef(work);
+  const activeUnitRef = useRef(activeUnitEntryId);
+  const draftRef = useRef(draft);
   const savedDocumentRef = useRef(savedDocument);
+  useEffect(() => {
+    workRef.current = work;
+  }, [work]);
+  useEffect(() => {
+    activeUnitRef.current = activeUnitEntryId;
+  }, [activeUnitEntryId]);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
   useEffect(() => {
     savedDocumentRef.current = savedDocument;
   }, [savedDocument]);
 
-  // Compare ignoring per-block ids: the editor stamps an id onto the freshly created work's `id: null`
-  // paragraph, and a save may return server-assigned ids, so only a real content change is "unsaved".
+  // Compare ignoring per-block ids: the editor stamps an id onto a freshly created section's `id: null`
+  // nodes, and a save may return server-assigned ids, so only a real content change is "unsaved".
   const dirty = !editorDocumentsEqualIgnoringIds(draft, savedDocument);
   useUnsavedGuard(dirty || status === "saving" || status === "conflict" || status === "error");
 
+  const outlineEntries = useMemo(() => deriveWorkOutline(work.sections), [work.sections]);
+
+  const bumpFocus = useCallback((): void => {
+    setFocusSignal((previous) => (previous === undefined ? 1 : previous + 1));
+  }, []);
+
   const handleChange = useCallback((document: DocumentNodeJSON): void => {
     setDraft(document);
+    draftRef.current = document;
     // The editor's mount echo re-emits the loaded document with generated ids; only a real divergence
-    // from the saved baseline is an unsaved edit, so opening a work reads "Saved" rather than "Unsaved
-    // changes".
+    // from the saved baseline is an unsaved edit, so opening a section reads "Saved" rather than
+    // "Unsaved changes".
     setStatus((previous) =>
       previous === "saving"
         ? previous
@@ -167,68 +204,182 @@ function ManualWorkEditor({
     );
   }, []);
 
-  const save = useCallback(
-    async (document: DocumentNodeJSON): Promise<void> => {
-      if (savingRef.current) {
-        return;
-      }
+  // Save the active section's document with the work-level revision. Updates the section list and
+  // revision on success; keeps the local edits on every refusal so nothing the learner typed is lost.
+  const runSave = useCallback(async (document: DocumentNodeJSON): Promise<SaveOutcome> => {
+    if (savingRef.current) {
+      return "busy";
+    }
 
-      savingRef.current = true;
-      setDraft(document);
-      setStatus("saving");
+    savingRef.current = true;
+    setDraft(document);
+    draftRef.current = document;
+    setStatus("saving");
 
-      let result;
-      try {
-        result = await saveManualWorkContent(work.entryId, document, work.revision);
-      } catch {
-        savingRef.current = false;
-        setStatus("error");
-        return;
-      }
+    let result;
+    try {
+      result = await saveManualWorkContent(
+        workRef.current.entryId,
+        activeUnitRef.current,
+        document,
+        workRef.current.revision
+      );
+    } catch {
+      savingRef.current = false;
+      setStatus("error");
+      return "error";
+    }
 
-      if (result.status === "saved") {
-        // Adopt the server's canonical document as the new local baseline AND editor content. The
-        // server may normalize what it persists (e.g. trimming trailing empty paragraphs), so the
-        // saved document can differ from what was sent. Setting `draft` to it keeps `dirty`/status
-        // truthful (the beforeunload guard disarms), and `savedDocument` — the editor's `document`
-        // prop — re-syncs the visible editor to exactly what was persisted.
-        setWork(result.work);
-        setSavedDocument(result.work.document);
-        setDraft(result.work.document);
-        setStatus("saved");
-        savingRef.current = false;
-        return;
-      }
+    if (result.status === "saved") {
+      // Adopt the server's canonical document as the new local baseline AND editor content, and the
+      // recomputed section list/revision so the Outline refreshes. The server may normalize what it
+      // persists, so the saved document can differ from what was sent.
+      setWork(result.work);
+      workRef.current = result.work;
+      savedDocumentRef.current = result.work.document;
+      draftRef.current = result.work.document;
+      setSavedDocument(result.work.document);
+      setDraft(result.work.document);
+      setStatus("saved");
+      savingRef.current = false;
+      return "saved";
+    }
 
-      // A malformed document the server refused (defensive: the editor produces valid documents). Keep
-      // the local edits so the learner can adjust and retry rather than losing them.
-      if (result.status === "invalid") {
-        setStatus("validation-error");
-        savingRef.current = false;
-        return;
-      }
+    // A malformed document the server refused (defensive). Keep the local edits so the learner can adjust
+    // and retry rather than losing them.
+    if (result.status === "invalid") {
+      setStatus("validation-error");
+      savingRef.current = false;
+      return "invalid";
+    }
 
-      // A stale revision: another session saved in between. Keep the learner's local edits and adopt the
-      // current revision, so pressing Save again deliberately overwrites the newer version.
-      let latest;
-      try {
-        latest = await fetchManualWork(work.entryId);
-      } catch {
-        savingRef.current = false;
-        setStatus("error");
-        return;
-      }
+    // A stale revision: another session wrote in between. Keep the learner's local edits and adopt the
+    // current revision/sections, so pressing Save again deliberately overwrites the newer version.
+    let latest;
+    try {
+      latest = await fetchManualWork(workRef.current.entryId);
+    } catch {
+      savingRef.current = false;
+      setStatus("error");
+      return "error";
+    }
 
-      setWork((previous) => ({
+    setWork((previous) => {
+      const adopted = {
         ...previous,
         revision: latest.revision,
+        sections: latest.sections,
         updatedAt: latest.updatedAt
-      }));
-      setStatus("conflict");
-      savingRef.current = false;
+      };
+      workRef.current = adopted;
+      return adopted;
+    });
+    setStatus("conflict");
+    savingRef.current = false;
+    return "conflict";
+  }, []);
+
+  // Open a section. Saves the current section first (save-before-switch); a failure/conflict leaves the
+  // current draft, section, and active item unchanged. On a clean save (or no pending edits) it loads the
+  // target section's document and focuses its heading.
+  const navigateTo = useCallback(
+    async (unitEntryId: string): Promise<void> => {
+      if (unitEntryId === activeUnitRef.current || savingRef.current || addPending) {
+        return;
+      }
+
+      const isDirty = !editorDocumentsEqualIgnoringIds(
+        draftRef.current,
+        savedDocumentRef.current
+      );
+      if (isDirty) {
+        const outcome = await runSave(draftRef.current);
+        if (outcome !== "saved") {
+          return;
+        }
+      }
+
+      let unit;
+      try {
+        unit = await fetchManualWorkUnit(workRef.current.entryId, unitEntryId);
+      } catch {
+        setStatus("error");
+        return;
+      }
+
+      activeUnitRef.current = unitEntryId;
+      savedDocumentRef.current = unit.document;
+      draftRef.current = unit.document;
+      setActiveUnitEntryId(unitEntryId);
+      setSavedDocument(unit.document);
+      setDraft(unit.document);
+      setStatus("saved");
+      bumpFocus();
     },
-    [work.entryId, work.revision]
+    [addPending, bumpFocus, runSave]
   );
+
+  // Append a new heading-led section and open it. Saves the current section first (a failure/conflict
+  // aborts the add and leaves everything unchanged), then focuses the new section's empty heading so the
+  // learner names it.
+  const addSection = useCallback(async (): Promise<void> => {
+    if (savingRef.current) {
+      return;
+    }
+
+    const isDirty = !editorDocumentsEqualIgnoringIds(draftRef.current, savedDocumentRef.current);
+    if (isDirty) {
+      const outcome = await runSave(draftRef.current);
+      if (outcome !== "saved") {
+        return;
+      }
+    }
+
+    setAddPending(true);
+    let result;
+    try {
+      result = await addManualWorkSection(workRef.current.entryId, workRef.current.revision);
+    } catch {
+      setAddPending(false);
+      setStatus("error");
+      return;
+    }
+
+    if (result.status === "conflict") {
+      // Another session wrote in between: adopt the current revision/sections and keep the learner where
+      // they are, so a repeat add works against the latest state.
+      try {
+        const latest = await fetchManualWork(workRef.current.entryId);
+        setWork((previous) => {
+          const adopted = {
+            ...previous,
+            revision: latest.revision,
+            sections: latest.sections,
+            updatedAt: latest.updatedAt
+          };
+          workRef.current = adopted;
+          return adopted;
+        });
+        setStatus("conflict");
+      } catch {
+        setStatus("error");
+      }
+      setAddPending(false);
+      return;
+    }
+
+    setWork(result.work);
+    workRef.current = result.work;
+    activeUnitRef.current = result.work.unitEntryId;
+    savedDocumentRef.current = result.work.document;
+    draftRef.current = result.work.document;
+    setActiveUnitEntryId(result.work.unitEntryId);
+    setSavedDocument(result.work.document);
+    setDraft(result.work.document);
+    setStatus("saved");
+    setAddPending(false);
+    bumpFocus();
+  }, [bumpFocus, runSave]);
 
   const header = (
     <div className="flex items-center gap-3">
@@ -245,7 +396,7 @@ function ManualWorkEditor({
       </p>
       <Button
         onClick={() => {
-          void save(draft);
+          void runSave(draft);
         }}
         pending={status === "saving"}
         size="sm"
@@ -258,17 +409,32 @@ function ManualWorkEditor({
 
   return (
     <EditorFrame primaryAction={header} title={work.title}>
-      <div className="manualWorkEditorColumn">
-        <RichContentEditor
-          ariaLabel={`Edit ${work.title}`}
-          document={savedDocument}
-          onChange={handleChange}
-          onSave={(document) => {
-            void save(document);
+      <div className="manualWorkWorkspace">
+        <WorkOutline
+          activeUnitEntryId={activeUnitEntryId}
+          addPending={addPending}
+          entries={outlineEntries}
+          onAddSection={() => {
+            void addSection();
           }}
-          presentation="full"
-          showToolbar
+          onSelect={(unitEntryId) => {
+            void navigateTo(unitEntryId);
+          }}
         />
+        <div className="manualWorkCanvas">
+          <RichContentEditor
+            ariaLabel={`Edit ${work.title}`}
+            document={savedDocument}
+            focusSignal={focusSignal}
+            key={activeUnitEntryId}
+            onChange={handleChange}
+            onSave={(document) => {
+              void runSave(document);
+            }}
+            presentation="full"
+            showToolbar
+          />
+        </div>
       </div>
     </EditorFrame>
   );

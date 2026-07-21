@@ -65,6 +65,11 @@ export interface RichContentEditorProps {
   // When false the editor is read-only (Tiptap's native `editable`): the content stays visible but every
   // edit is blocked. Consumers freeze the surface this way (e.g. an in-flight import). Defaults to true.
   readonly editable?: boolean;
+  // A monotonically-changing token a consumer bumps to place the caret at the document start (the
+  // section's heading) — the manual-Work Outline's "selection focuses the exact heading" (#697).
+  // `undefined` (the default) never focuses, so every other surface is unchanged; a number focuses on
+  // mount and whenever it changes, so re-selecting the same section re-focuses it.
+  readonly focusSignal?: number | undefined;
   readonly onChange: (document: DocumentNodeJSON) => void;
   readonly onSave?: (document: DocumentNodeJSON) => void;
   readonly presentation?: RichContentEditorPresentation;
@@ -112,6 +117,7 @@ export function RichContentEditor({
   ariaLabel = "Rich content editor",
   document,
   editable = true,
+  focusSignal,
   onChange,
   onSave,
   presentation = "full",
@@ -201,6 +207,18 @@ export function RichContentEditor({
 
     editor.setEditable(editable);
   }, [editor, editable]);
+
+  // Place the caret at the document start (the section's heading) when a consumer bumps `focusSignal` —
+  // the manual-Work Outline focuses the exact heading on selection/add (#697). Gated on a defined signal
+  // so no other surface is focused on mount. `focus("start")` is a selection-only transaction: it never
+  // edits the document, enters undo, or emits onChange.
+  useEffect(() => {
+    if (editor === null || focusSignal === undefined) {
+      return;
+    }
+
+    editor.commands.focus("start");
+  }, [editor, focusSignal]);
 
   // Paint the transient wash on the block that owns the interaction: the open menu's block when a menu
   // is open, otherwise the hovered gutter block. Clears (null) at rest. The decoration is a no-op
