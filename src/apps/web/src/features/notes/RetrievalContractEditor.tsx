@@ -184,10 +184,20 @@ export function RetrievalContractEditor({
           <div className="retrievalContractConfirm">
             <p>Remove the success check you wrote? This cannot be undone.</p>
             <div className="retrievalContractConfirmActions">
-              <Button onClick={discardSuccessCheck} type="button" variant="primary">
+              <Button
+                disabled={!editable}
+                onClick={discardSuccessCheck}
+                type="button"
+                variant="primary"
+              >
                 Remove it
               </Button>
-              <Button onClick={() => setConfirmingDiscard(false)} type="button" variant="secondary">
+              <Button
+                disabled={!editable}
+                onClick={() => setConfirmingDiscard(false)}
+                type="button"
+                variant="secondary"
+              >
                 Keep it
               </Button>
             </div>

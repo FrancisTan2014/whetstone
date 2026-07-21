@@ -336,6 +336,38 @@ describe("RepairCardView", () => {
     });
   });
 
+  it("freezes an already-open success-check discard while Keep/Restart is pending", async () => {
+    mockedSetTarget.mockResolvedValue(promptRow({ revision: 1 }));
+    renderView();
+    await loaded();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add a specific success check" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Success check" }),
+      "Names durability."
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Remove success check" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const remove = screen.getByRole("button", { name: "Remove it" });
+    expect((remove as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(remove);
+
+    expect(screen.getByRole("textbox", { name: "Success check" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Reference" })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Keep schedule" }));
+    await waitFor(() => expect(mockedSetTarget).toHaveBeenCalledTimes(1));
+    expect(mockedSetTarget).toHaveBeenCalledWith("prompt-1", {
+      expectedRevision: 0,
+      mode: "keep",
+      target: {
+        kind: "expected_response",
+        successCheckDoc: createTextDocument("Names durability.")
+      }
+    });
+  });
+
   it("a target change plus a question edit sends both writes", async () => {
     mockedSetTarget.mockResolvedValue(promptRow({ revision: 1 }));
     mockedEdit.mockResolvedValue(promptRow({ questionText: "Define a WAL.", revision: 2 }));
