@@ -135,9 +135,14 @@ export function RepairCardView({
     };
   }, [noteId, promptId, reloadNonce]);
 
+  // Focus the repair heading once the view is ready (on mount the loading placeholder renders instead, so
+  // the heading is not in the DOM yet). Re-running on `load.status` moves focus when it first mounts so
+  // assistive tech announces the mode change.
   useEffect(() => {
-    headingRef.current?.focus();
-  }, []);
+    if (load.status === "ready") {
+      headingRef.current?.focus();
+    }
+  }, [load.status]);
 
   // Escape abandons the repair, but never mid-write — a pending save must resolve before the view unmounts.
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {

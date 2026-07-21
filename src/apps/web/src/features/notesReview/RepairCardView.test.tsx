@@ -142,6 +142,13 @@ describe("RepairCardView", () => {
     expect(screen.queryByText(/review cards\./)).toBeNull();
   });
 
+  it("moves focus to the repair heading once the card is ready", async () => {
+    renderView();
+    const heading = await screen.findByRole("heading", { name: "Fix this card" });
+    // Focus lands only after the async load resolves (the loading placeholder has no heading to focus).
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
   it("warns that editing the note affects every card when the note has siblings", async () => {
     mockedSettings.mockResolvedValue(
       settingsList([promptRow(), promptRow({ promptId: "prompt-2" })])
