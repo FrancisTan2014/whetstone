@@ -459,10 +459,11 @@ test("the Notes tool is an alternate path that opens a whole-block note with no 
   await expect(editor.getByText("Whole-block note body.")).toBeVisible();
 });
 
-// #658: the saved-note sheet is the enrollment surface for Notes-owned Review. From a saved anchored
-// note the learner confirms the EXACT anchor snapshot as a read-only Question and adds it to Review;
-// enrollment is one card due now, persists across reopening, and a later body edit never reschedules it.
-test("adding a saved reader note to Review enrolls it, persists, and survives a later body edit", async ({
+// #687: the saved-note Cards workspace is where a learner authors a note's first review card in place. From
+// a saved anchored note the composer shows the anchored source as read-only Reference and the learner writes
+// the Question from blank (the selection never silently becomes the cue); the authored card is due now,
+// persists across reopening, and a later body edit never reschedules it.
+test("authoring a saved reader note's first card enrolls it, persists, and survives a later body edit", async ({
   page,
   setup
 }) => {
@@ -479,25 +480,25 @@ test("adding a saved reader note to Review enrolls it, persists, and survives a 
   );
   await reloadReader(page, work.readerUrl);
 
-  // Open the note and enroll it from the sheet's Cards workspace.
+  // Open the note and author its first card from the sheet's Cards workspace.
   await underlineFor(page, "note", "Alpha").click();
   let editor = page.getByRole("dialog", EDIT_DIALOG);
   await expect(editor).toBeVisible();
   await editor.getByRole("tab", { name: "Cards" }).click();
   let cardsPanel = editor.getByRole("tabpanel", { name: "Cards" });
   await expect(cardsPanel.getByText("This note has no review cards yet.")).toBeVisible();
-  await cardsPanel.getByRole("button", { name: "Add to review" }).click();
 
-  // The confirmation shows the exact anchor snapshot as a read-only Question — never retyped or edited.
-  await expect(cardsPanel.getByText("Question", { exact: true })).toBeVisible();
-  await expect(cardsPanel.getByText("Alpha", { exact: true })).toBeVisible();
-  await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+  // Add card opens the inline composer over the existing note: the anchored source is shown as read-only
+  // Reference and the learner writes the Question from blank (never auto-filled from the selection).
+  await cardsPanel.getByRole("button", { name: "Add card" }).click();
+  await cardsPanel.getByRole("textbox", { name: "Question" }).fill("What is Alpha?");
+  await cardsPanel.getByRole("button", { name: "Add card" }).click();
 
-  // One click enrolls: the shared card is due now in the Cards list.
+  // The authored card is due now in the Cards list.
   await expect(cardsPanel.getByRole("button", { name: /Alpha/ })).toBeVisible();
   await expect(cardsPanel.getByText("Due now")).toBeVisible();
 
-  // Enrollment persists across reopening the note (the section reads the objective server status).
+  // The authored card persists across reopening the note (the section reads the objective server status).
   await editor.getByRole("button", { name: "Close" }).click();
   await expect(editor).toBeHidden();
   await underlineFor(page, "note", "Alpha").click();
@@ -524,12 +525,12 @@ test("adding a saved reader note to Review enrolls it, persists, and survives a 
   await editor.getByRole("button", { name: "Close" }).click();
   await expect(editor).toBeHidden();
 
-  // The Notes-owned Review session shows the prompt's QUESTION as the exact anchor snapshot and its reveal
-  // as the note's LIVE canonical body — so the later edit shows here with no schedule reset. Grading it
-  // also returns the shared due queue to complete for the rest of the suite.
+  // The Notes-owned Review session shows the prompt's authored QUESTION and its reveal as the note's LIVE
+  // canonical body — so the later edit shows here with no schedule reset. Grading it also returns the shared
+  // due queue to complete for the rest of the suite.
   await page.goto(`${setup.baseURL}#/notes/review`);
   await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
-  await expect(page.getByText("Alpha", { exact: true })).toBeVisible();
+  await expect(page.getByText("What is Alpha?")).toBeVisible();
   await page.getByRole("button", { name: "Show note" }).click();
   await expect(page.getByText("Edited canonical body.")).toBeVisible();
   await page.getByRole("button", { name: "Good" }).click();

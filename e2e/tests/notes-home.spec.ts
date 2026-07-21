@@ -122,7 +122,7 @@ test.describe("notes home", () => {
     await expect(cardsPanel.getByRole("heading", { name: "Review history" })).toBeVisible();
     await expect(cardsPanel.getByText("Schedule restarted")).toBeVisible();
     await cardsPanel.getByRole("button", { name: "Back to card" }).click();
-    await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+    await cardsPanel.getByRole("button", { name: "Start reviewing" }).click();
     await expect(cardsPanel.getByText("Due now")).toBeVisible();
 
     // The note body itself was never rewritten by any settings action.

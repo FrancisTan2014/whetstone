@@ -3,21 +3,22 @@ import {
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
   parseNoteRevealDto,
-  parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewRatingResultDto,
   parseReviewHistoryPageDto,
+  type AuthorNoteCardRequest,
   type CreateDirectCardRequest,
   type DirectCardResultDto,
   type NotePromptSettingsDto,
   type NotePromptSettingsListDto,
-  type NoteReviewEnrollmentStatusDto,
   type NoteReviewPromptDto,
   type NoteRevealDto,
   type NoteReviewRatingResultDto,
-  type ReviewHistoryPageDto
+  type ReviewHistoryPageDto,
+  type SetNoteGradingTargetRequest
 } from "@whetstone/contracts";
 import { type ReviewRating } from "@whetstone/domain";
+import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { apiUrl } from "../../shared/runtime";
 
@@ -63,65 +64,6 @@ export async function rateNotePrompt(
   );
 }
 
-// One saved note's current Review status, for the note sheet's Review section: not enrolled, due now,
-// scheduled for a future date, or paused. A read; it changes nothing.
-export async function fetchNoteReviewStatus(
-  workEntryId: string,
-  noteEntryId: string
-): Promise<NoteReviewEnrollmentStatusDto> {
-  return parseNoteReviewEnrollmentStatusDto(
-    await requestJson(
-      apiUrl(
-        `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}/review`
-      )
-    )
-  );
-}
-
-// Add one saved note to Review: idempotently create-or-reuse its current-note prompt and active card,
-// returning the resulting objective status. Safe to call again — a second submit reuses the same prompt
-// and card without resetting the schedule. The target is fully addressed by the URL, so the POST carries
-// no body (and no JSON content-type, which Fastify would otherwise reject as an empty JSON body).
-export async function addNoteToReview(
-  workEntryId: string,
-  noteEntryId: string
-): Promise<NoteReviewEnrollmentStatusDto> {
-  return parseNoteReviewEnrollmentStatusDto(
-    await requestJson(
-      apiUrl(
-        `/works/${encodeURIComponent(workEntryId)}/notes/${encodeURIComponent(noteEntryId)}/review/enrollment`
-      ),
-      { method: "POST" }
-    )
-  );
-}
-
-// One owned note's Review status for the Notes home (#659), owner-scoped so a standalone note reads too.
-// A read; it changes nothing.
-export async function fetchOwnedNoteReviewStatus(
-  noteEntryId: string
-): Promise<NoteReviewEnrollmentStatusDto> {
-  return parseNoteReviewEnrollmentStatusDto(
-    await requestJson(apiUrl(`/notes/${encodeURIComponent(noteEntryId)}/review`))
-  );
-}
-
-// Add any owned note to Review from the Notes home (#659), owner-scoped. An anchored note reuses its exact
-// source server-side (no question sent); a standalone note supplies the learner's question. Idempotent —
-// a re-submit reuses the same prompt and card. A standalone enrollment MUST carry a non-blank question, so
-// this sends a JSON body only when a question is given; the anchored path posts no body.
-export async function addOwnedNoteToReview(
-  noteEntryId: string,
-  question?: string
-): Promise<NoteReviewEnrollmentStatusDto> {
-  const path = apiUrl(`/notes/${encodeURIComponent(noteEntryId)}/review/enrollment`);
-  const init: RequestInit =
-    question === undefined
-      ? { method: "POST" }
-      : { body: JSON.stringify({ question }), headers: jsonHeaders, method: "POST" };
-  return parseNoteReviewEnrollmentStatusDto(await requestJson(path, init));
-}
-
 // The full Review-settings list for one owned note (#660): every prompt in creation order with its reveal
 // policy and projected card state. A read; it changes nothing.
 export async function fetchNotePromptSettings(
@@ -143,18 +85,79 @@ export async function fetchNotePromptHistory(
   return parseReviewHistoryPageDto(await requestJson(path));
 }
 
-// Edit one prompt's retrieval question (#660): writes ONLY the cue and returns the refreshed settings row.
+// Edit one prompt's retrieval question (#660, rich in #687): sends the rich Question document and returns
+// the refreshed settings row. The server derives the plaintext and rejects a blank document.
 export async function editNotePromptQuestion(
   promptId: string,
-  question: string
+  questionDoc: DocumentNodeJSON
 ): Promise<NotePromptSettingsDto> {
   return parseNotePromptSettingsDto(
     await requestJson(apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/question`), {
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ questionDoc }),
       headers: jsonHeaders,
       method: "PATCH"
     })
   );
+}
+
+// Why setting a prompt's grading target failed (#686), kept as a small closed set so Card detail can report
+// the exact reason and keep the learner's drafts. `invalid_success_check` is a blank Success check;
+// `legacy_read_only` rejects converting a preserved `legacy_custom` prompt; `restart_requires_card` rejects
+// a `restart` on a cardless prompt; `not_found` is a prompt that is no longer the learner's; `network` is a
+// lost response, retry-safe with the same intent.
+export type SetNoteGradingTargetErrorKind =
+  | "invalid_success_check"
+  | "legacy_read_only"
+  | "network"
+  | "not_found"
+  | "restart_requires_card";
+
+export class SetNoteGradingTargetError extends Error {
+  readonly kind: SetNoteGradingTargetErrorKind;
+
+  constructor(kind: SetNoteGradingTargetErrorKind) {
+    super(`Setting the grading target failed: ${kind}.`);
+    this.name = "SetNoteGradingTargetError";
+    this.kind = kind;
+  }
+}
+
+// Set one prompt's grading target (#686): `mode` explicitly chooses `keep` (save the policy, never touch the
+// schedule) or `restart` (also reset the schedule, due now) so Whetstone never infers whether the trained
+// capability changed. Returns the refreshed settings row. On failure this throws a
+// `SetNoteGradingTargetError` whose `kind` maps the server outcome by status and error body — 400
+// `invalid_success_check`, 404 `not_found`, 409 `legacy_read_only`/`restart_requires_card`, anything else
+// `network` — so Card detail keeps every draft and reports the right reason.
+export async function setNoteGradingTarget(
+  promptId: string,
+  request: SetNoteGradingTargetRequest
+): Promise<NotePromptSettingsDto> {
+  let response: Response;
+  try {
+    response = await fetch(
+      apiUrl(`/notes/review/prompts/${encodeURIComponent(promptId)}/grading-target`),
+      { body: JSON.stringify(request), headers: jsonHeaders, method: "POST" }
+    );
+  } catch {
+    throw new SetNoteGradingTargetError("network");
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (response.status === 400 && body?.error === "invalid_success_check") {
+      throw new SetNoteGradingTargetError("invalid_success_check");
+    }
+    if (response.status === 404) {
+      throw new SetNoteGradingTargetError("not_found");
+    }
+    if (response.status === 409 && body?.error === "legacy_read_only") {
+      throw new SetNoteGradingTargetError("legacy_read_only");
+    }
+    if (response.status === 409 && body?.error === "restart_requires_card") {
+      throw new SetNoteGradingTargetError("restart_requires_card");
+    }
+    throw new SetNoteGradingTargetError("network");
+  }
+  return parseNotePromptSettingsDto(await response.json());
 }
 
 // Apply a card transition to one prompt through its settings route (#660): pause, resume, restart, or
@@ -237,6 +240,67 @@ export async function createDirectCard(
       throw new CreateDirectCardError("invalid");
     }
     throw new CreateDirectCardError("network");
+  }
+  return parseDirectCardResultDto(await response.json());
+}
+
+// Why authoring a card over an existing saved note failed (#687), kept as a small closed set so the composer
+// can decide recovery. A `network` blip is recoverable with the SAME submission id; a `conflict` is the same
+// id replayed with an edited payload; `gone` is a tombstoned submission whose note was deleted;
+// `already_authored` means another submission already gave this note its one allowed card; `not_found` means
+// the note no longer belongs to the learner. Every case keeps the learner's drafts.
+export type AuthorNoteCardErrorKind =
+  | "already_authored"
+  | "conflict"
+  | "gone"
+  | "invalid"
+  | "network"
+  | "not_found";
+
+export class AuthorNoteCardError extends Error {
+  readonly kind: AuthorNoteCardErrorKind;
+
+  constructor(kind: AuthorNoteCardErrorKind) {
+    super(`Authoring a note card failed: ${kind}.`);
+    this.name = "AuthorNoteCardError";
+    this.kind = kind;
+  }
+}
+
+// Author the FIRST review card over an EXISTING saved note (#687), retry-safe via the composer's stable
+// `submissionId`. A same-payload retry returns the ORIGINAL result (200), so a lost response never
+// double-creates. On failure this throws an `AuthorNoteCardError` whose `kind` maps the server outcome —
+// 409 `already_authored` → `already_authored` and any other 409 → `conflict`, 410 → `gone`, 404 →
+// `not_found`, other 4xx → `invalid`, anything else → `network` — so the composer keeps every draft and
+// offers the right recovery.
+export async function authorNoteCard(request: AuthorNoteCardRequest): Promise<DirectCardResultDto> {
+  let response: Response;
+  try {
+    response = await fetch(apiUrl("/notes/review/author-cards"), {
+      body: JSON.stringify(request),
+      headers: jsonHeaders,
+      method: "POST"
+    });
+  } catch {
+    throw new AuthorNoteCardError("network");
+  }
+  if (!response.ok) {
+    if (response.status === 409) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new AuthorNoteCardError(
+        body?.error === "already_authored" ? "already_authored" : "conflict"
+      );
+    }
+    if (response.status === 410) {
+      throw new AuthorNoteCardError("gone");
+    }
+    if (response.status === 404) {
+      throw new AuthorNoteCardError("not_found");
+    }
+    if (response.status >= 400 && response.status < 500) {
+      throw new AuthorNoteCardError("invalid");
+    }
+    throw new AuthorNoteCardError("network");
   }
   return parseDirectCardResultDto(await response.json());
 }

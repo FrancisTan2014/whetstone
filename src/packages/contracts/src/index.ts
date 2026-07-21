@@ -303,7 +303,7 @@ export {
 } from "./memoryContracts.js";
 export type { ReviewStateDto } from "./memoryContracts.js";
 export {
-  enrollNoteRequestSchema,
+  authorNoteCardRequestSchema,
   editNotePromptQuestionRequestSchema,
   createDirectCardRequestSchema,
   directCardResultDtoSchema,
@@ -313,20 +313,18 @@ export {
   notePromptSettingsListDtoSchema,
   noteRevealDtoSchema,
   noteRevealKindSchema,
-  noteReviewEnrollmentStatusDtoSchema,
   noteReviewNextDtoSchema,
   noteReviewPromptDtoSchema,
   noteReviewRatingRequestSchema,
   noteReviewRatingResultDtoSchema,
   noteReviewSummaryDtoSchema,
   noteGradingTargetSchema,
+  parseAuthorNoteCardRequest,
   parseCreateDirectCardRequest,
   parseDirectCardResultDto,
   parseEditNotePromptQuestionRequest,
-  parseEnrollNoteRequest,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
-  parseNoteReviewEnrollmentStatusDto,
   parseNoteReviewNextDto,
   parseNoteReviewPromptDto,
   parseNoteReviewRatingRequest,
@@ -340,10 +338,10 @@ export {
   setNoteGradingTargetRequestSchema
 } from "./noteReviewContracts.js";
 export type {
+  AuthorNoteCardRequest,
   CreateDirectCardRequest,
   DirectCardResultDto,
   EditNotePromptQuestionRequest,
-  EnrollNoteRequest,
   NoteGradingTarget,
   NotePromptCardStateDto,
   NotePromptRevealPolicyDto,
@@ -351,7 +349,6 @@ export type {
   NotePromptSettingsListDto,
   NoteRevealDto,
   NoteRevealKind,
-  NoteReviewEnrollmentStatusDto,
   NoteReviewNextDto,
   NoteReviewPromptDto,
   NoteReviewRatingRequest,

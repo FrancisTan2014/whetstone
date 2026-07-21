@@ -2,10 +2,11 @@ import { ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { NotePromptSettingsDto } from "@whetstone/contracts";
+import { type DocumentNodeJSON } from "@whetstone/document";
 
 import { Button } from "../../shared/ui/Button";
 import { useLearnerTimeZone } from "../../shared/preferences/useLearnerTimeZone";
-import { AddToReviewFlow } from "./AddToReviewFlow";
+import { SavedNoteCardComposer } from "./SavedNoteCardComposer";
 import { cardStateLabel, revealSummaryLabel } from "./cardState";
 import { CardDetail } from "./CardDetail";
 import { CardHistory } from "./CardHistory";
@@ -14,26 +15,33 @@ import { fetchNotePromptSettings } from "../notesReview/notesReviewApi";
 type CardsViewProps = Readonly<{
   noteEntryId: string;
   onReviewChanged: () => void;
-  // The anchored note's exact source snapshot for the no-prompt enrollment flow; `null` for a standalone
-  // note, which is asked "What should Whetstone ask you?" instead.
+  // The live canonical note body, framed as the read-only Answer/Reference a first card grades against, and
+  // shown read-only while editing an existing card's grading target. `null` when the note carries no
+  // reflowable body (a Mark) — such a note never offers Add card.
+  noteBodyDoc: DocumentNodeJSON | null;
+  // An anchored Reader note's exact selected source, shown verbatim as Reference context in the Add-card
+  // composer; `null` for a standalone note. The selection never silently chooses the Question or card type.
   sourceSnapshot: string | null;
 }>;
 
 type CardsScreen =
   | Readonly<{ kind: "list" }>
+  | Readonly<{ kind: "compose" }>
   | Readonly<{ kind: "detail"; fromHistory: boolean; promptId: string }>
   | Readonly<{ kind: "history"; promptId: string }>;
 
-// The Cards hierarchy for one saved note (#700): one compact stable-creation-order list of the note's
-// existing review contracts, drilling into a focused detail and then a per-card history, all inside the
-// shared Sheet. It renders N >= 0 rows without a singleton assumption and reuses the existing owner-scoped
-// prompt/settings query and prompt-id mutations — no client copy becomes a source of truth. Back navigates
-// History -> Detail -> List, restoring the originating row's focus. The optional toolbar slot hosts the
-// existing "Add to review" flow only for an eligible no-prompt note. Cards never offers a rating action;
+// The Cards hierarchy for one saved note (#700, first-card authoring in #687): one compact
+// stable-creation-order list of the note's existing review contracts, drilling into a focused detail and
+// then a per-card history, all inside the shared Sheet. It renders N >= 0 rows without a singleton
+// assumption and reuses the existing owner-scoped prompt/settings query and prompt-id mutations — no client
+// copy becomes a source of truth. Back navigates History -> Detail -> List, restoring the originating row's
+// focus. When the note has no authored prompt and carries a body, the toolbar offers Add card, which opens
+// the inline rich composer to author the note's first card in place. Cards never offers a rating action;
 // Today and Notes Review own the routine.
 export function CardsView({
   noteEntryId,
   onReviewChanged,
+  noteBodyDoc,
   sourceSnapshot
 }: CardsViewProps): React.JSX.Element {
   const [phase, setPhase] = useState<"loading" | "error" | "ready">("loading");
@@ -144,6 +152,7 @@ export function CardsView({
         </Button>
         <CardDetail
           focusHistoryButton={screen.fromHistory}
+          noteBodyDoc={noteBodyDoc}
           onOpenHistory={() => setScreen({ kind: "history", promptId: prompt.promptId })}
           onRefreshed={applyRefreshed}
           onReload={reloadAfterMutation}
@@ -154,18 +163,45 @@ export function CardsView({
     );
   }
 
+  if (screen.kind === "compose" && noteBodyDoc !== null) {
+    return (
+      <div className="noteCardsCompose">
+        <Button onClick={() => setScreen({ kind: "list" })} size="sm" type="button" variant="ghost">
+          Back to cards
+        </Button>
+        <SavedNoteCardComposer
+          noteBodyDoc={noteBodyDoc}
+          noteEntryId={noteEntryId}
+          onCancel={() => setScreen({ kind: "list" })}
+          onCreated={() => {
+            reloadAfterMutation();
+            setScreen({ kind: "list" });
+          }}
+          sourceSnapshot={sourceSnapshot}
+        />
+      </div>
+    );
+  }
+
   return renderList();
 
   function renderList(): React.JSX.Element {
+    // Add card opens the first-card composer, so it is offered only when the note has no AUTHORED prompt
+    // (a `current_note` or `expected_response` reveal) — never gated on total prompt count. A note may
+    // carry read-only `legacy_custom` prompts while still owning no authored first card (#657/#687's
+    // migration excludes `legacy_custom` from the one-authored-prompt-per-note invariant), so such a note
+    // still shows its legacy row(s) AND offers Add card.
+    const hasAuthoredPrompt = prompts.some(
+      (prompt) =>
+        prompt.reveal.kind === "current_note" || prompt.reveal.kind === "expected_response"
+    );
     return (
       <div className="noteCardsList">
         <div className="noteCardsToolbar">
-          {prompts.length === 0 ? (
-            <AddToReviewFlow
-              noteEntryId={noteEntryId}
-              onEnrolled={reloadAfterMutation}
-              sourceSnapshot={sourceSnapshot}
-            />
+          {!hasAuthoredPrompt && noteBodyDoc !== null ? (
+            <Button onClick={() => setScreen({ kind: "compose" })} type="button">
+              Add card
+            </Button>
           ) : null}
         </div>
         {prompts.length === 0 ? (

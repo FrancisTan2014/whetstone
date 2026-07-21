@@ -1,0 +1,2 @@
+DROP INDEX "memory_prompts_one_current_note_per_note_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "memory_prompts_one_authored_prompt_per_note_uq" ON "memory_prompts" USING btree ("note_entry_id") WHERE "memory_prompts"."reveal_kind" in ('current_note', 'expected_response');

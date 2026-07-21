@@ -288,6 +288,7 @@ export function NoteWorkspace({
             >
               {cardsEverOpened ? (
                 <CardsView
+                  noteBodyDoc={savedBody}
                   noteEntryId={persisted.entryId}
                   onReviewChanged={() => onReviewChanged?.()}
                   sourceSnapshot={activeSource?.snapshot ?? null}

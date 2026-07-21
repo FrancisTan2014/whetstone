@@ -2,7 +2,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NotePromptSettingsDto } from "@whetstone/contracts";
-import { createTextDocument } from "@whetstone/document";
+import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../notesReview/notesReviewApi", () => ({
@@ -14,16 +14,22 @@ vi.mock("../../shared/preferences/useLearnerTimeZone", () => ({
 }));
 
 // The Cards leaves have their own suites; here they are controllable stubs so CardsView's own orchestration
-// (list -> detail -> history navigation, row refresh, reload, the enrollment slot) is asserted in isolation.
+// (list -> detail -> history navigation, row refresh, reload, the Add-card compose slot) is asserted in
+// isolation.
 vi.mock("./CardDetail", () => ({
   CardDetail: (props: {
     focusHistoryButton: boolean;
+    noteBodyDoc: DocumentNodeJSON | null;
     onOpenHistory: () => void;
     onRefreshed: (refreshed: NotePromptSettingsDto) => void;
     onReload: () => void;
     prompt: NotePromptSettingsDto;
   }) => (
-    <div data-testid="card-detail" data-from-history={String(props.focusHistoryButton)}>
+    <div
+      data-testid="card-detail"
+      data-body={props.noteBodyDoc === null ? "null" : "present"}
+      data-from-history={String(props.focusHistoryButton)}
+    >
       <span>detail:{props.prompt.promptId}</span>
       <button onClick={props.onOpenHistory} type="button">
         stub-open-history
@@ -45,15 +51,24 @@ vi.mock("./CardHistory", () => ({
   CardHistory: (props: { promptId: string }) => <div>history:{props.promptId}</div>
 }));
 
-vi.mock("./AddToReviewFlow", () => ({
-  AddToReviewFlow: (props: {
+vi.mock("./SavedNoteCardComposer", () => ({
+  SavedNoteCardComposer: (props: {
     noteEntryId: string;
-    onEnrolled: () => void;
     sourceSnapshot: string | null;
+    onCancel: () => void;
+    onCreated: () => void;
   }) => (
-    <button onClick={props.onEnrolled} type="button">
-      stub-add:{props.noteEntryId}:{String(props.sourceSnapshot)}
-    </button>
+    <div data-testid="composer">
+      <span>
+        compose:{props.noteEntryId}:{String(props.sourceSnapshot)}
+      </span>
+      <button onClick={props.onCreated} type="button">
+        stub-created
+      </button>
+      <button onClick={props.onCancel} type="button">
+        stub-cancel
+      </button>
+    </div>
   )
 }));
 
@@ -61,6 +76,7 @@ import { CardsView } from "./CardsView";
 import { fetchNotePromptSettings } from "../notesReview/notesReviewApi";
 
 const mockedList = vi.mocked(fetchNotePromptSettings);
+const noteBody = createTextDocument("Merge sort is stable.");
 
 function prompt(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSettingsDto {
   return {
@@ -74,11 +90,16 @@ function prompt(overrides: Partial<NotePromptSettingsDto> = {}): NotePromptSetti
 }
 
 function renderView(
-  overrides: { onReviewChanged?: () => void; sourceSnapshot?: string | null } = {}
+  overrides: {
+    noteBodyDoc?: DocumentNodeJSON | null;
+    onReviewChanged?: () => void;
+    sourceSnapshot?: string | null;
+  } = {}
 ) {
   const onReviewChanged = overrides.onReviewChanged ?? vi.fn<() => void>();
   render(
     <CardsView
+      noteBodyDoc={overrides.noteBodyDoc === undefined ? noteBody : overrides.noteBodyDoc}
       noteEntryId="note-1"
       onReviewChanged={onReviewChanged}
       sourceSnapshot={overrides.sourceSnapshot ?? null}
@@ -108,34 +129,100 @@ describe("CardsView", () => {
     expect(await screen.findByText("What is a WAL?")).toBeDefined();
   });
 
-  it("shows the enrollment slot and empty copy for a no-card note, forwarding the source snapshot", async () => {
+  it("offers Add card and empty copy for a no-card note that has a body", async () => {
     mockedList.mockResolvedValue({ prompts: [] });
-    renderView({ sourceSnapshot: "the exact source" });
+    renderView();
 
-    expect(
-      await screen.findByRole("button", { name: "stub-add:note-1:the exact source" })
-    ).toBeDefined();
+    expect(await screen.findByRole("button", { name: "Add card" })).toBeDefined();
     expect(screen.getByText("This note has no review cards yet.")).toBeDefined();
   });
 
-  it("re-enrolling from the empty slot reloads the list and notifies the parent", async () => {
+  it("hides Add card for a bodyless note (a Mark), leaving only the empty copy", async () => {
+    mockedList.mockResolvedValue({ prompts: [] });
+    renderView({ noteBodyDoc: null });
+
+    expect(await screen.findByText("This note has no review cards yet.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Add card" })).toBeNull();
+  });
+
+  it("opens the compose slot from Add card, forwarding the note id and source snapshot", async () => {
+    mockedList.mockResolvedValue({ prompts: [] });
+    renderView({ sourceSnapshot: "the exact source" });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add card" }));
+    expect(screen.getByText("compose:note-1:the exact source")).toBeDefined();
+  });
+
+  it("authoring a card from the compose slot reloads the list and notifies the parent", async () => {
     mockedList.mockResolvedValueOnce({ prompts: [] });
     mockedList.mockResolvedValueOnce({ prompts: [prompt()] });
     const { onReviewChanged } = renderView();
 
-    await userEvent.click(await screen.findByRole("button", { name: /stub-add/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Add card" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-created" }));
+
     expect(await screen.findByText("What is a WAL?")).toBeDefined();
     expect(onReviewChanged).toHaveBeenCalled();
   });
 
-  it("lists each card's question, reveal summary, and state, with no enrollment slot", async () => {
+  it("cancelling the compose slot returns to the list without reloading", async () => {
+    mockedList.mockResolvedValue({ prompts: [] });
+    const { onReviewChanged } = renderView();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add card" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-cancel" }));
+
+    expect(await screen.findByText("This note has no review cards yet.")).toBeDefined();
+    // Only the initial load ran; cancel does not reload or notify.
+    expect(mockedList).toHaveBeenCalledTimes(1);
+    expect(onReviewChanged).not.toHaveBeenCalled();
+  });
+
+  it("returns to the list from the compose slot's Back control", async () => {
+    mockedList.mockResolvedValue({ prompts: [] });
+    renderView();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add card" }));
+    await userEvent.click(screen.getByRole("button", { name: "Back to cards" }));
+    expect(screen.getByText("This note has no review cards yet.")).toBeDefined();
+  });
+
+  it("lists each card's question, reveal summary, and state, with no Add card", async () => {
     mockedList.mockResolvedValue({ prompts: [prompt()] });
     renderView();
 
     expect(await screen.findByText("What is a WAL?")).toBeDefined();
     expect(screen.getByText("Whole note")).toBeDefined();
     expect(screen.getByText("Due now")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /stub-add/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add card" })).toBeNull();
+  });
+
+  it("offers Add card for a legacy-only note while still showing its legacy row", async () => {
+    // A `legacy_custom` prompt is read-only and is excluded from the one-authored-prompt-per-note
+    // invariant, so it never occupies the first-card slot: the note still owns no authored
+    // current_note/expected_response prompt and must still offer Add card alongside its legacy row.
+    mockedList.mockResolvedValue({
+      prompts: [
+        prompt({
+          promptId: "legacy-1",
+          questionDoc: createTextDocument("Legacy cue?"),
+          questionText: "Legacy cue?",
+          reveal: {
+            kind: "legacy_custom",
+            answerDoc: createTextDocument("Legacy answer."),
+            answerText: "Legacy answer."
+          }
+        })
+      ]
+    });
+    renderView();
+
+    // The legacy row renders...
+    expect(await screen.findByText("Legacy cue?")).toBeDefined();
+    // ...and Add card is still offered because no authored prompt exists yet.
+    expect(screen.getByRole("button", { name: "Add card" })).toBeDefined();
+    // The legacy-only note is not the true empty state.
+    expect(screen.queryByText("This note has no review cards yet.")).toBeNull();
   });
 
   it("drills list -> detail -> history and back, restoring the row's focus", async () => {
@@ -144,6 +231,8 @@ describe("CardsView", () => {
 
     await userEvent.click(await screen.findByText("What is a WAL?"));
     expect(screen.getByText("detail:prompt-1")).toBeDefined();
+    // The live note body is forwarded to the detail as the read-only Reference.
+    expect(screen.getByTestId("card-detail").getAttribute("data-body")).toBe("present");
     expect(screen.getByTestId("card-detail").getAttribute("data-from-history")).toBe("false");
 
     await userEvent.click(screen.getByRole("button", { name: "stub-open-history" }));

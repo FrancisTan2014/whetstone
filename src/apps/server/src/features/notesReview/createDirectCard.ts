@@ -1,20 +1,12 @@
-import { createHash } from "node:crypto";
-
 import type { CreateDirectCardRequest, DirectCardResultDto } from "@whetstone/contracts";
 import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document";
-import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { cardCreationReceipts, personalEntries, reviewCards } from "../../db/schema.js";
 import { insertNoteInTx, insertNotePromptInTx } from "../notes/noteCommands.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
-import { reviewStateFromCard } from "../review/reviewCardQueries.js";
+import { claimReceipt, fingerprintPayload, resolveReceiptReplay } from "./cardCreationReceipt.js";
 import { resolveGradingColumns } from "./noteGradingColumns.js";
-
-// The transaction handle drizzle passes into `db.transaction`, so the whole create-or-replay decision runs
-// in ONE atomic write.
-type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 // What the retry-safe direct card command needs: the database, id generation (for the note and prompt
 // Entries), and an explicit clock so the seeded card's due instant is deterministic.
@@ -37,78 +29,6 @@ export type CreateDirectCardOutcome =
   | Readonly<{ status: "invalid_success_check" }>
   | Readonly<{ status: "conflict" }>
   | Readonly<{ status: "gone" }>;
-
-// A canonical, key-sorted serialization of any JSON value, so two logically equal payloads hash
-// identically regardless of object-key order. Used only to feed the fingerprint digest.
-function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalize).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-      a.localeCompare(b)
-    );
-    return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${canonicalize(val)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) as string;
-}
-
-// A non-reversible fingerprint of a submission's payload — the question, the answer, and the grading target
-// — so a replay with the SAME `submissionId` can be classified as an identical retry (same fingerprint) or
-// a changed-payload conflict (different fingerprint) WITHOUT persisting any learning content: only this
-// opaque sha256 digest is stored, never the documents themselves.
-function fingerprintPayload(request: CreateDirectCardRequest): string {
-  const canonical = canonicalize({
-    answer: request.answerDoc,
-    question: request.questionDoc,
-    target: request.target
-  });
-  return createHash("sha256").update(canonical).digest("hex");
-}
-
-// Whether the receipt's original note still exists for this owner. A deleted note leaves the receipt behind
-// as a non-resurrecting tombstone (the receipt has no foreign key into the note's cascade), so a replay of
-// a deleted result reads `gone` here instead of resurrecting it.
-async function noteStillExists(
-  tx: Transaction,
-  noteEntryId: string,
-  userId: string
-): Promise<boolean> {
-  const rows = await tx
-    .select({ entryId: personalEntries.entryId })
-    .from(personalEntries)
-    .where(and(eq(personalEntries.entryId, noteEntryId), eq(personalEntries.userId, userId)))
-    .limit(1);
-  return rows.length > 0;
-}
-
-// Project the ORIGINAL result of a receipt on a same-payload replay: the recorded note/prompt ids plus the
-// live FSRS state of the seeded card. Returns `null` when the seeded card no longer exists even though the
-// note does — a later lifecycle operation (e.g. `deleteReviewCard`, which unenrolls a target while keeping
-// its note, prompt, and review history) can drop the `review_cards` row on its own. The result cannot be
-// reconstructed without the card, so the caller reports `gone` rather than dereferencing a missing row.
-async function projectOriginalResult(
-  tx: Transaction,
-  receipt: Readonly<{ noteEntryId: string; promptEntryId: string }>,
-  userId: string
-): Promise<DirectCardResultDto | null> {
-  const cards = await tx
-    .select()
-    .from(reviewCards)
-    .where(
-      and(eq(reviewCards.targetEntryId, receipt.promptEntryId), eq(reviewCards.userId, userId))
-    )
-    .limit(1);
-  const card = cards[0];
-  if (card === undefined) {
-    return null;
-  }
-  return {
-    noteId: receipt.noteEntryId,
-    promptId: receipt.promptEntryId,
-    review: reviewStateFromCard(card)
-  };
-}
 
 // Create one review card directly from an authored question/answer pair (#689), retry-safe via the client's
 // stable `submissionId`. One success writes EXACTLY: one manual standalone note from `answerDoc`; one prompt
@@ -143,56 +63,35 @@ export async function createDirectCard(
     return { status: "invalid_success_check" };
   }
 
-  const fingerprint = fingerprintPayload(request);
+  const fingerprint = fingerprintPayload({
+    answer: request.answerDoc,
+    question: request.questionDoc,
+    target: request.target
+  });
   const now = dependencies.now();
   const noteEntryId = toEntryId(dependencies.createId());
   const promptId = dependencies.createId();
 
   return dependencies.db.transaction(async (tx) => {
-    // Serialize concurrent/sequential retries on the receipt's primary key: the first submission wins the
-    // insert; a retry (or concurrent loser) inserts nothing and falls through to resolve the original.
-    const claimed = await tx
-      .insert(cardCreationReceipts)
-      .values({
-        createdAt: now,
-        noteEntryId,
-        payloadFingerprint: fingerprint,
-        promptEntryId: promptId,
+    const claimed = await claimReceipt(tx, {
+      createdAt: now,
+      noteEntryId,
+      payloadFingerprint: fingerprint,
+      promptEntryId: promptId,
+      submissionId: request.submissionId,
+      userId
+    });
+
+    if (!claimed) {
+      const replay = await resolveReceiptReplay(tx, {
+        fingerprint,
         submissionId: request.submissionId,
         userId
-      })
-      .onConflictDoNothing()
-      .returning({ noteEntryId: cardCreationReceipts.noteEntryId });
-
-    if (claimed.length === 0) {
-      const existingRows = await tx
-        .select({
-          noteEntryId: cardCreationReceipts.noteEntryId,
-          payloadFingerprint: cardCreationReceipts.payloadFingerprint,
-          promptEntryId: cardCreationReceipts.promptEntryId
-        })
-        .from(cardCreationReceipts)
-        .where(
-          and(
-            eq(cardCreationReceipts.userId, userId),
-            eq(cardCreationReceipts.submissionId, request.submissionId)
-          )
-        )
-        .limit(1);
-      const existing = existingRows[0]!;
-      if (existing.payloadFingerprint !== fingerprint) {
-        return { status: "conflict" };
+      });
+      if (replay.kind === "ok") {
+        return { status: "ok", value: replay.value };
       }
-      if (!(await noteStillExists(tx, existing.noteEntryId, userId))) {
-        return { status: "gone" };
-      }
-      const original = await projectOriginalResult(tx, existing, userId);
-      if (original === null) {
-        // The note survives but its seeded card was removed on its own (e.g. an unenroll). The original
-        // result no longer exists and the tombstone never resurrects it, so this replay is `gone`.
-        return { status: "gone" };
-      }
-      return { status: "ok", value: original };
+      return { status: replay.kind };
     }
 
     await insertNoteInTx(tx, {

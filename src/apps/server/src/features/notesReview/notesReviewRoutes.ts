@@ -1,6 +1,6 @@
 import {
+  authorNoteCardRequestSchema,
   editNotePromptQuestionRequestSchema,
-  enrollNoteRequestSchema,
   createDirectCardRequestSchema,
   noteReviewRatingRequestSchema,
   setNoteGradingTargetRequestSchema
@@ -9,13 +9,8 @@ import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { DbClient } from "../../db/dbClient.js";
+import { authorNoteCard } from "./authorNoteCard.js";
 import { createDirectCard } from "./createDirectCard.js";
-import {
-  enrollNoteInReview,
-  enrollNoteInReviewForOwner,
-  getNoteReviewStatus,
-  getNoteReviewStatusForOwner
-} from "./notesReviewEnrollment.js";
 import { rateNotePrompt } from "./notesReviewCommands.js";
 import { loadNextDueNotePrompt, loadNotePromptReveal } from "./notesReviewQueries.js";
 import {
@@ -32,19 +27,15 @@ import { listNotePromptSettings, loadNoteReviewHistoryPage } from "./notesReview
 
 const invalidRequest = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
-const notEnrollable = { error: "not_enrollable" } as const;
-const questionRequired = { error: "question_required" } as const;
 const conflict = { error: "conflict" } as const;
 const invalidSuccessCheck = { error: "invalid_success_check" } as const;
 const legacyReadOnly = { error: "legacy_read_only" } as const;
-const duplicateCurrentNote = { error: "duplicate_current_note" } as const;
 const restartRequiresCard = { error: "restart_requires_card" } as const;
 const invalidQuestion = { error: "invalid_question" } as const;
 const invalidAnswer = { error: "invalid_answer" } as const;
+const alreadyAuthored = { error: "already_authored" } as const;
 const submissionConflict = { error: "submission_conflict" } as const;
 const submissionGone = { error: "submission_gone" } as const;
-
-type NoteReviewParams = Readonly<{ noteEntryId: string; workEntryId: string }>;
 
 type OwnerNoteReviewParams = Readonly<{ noteEntryId: string }>;
 
@@ -145,110 +136,6 @@ export function registerNotesReviewRoutes(
     }
   );
 
-  // One saved note's Review status (#658), for the note sheet's Review section: 200 with the objective
-  // status (not enrolled / due now / scheduled / paused), or 404 when the note is not the caller's, is
-  // unanchored, or is a Mark (no review resource). Performs no write.
-  server.get<{ Params: NoteReviewParams }>(
-    "/api/works/:workEntryId/notes/:noteEntryId/review",
-    async (request, reply) => {
-      const result = await getNoteReviewStatus(
-        dependencies,
-        toEntryId(request.params.workEntryId),
-        toEntryId(request.params.noteEntryId),
-        request.server.currentUser.getCurrentUserId()
-      );
-      if (result.status !== "ok") {
-        return reply.code(404).send(notFound);
-      }
-      return reply.code(200).send(result.value);
-    }
-  );
-
-  // Add one saved note to Review (#658): idempotently create-or-reuse its current-note prompt and active
-  // shared card, returning the resulting objective status. 404 when the note is not the caller's or is
-  // unanchored; 409 when it is a Mark (never a retrieval target). Retry/double-submit safe at the command.
-  server.post<{ Params: NoteReviewParams }>(
-    "/api/works/:workEntryId/notes/:noteEntryId/review/enrollment",
-    async (request, reply) => {
-      const result = await enrollNoteInReview(
-        dependencies,
-        toEntryId(request.params.workEntryId),
-        toEntryId(request.params.noteEntryId),
-        request.server.currentUser.getCurrentUserId()
-      );
-      switch (result.status) {
-        case "not_found":
-          return reply.code(404).send(notFound);
-        case "not_enrollable":
-          return reply.code(409).send(notEnrollable);
-        case "ok":
-          request.log.info(
-            {
-              noteEntryId: request.params.noteEntryId,
-              route: "POST /api/works/:workEntryId/notes/:noteEntryId/review/enrollment",
-              workEntryId: request.params.workEntryId
-            },
-            "note_review_enrolled"
-          );
-          return reply.code(200).send(result.value);
-      }
-    }
-  );
-
-  // One owned note's Review status for the Notes home (#659), owner-scoped so a standalone note reads too:
-  // 200 with the objective status, or 404 when the note is not the caller's or is a Mark. Performs no write.
-  server.get<{ Params: OwnerNoteReviewParams }>(
-    "/api/notes/:noteEntryId/review",
-    async (request, reply) => {
-      const result = await getNoteReviewStatusForOwner(
-        dependencies,
-        toEntryId(request.params.noteEntryId),
-        request.server.currentUser.getCurrentUserId()
-      );
-      if (result.status !== "ok") {
-        return reply.code(404).send(notFound);
-      }
-      return reply.code(200).send(result.value);
-    }
-  );
-
-  // Add any owned note to Review from the Notes home (#659), owner-scoped. An anchored note reuses its exact
-  // source server-side (body omitted); a standalone note supplies the question ("What should Whetstone ask
-  // you?"). 404 when the note is not the caller's; 409 when it is a Mark; 400 when a standalone note carries
-  // no non-blank question. Idempotent/retry-safe at the shared enrollment command.
-  server.post<{ Params: OwnerNoteReviewParams }>(
-    "/api/notes/:noteEntryId/review/enrollment",
-    async (request, reply) => {
-      const parsed = enrollNoteRequestSchema.safeParse(request.body ?? {});
-      if (!parsed.success) {
-        return reply.code(400).send(invalidRequest);
-      }
-      const result = await enrollNoteInReviewForOwner(
-        dependencies,
-        toEntryId(request.params.noteEntryId),
-        request.server.currentUser.getCurrentUserId(),
-        parsed.data.question
-      );
-      switch (result.status) {
-        case "not_found":
-          return reply.code(404).send(notFound);
-        case "not_enrollable":
-          return reply.code(409).send(notEnrollable);
-        case "question_required":
-          return reply.code(400).send(questionRequired);
-        case "ok":
-          request.log.info(
-            {
-              noteEntryId: request.params.noteEntryId,
-              route: "POST /api/notes/:noteEntryId/review/enrollment"
-            },
-            "note_review_enrolled"
-          );
-          return reply.code(200).send(result.value);
-      }
-    }
-  );
-
   // The full Review-settings list for one owned note (#660): every prompt in creation order with its reveal
   // policy and projected card state. 404 when the note is not the caller's or is a Mark. Performs no write.
   server.get<{ Params: OwnerNoteReviewParams }>(
@@ -290,8 +177,9 @@ export function registerNotesReviewRoutes(
     }
   );
 
-  // Edit one prompt's retrieval question (#660): writes ONLY the cue. 404 when the prompt is not the
-  // caller's; 400 on a blank/malformed question. Returns the refreshed settings row.
+  // Edit one prompt's retrieval question (#660, rich in #687): writes ONLY the cue (rich doc + derived
+  // plaintext). 404 when the prompt is not the caller's; 400 on a malformed body or a Question document whose
+  // server-derived text is blank. Returns the refreshed settings row.
   server.patch<{ Params: PromptParams }>(
     "/api/notes/review/prompts/:id/question",
     async (request, reply) => {
@@ -303,9 +191,20 @@ export function registerNotesReviewRoutes(
         dependencies,
         request.params.id,
         request.server.currentUser.getCurrentUserId(),
-        parsed.data.question
+        parsed.data.questionDoc
       );
-      return sendSettingsMutation(reply, result, request, "PATCH /question");
+      switch (result.status) {
+        case "not_found":
+          return reply.code(404).send(notFound);
+        case "invalid_question":
+          return reply.code(400).send(invalidQuestion);
+        case "ok":
+          request.log.info(
+            { promptId: request.params.id, route: "PATCH /question" },
+            "note_review_settings_changed"
+          );
+          return reply.code(200).send(result.value);
+      }
     }
   );
 
@@ -384,8 +283,7 @@ export function registerNotesReviewRoutes(
   // or an authored Success check (`expected_response`), and choose `keep` (policy only) or `restart` (policy
   // + a schedule reset through the shared boundary, due now) — atomically. 404 when the prompt is not the
   // caller's; 400 on a malformed request or a blank Success check; 409 when the prompt is `legacy_custom`
-  // (read-only here), converting to `current_note` collides with the note's existing `current_note` prompt,
-  // or a `restart` targets a cardless prompt. Returns the refreshed settings row.
+  // (read-only here) or a `restart` targets a cardless prompt. Returns the refreshed settings row.
   server.post<{ Params: PromptParams }>(
     "/api/notes/review/prompts/:id/grading-target",
     async (request, reply) => {
@@ -406,8 +304,6 @@ export function registerNotesReviewRoutes(
           return reply.code(400).send(invalidSuccessCheck);
         case "legacy_read_only":
           return reply.code(409).send(legacyReadOnly);
-        case "duplicate_current_note":
-          return reply.code(409).send(duplicateCurrentNote);
         case "restart_requires_card":
           return reply.code(409).send(restartRequiresCard);
         case "ok":
@@ -456,6 +352,47 @@ export function registerNotesReviewRoutes(
         request.log.info(
           { noteId: result.value.noteId, route: "POST /api/notes/review/direct-cards" },
           "note_review_direct_card_created"
+        );
+        return reply.code(200).send(result.value);
+    }
+  });
+
+  // Author the FIRST review card over an EXISTING saved note (#687), retry-safe via the client's stable
+  // `submissionId`. Unlike direct-cards this never inserts or copies a note — it authors over the learner's
+  // already-owned note in place. One success atomically writes one prompt with the chosen reveal kind (its
+  // cue is the rich `questionDoc`) and its `contains` link, one active shared card at the recall retention
+  // due now, and one owner-scoped creation receipt — no review event, no note write. 400 on a malformed body
+  // or a blank Question/Success-check document; 404 when the note is not the caller's or is a Mark; 409 when
+  // the note already owns an authored prompt (`already_authored`) or the same `submissionId` is replayed with
+  // a CHANGED payload; 410 when the note has since been deleted. A same-payload replay returns 200 with the
+  // ORIGINAL result. Owner-scoped through the current user.
+  server.post("/api/notes/review/author-cards", async (request, reply) => {
+    const parsed = authorNoteCardRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+    const result = await authorNoteCard(
+      dependencies,
+      request.server.currentUser.getCurrentUserId(),
+      parsed.data
+    );
+    switch (result.status) {
+      case "invalid_question":
+        return reply.code(400).send(invalidQuestion);
+      case "invalid_success_check":
+        return reply.code(400).send(invalidSuccessCheck);
+      case "not_found":
+        return reply.code(404).send(notFound);
+      case "already_authored":
+        return reply.code(409).send(alreadyAuthored);
+      case "conflict":
+        return reply.code(409).send(submissionConflict);
+      case "gone":
+        return reply.code(410).send(submissionGone);
+      case "ok":
+        request.log.info(
+          { noteId: result.value.noteId, route: "POST /api/notes/review/author-cards" },
+          "note_review_authored_card_created"
         );
         return reply.code(200).send(result.value);
     }
