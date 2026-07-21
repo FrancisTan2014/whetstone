@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -158,6 +158,14 @@ const refreshedRow: NotePromptSettingsDto = {
   reveal: { kind: "current_note" }
 };
 
+function deferred<T>(): Readonly<{ promise: Promise<T>; resolve: (value: T) => void }> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 function renderPage(): void {
   render(
     <MemoryRouter>
@@ -213,6 +221,40 @@ describe("NotesReviewPage", () => {
     expect(screen.getByRole("button", { name: "Show note" })).toBeTruthy();
     expect(screen.queryByText(/preserved answer/u)).toBeNull();
     expect(screen.queryByRole("button", { name: "Good" })).toBeNull();
+  });
+
+  it("keeps reveal and repair mutually exclusive while Show note is pending", async () => {
+    const user = userEvent.setup();
+    const pendingReveal = deferred<NoteRevealDto>();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedReveal.mockReturnValue(pendingReveal.promise);
+    mockedSettings.mockResolvedValue(settingsList());
+    renderPage();
+
+    const showNote = (await screen.findByRole("button", {
+      name: "Show note"
+    })) as HTMLButtonElement;
+    const fixCard = screen.getByRole("button", { name: "Fix card" }) as HTMLButtonElement;
+    await user.click(showNote);
+
+    expect(showNote.disabled).toBe(true);
+    expect(showNote.getAttribute("aria-busy")).toBe("true");
+    expect(fixCard.disabled).toBe(true);
+
+    await user.click(showNote);
+    await user.click(fixCard);
+
+    expect(mockedReveal).toHaveBeenCalledTimes(1);
+    expect(mockedSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Fix this card" })).toBeNull();
+
+    await act(async () => {
+      pendingReveal.resolve(currentNoteReveal);
+      await pendingReveal.promise;
+    });
+
+    expect(await screen.findByText("Paris, the live note body.")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Fix this card" })).toBeNull();
   });
 
   it("reveals a legacy prompt's preserved answer, moves focus to it, and shows four ratings", async () => {
@@ -288,6 +330,44 @@ describe("NotesReviewPage", () => {
     expect(await screen.findByText("July 11, 2026 at 12:00 PM")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review next" })).toBeTruthy();
     expect(screen.queryByText(/Due complete/u)).toBeNull();
+  });
+
+  it("keeps rating and repair mutually exclusive while a rating is pending", async () => {
+    const user = userEvent.setup();
+    const ratingResult = { review, remainingDue: 1 };
+    const pendingRating = deferred<typeof ratingResult>();
+    mockedNext.mockResolvedValue(makePrompt({ revealKind: "current_note" }));
+    mockedReveal.mockResolvedValue(currentNoteReveal);
+    mockedRate.mockReturnValue(pendingRating.promise);
+    mockedSettings.mockResolvedValue(settingsList());
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Show note" }));
+    await user.click(await screen.findByRole("button", { name: "Good" }));
+
+    for (const label of ["Again", "Hard", "Good", "Easy", "Fix card"]) {
+      expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(
+        true
+      );
+    }
+    expect(screen.getByRole("button", { name: "Good" }).getAttribute("aria-busy")).toBe("true");
+
+    await user.click(screen.getByRole("button", { name: "Hard" }));
+    await user.click(screen.getByRole("button", { name: "Fix card" }));
+    screen.getByLabelText("Note").focus();
+    await user.keyboard("1");
+
+    expect(mockedRate).toHaveBeenCalledTimes(1);
+    expect(mockedSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Fix this card" })).toBeNull();
+
+    await act(async () => {
+      pendingRating.resolve(ratingResult);
+      await pendingRating.promise;
+    });
+
+    expect(await screen.findByText("July 11, 2026 at 12:00 PM")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Fix this card" })).toBeNull();
   });
 
   it("prefixes a short-term (learning) next review with the shared marker and a local time (#676)", async () => {
