@@ -206,6 +206,15 @@ describe("App shell and routes", () => {
     expect(markup).toContain('aria-label="Reader"');
   });
 
+  it("resolves the manual-work edit route to the manual editor framed by the shell (#720)", () => {
+    const markup = renderAt("/library/works/work-1/edit");
+
+    // The manual editor is a secondary surface reached from the Library: it mounts inside the shell
+    // (primary nav present) and, under static render (no effects run), in its loading arm.
+    expect(markup).toContain('aria-label="Primary"');
+    expect(markup).toContain("Opening this work…");
+  });
+
   it("resolves the notes route to the cross-work notes page", () => {
     const markup = renderAt("/notes");
 

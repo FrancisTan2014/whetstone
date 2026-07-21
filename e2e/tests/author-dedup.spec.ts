@@ -30,11 +30,11 @@ test("reuses one author across two Works added through the Library combobox (#69
   await authorField.fill("Ursula K. Le Guin");
   await page.getByRole("option", { name: /Add .Ursula K\. Le Guin./ }).click();
   await page.getByRole("button", { name: "Create work" }).click();
-  // Creating a work auto-opens its Manage-content sheet (a modal that aria-hides the shelf); dismiss it
-  // so the shelf's author grouping is back in the accessibility tree before asserting on it.
-  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeHidden();
+  // Creating a manual Work now routes to its dedicated Library editor (#720) instead of auto-opening a
+  // Manage-content sheet; return to the shelf so its author grouping is in the tree before asserting.
+  await expect(page.getByRole("textbox", { name: "Edit The Left Hand of Darkness" })).toBeVisible();
+  await page.goto(`${setup.baseURL}#/library`);
+  await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
 
   // Exactly one author group for this name, holding the first Work. (The group is an <h2> whose
   // accessible name is the author plus its work count; the works are <h3> cards beneath it.)
@@ -51,9 +51,9 @@ test("reuses one author across two Works added through the Library combobox (#69
   await expect(page.getByRole("option", { name: /Add /i })).toHaveCount(0);
   await page.getByRole("option", { name: "Ursula K. Le Guin" }).click();
   await page.getByRole("button", { name: "Create work" }).click();
-  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "Manage content" })).toBeHidden();
+  await expect(page.getByRole("textbox", { name: "Edit The Dispossessed" })).toBeVisible();
+  await page.goto(`${setup.baseURL}#/library`);
+  await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
 
   // Still ONE author group — the duplicate was prevented — now counting two Works, both listed.
   await expect(page.getByRole("heading", { name: /Ursula K\. Le Guin/ })).toHaveCount(1);

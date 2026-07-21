@@ -966,11 +966,25 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   creates, pre-fills, or edits a note.
   `content/` is the focused Manage-content surface (`WorkContentPanel.tsx`), opened on demand inside
   the Library's "Manage content" `Sheet`: a work switcher, a header (title/author/type/language +
-  unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, a calm add-content
-  area (manual **paste-Markdown** editor only — bringing a file in is the Library **Add ▸ Upload file**
-  action's job (#417); this panel edits an existing Work's content via `ingestMarkdown` — #418) reporting the ingestion result, and a units/blocks overview
+  unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, and a units/blocks overview
   that summarizes reading units + block counts by default and reveals per-block type/plaintext rows
   behind an explicit **View blocks** toggle (#392); `contentApi.ts` calls the content/ingest endpoints.
+  Imported Works still bring content in via the Library **Add ▸ Upload file** action (#417). Manual Works
+  no longer paste Markdown here (#720 retired the legacy manual-Markdown ingestion; the server rejects
+  `POST /api/works/:id/content` with `kind:"manual"` as `manual_markdown_unsupported`) — this panel is
+  inspection-only for them and their content is authored in the dedicated manual editor below.
+  `ManualWorkEditorPage.tsx` (#720) is the owner-only manual-Work editor at `/library/works/:id/edit`,
+  reached from the Library shelf's **Edit content** action on a manual Work (`WorkOverflowMenu` routes
+  manual origins there; imported → Manage content, authored → Writing). Manual creation writes one
+  canonical empty ProseMirror document (#696's initializer), so the editor opens immediately editable; it
+  loads the exact `doc_blocks` (`manualWorkApi.fetchManualWork`), edits them in the shared
+  `RichContentEditor` with a **persistent** `shared/editor/EditorToolbar` (block-type select + lists,
+  quote, code block, marks, undo/redo via `blockCommands.runBlockCommandById`), and saves explicitly with
+  revision-conflict protection (`saveManualWorkContent` → `PUT /api/manual-works/:id/content`; a stale
+  revision returns 409 and the page surfaces a reload-and-retry). Reader/search/notes read the same blocks
+  — no projection or dual write. Server: `library/manualWorkContentQueries.loadManualWorkDocument` +
+  `manualWorkContentCommands.updateManualWorkContent` own the owner/origin guard and revision check;
+  `manualWorkContracts.ts` (in `@whetstone/contracts`) holds the `ManualWorkDto` + update request.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
   `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
   the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the

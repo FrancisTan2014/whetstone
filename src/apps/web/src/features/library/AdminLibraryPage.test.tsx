@@ -453,7 +453,7 @@ describe("AdminLibraryPage", () => {
     });
   });
 
-  it("opens the manage-content surface for a freshly created work", async () => {
+  it("opens the manual editor for a freshly created manual work", async () => {
     const onManageContent = vi.fn();
     mockedCreateWork.mockResolvedValue(essayWorkItem);
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
@@ -464,9 +464,12 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
+    // A manual Work is created with a canonical empty document (#720): the page navigates straight to
+    // its manual editor rather than opening the imported-content panel.
     await waitFor(() => {
-      expect(onManageContent).toHaveBeenCalledWith("work-1");
+      expect(navigateSpy).toHaveBeenCalledWith("/library/works/work-1/edit");
     });
+    expect(onManageContent).not.toHaveBeenCalled();
   });
 
   it("shows an error when creating a work fails", async () => {
@@ -888,7 +891,7 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     await waitFor(() => {
-      expect(onManageContent).toHaveBeenCalledWith("work-1");
+      expect(navigateSpy).toHaveBeenCalledWith("/library/works/work-1/edit");
     });
     expect(mockedIngestMarkdown).not.toHaveBeenCalled();
   });

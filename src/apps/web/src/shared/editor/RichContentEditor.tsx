@@ -26,6 +26,7 @@ import {
   type FormattingMenuSelection
 } from "./bubbleFormatting.js";
 import { EditorFormattingMenu } from "./EditorFormattingMenu.js";
+import { EditorToolbar } from "./EditorToolbar.js";
 import { editorDocumentsEqual, validateEditorDocument } from "./editorDocument.js";
 import { editorClassNames } from "./RichContentEditor.tokens.js";
 import { SlashCommand } from "./slashCommand.js";
@@ -67,6 +68,10 @@ export interface RichContentEditorProps {
   readonly onChange: (document: DocumentNodeJSON) => void;
   readonly onSave?: (document: DocumentNodeJSON) => void;
   readonly presentation?: RichContentEditorPresentation;
+  // When true, a persistent formatting toolbar (block styles, inline marks, undo/redo) is rendered above
+  // the content, spanning the editor shell — the Library manual-Work editor's always-visible affordance
+  // (#720). Defaults to false, so the authoring/note surfaces keep their contextual-only chrome unchanged.
+  readonly showToolbar?: boolean;
 }
 
 function snapshot(editor: Editor): DocumentNodeJSON {
@@ -109,7 +114,8 @@ export function RichContentEditor({
   editable = true,
   onChange,
   onSave,
-  presentation = "full"
+  presentation = "full",
+  showToolbar = false
 }: RichContentEditorProps): React.JSX.Element {
   const initialDocument = useMemo(() => validateEditorDocument(document), [document]);
   const visibility = useMemo(() => createFormattingMenuVisibility(), []);
@@ -221,6 +227,7 @@ export function RichContentEditor({
 
   return (
     <div className={editorClassNames.root} data-presentation={presentation}>
+      {showToolbar && editable ? <EditorToolbar editor={editor} /> : null}
       <BubbleMenu
         appendTo={bubbleAppendTo}
         editor={editor}

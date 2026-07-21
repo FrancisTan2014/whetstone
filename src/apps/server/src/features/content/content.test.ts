@@ -2136,3 +2136,57 @@ describe("heading-derived table of contents (#680)", () => {
     expect(structure.tableOfContents).toBeUndefined();
   });
 });
+
+describe("manual-origin Work rejects legacy content ingestion (#720)", () => {
+  async function createManualWork(): Promise<string> {
+    const response = await context.server.inject({
+      method: "POST",
+      payload: {
+        author: { mode: "new", name: "Learner Curator" },
+        language: "en",
+        origin: "manual",
+        title: "Curated reading notes",
+        workType: "book"
+      },
+      url: "/api/works"
+    });
+
+    return response.json().work.entryId as string;
+  }
+
+  it("refuses Markdown ingestion into a manual Work with 409", async () => {
+    const workEntryId = await createManualWork();
+
+    const response = await ingest(workEntryId, { kind: "manual", markdown: "# Heading\n\nBody." });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
+  });
+
+  it("refuses PDF ingestion into a manual Work with 409", async () => {
+    const workEntryId = await createManualWork();
+
+    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 curated"));
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
+  });
+
+  it("refuses a manual Work PDF before conversion, independent of the PDF toolchain (#720)", async () => {
+    // The manual-origin rejection is a server-boundary decision that must not depend on the optional
+    // PDF toolchain: even when conversion would fail with PdfToolchainMissingError, a manual Work must
+    // still get the deterministic manual_work_unsupported/409, and the converter must never run.
+    let converterCalls = 0;
+    pdfResponder = async () => {
+      converterCalls += 1;
+      return Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`."));
+    };
+    const workEntryId = await createManualWork();
+
+    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 curated"));
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
+    expect(converterCalls).toBe(0);
+  });
+});

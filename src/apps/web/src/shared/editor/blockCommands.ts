@@ -46,7 +46,15 @@ function isBlockTransformContext(editor: Editor): boolean {
 // depth-1 ancestor is the top-level block — for a nested selection (e.g. inside a list) that ancestor
 // is the wrapping list, exactly the addressable block we must keep stable.
 function topLevelBlock(tr: Transaction): { pos: number; node: ProseMirrorNode; id: string | null } {
-  const $from = tr.selection.$from;
+  const selectionFrom = tr.selection.$from;
+  // A whole-document selection (Ctrl/Cmd+A → AllSelection) resolves `$from` at the document boundary
+  // (depth 0), where there is no depth-1 block and `$from.node(1)` is undefined. Step one position
+  // inside so the FIRST top-level block is the addressable block — the persistent toolbar can run a
+  // block command under such a selection, where the slash menu (always a caret) never does.
+  const $from =
+    selectionFrom.depth === 0
+      ? tr.doc.resolve(Math.min(selectionFrom.pos + 1, tr.doc.content.size))
+      : selectionFrom;
   const node = $from.node(1);
   const id = node.attrs["id"];
   return { id: typeof id === "string" ? id : null, node, pos: $from.before(1) };

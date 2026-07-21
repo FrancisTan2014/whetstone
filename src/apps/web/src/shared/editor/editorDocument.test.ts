@@ -1,9 +1,14 @@
-import { DocumentValidationError, isValidDocument } from "@whetstone/document";
+import {
+  DocumentValidationError,
+  type DocumentNodeJSON,
+  isValidDocument
+} from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
   createEmptyDocument,
   editorDocumentsEqual,
+  editorDocumentsEqualIgnoringIds,
   normalizeEditorLinkHref,
   validateEditorDocument
 } from "./editorDocument";
@@ -49,6 +54,77 @@ describe("editor document boundary", () => {
 
     expect(editorDocumentsEqual(document, clone)).toBe(true);
     expect(editorDocumentsEqual(document, changed)).toBe(false);
+  });
+
+  it("treats id and key-order differences as equal while detecting real content and mark changes", () => {
+    // The server reassembles a stored document as { content, type } with attrs { anchorId, id };
+    // the editor serializes as { type, content } and stamps a real id. Same content, so equal ignoring
+    // ids/order — but strictly unequal.
+    const serverStyle = {
+      content: [{ attrs: { anchorId: null, id: null }, type: "paragraph" }],
+      type: "doc"
+    } as DocumentNodeJSON;
+    const editorStyle: DocumentNodeJSON = {
+      content: [{ attrs: { anchorId: null, id: "blk-gen" }, type: "paragraph" }],
+      type: "doc"
+    };
+    expect(editorDocumentsEqualIgnoringIds(serverStyle, editorStyle)).toBe(true);
+    expect(editorDocumentsEqual(serverStyle, editorStyle)).toBe(false);
+
+    // Adding text is a genuine content change even when ids/order are ignored.
+    const withText: DocumentNodeJSON = {
+      content: [
+        {
+          attrs: { anchorId: null, id: null },
+          content: [{ text: "Hi", type: "text" }],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    expect(editorDocumentsEqualIgnoringIds(serverStyle, withText)).toBe(false);
+
+    // Marks canonicalize by type + attrs regardless of id/key order (a bold mark carries no attrs, a
+    // link mark does), so the same formatting compares equal…
+    const bold: DocumentNodeJSON = {
+      content: [
+        {
+          attrs: { anchorId: null, id: "a" },
+          content: [
+            {
+              marks: [{ type: "bold" }, { attrs: { href: "https://example.com" }, type: "link" }],
+              text: "Hi",
+              type: "text"
+            }
+          ],
+          type: "paragraph"
+        }
+      ],
+      type: "doc"
+    };
+    const boldReordered = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { id: "b", anchorId: null },
+          content: [
+            {
+              type: "text",
+              text: "Hi",
+              marks: [{ type: "bold" }, { type: "link", attrs: { href: "https://example.com" } }]
+            }
+          ]
+        }
+      ]
+    } as DocumentNodeJSON;
+    expect(editorDocumentsEqualIgnoringIds(bold, boldReordered)).toBe(true);
+
+    // …while a changed mark attribute is a real change.
+    const boldOtherHref = structuredClone(bold);
+    (boldOtherHref.content![0]!.content![0]!.marks![1]!.attrs as Record<string, unknown>)["href"] =
+      "https://other.example.com";
+    expect(editorDocumentsEqualIgnoringIds(bold, boldOtherHref)).toBe(false);
   });
 });
 

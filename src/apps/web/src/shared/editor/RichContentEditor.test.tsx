@@ -164,12 +164,16 @@ function lastDocument(mock: Mock<DocumentListener>): DocumentNodeJSON {
 async function renderReady({
   ariaLabel = "Entry body",
   document = createEmptyDocument(),
+  editable = true,
   presentation = "full",
+  showToolbar = false,
   withSave = true
 }: {
   ariaLabel?: string;
   document?: DocumentNodeJSON;
+  editable?: boolean;
   presentation?: "compact" | "full" | "workspace";
+  showToolbar?: boolean;
   withSave?: boolean;
 } = {}) {
   const onChange = vi.fn<DocumentListener>();
@@ -179,8 +183,10 @@ async function renderReady({
     <RichContentEditor
       ariaLabel={ariaLabel}
       document={document}
+      editable={editable}
       onChange={onChange}
       presentation={presentation}
+      showToolbar={showToolbar}
       {...(withSave ? { onSave } : {})}
     />
   );
@@ -395,8 +401,22 @@ describe("RichContentEditor presentation", () => {
     expect(textbox.textContent).toBe("Note");
     expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull();
   });
-});
 
+  it("renders the persistent formatting toolbar when showToolbar is set on an editable surface", async () => {
+    await renderReady({ document: textDocument("Passage"), showToolbar: true });
+
+    // The always-visible Library affordance (#720) is a distinct toolbar from the selection-only
+    // "Text formatting" bubble; it appears without any selection.
+    expect(screen.getByRole("toolbar", { name: "Formatting" })).toBeDefined();
+    expect(screen.queryByRole("toolbar", { name: "Text formatting" })).toBeNull();
+  });
+
+  it("suppresses the persistent toolbar on a read-only surface even when showToolbar is set", async () => {
+    await renderReady({ document: textDocument("Passage"), editable: false, showToolbar: true });
+
+    expect(screen.queryByRole("toolbar", { name: "Formatting" })).toBeNull();
+  });
+});
 describe("RichContentEditor contextual formatting", () => {
   it("reveals the contextual toolbar beside a real selection and applies a mark", async () => {
     const { onChange, textbox, user } = await renderReady({ document: textDocument("Format me") });

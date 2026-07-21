@@ -30,6 +30,7 @@ import {
   workSources
 } from "../../db/schema.js";
 import { resolveNamedAuthor } from "./authorResolver.js";
+import { initializeEditableWorkContent } from "../content/editableWorkContent.js";
 import { deleteRecitationReviewData } from "../recitation/recitationTeardown.js";
 
 // Real infrastructure boundaries (database client and id generation) are passed
@@ -106,6 +107,15 @@ export async function createWork(
       await tx
         .insert(personalEntries)
         .values({ createdAt: now, entryId, occurredAt: now, updatedAt: now, userId });
+
+      // A manual Work is editable from the first moment (#720): initialize its canonical content — one
+      // reading unit and one empty, id-stamped paragraph with its Entry/containment graph — through the
+      // shared editable-Work boundary, in this same creation transaction. It carries no imported source;
+      // its document is edited only through the manual-Work editor, never legacy Markdown ingestion.
+      await initializeEditableWorkContent(tx, {
+        createEntryId: dependencies.createEntryId,
+        workEntryId: entryId
+      });
     }
 
     const work: WorkDto = {

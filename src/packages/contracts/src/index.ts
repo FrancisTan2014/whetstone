@@ -27,6 +27,13 @@ export type {
   UpdateAuthoredWorkContentRequest
 } from "./authoredWorkContracts.js";
 export {
+  manualWorkDtoSchema,
+  parseManualWorkDto,
+  parseUpdateManualWorkContentRequest,
+  updateManualWorkContentRequestSchema
+} from "./manualWorkContracts.js";
+export type { ManualWorkDto, UpdateManualWorkContentRequest } from "./manualWorkContracts.js";
+export {
   enrollRecitationRequestSchema,
   parseEnrollRecitationRequest,
   parseRecitationOverviewDto,

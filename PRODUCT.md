@@ -317,10 +317,13 @@ owning source flow:
   migration: pre-canonical local development data is deliberately reset, so manual Works are canonical
   from their first save. Retained uploaded Markdown is provenance, never a second current copy. Uploaded
   EPUB/PDF/Markdown remains source-managed rather than silently becoming learner-authored content.
-- The manual-Work editor uses the shared rich editor with debounced, latest-write-safe autosave,
-  explicit Saving/Saved/Error state, `Ctrl/Cmd+S`, draft retention on failure, and a pending-save
-  navigation guard. Every saved block is directly editable; raw Markdown entry, block inspection,
-  and the old **Content overview** are not editing surfaces.
+- The manual-Work editor uses the shared rich editor with explicit save (a visible **Save** control
+  and `Ctrl/Cmd+S`), not autosave: the owner saves deliberately, sending the revision loaded with the
+  document so the server rejects a stale revision instead of silently overwriting another session's
+  save. It shows Saved/Saving/dirty/validation-error/conflict/retry state, retains the local draft on
+  any failure, and arms a navigation guard while there are unsaved changes. Every saved block is
+  directly editable; raw Markdown entry, block inspection, and the old **Content overview** are not
+  editing surfaces.
 - On desktop, the editor is a dedicated page with a persistent 15rem left **Outline** and a
   42–48rem content canvas; mobile opens Outline in a drawer. The header provides Library return,
   save state, and **Open in Reader**.

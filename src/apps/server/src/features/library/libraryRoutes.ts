@@ -1,4 +1,8 @@
-import { createAuthorRequestSchema, createWorkRequestSchema } from "@whetstone/contracts";
+import {
+  createAuthorRequestSchema,
+  createWorkRequestSchema,
+  updateManualWorkContentRequestSchema
+} from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
@@ -9,9 +13,12 @@ import {
   type DeleteWorkDependencies,
   type LibraryDependencies
 } from "./libraryCommands.js";
+import { updateManualWorkContent } from "./manualWorkContentCommands.js";
+import { loadManualWorkForEditing } from "./manualWorkContentQueries.js";
 import { listWorks, searchAuthors } from "./libraryQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
+const notFound = { error: "not_found" } as const;
 
 // The library routes need the create dependencies plus the delete-work capability (DB cascade + a
 // best-effort source-file unlink), composed at wiring time.
@@ -91,4 +98,58 @@ export function registerLibraryRoutes(
 
     return reply.code(204).send();
   });
+
+  // Load one manual Work with its reassembled canonical document, for the Library editor to open (#720).
+  // Owner-scoped and origin-scoped: an unknown id, another user's Work, an imported Work, or an authored
+  // Work is 404.
+  server.get<{ Params: WorkParams }>("/api/manual-works/:workEntryId", async (request, reply) => {
+    const work = await loadManualWorkForEditing(
+      dependencies.db,
+      toEntryId(request.params.workEntryId),
+      request.server.currentUser.getCurrentUserId()
+    );
+
+    if (work === undefined) {
+      return reply.code(404).send(notFound);
+    }
+
+    return reply.code(200).send(work);
+  });
+
+  // Save a manual Work's canonical document with revision protection (#720): id-preserving replace scoped
+  // to the owner and `origin = 'manual'` (404 otherwise). A malformed/unsafe document is rejected at the
+  // boundary (400); a stale revision — another session saved in between — is a 409 and writes nothing, so
+  // the editor keeps its local document and can reload.
+  server.put<{ Params: WorkParams }>(
+    "/api/manual-works/:workEntryId/content",
+    async (request, reply) => {
+      const parsed = updateManualWorkContentRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const result = await updateManualWorkContent(
+        dependencies,
+        toEntryId(request.params.workEntryId),
+        parsed.data.document,
+        parsed.data.revision,
+        request.server.currentUser.getCurrentUserId()
+      );
+
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+
+      if (result.status === "conflict") {
+        return reply.code(409).send({ error: "revision_conflict" });
+      }
+
+      request.log.info(
+        { route: "PUT /api/manual-works/:workEntryId/content", workEntryId: result.work.entryId },
+        "manual_work_saved"
+      );
+
+      return reply.code(200).send(result.work);
+    }
+  );
 }

@@ -1,12 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 
 import type { ReadingUnitDto, WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
 import { buildHeadingOutline, workLanguageLabels, type WorkType } from "@whetstone/domain";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
-import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
-import { markdownEmptyContentMessage } from "./contentMessages";
+import { fetchWorkContent, fetchWorks } from "./contentApi";
 import { summarizeWorkContent, workContentSummaryLabel } from "./workContentSummary";
 
 type ReadyData = Readonly<{
@@ -45,22 +44,15 @@ function formatWorkType(workType: WorkType): string {
   return workType.replace("_", " ");
 }
 
-function ingestedLabel(content: WorkContentDto): string {
-  return `Ingested — ${workContentSummaryLabel(summarizeWorkContent(content))}.`;
-}
-
 type WorkContentPanelProps = Readonly<{
-  // When this changes to a work's entry id (e.g. just after the Library creates or imports
-  // one), the panel reloads its works and selects that work, so its content can be edited
-  // without a page reload.
+  // When this changes to a work's entry id (e.g. just after the Library imports one), the panel reloads
+  // its works and selects that work, so its ingested content can be inspected without a page reload.
   focusWorkEntryId?: string | undefined;
 }>;
 
 export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): React.JSX.Element {
   const [state, setState] = useState<PanelState>({ status: "loading" });
-  const [markdown, setMarkdown] = useState("");
   const [error, setError] = useState<string | undefined>(undefined);
-  const [result, setResult] = useState<string | undefined>(undefined);
   // The units/blocks overview summarizes by default (reading units + block counts); the per-block
   // plaintext/type rows stay collapsed behind an explicit "View blocks" affordance (#392).
   const [showBlocks, setShowBlocks] = useState(false);
@@ -77,41 +69,11 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
 
   async function onSelectWork(work: WorkListItemDto, data: ReadyData): Promise<void> {
     setError(undefined);
-    setResult(undefined);
 
     try {
       applyContent(data, await fetchWorkContent(work.work.entryId), work);
     } catch {
       setError("Could not load this work's content. Please try again.");
-    }
-  }
-
-  async function onAddMarkdown(event: FormEvent, data: ReadyData): Promise<void> {
-    event.preventDefault();
-
-    if (markdown.trim().length === 0) {
-      setError("Enter some Markdown to add.");
-      return;
-    }
-
-    try {
-      const outcome = await ingestMarkdown(data.selectedWork.work.entryId, {
-        kind: "manual",
-        markdown
-      });
-
-      if (outcome.status === "empty_content") {
-        setResult(undefined);
-        setError(markdownEmptyContentMessage);
-        return;
-      }
-
-      applyContent(data, outcome.content, data.selectedWork);
-      setMarkdown("");
-      setError(undefined);
-      setResult(ingestedLabel(outcome.content));
-    } catch {
-      setError("Could not add the Markdown content. Please try again.");
     }
   }
 
@@ -126,12 +88,8 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
       {state.status === "ready"
         ? renderReady(state.data, {
             error,
-            markdown,
-            onAddMarkdown,
             onSelectWork,
             onToggleBlocks: () => setShowBlocks((previous) => !previous),
-            result,
-            setMarkdown,
             showBlocks
           })
         : null}
@@ -141,12 +99,8 @@ export function WorkContentPanel({ focusWorkEntryId }: WorkContentPanelProps): R
 
 type ReadyHandlers = Readonly<{
   error: string | undefined;
-  markdown: string;
-  onAddMarkdown: (event: FormEvent, data: ReadyData) => void;
   onSelectWork: (work: WorkListItemDto, data: ReadyData) => void;
   onToggleBlocks: () => void;
-  result: string | undefined;
-  setMarkdown: (value: string) => void;
   showBlocks: boolean;
 }>;
 
@@ -155,7 +109,11 @@ function renderReady(data: ReadyData, handlers: ReadyHandlers): React.JSX.Elemen
     <div className="flex flex-col gap-6">
       {data.works.length > 1 ? renderWorkSwitcher(data, handlers) : null}
       {renderHeader(data)}
-      {renderAddContent(data, handlers)}
+      {handlers.error !== undefined ? (
+        <p className="text-danger" role="alert">
+          {handlers.error}
+        </p>
+      ) : null}
       {renderTableOfContents(data.content)}
       {renderOverview(data.content, handlers.showBlocks, handlers.onToggleBlocks)}
     </div>
@@ -206,52 +164,6 @@ function renderHeader(data: ReadyData): React.JSX.Element {
   );
 }
 
-function renderAddContent(data: ReadyData, handlers: ReadyHandlers): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-4">
-      <h4 className="text-lg font-medium text-text">Add content</h4>
-
-      <form
-        className="flex flex-col gap-2"
-        onSubmit={(event) => handlers.onAddMarkdown(event, data)}
-      >
-        <label className="flex flex-col gap-1 text-sm text-text-muted" htmlFor="content-markdown">
-          Markdown
-          <textarea
-            className="min-h-32 rounded border border-border bg-bg px-3 py-2 font-mono text-sm text-text"
-            id="content-markdown"
-            onChange={(event) => handlers.setMarkdown(event.currentTarget.value)}
-            value={handlers.markdown}
-          />
-        </label>
-        <p className="text-sm text-text-muted">
-          Use <code className="font-mono">#</code> for chapters and{" "}
-          <code className="font-mono">##</code> or deeper headings for sections. The reader and this
-          panel build the table of contents from those headings.
-        </p>
-        <Button className="self-start" size="sm" type="submit">
-          Save content
-        </Button>
-      </form>
-
-      {handlers.result !== undefined ? (
-        <p className="text-sm text-accent" role="status">
-          {handlers.result}
-        </p>
-      ) : null}
-      {handlers.error !== undefined ? (
-        <p className="text-danger" role="alert">
-          {handlers.error}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-// A read-only preview of the heading-derived table of contents (#680), built with the same domain
-// projection the reader uses so the two never diverge. Absent for a single-unit or headingless work
-// (the projection returns nothing), matching the reader showing no 目录 there. Each entry is indented
-// by its depth so the nesting is visible; the reader owns the interactive tree.
 function renderTableOfContents(content: WorkContentDto): React.JSX.Element | null {
   const outline = buildHeadingOutline(
     content.readingUnits.map((unit) => ({

@@ -75,7 +75,7 @@ async function createWorkWithUnitAndBlock(): Promise<{
     payload: {
       author: { mode: "new", name: "Aesop" },
       language: "en",
-      origin: "manual",
+      origin: "imported",
       title: "Fables",
       workType: "classical_text"
     },
