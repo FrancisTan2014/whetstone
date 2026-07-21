@@ -249,12 +249,7 @@ export async function createDirectCard(
 // submission id; a `conflict` is the same id replayed with an edited payload; `gone` is a tombstoned
 // submission whose note was deleted; `not_found` means the note no longer belongs to the learner. Every case
 // keeps the learner's drafts.
-export type AuthorNoteCardErrorKind =
-  | "conflict"
-  | "gone"
-  | "invalid"
-  | "network"
-  | "not_found";
+export type AuthorNoteCardErrorKind = "conflict" | "gone" | "invalid" | "network" | "not_found";
 
 export class AuthorNoteCardError extends Error {
   readonly kind: AuthorNoteCardErrorKind;
