@@ -5,18 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./contentApi", () => ({
   fetchWorkContent: vi.fn(),
-  fetchWorks: vi.fn(),
-  ingestMarkdown: vi.fn()
+  fetchWorks: vi.fn()
 }));
 
-import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
+import { fetchWorkContent, fetchWorks } from "./contentApi";
 import { WorkContentPanel } from "./WorkContentPanel";
 import type { WorkContentDto, WorkListItemDto } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
 
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
-const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
 
 const author = { id: toAuthorId("author-1"), name: "George Orwell" };
 
@@ -255,61 +253,6 @@ describe("WorkContentPanel", () => {
     expect(screen.queryByRole("navigation", { name: "Works" })).toBeNull();
   });
 
-  it("adds manual Markdown content and reports the ingestion result", async () => {
-    const user = await renderReady();
-    mockedIngestMarkdown.mockResolvedValue({ content: contentA, status: "ingested" });
-
-    await user.type(screen.getByLabelText("Markdown"), "# Hi");
-    await user.click(screen.getByRole("button", { name: "Save content" }));
-
-    expect(await screen.findByText("Ingested — 2 reading units · 3 blocks.")).toBeDefined();
-    expect(screen.getByText("2 reading units · 3 blocks")).toBeDefined();
-    expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
-      kind: "manual",
-      markdown: "# Hi"
-    });
-  });
-
-  it("shows an unsupported-content message when Markdown has no readable blocks", async () => {
-    const user = await renderReady();
-    mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
-
-    await user.type(screen.getByLabelText("Markdown"), "image only paste");
-    await user.click(screen.getByRole("button", { name: "Save content" }));
-
-    expect(
-      await screen.findByText(
-        "This Markdown has no readable text to add. Images on their own aren’t supported yet."
-      )
-    ).toBeDefined();
-    // The work is not reported as ingested and the Markdown is kept so it can be fixed.
-    expect(screen.queryByText(/^Ingested —/)).toBeNull();
-    expect((screen.getByLabelText("Markdown") as HTMLTextAreaElement).value).toBe(
-      "image only paste"
-    );
-  });
-
-  it("validates that Markdown is provided", async () => {
-    const user = await renderReady();
-
-    await user.click(screen.getByRole("button", { name: "Save content" }));
-
-    expect(screen.getByText("Enter some Markdown to add.")).toBeDefined();
-    expect(mockedIngestMarkdown).not.toHaveBeenCalled();
-  });
-
-  it("shows an error when adding Markdown fails", async () => {
-    const user = await renderReady();
-    mockedIngestMarkdown.mockRejectedValue(new Error("boom"));
-
-    await user.type(screen.getByLabelText("Markdown"), "# Hi");
-    await user.click(screen.getByRole("button", { name: "Save content" }));
-
-    expect(
-      await screen.findByText("Could not add the Markdown content. Please try again.")
-    ).toBeDefined();
-  });
-
   it("switches the selected work and loads its content", async () => {
     mockedFetchWorks.mockResolvedValue({ works: [workA, workB] });
     mockedFetchWorkContent.mockImplementation(async (workEntryId: string) =>
@@ -379,19 +322,6 @@ describe("WorkContentPanel", () => {
     expect(mockedFetchWorkContent).toHaveBeenCalledWith("work-1");
   });
 
-  it("shows heading guidance next to the content editor", async () => {
-    await renderReady();
-
-    expect(
-      screen.getByText(
-        (_, el) =>
-          el?.tagName === "P" &&
-          (el.textContent ?? "").includes("for chapters and") &&
-          (el.textContent ?? "").includes("or deeper headings for sections")
-      )
-    ).toBeDefined();
-  });
-
   it("previews the heading-derived table of contents in reading order", async () => {
     mockedFetchWorkContent.mockResolvedValue(contentWithHeadings);
 
@@ -410,25 +340,5 @@ describe("WorkContentPanel", () => {
     await renderReady();
 
     expect(screen.queryByRole("list", { name: "Table of contents" })).toBeNull();
-  });
-
-  it("refreshes the table of contents after saving new content", async () => {
-    const user = await renderReady();
-    // No outline before the save (the work starts empty).
-    expect(screen.queryByRole("list", { name: "Table of contents" })).toBeNull();
-    mockedIngestMarkdown.mockResolvedValue({
-      content: contentWithHeadings,
-      status: "ingested"
-    });
-
-    await user.type(screen.getByLabelText("Markdown"), "# Chapter One");
-    await user.click(screen.getByRole("button", { name: "Save content" }));
-
-    const toc = await screen.findByRole("list", { name: "Table of contents" });
-    expect(
-      within(toc)
-        .getAllByRole("listitem")
-        .map((item) => item.textContent)
-    ).toEqual(["Start", "Chapter One", "Section 1.1"]);
   });
 });

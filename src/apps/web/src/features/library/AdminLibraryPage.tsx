@@ -214,7 +214,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       if (heldUpload === undefined) {
         await reload();
         toast.success(`Added “${trimmedTitle}”.`);
-        onManageContent(created.work.entryId);
+        // A manual Work is created with a canonical empty document (#720): open it straight in the
+        // Library's manual editor to start writing, rather than the imported-content panel.
+        navigate(`/library/works/${encodeURIComponent(created.work.entryId)}/edit`);
         return;
       }
 
@@ -586,7 +588,6 @@ function renderWorkCard(item: WorkListItemDto, options: RenderLibraryOptions): R
           {resumes ? "Continue" : "Read"}
         </a>
         <WorkOverflowMenu
-          authored={authored}
           enrolled={options.recitationByWork.has(workEntryId)}
           enrolling={options.enrollingWorkId === workEntryId}
           item={item}

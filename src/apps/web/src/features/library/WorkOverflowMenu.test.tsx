@@ -44,6 +44,10 @@ const item: WorkListItemDto = {
   }
 };
 
+function itemWithOrigin(origin: WorkListItemDto["work"]["origin"]): WorkListItemDto {
+  return { ...item, work: { ...item.work, origin } };
+}
+
 function setup(overrides: Partial<Parameters<typeof WorkOverflowMenu>[0]> = {}) {
   const onRecite = vi.fn();
   const onManageContent = vi.fn();
@@ -51,7 +55,6 @@ function setup(overrides: Partial<Parameters<typeof WorkOverflowMenu>[0]> = {}) 
   const user = userEvent.setup();
   render(
     <WorkOverflowMenu
-      authored={false}
       enrolled={false}
       enrolling={false}
       item={item}
@@ -90,7 +93,7 @@ describe("WorkOverflowMenu", () => {
   });
 
   it("lists Open in Recite and Edit in Writing for an enrolled, authored Work", async () => {
-    const { user } = setup({ authored: true, enrolled: true });
+    const { user } = setup({ enrolled: true, item: itemWithOrigin("authored") });
     const menu = await openMenu(user);
 
     expect(
@@ -104,6 +107,20 @@ describe("WorkOverflowMenu", () => {
     expect(
       within(menu).getByRole("menuitem", { name: "Edit in Writing" }).getAttribute("href")
     ).toBe("#/write?work=work-1");
+  });
+
+  it("offers Edit content routing to the manual editor for a manual Work", async () => {
+    const { user } = setup({ item: itemWithOrigin("manual") });
+    const menu = await openMenu(user);
+
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((node) => node.textContent)
+    ).toEqual(["I can recite this", "View notes", "Edit content", "Delete work"]);
+    expect(within(menu).getByRole("menuitem", { name: "Edit content" }).getAttribute("href")).toBe(
+      "#/library/works/work-1/edit"
+    );
   });
 
   it("enrolls the Work when 'I can recite this' is chosen", async () => {

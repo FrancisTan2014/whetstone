@@ -7,9 +7,6 @@ import { libraryMenuClassNames as cx } from "./libraryMenu.tokens";
 
 export type WorkOverflowMenuProps = Readonly<{
   item: WorkListItemDto;
-  // Authored (owned) Works edit in the rich editor; imported/manual Works manage their content in the
-  // content panel. Exactly one of those two entries shows per Work.
-  authored: boolean;
   // A Work enrolled for recitation opens in Recite; an un-enrolled one offers the enrolment declaration.
   // Library shows no recitation phase/passage/due state — Recite owns all ongoing maintenance (#640).
   enrolled: boolean;
@@ -27,9 +24,12 @@ export type WorkOverflowMenuProps = Readonly<{
 // notes, edit-or-manage, then the destructive delete visually separated — and reaches real menu
 // semantics (roles, keyboard, Escape, outside dismissal, focus restored to the trigger, viewport-aware
 // placement) through Radix. Navigations are anchors so they route on select and close the menu.
+//
+// The content action is a three-way split on the Work's origin (#720): an authored (owned) Work edits in
+// the Writing editor, a manual (learner-curated) Work edits its canonical document in the Library's manual
+// editor, and an imported Work manages its ingested content in the content panel. Exactly one entry shows.
 export function WorkOverflowMenu({
   item,
-  authored,
   enrolled,
   enrolling,
   onRecite,
@@ -66,9 +66,13 @@ export function WorkOverflowMenu({
             <a href={`#/notes?work=${encoded}`}>View notes</a>
           </DropdownMenu.Item>
 
-          {authored ? (
+          {item.work.origin === "authored" ? (
             <DropdownMenu.Item asChild className={cx.item}>
               <a href={`#/write?work=${encoded}`}>Edit in Writing</a>
+            </DropdownMenu.Item>
+          ) : item.work.origin === "manual" ? (
+            <DropdownMenu.Item asChild className={cx.item}>
+              <a href={`#/library/works/${encoded}/edit`}>Edit content</a>
             </DropdownMenu.Item>
           ) : (
             <DropdownMenu.Item className={cx.item} onSelect={onManageContent}>
