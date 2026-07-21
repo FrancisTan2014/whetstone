@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,8 @@ import {
   labelNames,
   mergeGateFailures,
   mergePullRequestArgs,
+  REQUIRED_MERGE_CHECK_NAMES,
+  requiredMergeCheckFailures,
   reviewedHeadMatches,
   reviewedSha,
   selectDeveloperPrAction,
@@ -22,6 +25,10 @@ const passingCheck = {
   status: "COMPLETED",
   conclusion: "SUCCESS"
 };
+const requiredPassingChecks = REQUIRED_MERGE_CHECK_NAMES.map((name) => ({
+  ...passingCheck,
+  name
+}));
 
 function pullRequest(overrides = {}) {
   return {
@@ -72,6 +79,50 @@ test("blocking checks classify modern, legacy, missing, and non-blocking states"
     status: "passing",
     failures: []
   });
+});
+
+test("required merge checks are named, present, and successful", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  for (const name of REQUIRED_MERGE_CHECK_NAMES) {
+    assert.equal(workflow.includes(`name: ${name}`), true);
+  }
+  assert.deepEqual(requiredMergeCheckFailures(requiredPassingChecks), []);
+  assert.deepEqual(requiredMergeCheckFailures(), [
+    'required check "Quality (typecheck, lint, 100% coverage)" is missing',
+    'required check "Runtime (build, size, smoke, E2E)" is missing',
+    'required check "Isolated contracts" is missing'
+  ]);
+  assert.deepEqual(
+    requiredMergeCheckFailures([
+      {
+        __typename: "StatusContext",
+        context: "Quality (typecheck, lint, 100% coverage)",
+        state: "SUCCESS"
+      },
+      {
+        __typename: "StatusContext",
+        context: "Runtime (build, size, smoke, E2E)",
+        state: "PENDING"
+      },
+      {
+        ...passingCheck,
+        name: "Isolated contracts",
+        conclusion: "SKIPPED"
+      }
+    ]),
+    [
+      'required check "Runtime (build, size, smoke, E2E)" is PENDING',
+      'required check "Isolated contracts" is SKIPPED'
+    ]
+  );
+  assert.deepEqual(
+    requiredMergeCheckFailures([
+      requiredPassingChecks[0],
+      { ...requiredPassingChecks[1], status: "IN_PROGRESS", conclusion: null },
+      requiredPassingChecks[2]
+    ]),
+    ['required check "Runtime (build, size, smoke, E2E)" is IN_PROGRESS']
+  );
 });
 
 test("review markers require the complete exact head SHA", () => {
@@ -237,7 +288,8 @@ test("merge gate requires exact approval, complete checks, and an atomic head ma
     labels: [{ name: "review-approved" }],
     comments: [{ body: `reviewer-run-reviewed: ${headSha}` }],
     mergeable: "MERGEABLE",
-    mergeStateStatus: "CLEAN"
+    mergeStateStatus: "CLEAN",
+    statusCheckRollup: requiredPassingChecks
   });
   assert.deepEqual(mergeGateFailures(base), []);
   assert.deepEqual(mergeGateFailures({ ...base, mergeStateStatus: "UNSTABLE" }), []);
@@ -279,7 +331,11 @@ test("merge gate requires exact approval, complete checks, and an atomic head ma
   const stale = mergeGateFailures({
     ...base,
     comments: [{ body: `reviewer-run-reviewed: ${otherSha}` }],
-    statusCheckRollup: [{ ...passingCheck, conclusion: "FAILURE" }]
+    statusCheckRollup: [
+      { ...requiredPassingChecks[0], conclusion: "FAILURE" },
+      requiredPassingChecks[1],
+      requiredPassingChecks[2]
+    ]
   });
   assert.ok(stale.some((reason) => reason.includes("!= reviewed")));
   assert.ok(stale.some((reason) => reason.includes("FAILURE")));
@@ -294,7 +350,11 @@ test("merge gate requires exact approval, complete checks, and an atomic head ma
   assert.ok(
     mergeGateFailures({
       ...base,
-      statusCheckRollup: [{ ...passingCheck, status: "QUEUED", conclusion: null }]
+      statusCheckRollup: [
+        requiredPassingChecks[0],
+        { ...requiredPassingChecks[1], status: "QUEUED", conclusion: null },
+        requiredPassingChecks[2]
+      ]
     }).includes("required checks are pending")
   );
 });

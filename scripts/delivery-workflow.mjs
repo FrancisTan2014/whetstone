@@ -1,4 +1,9 @@
 export const PASSING_CHECK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+export const REQUIRED_MERGE_CHECK_NAMES = Object.freeze([
+  "Quality (typecheck, lint, 100% coverage)",
+  "Runtime (build, size, smoke, E2E)",
+  "Isolated contracts"
+]);
 
 export function labelNames(item) {
   return (item.labels ?? []).map((label) => label.name);
@@ -32,6 +37,35 @@ export function blockingCheckState(rollup) {
 
   if (failures.length > 0) return { status: "failed", failures };
   return { status: pending ? "pending" : "passing", failures: [] };
+}
+
+export function requiredMergeCheckFailures(rollup) {
+  const checks = rollup ?? [];
+  const failures = [];
+  for (const requiredName of REQUIRED_MERGE_CHECK_NAMES) {
+    const check = checks.find(
+      (candidate) => (candidate.name ?? candidate.context) === requiredName
+    );
+    if (check == null) {
+      failures.push(`required check "${requiredName}" is missing`);
+      continue;
+    }
+
+    const passed =
+      check.__typename === "StatusContext"
+        ? check.state === "SUCCESS"
+        : check.status === "COMPLETED" && check.conclusion === "SUCCESS";
+    if (!passed) {
+      const state =
+        check.__typename === "StatusContext"
+          ? check.state
+          : check.status === "COMPLETED"
+            ? check.conclusion
+            : check.status;
+      failures.push(`required check "${requiredName}" is ${state}`);
+    }
+  }
+  return failures;
 }
 
 export function reviewedSha(comments) {
@@ -148,6 +182,7 @@ export function mergeGateFailures(pullRequest) {
   if (checks.status === "missing") reasons.push("no required checks reported");
   if (checks.status === "pending") reasons.push("required checks are pending");
   reasons.push(...checks.failures);
+  reasons.push(...requiredMergeCheckFailures(pullRequest.statusCheckRollup));
 
   if (pullRequest.mergeable !== "MERGEABLE") {
     reasons.push(`mergeable is ${pullRequest.mergeable}`);

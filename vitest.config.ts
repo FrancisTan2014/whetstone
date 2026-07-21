@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const domainSource = fileURLToPath(new URL("./src/packages/domain/src/index.ts", import.meta.url));
 const contractsSource = fileURLToPath(
@@ -10,13 +10,15 @@ const documentSource = fileURLToPath(
   new URL("./src/packages/document/src/index.ts", import.meta.url)
 );
 
+export const sourceAliases = {
+  "@whetstone/contracts": contractsSource,
+  "@whetstone/document": documentSource,
+  "@whetstone/domain": domainSource
+};
+
 export default defineConfig({
   resolve: {
-    alias: {
-      "@whetstone/contracts": contractsSource,
-      "@whetstone/document": documentSource,
-      "@whetstone/domain": domainSource
-    }
+    alias: sourceAliases
   },
   test: {
     coverage: {
@@ -65,7 +67,11 @@ export default defineConfig({
         "**/src/**/*.tokens.tsx",
         "**/src/vite-env.d.ts"
       ],
-      include: ["src/apps/*/src/**/*.{ts,tsx}", "src/packages/*/src/**/*.{ts,tsx}", "scripts/setup/**/*.mjs"],
+      include: [
+        "src/apps/*/src/**/*.{ts,tsx}",
+        "src/packages/*/src/**/*.{ts,tsx}",
+        "scripts/setup/**/*.mjs"
+      ],
       provider: "v8",
       reporter: ["text", "json", "html"],
       thresholds: {
@@ -80,8 +86,20 @@ export default defineConfig({
     // case; in isolation that is ~2s, but under the full suite's parallel load it can exceed Vitest's
     // 5s default and flake. A generous timeout keeps these real-database tests reliable without
     // weakening any assertion or coverage threshold.
+    // These real process/filesystem contracts pass in isolation but contend with the parallel
+    // coverage workers. They remain required in vitest.isolated.config.ts; source coverage stays in
+    // this lane and must still meet the unchanged 100% thresholds without them.
+    exclude: [
+      ...configDefaults.exclude,
+      "scripts/setup/setupScriptRouting.test.mjs",
+      "src/apps/server/src/data/backupRestore.test.ts"
+    ],
     hookTimeout: 30000,
-    include: ["src/apps/**/*.{test,spec}.{ts,tsx}", "src/packages/**/*.{test,spec}.{ts,tsx}", "scripts/setup/**/*.{test,spec}.mjs"],
+    include: [
+      "src/apps/**/*.{test,spec}.{ts,tsx}",
+      "src/packages/**/*.{test,spec}.{ts,tsx}",
+      "scripts/setup/**/*.{test,spec}.mjs"
+    ],
     setupFiles: ["./vitest.setup.ts"],
     testTimeout: 30000
   }

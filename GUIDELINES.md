@@ -612,6 +612,10 @@ CI. Do not duplicate that review inside the developer process.
 - **Exact-head merge authority:** CI runs the exhaustive required lanes on the PR head. A local full
   run is optional, not duplicated on every handoff. Merge still requires all blocking checks, the
   exact reviewed SHA, valid labels, mergeability, and a linked issue.
+- **Independent exhaustive lanes:** CI runs quality (typecheck, lint, full 100% source coverage),
+  runtime (build, size, smoke, E2E), and isolated real-process/filesystem contracts in parallel. Every
+  lane is blocking. Isolation changes resource scheduling, never assertions or source exclusions; a
+  failure in one lane does not prevent the others from returning evidence.
 - **Concurrent review:** pending checks do not block code review. A reviewer may approve the exact
   head while CI runs; the deterministic merge step waits. Completed failed blocking checks route back
   through `fix-ci`; pending, neutral, skipped, and explicitly non-blocking checks do not.

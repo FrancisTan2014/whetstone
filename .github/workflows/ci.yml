@@ -10,7 +10,35 @@ permissions:
 
 jobs:
   quality:
-    name: Typecheck, lint, test, and build
+    name: Quality (typecheck, lint, 100% coverage)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Full source coverage
+        run: pnpm test:quality
+
+  runtime:
+    name: Runtime (build, size, smoke, E2E)
     runs-on: ubuntu-latest
 
     steps:
@@ -31,15 +59,6 @@ jobs:
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Test
-        run: pnpm test
-
       - name: Build
         run: pnpm build
 
@@ -51,3 +70,28 @@ jobs:
 
       - name: E2E smoke
         run: pnpm e2e
+
+  isolated:
+    name: Isolated contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Real process and filesystem contracts
+        run: pnpm test:isolated
+
+      - name: Delivery workflow contracts
+        run: pnpm test:workflow

@@ -122,6 +122,21 @@ function fakeDb(opts: { migrateThrows?: boolean } = {}): {
 }
 
 describe("restoreData", () => {
+  it("uses the real filesystem default", async () => {
+    const targetDir = join(scratch(), "target");
+    const { db, calls } = fakeDb();
+
+    const summary = await restoreData({
+      archive: sampleArchive(),
+      targetDir,
+      openDatabase: async () => db
+    });
+
+    expect(nodeRestoreFs.fileExists(join(targetDir, "sources", "a.txt"))).toBe(true);
+    expect(calls).toEqual({ migrate: 1, close: 1 });
+    expect(summary.probe).toEqual({ entryCount: 3, checkedFiles: 0 });
+  });
+
   it("verifies, writes roots, migrates, probes, and closes on success", async () => {
     const { fs, writes } = fakeFs();
     const { db, calls } = fakeDb();
