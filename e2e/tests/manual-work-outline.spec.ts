@@ -91,8 +91,19 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
     "aria-current",
     "true"
   );
-
-  // Navigate to a DISTANT section (the first) through the Outline: it loads that unit and highlights it.
+  // The whole ancestor path is highlighted, not just the exact section (#697 active-path requirement).
+  await expect(outline.getByRole("button", { name: "Section One" })).toHaveAttribute(
+    "data-active-path",
+    "true"
+  );
+  await expect(outline.getByRole("button", { name: "Chapter One" })).toHaveAttribute(
+    "data-active-path",
+    "true"
+  );
+  await expect(outline.getByRole("button", { name: "Part One" })).toHaveAttribute(
+    "data-active-path",
+    "true"
+  );
   await outline.getByRole("button", { name: "Part One" }).click();
   await expect(editor.locator("h1")).toContainText("Part One");
   await expect(editor.locator("h2")).toHaveCount(0);

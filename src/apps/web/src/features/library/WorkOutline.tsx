@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
 import { buildHeadingOutline, type HeadingOutlineEntry } from "@whetstone/domain";
@@ -50,6 +50,22 @@ export function WorkOutline({
   const [openRequested, setOpenRequested] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
+
+  // The active *path*, not just the active section: issue #697 requires selecting a nested item to
+  // highlight the whole ancestry (Part One > Chapter One > Section One), so a reader always sees where the
+  // open section sits in the hierarchy. Walk up the derived `parentEntryId` chain from the active entry —
+  // every entry's `entryId` is its own `targetUnitEntryId`, so the active entry is found by id directly.
+  const activePathEntryIds = useMemo(() => {
+    const path = new Set<string>();
+    const byEntryId = new Map(entries.map((entry) => [entry.entryId, entry] as const));
+    let current = byEntryId.get(activeUnitEntryId);
+    while (current !== undefined) {
+      path.add(current.entryId);
+      current =
+        current.parentEntryId === undefined ? undefined : byEntryId.get(current.parentEntryId);
+    }
+    return path;
+  }, [entries, activeUnitEntryId]);
 
   // The drawer is only ever open below the sidebar breakpoint. Deriving the open state (rather than
   // resetting it in an effect) means growing to sidebar width simply hands navigation to the always-
@@ -128,6 +144,7 @@ export function WorkOutline({
                 <button
                   aria-current={entry.targetUnitEntryId === activeUnitEntryId ? "true" : undefined}
                   className="workOutlineItem"
+                  data-active-path={activePathEntryIds.has(entry.entryId) ? "true" : undefined}
                   onClick={() => select(entry.targetUnitEntryId)}
                   title={entry.label}
                   type="button"

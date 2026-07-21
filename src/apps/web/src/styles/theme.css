@@ -727,6 +727,11 @@
   cursor: pointer;
 }
 
+.workOutlineItem[data-active-path="true"] {
+  color: var(--color-accent);
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--color-accent) 45%, transparent);
+}
+
 .workOutlineItem[aria-current="true"] {
   background: color-mix(in oklch, var(--color-accent) 12%, transparent);
   color: var(--color-accent);

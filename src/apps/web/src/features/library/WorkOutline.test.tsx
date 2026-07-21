@@ -84,6 +84,35 @@ describe("WorkOutline (drawer, < 48rem)", () => {
     ).toBeNull();
   });
 
+  it("highlights the active path through the ancestors of a nested active section", () => {
+    // Part One (H1) > Chapter One (H2) > Section One (H3), with a sibling Chapter Two off the path.
+    const nested: readonly ManualWorkSectionDto[] = [
+      { headingLevel: 1, orderIndex: 0, title: "Part One", unitEntryId: "unit-p" },
+      { headingLevel: 2, orderIndex: 1, title: "Chapter One", unitEntryId: "unit-c1" },
+      { headingLevel: 3, orderIndex: 2, title: "Section One", unitEntryId: "unit-s" },
+      { headingLevel: 2, orderIndex: 3, title: "Chapter Two", unitEntryId: "unit-c2" }
+    ];
+    renderOutline({ activeUnitEntryId: "unit-s", entries: deriveWorkOutline(nested) });
+
+    const section = screen.getByRole("button", { name: "Section One" });
+    const chapterOne = screen.getByRole("button", { name: "Chapter One" });
+    const partOne = screen.getByRole("button", { name: "Part One" });
+    const chapterTwo = screen.getByRole("button", { name: "Chapter Two" });
+
+    // Only the exact active section carries aria-current.
+    expect(section.getAttribute("aria-current")).toBe("true");
+    expect(chapterOne.getAttribute("aria-current")).toBeNull();
+    expect(partOne.getAttribute("aria-current")).toBeNull();
+
+    // The active section AND every ancestor up the derived chain are on the active path.
+    expect(section.getAttribute("data-active-path")).toBe("true");
+    expect(chapterOne.getAttribute("data-active-path")).toBe("true");
+    expect(partOne.getAttribute("data-active-path")).toBe("true");
+
+    // A sibling that is not an ancestor of the active section stays off the path.
+    expect(chapterTwo.getAttribute("data-active-path")).toBeNull();
+  });
+
   it("opens the drawer from the toggle and dismisses it via the backdrop, restoring focus", async () => {
     const user = userEvent.setup();
     renderOutline();
