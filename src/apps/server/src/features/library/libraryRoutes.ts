@@ -14,10 +14,7 @@ import {
   type DeleteWorkDependencies,
   type LibraryDependencies
 } from "./libraryCommands.js";
-import {
-  addManualWorkSection,
-  updateManualWorkContent
-} from "./manualWorkContentCommands.js";
+import { addManualWorkSection, updateManualWorkContent } from "./manualWorkContentCommands.js";
 import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
 import { listWorks, searchAuthors } from "./libraryQueries.js";
 

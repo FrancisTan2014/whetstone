@@ -517,9 +517,9 @@ describe("ManualWorkEditorPage", () => {
     // first, so re-selecting a section always re-focuses its heading.
     await user.click(screen.getByRole("button", { name: "Chapter One" }));
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: "Chapter One" }).getAttribute("aria-current")
-      ).toBe("true");
+      expect(screen.getByRole("button", { name: "Chapter One" }).getAttribute("aria-current")).toBe(
+        "true"
+      );
     });
     await user.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => {

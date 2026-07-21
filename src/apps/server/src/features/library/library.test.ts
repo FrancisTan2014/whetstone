@@ -1075,7 +1075,8 @@ describe("manual work editor (#720, sections #697)", () => {
     const workEntryId = await createManualWork();
     const loaded = await load(workEntryId);
 
-    const firstBlock = (loaded.document as { content: Array<{ attrs: { id: string } }> }).content[0];
+    const firstBlock = (loaded.document as { content: Array<{ attrs: { id: string } }> })
+      .content[0];
     const originalId = firstBlock.attrs.id;
     expect(typeof originalId).toBe("string");
 
@@ -1098,14 +1099,20 @@ describe("manual work editor (#720, sections #697)", () => {
     const first = await context.server.inject({
       method: "PUT",
       url: unitUrl,
-      payload: { document: { content: [paragraph("Winner")], type: "doc" }, revision: loaded.revision }
+      payload: {
+        document: { content: [paragraph("Winner")], type: "doc" },
+        revision: loaded.revision
+      }
     });
     expect(first.statusCode).toBe(200);
 
     const stale = await context.server.inject({
       method: "PUT",
       url: unitUrl,
-      payload: { document: { content: [paragraph("Loser")], type: "doc" }, revision: loaded.revision }
+      payload: {
+        document: { content: [paragraph("Loser")], type: "doc" },
+        revision: loaded.revision
+      }
     });
 
     expect(stale.statusCode).toBe(409);
@@ -1276,7 +1283,9 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(dto.unitEntryId).not.toBe(loaded.unitEntryId);
     expect(dto.document.content[0].type).toBe("heading");
     expect(dto.document.content[0].attrs.level).toBe(1);
-    expect(new Date(dto.revision).getTime()).toBeGreaterThan(new Date(loaded.revision as string).getTime());
+    expect(new Date(dto.revision).getTime()).toBeGreaterThan(
+      new Date(loaded.revision as string).getTime()
+    );
     expect(dto.sections).toHaveLength(2);
     expect(dto.sections[0].unitEntryId).toBe(loaded.unitEntryId);
     expect(dto.sections[1].unitEntryId).toBe(dto.unitEntryId);
@@ -1288,7 +1297,7 @@ describe("manual work editor (#720, sections #697)", () => {
 
   it("derives each section's outline title from its heading text after saves", async () => {
     const workEntryId = await createManualWork();
-    let loaded = await load(workEntryId);
+    const loaded = await load(workEntryId);
 
     // Name the first section by saving a Heading 1 into it.
     const savedFirst = await context.server.inject({

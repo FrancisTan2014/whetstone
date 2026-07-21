@@ -221,7 +221,10 @@ export async function addManualWorkSection(
       .limit(1);
     // A manual Work always has at least its seeded first section, so `last` is defined; the nullish
     // fallback keeps the arithmetic total without a separately-tested empty-Work branch.
+    /* v8 ignore start -- `last` is always defined (a manual Work keeps >= 1 section), so the `?.`/`?? -1`
+       fallbacks are unreachable and only satisfy the possibly-empty query-result type. */
     const nextOrderIndex = (last?.orderIndex ?? -1) + 1;
+    /* v8 ignore stop */
 
     const appended = await appendEditableWorkSection(tx, {
       createEntryId: dependencies.createEntryId,

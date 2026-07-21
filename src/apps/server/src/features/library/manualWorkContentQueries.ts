@@ -76,7 +76,10 @@ export async function loadManualWorkSections(
 
   return unitRows.map((unit) => {
     const firstBlock = firstBlockByUnit.get(unit.entryId);
+    /* v8 ignore start -- every persisted section has an order-0 block (creation and save always write
+       one), so `firstBlock` is never undefined here; the guard only satisfies the Map.get return type. */
     const heading = firstBlock === undefined ? undefined : documentBlockHeading(firstBlock);
+    /* v8 ignore stop */
 
     return {
       orderIndex: unit.orderIndex,
@@ -146,13 +149,14 @@ export async function loadManualWorkForEditing(
   }
 
   const sections = await loadManualWorkSections(db, workEntryId);
-  /* v8 ignore next 4 -- an owned manual Work always has >= 1 section (creation seeds one, and no path
+  const first = sections[0];
+  /* v8 ignore start -- an owned manual Work always has >= 1 section (creation seeds one, and no path
      removes the last), so `first` is never undefined; the guard only narrows the type and its return is
      unreachable through the real routes. */
-  const first = sections[0];
   if (first === undefined) {
     return undefined;
   }
+  /* v8 ignore stop */
 
   const document = await loadManualWorkDocument(db, first.unitEntryId);
   return toManualWorkDto(workEntryId, owned, first.unitEntryId, document, sections);

@@ -597,15 +597,15 @@
 }
 
 /* The control that opens the drawer (<48rem only). A real >=44px tap target; hidden once the Outline
-   becomes a persistent sidebar. */
-.workOutlineToggle {
+   becomes a persistent sidebar. Shares its chrome with the Add-section button. */
+.workOutlineToggle,
+.workOutlineAdd {
   display: inline-flex;
   align-items: center;
   min-block-size: 44px;
   padding-inline: 0.75rem;
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
-  background-color: var(--color-surface);
   color: var(--color-text);
   font-family: var(--font-sans);
   font-size: 0.875rem;
@@ -613,7 +613,13 @@
   cursor: pointer;
 }
 
-.workOutlineToggle:focus-visible {
+.workOutlineToggle {
+  background-color: var(--color-surface);
+}
+
+.workOutlineToggle:focus-visible,
+.workOutlineItem:focus-visible,
+.workOutlineAdd:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;
 }
@@ -721,11 +727,6 @@
   cursor: pointer;
 }
 
-.workOutlineItem:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
-
 .workOutlineItem[aria-current="true"] {
   background: color-mix(in oklch, var(--color-accent) 12%, transparent);
   color: var(--color-accent);
@@ -750,24 +751,9 @@
 }
 
 .workOutlineAdd {
-  display: inline-flex;
-  align-items: center;
-  min-block-size: 44px;
   margin-block-start: 0.75rem;
-  padding-inline: 0.75rem;
-  border: 1px dashed var(--color-border);
-  border-radius: 0.5rem;
+  border-style: dashed;
   background: transparent;
-  color: var(--color-text);
-  font-family: var(--font-sans);
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.workOutlineAdd:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
 }
 
 .workOutlineAdd:disabled {

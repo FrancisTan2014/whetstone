@@ -288,10 +288,7 @@ function ManualWorkEditor({
         return;
       }
 
-      const isDirty = !editorDocumentsEqualIgnoringIds(
-        draftRef.current,
-        savedDocumentRef.current
-      );
+      const isDirty = !editorDocumentsEqualIgnoringIds(draftRef.current, savedDocumentRef.current);
       if (isDirty) {
         const outcome = await runSave(draftRef.current);
         if (outcome !== "saved") {

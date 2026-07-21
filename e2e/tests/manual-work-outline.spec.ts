@@ -54,7 +54,8 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   await expect(editor.locator("h1")).toContainText("Part One");
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
-  await expect(outline.getByRole("button", { name: "Part One" })).toBeVisible();
+  // A single-section Work has no useful outline yet — the empty hint stands in until a section is added.
+  await expect(outline.getByText("Add a section to build your outline.")).toBeVisible();
 
   // Section 2: add a section, name its seeded heading, and demote it to level 2 ("Chapter One").
   await outline.getByRole("button", { name: "Add section" }).click();
@@ -138,12 +139,27 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
 
   await page.getByRole("button", { name: "Table of contents" }).click();
   const toc = page.getByRole("navigation", { name: "Table of Contents" });
-  const tocNodes = toc.locator("li.readerTocNode");
-  await expect(tocNodes).toHaveCount(3);
-  await expect(tocNodes.nth(0)).toHaveAttribute("data-depth", "0");
-  await expect(tocNodes.nth(0)).toContainText("Part One");
-  await expect(tocNodes.nth(1)).toHaveAttribute("data-depth", "1");
-  await expect(tocNodes.nth(1)).toContainText("Chapter One");
-  await expect(tocNodes.nth(2)).toHaveAttribute("data-depth", "2");
-  await expect(tocNodes.nth(2)).toContainText("Section One");
+
+  // The derived TOC is a collapsible tree rooted at Part One; expanding reveals Chapter One, then
+  // Section One — proving the reader nests exactly the parent/child hierarchy the editor Outline showed.
+  await expect(toc.getByRole("button", { exact: true, name: "Part One" })).toBeVisible();
+  await expect(toc.getByRole("button", { exact: true, name: "Chapter One" })).toHaveCount(0);
+
+  await toc.getByRole("button", { name: "Expand Part One" }).click();
+  await expect(toc.getByRole("button", { exact: true, name: "Chapter One" })).toBeVisible();
+  await expect(toc.getByRole("button", { exact: true, name: "Section One" })).toHaveCount(0);
+
+  await toc.getByRole("button", { name: "Expand Chapter One" }).click();
+  await expect(toc.getByRole("button", { exact: true, name: "Section One" })).toBeVisible();
+
+  // The persisted depths match the editor Outline (root Part, nested Chapter, deeper Section).
+  await expect(
+    toc.locator('li.readerTocNode:has(> div.readerTocRow:has-text("Part One"))')
+  ).toHaveAttribute("data-depth", "0");
+  await expect(
+    toc.locator('li.readerTocNode:has(> div.readerTocRow:has-text("Chapter One"))')
+  ).toHaveAttribute("data-depth", "1");
+  await expect(
+    toc.locator('li.readerTocNode:has(> div.readerTocRow:has-text("Section One"))')
+  ).toHaveAttribute("data-depth", "2");
 });

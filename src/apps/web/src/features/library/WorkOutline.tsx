@@ -47,15 +47,20 @@ export function WorkOutline({
   onSelect: (unitEntryId: string) => void;
 }>): React.JSX.Element {
   const isSidebar = useMediaQuery(OUTLINE_SIDEBAR_QUERY);
-  const [open, setOpen] = useState(false);
+  const [openRequested, setOpenRequested] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
+
+  // The drawer is only ever open below the sidebar breakpoint. Deriving the open state (rather than
+  // resetting it in an effect) means growing to sidebar width simply hands navigation to the always-
+  // visible sidebar — the transient request is ignored, with no focus to restore.
+  const drawerOpen = openRequested && !isSidebar;
 
   // Dismiss (drawer only), optionally restoring focus to the control that opened it. A selection moves
   // focus into the editor's heading instead, so it closes WITHOUT restoring; Escape/backdrop dismissal
   // restores focus to the opener so keyboard focus is never stranded.
   const dismiss = useCallback((restoreFocus: boolean): void => {
-    setOpen(false);
+    setOpenRequested(false);
     if (restoreFocus) {
       // The toggle is always mounted (it is rendered unconditionally, only hidden by CSS in sidebar
       // mode), so the opener ref is set whenever a focus-restoring dismissal runs.
@@ -66,7 +71,7 @@ export function WorkOutline({
   // Escape closes the drawer (matching its backdrop/selection dismissal), attached only while open so it
   // never competes with editor key handling when the drawer is closed or the Outline is a sidebar.
   useEffect(() => {
-    if (!open) {
+    if (!drawerOpen) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -76,15 +81,7 @@ export function WorkOutline({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, dismiss]);
-
-  // Growing to sidebar width while the drawer is open hands navigation to the persistent sidebar, so the
-  // transient open state is dropped (no focus to restore — the sidebar is simply always visible).
-  useEffect(() => {
-    if (isSidebar) {
-      setOpen(false);
-    }
-  }, [isSidebar]);
+  }, [drawerOpen, dismiss]);
 
   const select = (unitEntryId: string): void => {
     onSelect(unitEntryId);
@@ -97,15 +94,15 @@ export function WorkOutline({
     <div className="workOutline">
       <button
         aria-controls={panelId}
-        aria-expanded={open}
+        aria-expanded={drawerOpen}
         className="workOutlineToggle"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpenRequested(true)}
         ref={openerRef}
         type="button"
       >
         Outline
       </button>
-      {open && !isSidebar ? (
+      {drawerOpen ? (
         <button
           aria-label="Close outline"
           className="workOutlineBackdrop"
@@ -115,7 +112,7 @@ export function WorkOutline({
       ) : null}
       <nav
         aria-label="Outline"
-        className={`workOutlinePanel${open ? " workOutlinePanel--open" : ""}`}
+        className={`workOutlinePanel${drawerOpen ? " workOutlinePanel--open" : ""}`}
         id={panelId}
       >
         <p className="workOutlineHeading">Outline</p>

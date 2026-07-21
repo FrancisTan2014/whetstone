@@ -25,9 +25,10 @@ const multiSections: readonly ManualWorkSectionDto[] = [
   { headingLevel: 1, orderIndex: 1, title: "Chapter One", unitEntryId: "unit-b" }
 ];
 
-function renderOutline(
-  overrides: Partial<React.ComponentProps<typeof WorkOutline>> = {}
-): { onAddSection: ReturnType<typeof vi.fn>; onSelect: ReturnType<typeof vi.fn> } {
+function renderOutline(overrides: Partial<React.ComponentProps<typeof WorkOutline>> = {}): {
+  onAddSection: ReturnType<typeof vi.fn>;
+  onSelect: ReturnType<typeof vi.fn>;
+} {
   const onAddSection = vi.fn();
   const onSelect = vi.fn();
   render(

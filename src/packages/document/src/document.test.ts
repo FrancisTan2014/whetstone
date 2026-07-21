@@ -548,7 +548,11 @@ describe("documentBlockHeading", () => {
   it("defaults a heading with a missing or non-numeric level to level 1", () => {
     expect(documentBlockHeading({ type: "heading" })).toEqual({ level: 1 });
     expect(
-      documentBlockHeading({ attrs: { level: "2" }, content: [{ text: "x", type: "text" }], type: "heading" })
+      documentBlockHeading({
+        attrs: { level: "2" },
+        content: [{ text: "x", type: "text" }],
+        type: "heading"
+      })
     ).toEqual({ level: 1, title: "x" });
   });
 
