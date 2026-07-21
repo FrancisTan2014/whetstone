@@ -63,6 +63,11 @@ Comment only on things that materially affect correctness, security, maintainabi
 acceptance criteria. In particular check:
 
 - **Scope** — the PR implements only its issue; no unrelated refactors, dependencies, or features.
+- **Landability** — more than 15 production files or 1,500 non-generated changed lines requires the
+  issue's substantive `## Landability` justification. Generated migration snapshots and calibration
+  fixtures are excluded from churn, but not from behavioral scope. If the PR crossed the warning
+  without an inseparable-invariant rationale, request design re-slicing instead of attempting a
+  low-signal review of an unbounded diff.
 - **Model correctness** — it uses the block-based model and does not reintroduce the
   filesystem-Markdown model.
 - **Design rules** (GUIDELINES / skill) — smallest public API, pure `domain`, boundary validation,

@@ -1,4 +1,5 @@
-# Runs the whetstone validation gate (typecheck, lint, test, build) encoding-safely.
+# Runs the full whetstone validation gate encoding-safely (typecheck, lint, tests, build,
+# bundle-size budget, smoke, and E2E).
 # Writes the full output to a timestamped log under .agent-logs/ and prints PASS/FAIL with
 # the tail on failure, so worker sessions do not stream Unicode-heavy output into their context.
 #

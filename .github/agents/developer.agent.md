@@ -156,6 +156,26 @@ starting fresh:
 - Commit in coherent steps with conventional commit messages and push as you go, so progress
   survives an interruption.
 
+## Landability checkpoint and adversarial preflight
+
+- After the first coherent implementation commit, and before broadening into another surface or
+  lifecycle, inspect `origin/main...HEAD`. More than 15 production files or 1,500 non-generated
+  changed lines is a landability warning. Tests, docs, generated migration snapshots, and calibration
+  fixtures do not count as production churn, but the behavior supporting them still counts.
+- If a warning is crossed and the issue has no substantive `## Landability` justification, stop
+  before compounding it: commit and push sound work, comment with the observed scope and proposed cut,
+  add `needs-design`, remove `in-progress`, and end the tick. Do not open a knowingly unreviewable PR.
+- Map every acceptance and validation bullet to concrete diff/test evidence. Inspect the changed-file
+  list for unrelated product-doc rewrites, local artifacts, missing screenshot/fixture updates, and
+  old paths the issue says to retire.
+- For every architecture issue (one with `## Design principle`) or warned diff, run exactly one
+  **fresh-context, read-only `code-review` subagent** against the linked issue and
+  `origin/main...HEAD` after targeted tests but before the full gate. Give it `PRODUCT.md`,
+  `GUIDELINES.md`, the issue, and the diff; ask only for high-confidence correctness, invariant,
+  failure-recovery, scope, and acceptance-criteria findings. Fix its material findings, but do not
+  loop preflight to perfection. A small `[Bug]` with the Tester's promoted repro and no warning may
+  use the explicit acceptance-evidence pass without the extra subagent.
+
 ## Gate, then open the PR
 
 - Run the full gate and make it pass at 100% coverage: `pnpm validate`, or

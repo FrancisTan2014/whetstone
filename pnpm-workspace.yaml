@@ -1,6 +1,9 @@
 packages:
   - src/apps/*
   - src/packages/*
+# Developers use a corporate registry proxy while CI uses npmjs.org. Keep registry tarball URLs out
+# of the shared lockfile so dependency updates remain portable between both environments.
+lockfileIncludeTarballUrl: false
 # esbuild ships a prebuilt platform binary as an optional dependency; approving
 # its (otherwise harmless) postinstall keeps pnpm install from failing on an
 # unapproved build script under pnpm 11. CI installs with --frozen-lockfile.

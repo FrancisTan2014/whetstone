@@ -71,12 +71,16 @@ the issue needs it and the PR explains why.
 Run the full gate, which mirrors CI (`.github/workflows/ci.yml`):
 
 ```
-pnpm validate   # = pnpm typecheck && pnpm lint && pnpm test && pnpm build
+pnpm validate   # typecheck, lint, 100%-coverage tests, build, size budget, smoke, and E2E
 ```
 
 On Windows workers, prefer the bundled `validate.ps1` in this skill directory: it runs `pnpm validate`
 encoding-safely, writes the full log under `.agent-logs/`, and prints PASS/FAIL with the tail.
 Never lower coverage thresholds or skip steps to make validation pass.
+
+Before the full gate, architecture or landability-warned diffs receive one fresh-context read-only
+code-review preflight after targeted tests. A warning is more than 15 production files or 1,500
+non-generated changed lines unless the issue carries a substantive `## Landability` rationale.
 
 ## Pull request conventions
 

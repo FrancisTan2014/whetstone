@@ -45,6 +45,8 @@ Architecture craft (design the system, not only the surface):
   `GUIDELINES.md` decisions, recently merged work, every overlapping open issue, and any `in-progress`
   branch or PR before filing or revising work. An issue must fit both the system that exists and the
   imminent queue; never deepen a structural flaw simply because an earlier issue already used it.
+  Run `pnpm delivery:health` before a broad queue redesign so active stage time and review returns,
+  not dependency-inflated issue age, inform the cuts.
 - **Choose the right boundary, without speculative abstraction.** When two concrete consumers share the
   same invariant or an imminent named second consumer is already queued, design one stable shared
   boundary and keep feature-specific semantics outside it. Otherwise keep the behavior local. Reuse
@@ -84,13 +86,29 @@ Rules:
 - Prefer small v0 slices that preserve the core idea: admin inputs source materials, reader displays them, user clicks/taps words or phrases to create notes linked to source text.
 - **Runtime defect discovery belongs to the tester, not design.** Investigate the rendered experience to judge product/UX/visual quality and to specify the design — and file a `[Bug]` when you spot a clear defect in passing — but do not boot the app under Playwright to hunt functional/runtime bugs. That dynamic exploration (console/HTTP/hydration errors, broken flows, accessibility) is the **whetstone-tester**'s job; keep design as static product/UX review so the two roles do not duplicate each other.
 
-Issue sizing guardrails:
+Issue landability guardrails:
 
-- If the issue title joins unrelated outcomes with "and", split it.
-- If the acceptance criteria cover unrelated user capabilities or unrelated engineering concerns, split it.
-- Size each issue to **land completely** — a passing PR at 100% coverage — within about one to two developer runs. A single coherent capability that is too large to finish and fully test in that window is still too big, even though its parts are related.
-- When a capability is too large to land, split it into thinner **vertical** slices by sub-capability. Each slice still delivers a full feature (UI, API, persistence, and tests for one smaller user-visible step) and leaves the app working. Never split into separate backend, database, or frontend issues.
-- Order the thinner slices with `Depends on: #N` so each builds on the last.
+- The north star is **one fresh developer run to one reviewable, fully validated PR**. A coherent
+  capability that cannot reach that outcome in one bounded run is still too large.
+- An issue owns exactly one primary user journey or one stable foundation boundary. Split when it
+  combines independently shippable durable-model migration, user surface, legacy retirement,
+  operational lifecycle, or multiple end-to-end journeys. Touching schema, API, server, and UI for
+  one journey is still one vertical slice, not four.
+- Treat any of these as a mandatory landability warning, not a mechanical hard cap: more than 700
+  issue-body words; more than 15 anticipated production files; more than 1,500 anticipated
+  non-generated changed lines; or more than one independently shippable E2E journey. Use analogous
+  merged PRs to estimate rather than guessing.
+- A warned issue must be split unless a substantive `## Landability` section explains why the work
+  protects one inseparable invariant, why an earlier cut would leave an unusable or unsafe product,
+  and the exact boundary excluded into its named successor. Boilerplate justification is a design
+  failure. Generated migration snapshots and calibration fixtures do not count toward line churn,
+  but the behavior needed to create, validate, and consume them still counts toward scope.
+- When a capability is too large, split it into thinner **vertical** slices by sub-capability. Each
+  slice leaves the app working. A foundation slice is allowed only under the existing stable-boundary,
+  tested-fake, named-first-consumer rule; never split one feature merely into database, API, and UI.
+- Order thinner slices with `Depends on: #N` so each builds on the last, then audit every manual gate
+  or enumerated dependency list that names the old issue numbers. A split is incomplete until those
+  gates point at the new tail slice and cannot pass early.
 - If the developer would need to choose architecture not already in `PRODUCT.md`, keep it in design.
 - If the developer would need to choose project structure or engineering convention not already in `GUIDELINES.md`, keep it in design.
 - If an issue can pass while violating its stated design principle, its acceptance criteria are

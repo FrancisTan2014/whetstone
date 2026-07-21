@@ -580,6 +580,35 @@ Prefer cohesive vertical feature/fix PRs. A PR may include schema, API, server l
 
 A **foundation PR** is the one allowed exception to vertical-only: it may deliver reusable infrastructure behind a stable interface with no UI, provided it is fully unit-tested at its boundary (fakes, no real I/O), keeps the app building and green, and its linked foundation issue names the imminent consumer it unblocks (a following `Depends on:` issue). Do not flag such a PR as scaffolding mixed with features — it deliberately contains no feature behavior.
 
+### Landability gate
+
+The unit of delivery is one fresh developer run ending in one reviewable PR that passes the full gate
+at 100% coverage. One issue owns one primary user journey or one stable foundation boundary. A
+vertical journey may legitimately touch schema, contracts, server, and UI; it must still be split
+when it also owns an independently shippable migration, legacy retirement, operational lifecycle, or
+second end-to-end journey.
+
+These are warning signals that require design action, not automatic rejection: an issue body over 700
+words; more than 15 anticipated or actual production files; more than 1,500 non-generated changed
+lines; or more than one independently shippable E2E journey. Generated migration snapshots and
+calibration fixtures are excluded from line churn, but the code and behavior that produce and consume
+them still count. A warned issue is split unless its `## Landability` section explains one
+inseparable invariant, why an earlier cut would be unusable or unsafe, and the exact named successor
+boundary. Boilerplate does not satisfy the gate.
+
+If implementation crosses a warning unexpectedly, the developer stops after a coherent commit and
+returns the issue to design before opening a PR. Architecture or warned changes receive one
+fresh-context, read-only adversarial preflight review after targeted tests and before the full gate.
+This is a bounded shift-left check, not a second iterative review loop.
+
+### Flow measurement
+
+Measure active delivery stages, not issue creation-to-close: dependency-gated issues may be designed
+days before they are eligible. `pnpm delivery:health` reports `ready-for-dev` to `in-progress`,
+implementation start to PR, PR to merge, approval to merge, review-return rounds, raw diff signals,
+and the current queue. Run it before a broad queue redesign and after each delivered batch; use its
+trend to recalibrate landability warnings rather than relaxing quality gates.
+
 ## Review gates
 
 Reviewer agents enforce this same spec. Review comments should be high-signal: only material issues that affect correctness, safety, maintainability, product fit, or validation.
@@ -591,7 +620,9 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - The PR satisfies all acceptance criteria.
 - The PR does not implement requirements outside the linked issue.
 - Do not request a split merely because the PR touches schema, API, server logic, and UI. Vertical feature/fix PRs are expected.
-- If the issue mixes unrelated outcomes or broad scaffolding with feature behavior, comment that future work must be split by coherent user capability or engineering concern.
+- If the issue or diff crosses a landability warning without a substantive `## Landability`
+  justification, request design re-slicing rather than attempting a low-signal review of an unbounded
+  change.
 
 ### Product/design fit
 
@@ -733,7 +764,8 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 ### Validation
 
 - PR body lists the commands run.
-- Existing build/lint/test commands pass (`pnpm validate` runs all four).
+- The full local gate passes (`pnpm validate`: typecheck, lint, 100%-coverage tests, build,
+  bundle-size budget, smoke, and E2E).
 - If validation cannot run because tooling does not exist yet, the PR says so and the issue scope justifies it.
 - Behavior changed by the PR has tests when test infrastructure exists.
 - Data/file changes include at least one validation path for failure cases, not only happy paths.
