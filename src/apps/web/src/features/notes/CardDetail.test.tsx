@@ -352,7 +352,9 @@ describe("CardDetail", () => {
     await waitFor(() => expect(mockedEdit).toHaveBeenCalled());
     expect(mockedSetTarget).toHaveBeenCalled();
     // The question send runs after the target send, so its row is the one handed up.
-    expect(onRefreshed).toHaveBeenCalledWith(expect.objectContaining({ questionText: "final question" }));
+    expect(onRefreshed).toHaveBeenCalledWith(
+      expect.objectContaining({ questionText: "final question" })
+    );
   });
 
   it("reports a named grading-target failure and reloads the list", async () => {

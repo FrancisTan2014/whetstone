@@ -77,9 +77,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderComposer(
-  overrides: { sourceSnapshot?: string | null } = {}
-): { onCancel: ReturnType<typeof vi.fn>; onCreated: ReturnType<typeof vi.fn> } {
+function renderComposer(overrides: { sourceSnapshot?: string | null } = {}): {
+  onCancel: ReturnType<typeof vi.fn>;
+  onCreated: ReturnType<typeof vi.fn>;
+} {
   const onCancel = vi.fn();
   const onCreated = vi.fn();
   render(
@@ -258,9 +259,7 @@ describe("SavedNoteCardComposer", () => {
     await user.type(screen.getByLabelText("Question"), "Which sort is stable?");
     await user.click(screen.getByRole("button", { name: "Add card" }));
     await waitFor(() =>
-      expect(
-        screen.getByText(/This card was already started with different wording/)
-      ).toBeTruthy()
+      expect(screen.getByText(/This card was already started with different wording/)).toBeTruthy()
     );
 
     await user.type(screen.getByLabelText("Question"), " really?");

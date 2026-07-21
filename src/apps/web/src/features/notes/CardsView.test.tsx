@@ -59,7 +59,9 @@ vi.mock("./SavedNoteCardComposer", () => ({
     onCreated: () => void;
   }) => (
     <div data-testid="composer">
-      <span>compose:{props.noteEntryId}:{String(props.sourceSnapshot)}</span>
+      <span>
+        compose:{props.noteEntryId}:{String(props.sourceSnapshot)}
+      </span>
       <button onClick={props.onCreated} type="button">
         stub-created
       </button>

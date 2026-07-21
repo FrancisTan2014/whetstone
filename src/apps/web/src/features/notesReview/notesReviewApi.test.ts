@@ -378,14 +378,11 @@ describe("setNoteGradingTarget (#686)", () => {
     const fetchMock = stubFetch({ body: settingsDto, ok: true });
 
     await expect(setNoteGradingTarget("prompt 1", request)).resolves.toEqual(settingsDto);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/notes/review/prompts/prompt%201/grading-target",
-      {
-        body: JSON.stringify(request),
-        headers: { "content-type": "application/json" },
-        method: "POST"
-      }
-    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/prompts/prompt%201/grading-target", {
+      body: JSON.stringify(request),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
   });
 
   it("throws invalid_success_check on a 400 with that error body", async () => {

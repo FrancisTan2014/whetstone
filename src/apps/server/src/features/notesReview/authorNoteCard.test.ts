@@ -381,7 +381,10 @@ describe("authorNoteCard", () => {
     const second = await authorNoteCard(
       context.deps,
       DEFAULT_USER_ID,
-      authorRequest(noteEntryId, { submissionId: "sub-2", questionDoc: questionDoc("Another cue?") })
+      authorRequest(noteEntryId, {
+        submissionId: "sub-2",
+        questionDoc: questionDoc("Another cue?")
+      })
     );
     expect(second).toEqual({ status: "already_authored" });
     // Exactly one authored prompt and one card survive; the loser's receipt rolled back so a later retry
@@ -527,9 +530,9 @@ describe("authorNoteCard", () => {
       db: dbFailingOnInsert(context.db, failTable)
     };
 
-    await expect(
-      authorNoteCard(deps, DEFAULT_USER_ID, authorRequest(noteEntryId))
-    ).rejects.toThrow("injected write failure");
+    await expect(authorNoteCard(deps, DEFAULT_USER_ID, authorRequest(noteEntryId))).rejects.toThrow(
+      "injected write failure"
+    );
 
     expect(await listReceipts()).toHaveLength(0);
     expect(await listPrompts()).toHaveLength(0);
@@ -596,7 +599,10 @@ describe("POST /api/notes/review/author-cards", () => {
     const noteEntryId = await seedNote();
     await post(authorRequest(noteEntryId));
     const response = await post(
-      authorRequest(noteEntryId, { submissionId: "sub-2", questionDoc: questionDoc("Another cue?") })
+      authorRequest(noteEntryId, {
+        submissionId: "sub-2",
+        questionDoc: questionDoc("Another cue?")
+      })
     );
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ error: "already_authored" });

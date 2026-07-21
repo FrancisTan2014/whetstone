@@ -159,7 +159,10 @@ export function CardDetail({
   // Persist a committed edit: apply the grading target first (it may reset the schedule), then the Question,
   // so the final refreshed row reflects both. Either send is skipped when unchanged. On success the card
   // flows up and editing closes; on failure the drafts stay, the named reason shows, and the list reloads.
-  async function persist(target: NoteGradingTarget | null, mode: "keep" | "restart"): Promise<void> {
+  async function persist(
+    target: NoteGradingTarget | null,
+    mode: "keep" | "restart"
+  ): Promise<void> {
     setBusy(true);
     setFailure(null);
     let refreshed: NotePromptSettingsDto | null = null;
@@ -268,12 +271,7 @@ export function CardDetail({
                   <Button onClick={saveEdits} pending={busy} type="button">
                     Save
                   </Button>
-                  <Button
-                    disabled={busy}
-                    onClick={cancelEditing}
-                    type="button"
-                    variant="secondary"
-                  >
+                  <Button disabled={busy} onClick={cancelEditing} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </>
@@ -352,11 +350,15 @@ export function CardDetail({
       {pendingTarget !== null ? (
         <div className="noteReviewConfirm" role="group">
           <p>
-            You changed how this card is graded. Keep its schedule, or restart it because the trained
-            capability changed?
+            You changed how this card is graded. Keep its schedule, or restart it because the
+            trained capability changed?
           </p>
           <div className="noteReviewConfirmActions">
-            <Button onClick={() => void persist(pendingTarget, "keep")} pending={busy} type="button">
+            <Button
+              onClick={() => void persist(pendingTarget, "keep")}
+              pending={busy}
+              type="button"
+            >
               Keep schedule
             </Button>
             <Button

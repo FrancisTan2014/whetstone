@@ -445,7 +445,9 @@ describe("note Review settings & history contracts (#660)", () => {
   it("parses a rich question document and rejects a malformed one and extra keys (#687)", () => {
     const questionDoc = createTextDocument("Define a WAL");
     expect(parseEditNotePromptQuestionRequest({ questionDoc })).toEqual({ questionDoc });
-    expect(() => parseEditNotePromptQuestionRequest({ questionDoc: { not: "a document" } })).toThrow();
+    expect(() =>
+      parseEditNotePromptQuestionRequest({ questionDoc: { not: "a document" } })
+    ).toThrow();
     expect(() => parseEditNotePromptQuestionRequest({ question: "Define a WAL" })).toThrow();
   });
 });

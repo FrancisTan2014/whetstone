@@ -273,9 +273,7 @@ export class AuthorNoteCardError extends Error {
 // 409 `already_authored` → `already_authored` and any other 409 → `conflict`, 410 → `gone`, 404 →
 // `not_found`, other 4xx → `invalid`, anything else → `network` — so the composer keeps every draft and
 // offers the right recovery.
-export async function authorNoteCard(
-  request: AuthorNoteCardRequest
-): Promise<DirectCardResultDto> {
+export async function authorNoteCard(request: AuthorNoteCardRequest): Promise<DirectCardResultDto> {
   let response: Response;
   try {
     response = await fetch(apiUrl("/notes/review/author-cards"), {

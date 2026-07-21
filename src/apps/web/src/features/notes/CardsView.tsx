@@ -166,12 +166,7 @@ export function CardsView({
   if (screen.kind === "compose" && noteBodyDoc !== null) {
     return (
       <div className="noteCardsCompose">
-        <Button
-          onClick={() => setScreen({ kind: "list" })}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
+        <Button onClick={() => setScreen({ kind: "list" })} size="sm" type="button" variant="ghost">
           Back to cards
         </Button>
         <SavedNoteCardComposer
