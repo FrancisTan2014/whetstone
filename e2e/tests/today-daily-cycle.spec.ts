@@ -60,8 +60,8 @@ test.describe("Today daily cycle (#610)", () => {
     const work = await uploadTodayWork(page.request, baseURL);
     await post(page.request, baseURL, "/recitation/enroll", { workEntryId: work.entryId });
 
-    // A due note-review routine: create one standalone note and enroll it in Review with a question, so
-    // its current-note prompt's card is due immediately (the retired Memory deposit route is gone).
+    // A due note-review routine: create one standalone note, then author its first review card in place
+    // (#687 replaced the retired enrollment route) so its current-note prompt's card is due immediately.
     const doc = (text: string) => ({
       content: [{ content: [{ text, type: "text" }], type: "paragraph" }],
       type: "doc"
@@ -69,8 +69,11 @@ test.describe("Today daily cycle (#610)", () => {
     const note = (await post(page.request, baseURL, "/notes", {
       bodyDoc: doc("kanmusu — ship girl")
     })) as { entryId: string };
-    await post(page.request, baseURL, `/notes/${note.entryId}/review/enrollment`, {
-      question: "kanmusu"
+    await post(page.request, baseURL, "/notes/review/author-cards", {
+      noteEntryId: note.entryId,
+      questionDoc: doc("kanmusu"),
+      submissionId: "today-daily-note-card",
+      target: { kind: "current_note" }
     });
 
     // Today shows both obligations as grouped Due-now rows, and no false clear.

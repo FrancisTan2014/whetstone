@@ -2,9 +2,9 @@ import { expect, test } from "../fixtures";
 
 // Import notebook lists into Notes (#661): a learner pastes a multiline list, previews the deterministic
 // split into Question/Note rows, and imports the whole batch atomically as standalone Notes. Every imported
-// note lands in the one Notes list and is cardless — no Review until the learner deliberately adds it. When
-// they do, an imported note reuses its confirmed question read-only (never retyped), exactly like an
-// anchored note reuses its source. Editing the canonical Note afterwards is what the review prompt reveals;
+// note lands in the one Notes list with a cardless prompt — no Review until the learner deliberately adds
+// it. When they do, an imported note reuses its confirmed question read-only (never retyped); Start
+// reviewing enrolls that same prompt. Editing the canonical Note afterwards is what the review prompt reveals;
 // the cue itself is untouched. The enrolled prompt is graded back to "Due complete" so the shared review
 // queue stays clean for the other specs. Terms are distinctive so every row assertion is scoped to its own
 // list item in the shared stack.
@@ -55,8 +55,9 @@ test.describe("notes import", () => {
     await expect(dialog).toBeHidden();
     await expect(first.getByText("a fortunate discovery (revised)")).toBeVisible();
 
-    // Add it to Review. An imported note reuses its confirmed question read-only: the exact cue is shown,
-    // and there is no "what should Whetstone ask you?" input to retype it.
+    // Add it to Review from the imported note's cardless prompt: drilling into its card row shows the
+    // confirmed Question read-only (as text with an Edit question control, never an inline retype field),
+    // and Start reviewing enrolls it due now.
     await first.getByRole("button", { name: /Open note/ }).click();
     const reviewDialog = page.getByRole("dialog", { name: "Edit note" });
     await reviewDialog.getByRole("tab", { name: "Cards" }).click();
@@ -64,8 +65,8 @@ test.describe("notes import", () => {
     await cardsPanel.getByRole("button", { name: /serendipity/ }).click();
     await expect(cardsPanel.getByText("Not in review")).toBeVisible();
     await expect(cardsPanel.getByText("serendipity", { exact: true })).toBeVisible();
-    await expect(cardsPanel.getByLabel("What should Whetstone ask you?")).toHaveCount(0);
-    await cardsPanel.getByRole("button", { name: "Add to review" }).click();
+    await expect(cardsPanel.getByRole("button", { name: "Edit question" })).toBeVisible();
+    await cardsPanel.getByRole("button", { name: "Start reviewing" }).click();
     await expect(cardsPanel.getByText("Due now")).toBeVisible();
     await reviewDialog.getByRole("button", { name: "Close" }).click();
     await expect(reviewDialog).toBeHidden();
