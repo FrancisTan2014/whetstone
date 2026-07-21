@@ -533,7 +533,7 @@ The loop so far verifies the **code** (types, lint, unit/jsdom tests, build) and
 
 - **Deterministic E2E smoke — gate in CI.** A Playwright suite boots the **real stack** (reuse the screenshot harness's real-server + in-memory PGlite boot) and drives the core loop: open a work → open a chapter → **assert no console errors, no 4xx, no React hydration/DOM-nesting warnings** → select text → toolbar → add note → note persists → look up a word. These are **correctness** assertions (deterministic, not timing), so unlike flaky runtime perf numbers they **block the merge** (`pnpm validate`/CI). Keep the suite small, stable, and fast; prefer role/label selectors. **Author and maintain it with Playwright Test Agents** — the planner/generator/healer set (`npx playwright init-agents`) with a seed test that boots the real stack — but the gate stays the deterministic generated tests, not the agents themselves. This is the regression net for the integrated app.
 - **Independent Tester (QA) agent — exploratory, files bugs.** A tester role runs **against `main` after merges** (and/or on a schedule), driving the booted app **beyond the scripted smoke** like a real tester, and files `[Bug]` issues for what it finds. It is **decoupled from the reviewer** (static diff review vs dynamic runtime testing — different skills, cadence, and ideally model). It holds the **same high-signal bar** as the reviewer: reproduce before filing, **dedupe against open `[Bug]`s**, and file only genuine, reproducible defects with clear repro steps — each `[Bug]` shipping a **runnable repro** (a deterministic script that fails on the tested SHA, asserting the product contract, saved as a run artifact) that the developer promotes into the committed regression test — an over-eager bug-filer that floods the backlog is a regression, not a feature. Its safety lives in its **own guardrails, not a human gate** (the loop is fully autonomous): its only action is **filing issues** (read-only on code and runtime — it never merges or edits code), it **self-limits** each run (a cap on bugs filed, plus the reproduce/dedupe/high-signal bar above), and any bad output is cheaply reversible by closing the issue. Crucially, **a clean run is a success: the tester is measured by the surface it exercises and the evidence it leaves, not by a bug count** (counting filed bugs would only reward noise). So every run — including a zero-bug one — must leave an **observable evidence trail**: a short report of the flows/surfaces driven, the console/HTTP/hydration capture (or "none"), and screenshots, saved as a run artifact and surfaced where the maintainer can see it; otherwise a clean run is indistinguishable from a run that did nothing. Its discovery surface is **dynamic functional and accessibility** behavior — console/4xx/5xx/hydration warnings, flows that violate `PRODUCT.md`, focus/contrast/target-size, responsiveness at realistic scale — **decoupled from the design agent's static product/UX review**: design owns visual/UX quality, the tester owns runtime defect discovery, so the two never duplicate each other.
-- **Bug-first prioritization.** The developer picks ready `[Bug]`s before ready `[Task]`s (`scripts/developer-next-action.mjs`), so verified defects are paid down before new feature work.
+- **Bug-first prioritization.** The developer picks ready `[Bug]`s before ready `[Task]`s (`scripts/delivery/developerNextAction.mjs`), so verified defects are paid down before new feature work.
 
 ## Performance
 
@@ -811,7 +811,7 @@ reviewer-run-reviewed: <head-sha>
 ### Merge gates
 
 The reviewer records its verdict (labels + the `reviewer-run-reviewed` marker); a **deterministic merge
-step** (`scripts/merge-approved-prs.mjs`, run by the reviewer launcher) — not an LLM session's
+step** (`scripts/delivery/mergeApprovedPrs.mjs`, run by the reviewer launcher) — not an LLM session's
 discretion — merges a PR only when **every** gate below passes. The reviewer agent itself does not merge.
 
 - The PR has a `review-approved` label.
@@ -829,11 +829,11 @@ the repository default merge strategy (merge commit) and deletes the branch when
 ### Dependency unblock
 
 After the merge step, the reviewer launcher runs a sibling **deterministic unblock step**
-(`scripts/unblock-ready-issues.mjs`) — again code, not an LLM session's discretion. Merging a PR closes
+(`scripts/delivery/unblockReadyIssues.mjs`) — again code, not an LLM session's discretion. Merging a PR closes
 its linked issue, which can satisfy another issue's dependency; this step rejoins those issues to the
 developer queue. It flips every open `blocked` issue whose `Depends on: #N` references are **all** closed
 from `blocked` to `ready-for-dev` (with an audit comment), sharing its dependency parse with the
-developer's selector (`scripts/pick-next-issue.mjs`) so "dependencies resolved" means the same thing on
+developer's selector (`scripts/delivery/pickNextIssue.mjs`) so "dependencies resolved" means the same thing on
 both sides of the handoff. It leaves an issue blocked when any dependency is still open, when it carries
 `needs-design` (the block is an unresolved decision, not a dependency), or when it names no dependency.
 The scan is idempotent and self-heals, so a dependency closed in an earlier tick is still caught later.

@@ -4,7 +4,10 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const scriptsDir = dirname(fileURLToPath(import.meta.url));
+// This module lives in scripts/delivery/; the operator launchers stay in scripts/.
+const deliveryDir = dirname(fileURLToPath(import.meta.url));
+const scriptsDir = resolve(deliveryDir, "..");
+const repoRoot = resolve(deliveryDir, "..", "..");
 const launchers = {
   developer: "run-developer.cmd",
   reviewer: "run-reviewer.cmd"
@@ -29,7 +32,7 @@ export function runSupervisorCycle(role, runtime) {
   const command = runtime.platform === "win32" ? (runtime.comSpec ?? "cmd.exe") : launcher;
   const args = runtime.platform === "win32" ? ["/d", "/c", launcher] : [];
   const result = runtime.spawn(command, args, {
-    cwd: resolve(scriptsDir, ".."),
+    cwd: repoRoot,
     encoding: "utf8",
     stdio: "inherit"
   });
@@ -86,7 +89,7 @@ export async function runCli(argv, runtime, processRef) {
   try {
     processRef.exitCode = await runSupervisor(argv, runtime);
   } catch (error) {
-    runtime.error(`delivery-supervisor: ${error.message}`);
+    runtime.error(`supervisor: ${error.message}`);
     processRef.exitCode = 1;
   }
 }

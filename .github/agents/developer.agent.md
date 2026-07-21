@@ -42,7 +42,7 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 
 Do exactly **one** thing per run, chosen as a pure function of the GitHub queue — never an arbitrary
 or "latest" pick. The launcher (`scripts/run-developer.cmd`) decides for you and hands you a concrete
-task; if you are driven directly, run `node scripts/developer-next-action.mjs` and obey its single
+task; if you are driven directly, run `node scripts/delivery/developerNextAction.mjs` and obey its single
 decision line. The rule keeps work-in-progress at 1:
 
 - **`fix <pr>`** — a workflow PR is open and labeled `changes-requested`: the reviewer handed it back.

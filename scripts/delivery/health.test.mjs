@@ -7,7 +7,7 @@ import {
   summarizeFlow,
   summarizeGateRuns,
   summarizeQueue
-} from "./delivery-health.mjs";
+} from "./health.mjs";
 
 test("percentile interpolates a sorted sample without mutating it", () => {
   const values = [30, 10, 20];

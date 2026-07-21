@@ -16,7 +16,7 @@ set "ACTION_FILE=%TEMP%\whetstone-reviewer-action-%RANDOM%-%RANDOM%.txt"
 if defined WHETSTONE_SELECTOR_COMMAND (
   call "%WHETSTONE_SELECTOR_COMMAND%" > "%ACTION_FILE%"
 ) else (
-  node scripts\reviewer-next-action.mjs > "%ACTION_FILE%"
+  node scripts\delivery\reviewerNextAction.mjs > "%ACTION_FILE%"
 )
 set "SELECTOR_STATUS=%ERRORLEVEL%"
 if not "%SELECTOR_STATUS%"=="0" (
@@ -49,4 +49,4 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo.
 echo === Deterministic unblock step (unblocks blocked issues whose dependencies are now resolved) ===
-node scripts\unblock-ready-issues.mjs
+node scripts\delivery\unblockReadyIssues.mjs

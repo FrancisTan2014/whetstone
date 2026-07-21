@@ -44,7 +44,7 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 ## Decide whether to run
 
 The launcher (`scripts/run-tester.cmd` / `-auto.cmd`) decides for you with
-`scripts/tester-next-action.mjs`; if you are driven directly, run `node scripts/tester-next-action.mjs`
+`scripts/delivery/testerNextAction.mjs`; if you are driven directly, run `node scripts/delivery/testerNextAction.mjs`
 and obey its single line:
 
 - **`test <budget>`** — explore and file at most `<budget>` new bugs this session (the budget is the
@@ -259,7 +259,7 @@ to "run automatically" / "loop"), drive yourself with Copilot's scheduled-task f
 
 - On the first tick, create a **self-paced** schedule (a recurring foreground task you re-arm each
   cycle). Keep it in the **foreground**; never a detached or background run.
-- Each tick: run `node scripts/tester-next-action.mjs`. On `test <budget>`, do **one** exploration
+- Each tick: run `node scripts/delivery/testerNextAction.mjs`. On `test <budget>`, do **one** exploration
   session and file up to `<budget>` bugs (or none). On `idle`, file nothing.
 - End every tick by **re-arming the schedule** as your last action, at the cadence the launcher set
   (**about 10 minutes**, 600s). Re-arm even after `idle` or a clean run — a tick that fires mid-run

@@ -5,9 +5,9 @@ description: Reviews one pull request with high signal and records its verdict v
 
 You are a senior reviewer on whetstone. Your atom of work is **one** pull request: review it, post
 high-signal feedback, and record your verdict by setting its label and the `reviewer-run-reviewed`
-marker. You do **not** merge — a deterministic step (`scripts/merge-approved-prs.mjs`) merges when
+marker. You do **not** merge — a deterministic step (`scripts/delivery/mergeApprovedPrs.mjs`) merges when
 every merge gate passes; you only ever run that script, never `gh pr merge`. A sibling deterministic
-step (`scripts/unblock-ready-issues.mjs`) then unblocks any issue whose `Depends on:` dependencies
+step (`scripts/delivery/unblockReadyIssues.mjs`) then unblocks any issue whose `Depends on:` dependencies
 have just been resolved. Never edit the code yourself. Every invocation is one-shot and foreground.
 `run-reviewer-auto.cmd` is an external deterministic supervisor that launches a fresh process only
 when review work exists; never schedule, poll, re-arm, detach, or review a second PR yourself.
@@ -34,8 +34,8 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 ## Pick the work
 
 - If the maintainer named a PR, review it. Otherwise the launcher (`scripts/run-reviewer.cmd`) decides
-  for you with `scripts/reviewer-next-action.mjs`; if you are driven directly, run
-  `node scripts/reviewer-next-action.mjs` and obey it — **`review <pr>`** (review that PR) or
+  for you with `scripts/delivery/reviewerNextAction.mjs`; if you are driven directly, run
+  `node scripts/delivery/reviewerNextAction.mjs` and obey it — **`review <pr>`** (review that PR) or
   **`idle`** (nothing waiting: stop, or in a loop re-arm).
 - It selects the **oldest** open non-draft PR labeled `needs-review`, plus any `review-approved` PR
   whose reviewed marker is stale after a push. It skips `changes-requested` and `blocked` PRs. This
@@ -99,7 +99,7 @@ labels a dependency-gated issue `blocked` (not `ready-for-dev`) with a `Depends 
 those dependencies close, it must rejoin the developer queue. Run the deterministic unblock step
 **after** the merge step so an issue unblocked by this tick's merge is picked up the same tick:
 
-- `node scripts/unblock-ready-issues.mjs` flips every open `blocked` issue whose `Depends on: #N`
+- `node scripts/delivery/unblockReadyIssues.mjs` flips every open `blocked` issue whose `Depends on: #N`
   references are **all** closed to `ready-for-dev` (removing `blocked`, adding `ready-for-dev`, with
   an audit comment). It shares its dependency parse with the developer's selector, so "dependencies
   resolved" means the same thing on both sides of the handoff.

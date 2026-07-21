@@ -7,7 +7,7 @@ set "NO_COLOR=1"
 echo === Deciding whether the Tester should run (open-bug backlog headroom) ===
 set "ACTION="
 set "BUDGET="
-for /f "usebackq tokens=1,2 delims= " %%a in (`node scripts\tester-next-action.mjs`) do (
+for /f "usebackq tokens=1,2 delims= " %%a in (`node scripts\delivery\testerNextAction.mjs`) do (
   set "ACTION=%%a"
   set "BUDGET=%%b"
 )

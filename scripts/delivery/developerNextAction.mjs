@@ -3,7 +3,7 @@
 //
 // The developer completes ONE unit of work per run and otherwise stops. Whether that unit is "fix a
 // PR the reviewer sent back" or "start the next issue" must be a pure function of the GitHub queue,
-// not a choice left to a non-deterministic LLM session -- the same reason merge-approved-prs.mjs
+// not a choice left to a non-deterministic LLM session -- the same reason mergeApprovedPrs.mjs
 // decides merges in code. The rule keeps work-in-progress at 1:
 //
 //   * a workflow PR is open and labeled `changes-requested`  -> fix that PR (reviewer handed it back)
@@ -18,7 +18,7 @@
 //                                                               `in-progress` at once and orphaning the first.
 //   * no workflow PR and nothing in-progress                 -> implement the next dependency-ready issue
 //                                                               (ready `[Bug]`s before `[Task]`s; see
-//                                                               pick-next-issue.mjs `selectNextIssue`)
+//                                                               pickNextIssue.mjs `selectNextIssue`)
 //   * none of the above                                      -> idle (nothing to do)
 //
 // A "workflow PR" is one this loop owns: a `dev/` head branch, or a PR carrying a review label. That
@@ -26,7 +26,7 @@
 // closing the lowest-numbered issue is fixed first, matching the lowest-issue-first selection order.
 //
 // Usage:
-//   node scripts/developer-next-action.mjs
+//   node scripts/delivery/developerNextAction.mjs
 //
 // stdout: exactly one decision line -- one of:
 //   fix <pr>        address the reviewer's change requests on this PR, then stop
@@ -39,8 +39,8 @@
 //
 // Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-developer.cmd).
 
-import { ghJson, selectNextIssue } from "./pick-next-issue.mjs";
-import { selectDeveloperPrAction } from "./delivery-workflow.mjs";
+import { ghJson, selectNextIssue } from "./pickNextIssue.mjs";
+import { selectDeveloperPrAction } from "./workflow.mjs";
 
 function decide() {
   const prs = ghJson([
@@ -87,7 +87,7 @@ let d;
 try {
   d = decide();
 } catch (err) {
-  console.error(`developer-next-action: failed to query GitHub: ${err.message}`);
+  console.error(`developerNextAction: failed to query GitHub: ${err.message}`);
   process.exit(1);
 }
 
@@ -97,24 +97,24 @@ const openSummary = d.open.length
 
 switch (d.action) {
   case "fix":
-    console.error(`developer-next-action: ${openSummary} -> fix PR #${d.pr} (changes-requested).`);
+    console.error(`developerNextAction: ${openSummary} -> fix PR #${d.pr} (changes-requested).`);
     console.log(`fix ${d.pr}`);
     break;
   case "fix-ci":
     console.error(
-      `developer-next-action: ${openSummary} -> fix-ci PR #${d.pr} (completed blocking check failed).`
+      `developerNextAction: ${openSummary} -> fix-ci PR #${d.pr} (completed blocking check failed).`
     );
     console.log(`fix-ci ${d.pr}`);
     break;
   case "wait":
     console.error(
-      `developer-next-action: ${openSummary} -> wait (PR #${d.pr} in review / awaiting merge); not starting new work.`
+      `developerNextAction: ${openSummary} -> wait (PR #${d.pr} in review / awaiting merge); not starting new work.`
     );
     console.log(`wait ${d.pr}`);
     break;
   case "implement":
     console.error(
-      `developer-next-action: ${openSummary} -> ${
+      `developerNextAction: ${openSummary} -> ${
         d.resume ? `resume in-progress issue #${d.issue}` : `implement issue #${d.issue}`
       }.`
     );
@@ -122,7 +122,7 @@ switch (d.action) {
     break;
   default:
     console.error(
-      "developer-next-action: nothing to do (no workflow PR, no dependency-ready issue)."
+      "developerNextAction: nothing to do (no workflow PR, no dependency-ready issue)."
     );
     console.log("idle");
 }

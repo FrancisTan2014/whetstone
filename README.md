@@ -161,6 +161,6 @@ The **Tester (QA)** is the exploratory discovery layer above the deterministic E
 reviewer (on a different model than the developer), boots the real stack on `main`, drives the app
 beyond the scripted smoke, and files high-signal, de-duplicated `[Bug]` issues — its only action is
 filing issues (read-only on code; it never merges or edits). It is **self-limiting**:
-`scripts/tester-next-action.mjs` caps how many bugs a run may file from the open-bug backlog headroom,
+`scripts/delivery/testerNextAction.mjs` caps how many bugs a run may file from the open-bug backlog headroom,
 and it files **nothing** when it finds nothing. The developer's bug-first selection then pays those
 bugs down before new feature work.

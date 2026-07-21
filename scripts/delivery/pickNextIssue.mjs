@@ -17,7 +17,7 @@
 // Importable: other workflow scripts import `selectNextIssue()` (and the `gh` helpers) from here.
 //
 // Usage:
-//   node scripts/pick-next-issue.mjs        print the next issue number, or nothing if none is ready
+//   node scripts/delivery/pickNextIssue.mjs        print the next issue number, or nothing if none is ready
 //
 // stdout: the chosen issue number and nothing else (so a caller can capture it); empty when none.
 // stderr: human-readable diagnostics (the pick, the eligible set, anything blocked by dependencies).
@@ -25,13 +25,13 @@
 //
 // Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-developer.cmd).
 
-import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
-export const READY_LABEL = 'ready-for-dev';
+export const READY_LABEL = "ready-for-dev";
 
 export function gh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 }
 
 export function ghJson(args) {
@@ -49,7 +49,7 @@ export function dependsOn(body) {
   const deps = new Set();
   const clauseRe = /^[ \t>*_+-]*depends on\b[^.\n]*/gim;
   let clause;
-  while ((clause = clauseRe.exec(body ?? '')) !== null) {
+  while ((clause = clauseRe.exec(body ?? "")) !== null) {
     for (const m of clause[0].matchAll(/#(\d+)/g)) deps.add(Number(m[1]));
   }
   return [...deps];
@@ -58,8 +58,8 @@ export function dependsOn(body) {
 // An issue is a bug (fixed before feature `[Task]`s) when it carries the `bug` label or its title
 // starts with the `[Bug]` prefix. EPUB/issue titles are conventionally prefixed by type.
 export function isBug(issue) {
-  const labelled = (issue.labels ?? []).some((l) => l.name === 'bug');
-  const titled = /^\s*\[bug\]/i.test(issue.title ?? '');
+  const labelled = (issue.labels ?? []).some((l) => l.name === "bug");
+  const titled = /^\s*\[bug\]/i.test(issue.title ?? "");
   return labelled || titled;
 }
 
@@ -67,22 +67,48 @@ export function isBug(issue) {
 // Returns { next: number|null, eligible: number[], blocked: number[] } with `eligible` in
 // selection order (so eligible[0] is the pick).
 export function selectNextIssue() {
-  const repo = ghJson(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner;
+  const repo = ghJson(["repo", "view", "--json", "nameWithOwner"]).nameWithOwner;
   const ready = ghJson([
-    'issue', 'list', '--repo', repo, '--state', 'open', '--label', READY_LABEL,
-    '--limit', '500', '--json', 'number,body,labels,title',
+    "issue",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--label",
+    READY_LABEL,
+    "--limit",
+    "500",
+    "--json",
+    "number,body,labels,title"
   ]);
   // One list of every open issue number lets us treat a dependency as satisfied iff it is no longer
   // open (closed or nonexistent) -- without one API call per dependency.
   const openNumbers = new Set(
-    ghJson(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', 'number'])
-      .map((i) => i.number),
+    ghJson([
+      "issue",
+      "list",
+      "--repo",
+      repo,
+      "--state",
+      "open",
+      "--limit",
+      "1000",
+      "--json",
+      "number"
+    ]).map((i) => i.number)
   );
   const eligibleIssues = ready.filter((i) => dependsOn(i.body).every((n) => !openNumbers.has(n)));
   const byNumber = (a, b) => a.number - b.number;
   // Bug-first, then oldest-first within each group.
-  const bugs = eligibleIssues.filter((i) => isBug(i)).sort(byNumber).map((i) => i.number);
-  const tasks = eligibleIssues.filter((i) => !isBug(i)).sort(byNumber).map((i) => i.number);
+  const bugs = eligibleIssues
+    .filter((i) => isBug(i))
+    .sort(byNumber)
+    .map((i) => i.number);
+  const tasks = eligibleIssues
+    .filter((i) => !isBug(i))
+    .sort(byNumber)
+    .map((i) => i.number);
   const eligible = [...bugs, ...tasks];
   const blocked = ready
     .map((i) => i.number)
@@ -96,22 +122,22 @@ function runCli() {
   try {
     result = selectNextIssue();
   } catch (err) {
-    console.error(`pick-next-issue: failed to query GitHub: ${err.message}`);
+    console.error(`pickNextIssue: failed to query GitHub: ${err.message}`);
     process.exit(1);
   }
   const { next, eligible, blocked } = result;
   if (next == null) {
-    console.error(`pick-next-issue: no ${READY_LABEL} issue is dependency-ready.`);
+    console.error(`pickNextIssue: no ${READY_LABEL} issue is dependency-ready.`);
     process.exit(0);
   }
   console.error(
-    `pick-next-issue: next=#${next}; eligible=[${eligible.join(', ')}]` +
-      (blocked.length ? `; blocked-by-deps=[${blocked.join(', ')}]` : ''),
+    `pickNextIssue: next=#${next}; eligible=[${eligible.join(", ")}]` +
+      (blocked.length ? `; blocked-by-deps=[${blocked.join(", ")}]` : "")
   );
   console.log(String(next));
   process.exit(0);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   runCli();
 }
