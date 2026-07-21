@@ -244,18 +244,12 @@ export async function createDirectCard(
   return parseDirectCardResultDto(await response.json());
 }
 
-// Why authoring a card over an existing saved note failed (#687), kept as a small closed set so the composer
-// can decide recovery. A `network` blip is recoverable with the SAME submission id; a `conflict` is the same
-// id replayed with an edited payload; `gone` is a tombstoned submission whose note was deleted;
-// `already_authored` means another submission already gave this note its one allowed card; `not_found` means
-// the note no longer belongs to the learner. Every case keeps the learner's drafts.
-export type AuthorNoteCardErrorKind =
-  | "already_authored"
-  | "conflict"
-  | "gone"
-  | "invalid"
-  | "network"
-  | "not_found";
+// Why authoring a card over an existing saved note failed (#687; independent directions in #688), kept as a
+// small closed set so the composer can decide recovery. A `network` blip is recoverable with the SAME
+// submission id; a `conflict` is the same id replayed with an edited payload; `gone` is a tombstoned
+// submission whose note was deleted; `not_found` means the note no longer belongs to the learner. Every case
+// keeps the learner's drafts.
+export type AuthorNoteCardErrorKind = "conflict" | "gone" | "invalid" | "network" | "not_found";
 
 export class AuthorNoteCardError extends Error {
   readonly kind: AuthorNoteCardErrorKind;
@@ -267,12 +261,12 @@ export class AuthorNoteCardError extends Error {
   }
 }
 
-// Author the FIRST review card over an EXISTING saved note (#687), retry-safe via the composer's stable
-// `submissionId`. A same-payload retry returns the ORIGINAL result (200), so a lost response never
-// double-creates. On failure this throws an `AuthorNoteCardError` whose `kind` maps the server outcome —
-// 409 `already_authored` → `already_authored` and any other 409 → `conflict`, 410 → `gone`, 404 →
-// `not_found`, other 4xx → `invalid`, anything else → `network` — so the composer keeps every draft and
-// offers the right recovery.
+// Author a review card over an EXISTING saved note (#687; independent directions in #688), retry-safe via
+// the composer's stable `submissionId`. A same-payload retry returns the ORIGINAL result (200), so a lost
+// response never double-creates, while a DIFFERENT submission always creates a new card. On failure this
+// throws an `AuthorNoteCardError` whose `kind` maps the server outcome — 409 → `conflict`, 410 → `gone`,
+// 404 → `not_found`, other 4xx → `invalid`, anything else → `network` — so the composer keeps every draft
+// and offers the right recovery.
 export async function authorNoteCard(request: AuthorNoteCardRequest): Promise<DirectCardResultDto> {
   let response: Response;
   try {
@@ -286,10 +280,7 @@ export async function authorNoteCard(request: AuthorNoteCardRequest): Promise<Di
   }
   if (!response.ok) {
     if (response.status === 409) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      throw new AuthorNoteCardError(
-        body?.error === "already_authored" ? "already_authored" : "conflict"
-      );
+      throw new AuthorNoteCardError("conflict");
     }
     if (response.status === 410) {
       throw new AuthorNoteCardError("gone");

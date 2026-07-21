@@ -133,8 +133,8 @@ async function seedNote(
   return noteEntryId;
 }
 
-// Seed a historical `legacy_custom` prompt on a note — an imported cardless sibling that the
-// one-authored-prompt-per-note invariant must ignore.
+// Seed a historical `legacy_custom` prompt on a note — an imported cardless sibling that coexists with any
+// number of authored prompts on the same note.
 async function seedLegacyPrompt(noteEntryId: string): Promise<string> {
   const promptId = `legacy-${(sequence += 1)}`;
   await context.db.transaction((tx) =>
@@ -373,7 +373,7 @@ describe("authorNoteCard", () => {
     expect(await listPrompts()).toHaveLength(0);
   });
 
-  it("reports already_authored for a distinct second submission and rolls its receipt back", async () => {
+  it("creates a DISTINCT second card for a distinct submission over the same note", async () => {
     const noteEntryId = await seedNote();
     const first = await authorNoteCard(context.deps, DEFAULT_USER_ID, authorRequest(noteEntryId));
     expect(first.status).toBe("ok");
@@ -386,12 +386,37 @@ describe("authorNoteCard", () => {
         questionDoc: questionDoc("Another cue?")
       })
     );
-    expect(second).toEqual({ status: "already_authored" });
-    // Exactly one authored prompt and one card survive; the loser's receipt rolled back so a later retry
-    // re-decides cleanly.
-    expect(await listPrompts()).toHaveLength(1);
-    expect(await listCards()).toHaveLength(1);
-    expect(await listReceipts()).toHaveLength(1);
+    expect(second.status).toBe("ok");
+    if (first.status !== "ok" || second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+    // The note owns two independent authored prompts and two independent cards, each with its own receipt.
+    expect(second.value.promptId).not.toBe(first.value.promptId);
+    const cards = await listCards();
+    expect(new Set(cards.map((card) => card.targetEntryId)).size).toBe(2);
+    expect(await listPrompts()).toHaveLength(2);
+    expect(cards).toHaveLength(2);
+    expect(await listReceipts()).toHaveLength(2);
+  });
+
+  it("creates a DISTINCT second card even when the second submission's text matches the first", async () => {
+    const noteEntryId = await seedNote();
+    const first = await authorNoteCard(context.deps, DEFAULT_USER_ID, authorRequest(noteEntryId));
+    expect(first.status).toBe("ok");
+
+    // Same question text, DIFFERENT submission id: distinct submissions are never coalesced by content.
+    const second = await authorNoteCard(
+      context.deps,
+      DEFAULT_USER_ID,
+      authorRequest(noteEntryId, { submissionId: "sub-2" })
+    );
+    expect(second.status).toBe("ok");
+    if (first.status !== "ok" || second.status !== "ok") {
+      throw new Error("expected ok");
+    }
+    expect(second.value.promptId).not.toBe(first.value.promptId);
+    expect(await listPrompts()).toHaveLength(2);
+    expect(await listCards()).toHaveLength(2);
   });
 
   it("returns the original result on an identical retry without writing a second card", async () => {
@@ -595,17 +620,21 @@ describe("POST /api/notes/review/author-cards", () => {
     expect(response.json()).toEqual({ error: "not_found" });
   });
 
-  it("returns 409 already_authored for a distinct second submission", async () => {
+  it("authors a DISTINCT second card via the route for a distinct submission", async () => {
     const noteEntryId = await seedNote();
-    await post(authorRequest(noteEntryId));
+    const first = await post(authorRequest(noteEntryId));
     const response = await post(
       authorRequest(noteEntryId, {
         submissionId: "sub-2",
         questionDoc: questionDoc("Another cue?")
       })
     );
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "already_authored" });
+    expect(response.statusCode).toBe(200);
+    const firstPromptId = (first.json() as { promptId: string }).promptId;
+    const secondPromptId = (response.json() as { promptId: string }).promptId;
+    expect(secondPromptId).not.toBe(firstPromptId);
+    expect(await listPrompts()).toHaveLength(2);
+    expect(await listCards()).toHaveLength(2);
   });
 
   it("returns 409 submission_conflict when a submission id is reused with a changed payload", async () => {

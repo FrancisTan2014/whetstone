@@ -1,5 +1,5 @@
 import { localDayBoundary, type TodayRoutineSummary } from "@whetstone/domain";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { memoryPrompts, personalEntries, reviewCards } from "../../db/schema.js";
@@ -27,30 +27,6 @@ export async function getPromptRowForUser(
     .limit(1);
 
   return rows[0]?.prompt;
-}
-
-// The id of the note's existing authored prompt, if any (#687). At most ONE authored prompt — a
-// `current_note` or an `expected_response` — may exist per note; the partial unique index
-// `memory_prompts_one_authored_prompt_per_note_uq` enforces it. The first-card command reads this inside
-// its creating transaction (under the note's row lock) to reject a second authored prompt as a deterministic
-// `already_authored` BEFORE it reaches that index (otherwise it surfaces as an unhandled 500). Legacy
-// non-authored prompts (imported cardless questions) are ignored — they never occupy the invariant.
-export async function findAuthoredPromptId(
-  db: Pick<DbClient, "select">,
-  noteEntryId: string
-): Promise<string | undefined> {
-  const rows = await db
-    .select({ entryId: memoryPrompts.entryId })
-    .from(memoryPrompts)
-    .where(
-      and(
-        eq(memoryPrompts.noteEntryId, noteEntryId),
-        inArray(memoryPrompts.revealKind, ["current_note", "expected_response"])
-      )
-    )
-    .limit(1);
-
-  return rows[0]?.entryId;
 }
 
 // The learner's note-review routine as Today's board reads it (#610): one grouped summary over the user's

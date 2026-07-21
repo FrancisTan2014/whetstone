@@ -15,7 +15,7 @@ import { fetchNotePromptSettings } from "../notesReview/notesReviewApi";
 type CardsViewProps = Readonly<{
   noteEntryId: string;
   onReviewChanged: () => void;
-  // The live canonical note body, framed as the read-only Answer/Reference a first card grades against, and
+  // The live canonical note body, framed as the read-only Answer/Reference each card grades against, and
   // shown read-only while editing an existing card's grading target. `null` when the note carries no
   // reflowable body (a Mark) — such a note never offers Add card.
   noteBodyDoc: DocumentNodeJSON | null;
@@ -35,9 +35,9 @@ type CardsScreen =
 // then a per-card history, all inside the shared Sheet. It renders N >= 0 rows without a singleton
 // assumption and reuses the existing owner-scoped prompt/settings query and prompt-id mutations — no client
 // copy becomes a source of truth. Back navigates History -> Detail -> List, restoring the originating row's
-// focus. When the note has no authored prompt and carries a body, the toolbar offers Add card, which opens
-// the inline rich composer to author the note's first card in place. Cards never offers a rating action;
-// Today and Notes Review own the routine.
+// focus. When the note carries a reflowable body, the toolbar offers Add card, which opens the inline rich
+// composer to author another independently-scheduled card in place; a note may own many such cards (#688).
+// Cards never offers a rating action; Today and Notes Review own the routine.
 export function CardsView({
   noteEntryId,
   onReviewChanged,
@@ -186,19 +186,15 @@ export function CardsView({
   return renderList();
 
   function renderList(): React.JSX.Element {
-    // Add card opens the first-card composer, so it is offered only when the note has no AUTHORED prompt
-    // (a `current_note` or `expected_response` reveal) — never gated on total prompt count. A note may
-    // carry read-only `legacy_custom` prompts while still owning no authored first card (#657/#687's
-    // migration excludes `legacy_custom` from the one-authored-prompt-per-note invariant), so such a note
-    // still shows its legacy row(s) AND offers Add card.
-    const hasAuthoredPrompt = prompts.some(
-      (prompt) =>
-        prompt.reveal.kind === "current_note" || prompt.reveal.kind === "expected_response"
-    );
+    // Add card opens the composer, offered for EVERY non-Mark note — one that carries a reflowable body —
+    // regardless of how many cards it already owns (#688 independent directions). A note can hold many
+    // authored `current_note`/`expected_response` cards plus read-only `legacy_custom` rows, so the toolbar
+    // never gates on prompt count or on whether an authored card already exists; a bodyless Mark alone
+    // cannot hold a recall card and so is the only case that hides Add card.
     return (
       <div className="noteCardsList">
         <div className="noteCardsToolbar">
-          {!hasAuthoredPrompt && noteBodyDoc !== null ? (
+          {noteBodyDoc !== null ? (
             <Button onClick={() => setScreen({ kind: "compose" })} type="button">
               Add card
             </Button>

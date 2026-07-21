@@ -1,0 +1,1 @@
+DROP INDEX "memory_prompts_one_authored_prompt_per_note_uq";

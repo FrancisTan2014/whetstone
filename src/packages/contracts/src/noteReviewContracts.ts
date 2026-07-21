@@ -300,15 +300,17 @@ export const directCardResultDtoSchema = z
 
 export type DirectCardResultDto = z.infer<typeof directCardResultDtoSchema>;
 
-// Author the FIRST rich review card for an already-saved, owned note from its Cards list (#687), retry-safe
-// via the client's stable `submissionId`. Unlike #689's createDirectCard — which mints a NEW standalone note
-// to review — this applies a retrieval contract to an EXISTING owned note: the note itself is the reviewed
-// material, so there is no `answerDoc` and the note is never copied or rewritten. `noteEntryId` is the owned
-// note; `questionDoc` is the rich retrieval prompt (its readable text derived server-side, where the
-// non-blank gate is applied); `target` is the discriminated grading policy (grade against the live note, or
-// against an authored Success check). At most one authored prompt may exist per note, so a genuine second
-// submission is a named conflict, never a database error. The result reuses `directCardResultDtoSchema` —
-// the created prompt/card ids plus the seeded FSRS state — with `noteId` being the existing owned note.
+// Author a rich review card for an already-saved, owned note from its Cards list (#687; independent
+// directions in #688), retry-safe via the client's stable `submissionId`. Unlike #689's createDirectCard —
+// which mints a NEW standalone note to review — this applies a retrieval contract to an EXISTING owned note:
+// the note itself is the reviewed material, so there is no `answerDoc` and the note is never copied or
+// rewritten. `noteEntryId` is the owned note; `questionDoc` is the rich retrieval prompt (its readable text
+// derived server-side, where the non-blank gate is applied); `target` is the discriminated grading policy
+// (grade against the live note, or against an authored Success check). A note may own MANY authored prompts,
+// so a DIFFERENT submission always creates a new independently-scheduled card; idempotency is per
+// `submissionId` (a same-id replay returns the original result, a changed-payload replay is a named
+// conflict), never a note-uniqueness constraint. The result reuses `directCardResultDtoSchema` — the created
+// prompt/card ids plus the seeded FSRS state — with `noteId` being the existing owned note.
 export const authorNoteCardRequestSchema = z
   .object({
     submissionId: z.string().trim().min(1),

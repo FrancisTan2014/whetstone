@@ -178,15 +178,17 @@ can navigate them from another package.
   note as Reference (#686). The pure
   `resolveNoteReveal` (`notesReviewReveal.ts`) switches on the discriminant; queries in `notesReviewQueries.ts`,
   the rating command reuses the shared review boundary (`rateReviewCard`) in `notesReviewCommands.ts`. All
-  legacy write paths deposit `legacy_custom`; the FIRST authored prompt over a saved note is minted by
-  first-card authoring (#687): `authorNoteCard.ts` (`authorNoteCard`, served at
+  legacy write paths deposit `legacy_custom`; authored prompts over a saved note are minted by
+  card authoring (#687, independent directions #688): `authorNoteCard.ts` (`authorNoteCard`, served at
   `POST /api/notes/review/author-cards` in `notesReviewRoutes.ts`, current-user scoped) authors ONE rich
   `current_note`/`expected_response` prompt + its `contains` link + ONE active shared card (retention 0.90,
   due now) over the learner's EXISTING note in place — never inserting or copying a note — plus one
   owner-scoped `card_creation_receipts` tombstone for retry-safety (shared with #689 via `cardCreationReceipt.ts`).
-  At most one authored prompt per note is enforced by the `memory_prompts_one_authored_prompt_per_note_uq`
-  partial unique index (migration `0060_brown_raza.sql`); a note that already has one is `already_authored`
-  (409), a Mark or bodyless note is rejected (`not_found`), and a deleted/card-removed target is `gone` (410).
+  A note may own MANY authored prompts, each independently scheduled (#688 dropped the
+  one-authored-prompt-per-note unique index in migration `0061_gigantic_killraven.sql`), so a DISTINCT
+  `submissionId` always creates a new card; per-submission idempotency is enforced by the creation receipt,
+  not a note-uniqueness constraint. A Mark or bodyless note is rejected (`not_found`), a changed-payload
+  replay of the same submission is `conflict` (409), and a deleted/card-removed target is `gone` (410).
 - Notes home — the owner-scoped note surface (#659): the `notes` feature owns generic, owner-scoped CRUD +
   search for EVERY owned note (anchored, standalone, imported, or a Mark), independent of any work. Server:
   `noteRoutes.ts` serves `GET /api/notes` (one recency-ordered list — `updated_at` desc, entry-id tiebreak —
@@ -197,9 +199,9 @@ can navigate them from another package.
   (`listNotesForUser` recency/work/search + `summarizeNoteReview` per-note projection, `getNoteForOwner`,
   `searchNoteIds`, `listNoteReviewCards`); owner-scoped writes in `noteCommands.ts` (`createStandaloneNote`/
   `updateNoteForOwner`/`deleteNoteForOwner`, each composing the single `insertNoteInTx`/`updateNoteBodyInTx`/
-  `deleteNoteInTx` primitives — guarded by `noteFacetOwnership.test.ts`). A saved note takes its first review
-  card through first-card authoring (`POST /api/notes/review/author-cards`, above), not a separate enrollment
-  step. Web: `NotesPage.tsx`
+  `deleteNoteInTx` primitives — guarded by `noteFacetOwnership.test.ts`). A saved note takes review cards
+  through card authoring (`POST /api/notes/review/author-cards`, above) — one or MANY, each independently
+  scheduled (#688) — not a separate enrollment step. Web: `NotesPage.tsx`
   is the single Notes home (one continuous list via `NotesHomeList.tsx`, per-row Review projection via
   `noteReviewSummaryLabel.ts`, debounced note-centric search, a "New card" primary action that composes a
   retrieval card in place — see #690). Opening any
@@ -207,7 +209,7 @@ can navigate them from another package.
   hosts the `RichContentEditor`, and a header-overflow "Delete note" replaces the old inline delete; the
   origin-specific persistence adapters live in `noteWorkspaceModel.ts`. The owner-scoped client lives in `notes/notesApi.ts`
   (`fetchAllNotes({work,search})`/`createStandaloneNote`/`updateOwnedNote`/`deleteOwnedNote`) and
-  `notesReview/notesReviewApi.ts` (`authorNoteCard`, the saved-note first-card client boundary).
+  `notesReview/notesReviewApi.ts` (`authorNoteCard`, the saved-note card client boundary).
 - Notes-owned Review settings & history (#660): the same owner-scoped boundary manages each note prompt's
   Review lifecycle over the shared Review commands (never re-implementing FSRS). Server
   `notesReview/notesReviewSettings{Projection,Queries,Commands}.ts` project a per-prompt settings row
@@ -221,8 +223,8 @@ can navigate them from another package.
   is rejected (400),
   `restart` composes the shared `applyResetToCardInTx` (409 if cardless), all in one transaction (#686). Web: the workspace's **Cards** tab `CardsView.tsx` lists each prompt and drills into `CardDetail.tsx` (state-driven
   rich edit-question/pause/resume/restart/remove/re-add, overflow confirmations, no-double-submit, stale-action list reload)
-  and a per-card `CardHistory.tsx` view; when the note has no authored prompt and carries a body its toolbar
-  offers Add card → the inline `SavedNoteCardComposer.tsx` (first-card authoring, #687). Client fns in
+  and a per-card `CardHistory.tsx` view; when the note carries a reflowable body its toolbar
+  offers Add card → the inline `SavedNoteCardComposer.tsx` (card authoring, #687/#688 multiplicity). Client fns in
   `notesReview/notesReviewApi.ts` (`fetchNotePromptSettings`/`fetchNotePromptHistory`/`editNotePromptQuestion` (rich `questionDoc`)/
   `pause|resume|restart|removeNotePromptCard`/`addNotePromptCardBack`/`authorNoteCard`).
 - Retry-safe direct card creation (#689): `notesReview/createDirectCard.ts` (`createDirectCard`, served at
@@ -264,7 +266,7 @@ can navigate them from another package.
   `notesImportDrafts.ts` (parse/fold via domain `notebookImport.ts`, undo-split/merge/split-off, offline
   gloss fill); `notesApi.ts` adds `importNotes`/`suggestGloss`. An imported note enrolls by reusing its
   cardless prompt's confirmed question read-only; the Cards-toolbar "Add card" opens `SavedNoteCardComposer.tsx`
-  (first-card authoring, #687) over a bodied note that has no authored prompt yet.
+  (card authoring, #687/#688) over any bodied note, adding one more independently-scheduled card.
 - Diary capture (owned, journals only) (#571): `src/apps/server/src/features/diary/` is the single
   owned-capture surface — the retired `makeDurable/` feature (proposal generation, `timeline_entries`,
   `proposal_candidates`/`proposal_reviews`, history backfill, `makeDurableContracts.ts`, the domain
@@ -986,10 +988,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   after rating, the learner sees the next scheduled date and chooses **Review next**. A failed reveal keeps
   the question with a specific retry; a failed rating keeps the reveal and its grades in place with a
   retryable alert. `notesReviewApi.ts` calls `/api/notes/review/*` (`NoteReviewPromptDto`/`NoteRevealDto`)
-  and parses via `noteReviewContracts`. A saved note's first review card is authored from the note sheet, not
-  this session: the Cards-toolbar Add card (in the shared `NoteWorkspace.tsx` for a bodied note without an
-  authored prompt) opens `SavedNoteCardComposer.tsx` (#687), which authors one rich card in place over the
-  note; `notesReviewApi.ts` exposes `authorNoteCard` for it.
+  and parses via `noteReviewContracts`. A saved note's review cards are authored from the note sheet, not
+  this session: the Cards-toolbar Add card (in the shared `NoteWorkspace.tsx` for any bodied note)
+  opens `SavedNoteCardComposer.tsx` (#687/#688), which authors one more independently-scheduled card in place
+  over the note; `notesReviewApi.ts` exposes `authorNoteCard` for it.
   The standalone `memory/` web mode (#573) was retired in #662: its browse/capture/manage clients
   (`MemoryPage`/`MemoryList`/`MemoryQuickAdd`/`MemoryAddDirection`/`MemoryNoteDetail`/`MemoryPromptRow`/
   `MemoryImport`), their tokens/labels, and `memoryApi.ts` are gone, and `/memory` now redirects to

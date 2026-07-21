@@ -179,30 +179,8 @@ describe("authorNoteCard (#687)", () => {
     });
   });
 
-  it("throws already_authored when a 409 carries that error body", async () => {
-    stubFetch({ body: { error: "already_authored" }, ok: false, status: 409 });
-
-    await expect(authorNoteCard(request)).rejects.toMatchObject({
-      kind: "already_authored",
-      name: "AuthorNoteCardError"
-    });
-  });
-
-  it("throws conflict for any other 409", async () => {
+  it("throws conflict on a 409", async () => {
     stubFetch({ body: { error: "submission_conflict" }, ok: false, status: 409 });
-
-    await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "conflict" });
-  });
-
-  it("throws conflict for a 409 whose body cannot be read", async () => {
-    const fetchMock = vi.fn(async () => ({
-      json: async () => {
-        throw new Error("no body");
-      },
-      ok: false,
-      status: 409
-    }));
-    vi.stubGlobal("fetch", fetchMock);
 
     await expect(authorNoteCard(request)).rejects.toMatchObject({ kind: "conflict" });
   });
