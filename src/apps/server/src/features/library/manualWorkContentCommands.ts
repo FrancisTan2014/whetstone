@@ -8,7 +8,7 @@ import {
   appendEditableWorkSection,
   reconcileEditableWorkContent
 } from "../content/editableWorkContent.js";
-import { normalizeManualWorkDocument } from "./manualWorkDocument.js";
+import { normalizeManualWorkDocument, ensureHeadingLedSection } from "./manualWorkDocument.js";
 import {
   loadManualWorkDocument,
   loadManualWorkSections,
@@ -158,7 +158,7 @@ export async function updateManualWorkContent(
     }
 
     const [unit] = await tx
-      .select({ entryId: readingUnits.entryId })
+      .select({ entryId: readingUnits.entryId, orderIndex: readingUnits.orderIndex })
       .from(readingUnits)
       .where(and(eq(readingUnits.entryId, unitEntryId), eq(readingUnits.workEntryId, workEntryId)))
       .limit(1);
@@ -171,8 +171,15 @@ export async function updateManualWorkContent(
       return { status: "conflict" as const };
     }
 
+    // Preserve the heading-led section invariant (#697): a non-leading section (order index > 0) is an
+    // outline node, so its first block must stay a heading — otherwise the Outline and the Reader TOC
+    // would show a spurious mid-work "Start". The leading section (index 0) is exempt: its pre-heading
+    // content is a legitimate "Start".
+    const normalized = normalizeManualWorkDocument(document);
+    const persisted = unit.orderIndex === 0 ? normalized : ensureHeadingLedSection(normalized);
+
     await reconcileEditableWorkContent(tx, {
-      document: normalizeManualWorkDocument(document),
+      document: persisted,
       unitEntryId,
       workEntryId
     });

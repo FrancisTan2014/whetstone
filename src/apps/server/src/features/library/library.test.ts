@@ -1528,4 +1528,59 @@ describe("manual work editor (#720, sections #697)", () => {
       { depth: 1, label: "Chapter One" }
     ]);
   });
+
+  it("keeps a non-leading section heading-led when its first block is saved as non-heading (#697)", async () => {
+    const workEntryId = await createManualWork();
+    const initial = await load(workEntryId);
+
+    // The leading section stays a legitimate headless "Start" — it must NOT be coerced.
+    const savedLead = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${initial.unitEntryId}/content`,
+      payload: {
+        document: { content: [paragraph("A lead paragraph before any heading.")], type: "doc" },
+        revision: initial.revision
+      }
+    });
+    expect(savedLead.statusCode).toBe(200);
+
+    // A second (non-leading) section, then a save that strips its heading down to a plain paragraph —
+    // exactly what the shared toolbar's "Paragraph" transform produces.
+    const added = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: { revision: savedLead.json().revision }
+    });
+    const secondUnitId = added.json().unitEntryId as string;
+    const savedSecond = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${secondUnitId}/content`,
+      payload: {
+        document: { content: [paragraph("Section Two"), paragraph("Body.")], type: "doc" },
+        revision: added.json().revision
+      }
+    });
+    expect(savedSecond.statusCode).toBe(200);
+
+    // The save response's recomputed Outline restores the second section as a heading (not headless),
+    // while the leading section keeps its headless "Start" identity.
+    const sections = savedSecond.json().sections as Array<Record<string, unknown>>;
+    expect(sections).toHaveLength(2);
+    expect(sections[0].headingLevel).toBeUndefined();
+    expect(sections[0].title).toBeUndefined();
+    expect(sections[1]).toMatchObject({ headingLevel: 1, title: "Section Two" });
+
+    // Reader parity: the same persisted blocks yield the same structure, so there is exactly one
+    // "Start" (the lead) — never a second, mid-work "Start" for the non-leading section.
+    const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+    const byId = new Map(structure.readingUnits.map((unit) => [unit.entryId as string, unit]));
+    expect(byId.get(initial.unitEntryId as string)?.headingLevel).toBeUndefined();
+    expect(byId.get(secondUnitId)).toMatchObject({ headingLevel: 1, title: "Section Two" });
+
+    const toc = structure.tableOfContents ?? [];
+    expect(toc.map((entry) => ({ depth: entry.depth, label: entry.label }))).toEqual([
+      { depth: 0, label: "Start" },
+      { depth: 0, label: "Section Two" }
+    ]);
+  });
 });
