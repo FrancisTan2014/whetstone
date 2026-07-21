@@ -311,9 +311,12 @@ owning source flow:
   never turns the retained readable Work into an invalid PDF. The original bytes remain immutable
   visual source and provenance.
 - A manual Work is learner-owned, editable source material whose canonical content is its
-  ProseMirror blocks. Existing manual Markdown is migrated into that substrate with stable block ids;
-  retained Markdown is provenance, never a second current copy. Uploaded EPUB/PDF/Markdown remains
-  source-managed rather than silently becoming learner-authored content.
+  ProseMirror blocks. Once the manual editor lands (#720) it writes those blocks through the same
+  shared editable-Work storage boundary the authored path uses — one reading unit plus an empty block on
+  create, stable-id reconcile on save — never a second block writer. There is no legacy-manual mdast
+  migration: pre-canonical local development data is deliberately reset, so manual Works are canonical
+  from their first save. Retained uploaded Markdown is provenance, never a second current copy. Uploaded
+  EPUB/PDF/Markdown remains source-managed rather than silently becoming learner-authored content.
 - The manual-Work editor uses the shared rich editor with debounced, latest-write-safe autosave,
   explicit Saving/Saved/Error state, `Ctrl/Cmd+S`, draft retention on failure, and a pending-save
   navigation guard. Every saved block is directly editable; raw Markdown entry, block inspection,
@@ -535,7 +538,10 @@ entries, Recitation plans, and review targets.
   editing policy; provenance rows and ownership facets never double as an implicit type discriminator.
 - Imported Works are source-managed library content. Manual Works are learner-owned source material
   edited in Library; authored Works are learner-owned writing edited in Writing. Both editable origins
-  use canonical ProseMirror content without becoming the same product concept.
+  use canonical ProseMirror content without becoming the same product concept: they share one internal
+  rich-block storage boundary that initializes and reconciles their blocks (stable-id retention that
+  never resets a schedule or drops learner-owned material), while each origin keeps its own commands,
+  authorization, routes, and navigation — the shared substrate never collapses them into one concept.
 - A Recitation plan is one owner-scoped enrollment referencing a canonical Work. Its Work-level review
   target owns no source copy. Legacy passage Entries may remain for audit but are not active targets.
 - Review targets are Entries owned transitively through their material/plan and do not duplicate it on
@@ -577,9 +583,11 @@ fixed-layout exception because page geometry is authored content: its retained s
 while its page block remains the stable addressable/searchable target used by the same notes and Entry
 contracts. This is a representation facet, not a second Work identity or an editable content copy.
 
-The current Reader/Search still contain a legacy mdast fallback for units not yet represented by
-`doc_blocks`. That fallback is **migration debt**: preserve it until old content is safely migrated,
-but do not add new feature behavior to it or claim it has already disappeared.
+The current Reader/Search still contain a legacy mdast fallback for imported-Markdown units not yet
+represented by `doc_blocks`. That fallback is **imported-Markdown migration debt** — not editable-Work
+history: authored Works, and manual Works once #720 adopts the shared editable-Work boundary, are
+canonical `doc_blocks` from creation. Preserve the fallback until imported Markdown also writes
+`doc_blocks`, but do not add new feature behavior to it or claim it has already disappeared.
 
 Personal overlays—notes, comments, and review provenance—stay outside shared content and render as
 decorations or linked Entries. Intrinsic source links may be ProseMirror marks; personal annotations

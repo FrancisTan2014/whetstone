@@ -425,7 +425,18 @@ can navigate them from another package.
   work's content via the domain block diff (`blockReconciler.ts` preserves matched block ids, inserts
   new, soft-deletes removed — `blocks.deleted_at` set + detached `reading_unit_entry_id` — and clears
   the work's `reading_positions` so deleting the replaced unit entries cannot dangle their FK); identical
-  source is a no-op. PDF uploads (`POST …/content/pdf`) converge on the Markdown pipeline: `src/files/pdfToMarkdown.ts` (`PdfToMarkdown` seam) converts a PDF to Markdown one-shot — production spawns the isolated Docling worker (`src/files/pdf_to_markdown.py`, MIT, permissive); a deterministic fake keeps the keyless gate green with no Python — then `ingestPdf` reuses `ingestMarkdown` (golden: a PDF ≡ the equivalent `.md`). A missing toolchain (no Python/Docling/OCRmyPDF/Tesseract on the host — including an installed OCRmyPDF that cannot find Tesseract) is classified at the spawn boundary (`src/files/pdfToolchain.ts`, `PdfToolchainMissingError`) and surfaced distinctly as **503 `pdf_toolchain_missing`** ("run `pnpm setup:pdf`"), separate from a genuinely bad file's **422 `invalid_pdf`** (#510). A scanned PDF gets an OCR pre-pass first (`src/files/pdfOcr.ts`, `PdfOcr` seam, composed via `composePdfToMarkdown`): production spawns OCRmyPDF/Tesseract (`--skip-text`, permissive); the identity fake is a no-op so born-digital ingest is unchanged. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
+    source is a no-op. Editable Works are a SEPARATE, canonical path: `content/editableWorkContent.ts` is
+    the feature-neutral shared boundary that initializes (one `reading_units` row + one empty id-stamped PM
+    paragraph, with `entries` + `contains` links) and reconciles (stable-id update/insert/remove of PM
+    `doc_blocks`) editable-Work content in the caller's transaction. It takes an already-authorized
+    Work/unit context and never decides origin/ownership. Its reconcile retains a removed block's `entries`
+    row whenever durable history still references it — a note anchor (start/end), a Recitation passage range
+    endpoint, a saved reading position, a review card or event, or a durable `entry_links` relation — and
+    only deletes a genuinely unreferenced Entry after detaching its nullable provenance (harvested chunks,
+    `derived_from` links), so cleanup never resets a schedule or drops learner-owned material. The
+    authored-Writing commands (`authoredWorks/authoredWorkCommands.ts`) own auth/origin/owner and delegate
+    their block writes here; #720 manual Library editing will adopt the same boundary with no migration or
+    second block writer. PDF uploads (`POST …/content/pdf`) converge on the Markdown pipeline: `src/files/pdfToMarkdown.ts` (`PdfToMarkdown` seam) converts a PDF to Markdown one-shot — production spawns the isolated Docling worker (`src/files/pdf_to_markdown.py`, MIT, permissive); a deterministic fake keeps the keyless gate green with no Python — then `ingestPdf` reuses `ingestMarkdown` (golden: a PDF ≡ the equivalent `.md`). A missing toolchain (no Python/Docling/OCRmyPDF/Tesseract on the host — including an installed OCRmyPDF that cannot find Tesseract) is classified at the spawn boundary (`src/files/pdfToolchain.ts`, `PdfToolchainMissingError`) and surfaced distinctly as **503 `pdf_toolchain_missing`** ("run `pnpm setup:pdf`"), separate from a genuinely bad file's **422 `invalid_pdf`** (#510). A scanned PDF gets an OCR pre-pass first (`src/files/pdfOcr.ts`, `PdfOcr` seam, composed via `composePdfToMarkdown`): production spawns OCRmyPDF/Tesseract (`--skip-text`, permissive); the identity fake is a no-op so born-digital ingest is unchanged. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
   sha256-idempotent, persisting via `blockWriter.ts`. Figure blocks have their transient image src
   resolved against the parser's extracted chapter images and stored content-addressed
   (`figureImageResolver.ts` → `imageResourceStore`), stamping `image_resource_id` + `alt`; an
@@ -459,7 +470,9 @@ can navigate them from another package.
   existing mdast `blocks` rows; each `doc_blocks` row is also registered as a first-class `entries` row
   (`type: "block"`) under a `contains` link from its unit, so a PM block id is an addressable anchor
   (the reader renders these PM block rows for EPUB content (#312) and stamps the id as `data-block-id`;
-  mdast block storage stays as the Markdown fallback until Markdown ingestion also writes `doc_blocks`);
+  the remaining mdast `blocks` store is **imported-Markdown** debt — kept until Markdown ingestion also
+  writes `doc_blocks` — NOT editable-Work history: editable Works are canonical PM `doc_blocks` from
+  creation via `editableWorkContent.ts`, authored now and manual once #720 consumes that boundary);
   the
   surviving units' fail-loud evidence is logged through the injected
   `ContentDependencies.ingestionLogger`. Both writers
