@@ -225,6 +225,16 @@ competing content stores.
   one active shared review card at requested retention **0.90**, due immediately. A retry reuses that
   same result; a failed or repeated request never leaves a half-card or duplicate. The action states
   plainly that it adds one recurring review.
+- Before direct-card material is committed, one server-owned deterministic projection compares its
+  Answer with the learner's existing Notes. An exact or conservatively scored near match is advisory
+  evidence, never identity: the learner may reuse that canonical Note for the drafted retrieval
+  contract or deliberately keep separate material. Question wording is not duplicate evidence, and
+  neither a hash nor a similarity score may merge Notes, cards, schedules, or history.
+- **Related material** is a separate signal from **Possible duplicate**. For an explicitly inspected
+  English word, offline morphology and WordNet may show typed same-lemma, synonym, antonym,
+  derivational, hypernym, or hyponym relationships after the learner chooses the intended sense.
+  Related words remain separate Notes with independent retrieval contracts and FSRS state; ambiguous,
+  unsupported, or out-of-scope material produces no relationship suggestion rather than a guess.
 - Editing a saved note opens the same responsive **Note workspace** from Reader and Notes. Its
   top-level **Note** and **Cards** modes mirror durable ownership instead of stacking every capability
   in one scrolling panel: Note contains optional source context, the canonical rich body, and its save
@@ -606,7 +616,7 @@ result. Generic model plumbing may be shared; product behavior must not depend o
 Deferred intelligence includes:
 
 - live coach/Practice conversations and LLM grading;
-- AI-authored cases or prompts;
+- unreviewed AI-authored cases or prompts;
 - Progress Map/fog-of-war personalization;
 - reading-to-Practice nudges;
 - unsolicited next actions, "Make Durable" proposals, and history mining;
@@ -619,6 +629,12 @@ Future intelligence earns a product surface only after:
 3. outputs are evaluated against explicit usefulness/faithfulness criteria;
 4. the learner opts in and approves every durable mutation;
 5. disabling the model returns to the complete base product.
+
+The first permitted agent-authored card surface is a narrow local MCP handoff after the manual gate:
+an agent may prepare one corpus-grounded card preview through the same deterministic material-match
+boundary, but a second explicit learner-approved commit must invoke the canonical Note/prompt/review
+writer. There is no bulk corpus mining, proposal inbox, silent enrollment, model dependency, or
+alternate FSRS writer.
 
 ## Release bar: usable personal assistant
 
