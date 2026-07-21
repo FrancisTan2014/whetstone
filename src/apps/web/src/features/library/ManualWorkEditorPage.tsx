@@ -133,7 +133,8 @@ function ManualWorkEditor({
   const [work, setWork] = useState<ManualWorkDto>(initialWork);
   const [draft, setDraft] = useState<DocumentNodeJSON>(initialWork.document);
   // The last document the server confirmed. `dirty` is derived against it, so the status is truthful
-  // even after an undo back to the saved content.
+  // even after an undo back to the saved content; it is also the editor's `document` prop, so adopting
+  // the server's canonical (possibly normalized) document after a save re-syncs the visible editor.
   const [savedDocument, setSavedDocument] = useState<DocumentNodeJSON>(initialWork.document);
   const [status, setStatus] = useState<ManualEditorSaveStatus>("saved");
   // A single in-flight save at a time: a rapid second Save/Ctrl+S while one is pending is ignored rather
@@ -186,8 +187,14 @@ function ManualWorkEditor({
       }
 
       if (result.status === "saved") {
+        // Adopt the server's canonical document as the new local baseline AND editor content. The
+        // server may normalize what it persists (e.g. trimming trailing empty paragraphs), so the
+        // saved document can differ from what was sent. Setting `draft` to it keeps `dirty`/status
+        // truthful (the beforeunload guard disarms), and `savedDocument` — the editor's `document`
+        // prop — re-syncs the visible editor to exactly what was persisted.
         setWork(result.work);
         setSavedDocument(result.work.document);
+        setDraft(result.work.document);
         setStatus("saved");
         savingRef.current = false;
         return;
@@ -254,7 +261,7 @@ function ManualWorkEditor({
       <div className="manualWorkEditorColumn">
         <RichContentEditor
           ariaLabel={`Edit ${work.title}`}
-          document={initialWork.document}
+          document={savedDocument}
           onChange={handleChange}
           onSave={(document) => {
             void save(document);

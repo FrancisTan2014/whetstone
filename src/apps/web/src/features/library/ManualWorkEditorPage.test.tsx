@@ -360,6 +360,59 @@ describe("ManualWorkEditorPage", () => {
     });
   });
 
+  it("adopts the server's normalized document after a save that trims trailing empty paragraphs", async () => {
+    // The learner saves a document that ends in a deliberate-looking trailing empty paragraph; the
+    // server normalizes it away and returns the trimmed canonical document. The page must adopt that
+    // returned document as its local baseline so the status is truthfully Saved and the beforeunload
+    // guard disarms — not left comparing the untrimmed local draft against the trimmed persisted doc.
+    mockedFetch.mockResolvedValue(
+      makeWork({
+        document: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              attrs: { id: "blk-1", anchorId: null },
+              content: [{ type: "text", text: "Body" }]
+            },
+            { type: "paragraph", attrs: { id: "blk-2", anchorId: null } }
+          ]
+        } as ManualWorkDto["document"]
+      })
+    );
+    // The server trims the trailing empty paragraph, persisting only the "Body" paragraph.
+    mockedSave.mockResolvedValue({
+      status: "saved",
+      work: makeWork({
+        document: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              attrs: { id: "blk-1", anchorId: null },
+              content: [{ type: "text", text: "Body" }]
+            }
+          ]
+        } as ManualWorkDto["document"],
+        revision: "2026-02-02T00:00:00.000Z"
+      })
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+    // Because the persisted (trimmed) document is now the local baseline, no edit remains outstanding,
+    // so a reload/close must not warn — the guard is disarmed.
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("warns before unloading while there are unsaved edits, and stays quiet once saved", async () => {
     const { textbox, user } = await renderReadyEditor();
 
