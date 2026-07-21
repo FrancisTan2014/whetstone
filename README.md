@@ -63,16 +63,20 @@ GET /health
 
 ## Validation commands
 
-Run these commands before opening a pull request:
+Before opening or updating a pull request, run the changed-scope handoff gate and the issue's named
+E2E spec:
 
 ```powershell
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
+pnpm validate:changed
 ```
 
-`pnpm test` runs Vitest with coverage and enforces 100% statements, branches, functions, and lines for included app/package source. Generated output, config files, type-only files, test files, and framework bootstraps are excluded.
+The changed gate runs typecheck, lint, related tests with 100% coverage on changed production source,
+build, the bundle budget, and smoke. Exact-head CI is the exhaustive merge authority; `pnpm validate`
+remains available for an optional full local run.
+
+`pnpm test` runs the exhaustive test suites and enforces 100% statements, branches, functions, and
+lines for included app/package source. Generated output, config files, type-only files, test files,
+and framework bootstraps are excluded.
 
 ## Bundle size budget
 
