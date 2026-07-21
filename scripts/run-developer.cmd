@@ -13,13 +13,29 @@ if not "%~1"=="" (
 echo === Deciding the next developer action ^(fix open PR ^| wait ^| implement next issue^) ===
 set "ACTION="
 set "NUM="
-for /f "usebackq tokens=1,2 delims= " %%a in (`node scripts\developer-next-action.mjs`) do (
+set "ACTION_FILE=%TEMP%\whetstone-developer-action-%RANDOM%-%RANDOM%.txt"
+if defined WHETSTONE_SELECTOR_COMMAND (
+  call "%WHETSTONE_SELECTOR_COMMAND%" > "%ACTION_FILE%"
+) else (
+  node scripts\developer-next-action.mjs > "%ACTION_FILE%"
+)
+set "SELECTOR_STATUS=%ERRORLEVEL%"
+if not "%SELECTOR_STATUS%"=="0" (
+  del /q "%ACTION_FILE%" >nul 2>&1
+  exit /b %SELECTOR_STATUS%
+)
+for /f "usebackq tokens=1,2 delims= " %%a in ("%ACTION_FILE%") do (
   set "ACTION=%%a"
   set "NUM=%%b"
 )
+del /q "%ACTION_FILE%" >nul 2>&1
 
 if "%ACTION%"=="fix" (
   set "TASK=Run the whetstone developer role per your agent instructions. Pull request #%NUM% was sent back by the reviewer with changes requested: check out its existing branch, address the review feedback, push, set it back to needs-review, then stop."
+  goto run
+)
+if "%ACTION%"=="fix-ci" (
+  set "TASK=Run the whetstone developer role per your agent instructions. Pull request #%NUM% has a completed failing blocking CI check: check out its existing branch and triage the exact failure. Fix a reproducible regression; rerun a transient infrastructure failure once without changing product code. Push any required fix, remove stale review-approved, set needs-review, and stop."
   goto run
 )
 if "%ACTION%"=="implement" (

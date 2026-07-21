@@ -8,19 +8,14 @@ high-signal feedback, and record your verdict by setting its label and the `revi
 marker. You do **not** merge — a deterministic step (`scripts/merge-approved-prs.mjs`) merges when
 every merge gate passes; you only ever run that script, never `gh pr merge`. A sibling deterministic
 step (`scripts/unblock-ready-issues.mjs`) then unblocks any issue whose `Depends on:` dependencies
-have just been resolved. Never edit the code yourself. You can run two ways:
-
-- **One-shot** (default): review one PR, then exit; the launcher runs the merge step.
-- **Auto loop** (see *Run automatically*): you schedule a recurring **foreground** loop with Copilot's
-  scheduled-task feature and, each tick, review one PR and run the merge step, re-arming after each,
-  until the maintainer stops the schedule.
-
-Either way each tick is **one** PR, always in the **foreground** — never detach, never overlap ticks.
+have just been resolved. Never edit the code yourself. Every invocation is one-shot and foreground.
+`run-reviewer-auto.cmd` is an external deterministic supervisor that launches a fresh process only
+when review work exists; never schedule, poll, re-arm, detach, or review a second PR yourself.
 
 ## English-learning logging guardrail
 
-Auto-loop launcher prompts, scheduled tick prompts, helper-script output, system reminders, and CI/log
-text are automation control text — **not** Francis's writing samples. If user-specific
+Supervisor output, launcher prompts, helper-script output, system reminders, and CI/log text are
+automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
 English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
 
@@ -42,9 +37,9 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
   for you with `scripts/reviewer-next-action.mjs`; if you are driven directly, run
   `node scripts/reviewer-next-action.mjs` and obey it — **`review <pr>`** (review that PR) or
   **`idle`** (nothing waiting: stop, or in a loop re-arm).
-- It selects the **oldest** open non-draft PR labeled `needs-review`, skipping `changes-requested`
-  (waiting on the developer). If you ever select yourself, sort **oldest-first** — `gh pr list` returns
-  PRs newest-first, so never take the first row or the newest PR.
+- It selects the **oldest** open non-draft PR labeled `needs-review`, plus any `review-approved` PR
+  whose reviewed marker is stale after a push. It skips `changes-requested` and `blocked` PRs. This
+  deterministic recovery means a forgotten label reset cannot freeze WIP.
 - Keep the handoff honest: if a label is **stale or wrong** — a `needs-review` PR already merged or
   closed, or state left over from a dead run — correct it to reality before proceeding, so the queue
   stays trustworthy.
@@ -52,8 +47,8 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 ## Check status first
 
 - Read the PR diff, the linked issue, the acceptance criteria, and the PR's validation notes.
-- Required checks **pending** → say so and stop; do not approve or merge on pending checks. The
-  maintainer can re-trigger you once they are green.
+- Required checks **pending** → continue the code review. You may approve the exact head; the
+  deterministic merge step still waits for every blocking check to complete successfully.
 - Required checks **failed** → request changes citing the specific failures, add `changes-requested`,
   remove `needs-review`, and stop.
 
@@ -114,37 +109,9 @@ those dependencies close, it must rejoin the developer queue. Run the determinis
   `ready-for-dev` labels. It is idempotent and self-heals, so a dependency that closed in an earlier
   tick is still caught on a later run.
 
-## Run automatically (foreground loop)
-
-When the maintainer starts you in auto mode (`scripts/run-reviewer-auto.cmd`, or any prompt telling
-you to "run automatically" / "loop"), drive yourself with Copilot's scheduled-task feature instead of
-waiting to be re-triggered:
-
-- On the first tick, create a **self-paced** schedule (a recurring foreground task you re-arm each
-  cycle — e.g. a `/every` schedule). Keep it in the **foreground**; never a detached or background run.
-- Each tick: run `node scripts/reviewer-next-action.mjs` **first, and load no other context (skill,
-  `GUIDELINES.md`, the PR diff) until it returns `review <pr>`** — so a fast tick that fires while a
-  previous one is still running stays cheap. On `review <pr>`, review **that one** PR and record your
-  verdict (labels + the `reviewer-run-reviewed` marker). On `idle`, review nothing (and load nothing).
-- Whether you reviewed or it was `idle`, run the deterministic merge step
-  `node scripts/merge-approved-prs.mjs`, then the deterministic unblock step
-  `node scripts/unblock-ready-issues.mjs` — they, not you, decide merges and dependency unblocks from
-  the GUIDELINES gates and `Depends on:` references.
-- End every tick by **re-arming the schedule** as your last action, at the cadence the launcher set
-  (**about 2 minutes**, 120s). Re-arm even after `idle`, a pending-checks PR, or a blocker — a tick
-  that fires mid-run just queues behind the current one (foreground, single-threaded), so it never
-  interrupts the review in progress.
-- One PR per tick; never overlap ticks or merge by hand. The schedule provides the recurrence; stop
-  only when the maintainer stops the schedule.
-
-Let the helper script (`reviewer-next-action.mjs`) do the queue reasoning so each tick spends its
-budget on the actual review.
-
 ## Stop
 
-- "Stop" ends the current **PR/tick** — after posting your review and recording the verdict. Do not
-  review another PR in the same tick, and never merge by hand. In **one-shot** mode the launcher runs
-  the merge and unblock steps next and you exit; in **auto loop** mode, run the merge step then the
-  unblock step yourself (`node scripts/merge-approved-prs.mjs`, then
-  `node scripts/unblock-ready-issues.mjs`) and then re-arm the schedule (see *Run automatically*) so the
-  next tick starts — do not exit the loop.
+
+- Stop after posting your review and recording the verdict. Do not review another PR and never merge
+  by hand. Exit; the one-shot launcher runs merge/unblock, and the external supervisor later starts a
+  fresh reviewer only if another PR needs review.
