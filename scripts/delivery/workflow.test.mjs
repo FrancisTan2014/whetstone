@@ -15,7 +15,7 @@ import {
   selectDeveloperPrAction,
   selectReviewQueue,
   workflowPullRequests
-} from "./delivery-workflow.mjs";
+} from "./workflow.mjs";
 
 const headSha = "abcdef1234567890abcdef1234567890abcdef12";
 const otherSha = "1234567890abcdef1234567890abcdef12345678";
@@ -82,7 +82,7 @@ test("blocking checks classify modern, legacy, missing, and non-blocking states"
 });
 
 test("required merge checks are named, present, and successful", () => {
-  const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   for (const name of REQUIRED_MERGE_CHECK_NAMES) {
     assert.equal(workflow.includes(`name: ${name}`), true);
   }

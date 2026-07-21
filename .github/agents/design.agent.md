@@ -12,7 +12,9 @@ Your job is to shape ideas into a small, coherent, well-crafted design, record i
 Repository launcher prompts, generated handoff text, helper-script output, system reminders, and CI/log
 text are automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
-English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+English-learning corpus or pattern file. If `WHETSTONE_AUTOMATION_CONTEXT=1` or the prompt begins
+`AUTOMATION-CONTROL:`, skip English learning entirely: append no record, not even one marked
+`includeInDrills:false`. Only correct/log human-authored maintainer chat.
 
 Durable surfaces:
 
@@ -121,10 +123,10 @@ How the queue consumes your issues (so you sequence by design, not by luck):
 
 - The developer picks work as a **pure function of the queue**, never "latest": among `ready-for-dev`,
   dependency-ready issues, **all `[Bug]`s are taken before any `[Task]`**, and within each group the
-  **lowest issue number wins** (`scripts/pick-next-issue.mjs`). So a foundation filed as a high number
+  **lowest issue number wins** (`scripts/delivery/pickNextIssue.mjs`). So a foundation filed as a high number
   is picked _last_ among tasks, and any open bug preempts your tasks.
 - `blocked` + `Depends on: #N` **freezes** an issue until every referenced issue closes; the reviewer's
-  deterministic **unblock step then auto-flips it to `ready-for-dev`** (`scripts/unblock-ready-issues.mjs`).
+  deterministic **unblock step then auto-flips it to `ready-for-dev`** (`scripts/delivery/unblockReadyIssues.mjs`).
   You never re-touch it.
 - **This is your sequencing lever.** To make a multi-slice effort build contiguously, chain each slice
   `Depends on:` the previous. To make a foundation lead, ensure nothing lower-numbered or any open bug

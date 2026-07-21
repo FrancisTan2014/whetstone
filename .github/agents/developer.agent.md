@@ -14,7 +14,9 @@ or begin a second unit yourself. There is no shared status file; GitHub is the h
 Supervisor output, launcher prompts, helper-script output, system reminders, and CI/log text are
 automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
-English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+English-learning corpus or pattern file. If `WHETSTONE_AUTOMATION_CONTEXT=1` or the prompt begins
+`AUTOMATION-CONTROL:`, skip English learning entirely: append no record, not even one marked
+`includeInDrills:false`. Only correct/log human-authored maintainer chat.
 
 ## Sources of truth — read enough to act, not everything
 
@@ -42,19 +44,19 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 
 Do exactly **one** thing per run, chosen as a pure function of the GitHub queue — never an arbitrary
 or "latest" pick. The launcher (`scripts/run-developer.cmd`) decides for you and hands you a concrete
-task; if you are driven directly, run `node scripts/developer-next-action.mjs` and obey its single
+task; if you are driven directly, run `node scripts/delivery/developerNextAction.mjs` and obey its single
 decision line. The rule keeps work-in-progress at 1:
 
 - **`fix <pr>`** — a workflow PR is open and labeled `changes-requested`: the reviewer handed it back.
-  Address that PR (see *Addressing review feedback*). Do **not** start a new issue.
+  Address that PR (see _Addressing review feedback_). Do **not** start a new issue.
 - **`fix-ci <pr>`** — a blocking exact-head CI check completed unsuccessfully. Continue that PR and
   triage the check: fix a reproducible regression; for a transient infrastructure failure, rerun the
   failed check once without changing product code. Do **not** treat pending or non-blocking checks as
   failures.
 - **`wait <pr>`** — a workflow PR is open but not changes-requested (in review, or approved and
   awaiting the deterministic merge step): there is nothing for you to do. Stop.
-- **`implement <issue>`** — no workflow PR is open: implement that issue (see *Start clean* and
-  *Implement*). Among `ready-for-dev` issues whose `Depends on: #N` are all closed, ready **`[Bug]`s
+- **`implement <issue>`** — no workflow PR is open: implement that issue (see _Start clean_ and
+  _Implement_). Among `ready-for-dev` issues whose `Depends on: #N` are all closed, ready **`[Bug]`s
   are selected before `[Task]`s** (verified defects are paid down before new feature work —
   GUIDELINES.md "Functional verification"), and within each group the **lowest-numbered** issue
   wins. If you ever select an issue yourself, apply the same order: bugs first, then sort by `number`
@@ -77,7 +79,7 @@ implementing an issue, claim it: add the `in-progress` label and remove `ready-f
 ## Start clean — never build on stale state (mandatory)
 
 This applies when you **implement a new issue** (action `implement`). For action `fix` you are
-continuing an existing PR — see *Addressing review feedback* — so do not delete or recreate its branch.
+continuing an existing PR — see _Addressing review feedback_ — so do not delete or recreate its branch.
 
 Previous attempts and other sessions leave branches, worktrees, and progress notes behind. They are
 **not** a source of truth and are frequently wrong-model or out of scope. So:
@@ -101,7 +103,7 @@ You are **continuing an existing PR**, not starting fresh:
 - For `fix`, the reviewer's change-request comment is the handoff: make **exactly** those changes, no
   scope creep. For `fix-ci`, the completed failed check and its log are the handoff; distinguish a
   product regression from transient infrastructure before editing.
-- Run the changed-scope handoff gate (*Gate, then open the PR*), plus the issue-specific E2E affected
+- Run the changed-scope handoff gate (_Gate, then open the PR_), plus the issue-specific E2E affected
   by the fix.
 - Commit and **push to the same branch**, then hand it back: remove stale `review-approved` and
   `changes-requested`, add `needs-review`, and leave a brief comment listing what changed. Stop.

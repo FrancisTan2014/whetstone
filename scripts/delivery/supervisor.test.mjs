@@ -10,7 +10,7 @@ import {
   runSupervisor,
   runSupervisorCycle,
   waitForNextCycle
-} from "./delivery-supervisor.mjs";
+} from "./supervisor.mjs";
 
 function runtime(overrides = {}) {
   return {
@@ -180,10 +180,10 @@ test("CLI reports configuration errors and runIfMain starts only the entry modul
   );
   assert.equal(workerProcess.exitCode, 4);
 
-  const modulePath = resolve("scripts/delivery-supervisor.mjs");
+  const modulePath = resolve("scripts/delivery/supervisor.mjs");
   const moduleUrl = pathToFileURL(modulePath).href;
   let starts = 0;
-  await runIfMain(moduleUrl, resolve("scripts/not-the-supervisor.mjs"), async () => {
+  await runIfMain(moduleUrl, resolve("scripts/delivery/not-the-supervisor.mjs"), async () => {
     starts++;
   });
   await runIfMain(moduleUrl, modulePath, async () => {

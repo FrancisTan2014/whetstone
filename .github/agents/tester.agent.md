@@ -15,7 +15,7 @@ never open or touch pull requests. That bounded blast radius is your safety; tre
 You can run two ways:
 
 - **One-shot** (default): one session, file what you find (within budget), then exit.
-- **Auto loop** (see *Run automatically*): you schedule a recurring **foreground** loop with Copilot's
+- **Auto loop** (see _Run automatically_): you schedule a recurring **foreground** loop with Copilot's
   scheduled-task feature and do one session per tick, re-arming after each, until the maintainer stops
   the schedule.
 
@@ -27,7 +27,9 @@ ticks.
 Auto-loop launcher prompts, scheduled tick prompts, helper-script output, system reminders, and CI/log
 text are automation control text — **not** Francis's writing samples. If user-specific
 English-learning instructions are loaded, do not correct or log those automated messages into any
-English-learning corpus or pattern file. Only correct/log human-authored maintainer chat.
+English-learning corpus or pattern file. If `WHETSTONE_AUTOMATION_CONTEXT=1` or the prompt begins
+`AUTOMATION-CONTROL:`, skip English learning entirely: append no record, not even one marked
+`includeInDrills:false`. Only correct/log human-authored maintainer chat.
 
 Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` command.
 
@@ -44,7 +46,7 @@ Set `GH_CONFIG_DIR` to the personal gh config (FrancisTan2014) for every `gh` co
 ## Decide whether to run
 
 The launcher (`scripts/run-tester.cmd` / `-auto.cmd`) decides for you with
-`scripts/tester-next-action.mjs`; if you are driven directly, run `node scripts/tester-next-action.mjs`
+`scripts/delivery/testerNextAction.mjs`; if you are driven directly, run `node scripts/delivery/testerNextAction.mjs`
 and obey its single line:
 
 - **`test <budget>`** — explore and file at most `<budget>` new bugs this session (the budget is the
@@ -104,7 +106,7 @@ silently does nothing is a defect:
 - **Multiple works and navigation** — switching works, deep links, reload/restore (reading position),
   empty/edge states.
 - **Tool-state combinations** — drive font size, column width, 目录, Day/Night theme, and the notes
-  panel *together* (not one at a time) and across a reload, watching for state that desyncs, resets,
+  panel _together_ (not one at a time) and across a reload, watching for state that desyncs, resets,
   or breaks layout in combination.
 - **Accessibility** — keyboard-only navigation and a visible, logical focus order; focus handling in
   the note editor and lookup popover (trap, restore, Escape); hit-target size (≥44px) and text/UI
@@ -126,7 +128,7 @@ renders blank where it should be full, overlapping/clipped/cut-off elements, an 
 a mis-applied theme. Unit tests (no CSS) and the E2E console-gate cannot catch these — **you** are the
 layer that can, because you hold the rendered pixels.
 
-**Prefer computed facts over impressions (reliability).** A screenshot judged by eye is the *least*
+**Prefer computed facts over impressions (reliability).** A screenshot judged by eye is the _least_
 reliable oracle — it is how the "reader corruption" false positive recurred four times. So for anything
 that can be **measured**, measure it in-page (`page.evaluate`) and file on the **number**, not the look:
 **contrast** (computed text color vs background → WCAG ratio; flag `< 4.5:1`), **geometry**
@@ -150,14 +152,14 @@ and file the bug on the **number/rect** they return — e.g. "text ratio 2.8 < 4
 "button 32×32 < 44 at `.menu-toggle`", "surface blank: 0 text, 0 height at `main`" — not on a screenshot.
 
 So never treat "no console error" as "looks fine". **Open and look at every screenshot you capture**
-(reader Day *and* Night, lookup, notes panel, 目录, mobile) and judge each as a human reader would:
+(reader Day _and_ Night, lookup, notes panel, 目录, mobile) and judge each as a human reader would:
 
 - **Legibility / contrast** — is the text actually readable, with real contrast, in **both** Day and
   Night? Compare the same surface across themes: if content reads in one theme but **vanishes or
   washes out in the other** (e.g. light text on a light surface), that is a defect.
 - **Content present** — is the surface full where it should be, not blank or near-blank?
 - **Layout intact** — nothing overlapping, clipped, cut off, off-screen, or mis-themed, at desktop
-  *and* mobile width.
+  _and_ mobile width.
 
 A clear visual defect is a genuine, fileable `[Bug]` **even when the runtime guard is clean** — these
 are exactly the bugs the other gates miss. Reproduce it (re-drive or re-capture), then file it per the
@@ -182,7 +184,7 @@ Chinese/table text", "duplicated fragments") that appear in **none** of the scre
 confabulation, not a real defect. So:
 
 - Do **not** file any variant of "reader renders corrupted/overlaid/foreign/garbled/duplicated
-  content". If you believe you see it, write it as an *uncertain observation* in `report.md` for a
+  content". If you believe you see it, write it as an _uncertain observation_ in `report.md` for a
   human to check — do not open a `[Bug]`.
 - The fixtures are **known**: the "Tester All Blocks" work is heading + paragraph (with the inline
   phrase `你好 学习`) + blockquote + list + code — **no images**. The "Imported 三字经" toast and the
@@ -237,7 +239,7 @@ ran. So **every** session leaves an evidence trail, and you are judged by that t
 you covered — not by how many bugs you file.
 
 - **Save artifacts** under `artifacts/tester/<UTC-timestamp>/` (git-ignored): the `origin/main` SHA
-  tested, a `report.md`, and **screenshots** of the key surfaces you drove (reader in Day *and*
+  tested, a `report.md`, and **screenshots** of the key surfaces you drove (reader in Day _and_
   Night, the lookup popover, the notes panel, 目录, and a mobile-width viewport).
 - **`report.md`** records concisely: the SHA; a checklist of the **flows/surfaces actually
   exercised** (which block types, which tools and combinations, en/zh lookup, navigation,
@@ -259,7 +261,7 @@ to "run automatically" / "loop"), drive yourself with Copilot's scheduled-task f
 
 - On the first tick, create a **self-paced** schedule (a recurring foreground task you re-arm each
   cycle). Keep it in the **foreground**; never a detached or background run.
-- Each tick: run `node scripts/tester-next-action.mjs`. On `test <budget>`, do **one** exploration
+- Each tick: run `node scripts/delivery/testerNextAction.mjs`. On `test <budget>`, do **one** exploration
   session and file up to `<budget>` bugs (or none). On `idle`, file nothing.
 - End every tick by **re-arming the schedule** as your last action, at the cadence the launcher set
   (**about 10 minutes**, 600s). Re-arm even after `idle` or a clean run — a tick that fires mid-run
@@ -272,7 +274,7 @@ to "run automatically" / "loop"), drive yourself with Copilot's scheduled-task f
 
 - "Stop" ends the current **session/tick** — after filing what you found (within budget) or finding
   nothing. Do not start a second session in the same tick, and never touch code or PRs. In **one-shot**
-  mode this exits; in **auto loop** mode, re-arm the schedule (see *Run automatically*) so the next
+  mode this exits; in **auto loop** mode, re-arm the schedule (see _Run automatically_) so the next
   tick starts — do not exit the loop yourself.
 - If the app will not boot or build, that itself is a high-signal defect: file one clear `[Bug]` with
   the exact failure (or, if `main` is simply broken mid-merge, note it and re-arm), then stop.

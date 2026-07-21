@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
-import { dependsOn } from "./pick-next-issue.mjs";
+import { dependsOn } from "./pickNextIssue.mjs";
 
 const execFileAsync = promisify(execFile);
 const maxBuffer = 16 * 1024 * 1024;
@@ -362,7 +362,7 @@ async function run() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   run().catch((error) => {
-    console.error(`delivery-health: ${(error.stderr || error.message).trim()}`);
+    console.error(`health: ${(error.stderr || error.message).trim()}`);
     console.error(
       "Confirm `gh` is installed, set GH_CONFIG_DIR to the authenticated profile used by this " +
         "repository, run `gh auth status`, then retry from the repository root."

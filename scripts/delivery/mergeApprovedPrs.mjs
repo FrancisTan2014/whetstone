@@ -8,15 +8,15 @@
 // chose to "hand off to a human".
 //
 // Usage:
-//   node scripts/merge-approved-prs.mjs            merge every eligible review-approved PR
-//   node scripts/merge-approved-prs.mjs --pr 21    evaluate only PR #21
-//   node scripts/merge-approved-prs.mjs --dry-run  report what would merge, merge nothing
+//   node scripts/delivery/mergeApprovedPrs.mjs            merge every eligible review-approved PR
+//   node scripts/delivery/mergeApprovedPrs.mjs --pr 21    evaluate only PR #21
+//   node scripts/delivery/mergeApprovedPrs.mjs --dry-run  report what would merge, merge nothing
 //
 // Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-merge.cmd).
 
 import { execFileSync } from "node:child_process";
 
-import { mergeGateFailures, mergePullRequestArgs } from "./delivery-workflow.mjs";
+import { mergeGateFailures, mergePullRequestArgs } from "./workflow.mjs";
 
 const argv = process.argv.slice(2);
 const DRY_RUN = argv.includes("--dry-run");

@@ -8,7 +8,7 @@
 // from freezing WIP forever.
 //
 // Usage:
-//   node scripts/reviewer-next-action.mjs
+//   node scripts/delivery/reviewerNextAction.mjs
 //
 // stdout: exactly one decision line -- one of:
 //   review <pr>   review this PR against GUIDELINES.md, then stop
@@ -20,7 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 
-import { selectReviewQueue } from "./delivery-workflow.mjs";
+import { selectReviewQueue } from "./workflow.mjs";
 
 function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
@@ -49,19 +49,19 @@ let result;
 try {
   result = selectNextReviewPr();
 } catch (err) {
-  console.error(`reviewer-next-action: failed to query GitHub: ${err.message}`);
+  console.error(`reviewerNextAction: failed to query GitHub: ${err.message}`);
   process.exit(1);
 }
 
 const { next, queue } = result;
 if (next == null) {
-  console.error("reviewer-next-action: no PR is waiting for review (needs-review, non-draft).");
+  console.error("reviewerNextAction: no PR is waiting for review (needs-review, non-draft).");
   console.log("idle");
   process.exit(0);
 }
 
 console.error(
-  `reviewer-next-action: review PR #${next}; queue=[${queue.map((p) => `#${p.number}`).join(", ")}]`
+  `reviewerNextAction: review PR #${next}; queue=[${queue.map((p) => `#${p.number}`).join(", ")}]`
 );
 console.log(`review ${next}`);
 process.exit(0);
