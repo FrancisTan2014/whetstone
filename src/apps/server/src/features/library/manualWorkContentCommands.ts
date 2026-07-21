@@ -6,9 +6,9 @@ import { and, desc, eq } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import {
   appendEditableWorkSection,
-  reconcileEditableWorkContent
+  repartitionEditableWorkContent
 } from "../content/editableWorkContent.js";
-import { normalizeManualWorkDocument, ensureHeadingLedSection } from "./manualWorkDocument.js";
+import { normalizeManualWorkDocument } from "./manualWorkDocument.js";
 import {
   loadManualWorkDocument,
   loadManualWorkSections,
@@ -158,7 +158,7 @@ export async function updateManualWorkContent(
     }
 
     const [unit] = await tx
-      .select({ entryId: readingUnits.entryId, orderIndex: readingUnits.orderIndex })
+      .select({ entryId: readingUnits.entryId })
       .from(readingUnits)
       .where(and(eq(readingUnits.entryId, unitEntryId), eq(readingUnits.workEntryId, workEntryId)))
       .limit(1);
@@ -171,20 +171,20 @@ export async function updateManualWorkContent(
       return { status: "conflict" as const };
     }
 
-    // Preserve the heading-led section invariant (#697): a non-leading section (order index > 0) is an
-    // outline node, so its first block must stay a heading — otherwise the Outline and the Reader TOC
-    // would show a spurious mid-work "Start". The leading section (index 0) is exempt: its pre-heading
-    // content is a legitimate "Start".
+    // Substitute the saved section's draft into the Work's block stream and repartition the affected span
+    // at heading boundaries (#698): a surviving leading heading keeps this unit's identity, a new heading
+    // mints a unit, and removing the leading heading merges the section into the preceding unit. The
+    // returned active unit is where the first draft block landed, so the editor stays on the edited
+    // section (or follows it into the unit it merged into).
     const normalized = normalizeManualWorkDocument(document);
-    const persisted = unit.orderIndex === 0 ? normalized : ensureHeadingLedSection(normalized);
-
-    await reconcileEditableWorkContent(tx, {
-      document: persisted,
-      unitEntryId,
+    const { activeUnitEntryId } = await repartitionEditableWorkContent(tx, {
+      createEntryId: dependencies.createEntryId,
+      document: normalized,
+      editedUnitEntryId: unitEntryId,
       workEntryId
     });
 
-    return { owned, revision: nextRevisionInstant, status: "updated" as const };
+    return { activeUnitEntryId, owned, revision: nextRevisionInstant, status: "updated" as const };
   });
 
   if (outcome.status !== "updated") {
@@ -193,7 +193,13 @@ export async function updateManualWorkContent(
 
   return {
     status: "updated",
-    work: await buildDto(dependencies.db, workEntryId, unitEntryId, outcome.owned, outcome.revision)
+    work: await buildDto(
+      dependencies.db,
+      workEntryId,
+      toEntryId(outcome.activeUnitEntryId),
+      outcome.owned,
+      outcome.revision
+    )
   };
 }
 

@@ -136,3 +136,11 @@ export {
   workOrigins
 } from "./workOrigin.js";
 export type { LibraryCreateOrigin, WorkOrigin } from "./workOrigin.js";
+export { planSectionRepartition } from "./workRepartition.js";
+export type {
+  PlannedUnit,
+  RepartitionBlock,
+  RepartitionInput,
+  RepartitionPlan,
+  RepartitionUnit
+} from "./workRepartition.js";
