@@ -28,21 +28,26 @@ const DOCLING_DOCS = "https://github.com/docling-project/docling";
 const PINNED_DOCLING_VERSION = "2.114.0";
 const PINNED_DOCLING_CORE_VERSION = "2.87.1";
 const PINNED_MODEL_REPO = "docling-project/docling-models";
-const PINNED_MODEL_REVISION = "v2.3.0";
+// Pin the IMMUTABLE commit SHA, not the mutable `v2.3.0` tag: a moved tag can otherwise resolve to
+// different artifacts and still pass readiness. `PINNED_MODEL_TAG` is a human-readable label only —
+// setup downloads and verifies the exact commit below. Keep both in lockstep with the contract.
+const PINNED_MODEL_TAG = "v2.3.0";
+const PINNED_MODEL_COMMIT = "fc0f2d45e2218ea24bce5045f58a389aed16dc23";
 
 // One-line Python probes (stable so the setup tests can match them). The version probe exits non-zero
 // unless BOTH pinned versions are installed; the model probe loads the pinned snapshot from cache only
-// (`local_files_only=True`), exiting non-zero when it is not already downloaded.
+// (`local_files_only=True`) at the exact pinned commit, exiting non-zero when it is not already
+// downloaded at that fingerprint.
 const VERSION_PROBE =
   `import importlib.metadata as m,sys;` +
   `sys.exit(0 if m.version('docling')=='${PINNED_DOCLING_VERSION}' ` +
   `and m.version('docling-core')=='${PINNED_DOCLING_CORE_VERSION}' else 1)`;
 const MODEL_PROBE =
   `from huggingface_hub import snapshot_download;` +
-  `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_REVISION}',local_files_only=True)`;
+  `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_COMMIT}',local_files_only=True)`;
 const MODEL_DOWNLOAD =
   `from huggingface_hub import snapshot_download;` +
-  `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_REVISION}')`;
+  `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_COMMIT}')`;
 
 const DOCLING_PIN_REMEDY = "Run `pnpm setup:pdf` to install the exact pinned versions.";
 const MODEL_REMEDY = "Run `pnpm setup:pdf` to download the exact pinned model snapshot.";
@@ -161,7 +166,8 @@ export function probePdfLane(ctx) {
   }
   if (ctx.exec(python, ["-c", MODEL_PROBE]).code !== 0) {
     return missing(
-      `The pinned Docling model artifacts (${PINNED_MODEL_REPO}@${PINNED_MODEL_REVISION}) are not ` +
+      `The pinned Docling model artifacts ` +
+        `(${PINNED_MODEL_REPO}@${PINNED_MODEL_COMMIT}, tag ${PINNED_MODEL_TAG}) are not ` +
         `available locally (required for a reproducible, offline-ready conversion).`,
       MODEL_REMEDY,
       DOCLING_DOCS
@@ -229,7 +235,8 @@ export const pdfStep = {
       const download = ctx.exec(python, ["-c", MODEL_DOWNLOAD]);
       if (download.code !== 0) {
         return error(
-          `Downloading the pinned Docling models (${PINNED_MODEL_REPO}@${PINNED_MODEL_REVISION}) failed.`,
+          `Downloading the pinned Docling models ` +
+            `(${PINNED_MODEL_REPO}@${PINNED_MODEL_COMMIT}, tag ${PINNED_MODEL_TAG}) failed.`,
           withOutputTail(
             "Check your network/proxy and Hugging Face access, then re-run `pnpm setup:pdf`.",
             download

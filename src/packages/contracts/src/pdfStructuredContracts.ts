@@ -27,12 +27,14 @@ export const SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS: readonly string[] = Object.
 // lockstep with scripts/setup/steps/pdf.mjs (which cannot import this TS module).
 export const PINNED_DOCLING_VERSION = "2.114.0";
 export const PINNED_DOCLING_CORE_VERSION = "2.87.1";
-// The pinned Docling layout/table model artifacts. Docling downloads these from the HF repo below at
-// this exact revision; setup verifies the pinned runtime can construct its converter (i.e. the model
-// set at this revision is present) before reporting readiness, so a silently different model set
-// fails readiness rather than degrading extraction quietly.
+// The pinned Docling layout/table model artifacts. We pin the IMMUTABLE commit SHA, never the mutable
+// `v2.3.0` Git/Hugging Face tag: a tag can be moved to different artifacts and still pass readiness,
+// so setup downloads and verifies this EXACT commit. `PINNED_MODEL_TAG` is the human-readable label
+// the commit resolved from (for changelogs/upgrades only) — it is never used as the download revision.
+// Bump the commit SHA and the tag note together if the model set is intentionally changed.
 export const PINNED_MODEL_REPO = "docling-project/docling-models";
-export const PINNED_MODEL_REVISION = "v2.3.0";
+export const PINNED_MODEL_TAG = "v2.3.0";
+export const PINNED_MODEL_COMMIT = "fc0f2d45e2218ea24bce5045f58a389aed16dc23";
 
 // Resource bounds. Enforced before and around conversion so an oversized or absurd input is a named
 // failure rather than an unbounded child process. Mirrors PRODUCT.md's 128 MiB / 3,000-page limits.

@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseRangeConversion,
+  PINNED_MODEL_COMMIT,
   PINNED_MODEL_REPO,
-  PINNED_MODEL_REVISION,
   RANGE_CONVERSION_SCHEMA_VERSION,
   STRUCTURED_DOCUMENT_SCHEMA_VERSION,
   SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS,
@@ -477,7 +477,7 @@ function detectRealLane(): { python: string } | null {
   }
   const probe =
     `import docling;from huggingface_hub import snapshot_download;` +
-    `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_REVISION}',local_files_only=True)`;
+    `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_COMMIT}',local_files_only=True)`;
   for (const python of ["python", "python3"]) {
     try {
       execFileSync(python, ["-c", probe], { stdio: "ignore" });

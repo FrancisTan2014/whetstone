@@ -106,7 +106,8 @@ describe("probePdfLane", () => {
     const result = probePdfLane(ctx);
     expect(result?.status).toBe("missing");
     expect(result?.what).toContain("model artifacts");
-    expect(result?.what).toContain("v2.3.0");
+    // The message must surface the IMMUTABLE commit fingerprint, not just the mutable tag.
+    expect(result?.what).toContain("fc0f2d45e2218ea24bce5045f58a389aed16dc23");
   });
 
   it("reports OCRmyPDF missing distinctly when Python + Docling are present", () => {
