@@ -36,7 +36,6 @@ import { writeReadingUnits } from "./blockWriter.js";
 import { loadWorkContent } from "./contentQueries.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
-import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import { createImportedMarkdownWork, type ContentDependencies } from "./contentCommands.js";
@@ -479,103 +478,21 @@ describe("content routes", () => {
     expect(onDisk).toBe(markdown);
   });
 
-  it("ingests a PDF to identical blocks as the equivalent Markdown upload (golden)", async () => {
-    const pdfMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
-    pdfResponder = async () => pdfMarkdown;
-
-    const pdfWork = await createWork();
-    expect((await ingestPdf(pdfWork, Buffer.from("%PDF-1.7 bytes"))).statusCode).toBe(201);
-
-    const mdWork = await createWork();
-    await ingest(mdWork, { kind: "manual", markdown: pdfMarkdown });
-
-    const fromPdf = await getContent(pdfWork);
-    const fromMd = await getContent(mdWork);
-    const plaintexts = (content: WorkContentDto): string[] =>
-      content.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext));
-    expect(plaintexts(fromPdf)).toEqual(plaintexts(fromMd));
-    expect(fromPdf.readingUnits.map((unit) => unit.title)).toEqual(
-      fromMd.readingUnits.map((unit) => unit.title)
-    );
-  });
-
-  it("retains the uploaded PDF source with a .pdf path and the PDF byte hash, not Markdown", async () => {
-    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
+  it("deactivates the legacy PDF content route, reporting OCR support is not available yet (#702)", async () => {
+    // The Docling-to-Markdown lane is retired: born-digital PDFs create their own Work through the
+    // structured /api/pdf-imports lane, and scanned/mixed PDFs have no lane until language-aware OCR
+    // lands (#704). This route never persists mdast content again; it reports the sequenced limitation
+    // and writes nothing.
     const workEntryId = await createWork();
-    const pdfBytes = Buffer.from("%PDF-1.7 original bytes");
-
-    expect((await ingestPdf(workEntryId, pdfBytes)).statusCode).toBe(201);
-
-    const sources = await context.db
-      .select()
-      .from(workSources)
-      .where(eq(workSources.workEntryId, workEntryId));
-    const source = sources[0];
-    expect(source?.kind).toBe("upload");
-    expect(source?.fileName).toBe("upload.pdf");
-    expect(source?.filePath?.endsWith(".pdf")).toBe(true);
-    expect(source?.sourceText).toBeNull();
-    // Provenance hashes the original PDF payload, not the converted Markdown.
-    expect(source?.sha256).toBe(hashBytes(new Uint8Array(pdfBytes)));
-    expect(source?.sha256).not.toBe(hashMarkdown("Intro.\n\n# Chapter\n\n- a"));
-  });
-
-  it("re-uploading an equivalent PDF is a no-op that leaves one source and no orphan file", async () => {
-    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
-    const workEntryId = await createWork();
-
-    expect((await ingestPdf(workEntryId, Buffer.from("%PDF first"))).statusCode).toBe(201);
-    // A different PDF payload converting to the same Markdown re-ingests to identical blocks: a no-op.
-    expect((await ingestPdf(workEntryId, Buffer.from("%PDF second"))).statusCode).toBe(201);
-
-    const sources = await context.db
-      .select()
-      .from(workSources)
-      .where(eq(workSources.workEntryId, workEntryId));
-    expect(sources).toHaveLength(1);
-    expect(
-      (await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))
-    ).toHaveLength(1);
-  });
-
-  it("returns 422 when the PDF worker fails to convert", async () => {
-    pdfResponder = async () => Promise.reject(new Error("docling absent"));
-    const workEntryId = await createWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF"));
-    expect(response.statusCode).toBe(422);
-    expect(response.json()).toEqual({ error: "invalid_pdf" });
-  });
-
-  it("returns 503 pdf_toolchain_missing when the PDF toolchain is not installed (#510)", async () => {
-    // A missing toolchain is a provisioning gap, not a bad file: it must be distinguishable from
-    // invalid_pdf so the client can point at `pnpm setup:pdf`.
-    pdfResponder = async () =>
-      Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`."));
-    const workEntryId = await createWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.6 valid"));
+    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 born-digital"));
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ error: "pdf_toolchain_missing" });
-    // A capability gap must not orphan a source file for an otherwise-valid PDF.
-    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
-  });
+    expect(response.json()).toEqual({ error: "ocr_support_unavailable" });
 
-  it("rejects an empty PDF body with 400", async () => {
-    const workEntryId = await createWork();
-    expect((await ingestPdf(workEntryId, Buffer.alloc(0))).statusCode).toBe(400);
-  });
-
-  it("returns 422 for a PDF whose Markdown has no readable blocks", async () => {
-    pdfResponder = async () => "![only image](x.png)";
-    const workEntryId = await createWork();
-    expect((await ingestPdf(workEntryId, Buffer.from("%PDF"))).statusCode).toBe(422);
-    // No work_sources row would exist, so no PDF file may be orphaned on disk.
-    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
-  });
-
-  it("returns 404 ingesting a PDF into a missing work", async () => {
-    expect((await ingestPdf("missing-work", Buffer.from("%PDF"))).statusCode).toBe(404);
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, workEntryId));
+    expect(sources).toHaveLength(0);
     expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
@@ -2282,21 +2199,6 @@ describe("heading-derived table of contents (#680)", () => {
     expect(structure.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined]);
   });
 
-  it("derives the outline for a PDF-converted work through the same Markdown pipeline", async () => {
-    pdfResponder = async () => "# Chapter One\n\n## Section A\n\n# Chapter Two";
-    const workEntryId = await createWork();
-    const response = await ingestPdf(workEntryId, Buffer.from("pdf-bytes"));
-    expect(response.statusCode).toBe(201);
-
-    const toc = (await getStructure(workEntryId)).tableOfContents ?? [];
-
-    expect(toc.map((entry) => [entry.label, entry.depth])).toEqual([
-      ["Chapter One", 0],
-      ["Section A", 1],
-      ["Chapter Two", 0]
-    ]);
-  });
-
   it("recomputes the outline on re-ingestion and never persists toc_entries rows", async () => {
     const workEntryId = await createWork();
     await ingest(workEntryId, { kind: "manual", markdown: "# Old One\n\n## Old Section" });
@@ -2398,32 +2300,5 @@ describe("manual-origin Work rejects legacy content ingestion (#720)", () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ error: "manual_work_unsupported" });
-  });
-
-  it("refuses PDF ingestion into a manual Work with 409", async () => {
-    const workEntryId = await createManualWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 curated"));
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
-  });
-
-  it("refuses a manual Work PDF before conversion, independent of the PDF toolchain (#720)", async () => {
-    // The manual-origin rejection is a server-boundary decision that must not depend on the optional
-    // PDF toolchain: even when conversion would fail with PdfToolchainMissingError, a manual Work must
-    // still get the deterministic manual_work_unsupported/409, and the converter must never run.
-    let converterCalls = 0;
-    pdfResponder = async () => {
-      converterCalls += 1;
-      return Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`."));
-    };
-    const workEntryId = await createManualWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 curated"));
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
-    expect(converterCalls).toBe(0);
   });
 });
