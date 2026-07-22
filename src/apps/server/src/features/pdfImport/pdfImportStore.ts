@@ -347,8 +347,8 @@ export async function getCommittedRanges(
 
 // The #702 publication record for an attempt: the learner's capture-time intent plus, once published,
 // exactly one resolved outcome (`workEntryId` for a published Work, `ocrRequiredPages` for the typed
-// OCR-required refusal, or `noContent` for the typed empty-document refusal). All null means the
-// publication is still pending.
+// OCR-required refusal, `noContent` for the typed empty-document refusal, or `unpreservableImages` for
+// the typed unsupported-image refusal). All null means the publication is still pending.
 export type PdfImportPublicationRecord = Readonly<{
   attemptId: string;
   enteredTitle: string | null;
@@ -358,6 +358,7 @@ export type PdfImportPublicationRecord = Readonly<{
   workEntryId: string | null;
   ocrRequiredPages: number | null;
   noContent: boolean | null;
+  unpreservableImages: number | null;
   publishedAt: Date | null;
 }>;
 
@@ -373,6 +374,7 @@ function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
     workEntryId: row.workEntryId,
     ocrRequiredPages: row.ocrRequiredPages,
     noContent: row.noContent,
+    unpreservableImages: row.unpreservableImages,
     publishedAt: row.publishedAt
   });
 }
@@ -415,6 +417,19 @@ export async function getPublication(
 // Link a published Work to its publication as the terminal job state, inside the caller's claim
 // transaction so the outcome commits atomically with the Work. Only applies while the publication is
 // still pending (no result yet), so a re-run cannot relink an already-resolved publication.
+// A publication is still pending only while no outcome column is set. Every terminal marker updates under
+// this guard so a re-run can never overwrite an already-resolved outcome (published Work, OCR-required,
+// no-content, or unsupported-image refusal).
+function pendingPublicationGuard(attemptId: string): ReturnType<typeof and> {
+  return and(
+    eq(pdfImportPublications.attemptId, attemptId),
+    sql`${pdfImportPublications.workEntryId} is null`,
+    sql`${pdfImportPublications.ocrRequiredPages} is null`,
+    sql`${pdfImportPublications.noContent} is null`,
+    sql`${pdfImportPublications.unpreservableImages} is null`
+  );
+}
+
 export async function linkPublishedWork(
   tx: Executor,
   attemptId: string,
@@ -424,14 +439,7 @@ export async function linkPublishedWork(
   await tx
     .update(pdfImportPublications)
     .set({ workEntryId, publishedAt: now })
-    .where(
-      and(
-        eq(pdfImportPublications.attemptId, attemptId),
-        sql`${pdfImportPublications.workEntryId} is null`,
-        sql`${pdfImportPublications.ocrRequiredPages} is null`,
-        sql`${pdfImportPublications.noContent} is null`
-      )
-    );
+    .where(pendingPublicationGuard(attemptId));
 }
 
 // Record the typed OCR-required outcome (no Work) for a pending publication.
@@ -444,14 +452,7 @@ export async function markPublicationOcrRequired(
   await db
     .update(pdfImportPublications)
     .set({ ocrRequiredPages: pagesNeedingOcr, publishedAt: now })
-    .where(
-      and(
-        eq(pdfImportPublications.attemptId, attemptId),
-        sql`${pdfImportPublications.workEntryId} is null`,
-        sql`${pdfImportPublications.ocrRequiredPages} is null`,
-        sql`${pdfImportPublications.noContent} is null`
-      )
-    );
+    .where(pendingPublicationGuard(attemptId));
 }
 
 // Record the typed no-content refusal (no Work) for a pending publication: the pages carried native text
@@ -464,14 +465,21 @@ export async function markPublicationNoContent(
   await db
     .update(pdfImportPublications)
     .set({ noContent: true, publishedAt: now })
-    .where(
-      and(
-        eq(pdfImportPublications.attemptId, attemptId),
-        sql`${pdfImportPublications.workEntryId} is null`,
-        sql`${pdfImportPublications.ocrRequiredPages} is null`,
-        sql`${pdfImportPublications.noContent} is null`
-      )
-    );
+    .where(pendingPublicationGuard(attemptId));
+}
+
+// Record the typed unsupported-image refusal (no Work) for a pending publication: the document contains
+// picture/figure constructs whose images #701 cannot extract, so publishing would lose content.
+export async function markPublicationImagesUnsupported(
+  db: DbClient,
+  attemptId: string,
+  unpreservableImages: number,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ unpreservableImages, publishedAt: now })
+    .where(pendingPublicationGuard(attemptId));
 }
 
 export async function markConverted(

@@ -78,6 +78,32 @@ describe("describePdfImport", () => {
     });
   });
 
+  it("refuses a single unpreservable image with the singular copy", () => {
+    const progress = describePdfImport(
+      view({ status: "image_unsupported", unpreservableImages: 1 })
+    );
+
+    expect(progress.kind).toBe("image_unsupported");
+    expect(progress.terminal).toBe(true);
+    if (progress.kind === "image_unsupported") {
+      expect(progress.message).toContain("an image that cannot");
+    } else {
+      expect.unreachable("expected image_unsupported");
+    }
+  });
+
+  it("pluralizes when several images cannot be preserved", () => {
+    const progress = describePdfImport(
+      view({ status: "image_unsupported", unpreservableImages: 4 })
+    );
+
+    if (progress.kind === "image_unsupported") {
+      expect(progress.message).toContain("4 images that cannot");
+    } else {
+      expect.unreachable("expected image_unsupported");
+    }
+  });
+
   it("surfaces the adapter's named failure message", () => {
     const progress = describePdfImport(
       view(

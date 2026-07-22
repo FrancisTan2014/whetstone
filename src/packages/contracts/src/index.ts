@@ -194,6 +194,7 @@ export type {
   RangeConversion,
   StructuredDocItem,
   StructuredDocument,
+  StructuredDocumentMetadata,
   StructuredDocumentSource,
   StructuredPage,
   ValidateStructuredResult

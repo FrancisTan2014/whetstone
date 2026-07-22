@@ -124,34 +124,48 @@ describe("mapStructuredDocument", () => {
     expect(unitTypes(result, 0)).toEqual(["footnoteTarget", "footnoteTarget", "footnoteTarget"]);
   });
 
-  it("projects a picture with a caption child to a figure with a caption", () => {
-    const result = mapped(
-      mapStructuredDocument(
-        doc([
-          item({
-            children: [item({ label: "caption", text: "Figure 1. A diagram." })],
-            label: "picture"
-          })
-        ])
-      )
+  it("refuses a document with a picture as image_unsupported and maps no content", () => {
+    const result = mapStructuredDocument(
+      doc([
+        item({ label: "text", text: "Body" }),
+        item({
+          children: [item({ label: "caption", text: "Figure 1. A diagram." })],
+          label: "picture"
+        })
+      ])
     );
-    const figure = result.units[0]!.docBlocks[0]!.node;
-    expect(figure.type).toBe("figure");
-    expect(figure.content?.map((child) => child.type)).toEqual(["image", "figureCaption"]);
+    expect(result.status).toBe("image_unsupported");
+    if (result.status !== "image_unsupported") {
+      throw new Error(`expected image_unsupported, got ${result.status}`);
+    }
+    expect(result.unpreservableImages).toBe(1);
   });
 
-  it("projects a figure label using its own text as the caption", () => {
-    const result = mapped(
-      mapStructuredDocument(doc([item({ label: "figure", text: "Inline figure caption." })]))
-    );
-    const figure = result.units[0]!.docBlocks[0]!.node;
-    expect(figure.content?.map((child) => child.type)).toEqual(["image", "figureCaption"]);
+  it("refuses a figure label as image_unsupported", () => {
+    const result = mapStructuredDocument(doc([item({ label: "figure", text: "Inline figure." })]));
+    expect(result.status).toBe("image_unsupported");
   });
 
-  it("projects a caption-less picture to a figure with only an image", () => {
-    const result = mapped(mapStructuredDocument(doc([item({ label: "picture", text: "" })])));
-    const figure = result.units[0]!.docBlocks[0]!.node;
-    expect(figure.content?.map((child) => child.type)).toEqual(["image"]);
+  it("counts pictures nested inside other constructs when refusing", () => {
+    const result = mapStructuredDocument(
+      doc([
+        item({
+          children: [
+            item({
+              children: [item({ label: "picture", text: "" })],
+              label: "table_cell"
+            }),
+            item({ label: "figure", text: "" })
+          ],
+          label: "table_row"
+        }),
+        item({ label: "picture", text: "" })
+      ])
+    );
+    if (result.status !== "image_unsupported") {
+      throw new Error(`expected image_unsupported, got ${result.status}`);
+    }
+    expect(result.unpreservableImages).toBe(3);
   });
 
   it("projects a table with rows into a table, marking header cells", () => {

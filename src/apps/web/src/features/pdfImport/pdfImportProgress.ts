@@ -10,6 +10,14 @@ export const ocrSupportUnavailableMessage = "OCR support is not available yet.";
 export const noReadableContentMessage =
   "This PDF has no readable text content to import, so no book was created.";
 
+function imageUnsupportedMessage(unpreservableImages: number): string {
+  const images =
+    unpreservableImages === 1
+      ? "an image that cannot"
+      : `${unpreservableImages} images that cannot`;
+  return `This PDF contains ${images} be preserved yet, so no book was created.`;
+}
+
 function ocrRequiredMessage(pagesNeedingOcr: number): string {
   const pages = pagesNeedingOcr === 1 ? "1 page needs" : `${pagesNeedingOcr} pages need`;
   return `${ocrSupportUnavailableMessage} ${pages} text recognition, which a later update will add.`;
@@ -24,13 +32,15 @@ export type PdfImportProgress =
   | Readonly<{ kind: "published"; workEntryId: string; terminal: true }>
   | Readonly<{ kind: "ocr_required"; message: string; terminal: true }>
   | Readonly<{ kind: "no_content"; message: string; terminal: true }>
+  | Readonly<{ kind: "image_unsupported"; message: string; terminal: true }>
   | Readonly<{ kind: "failed"; message: string; terminal: true }>;
 
 // Project an import view into its progress model. Terminal outcomes win over in-flight labels: a published
 // Work (open the Reader), an OCR-required refusal (no Work; sequenced-limitation copy), a no-content
-// refusal (no Work; empty-document copy), or a failed conversion (the adapter's named failure). Otherwise
-// the label reflects the #721 execution phase — reading the source, converting a known page range,
-// resuming after an interruption, or finishing publication.
+// refusal (no Work; empty-document copy), an unsupported-image refusal (no Work; unpreservable-image
+// copy), or a failed conversion (the adapter's named failure). Otherwise the label reflects the #721
+// execution phase — reading the source, converting a known page range, resuming after an interruption, or
+// finishing publication.
 export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
   if (view.publication.status === "published") {
     return { kind: "published", terminal: true, workEntryId: view.publication.workEntryId };
@@ -46,6 +56,14 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
 
   if (view.publication.status === "no_content") {
     return { kind: "no_content", message: noReadableContentMessage, terminal: true };
+  }
+
+  if (view.publication.status === "image_unsupported") {
+    return {
+      kind: "image_unsupported",
+      message: imageUnsupportedMessage(view.publication.unpreservableImages),
+      terminal: true
+    };
   }
 
   if (view.status.state === "failed") {

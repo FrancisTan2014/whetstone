@@ -399,6 +399,72 @@ describe("publishConvertedPdfImport", () => {
     });
   });
 
+  it("refuses a converted PDF containing a picture as image_unsupported, creating no Work", async () => {
+    // Native text on every page, but the body carries a picture whose image #701 cannot preserve:
+    // publishing must refuse rather than write a content-losing null-image placeholder (#702).
+    await driveToConverted(db, {
+      id: "att-image",
+      sourceHash: "e".repeat(64),
+      payload: rangePayload(
+        [item({ label: "text", text: "Body" }), item({ label: "picture", text: "" })],
+        [true]
+      ),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-image",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "figures.pdf"
+    });
+
+    const result = await publishConvertedPdfImport(publishDeps(db), "att-image");
+    expect(result).toEqual({ status: "image_unsupported", unpreservableImages: 1 });
+    const publication = await getPublication(db, "att-image");
+    expect(publication?.unpreservableImages).toBe(1);
+    expect(publication?.workEntryId).toBeNull();
+    expect(publication?.noContent).toBeNull();
+    expect(publication?.ocrRequiredPages).toBeNull();
+    // No Work, no source, no claim: nothing was committed before the refusal.
+    expect(await db.select().from(workSources)).toHaveLength(0);
+    expect(await db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    expect(await db.select().from(workMeta)).toHaveLength(0);
+    // The redundant stage is freed cleanly and its binding cleared, like the other refusals.
+    await expect(stat(stageStore.openStage("att-image").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
+    expect((await getAttemptById(db, "att-image"))?.stagePath).toBeNull();
+    // The refusal is terminal: a second publish is an idempotent no-op, not a retry.
+    expect(await publishConvertedPdfImport(publishDeps(db), "att-image")).toEqual({
+      status: "already_published"
+    });
+  });
+
+  it("falls back to cleaned PDF metadata for title and author when nothing was entered", async () => {
+    await driveToConverted(db, {
+      id: "att-meta",
+      sourceHash: "f".repeat(64),
+      payload: {
+        ...rangePayload(SAMPLE_BODY, [true]),
+        metadata: { title: "Metadata Title", author: "Metadata Author" }
+      },
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-meta",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "ignored-stem.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-meta"));
+    // Entered values are absent, so the cleaned PDF metadata wins over the filename stem / neutral author.
+    expect(result.work.title).toBe("Metadata Title");
+    const createdAuthors = await db.select().from(authors);
+    expect(createdAuthors.map((row) => row.name)).toContain("Metadata Author");
+  });
+
   it("is idempotent: a second publish of a resolved attempt is a no-op", async () => {
     await driveToConverted(db, {
       id: "att-5",

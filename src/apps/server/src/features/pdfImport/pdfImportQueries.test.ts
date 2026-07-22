@@ -15,6 +15,7 @@ import {
   insertPublicationIntent,
   insertQueuedAttempt,
   markFailed,
+  markPublicationImagesUnsupported,
   markPublicationNoContent,
   markPublicationOcrRequired,
   setProbeResult
@@ -209,6 +210,23 @@ describe("buildPdfImportPublicationOutcome", () => {
     await markPublicationNoContent(db, "a1", new Date());
 
     expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "no_content" });
+  });
+
+  it("reports `image_unsupported` with the image count once an unsupported-image refusal is recorded", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "figures.pdf"
+    });
+    await markPublicationImagesUnsupported(db, "a1", 2, new Date());
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
+      status: "image_unsupported",
+      unpreservableImages: 2
+    });
   });
 
   it("reports `pending` once an intent exists but neither a Work nor an OCR refusal is resolved", async () => {

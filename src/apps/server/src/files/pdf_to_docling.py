@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 # Exit codes — kept in LOCKSTEP with WORKER_EXIT_* in pdfStructuredErrors.ts. Changing one side
 # requires changing the other; the Node adapter maps each to a named PdfStructuredFailure.
@@ -292,17 +292,59 @@ def page_confidence_map(doc: Any) -> dict[int, float]:
     return confidences
 
 
+def clean_metadata_value(value: Any) -> Optional[str]:
+    """Clean one raw PDF info-dictionary value: trim surrounding whitespace, and treat an empty (or
+    non-string) value as absent (``None``) so a blank Title/Author never wins the resolution ladder."""
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed if trimmed else None
+
+
+def build_document_metadata(raw: Mapping[str, Any]) -> dict[str, Optional[str]]:
+    """Project the raw PDF info dictionary into the contract's cleaned ``{title, author}`` (#702).
+
+    Both keys are always present; an absent, blank, or non-string field becomes ``None``. The Node
+    ``pdfStructuredContracts`` schema expects this exact strict shape.
+    """
+    return {
+        "title": clean_metadata_value(raw.get("Title")),
+        "author": clean_metadata_value(raw.get("Author")),
+    }
+
+
+def pdf_metadata_reader(
+    pdf_path: str, opener: Callable[[str], Any]
+) -> Callable[[], Mapping[str, Any]]:  # pragma: no cover - real backend; cleaning tested via fake.
+    """A document-metadata reader over the same pypdfium2 backend: reads the info-dictionary Title/Author.
+
+    Kept behind this seam (mirroring ``native_text_prober``) so the cleaning/assembly logic tests against
+    a fake and the real pypdfium2 read stays out of the coverage lane.
+    """
+    document = opener(pdf_path)
+
+    def read() -> Mapping[str, Any]:
+        return {
+            "Title": document.get_metadata_value("Title"),
+            "Author": document.get_metadata_value("Author"),
+        }
+
+    return read
+
+
 def build_range_payload(
     doc: Any,
     start_page: int,
     end_page: int,
     native_text: Callable[[int], bool],
+    metadata: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Assemble one range payload from a converted DoclingDocument.
 
     Rejects an unsupported schema version up front (``UnsupportedSchema``) so an incompatible converter
     is a named failure, not a silent misread. Preserves the ordered body/furniture trees and reports
-    native-text availability for every page in [start_page, end_page].
+    native-text availability for every page in [start_page, end_page]. When the caller supplies the raw
+    PDF info dictionary, attaches its cleaned ``metadata`` (#702's title/author fallback source).
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -313,13 +355,16 @@ def build_range_payload(
         {"pageNumber": page, "hasNativeText": bool(native_text(page))}
         for page in range(start_page, end_page + 1)
     ]
-    return {
+    payload: dict[str, Any] = {
         "schemaVersion": RANGE_SCHEMA_VERSION,
         "doclingSchema": {"name": DOCLING_SCHEMA_NAME, "version": version},
         "pages": pages,
         "body": map_group(getattr(doc, "body", None), doc, _resolve_ref, page_confidences),
         "furniture": map_group(getattr(doc, "furniture", None), doc, _resolve_ref, page_confidences),
     }
+    if metadata is not None:
+        payload["metadata"] = build_document_metadata(metadata)
+    return payload
 
 
 def convert_range(
@@ -328,14 +373,17 @@ def convert_range(
     end_page: int,
     converter_factory: Callable[[], Any],
     native_text: Callable[[int], bool],
+    read_metadata: Optional[Callable[[], Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Convert one bounded page range to a range payload using a converter from ``converter_factory``.
 
     Docling's ``convert`` receives an explicit ``page_range`` so only the requested pages are decoded.
+    When a ``read_metadata`` seam is supplied, its raw PDF info dictionary is cleaned onto the payload.
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
-    return build_range_payload(result.document, start_page, end_page, native_text)
+    metadata = read_metadata() if read_metadata is not None else None
+    return build_range_payload(result.document, start_page, end_page, native_text, metadata)
 
 
 def native_text_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[[int], bool]:
@@ -397,11 +445,23 @@ def run_range(
     prober_factory: Callable[[str], Callable[[int], bool]],
     stdout: Any,
     stderr: Any,
+    metadata_reader_factory: Optional[
+        Callable[[str], Callable[[], Mapping[str, Any]]]
+    ] = None,
 ) -> int:
-    """``--range`` mode: emit one validated range payload, classifying each failure distinctly."""
+    """``--range`` mode: emit one validated range payload, classifying each failure distinctly.
+
+    When a ``metadata_reader_factory`` is wired, the payload carries the source PDF's cleaned document
+    metadata (#702's title/author fallback); without one it is simply omitted (an older/metadata-less run).
+    """
     try:
         native_text = prober_factory(pdf_path)
-        payload = convert_range(pdf_path, start_page, end_page, converter_factory, native_text)
+        read_metadata = (
+            metadata_reader_factory(pdf_path) if metadata_reader_factory is not None else None
+        )
+        payload = convert_range(
+            pdf_path, start_page, end_page, converter_factory, native_text, read_metadata
+        )
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
         return EXIT_PASSWORD_REQUIRED
@@ -436,6 +496,9 @@ def main(
     resource_module: Any = "__default__",
     stdout: Any = None,
     stderr: Any = None,
+    metadata_reader_factory: Optional[
+        Callable[[str], Callable[[], Mapping[str, Any]]]
+    ] = None,
 ) -> int:
     """Parse args, apply the memory ceiling, and dispatch to the requested mode."""
     import os
@@ -447,6 +510,8 @@ def main(
         resource_module = _load_resource_module()
     if prober_factory is None:
         prober_factory = lambda path: native_text_prober(path, opener)
+    if metadata_reader_factory is None:
+        metadata_reader_factory = lambda path: pdf_metadata_reader(path, opener)
 
     try:
         apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), resource_module)
@@ -467,7 +532,14 @@ def main(
             if end_page < start_page:
                 raise ValueError("end page must be >= start page")
             return run_range(
-                argv[1], start_page, end_page, converter_factory, prober_factory, stdout, stderr
+                argv[1],
+                start_page,
+                end_page,
+                converter_factory,
+                prober_factory,
+                stdout,
+                stderr,
+                metadata_reader_factory,
             )
     except ValueError as error:
         _write(stderr, f"usage error: {error}\n")

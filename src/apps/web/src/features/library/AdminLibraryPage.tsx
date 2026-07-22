@@ -385,17 +385,19 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    /* v8 ignore next 3 -- a terminal poll result is published, ocr_required, no_content, or failed;
-       `in_progress` (the only remaining kind) is never terminal, so this early return is unreachable. */
+    /* v8 ignore next 4 -- a terminal poll result is published, ocr_required, no_content,
+       image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal, so this
+       early return is unreachable. */
     if (
       progress.kind !== "ocr_required" &&
       progress.kind !== "no_content" &&
+      progress.kind !== "image_unsupported" &&
       progress.kind !== "failed"
     ) {
       return;
     }
 
-    // ocr_required, no_content, and failed all surface their message and create no Work.
+    // ocr_required, no_content, image_unsupported, and failed all surface their message and create no Work.
     toast.error(progress.message);
   }
 

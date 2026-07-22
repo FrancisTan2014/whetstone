@@ -35,11 +35,15 @@ export type PdfBlockEvidence = Readonly<{
 // A born-digital PDF with any non-native-text page cannot be canonicalized without OCR (#704), so the
 // whole publication is refused with a typed `ocr_required` outcome and NO partial Work is created. A PDF
 // whose pages carry native text but map to ZERO canonical blocks (an empty body) is refused with a typed
-// `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell"). The
-// affected page count is reported for OCR so the caller can explain exactly how much needs OCR.
+// `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell"). A PDF
+// that contains picture/figure constructs is refused with a typed `image_unsupported` outcome: #701 emits
+// no extractable image bytes, so the image cannot be preserved through the image-resource boundary, and
+// publishing a null-image placeholder would silently lose content — the whole document fails visibly
+// instead (#702's "fail visibly when a construct cannot map"). The affected page/image count is reported.
 export type PdfCanonicalMappingResult =
   | Readonly<{ status: "ocr_required"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
+  | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
   | Readonly<{
       status: "mapped";
       units: readonly PersistableReadingUnit[];
@@ -61,6 +65,9 @@ type DraftUnit = { title: string | null; blocks: MappedBlock[] };
 const HEADING_LEVEL_BY_LABEL: Readonly<Record<string, number>> = { title: 1, section_header: 2 };
 const LIST_GROUP_LABELS = new Set(["list", "ordered_list", "unordered_list"]);
 const HEADER_CELL_LABELS = new Set(["table_header", "column_header", "row_header"]);
+// Picture/figure constructs whose image bytes #701 does not extract. Their presence refuses the whole
+// publication (`image_unsupported`) rather than publishing a content-losing null-image placeholder.
+const PICTURE_LABELS = new Set(["picture", "figure"]);
 
 function inlineContent(text: string): DocumentNodeJSON[] {
   return text.length === 0 ? [] : [{ text, type: "text" }];
@@ -125,24 +132,20 @@ function tableNode(item: StructuredDocItem): DocumentNodeJSON | null {
   return { content: rows, type: "table" };
 }
 
-// Build a figure from a docling picture: a display-only image (born-digital pictures carry no extracted
-// bytes, so `src`/`imageResourceId` stay null and the reader degrades to a caption/placeholder) plus an
-// optional caption taken from a `caption` child, else the picture's own text.
-function figureNode(item: StructuredDocItem): DocumentNodeJSON {
-  const captionChild = item.children.find((child) => child.label === "caption");
-  const captionText = captionChild?.text ?? item.text;
-  const content: DocumentNodeJSON[] = [
-    { attrs: { alt: null, imageResourceId: null, src: null }, type: "image" }
-  ];
-  if (captionText.length > 0) {
-    content.push({ content: inlineContent(captionText), type: "figureCaption" });
-  }
-  return { content, type: "figure" };
+// Count the picture/figure constructs anywhere in the body tree (including nested inside lists or table
+// cells): each one carries an image #701 cannot extract, so any occurrence refuses the whole document.
+function countUnpreservableImages(items: readonly StructuredDocItem[]): number {
+  return items.reduce(
+    (total, item) =>
+      total + (PICTURE_LABELS.has(item.label) ? 1 : 0) + countUnpreservableImages(item.children),
+    0
+  );
 }
 
 // Project one top-level body item to its canonical block node. The raw docling label decides the node
 // type; a construct with no canonical representation (or an empty table/list) becomes a visible `unknown`
-// node so nothing a publisher wrote is silently dropped.
+// node so nothing a publisher wrote is silently dropped. Picture/figure constructs never reach here — a
+// document containing one is refused as `image_unsupported` before mapping.
 function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
   const headingLevel = HEADING_LEVEL_BY_LABEL[item.label];
   if (headingLevel !== undefined) {
@@ -160,9 +163,6 @@ function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
     case "endnote":
     case "reference":
       return { content: [paragraph(item.text)], type: "footnoteTarget" };
-    case "picture":
-    case "figure":
-      return figureNode(item);
     case "table":
       return tableNode(item) ?? unknownNode(item);
     case "list":
@@ -272,6 +272,15 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   const pagesNeedingOcr = document.pages.filter((page) => !page.hasNativeText).length;
   if (pagesNeedingOcr > 0) {
     return { pagesNeedingOcr, status: "ocr_required" };
+  }
+
+  // A picture/figure carries an image #701 does not extract, so it cannot be preserved through the
+  // image-resource boundary. Refuse the whole document (no null-image placeholder is ever published)
+  // before mapping, reporting how many images were affected (#702's "fail visibly when a construct
+  // cannot map").
+  const unpreservableImages = countUnpreservableImages(document.body);
+  if (unpreservableImages > 0) {
+    return { status: "image_unsupported", unpreservableImages };
   }
 
   const walked = walkBody(document.body);

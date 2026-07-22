@@ -110,6 +110,27 @@ describe("parseRangeConversion", () => {
     const result = parseRangeConversion(rangePayload({ body: [item({ charSpan: [5, 2] })] }));
     expect(result.status).toBe("malformed");
   });
+
+  it("accepts a payload carrying cleaned document metadata", () => {
+    const result = parseRangeConversion(
+      rangePayload({ metadata: { title: "A Title", author: null } })
+    );
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.value.metadata).toEqual({ title: "A Title", author: null });
+  });
+
+  it("rejects metadata carrying an unknown key", () => {
+    const result = parseRangeConversion(
+      rangePayload({ metadata: { title: "A Title", author: null, subject: "x" } })
+    );
+    expect(result.status).toBe("malformed");
+  });
+
+  it("rejects metadata missing a required field", () => {
+    const result = parseRangeConversion(rangePayload({ metadata: { title: "A Title" } }));
+    expect(result.status).toBe("malformed");
+  });
 });
 
 describe("parseProbePageCount", () => {
@@ -183,6 +204,26 @@ describe("concatenateRanges", () => {
     const document = concatenateRanges({ ...source, pageCount: 0 }, []);
     expect(document.doclingSchema).toEqual({ name: "DoclingDocument", version: supportedVersion });
     expect(document.body).toEqual([]);
+  });
+
+  it("omits document metadata when no range carried any", () => {
+    const document = concatenateRanges(source, [range([1])]);
+    expect(document.metadata).toBeUndefined();
+  });
+
+  it("surfaces the first non-null title and author seen across ranges", () => {
+    const document = concatenateRanges(source, [
+      { ...range([1]), metadata: { title: null, author: "Ada Lovelace" } },
+      { ...range([2]), metadata: { title: "Notes on the Engine", author: "Ignored" } }
+    ]);
+    expect(document.metadata).toEqual({ title: "Notes on the Engine", author: "Ada Lovelace" });
+  });
+
+  it("keeps a partial metadata field null when no range supplies it", () => {
+    const document = concatenateRanges(source, [
+      { ...range([1]), metadata: { title: "Only A Title", author: null } }
+    ]);
+    expect(document.metadata).toEqual({ title: "Only A Title", author: null });
   });
 });
 

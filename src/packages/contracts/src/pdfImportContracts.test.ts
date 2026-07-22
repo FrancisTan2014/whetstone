@@ -157,12 +157,27 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
     expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "no_content" })).toEqual({
       status: "no_content"
     });
+    expect(
+      pdfImportPublicationOutcomeDtoSchema.parse({
+        status: "image_unsupported",
+        unpreservableImages: 2
+      })
+    ).toEqual({ status: "image_unsupported", unpreservableImages: 2 });
   });
 
   it("rejects a non-positive OCR page count", () => {
     expect(
       pdfImportPublicationOutcomeDtoSchema.safeParse({ pagesNeedingOcr: 0, status: "ocr_required" })
         .success
+    ).toBe(false);
+  });
+
+  it("rejects a non-positive unpreservable-image count", () => {
+    expect(
+      pdfImportPublicationOutcomeDtoSchema.safeParse({
+        status: "image_unsupported",
+        unpreservableImages: 0
+      }).success
     ).toBe(false);
   });
 });

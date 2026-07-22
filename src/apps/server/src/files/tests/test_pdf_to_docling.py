@@ -33,7 +33,9 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     UnsupportedSchema,
     apply_memory_limit,
     build_converter,
+    build_document_metadata,
     build_range_payload,
+    clean_metadata_value,
     convert_range,
     count_pages,
     main,
@@ -239,6 +241,56 @@ class RangePayloadTests(unittest.TestCase):
         )
         self.assertEqual(converter.calls, [("/tmp/a.pdf", (1, 2))])
         self.assertEqual(payload["pages"][0]["pageNumber"], 1)
+        self.assertNotIn("metadata", payload)
+
+    def test_convert_range_attaches_cleaned_metadata_when_a_reader_is_given(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+        payload = convert_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: converter,
+            native_text=lambda _p: True,
+            read_metadata=lambda: {"Title": "  Trimmed  ", "Author": ""},
+        )
+        self.assertEqual(payload["metadata"], {"title": "Trimmed", "author": None})
+
+
+class DocumentMetadataTests(unittest.TestCase):
+    def test_clean_metadata_value_trims_and_nullifies_blanks(self):
+        self.assertEqual(clean_metadata_value("  A Title  "), "A Title")
+        self.assertIsNone(clean_metadata_value("   "))
+        self.assertIsNone(clean_metadata_value(""))
+
+    def test_clean_metadata_value_nullifies_non_strings(self):
+        self.assertIsNone(clean_metadata_value(None))
+        self.assertIsNone(clean_metadata_value(42))
+
+    def test_build_document_metadata_projects_title_and_author(self):
+        self.assertEqual(
+            build_document_metadata({"Title": " Book ", "Author": " Ada "}),
+            {"title": "Book", "author": "Ada"},
+        )
+
+    def test_build_document_metadata_defaults_missing_fields_to_null(self):
+        self.assertEqual(
+            build_document_metadata({}),
+            {"title": None, "author": None},
+        )
+
+    def test_build_range_payload_attaches_metadata_when_supplied(self):
+        payload = build_range_payload(
+            FakeDoc(),
+            1,
+            1,
+            native_text=lambda _p: True,
+            metadata={"Title": "T", "Author": "A"},
+        )
+        self.assertEqual(payload["metadata"], {"title": "T", "author": "A"})
+
+    def test_build_range_payload_omits_metadata_when_absent(self):
+        payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
+        self.assertNotIn("metadata", payload)
 
 
 # --- Page counting -----------------------------------------------------------------------------
@@ -421,6 +473,24 @@ class RunRangeTests(unittest.TestCase):
         payload = json.loads(raw.getvalue().decode("utf-8"))
         self.assertEqual(payload["schemaVersion"], RANGE_SCHEMA_VERSION)
         self.assertEqual(payload["body"][0]["text"], "标题 α")
+        self.assertNotIn("metadata", payload)
+
+    def test_emits_cleaned_metadata_when_a_reader_factory_is_wired(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            self._factory(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+            lambda _path: (lambda: {"Title": " Meta Title ", "Author": None}),
+        )
+        self.assertEqual(code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["metadata"], {"title": "Meta Title", "author": None})
 
     def test_unsupported_schema_exits_with_its_own_code(self):
         doc = FakeDoc(version="0.0.9")
@@ -506,6 +576,7 @@ class MainTests(unittest.TestCase):
             ["--range", "/tmp/a.pdf", "1", "2"],
             converter_factory=lambda: FakeConverter(doc),
             prober_factory=lambda _path: (lambda page: page == 1),
+            metadata_reader_factory=lambda _path: (lambda: {"Title": "Doc", "Author": "Ada"}),
             resource_module=None,
             stdout=stdout,
             stderr=io.StringIO(),
@@ -513,6 +584,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, EXIT_OK)
         payload = json.loads(stdout.getvalue())
         self.assertEqual([p["hasNativeText"] for p in payload["pages"]], [True, False])
+        self.assertEqual(payload["metadata"], {"title": "Doc", "author": "Ada"})
 
     def test_range_rejects_non_positive_pages(self):
         stderr = io.StringIO()

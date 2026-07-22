@@ -838,10 +838,12 @@ export const pdfImportRanges = pgTable(
 // records the outcome exactly once at publish: `work_entry_id` (the published Work), OR
 // `ocr_required_pages` (a positive page count when the born-digital text layer was missing and no Work
 // was created), OR `no_content` (the pages carried native text but mapped to zero canonical blocks, so
-// publishing would create an empty-shell Work — refused, no Work created). A row with no result set is
-// a publication still pending; the `result_ck` check forbids ever setting more than one. Deleted with
-// its attempt (cascade) as operational hygiene — the published
-// Work and its blocks are independent, immutable content and are never touched by that cleanup.
+// publishing would create an empty-shell Work — refused, no Work created), OR `unpreservable_images` (a
+// positive count of picture/figure constructs whose images #701 cannot extract, so publishing would lose
+// content — refused, no Work created). A row with no result set is a publication still pending; the
+// `result_ck` check forbids ever setting more than one. Deleted with its attempt (cascade) as operational
+// hygiene — the published Work and its blocks are independent, immutable content and are never touched by
+// that cleanup.
 export const pdfImportPublications = pgTable(
   "pdf_import_publications",
   {
@@ -855,20 +857,26 @@ export const pdfImportPublications = pgTable(
     workEntryId: text("work_entry_id").references(() => entries.id),
     ocrRequiredPages: integer("ocr_required_pages"),
     noContent: boolean("no_content"),
+    unpreservableImages: integer("unpreservable_images"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     publishedAt: timestamp("published_at", { mode: "date", withTimezone: true })
   },
   (table) => [
-    // A publication resolves to at most one outcome: a published Work, an OCR-required page count, or a
-    // no-content refusal — never more than one. (None set = still pending.)
+    // A publication resolves to at most one outcome: a published Work, an OCR-required page count, a
+    // no-content refusal, or an unsupported-image refusal — never more than one. (None set = pending.)
     check(
       "pdf_import_publications_result_ck",
-      sql`(${table.workEntryId} is not null)::int + (${table.ocrRequiredPages} is not null)::int + (${table.noContent} is not null)::int <= 1`
+      sql`(${table.workEntryId} is not null)::int + (${table.ocrRequiredPages} is not null)::int + (${table.noContent} is not null)::int + (${table.unpreservableImages} is not null)::int <= 1`
     ),
     // An OCR-required marker, when present, is a positive page count.
     check(
       "pdf_import_publications_ocr_pages_ck",
       sql`${table.ocrRequiredPages} is null or ${table.ocrRequiredPages} > 0`
+    ),
+    // An unsupported-image marker, when present, is a positive image count.
+    check(
+      "pdf_import_publications_images_ck",
+      sql`${table.unpreservableImages} is null or ${table.unpreservableImages} > 0`
     )
   ]
 );

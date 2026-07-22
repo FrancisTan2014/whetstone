@@ -113,7 +113,9 @@ export type PdfImportBeginResultDto = z.infer<typeof pdfImportBeginResultDtoSche
 // published (or not yet converted); `published` = a canonical Work is ready to open; `ocr_required` = a
 // typed refusal (a page lacked native text) that publishes no Work and reports the affected page count;
 // `no_content` = a typed refusal (the pages had native text but mapped to zero canonical blocks) that
-// publishes no Work.
+// publishes no Work; `image_unsupported` = a typed refusal (the document contains picture/figure
+// constructs whose images cannot yet be preserved) that publishes no Work rather than a content-losing
+// placeholder, reporting how many images were affected.
 export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("none") }).strict(),
   z.object({ status: z.literal("pending") }).strict(),
@@ -121,7 +123,13 @@ export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status
   z
     .object({ pagesNeedingOcr: z.number().int().positive(), status: z.literal("ocr_required") })
     .strict(),
-  z.object({ status: z.literal("no_content") }).strict()
+  z.object({ status: z.literal("no_content") }).strict(),
+  z
+    .object({
+      status: z.literal("image_unsupported"),
+      unpreservableImages: z.number().int().positive()
+    })
+    .strict()
 ]);
 
 export type PdfImportPublicationOutcomeDto = z.infer<typeof pdfImportPublicationOutcomeDtoSchema>;

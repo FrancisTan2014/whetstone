@@ -25,6 +25,7 @@ import {
   getPublication,
   insertPublicationIntent,
   linkPublishedWork,
+  markPublicationImagesUnsupported,
   markPublicationNoContent,
   markPublicationOcrRequired,
   PDF_IMPORT_ADAPTER_FINGERPRINT
@@ -145,19 +146,23 @@ export type PdfImportPublishDependencies = Readonly<{
 // through `beginPdfImport` (no publication intent); `already_published` = its outcome was resolved by a
 // prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_required` = a typed refusal
 // with no Work (a page lacked native text); `no_content` = a typed refusal with no Work (the pages had
-// native text but mapped to zero canonical blocks); `published` = a canonical Work (freshly created, or
-// reopened for identical bytes).
+// native text but mapped to zero canonical blocks); `image_unsupported` = a typed refusal with no Work
+// (the document contains picture/figure constructs whose images cannot be preserved); `published` = a
+// canonical Work (freshly created, or reopened for identical bytes).
 export type PublishConvertedResult =
   | Readonly<{ status: "skipped" }>
   | Readonly<{ status: "already_published" }>
   | Readonly<{ status: "not_ready" }>
   | Readonly<{ status: "ocr_required"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
+  | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
   | Readonly<{ status: "published"; work: WorkDto; reopened: boolean }>;
 
-// The document metadata resolution ladder (#702): entered value first, then — a born-digital PDF exposes
-// no cleaned document metadata through #701 — the filename stem, then a neutral default. A raw path is
-// never exposed: the stem strips any directory portion and the extension.
+// The document metadata resolution ladder (#702): entered value first, then the source PDF's own cleaned
+// metadata (#701 surfaces its title/author when the info dictionary carried them), then — for the title —
+// the filename stem, then a neutral default. A raw path is never exposed: the stem strips any directory
+// portion and the extension. Cleaned PDF metadata is trusted as already-trimmed, but an empty/whitespace
+// value is still treated as absent so a blank Title/Author never wins over the next layer.
 function filenameStem(fileName: string): string | null {
   // Strip any directory portion (never exposing a raw path) and the extension.
   const base = fileName.replace(/^.*[\\/]/u, "");
@@ -165,12 +170,21 @@ function filenameStem(fileName: string): string | null {
   return stem.length > 0 ? stem : null;
 }
 
-function resolveTitle(enteredTitle: string | null, fileName: string): string {
-  return enteredTitle ?? filenameStem(fileName) ?? "Untitled PDF";
+function resolveTitle(
+  enteredTitle: string | null,
+  metadataTitle: string | null | undefined,
+  fileName: string
+): string {
+  return (
+    enteredTitle ?? normalizeEntered(metadataTitle) ?? filenameStem(fileName) ?? "Untitled PDF"
+  );
 }
 
-function resolveAuthorName(enteredAuthor: string | null): string {
-  return enteredAuthor ?? "Unknown";
+function resolveAuthorName(
+  enteredAuthor: string | null,
+  metadataAuthor: string | null | undefined
+): string {
+  return enteredAuthor ?? normalizeEntered(metadataAuthor) ?? "Unknown";
 }
 
 // Accept an entered language only when it is one of the supported work languages; otherwise fall back to
@@ -243,7 +257,8 @@ export async function publishConvertedPdfImport(
   if (
     publication.workEntryId !== null ||
     publication.ocrRequiredPages !== null ||
-    publication.noContent !== null
+    publication.noContent !== null ||
+    publication.unpreservableImages !== null
   ) {
     return { status: "already_published" };
   }
@@ -288,10 +303,27 @@ export async function publishConvertedPdfImport(
     await removeRetainedStage(deps, attemptId, stagePath);
     return { status: "no_content" };
   }
+  if (mapping.status === "image_unsupported") {
+    // The document contains picture/figure constructs whose images #701 cannot extract: refuse before
+    // claiming/publishing rather than publishing a content-losing null-image placeholder (#702's "fail
+    // visibly when a construct cannot map"). Record the typed terminal refusal and free the retained bytes.
+    await markPublicationImagesUnsupported(
+      deps.db,
+      attemptId,
+      mapping.unpreservableImages,
+      deps.now()
+    );
+    await removeRetainedStage(deps, attemptId, stagePath);
+    return { status: "image_unsupported", unpreservableImages: mapping.unpreservableImages };
+  }
 
-  const title = resolveTitle(publication.enteredTitle, publication.fileName);
+  const title = resolveTitle(
+    publication.enteredTitle,
+    document.metadata?.title,
+    publication.fileName
+  );
   const language = resolveLanguage(publication.enteredLanguage);
-  const authorName = resolveAuthorName(publication.enteredAuthor);
+  const authorName = resolveAuthorName(publication.enteredAuthor, document.metadata?.author);
   const sourceId = deps.createSourceId();
   const expectedBlockCount = mapping.units.reduce(
     (total, unit) => total + unit.docBlocks.length,
