@@ -19,6 +19,7 @@ import {
 import type { PdfImportCleanupLogger } from "./pdfImportRunner.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
+  clearStagePath,
   getAttemptById,
   getCommittedRanges,
   getPublication,
@@ -102,18 +103,23 @@ export async function beginPdfImport(
     return { outcome: "reopened", work: claimed.work, content: claimed.content };
   }
 
+  // Bind the queued attempt and record the learner's capture-time intent atomically: the queued row and
+  // its #702 publication intent commit in one transaction, so a conversion can never race ahead of an
+  // attempt that has no intent (which would later publish as `skipped`). If the intent insert fails, the
+  // attempt row is rolled back with it and the freshly-staged bytes are discarded.
   const started = await bindStagedPdfAttempt(deps.start, {
     attemptId: staged.attemptId,
     stagePath: staged.stagePath,
     sha256: staged.sha256,
-    userId: input.userId
-  });
-  await insertPublicationIntent(deps.db, {
-    attemptId: started.attemptId,
-    enteredTitle: normalizeEntered(input.enteredTitle),
-    enteredAuthor: normalizeEntered(input.enteredAuthor),
-    enteredLanguage: normalizeEntered(input.enteredLanguage),
-    fileName: input.fileName
+    userId: input.userId,
+    commitWithin: (tx) =>
+      insertPublicationIntent(tx, {
+        attemptId: staged.attemptId,
+        enteredTitle: normalizeEntered(input.enteredTitle),
+        enteredAuthor: normalizeEntered(input.enteredAuthor),
+        enteredLanguage: normalizeEntered(input.enteredLanguage),
+        fileName: input.fileName
+      })
   });
   return { outcome: "queued", started };
 }
@@ -195,9 +201,12 @@ function describeError(cause: unknown): string {
 }
 
 // Remove the retained stage once its bytes are safely durable (persisted to the source-file store for a
-// published Work) or no longer needed (an OCR-required outcome publishes nothing). A removal failure is
-// surfaced via the cleanup logger (never swallowed) and leaves the bytes to be retried; the Work's
-// provenance is unaffected because it already lives in the source-file store.
+// published Work) or no longer needed (an OCR-required outcome publishes nothing), and — ONLY on a
+// successful removal — clear the attempt's stage binding so status reports it unbound. A removal failure
+// is surfaced via the cleanup logger (never swallowed) AND leaves `stagePath` set, so the attempt stays
+// `bound` in status and its cleanup can be retried (via `retryPdfImportCleanup`) rather than the bytes
+// lingering with no path record; the Work's provenance is unaffected because it already lives in the
+// source-file store.
 async function removeRetainedStage(
   deps: PdfImportPublishDependencies,
   attemptId: string,
@@ -207,7 +216,9 @@ async function removeRetainedStage(
     await deps.stageStore.removeStage(stagePath);
   } catch (cause) {
     deps.logCleanupFailure({ attemptId, stagePath, reason: describeError(cause) });
+    return;
   }
+  await clearStagePath(deps.db, attemptId, deps.now());
 }
 
 // Publish one converted attempt, idempotently. Reconstructs the structured document from the committed

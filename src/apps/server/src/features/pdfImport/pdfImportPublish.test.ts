@@ -48,6 +48,7 @@ import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
   commitRange,
+  getAttemptById,
   getPublication,
   insertPublicationIntent,
   insertQueuedAttempt,
@@ -256,6 +257,8 @@ describe("publishConvertedPdfImport", () => {
     expect(new Uint8Array(retained)).toEqual(pdfBytes);
     await expect(stat(stageStore.openStage("att-1").path)).rejects.toThrow();
     expect(cleanupFailures).toEqual([]);
+    // The stage binding is cleared once the bytes are durable, so status no longer reports it bound.
+    expect((await getAttemptById(db, "att-1"))?.stagePath).toBeNull();
   });
 
   it("publishes and surfaces an unknown-only born-digital PDF whose page maps entirely to unknown nodes (#702)", async () => {
@@ -357,6 +360,8 @@ describe("publishConvertedPdfImport", () => {
     expect(await db.select().from(workSources)).toHaveLength(0);
     await expect(stat(stageStore.openStage("att-4").path)).rejects.toThrow();
     expect(cleanupFailures).toEqual([]);
+    // The stage binding is cleared on the OCR-required outcome too, so status reports it unbound.
+    expect((await getAttemptById(db, "att-4"))?.stagePath).toBeNull();
   });
 
   it("is idempotent: a second publish of a resolved attempt is a no-op", async () => {
@@ -570,6 +575,9 @@ describe("publishConvertedPdfImport", () => {
         expect.objectContaining({ attemptId: id, reason: "stage locked" })
       );
       await expect(stat(stageStore.openStage(id).path)).resolves.toBeDefined();
+      // The stage binding stays set on a removal failure, so status still reports it bound and the
+      // cleanup remains retryable rather than orphaning the bytes with no path record.
+      expect((await getAttemptById(db, id))?.stagePath).not.toBeNull();
     });
   }
 
@@ -714,6 +722,59 @@ describe("beginPdfImport", () => {
       stageStore
     };
   }
+
+  // A db whose insert into pdf_import_publications fails, to drive the publication-intent write failure
+  // path. The queued-attempt insert and the dedup SELECT pass straight through to the real db; only the
+  // intent insert throws. Applied recursively to the transaction handle so the failure lands inside the
+  // atomic start transaction (and, for a non-atomic regression, on the top-level db too).
+  function failIntentInsert(executor: DbClient): DbClient {
+    return new Proxy(executor, {
+      get(target, prop, receiver) {
+        if (prop === "transaction") {
+          return (cb: (tx: DbClient) => unknown, ...rest: unknown[]) =>
+            (target.transaction as (...args: unknown[]) => unknown)(
+              (tx: DbClient) => cb(failIntentInsert(tx)),
+              ...rest
+            );
+        }
+        if (prop === "insert") {
+          return (table: unknown) => {
+            if (table === pdfImportPublications) {
+              throw new Error("publication intent insert failed");
+            }
+            return (target.insert as (value: unknown) => unknown)(table);
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    }) as unknown as DbClient;
+  }
+
+  it("rolls back the queued attempt and discards the stage when the publication-intent insert fails", async () => {
+    // The attempt row and its #702 intent must start atomically: if the intent insert fails after the
+    // queued row is inserted, the row must roll back too — otherwise a queued attempt with no intent
+    // survives, converts, and later publishes as `skipped`.
+    const failingDb = failIntentInsert(db);
+    const start: PdfImportCommandDependencies = { ...startDeps(), db: failingDb };
+
+    await expect(
+      beginPdfImport(
+        { db: failingDb, start },
+        {
+          userId: DEFAULT_USER_ID,
+          source: streamOf(new Uint8Array([5, 5, 5])),
+          maxBytes: 1_000,
+          fileName: "atomic.pdf"
+        }
+      )
+    ).rejects.toThrow(/publication intent insert failed/u);
+
+    // No orphaned queued attempt and no intent row committed, and the freshly-staged bytes were discarded.
+    expect(await db.select().from(pdfImportAttempts)).toHaveLength(0);
+    expect(await db.select().from(pdfImportPublications)).toHaveLength(0);
+    await expect(stat(stageStore.openStage("att-1").path)).rejects.toThrow();
+  });
 
   it("streams a fresh attempt and records the learner's capture-time intent", async () => {
     const result = await beginPdfImport(

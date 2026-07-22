@@ -10,7 +10,9 @@ import {
   clearStagePath,
   insertQueuedAttempt,
   markCancelled,
-  retryInterrupted
+  retryInterrupted,
+  type Executor,
+  type PdfImportAttemptRecord
 } from "./pdfImportStore.js";
 
 // The owner-scoped start / cancel / retry / cleanup-retry commands for a recoverable staged PDF import
@@ -70,23 +72,36 @@ export type BindStagedPdfAttemptInput = Readonly<{
   stagePath: string;
   sha256: string;
   userId: string;
+  // An optional dependent write (e.g. #702's publication intent) committed in the SAME transaction as
+  // the queued-attempt row, so the attempt is never visible/claimable by the runner without it. Any
+  // throw here rolls the row back too, and the stage THIS upload created is then removed — a partial
+  // start never leaves a queued attempt that would later publish as `skipped` for want of its intent.
+  commitWithin?: (tx: Executor, record: PdfImportAttemptRecord) => Promise<void>;
 }>;
 
-// Bind an already-streamed stage to a fresh queued attempt row, and return its id + initial status. If
-// the bind insert fails, the stage THIS upload created is rolled back — so a failed start never leaves
-// orphaned staged bytes and never disturbs a colliding attempt.
+// Bind an already-streamed stage to a fresh queued attempt row, and return its id + initial status. The
+// row insert and any `commitWithin` dependent write run in one transaction, so the attempt and its
+// dependent record commit atomically. If either fails, nothing is committed and the stage THIS upload
+// created is rolled back — so a failed start never leaves orphaned staged bytes, never leaves a queued
+// attempt missing its publication intent, and never disturbs a colliding attempt.
 export async function bindStagedPdfAttempt(
   deps: PdfImportCommandDependencies,
   input: BindStagedPdfAttemptInput
 ): Promise<PdfImportStartedDto> {
-  let record;
+  let record: PdfImportAttemptRecord;
   try {
-    record = await insertQueuedAttempt(deps.db, {
-      id: input.attemptId,
-      userId: input.userId,
-      sourceHash: input.sha256,
-      stagePath: input.stagePath,
-      now: deps.now()
+    record = await deps.db.transaction(async (tx) => {
+      const inserted = await insertQueuedAttempt(tx, {
+        id: input.attemptId,
+        userId: input.userId,
+        sourceHash: input.sha256,
+        stagePath: input.stagePath,
+        now: deps.now()
+      });
+      if (input.commitWithin !== undefined) {
+        await input.commitWithin(tx, inserted);
+      }
+      return inserted;
     });
   } catch (cause) {
     await rollbackCreatedStage(deps, input.attemptId, input.stagePath);

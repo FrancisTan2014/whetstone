@@ -67,7 +67,7 @@ function toRecord(row: AttemptRow): PdfImportAttemptRecord {
 }
 
 // Every fenced update carries the same `updated_at` bump; a matched row proves the write was applied.
-type Executor = DbClient | Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+export type Executor = DbClient | Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 async function sumCommittedPages(
   tx: Executor,
@@ -94,10 +94,10 @@ export type InsertQueuedAttemptInput = Readonly<{
 }>;
 
 export async function insertQueuedAttempt(
-  db: DbClient,
+  executor: Executor,
   input: InsertQueuedAttemptInput
 ): Promise<PdfImportAttemptRecord> {
-  const [row] = await db
+  const [row] = await executor
     .insert(pdfImportAttempts)
     .values({
       id: input.id,
@@ -383,12 +383,13 @@ export type InsertPublicationIntentInput = Readonly<{
 }>;
 
 // Record the learner's upload-time intent for a freshly queued attempt, before any conversion. The
-// outcome columns stay null until publication resolves them.
+// outcome columns stay null until publication resolves them. Accepts a transaction so the intent can be
+// inserted atomically with the queued-attempt row: the attempt is never claimable without its intent.
 export async function insertPublicationIntent(
-  db: DbClient,
+  executor: Executor,
   input: InsertPublicationIntentInput
 ): Promise<void> {
-  await db.insert(pdfImportPublications).values({
+  await executor.insert(pdfImportPublications).values({
     attemptId: input.attemptId,
     enteredTitle: input.enteredTitle,
     enteredAuthor: input.enteredAuthor,

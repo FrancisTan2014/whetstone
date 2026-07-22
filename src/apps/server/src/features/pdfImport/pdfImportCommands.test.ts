@@ -225,6 +225,64 @@ describe("pdfImport commands", () => {
         expect.objectContaining({ attemptId: "dup", reason: "busy" })
       );
     });
+
+    it("commits the attempt row and its dependent write atomically, rolling both back on a commitWithin failure", async () => {
+      // A `commitWithin` dependent write (e.g. #702's publication intent) that throws must roll the
+      // queued-attempt row back too — the row is never left visible/claimable without its dependent
+      // record — and the stage this upload created is discarded.
+      const deps = buildDeps({ createAttemptId: () => "att-atomic" });
+      const staged = await stagePdfUpload(deps, {
+        source: streamOf(new Uint8Array([4, 4, 4])),
+        maxBytes: 1_000
+      });
+      const commitWithin = vi.fn(() => Promise.reject(new Error("dependent write failed")));
+
+      await expect(
+        bindStagedPdfAttempt(deps, {
+          attemptId: staged.attemptId,
+          stagePath: staged.stagePath,
+          sha256: staged.sha256,
+          userId: DEFAULT_USER_ID,
+          commitWithin
+        })
+      ).rejects.toThrow(/dependent write failed/u);
+
+      expect(commitWithin).toHaveBeenCalledOnce();
+      // The queued row rolled back with the failed dependent write, and the staged bytes were discarded.
+      expect(await getAttempt(db, DEFAULT_USER_ID, "att-atomic")).toBeNull();
+      await expect(stat(stageStore.openStage("att-atomic").path)).rejects.toThrow();
+    });
+
+    it("runs commitWithin inside the same transaction so its write commits atomically with the row", async () => {
+      // The dependent write sees and shares the row's transaction: on success both are committed together.
+      const deps = buildDeps({ createAttemptId: () => "att-together" });
+      const staged = await stagePdfUpload(deps, {
+        source: streamOf(new Uint8Array([6, 6])),
+        maxBytes: 1_000
+      });
+      let sawRowInTx = false;
+
+      const started = await bindStagedPdfAttempt(deps, {
+        attemptId: staged.attemptId,
+        stagePath: staged.stagePath,
+        sha256: staged.sha256,
+        userId: DEFAULT_USER_ID,
+        commitWithin: async (tx, record) => {
+          // The row is visible to the same transaction the dependent write runs in.
+          const [row] = await tx
+            .select()
+            .from(pdfImportAttempts)
+            .where(eq(pdfImportAttempts.id, record.id));
+          sawRowInTx = row !== undefined;
+        }
+      });
+
+      expect(sawRowInTx).toBe(true);
+      expect(started.status).toMatchObject({ attemptId: "att-together", state: "queued" });
+      expect(await getAttempt(db, DEFAULT_USER_ID, "att-together")).toMatchObject({
+        state: "queued"
+      });
+    });
   });
 
   describe("discardStagedPdfUpload", () => {
