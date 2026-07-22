@@ -31,6 +31,18 @@ describe("createPdfImportStageStore", () => {
     expect(reopened.path).toBe(created.handle.path);
   });
 
+  it("reads staged bytes back through the server-issued handle", async () => {
+    const bytes = new Uint8Array([5, 6, 7, 8, 9]);
+    const { stagePath } = await store.createStage("attempt-read", bytes);
+    expect(await store.readStage(stagePath)).toEqual(bytes);
+  });
+
+  it("rejects reading a stage whose bytes were never written", async () => {
+    // A valid, safe id with no file on disk: openStage succeeds, the read rejects rather than
+    // silently returning empty bytes.
+    await expect(store.readStage("never-written")).rejects.toThrow();
+  });
+
   it("removes exactly the attempt-owned stage and is a no-op when already gone", async () => {
     const { stagePath, handle } = await store.createStage("attempt-2", new Uint8Array([9]));
     await store.removeStage(stagePath);

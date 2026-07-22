@@ -17,6 +17,7 @@ import {
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { createServer } from "../../http/createServer.js";
+import { createSourceFileStore, type SourceFileStore } from "../../files/sourceFileStore.js";
 import Fastify from "fastify";
 import { registerPdfImportRoutes } from "./pdfImportRoutes.js";
 import {
@@ -40,8 +41,10 @@ const doclingSchema = { name: "DoclingDocument", version: "1.10.0" } as const;
 type TestContext = Readonly<{
   db: DbClient;
   rootDir: string;
+  sourceFilesDir: string;
   server: ReturnType<typeof createServer>;
   stageStore: PdfImportStageStore;
+  sourceFileStore: SourceFileStore;
 }>;
 
 let context: TestContext;
@@ -92,7 +95,10 @@ function publishDeps(db: DbClient): PdfImportPublishDependencies {
     createAuthorId: () => `author-${(author += 1)}`,
     createEntryId: () => `entry-${(entry += 1)}`,
     createSourceId: () => `source-${(source += 1)}`,
-    now: () => NOW
+    now: () => NOW,
+    stageStore: context.stageStore,
+    sourceFileStore: context.sourceFileStore,
+    logCleanupFailure: vi.fn()
   };
 }
 
@@ -147,21 +153,26 @@ describe("pdf import routes", () => {
     await runMigrations(pglite);
     const db = createDbClient(pglite);
     const rootDir = await mkdtemp(join(tmpdir(), "pdf-import-routes-"));
+    const sourceFilesDir = await mkdtemp(join(tmpdir(), "pdf-import-routes-src-"));
     const stageStore = createPdfImportStageStore(rootDir);
+    const sourceFileStore = createSourceFileStore(sourceFilesDir);
     context = {
       db,
       rootDir,
+      sourceFilesDir,
       server: createServer({
         logger: false,
         pdfImport: { commands: commandDeps(db, stageStore), uploadLimitBytes: 10_000_000 }
       }),
-      stageStore
+      stageStore,
+      sourceFileStore
     };
   });
 
   afterEach(async () => {
     await context.server.close();
     await rm(context.rootDir, { force: true, recursive: true });
+    await rm(context.sourceFilesDir, { force: true, recursive: true });
   });
 
   it("queues a fresh attempt and returns its id and initial status", async () => {

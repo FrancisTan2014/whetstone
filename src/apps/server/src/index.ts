@@ -345,7 +345,12 @@ const pdfImportPublish: PdfImportPublishDependencies = {
   createEntryId: () => randomUUID(),
   createSourceId: () => randomUUID(),
   db,
-  now: () => new Date()
+  // Publication retains the original uploaded PDF through the immutable source-file boundary, reading it
+  // back from the attempt's retained stage; a failed cleanup of that redundant stage stays visible.
+  logCleanupFailure: logPdfImportCleanupFailure,
+  now: () => new Date(),
+  sourceFileStore,
+  stageStore: pdfImportStageStore
 };
 const PDF_IMPORT_POLL_MS = 1_000;
 let pdfImportDraining = false;

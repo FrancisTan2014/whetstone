@@ -4,13 +4,15 @@ import { toEntryId, workLanguages, type WorkLanguage } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, pdfBlockEvidence, workMeta, workSources } from "../../db/schema.js";
-import { hashBytes } from "../../files/sourceFileStore.js";
+import { hashBytes, type SourceFileStore } from "../../files/sourceFileStore.js";
 import { writeReadingUnits } from "../content/blockWriter.js";
 import { insertInBatches } from "../content/insertBatching.js";
 import { claimUploadedSource, findClaimedWork } from "../content/sourceClaims.js";
 import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { mapStructuredDocument, type PdfBlockEvidence } from "./pdfCanonicalMapping.js";
 import { startPdfImport, type PdfImportCommandDependencies } from "./pdfImportCommands.js";
+import type { PdfImportCleanupLogger } from "./pdfImportRunner.js";
+import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   getAttemptById,
   getCommittedRanges,
@@ -85,6 +87,14 @@ export type PdfImportPublishDependencies = Readonly<{
   createAuthorId: () => string;
   createSourceId: () => string;
   now: () => Date;
+  // The staged-bytes reader (#721) and the immutable source-file store (#706): publication reads the
+  // original uploaded PDF back from its retained stage and writes it through the source-file boundary so
+  // every published Work keeps its source bytes for provenance/export/re-ingestion.
+  stageStore: Pick<PdfImportStageStore, "readStage" | "removeStage">;
+  sourceFileStore: Pick<SourceFileStore, "writePdfSource" | "deleteSourceFile">;
+  // A retained stage that could not be removed after a terminal publication stays VISIBLE (logged, never
+  // silently swallowed); the durable provenance already lives in the source-file store by then.
+  logCleanupFailure: PdfImportCleanupLogger;
 }>;
 
 // The result of attempting to publish a converted attempt. `skipped` = the attempt was not started
@@ -143,11 +153,33 @@ async function writeBlockEvidence(
   await insertInBatches(rows, (batch) => tx.insert(pdfBlockEvidence).values(batch));
 }
 
+function describeError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+// Remove the retained stage once its bytes are safely durable (persisted to the source-file store for a
+// published Work) or no longer needed (an OCR-required outcome publishes nothing). A removal failure is
+// surfaced via the cleanup logger (never swallowed) and leaves the bytes to be retried; the Work's
+// provenance is unaffected because it already lives in the source-file store.
+async function removeRetainedStage(
+  deps: PdfImportPublishDependencies,
+  attemptId: string,
+  stagePath: string
+): Promise<void> {
+  try {
+    await deps.stageStore.removeStage(stagePath);
+  } catch (cause) {
+    deps.logCleanupFailure({ attemptId, stagePath, reason: describeError(cause) });
+  }
+}
+
 // Publish one converted attempt, idempotently. Reconstructs the structured document from the committed
 // ranges (#721 checkpoints), maps it to canonical doc_blocks (or a typed OCR-required outcome), and — for
-// a mapped document — commits Work metadata, immutable source provenance, the exact-source claim (#706),
-// reading units, doc_blocks, additive block evidence, and the terminal publication state in a single
-// transaction. Identical bytes reopen the owning Work instead of creating a duplicate.
+// a mapped document — commits Work metadata, the original uploaded PDF as immutable source provenance
+// (retained through the source-file boundary, #706), the exact-source claim, reading units, doc_blocks,
+// additive block evidence, and the terminal publication state in a single transaction. Identical bytes
+// reopen the owning Work instead of creating a duplicate. The retained stage is freed once its bytes are
+// durable (or an OCR-required outcome makes them unneeded).
 export async function publishConvertedPdfImport(
   deps: PdfImportPublishDependencies,
   attemptId: string
@@ -165,10 +197,21 @@ export async function publishConvertedPdfImport(
     return { status: "not_ready" };
   }
 
+  // A converted attempt always retains its bound stage: the runner clears `stagePath` only on a
+  // failure/cancel cleanup, and a non-converted attempt returned `not_ready` above.
+  /* v8 ignore next 3 -- unreachable for a converted attempt (see above); the guard keeps the retained
+     source bytes required for provenance rather than publishing a Work with no source file. */
+  if (attempt.stagePath === null) {
+    throw new Error(
+      `Converted PDF import ${attemptId} has no retained stage to persist as provenance.`
+    );
+  }
+  const stagePath = attempt.stagePath;
+
   const fingerprint = attempt.adapterFingerprint ?? PDF_IMPORT_ADAPTER_FINGERPRINT;
   const ranges = await getCommittedRanges(deps.db, attemptId, fingerprint);
   // The source metadata is unused by the mapping (which reads only pages + body) and is not persisted;
-  // provenance is the sha256 claim. `byteLength` is therefore a placeholder here.
+  // provenance is the retained source file plus the sha256 claim. `byteLength` is a placeholder here.
   const document = concatenateRanges(
     { sha256: attempt.sourceHash, byteLength: 0, pageCount: attempt.totalPages ?? 0 },
     ranges
@@ -177,6 +220,8 @@ export async function publishConvertedPdfImport(
   const mapping = mapStructuredDocument(document);
   if (mapping.status === "ocr_required") {
     await markPublicationOcrRequired(deps.db, attemptId, mapping.pagesNeedingOcr, deps.now());
+    // No Work is published, so the retained bytes are no longer needed: free the stage.
+    await removeRetainedStage(deps, attemptId, stagePath);
     return { status: "ocr_required", pagesNeedingOcr: mapping.pagesNeedingOcr };
   }
 
@@ -189,16 +234,18 @@ export async function publishConvertedPdfImport(
     0
   );
 
-  const outcome = await claimUploadedSource<undefined>(deps.db, {
+  const outcome = await claimUploadedSource(deps.db, {
     sha256: attempt.sourceHash,
-    // A born-digital PDF retains no source file — the immutable provenance is the sha256 claim plus the
-    // structured evidence — so there is nothing to stage or release.
-    stage: async () => undefined,
-    /* v8 ignore next -- a born-digital PDF retains no source file, so releasing the stage is a no-op
-       with nothing to assert; it runs only when the claim transaction fails, a boundary path already
-       exercised by sourceClaims' Markdown/EPUB mid-stage race tests. */
-    releaseStage: async () => {},
-    commit: async (tx) => {
+    // Persist the ORIGINAL uploaded PDF through the immutable source-file boundary (#706), so the
+    // published Work retains its source bytes for provenance/export and future correction/re-ingestion —
+    // exactly as EPUB does. Only runs for a newly-created Work; identical bytes reopen and stage nothing.
+    stage: async () => {
+      const bytes = await deps.stageStore.readStage(stagePath);
+      return deps.sourceFileStore.writePdfSource({ bytes, id: sourceId });
+    },
+    // A duplicate upload or a failed commit must not orphan the just-written source file.
+    releaseStage: (written) => deps.sourceFileStore.deleteSourceFile(written.path),
+    commit: async (tx, written) => {
       const workEntryId = toEntryId(deps.createEntryId());
       const resolved = await resolveNamedAuthor(tx, deps.createAuthorId, authorName);
       await tx.insert(entries).values({ id: workEntryId, type: "work" });
@@ -212,10 +259,10 @@ export async function publishConvertedPdfImport(
       });
       await tx.insert(workSources).values({
         fileName: publication.fileName,
-        filePath: null,
+        filePath: written.path,
         id: sourceId,
         kind: "upload",
-        sha256: attempt.sourceHash,
+        sha256: written.sha256,
         sourceText: null,
         workEntryId
       });
@@ -249,5 +296,8 @@ export async function publishConvertedPdfImport(
   if (outcome.status === "exact_existing") {
     await linkPublishedWork(deps.db, attemptId, outcome.work.entryId, deps.now());
   }
+  // The Work's source bytes now live durably in the source-file store (a fresh create) or already did (a
+  // reopen), so the retained stage is redundant: free it.
+  await removeRetainedStage(deps, attemptId, stagePath);
   return { status: "published", work: outcome.work, reopened: outcome.status === "exact_existing" };
 }

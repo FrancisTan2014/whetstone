@@ -220,7 +220,10 @@ async function convertClaimed(
   if (!converted) {
     return { status: "fenced", attemptId: claimed.id };
   }
-  await removeStageVisible(deps, claimed.id, stagePath);
+  // The staged bytes are RETAINED on the converted path (never removed here): they are the original
+  // uploaded PDF, and publication (#702) persists them through the immutable source-file boundary as the
+  // Work's provenance before its own cleanup removes this now-redundant stage. A failed conversion still
+  // frees its stage (see `fail`), because it never publishes.
   return { status: "converted", attemptId: claimed.id };
 }
 

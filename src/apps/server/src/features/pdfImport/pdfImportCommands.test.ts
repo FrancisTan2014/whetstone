@@ -128,6 +128,7 @@ describe("pdfImport commands", () => {
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage: () => Promise.reject("busy")
       };
       const deps = buildDeps({
@@ -217,6 +218,7 @@ describe("pdfImport commands", () => {
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage: () => Promise.reject(new Error("locked"))
       };
       const result = await cancelPdfImport(
@@ -245,6 +247,7 @@ describe("pdfImport commands", () => {
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage: () => Promise.reject(new Error("locked"))
       };
       const result = await cancelPdfImport(
@@ -267,6 +270,7 @@ describe("pdfImport commands", () => {
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage: () => Promise.reject("stage busy")
       };
       const result = await cancelPdfImport(
@@ -293,6 +297,7 @@ describe("pdfImport commands", () => {
       const noRemoveStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage
       };
       const result = await cancelPdfImport(buildDeps({ stageStore: noRemoveStore }), {
@@ -352,6 +357,7 @@ describe("pdfImport commands", () => {
       return {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage: () => Promise.reject(reason)
       };
     }
@@ -409,6 +415,7 @@ describe("pdfImport commands", () => {
       const spyingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage
       };
       const result = await retryPdfImportCleanup(buildDeps({ stageStore: spyingStore }), {
@@ -430,6 +437,7 @@ describe("pdfImport commands", () => {
       const spyingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
         openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
         removeStage
       };
       const result = await retryPdfImportCleanup(buildDeps({ stageStore: spyingStore }), {

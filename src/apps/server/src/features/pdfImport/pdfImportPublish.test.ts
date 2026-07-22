@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -14,8 +14,22 @@ import {
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { pdfBlockEvidence, pdfImportAttempts, pdfImportPublications } from "../../db/schema.js";
+import {
+  authors,
+  entries,
+  pdfBlockEvidence,
+  pdfImportAttempts,
+  pdfImportPublications,
+  uploadedSourceClaims,
+  workMeta,
+  workSources
+} from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
+import {
+  createSourceFileStore,
+  resolveWithinDirectory,
+  type SourceFileStore
+} from "../../files/sourceFileStore.js";
 import { loadWorkContent } from "../content/contentQueries.js";
 import { createPdfImportStageStore, type PdfImportStageStore } from "./pdfImportStage.js";
 import type { PdfImportActiveRuns } from "./pdfImportRunner.js";
@@ -45,6 +59,31 @@ async function buildDb(): Promise<DbClient> {
   await runMigrations(pglite);
   return createDbClient(pglite);
 }
+
+// Shared per-test harness: a fresh DB plus real attempt-stage and source-file stores backed by temp
+// directories, so publication reads the retained staged bytes and persists the original PDF through the
+// immutable source-file boundary exactly as it does in the composition root.
+type CleanupFailure = Readonly<{ attemptId: string; stagePath: string; reason: string }>;
+let db: DbClient;
+let stageRootDir: string;
+let sourceFilesDir: string;
+let stageStore: PdfImportStageStore;
+let sourceFileStore: SourceFileStore;
+let cleanupFailures: CleanupFailure[];
+
+beforeEach(async () => {
+  db = await buildDb();
+  stageRootDir = await mkdtemp(join(tmpdir(), "pdf-import-publish-stage-"));
+  sourceFilesDir = await mkdtemp(join(tmpdir(), "pdf-import-publish-src-"));
+  stageStore = createPdfImportStageStore(stageRootDir);
+  sourceFileStore = createSourceFileStore(sourceFilesDir);
+  cleanupFailures = [];
+});
+
+afterEach(async () => {
+  await rm(stageRootDir, { force: true, recursive: true });
+  await rm(sourceFilesDir, { force: true, recursive: true });
+});
 
 function item(partial: Partial<StructuredDocItem> & { label: string }): StructuredDocItem {
   return {
@@ -103,16 +142,27 @@ async function driveQueuedToConverted(
   await markConverted(db, input.id, runToken, NOW);
 }
 
-// Insert a queued attempt and drive it to `converted` in one step.
+// Insert a queued attempt, stage its real bytes (so publication can retain them as provenance), and drive
+// it to `converted` in one step.
 async function driveToConverted(
   db: DbClient,
-  input: Readonly<{ id: string; sourceHash: string; payload: RangeConversion; totalPages: number }>
+  input: Readonly<{
+    id: string;
+    sourceHash: string;
+    payload: RangeConversion;
+    totalPages: number;
+    stageBytes?: Uint8Array;
+  }>
 ): Promise<void> {
+  const { stagePath } = await stageStore.createStage(
+    input.id,
+    input.stageBytes ?? new Uint8Array([0x25, 0x50, 0x44, 0x46])
+  );
   await insertQueuedAttempt(db, {
     id: input.id,
     userId: DEFAULT_USER_ID,
     sourceHash: input.sourceHash,
-    stagePath: `stage-${input.id}`,
+    stagePath,
     now: NOW
   });
   await driveQueuedToConverted(db, {
@@ -131,7 +181,12 @@ function publishDeps(db: DbClient): PdfImportPublishDependencies {
     createAuthorId: () => `author-${(author += 1)}`,
     createEntryId: () => `entry-${(entry += 1)}`,
     createSourceId: () => `source-${(source += 1)}`,
-    now: () => NOW
+    now: () => NOW,
+    stageStore,
+    sourceFileStore,
+    logCleanupFailure: (event) => {
+      cleanupFailures.push(event);
+    }
   };
 }
 
@@ -150,22 +205,14 @@ const SAMPLE_BODY: readonly StructuredDocItem[] = [
 ];
 
 describe("publishConvertedPdfImport", () => {
-  let db: DbClient;
-
-  beforeEach(async () => {
-    db = await buildDb();
-  });
-
-  afterEach(() => {
-    // PGlite is in-memory per test; nothing to close explicitly for the drizzle client.
-  });
-
   it("publishes a mapped converted attempt into a canonical Work that surfaces in the reader", async () => {
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
     await driveToConverted(db, {
       id: "att-1",
       sourceHash: "a".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
-      totalPages: 1
+      totalPages: 1,
+      stageBytes: pdfBytes
     });
     await insertPublicationIntent(db, {
       attemptId: "att-1",
@@ -191,6 +238,20 @@ describe("publishConvertedPdfImport", () => {
     const publication = await getPublication(db, "att-1");
     expect(publication?.workEntryId).toBe(result.work.entryId);
     expect(publication?.ocrRequiredPages).toBeNull();
+
+    // Provenance retention (PRODUCT.md): the original uploaded PDF is persisted through the source-file
+    // boundary — the Work's source row keeps a non-null file_path whose bytes match the upload — and the
+    // now-redundant stage is freed without a cleanup failure.
+    const sources = await db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, result.work.entryId));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.filePath).not.toBeNull();
+    const retained = await readFile(resolveWithinDirectory(sourceFilesDir, sources[0]!.filePath!));
+    expect(new Uint8Array(retained)).toEqual(pdfBytes);
+    await expect(stat(stageStore.openStage("att-1").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
   });
 
   it("prefers entered metadata over the filename fallback", async () => {
@@ -258,6 +319,10 @@ describe("publishConvertedPdfImport", () => {
     const publication = await getPublication(db, "att-4");
     expect(publication?.ocrRequiredPages).toBe(2);
     expect(publication?.workEntryId).toBeNull();
+    // No Work is published, so no source file is retained and the redundant stage is freed cleanly.
+    expect(await db.select().from(workSources)).toHaveLength(0);
+    await expect(stat(stageStore.openStage("att-4").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
   });
 
   it("is idempotent: a second publish of a resolved attempt is a no-op", async () => {
@@ -354,7 +419,125 @@ describe("publishConvertedPdfImport", () => {
 
     const publicationB = await getPublication(db, "att-8b");
     expect(publicationB?.workEntryId).toBe(first.work.entryId);
+
+    // The reopen persists no second source file (the winning Work already retains its bytes), and both
+    // attempts' redundant stages are freed cleanly.
+    const sources = await db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, first.work.entryId));
+    expect(sources).toHaveLength(1);
+    await expect(stat(stageStore.openStage("att-8a").path)).rejects.toThrow();
+    await expect(stat(stageStore.openStage("att-8b").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
   });
+
+  it("releases the staged source file and reopens the winner when an identical claim lands mid-stage", async () => {
+    const sourceHash = "2".repeat(64);
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x32]);
+    await driveToConverted(db, {
+      id: "att-race",
+      sourceHash,
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1,
+      stageBytes: pdfBytes
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-race",
+      enteredTitle: "Loser",
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "race.pdf"
+    });
+
+    await db.insert(authors).values({ id: "author-winner", name: "Race Winner", nameKey: null });
+    const deleteSourceFile = vi.fn((path: string) => sourceFileStore.deleteSourceFile(path));
+    // A concurrent winner commits its Work + claim for the same hash after our initial miss but before
+    // our own transaction inserts the claim — modelled by committing it during the source-file write.
+    const racingStore: SourceFileStore = {
+      ...sourceFileStore,
+      deleteSourceFile,
+      writePdfSource: async (args) => {
+        const written = await sourceFileStore.writePdfSource(args);
+        await db.insert(entries).values({ id: "work-winner", type: "work" });
+        await db.insert(workMeta).values({
+          authorId: "author-winner",
+          entryId: "work-winner",
+          language: "en",
+          origin: "imported",
+          title: "PDF Winner",
+          workType: "book"
+        });
+        await db
+          .insert(uploadedSourceClaims)
+          .values({ sha256: sourceHash, workEntryId: "work-winner" });
+        return written;
+      }
+    };
+
+    const deps: PdfImportPublishDependencies = { ...publishDeps(db), sourceFileStore: racingStore };
+    const result = published(await publishConvertedPdfImport(deps, "att-race"));
+    expect(result.reopened).toBe(true);
+    expect(result.work.entryId).toBe("work-winner");
+
+    // The loser's just-written source file was released (never orphaned), and only the winner survives.
+    expect(deleteSourceFile).toHaveBeenCalledOnce();
+    const works = await db.select().from(workMeta);
+    expect(works.map((row) => row.entryId)).toEqual(["work-winner"]);
+    expect(await db.select().from(workSources)).toHaveLength(0);
+    // The now-redundant stage is still freed cleanly after the reopen.
+    await expect(stat(stageStore.openStage("att-race").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
+  });
+
+  const cleanupFailureCases = [
+    { name: "an Error cause", id: "att-clean-err", rejection: new Error("stage locked") },
+    { name: "a non-Error cause", id: "att-clean-str", rejection: "stage locked" }
+  ] as const;
+  for (const { name, id, rejection } of cleanupFailureCases) {
+    it(`publishes with retained source bytes and surfaces a post-publish stage cleanup failure (${name})`, async () => {
+      const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]);
+      await driveToConverted(db, {
+        id,
+        sourceHash: "7".repeat(64),
+        payload: rangePayload(SAMPLE_BODY, [true]),
+        totalPages: 1,
+        stageBytes: pdfBytes
+      });
+      await insertPublicationIntent(db, {
+        attemptId: id,
+        enteredTitle: null,
+        enteredAuthor: null,
+        enteredLanguage: null,
+        fileName: "locked.pdf"
+      });
+      const deps: PdfImportPublishDependencies = {
+        ...publishDeps(db),
+        stageStore: {
+          readStage: stageStore.readStage,
+          removeStage: () => Promise.reject(rejection)
+        }
+      };
+
+      const result = published(await publishConvertedPdfImport(deps, id));
+      // The Work still publishes with its source bytes durably retained, even though the now-redundant
+      // stage could not be freed.
+      const sources = await db
+        .select()
+        .from(workSources)
+        .where(eq(workSources.workEntryId, result.work.entryId));
+      expect(sources[0]!.filePath).not.toBeNull();
+      const retained = await readFile(
+        resolveWithinDirectory(sourceFilesDir, sources[0]!.filePath!)
+      );
+      expect(new Uint8Array(retained)).toEqual(pdfBytes);
+      // The cleanup failure is surfaced (never swallowed) and the staged bytes still exist for a retry.
+      expect(cleanupFailures).toContainEqual(
+        expect.objectContaining({ attemptId: id, reason: "stage locked" })
+      );
+      await expect(stat(stageStore.openStage(id).path)).resolves.toBeDefined();
+    });
+  }
 
   it("publishes the keyless born-digital preview sample into a multi-section Reader Work", async () => {
     // The composition root feeds this exact payload to the fake runner, so publishing it here proves the
@@ -476,20 +659,6 @@ describe("publishConvertedPdfImport", () => {
 });
 
 describe("beginPdfImport", () => {
-  let db: DbClient;
-  let rootDir: string;
-  let stageStore: PdfImportStageStore;
-
-  beforeEach(async () => {
-    db = await buildDb();
-    rootDir = await mkdtemp(join(tmpdir(), "pdf-import-begin-"));
-    stageStore = createPdfImportStageStore(rootDir);
-  });
-
-  afterEach(async () => {
-    await rm(rootDir, { force: true, recursive: true });
-  });
-
   function startDeps(): PdfImportCommandDependencies {
     let id = 0;
     return {

@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { issueStagedFileHandle, type StagedFileHandle } from "../../files/pdfStructuredAdapter.js";
@@ -34,6 +34,10 @@ export type PdfImportStageStore = Readonly<{
   // Re-open the handle for an already-created stage (e.g. a resumed run after restart), from the stored
   // relative stage path. Does not touch disk; the runner's read reports a missing stage as a failure.
   openStage: (stagePath: string) => StagedFileHandle;
+  // Read the exact staged bytes back through the server-issued handle, so publication can retain the
+  // original uploaded PDF as immutable provenance without ever seeing a user-supplied path. A missing or
+  // unreadable stage rejects (the caller surfaces it), never silently returns empty bytes.
+  readStage: (stagePath: string) => Promise<Uint8Array>;
   // Remove exactly this attempt-owned stage directory. A missing directory is a no-op (already gone); a
   // real filesystem error (e.g. permissions) still throws so the caller surfaces it as a retryable
   // cleanup failure. Never removes anything outside the exact path, and never by age.
@@ -65,9 +69,14 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     return issueStagedFileHandle(stageDirFor(stagePath), STAGED_FILE_NAME);
   }
 
+  async function readStage(stagePath: string): Promise<Uint8Array> {
+    const handle = openStage(stagePath);
+    return new Uint8Array(await readFile(handle.path));
+  }
+
   async function removeStage(stagePath: string): Promise<void> {
     await rm(stageDirFor(stagePath), { force: true, recursive: true });
   }
 
-  return Object.freeze({ createStage, openStage, removeStage });
+  return Object.freeze({ createStage, openStage, readStage, removeStage });
 }
