@@ -753,3 +753,80 @@ export const diaryEntries = pgTable("diary_entries", {
   }),
   failureReason: text("failure_reason")
 });
+
+// A recoverable staged PDF import attempt (#721): import EXECUTION state, deliberately SEPARATE from
+// readable content. An attempt owns staged bytes and a bounded #701 conversion run; it is NOT an
+// `entries` row and creates no Work/ReadingUnit/Block (publication is #702). `state` walks
+// queued -> running -> converted/failed, with `cancelled` (owner-cancelled) and `interrupted` (a claim
+// abandoned by a dead process, recovered at startup). `run_token` fences a stale child: a checkpoint is
+// applied only while the row is still `running` under the same token. `stage_path` is the attempt-owned
+// staging directory (relative, server-generated), null once the stage is removed. `source_hash` is the
+// staged bytes' sha256; `adapter_fingerprint` records the exact converter build committed ranges were
+// produced under, so a resume reuses only matching ranges. Progress is COUNTS (`completed_pages`,
+// derived range counts), never a parsed percentage. The failure columns hold a typed failure only
+// (kind/message/remedy) — never converter JSON or extracted learning content.
+export const pdfImportAttempts = pgTable(
+  "pdf_import_attempts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    state: text("state", {
+      enum: ["queued", "running", "converted", "failed", "cancelled", "interrupted"] as const
+    }).notNull(),
+    runToken: text("run_token"),
+    adapterFingerprint: text("adapter_fingerprint"),
+    stagePath: text("stage_path"),
+    totalPages: integer("total_pages"),
+    completedPages: integer("completed_pages").notNull().default(0),
+    totalRanges: integer("total_ranges"),
+    // The typed failure of a `failed` attempt, stored as one jsonb value (never spread across log/error
+    // columns, and never converter JSON). Null unless `failed`, enforced by the check below.
+    failure: jsonb("failure").$type<{ kind: string; message: string; remedy: string }>(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    heartbeatAt: timestamp("heartbeat_at", { mode: "date", withTimezone: true })
+  },
+  (table) => [
+    index("pdf_import_attempts_user_idx").on(table.userId),
+    // At most ONE running attempt across the whole server: a partial unique index over the `state`
+    // column restricted to running rows means a second concurrent claim cannot commit, so single
+    // admission is guaranteed by the database, not only by the transactional claim.
+    uniqueIndex("pdf_import_attempts_single_running")
+      .on(table.state)
+      .where(sql`${table.state} = 'running'`),
+    // Enforce the closed state set in the database so no writer (or restored dump) can land an
+    // unknown attempt state.
+    check(
+      "pdf_import_attempts_state_ck",
+      sql`${table.state} in ('queued', 'running', 'converted', 'failed', 'cancelled', 'interrupted')`
+    ),
+    // A typed failure is stored on (and only on) a `failed` attempt, so a non-failed row never carries
+    // a stale failure and a failed row always explains itself.
+    check(
+      "pdf_import_attempts_failure_ck",
+      sql`(${table.state} = 'failed' and ${table.failure} is not null) or (${table.state} <> 'failed' and ${table.failure} is null)`
+    )
+  ]
+);
+
+// One committed page-range result for an attempt (#721): the validated #701 RangeConversion projection
+// for pages [start_page, end_page], stored idempotently by (attempt_id, range_index). `fingerprint` is
+// the adapter build the range was produced under, so a resume/retry reuses only ranges matching the
+// current build and drops stale ones. `payload` is the validated structural projection — evidence for
+// #702, never published content. Deleted with its attempt (cascade) as operational hygiene.
+export const pdfImportRanges = pgTable(
+  "pdf_import_ranges",
+  {
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => pdfImportAttempts.id, { onDelete: "cascade" }),
+    rangeIndex: integer("range_index").notNull(),
+    startPage: integer("start_page").notNull(),
+    endPage: integer("end_page").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.attemptId, table.rangeIndex] })]
+);

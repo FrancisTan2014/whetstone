@@ -9,6 +9,7 @@ export type ServerConfig = Readonly<{
   imageResourcesDir: string;
   logLevel: ServerLogLevel;
   pdfOcrBinary: string;
+  pdfImportStageDir: string;
   pdfPythonBinary: string;
   pdfTimeoutMs: number;
   port: number;
@@ -23,6 +24,10 @@ const defaultServerConfig: ServerConfig = {
   imageResourcesDir: "./.data/images",
   logLevel: "info",
   pdfOcrBinary: "ocrmypdf",
+  // Recoverable PDF import stages (#721): transient per-attempt staged bytes, SEPARATE from immutable
+  // source provenance under sourceFilesDir, so they are never backed up and a cancelled/failed/expired
+  // attempt's bytes are freed without touching provenance. Env-overridable.
+  pdfImportStageDir: "./.data/pdf-import-stages",
   pdfPythonBinary: "python",
   // Docling's per-page layout + table analysis is slow; oversized/scanned books can run for many
   // minutes. Bound the spawn so a slow PDF is killed and rejected (422) instead of hanging the
@@ -56,6 +61,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
     logLevel,
     pdfOcrBinary: env.PDF_OCR_BINARY ?? defaultServerConfig.pdfOcrBinary,
+    pdfImportStageDir: env.PDF_IMPORT_STAGE_DIR ?? defaultServerConfig.pdfImportStageDir,
     pdfPythonBinary: env.PDF_PYTHON_BINARY ?? defaultServerConfig.pdfPythonBinary,
     pdfTimeoutMs,
     port,

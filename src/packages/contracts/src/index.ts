@@ -199,6 +199,22 @@ export type {
   ValidateStructuredResult
 } from "./pdfStructuredContracts.js";
 export {
+  parsePdfImportStartedDto,
+  parsePdfImportStatusDto,
+  pdfImportAttemptStateSchema,
+  pdfImportFailureDtoSchema,
+  pdfImportStageDtoSchema,
+  pdfImportStartedDtoSchema,
+  pdfImportStatusDtoSchema
+} from "./pdfImportContracts.js";
+export type {
+  PdfImportAttemptStateDto,
+  PdfImportFailureDto,
+  PdfImportStageDto,
+  PdfImportStartedDto,
+  PdfImportStatusDto
+} from "./pdfImportContracts.js";
+export {
   entryDtoSchema,
   entryIdDtoSchema,
   entryLinkDtoSchema,

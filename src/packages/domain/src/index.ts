@@ -136,6 +136,15 @@ export {
   workOrigins
 } from "./workOrigin.js";
 export type { LibraryCreateOrigin, WorkOrigin } from "./workOrigin.js";
+export {
+  isNonTerminalAttemptState,
+  isRetryableAttemptState,
+  isTerminalAttemptState,
+  mayApplyRunOutput,
+  nextRangeIndex,
+  pdfImportAttemptStates
+} from "./pdfImportAttempt.js";
+export type { PdfImportAttemptState } from "./pdfImportAttempt.js";
 export { planSectionRepartition } from "./workRepartition.js";
 export type {
   PlannedUnit,
