@@ -358,8 +358,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     try {
       await cancelPdfImport(attemptId);
     } catch {
-      // The local session is already cleared; a failed cancel only leaves the server job to finish on its
-      // own (reopenable later), so there is nothing to surface here.
+      // The cancel request failed, so the server import may still be running even though the local
+      // session is cleared. Surface the failure instead of success-shaped feedback; the attempt is
+      // reopenable later.
+      toast.error("Could not cancel the import. It may still be running.");
+      return;
     }
     toast.success("Import cancelled.");
   }

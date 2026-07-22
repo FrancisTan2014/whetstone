@@ -1155,6 +1155,37 @@ describe("AdminLibraryPage", () => {
     expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
 
+  it("surfaces a failed cancel instead of success-shaped feedback (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    // The view stays in-flight so the progress card and Cancel action remain visible for the assertion.
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ status: "pending" }, { state: "running", totalPages: null })
+    );
+    // The cancel request fails: the server import may still be running, so the UI must not claim success.
+    mockedCancelPdfImport.mockRejectedValue(new Error("network"));
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("Reading the PDF…")).toBeDefined();
+    const cancelButton = await screen.findByRole("button", { name: "Cancel" });
+
+    await user.click(cancelButton);
+
+    expect(mockedCancelPdfImport).toHaveBeenCalledWith("attempt-1");
+    expect(
+      await screen.findByText("Could not cancel the import. It may still be running.")
+    ).toBeDefined();
+    expect(screen.queryByText("Import cancelled.")).toBeNull();
+  });
+
   it("drops the session without opening the Reader when the polled attempt is gone (#702)", async () => {
     // A stale/removed attempt returns no view: polling reports `gone`, so the terminal handler just clears
     // the local session (no Work to open, no error toast).
