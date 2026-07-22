@@ -7,6 +7,7 @@ import { buildPdfImportStatus } from "./pdfImportQueries.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   getAttempt,
+  clearStagePath,
   insertQueuedAttempt,
   markCancelled,
   retryInterrupted
@@ -30,8 +31,9 @@ export type PdfImportCommandDependencies = Readonly<{
 export type StartPdfImportInput = Readonly<{ userId: string; bytes: Uint8Array }>;
 
 // Stage the uploaded bytes, bind them to a fresh queued attempt, and return its id + initial status. The
-// stage is created BEFORE the row and rolled back if the bind insert fails, so a failed start never
-// leaves orphaned staged bytes and a queued attempt always owns a real stage.
+// stage is created EXCLUSIVELY before the row: an id collision fails stage creation (never overwriting a
+// live attempt's bytes), and if the bind insert fails the stage THIS start created is rolled back — so a
+// failed start never leaves orphaned staged bytes and never disturbs a colliding attempt.
 export async function startPdfImport(
   deps: PdfImportCommandDependencies,
   input: StartPdfImportInput
@@ -50,7 +52,7 @@ export async function startPdfImport(
       now: deps.now()
     });
   } catch (cause) {
-    await removeStageQuiet(deps, attemptId, stagePath);
+    await rollbackCreatedStage(deps, attemptId, stagePath);
     throw cause;
   }
 
@@ -78,7 +80,7 @@ export async function cancelPdfImport(
       deps.activeRuns.abort(input.attemptId);
     }
     if (result.stagePath !== null) {
-      await removeStageQuiet(deps, input.attemptId, result.stagePath);
+      await removeAndUnbindStage(deps, input.attemptId, result.stagePath);
     }
   }
   return {
@@ -108,7 +110,10 @@ async function statusFor(
   return record === null ? null : buildPdfImportStatus(deps.db, record);
 }
 
-async function removeStageQuiet(
+// Remove a cancelled attempt's stage and, ONLY on a successful removal, clear its stage binding. A
+// removal failure is surfaced via the cleanup logger AND leaves `stagePath` set, so the attempt stays
+// `bound` in status and its cleanup can be retried rather than the bytes lingering with no path record.
+async function removeAndUnbindStage(
   deps: PdfImportCommandDependencies,
   attemptId: string,
   stagePath: string
@@ -116,10 +121,36 @@ async function removeStageQuiet(
   try {
     await deps.stageStore.removeStage(stagePath);
   } catch (cause) {
-    deps.logCleanupFailure({
-      attemptId,
-      stagePath,
-      reason: cause instanceof Error ? cause.message : String(cause)
-    });
+    logStageCleanupFailure(deps, attemptId, stagePath, cause);
+    return;
   }
+  await clearStagePath(deps.db, attemptId, deps.now());
+}
+
+// Roll back only the stage THIS start actually created (the row insert never landed, so there is no
+// binding to clear). Never touches a stagePath, so it cannot unbind a colliding attempt that owns the
+// same id. A removal failure is surfaced, never swallowed.
+async function rollbackCreatedStage(
+  deps: PdfImportCommandDependencies,
+  attemptId: string,
+  stagePath: string
+): Promise<void> {
+  try {
+    await deps.stageStore.removeStage(stagePath);
+  } catch (cause) {
+    logStageCleanupFailure(deps, attemptId, stagePath, cause);
+  }
+}
+
+function logStageCleanupFailure(
+  deps: PdfImportCommandDependencies,
+  attemptId: string,
+  stagePath: string,
+  cause: unknown
+): void {
+  deps.logCleanupFailure({
+    attemptId,
+    stagePath,
+    reason: cause instanceof Error ? cause.message : String(cause)
+  });
 }

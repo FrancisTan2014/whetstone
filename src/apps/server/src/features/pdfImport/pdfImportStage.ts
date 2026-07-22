@@ -28,6 +28,8 @@ export type CreatedStage = Readonly<{ stagePath: string; handle: StagedFileHandl
 export type PdfImportStageStore = Readonly<{
   // Create the attempt's secure stage: write the uploaded bytes into a fresh per-attempt directory and
   // return the relative stage path (persisted on the attempt) plus a server-issued handle #701 reads.
+  // Creation is EXCLUSIVE: if a directory for this attempt id already exists (an id collision), it
+  // throws instead of overwriting the existing attempt's staged bytes.
   createStage: (attemptId: string, bytes: Uint8Array) => Promise<CreatedStage>;
   // Re-open the handle for an already-created stage (e.g. a resumed run after restart), from the stored
   // relative stage path. Does not touch disk; the runner's read reports a missing stage as a failure.
@@ -46,8 +48,13 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
 
   async function createStage(attemptId: string, bytes: Uint8Array): Promise<CreatedStage> {
     const stageDir = stageDirFor(attemptId);
-    await mkdir(stageDir, { recursive: true });
-    await writeFile(join(stageDir, STAGED_FILE_NAME), bytes);
+    // Ensure the shared root exists, then create THIS attempt's directory EXCLUSIVELY (non-recursive
+    // mkdir throws EEXIST if it already exists). A start that reuses an id therefore fails here instead
+    // of overwriting a live attempt's staged bytes; `writeFile` with the `wx` flag is a second exclusive
+    // guard on the staged file itself.
+    await mkdir(stageRootDir, { recursive: true });
+    await mkdir(stageDir);
+    await writeFile(join(stageDir, STAGED_FILE_NAME), bytes, { flag: "wx" });
     return Object.freeze({
       stagePath: attemptId,
       handle: issueStagedFileHandle(stageDir, STAGED_FILE_NAME)

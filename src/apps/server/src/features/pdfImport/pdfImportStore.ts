@@ -315,7 +315,7 @@ export async function markConverted(
 ): Promise<boolean> {
   const applied = await db
     .update(pdfImportAttempts)
-    .set({ state: "converted", runToken: null, stagePath: null, heartbeatAt: null, updatedAt: now })
+    .set({ state: "converted", runToken: null, heartbeatAt: null, updatedAt: now })
     .where(fencedWhere(id, runToken))
     .returning({ id: pdfImportAttempts.id });
   return applied.length > 0;
@@ -334,13 +334,24 @@ export async function markFailed(
       state: "failed",
       failure,
       runToken: null,
-      stagePath: null,
       heartbeatAt: null,
       updatedAt: now
     })
     .where(fencedWhere(id, runToken))
     .returning({ id: pdfImportAttempts.id });
   return applied.length > 0;
+}
+
+// Clear the stage binding ONLY after the staged bytes were actually removed from disk. Terminal and
+// cancel transitions keep `stagePath` set until the filesystem removal succeeds, so a failed cleanup
+// leaves the attempt `bound` (visible in status and retryable) instead of forgetting the path and
+// orphaning the bytes. Scoped by id: the attempt is already terminal/cancelled and the caller has
+// owner-checked it.
+export async function clearStagePath(db: DbClient, id: string, now: Date): Promise<void> {
+  await db
+    .update(pdfImportAttempts)
+    .set({ stagePath: null, updatedAt: now })
+    .where(eq(pdfImportAttempts.id, id));
 }
 
 export type CancelResult = Readonly<{
@@ -351,8 +362,9 @@ export type CancelResult = Readonly<{
 
 // The states an owner may cancel are exactly the non-terminal ones (`queued`, `running`, `interrupted`),
 // decided by the domain state machine rather than a duplicated set here. Clearing the run token AND
-// leaving `running` fences any late child output. Returns whether a child must be terminated and the
-// stage to remove.
+// leaving `running` fences any late child output. `stagePath` is intentionally kept until the caller
+// removes the staged bytes (then clears it via `clearStagePath`), so a failed cleanup stays retryable.
+// Returns whether a child must be terminated and the stage to remove.
 export async function markCancelled(
   db: DbClient,
   userId: string,
@@ -372,7 +384,6 @@ export async function markCancelled(
       .set({
         state: "cancelled",
         runToken: null,
-        stagePath: null,
         heartbeatAt: null,
         updatedAt: now
       })

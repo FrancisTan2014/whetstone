@@ -46,6 +46,17 @@ describe("createPdfImportStageStore", () => {
     await expect(stat(keep.handle.path)).resolves.toBeDefined();
   });
 
+  it("creates a stage exclusively, refusing to overwrite an existing attempt's bytes", async () => {
+    const original = new Uint8Array([1, 1, 1]);
+    const created = await store.createStage("attempt-3", original);
+
+    // A second create for the same id (an attempt-id collision) must fail rather than clobber the
+    // existing staged bytes.
+    await expect(store.createStage("attempt-3", new Uint8Array([2, 2, 2]))).rejects.toThrow();
+    const staged = await readFile(created.handle.path);
+    expect(new Uint8Array(staged)).toEqual(original);
+  });
+
   it("rejects a path-traversal stage id on every entry point", async () => {
     await expect(store.createStage("../escape", new Uint8Array([0]))).rejects.toThrow(
       /letters, digits, hyphen, or underscore/

@@ -381,8 +381,9 @@ describe("processNextPdfImport", () => {
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("too_large");
   });
 
-  it("surfaces a stage cleanup failure after a successful conversion", async () => {
+  it("retains the stage (bound, retryable) when cleanup fails after a successful conversion", async () => {
     await seedStaged("a1");
+    const handlePath = stageStore.openStage("a1").path;
     const logCleanupFailure = vi.fn();
     const failingStore: PdfImportStageStore = {
       createStage: stageStore.createStage,
@@ -397,6 +398,10 @@ describe("processNextPdfImport", () => {
     expect(logCleanupFailure).toHaveBeenCalledWith(
       expect.objectContaining({ attemptId: "a1", reason: "stage locked" })
     );
+    // A failed removal must not forget the stage: the binding is retained and the bytes still exist, so
+    // the terminal attempt stays bound and its cleanup can be retried.
+    expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.stagePath).toBe("a1");
+    await expect(stat(handlePath)).resolves.toBeDefined();
   });
 });
 

@@ -11,6 +11,7 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
+  clearStagePath,
   commitRange,
   countCommittedRanges,
   getAttempt,
@@ -231,16 +232,18 @@ describe("pdfImportStore", () => {
   });
 
   describe("terminal transitions", () => {
-    it("marks converted (clearing the stage) only under the live token", async () => {
+    it("marks converted (retaining the stage until cleanup) only under the live token", async () => {
       await seedQueued(db, "a1");
       const { runToken } = await claim(db);
       expect(await markConverted(db, "a1", "stale", new Date())).toBe(false);
       expect(await markConverted(db, "a1", runToken, new Date())).toBe(true);
       const done = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      // The stage binding is kept on the terminal row so a cleanup failure stays visible/retryable; it
+      // is cleared only after the bytes are actually removed (via clearStagePath).
       expect(done).toMatchObject({
         state: "converted",
         runToken: null,
-        stagePath: null,
+        stagePath: "stage-a1",
         heartbeatAt: null
       });
     });
@@ -252,7 +255,18 @@ describe("pdfImportStore", () => {
       expect(await markFailed(db, "a1", "stale", failure, new Date())).toBe(false);
       expect(await markFailed(db, "a1", runToken, failure, new Date())).toBe(true);
       const failed = await getAttempt(db, DEFAULT_USER_ID, "a1");
-      expect(failed).toMatchObject({ state: "failed", failure, stagePath: null });
+      // Stage retained until cleanup succeeds (see clearStagePath).
+      expect(failed).toMatchObject({ state: "failed", failure, stagePath: "stage-a1" });
+    });
+
+    it("clears the stage binding only after cleanup, keeping it retryable on failure", async () => {
+      await seedQueued(db, "a1");
+      const { runToken } = await claim(db);
+      await markConverted(db, "a1", runToken, new Date());
+      // Until cleanup runs, the terminal row still owns its stage (status stays bound, retryable).
+      expect((await getAttemptById(db, "a1"))?.stagePath).toBe("stage-a1");
+      await clearStagePath(db, "a1", new Date());
+      expect((await getAttemptById(db, "a1"))?.stagePath).toBeNull();
     });
   });
 
@@ -262,7 +276,9 @@ describe("pdfImportStore", () => {
       const result = await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
       expect(result).toEqual({ cancelled: true, wasRunning: false, stagePath: "stage-a1" });
       const after = await getAttempt(db, DEFAULT_USER_ID, "a1");
-      expect(after).toMatchObject({ state: "cancelled", stagePath: null });
+      // Cancel keeps the stage binding so a failed removal stays retryable; the caller clears it after
+      // the bytes are actually removed.
+      expect(after).toMatchObject({ state: "cancelled", stagePath: "stage-a1" });
     });
 
     it("cancels a running attempt and flags that a child must be terminated", async () => {

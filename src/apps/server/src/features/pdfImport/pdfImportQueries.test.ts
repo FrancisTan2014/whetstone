@@ -10,6 +10,7 @@ import { getPdfImportStatus } from "./pdfImportQueries.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
+  clearStagePath,
   commitRange,
   insertQueuedAttempt,
   markFailed,
@@ -114,7 +115,7 @@ describe("getPdfImportStatus", () => {
     expect(status?.heartbeatAt).not.toBeNull();
   });
 
-  it("reports a typed failure and a released stage once failed", async () => {
+  it("keeps the stage bound on a failed attempt until cleanup releases it", async () => {
     await seedQueued("a1");
     await claimNextQueued(db, {
       runToken: "rt",
@@ -129,13 +130,19 @@ describe("getPdfImportStatus", () => {
       new Date()
     );
 
-    const status = await getPdfImportStatus(db, DEFAULT_USER_ID, "a1");
-    expect(status).toMatchObject({
+    // Failed keeps the stage bound so a cleanup failure stays visible/retryable.
+    const failed = await getPdfImportStatus(db, DEFAULT_USER_ID, "a1");
+    expect(failed).toMatchObject({
       state: "failed",
       failure: { kind: "malformed", message: "bad", remedy: "re-stage" },
-      stage: { bound: false },
+      stage: { bound: true },
       heartbeatAt: null
     });
+
+    // Only after the bytes are actually removed does the stage report unbound.
+    await clearStagePath(db, "a1", new Date());
+    const released = await getPdfImportStatus(db, DEFAULT_USER_ID, "a1");
+    expect(released?.stage).toEqual({ bound: false });
   });
 
   it("returns null for a missing attempt", async () => {

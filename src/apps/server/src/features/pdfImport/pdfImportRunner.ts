@@ -27,6 +27,7 @@ import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
+  clearStagePath,
   commitRange,
   getCommittedRangeIndices,
   markConverted,
@@ -290,6 +291,10 @@ async function fail(
   return { status: "failed", attemptId: claimed.id, failure: dto };
 }
 
+// Remove the attempt-owned stage after a terminal outcome and, ONLY on success, clear the stage binding
+// so status reports it unbound. A removal failure is surfaced via the cleanup logger (never swallowed)
+// AND leaves `stagePath` set, so the attempt stays `bound` in status and its cleanup can be retried
+// rather than the bytes lingering with no record of the path.
 async function removeStageVisible(
   deps: PdfImportRunnerDependencies,
   attemptId: string,
@@ -299,5 +304,7 @@ async function removeStageVisible(
     await deps.stageStore.removeStage(stagePath);
   } catch (cause) {
     deps.logCleanupFailure({ attemptId, stagePath, reason: describeError(cause) });
+    return;
   }
+  await clearStagePath(deps.db, attemptId, deps.now());
 }
