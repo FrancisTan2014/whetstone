@@ -51,8 +51,6 @@ describe("createPdfImportStageStore", () => {
       /letters, digits, hyphen, or underscore/
     );
     expect(() => store.openStage("a/b")).toThrow(/letters, digits, hyphen, or underscore/);
-    await expect(store.removeStage("")).rejects.toThrow(
-      /letters, digits, hyphen, or underscore/
-    );
+    await expect(store.removeStage("")).rejects.toThrow(/letters, digits, hyphen, or underscore/);
   });
 });

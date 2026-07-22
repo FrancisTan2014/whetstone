@@ -48,7 +48,9 @@ export const pdfImportStatusDtoSchema = z
     createdAt: z.string(),
     failure: pdfImportFailureDtoSchema.nullable(),
     heartbeatAt: z.string().nullable(),
-    sourceHash: z.string().regex(/^[a-f0-9]{64}$/, "sourceHash must be 64 lowercase hex characters."),
+    sourceHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/, "sourceHash must be 64 lowercase hex characters."),
     stage: pdfImportStageDtoSchema,
     state: pdfImportAttemptStateSchema,
     totalPages: z.number().int().nonnegative().nullable(),

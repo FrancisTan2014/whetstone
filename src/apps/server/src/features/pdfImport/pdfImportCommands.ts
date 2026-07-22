@@ -81,7 +81,10 @@ export async function cancelPdfImport(
       await removeStageQuiet(deps, input.attemptId, result.stagePath);
     }
   }
-  return { applied: result.cancelled, status: await statusFor(deps, input.userId, input.attemptId) };
+  return {
+    applied: result.cancelled,
+    status: await statusFor(deps, input.userId, input.attemptId)
+  };
 }
 
 export type RetryPdfImportInput = Readonly<{ userId: string; attemptId: string }>;

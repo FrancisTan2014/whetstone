@@ -23,7 +23,13 @@ function payloadForPages(startPage: number, endPage: number): RangeConversion {
   for (let page = startPage; page <= endPage; page += 1) {
     pages.push({ pageNumber: page, hasNativeText: true });
   }
-  return { schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION, doclingSchema, pages, body: [], furniture: [] };
+  return {
+    schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION,
+    doclingSchema,
+    pages,
+    body: [],
+    furniture: []
+  };
 }
 
 async function buildDb(): Promise<DbClient> {
@@ -73,8 +79,18 @@ describe("getPdfImportStatus", () => {
 
   it("reports probe totals, a committed range, and a heartbeat once running", async () => {
     await seedQueued("a1");
-    await claimNextQueued(db, { runToken: "rt", fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT, now: new Date() });
-    await setProbeResult(db, { id: "a1", runToken: "rt", totalPages: 4, totalRanges: 2, now: new Date() });
+    await claimNextQueued(db, {
+      runToken: "rt",
+      fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+      now: new Date()
+    });
+    await setProbeResult(db, {
+      id: "a1",
+      runToken: "rt",
+      totalPages: 4,
+      totalRanges: 2,
+      now: new Date()
+    });
     await commitRange(db, {
       attemptId: "a1",
       runToken: "rt",
@@ -100,7 +116,11 @@ describe("getPdfImportStatus", () => {
 
   it("reports a typed failure and a released stage once failed", async () => {
     await seedQueued("a1");
-    await claimNextQueued(db, { runToken: "rt", fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT, now: new Date() });
+    await claimNextQueued(db, {
+      runToken: "rt",
+      fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+      now: new Date()
+    });
     await markFailed(
       db,
       "a1",

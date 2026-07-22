@@ -24,7 +24,12 @@ async function applyMigrationFile(pglite: PGlite): Promise<void> {
   }
 }
 
-async function insertAttempt(pglite: PGlite, id: string, state: string, failure = "NULL"): Promise<void> {
+async function insertAttempt(
+  pglite: PGlite,
+  id: string,
+  state: string,
+  failure = "NULL"
+): Promise<void> {
   await pglite.exec(
     `INSERT INTO pdf_import_attempts (id, user_id, source_hash, state, failure)
      VALUES ('${id}', 'user-1', 'sha', '${state}', ${failure});`

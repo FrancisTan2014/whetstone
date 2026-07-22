@@ -42,13 +42,7 @@ describe("isRetryableAttemptState", () => {
   });
 
   it("is false for every other state", () => {
-    for (const state of [
-      "queued",
-      "running",
-      "converted",
-      "failed",
-      "cancelled"
-    ] as const) {
+    for (const state of ["queued", "running", "converted", "failed", "cancelled"] as const) {
       expect(isRetryableAttemptState(state)).toBe(false);
     }
   });

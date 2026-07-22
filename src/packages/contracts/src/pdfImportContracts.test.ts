@@ -45,7 +45,8 @@ describe("pdfImportFailureDtoSchema", () => {
       pdfImportFailureDtoSchema.safeParse({ kind: "", message: "m", remedy: "r" }).success
     ).toBe(false);
     expect(
-      pdfImportFailureDtoSchema.safeParse({ kind: "k", message: "m", remedy: "r", extra: 1 }).success
+      pdfImportFailureDtoSchema.safeParse({ kind: "k", message: "m", remedy: "r", extra: 1 })
+        .success
     ).toBe(false);
   });
 });

@@ -291,7 +291,9 @@ export async function getCommittedRangeIndices(
   const rows = await db
     .select({ rangeIndex: pdfImportRanges.rangeIndex })
     .from(pdfImportRanges)
-    .where(and(eq(pdfImportRanges.attemptId, attemptId), eq(pdfImportRanges.fingerprint, fingerprint)))
+    .where(
+      and(eq(pdfImportRanges.attemptId, attemptId), eq(pdfImportRanges.fingerprint, fingerprint))
+    )
     .orderBy(asc(pdfImportRanges.rangeIndex));
   return rows.map((row) => row.rangeIndex);
 }
@@ -367,9 +369,19 @@ export async function markCancelled(
     }
     await tx
       .update(pdfImportAttempts)
-      .set({ state: "cancelled", runToken: null, stagePath: null, heartbeatAt: null, updatedAt: now })
+      .set({
+        state: "cancelled",
+        runToken: null,
+        stagePath: null,
+        heartbeatAt: null,
+        updatedAt: now
+      })
       .where(eq(pdfImportAttempts.id, id));
-    return { cancelled: true, wasRunning: attempt.state === "running", stagePath: attempt.stagePath };
+    return {
+      cancelled: true,
+      wasRunning: attempt.state === "running",
+      stagePath: attempt.stagePath
+    };
   });
 }
 

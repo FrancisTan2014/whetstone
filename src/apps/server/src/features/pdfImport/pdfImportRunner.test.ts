@@ -17,7 +17,11 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { pdfImportAttempts } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
-import { createFakeDoclingRunner, type DoclingRunner, type ProbeOutcome } from "../../files/pdfStructuredAdapter.js";
+import {
+  createFakeDoclingRunner,
+  type DoclingRunner,
+  type ProbeOutcome
+} from "../../files/pdfStructuredAdapter.js";
 import { malformedFailure } from "../../files/pdfStructuredErrors.js";
 import {
   createPdfImportActiveRuns,
@@ -45,7 +49,13 @@ function payloadForPages(startPage: number, endPage: number): RangeConversion {
   for (let page = startPage; page <= endPage; page += 1) {
     pages.push({ pageNumber: page, hasNativeText: true });
   }
-  return { schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION, doclingSchema, pages, body: [], furniture: [] };
+  return {
+    schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION,
+    doclingSchema,
+    pages,
+    body: [],
+    furniture: []
+  };
 }
 
 const rawValid = JSON.stringify(payloadForPages(1, 50));
@@ -99,7 +109,10 @@ describe("processNextPdfImport", () => {
       pageRangeSize: overrides.pageRangeSize,
       runner:
         overrides.runner ??
-        createFakeDoclingRunner({ probe: { status: "ok", pageCount: 1 }, rangePayloads: [rawValid] }),
+        createFakeDoclingRunner({
+          probe: { status: "ok", pageCount: 1 },
+          rangePayloads: [rawValid]
+        }),
       stageStore: overrides.stageStore ?? stageStore
     };
   }
@@ -112,7 +125,10 @@ describe("processNextPdfImport", () => {
     await seedStaged("a1");
     const handlePath = stageStore.openStage("a1").path;
     const deps = buildDeps({
-      runner: createFakeDoclingRunner({ probe: { status: "ok", pageCount: 5 }, rangePayloads: [rawValid] }),
+      runner: createFakeDoclingRunner({
+        probe: { status: "ok", pageCount: 5 },
+        rangePayloads: [rawValid]
+      }),
       pageRangeSize: 2
     });
 
@@ -120,15 +136,27 @@ describe("processNextPdfImport", () => {
 
     const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
     expect(attempt).toMatchObject({ state: "converted", completedPages: 5, stagePath: null });
-    expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([0, 1, 2]);
+    expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([
+      0, 1, 2
+    ]);
     await expect(stat(handlePath)).rejects.toThrow();
   });
 
   it("resumes after the last committed range without re-probing", async () => {
     await seedStaged("a1");
     const runToken = "prior";
-    await claimNextQueued(db, { runToken, fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT, now: new Date() });
-    await setProbeResult(db, { id: "a1", runToken, totalPages: 5, totalRanges: 3, now: new Date() });
+    await claimNextQueued(db, {
+      runToken,
+      fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+      now: new Date()
+    });
+    await setProbeResult(db, {
+      id: "a1",
+      runToken,
+      totalPages: 5,
+      totalRanges: 3,
+      now: new Date()
+    });
     await commitRange(db, {
       attemptId: "a1",
       runToken,
@@ -147,9 +175,13 @@ describe("processNextPdfImport", () => {
       probe: () => Promise.resolve({ status: "tool_missing" }),
       convertRange: () => Promise.resolve({ status: "ok", raw: rawValid })
     };
-    const result = await processNextPdfImport(buildDeps({ runner: resumeRunner, pageRangeSize: 2 }));
+    const result = await processNextPdfImport(
+      buildDeps({ runner: resumeRunner, pageRangeSize: 2 })
+    );
     expect(result.status).toBe("converted");
-    expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([0, 1, 2]);
+    expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([
+      0, 1, 2
+    ]);
   });
 
   describe("probe failures free the stage and fail the attempt", () => {
@@ -164,7 +196,9 @@ describe("processNextPdfImport", () => {
       it(name, async () => {
         await seedStaged("a1");
         const handlePath = stageStore.openStage("a1").path;
-        const result = await processNextPdfImport(buildDeps({ runner: createFakeDoclingRunner({ probe }) }));
+        const result = await processNextPdfImport(
+          buildDeps({ runner: createFakeDoclingRunner({ probe }) })
+        );
         expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
         const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
         expect(attempt).toMatchObject({ state: "failed", stagePath: null });
@@ -177,7 +211,12 @@ describe("processNextPdfImport", () => {
   it("fails on a malformed range payload", async () => {
     await seedStaged("a1");
     const result = await processNextPdfImport(
-      buildDeps({ runner: createFakeDoclingRunner({ probe: { status: "ok", pageCount: 1 }, rangePayloads: ["{not json"] }) })
+      buildDeps({
+        runner: createFakeDoclingRunner({
+          probe: { status: "ok", pageCount: 1 },
+          rangePayloads: ["{not json"]
+        })
+      })
     );
     expect(result).toMatchObject({ status: "failed" });
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("malformed");
@@ -186,7 +225,12 @@ describe("processNextPdfImport", () => {
   it("fails on an unsupported converter schema", async () => {
     await seedStaged("a1");
     const result = await processNextPdfImport(
-      buildDeps({ runner: createFakeDoclingRunner({ probe: { status: "ok", pageCount: 1 }, rangePayloads: [rawUnsupported] }) })
+      buildDeps({
+        runner: createFakeDoclingRunner({
+          probe: { status: "ok", pageCount: 1 },
+          rangePayloads: [rawUnsupported]
+        })
+      })
     );
     expect(result).toMatchObject({ status: "failed" });
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("unsupported_schema");
@@ -195,7 +239,12 @@ describe("processNextPdfImport", () => {
   it("fails on a non-cancelled range run failure", async () => {
     await seedStaged("a1");
     const result = await processNextPdfImport(
-      buildDeps({ runner: createFakeDoclingRunner({ probe: { status: "ok", pageCount: 1 }, failRangeWith: malformedFailure("boom") }) })
+      buildDeps({
+        runner: createFakeDoclingRunner({
+          probe: { status: "ok", pageCount: 1 },
+          failRangeWith: malformedFailure("boom")
+        })
+      })
     );
     expect(result).toMatchObject({ status: "failed" });
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("malformed");
@@ -287,7 +336,10 @@ describe("processNextPdfImport", () => {
 
   it("fails a claim with no bound stage", async () => {
     await seedStaged("a1");
-    await db.update(pdfImportAttempts).set({ stagePath: null }).where(eq(pdfImportAttempts.id, "a1"));
+    await db
+      .update(pdfImportAttempts)
+      .set({ stagePath: null })
+      .where(eq(pdfImportAttempts.id, "a1"));
     const result = await processNextPdfImport(buildDeps());
     expect(result).toMatchObject({ status: "failed" });
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("malformed");

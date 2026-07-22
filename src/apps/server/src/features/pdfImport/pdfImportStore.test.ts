@@ -147,7 +147,10 @@ describe("pdfImportStore", () => {
         now: new Date()
       });
       // Simulate a re-queue (as a retry would), then re-claim under the current build.
-      await db.update(pdfImportAttempts).set({ state: "queued", runToken: null }).where(eq(pdfImportAttempts.id, "a1"));
+      await db
+        .update(pdfImportAttempts)
+        .set({ state: "queued", runToken: null })
+        .where(eq(pdfImportAttempts.id, "a1"));
 
       const second = await claim(db, PDF_IMPORT_ADAPTER_FINGERPRINT);
       expect(second.claimed?.completedPages).toBe(0);
@@ -162,8 +165,24 @@ describe("pdfImportStore", () => {
       await seedQueued(db, "a1");
       const { runToken } = await claim(db);
 
-      expect(await setProbeResult(db, { id: "a1", runToken, totalPages: 30, totalRanges: 3, now: new Date() })).toBe(true);
-      expect(await setProbeResult(db, { id: "a1", runToken: "stale", totalPages: 1, totalRanges: 1, now: new Date() })).toBe(false);
+      expect(
+        await setProbeResult(db, {
+          id: "a1",
+          runToken,
+          totalPages: 30,
+          totalRanges: 3,
+          now: new Date()
+        })
+      ).toBe(true);
+      expect(
+        await setProbeResult(db, {
+          id: "a1",
+          runToken: "stale",
+          totalPages: 1,
+          totalRanges: 1,
+          now: new Date()
+        })
+      ).toBe(false);
 
       expect(await heartbeat(db, "a1", runToken, new Date())).toBe(true);
       expect(await heartbeat(db, "a1", "stale", new Date())).toBe(false);
@@ -218,7 +237,12 @@ describe("pdfImportStore", () => {
       expect(await markConverted(db, "a1", "stale", new Date())).toBe(false);
       expect(await markConverted(db, "a1", runToken, new Date())).toBe(true);
       const done = await getAttempt(db, DEFAULT_USER_ID, "a1");
-      expect(done).toMatchObject({ state: "converted", runToken: null, stagePath: null, heartbeatAt: null });
+      expect(done).toMatchObject({
+        state: "converted",
+        runToken: null,
+        stagePath: null,
+        heartbeatAt: null
+      });
     });
 
     it("marks failed with a typed failure only under the live token", async () => {

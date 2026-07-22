@@ -77,10 +77,17 @@ describe("pdfImport commands", () => {
   describe("startPdfImport", () => {
     it("stages the bytes and queues a new attempt", async () => {
       const deps = buildDeps({ createAttemptId: () => "att-1" });
-      const started = await startPdfImport(deps, { userId: DEFAULT_USER_ID, bytes: new Uint8Array([9, 9]) });
+      const started = await startPdfImport(deps, {
+        userId: DEFAULT_USER_ID,
+        bytes: new Uint8Array([9, 9])
+      });
 
       expect(started.attemptId).toBe("att-1");
-      expect(started.status).toMatchObject({ attemptId: "att-1", state: "queued", stage: { bound: true } });
+      expect(started.status).toMatchObject({
+        attemptId: "att-1",
+        state: "queued",
+        stage: { bound: true }
+      });
       const attempt = await getAttempt(db, DEFAULT_USER_ID, "att-1");
       expect(attempt?.state).toBe("queued");
       await expect(stat(stageStore.openStage("att-1").path)).resolves.toBeDefined();
@@ -153,10 +160,13 @@ describe("pdfImport commands", () => {
         openStage: stageStore.openStage,
         removeStage: () => Promise.reject(new Error("locked"))
       };
-      const result = await cancelPdfImport(buildDeps({ stageStore: failingStore, logCleanupFailure }), {
-        userId: DEFAULT_USER_ID,
-        attemptId: "a1"
-      });
+      const result = await cancelPdfImport(
+        buildDeps({ stageStore: failingStore, logCleanupFailure }),
+        {
+          userId: DEFAULT_USER_ID,
+          attemptId: "a1"
+        }
+      );
 
       expect(result.applied).toBe(true);
       expect(logCleanupFailure).toHaveBeenCalledWith(
@@ -174,7 +184,10 @@ describe("pdfImport commands", () => {
         now: new Date()
       });
       await recoverInterruptedAttempts(db, new Date());
-      const result = await retryPdfImport(buildDeps(), { userId: DEFAULT_USER_ID, attemptId: "a1" });
+      const result = await retryPdfImport(buildDeps(), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "a1"
+      });
 
       expect(result.applied).toBe(true);
       expect(result.status?.state).toBe("queued");
@@ -182,7 +195,10 @@ describe("pdfImport commands", () => {
 
     it("does not retry a non-interrupted attempt", async () => {
       await seedStaged("a1");
-      const result = await retryPdfImport(buildDeps(), { userId: DEFAULT_USER_ID, attemptId: "a1" });
+      const result = await retryPdfImport(buildDeps(), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "a1"
+      });
 
       expect(result.applied).toBe(false);
       expect(result.status?.state).toBe("queued");
