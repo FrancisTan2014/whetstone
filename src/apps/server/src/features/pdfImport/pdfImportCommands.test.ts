@@ -3,10 +3,12 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
+import { pdfImportAttempts } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
   cancelPdfImport,
@@ -172,6 +174,60 @@ describe("pdfImport commands", () => {
       expect(logCleanupFailure).toHaveBeenCalledWith(
         expect.objectContaining({ attemptId: "a1", reason: "locked" })
       );
+    });
+
+    it("stringifies a non-Error cleanup rejection for the logger", async () => {
+      await seedStaged("a1");
+      const logCleanupFailure = vi.fn();
+      const failingStore: PdfImportStageStore = {
+        createStage: stageStore.createStage,
+        openStage: stageStore.openStage,
+        removeStage: () => Promise.reject("stage busy")
+      };
+      const result = await cancelPdfImport(
+        buildDeps({ stageStore: failingStore, logCleanupFailure }),
+        {
+          userId: DEFAULT_USER_ID,
+          attemptId: "a1"
+        }
+      );
+
+      expect(result.applied).toBe(true);
+      expect(logCleanupFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ attemptId: "a1", reason: "stage busy" })
+      );
+    });
+
+    it("cancels a stage-less attempt without touching the stage store", async () => {
+      await seedStaged("a1");
+      await db
+        .update(pdfImportAttempts)
+        .set({ stagePath: null })
+        .where(eq(pdfImportAttempts.id, "a1"));
+      const removeStage = vi.fn(() => Promise.resolve());
+      const noRemoveStore: PdfImportStageStore = {
+        createStage: stageStore.createStage,
+        openStage: stageStore.openStage,
+        removeStage
+      };
+      const result = await cancelPdfImport(buildDeps({ stageStore: noRemoveStore }), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "a1"
+      });
+
+      expect(result.applied).toBe(true);
+      expect(result.status?.state).toBe("cancelled");
+      expect(removeStage).not.toHaveBeenCalled();
+    });
+
+    it("reports no status when cancelling an unknown attempt", async () => {
+      const result = await cancelPdfImport(buildDeps(), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "missing"
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.status).toBeNull();
     });
   });
 
