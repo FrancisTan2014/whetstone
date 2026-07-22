@@ -28,6 +28,8 @@ import {
   readingPositions,
   readingUnits,
   tocEntries,
+  uploadedSourceClaims,
+  workMeta,
   workSources
 } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
@@ -37,11 +39,13 @@ import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sour
 import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
-import type { ContentDependencies } from "./contentCommands.js";
+import { createImportedMarkdownWork, type ContentDependencies } from "./contentCommands.js";
+import { ingestEpub as ingestEpubCommand } from "./epubCommands.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
 type TestContext = Readonly<{
+  content: ContentDependencies;
   db: DbClient;
   imagesDir: string;
   pglite: PGlite;
@@ -105,6 +109,7 @@ async function buildContext(): Promise<TestContext> {
   };
 
   return {
+    content,
     db,
     imagesDir,
     pglite,
@@ -164,6 +169,33 @@ function ingestEpub(bytes: Buffer): ReturnType<typeof context.server.inject> {
     method: "POST",
     payload: bytes,
     url: "/api/works/epub"
+  });
+}
+
+type ImportMarkdownPayload = Readonly<{
+  author?: unknown;
+  fileName?: string;
+  language?: string;
+  markdown?: string;
+  title?: string;
+  workType?: string;
+}>;
+
+function importMarkdownWork(
+  overrides: ImportMarkdownPayload = {}
+): ReturnType<typeof context.server.inject> {
+  return context.server.inject({
+    method: "POST",
+    payload: {
+      author: { mode: "new", name: "George Orwell" },
+      fileName: "politics.md",
+      language: "en",
+      markdown: "# Chapter One\n\nFirst paragraph.",
+      title: "Politics and the English Language",
+      workType: "essay",
+      ...overrides
+    },
+    url: "/api/works/markdown"
   });
 }
 
@@ -1497,6 +1529,211 @@ describe("EPUB ingestion routes", () => {
     expect(removed.statusCode).toBe(404);
     expect(removed.json()).toEqual({ error: "block_not_found" });
     expect(unknown.statusCode).toBe(404);
+  });
+});
+
+describe("imported Markdown front door (#706)", () => {
+  const markdown = "# Chapter One\n\nFirst paragraph.";
+
+  it("mints an imported Work, retains the uploaded .md, and records its source claim", async () => {
+    const response = await importMarkdownWork({ markdown });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as IngestEpubResultDto;
+    expect(body.work).toMatchObject({
+      language: "en",
+      origin: "imported",
+      title: "Politics and the English Language",
+      workType: "essay"
+    });
+    expect(body.content.workEntryId).toBe(body.work.entryId);
+    expect(body.content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual([
+      "heading",
+      "paragraph"
+    ]);
+
+    const createdAuthors = await context.db.select().from(authors);
+    expect(createdAuthors.map((author) => author.name)).toEqual(["George Orwell"]);
+    expect(body.work.authorId).toBe(createdAuthors[0]?.id);
+
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, body.work.entryId));
+    expect(sources[0]).toMatchObject({
+      fileName: "politics.md",
+      kind: "upload",
+      sha256: hashMarkdown(markdown),
+      sourceText: null
+    });
+
+    const claims = await context.db.select().from(uploadedSourceClaims);
+    expect(claims).toEqual([{ sha256: hashMarkdown(markdown), workEntryId: body.work.entryId }]);
+  });
+
+  it("reopens the owning Work when identical bytes are re-uploaded, creating no duplicate", async () => {
+    const first = await importMarkdownWork({ markdown });
+    const firstBody = first.json() as IngestEpubResultDto;
+
+    const second = await importMarkdownWork({ markdown });
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json() as IngestEpubResultDto;
+
+    expect(secondBody.work.entryId).toBe(firstBody.work.entryId);
+    expect(secondBody.content.readingUnits[0]?.blocks).toHaveLength(2);
+    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+    expect(await context.db.select().from(workSources)).toHaveLength(1);
+    expect(await context.db.select().from(entries).where(eq(entries.type, "work"))).toHaveLength(1);
+    expect(await context.db.select().from(authors)).toHaveLength(1);
+  });
+
+  it("refuses image-only Markdown with 422 and mints no Work, source, or claim", async () => {
+    const response = await importMarkdownWork({ markdown: "![only image](x.png)" });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "empty_content" });
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    expect(await context.db.select().from(entries).where(eq(entries.type, "work"))).toHaveLength(0);
+    // No source file is ever staged for unsupported content.
+    expect(await readdir(context.sourcesDir)).toEqual([]);
+  });
+
+  it("reuses an existing author selected by id instead of creating a duplicate", async () => {
+    const existingAuthorId = await createAuthorNamed("George Orwell");
+
+    const response = await importMarkdownWork({
+      author: { authorId: existingAuthorId, mode: "existing" },
+      markdown
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as IngestEpubResultDto).work.authorId).toBe(existingAuthorId);
+    expect(await context.db.select().from(authors)).toHaveLength(1);
+  });
+
+  it("returns 400 and stages no source when the selected existing author is unknown", async () => {
+    const response = await importMarkdownWork({
+      author: { authorId: "missing-author", mode: "existing" },
+      markdown
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      authorId: "missing-author",
+      error: "author_not_found"
+    });
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+    expect(await readdir(context.sourcesDir)).toEqual([]);
+  });
+
+  it("rejects an invalid request body with 400", async () => {
+    const response = await context.server.inject({
+      method: "POST",
+      payload: { fileName: "notes.txt", markdown },
+      url: "/api/works/markdown"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rolls back the loser and reopens the winner when an identical claim lands mid-stage", async () => {
+    const winnerAuthorId = await createAuthorNamed("Race Winner");
+    const raceMarkdown = "# Race\n\nOne durable paragraph for the mid-stage claim race.";
+    const sha256 = hashMarkdown(raceMarkdown);
+    const realStore = context.content.sourceFileStore;
+    const deleteSourceFile = vi.fn((path: string) => realStore.deleteSourceFile(path));
+
+    // A concurrent winner commits its Work + claim for the same hash after our initial miss but
+    // before our own transaction inserts the claim — modelled by committing it during staging.
+    const racingStore: ContentDependencies["sourceFileStore"] = {
+      ...realStore,
+      deleteSourceFile,
+      writeMarkdownSource: async (args) => {
+        const written = await realStore.writeMarkdownSource(args);
+        await context.db.insert(entries).values({ id: "md-winner", type: "work" });
+        await context.db.insert(workMeta).values({
+          authorId: winnerAuthorId,
+          entryId: "md-winner",
+          language: "en",
+          origin: "imported",
+          title: "Markdown Winner",
+          workType: "essay"
+        });
+        await context.db.insert(uploadedSourceClaims).values({ sha256, workEntryId: "md-winner" });
+        return written;
+      }
+    };
+
+    const outcome = await createImportedMarkdownWork(
+      { ...context.content, sourceFileStore: racingStore },
+      {
+        author: { authorId: winnerAuthorId, mode: "existing" },
+        fileName: "race.md",
+        language: "en",
+        markdown: raceMarkdown,
+        title: "Markdown Loser",
+        workType: "essay"
+      }
+    );
+
+    expect(outcome.status).toBe("exact_existing");
+    if (outcome.status !== "exact_existing") {
+      throw new Error(`expected exact_existing, got ${outcome.status}`);
+    }
+    expect(outcome.result.work.entryId).toBe("md-winner");
+    // The staged loser source was released, and its would-be Work rolled back with the transaction.
+    expect(deleteSourceFile).toHaveBeenCalledOnce();
+    const works = await context.db.select().from(workMeta);
+    expect(works.map((row) => row.entryId)).toEqual(["md-winner"]);
+    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+  });
+
+  it("rolls back the EPUB loser and reopens the winner on the same mid-stage race", async () => {
+    const winnerAuthorId = await createAuthorNamed("EPUB Race Winner");
+    const bytes = Buffer.from("epub-race-bytes");
+    const sha256 = hashBytes(bytes);
+    const realStore = context.content.sourceFileStore;
+    const deleteSourceFile = vi.fn((path: string) => realStore.deleteSourceFile(path));
+
+    const racingStore: ContentDependencies["sourceFileStore"] = {
+      ...realStore,
+      deleteSourceFile,
+      writeEpubSource: async (args) => {
+        const written = await realStore.writeEpubSource(args);
+        await context.db.insert(entries).values({ id: "epub-winner", type: "work" });
+        await context.db.insert(workMeta).values({
+          authorId: winnerAuthorId,
+          entryId: "epub-winner",
+          language: "en",
+          origin: "imported",
+          title: "EPUB Winner",
+          workType: "book"
+        });
+        await context.db
+          .insert(uploadedSourceClaims)
+          .values({ sha256, workEntryId: "epub-winner" });
+        return written;
+      }
+    };
+
+    const outcome = await ingestEpubCommand(
+      { ...context.content, sourceFileStore: racingStore },
+      bytes
+    );
+
+    expect(outcome.status).toBe("exact_existing");
+    if (outcome.status !== "exact_existing") {
+      throw new Error(`expected exact_existing, got ${outcome.status}`);
+    }
+    expect(outcome.result.work.entryId).toBe("epub-winner");
+    expect(deleteSourceFile).toHaveBeenCalledOnce();
+    const works = await context.db.select().from(workMeta);
+    expect(works.map((row) => row.entryId)).toEqual(["epub-winner"]);
+    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
   });
 });
 

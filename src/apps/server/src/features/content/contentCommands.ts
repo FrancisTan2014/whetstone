@@ -1,5 +1,18 @@
-import { blocksToMarkdown, decomposeMarkdown, diffBlocks, type EntryId } from "@whetstone/domain";
-import type { IngestMarkdownRequest, WorkContentDto } from "@whetstone/contracts";
+import {
+  blocksToMarkdown,
+  decomposeMarkdown,
+  diffBlocks,
+  toEntryId,
+  type AuthorId,
+  type EntryId
+} from "@whetstone/domain";
+import type {
+  ImportMarkdownWorkRequest,
+  IngestEpubResultDto,
+  IngestMarkdownRequest,
+  WorkContentDto
+} from "@whetstone/contracts";
+import { eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import type { EpubParser } from "../../files/epubSource.js";
@@ -7,8 +20,10 @@ import type { ImageResourceStore } from "../../files/imageResourceStore.js";
 import type { PdfToMarkdown } from "../../files/pdfToMarkdown.js";
 import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
-import { workSources } from "../../db/schema.js";
+import { authors, entries, workMeta, workSources } from "../../db/schema.js";
+import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { reconcileWorkBlocks } from "./blockReconciler.js";
+import { claimUploadedSource } from "./sourceClaims.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
 import { assertContentPersisted } from "./insertBatching.js";
 import { loadWorkContent, loadWorkOrigin, workExists, workHasSource } from "./contentQueries.js";
@@ -42,6 +57,15 @@ export type IngestPdfResult =
   | IngestMarkdownResult
   | Readonly<{ status: "invalid_pdf" }>
   | Readonly<{ status: "pdf_toolchain_missing" }>;
+
+// The front-door result for minting an imported Work from an uploaded .md file (#706). `created` wrote
+// a new Work + its retained source + its single-owner claim atomically; `exact_existing` reopened the
+// Work that already owns these exact bytes (no duplicate). `empty_content` and `author_not_found` are
+// refused before any source file is written.
+export type CreateImportedMarkdownWorkResult =
+  | Readonly<{ result: IngestEpubResultDto; status: "created" | "exact_existing" }>
+  | Readonly<{ status: "empty_content" }>
+  | Readonly<{ status: "author_not_found"; authorId: AuthorId }>;
 
 // PDF ingestion converges on the Markdown pipeline (#15): the doc-AI worker converts the PDF to clean
 // Markdown one-shot, which is ingested exactly like an uploaded .md so a PDF and the equivalent .md
@@ -221,4 +245,116 @@ async function buildProvenance(
     sha256: written.sha256,
     sourceText: null
   };
+}
+
+type ContentTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+
+// Mint an imported Work from an uploaded .md file through the shared uploaded-source claim boundary
+// (#706), so the front door mirrors the EPUB path: identical bytes reopen the owning Work instead of
+// creating a duplicate. The Work, its retained source file, its blocks, and its claim are written in a
+// single transaction; a concurrent loser rolls the whole creation back and reopens the winner. Unlike
+// the per-work content endpoint, this creates the Work, so it also validates the metadata (empty
+// content and an unknown existing-author selection are refused before any source file is staged).
+export async function createImportedMarkdownWork(
+  dependencies: ContentDependencies,
+  request: ImportMarkdownWorkRequest
+): Promise<CreateImportedMarkdownWorkResult> {
+  const decomposed = decomposeMarkdown(request.markdown);
+  const newBlocks = decomposed.flatMap((unit) => unit.blocks);
+
+  // Markdown that yields no readable blocks (e.g. image-only input) is unsupported content, not an
+  // empty Work — refuse it before staging so no source file or shell Work is ever written.
+  if (newBlocks.length === 0) {
+    return { status: "empty_content" };
+  }
+
+  // Validate an existing-author selection up front (a read) so a bad id never stages a source file.
+  if (request.author.mode === "existing") {
+    const found = await dependencies.db
+      .select({ id: authors.id })
+      .from(authors)
+      .where(eq(authors.id, request.author.authorId))
+      .limit(1);
+
+    if (found[0] === undefined) {
+      return { status: "author_not_found", authorId: request.author.authorId };
+    }
+  }
+
+  const sourceId = dependencies.createSourceId();
+  const { assignments } = diffBlocks(
+    [],
+    newBlocks.map((block) => ({ plaintext: block.plaintext }))
+  );
+
+  const outcome = await claimUploadedSource(dependencies.db, {
+    sha256: dependencies.sourceFileStore.hashMarkdown(request.markdown),
+    stage: () =>
+      dependencies.sourceFileStore.writeMarkdownSource({
+        id: sourceId,
+        markdown: request.markdown
+      }),
+    releaseStage: (written) => dependencies.sourceFileStore.deleteSourceFile(written.path),
+    commit: async (tx, written) => {
+      const authorId = await resolveWorkAuthor(tx, dependencies, request.author);
+      const workEntryId = toEntryId(dependencies.createEntryId());
+      await tx.insert(entries).values({ id: workEntryId, type: "work" });
+      await tx.insert(workMeta).values({
+        authorId,
+        entryId: workEntryId,
+        language: request.language,
+        origin: "imported",
+        title: request.title,
+        workType: request.workType
+      });
+      await tx.insert(workSources).values({
+        fileName: request.fileName,
+        filePath: written.path,
+        id: sourceId,
+        kind: "upload",
+        sha256: written.sha256,
+        sourceText: null,
+        workEntryId
+      });
+      await reconcileWorkBlocks(tx, {
+        assignments,
+        createEntryId: dependencies.createEntryId,
+        oldUnitIds: [],
+        removedIds: [],
+        units: decomposed,
+        workEntryId
+      });
+
+      return {
+        expectedBlockCount: newBlocks.length,
+        work: {
+          authorId,
+          entryId: workEntryId,
+          language: request.language,
+          origin: "imported",
+          title: request.title,
+          workType: request.workType
+        },
+        workEntryId
+      };
+    }
+  });
+
+  return { result: { content: outcome.content, work: outcome.work }, status: outcome.status };
+}
+
+// Resolve the Work's author inside the creation transaction: a `new` selection upserts through the
+// canonical author identity boundary; an `existing` selection reuses its already-validated id.
+async function resolveWorkAuthor(
+  tx: ContentTransaction,
+  dependencies: ContentDependencies,
+  selection: ImportMarkdownWorkRequest["author"]
+): Promise<AuthorId> {
+  if (selection.mode === "new") {
+    const resolved = await resolveNamedAuthor(tx, dependencies.createAuthorId, selection.name);
+
+    return resolved.author.id;
+  }
+
+  return selection.authorId;
 }
