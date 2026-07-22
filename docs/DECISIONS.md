@@ -10,6 +10,26 @@ it. Newest first.
 
 ---
 
+## D5 — Seven-day queue lock → non-blocking daily-use evidence
+
+**Status:** Superseded 2026-07-22.
+**Replaced by:** continuous bug-first delivery until the daily routine is usable, followed by sustained
+use as product-completion evidence (`PRODUCT.md` → "Product-completion threshold").
+
+**What it was.** Every broader feature issue depended on a human-run gate requiring one complete
+walkthrough and seven unchanged days of normal use.
+
+**Why superseded.** The gate made usability a prerequisite for the work needed to achieve usability.
+When the maintainer could not complete daily routines, every remediation and missing capability was
+still frozen behind the failed routine, leaving no path back to a testable build.
+
+**What replaced it.** Loop-breaking defects enter the deterministic bug-first queue and scoped
+delivery continues. Once a stable build supports the real routine, the walkthrough and seven-day
+window remain meaningful completion evidence; a runtime change restarts that evidence window but
+never freezes delivery.
+
+---
+
 ## D4 — Fixed-layout PDF reader → canonical block ingestion
 
 **Status:** Superseded 2026-07-22.

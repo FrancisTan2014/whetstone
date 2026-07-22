@@ -673,10 +673,11 @@ The pivot is usable only when all are true:
 - Day/Night and desktop/mobile retain readable hierarchy, focus, contrast, and 44px controls except
   for the deliberate inline-text target exception.
 - The primary bundle does not eagerly ship retired Practice/Map experiences.
-- After the current daily-loop work lands, one `main` commit passes a maintainer-clicked manual
-  end-to-end walkthrough and seven consecutive local-calendar days of normal use. A loop-breaking
-  defect or runtime change restarts the window; cosmetic findings and documentation/test-only changes
-  do not. Broader feature work resumes only after this gate passes.
+- Daily-use evidence never blocks work needed to make daily use possible. Loop-breaking defects enter
+  the bug-first queue, and scoped delivery continues until the normal routine is usable. Once stable,
+  one `main` commit should pass a maintainer-clicked end-to-end walkthrough and seven consecutive
+  local-calendar days of normal use; runtime changes restart that evidence window, not delivery.
+  Cosmetic findings and documentation/test-only changes do not restart it.
 
 ## Delivery order
 
