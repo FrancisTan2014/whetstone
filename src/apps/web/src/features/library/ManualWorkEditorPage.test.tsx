@@ -839,9 +839,21 @@ describe("ManualWorkEditorPage", () => {
       document: {
         type: "doc",
         content: [
-          { type: "heading", attrs: { id: "blk-b1", level: 1 }, content: [{ type: "text", text: "Chapter One" }] },
-          { type: "paragraph", attrs: { id: "blk-b2" }, content: [{ type: "text", text: "Body." }] },
-          { type: "heading", attrs: { id: "blk-b3", level: 2 }, content: [{ type: "text", text: "A Subsection" }] }
+          {
+            type: "heading",
+            attrs: { id: "blk-b1", level: 1 },
+            content: [{ type: "text", text: "Chapter One" }]
+          },
+          {
+            type: "paragraph",
+            attrs: { id: "blk-b2" },
+            content: [{ type: "text", text: "Body." }]
+          },
+          {
+            type: "heading",
+            attrs: { id: "blk-b3", level: 2 },
+            content: [{ type: "text", text: "A Subsection" }]
+          }
         ]
       }
     };
@@ -868,7 +880,13 @@ describe("ManualWorkEditorPage", () => {
       unitEntryId: "unit-b",
       document: {
         type: "doc",
-        content: [{ type: "heading", attrs: { id: "blk-b1", anchorId: null, level: 2 }, content: [{ type: "text", text: "Chapter" }] }]
+        content: [
+          {
+            type: "heading",
+            attrs: { id: "blk-b1", anchorId: null, level: 2 },
+            content: [{ type: "text", text: "Chapter" }]
+          }
+        ]
       },
       sections: [
         { headingLevel: 1, orderIndex: 0, title: "Part", unitEntryId: "unit-a" },
@@ -881,7 +899,13 @@ describe("ManualWorkEditorPage", () => {
       unitEntryId: "unit-a",
       document: {
         type: "doc",
-        content: [{ type: "heading", attrs: { id: "blk-a1", anchorId: null, level: 1 }, content: [{ type: "text", text: "Part" }] }]
+        content: [
+          {
+            type: "heading",
+            attrs: { id: "blk-a1", anchorId: null, level: 1 },
+            content: [{ type: "text", text: "Part" }]
+          }
+        ]
       },
       sections: [
         { headingLevel: 1, orderIndex: 0, title: "Part", unitEntryId: "unit-a" },
@@ -904,6 +928,8 @@ describe("ManualWorkEditorPage", () => {
     // The merged-away section is gone and focus/active follows the server's reconciled unit-a ("Part").
     expect(screen.queryByRole("button", { name: "Chapter" })).toBeNull();
     expect(screen.getByRole("button", { name: "Part" }).getAttribute("aria-current")).toBe("true");
-    expect(screen.getByRole("button", { name: "Part Two" }).getAttribute("aria-current")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Part Two" }).getAttribute("aria-current")
+    ).toBeNull();
   });
 });

@@ -1581,7 +1581,9 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(sections[0].title).toBeUndefined();
     expect(sections[0].unitEntryId).toBe(initial.unitEntryId);
     expect(merged.json().unitEntryId).toBe(initial.unitEntryId);
-    expect(documentText(merged.json().document)).toBe("A lead paragraph before any heading.Body only now.");
+    expect(documentText(merged.json().document)).toBe(
+      "A lead paragraph before any heading.Body only now."
+    );
 
     // Reader parity: exactly one unit and one "Start"; the merged-away section id is gone.
     const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));

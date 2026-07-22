@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
-import { buildHeadingOutline, type HeadingOutlineEntry, type HeadingOutlineUnit } from "@whetstone/domain";
+import {
+  buildHeadingOutline,
+  type HeadingOutlineEntry,
+  type HeadingOutlineUnit
+} from "@whetstone/domain";
 import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { useMediaQuery } from "../../shared/ui/useMediaQuery.js";
@@ -58,7 +62,9 @@ function partitionDraftIntoUnits(
     }
     partitionIndex += 1;
     const entryId =
-      partitionIndex === 0 ? activeUnitEntryId : `${activeUnitEntryId}\u0000draft-${partitionIndex}`;
+      partitionIndex === 0
+        ? activeUnitEntryId
+        : `${activeUnitEntryId}\u0000draft-${partitionIndex}`;
     if (!isHeading) {
       units.push({ entryId });
       return;
@@ -96,9 +102,7 @@ export function projectDraftOutline(
 
   const previewEntryIds = new Set(draftUnits.slice(1).map((unit) => unit.entryId));
   return buildHeadingOutline(projected).map((entry) =>
-    previewEntryIds.has(entry.entryId)
-      ? { ...entry, targetUnitEntryId: activeUnitEntryId }
-      : entry
+    previewEntryIds.has(entry.entryId) ? { ...entry, targetUnitEntryId: activeUnitEntryId } : entry
   );
 }
 

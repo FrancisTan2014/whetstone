@@ -32,7 +32,11 @@ export type RepartitionInput = Readonly<{
 
 // One resulting reading unit over the affected span: its id (reused from an existing unit or freshly
 // minted), whether it is new, and the ordered block ids it now contains.
-export type PlannedUnit = Readonly<{ blockIds: readonly string[]; entryId: string; isNew: boolean }>;
+export type PlannedUnit = Readonly<{
+  blockIds: readonly string[];
+  entryId: string;
+  isNew: boolean;
+}>;
 
 export type RepartitionPlan = Readonly<{
   // Every stream block mapped to the entry id of the resulting unit that now contains it — the anchor a

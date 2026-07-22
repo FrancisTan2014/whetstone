@@ -129,7 +129,10 @@ describe("projectDraftOutline", () => {
   });
 
   it("treats a draft heading with no level as headless (defensive)", () => {
-    const noLevel: DocumentNodeJSON = { content: [{ text: "No level", type: "text" }], type: "heading" };
+    const noLevel: DocumentNodeJSON = {
+      content: [{ text: "No level", type: "text" }],
+      type: "heading"
+    };
     const entries = projectDraftOutline(multiSections, "unit-a", docOf(noLevel));
 
     // unit-a's malformed heading carries no level, so it stays the leading "Start".

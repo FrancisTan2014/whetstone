@@ -2,12 +2,18 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 
-import { toEntryId, type EntryId } from "@whetstone/domain";
+import { toEntryId } from "@whetstone/domain";
 import { type DocumentNodeJSON } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { docBlocks, entries, noteAnchors, readingPositions, readingUnits } from "../../db/schema.js";
+import {
+  docBlocks,
+  entries,
+  noteAnchors,
+  readingPositions,
+  readingUnits
+} from "../../db/schema.js";
 import {
   appendEditableWorkSection,
   initializeEditableWorkContent,
@@ -34,10 +40,7 @@ function doc(...nodes: ReadonlyArray<DocumentNodeJSON>): DocumentNodeJSON {
   return { content: [...nodes], type: "doc" };
 }
 
-async function repartition(
-  editedUnitEntryId: string,
-  document: DocumentNodeJSON
-): Promise<string> {
+async function repartition(editedUnitEntryId: string, document: DocumentNodeJSON): Promise<string> {
   return db.transaction(async (tx) => {
     const result = await repartitionEditableWorkContent(tx, {
       createEntryId,
@@ -241,7 +244,10 @@ describe("repartitionEditableWorkContent — reading positions", () => {
       doc(heading(1, "Chapter One", "h1"), heading(2, "Sub", "h1a"), para("A body", "a1"))
     );
 
-    expect(await positionOf("follower")).toEqual({ anchorBlockEntryId: "a1", unitEntryId: "unit-4" });
+    expect(await positionOf("follower")).toEqual({
+      anchorBlockEntryId: "a1",
+      unitEntryId: "unit-4"
+    });
     // u2 was never in the affected span, so its top-of-unit position is untouched.
     expect(await positionOf("top-survivor")).toEqual({ anchorBlockEntryId: null, unitEntryId: u2 });
   });
@@ -252,7 +258,10 @@ describe("repartitionEditableWorkContent — reading positions", () => {
 
     await repartition(u1, doc(para("A body", "a1")));
 
-    expect(await positionOf("top-of-removed")).toEqual({ anchorBlockEntryId: null, unitEntryId: u0 });
+    expect(await positionOf("top-of-removed")).toEqual({
+      anchorBlockEntryId: null,
+      unitEntryId: u0
+    });
   });
 
   it("drops a deleted anchor but keeps the position on its still-surviving unit", async () => {
@@ -262,7 +271,10 @@ describe("repartitionEditableWorkContent — reading positions", () => {
     // Remove a1 while u1 survives (its heading still leads it).
     await repartition(u1, doc(heading(1, "Chapter One", "h1")));
 
-    expect(await positionOf("deleted-anchor")).toEqual({ anchorBlockEntryId: null, unitEntryId: u1 });
+    expect(await positionOf("deleted-anchor")).toEqual({
+      anchorBlockEntryId: null,
+      unitEntryId: u1
+    });
   });
 
   it("drops a deleted anchor and falls back to the span's first unit when its unit was removed", async () => {

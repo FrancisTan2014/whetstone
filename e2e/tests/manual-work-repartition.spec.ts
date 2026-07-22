@@ -63,7 +63,11 @@ async function blockInUnit(
 
 type Section = { headingLevel?: number; title?: string; unitEntryId: string };
 
-async function fetchSections(page: Page, setup: SetupData, workEntryId: string): Promise<Section[]> {
+async function fetchSections(
+  page: Page,
+  setup: SetupData,
+  workEntryId: string
+): Promise<Section[]> {
   const response = await page.request.get(
     `${setup.baseURL}api/manual-works/${encodeURIComponent(workEntryId)}`
   );
