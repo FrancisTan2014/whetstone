@@ -15,22 +15,52 @@ function pdfContext({
   confirm = false,
   python = true,
   docling = false,
+  doclingPinned,
+  models,
   ocrmypdf = false,
   tesseract = false,
   brew = false,
-  pipFails = false
+  pipFails = false,
+  modelDownloadFails = false
 } = {}) {
-  const state = { python, docling, ocrmypdf, tesseract };
+  const state = {
+    python,
+    docling,
+    // When a test does not say otherwise, an installed Docling is assumed to be the pinned version
+    // with its models cached — so existing "lane ready" cases stay ready.
+    doclingPinned: doclingPinned === undefined ? docling : doclingPinned,
+    models: models === undefined ? docling : models,
+    ocrmypdf,
+    tesseract
+  };
   const pipCalls = [];
   const execHandler = (command, args) => {
     const key = [command, ...args].join(" ");
     if (key === "python --version") return state.python ? OK : FAIL;
     if (key === "python3 --version") return FAIL;
     if (key === "python -c import docling") return state.docling ? OK : FAIL;
-    if (key === "python -m pip install docling") {
+    if (command === "python" && args[0] === "-c" && args[1].includes("importlib.metadata")) {
+      return state.doclingPinned ? OK : FAIL;
+    }
+    if (command === "python" && args[0] === "-c" && args[1].includes("local_files_only")) {
+      return state.models ? OK : FAIL;
+    }
+    if (command === "python" && args[0] === "-c" && args[1].includes("snapshot_download")) {
+      if (modelDownloadFails) return { code: 1, stdout: "", stderr: "hf: could not fetch models" };
+      state.models = true;
+      return OK;
+    }
+    if (
+      command === "python" &&
+      args[0] === "-m" &&
+      args[1] === "pip" &&
+      args[2] === "install" &&
+      String(args[3]).startsWith("docling==")
+    ) {
       pipCalls.push(key);
       if (pipFails) return { code: 1, stdout: "", stderr: "pip: could not resolve docling" };
       state.docling = true;
+      state.doclingPinned = true;
       return OK;
     }
     if (key === "ocrmypdf --version") return state.ocrmypdf ? OK : FAIL;
@@ -61,6 +91,22 @@ describe("probePdfLane", () => {
     expect(result?.status).toBe("missing");
     expect(result?.what).toContain("Docling");
     expect(result?.remedy).toContain("pnpm setup:pdf");
+  });
+
+  it("reports a version-pin mismatch distinctly when Docling is present but unpinned", () => {
+    const { ctx } = pdfContext({ docling: true, doclingPinned: false });
+    const result = probePdfLane(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("pinned versions");
+    expect(result?.what).toContain("2.114.0");
+  });
+
+  it("reports the pinned models missing distinctly when the runtime is pinned but uncached", () => {
+    const { ctx } = pdfContext({ docling: true, doclingPinned: true, models: false });
+    const result = probePdfLane(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("model artifacts");
+    expect(result?.what).toContain("v2.3.0");
   });
 
   it("reports OCRmyPDF missing distinctly when Python + Docling are present", () => {
@@ -106,7 +152,7 @@ describe("pdf step provision", () => {
     expect(pipCalls).toEqual([]);
   });
 
-  it("installs Docling then reports ok when the rest of the lane is present", () => {
+  it("installs the pinned Docling then reports ok when the rest of the lane is present", () => {
     const { ctx, pipCalls } = pdfContext({
       python: true,
       docling: false,
@@ -114,15 +160,35 @@ describe("pdf step provision", () => {
       tesseract: true
     });
     expect(pdfStep.provision(ctx)).toEqual({ status: "ok" });
-    expect(pipCalls).toEqual(["python -m pip install docling"]);
+    expect(pipCalls).toHaveLength(1);
+    expect(pipCalls[0]).toContain("pip install docling==");
+    expect(pipCalls[0]).toContain("docling-core==");
   });
 
-  it("maps a failing `pip install docling` to an actionable error with the output tail", () => {
+  it("maps a failing pinned `pip install` to an actionable error with the output tail", () => {
     const { ctx } = pdfContext({ python: true, docling: false, pipFails: true });
     const result = pdfStep.provision(ctx);
     expect(result.status).toBe("error");
     expect(result.what).toContain("docling");
     expect(result.remedy).toContain("could not resolve docling");
+  });
+
+  it("maps a failing model download to an actionable error with the output tail", () => {
+    const { ctx, pipCalls } = pdfContext({
+      python: true,
+      docling: true,
+      doclingPinned: true,
+      models: false,
+      ocrmypdf: true,
+      tesseract: true,
+      modelDownloadFails: true
+    });
+    const result = pdfStep.provision(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("models");
+    expect(result.remedy).toContain("Hugging Face");
+    // The runtime was already pinned, so no pip install ran — only the model download was attempted.
+    expect(pipCalls).toEqual([]);
   });
 
   it("skips the Docling install when it is already present and surfaces the OCRmyPDF gap", () => {
