@@ -830,3 +830,68 @@ export const pdfImportRanges = pgTable(
   },
   (table) => [primaryKey({ columns: [table.attemptId, table.rangeIndex] })]
 );
+
+// The #702 publication of a converted attempt into canonical content. The attempt (#721) is pure
+// execution and knows nothing about publishing; this row is the publication's own record, one per
+// attempt. It captures the learner's upload-time intent (`entered_*`, `file_name`) at start, then
+// records the outcome exactly once at publish: either `work_entry_id` (the published Work) OR
+// `ocr_required_pages` (a positive page count when the born-digital text layer was missing and no Work
+// was created). A row with neither result set is a publication still pending; the `result_ck` check
+// forbids ever setting both. Deleted with its attempt (cascade) as operational hygiene — the published
+// Work and its blocks are independent, immutable content and are never touched by that cleanup.
+export const pdfImportPublications = pgTable(
+  "pdf_import_publications",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .references(() => pdfImportAttempts.id, { onDelete: "cascade" }),
+    enteredTitle: text("entered_title"),
+    enteredAuthor: text("entered_author"),
+    enteredLanguage: text("entered_language"),
+    fileName: text("file_name").notNull(),
+    workEntryId: text("work_entry_id").references(() => entries.id),
+    ocrRequiredPages: integer("ocr_required_pages"),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp("published_at", { mode: "date", withTimezone: true })
+  },
+  (table) => [
+    // A publication resolves to at most one outcome: a published Work, or an OCR-required page count,
+    // never both. (Neither set = still pending.)
+    check(
+      "pdf_import_publications_result_ck",
+      sql`not (${table.workEntryId} is not null and ${table.ocrRequiredPages} is not null)`
+    ),
+    // An OCR-required marker, when present, is a positive page count.
+    check(
+      "pdf_import_publications_ocr_pages_ck",
+      sql`${table.ocrRequiredPages} is null or ${table.ocrRequiredPages} > 0`
+    )
+  ]
+);
+
+// Additive per-block provenance for a PDF-published block (#702): the page geometry, character span,
+// converter confidence, and raw converter label the block was mapped from. This is EVIDENCE only —
+// the block's canonical content lives in `doc_blocks`; deleting or ignoring this row never changes
+// what the reader shows. Keyed by the block id (one evidence row per published block that carried
+// geometry). `work_entry_id` is denormalized for owner-scoped queries and cleanup.
+export const pdfBlockEvidence = pgTable(
+  "pdf_block_evidence",
+  {
+    blockId: text("block_id")
+      .primaryKey()
+      .references(() => docBlocks.id, { onDelete: "cascade" }),
+    workEntryId: text("work_entry_id")
+      .notNull()
+      .references(() => entries.id),
+    page: integer("page").notNull(),
+    left: doublePrecision("left"),
+    top: doublePrecision("top"),
+    right: doublePrecision("right"),
+    bottom: doublePrecision("bottom"),
+    charStart: integer("char_start"),
+    charEnd: integer("char_end"),
+    confidence: doublePrecision("confidence"),
+    label: text("label").notNull()
+  },
+  (table) => [index("pdf_block_evidence_work_idx").on(table.workEntryId)]
+);
