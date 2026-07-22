@@ -139,7 +139,7 @@ describe("libraryApi", () => {
     await expect(searchAuthors()).rejects.toThrow("failed with status 500");
   });
 
-  it("posts EPUB bytes to the epub endpoint and returns the result", async () => {
+  it("posts EPUB bytes to the epub endpoint and reports it created on 201", async () => {
     const result = {
       content: { readingUnits: [], workEntryId: "work-1" },
       work: {
@@ -150,18 +150,40 @@ describe("libraryApi", () => {
         workType: "book"
       }
     };
-    const fetchMock = stubFetch({ ok: true, body: result });
+    const fetchMock = stubFetch({ ok: true, status: 201, body: result });
     const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
       type: "application/epub+zip"
     });
 
-    await expect(ingestEpub(file)).resolves.toEqual(result);
+    await expect(ingestEpub(file)).resolves.toEqual({ result, status: "created" });
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(call[0]).toBe("/api/works/epub");
     expect(call[1].method).toBe("POST");
     expect(call[1].headers).toEqual({ "content-type": "application/epub+zip" });
     expect(new Uint8Array(call[1].body as Uint8Array)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("reports exact_existing when identical EPUB bytes reopen the owning Work (200)", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-1" },
+      work: { entryId: "work-1" }
+    };
+    stubFetch({ ok: true, status: 200, body: result });
+    const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
+      type: "application/epub+zip"
+    });
+
+    await expect(ingestEpub(file)).resolves.toEqual({ result, status: "exact_existing" });
+  });
+
+  it("throws when the epub endpoint responds with a non-ok status", async () => {
+    stubFetch({ ok: false, status: 500, body: undefined });
+    const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
+      type: "application/epub+zip"
+    });
+
+    await expect(ingestEpub(file)).rejects.toThrow("failed with status 500");
   });
 
   it("mints a Work from an uploaded .md and reports it created on 201", async () => {

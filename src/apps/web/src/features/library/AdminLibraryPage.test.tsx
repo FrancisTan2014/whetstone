@@ -548,8 +548,11 @@ describe("AdminLibraryPage", () => {
       }
     };
     mockedIngestEpub.mockResolvedValue({
-      content: { readingUnits: [], workEntryId: epubWork.work.entryId },
-      work: epubWork.work
+      result: {
+        content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+        work: epubWork.work
+      },
+      status: "created"
     });
     mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
 
@@ -578,8 +581,11 @@ describe("AdminLibraryPage", () => {
       }
     };
     mockedIngestEpub.mockResolvedValue({
-      content: { readingUnits: [], workEntryId: epubWork.work.entryId },
-      work: epubWork.work
+      result: {
+        content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+        work: epubWork.work
+      },
+      status: "created"
     });
     mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
     const user = await renderReady(onManageContent);
@@ -591,6 +597,47 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
     expect(onManageContent).not.toHaveBeenCalled();
+  });
+
+  it("reopens the existing Work when identical EPUB bytes are re-uploaded (#706)", async () => {
+    const onManageContent = vi.fn();
+    // Re-uploading the same bytes returns the already-claimed Work (exact_existing): the learner is told
+    // it is already in the library and dropped straight into Manage content, mirroring the Markdown front
+    // door — no duplicate Work is created.
+    const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
+    const epubWork: WorkListItemDto = {
+      author: epubAuthor,
+      work: {
+        authorId: epubAuthor.id,
+        entryId: toEntryId("work-epub"),
+        language: "zh-CN",
+        origin: "imported",
+        title: "史记选读",
+        workType: "book"
+      }
+    };
+    mockedIngestEpub.mockResolvedValue({
+      result: {
+        content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+        work: epubWork.work
+      },
+      status: "exact_existing"
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
+    const user = await renderReady(onManageContent);
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-epub");
+    });
+    expect(
+      await screen.findByText("“史记选读” is already in your library — opened it.")
+    ).toBeDefined();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("shows an error when the EPUB ingestion fails", async () => {
@@ -643,8 +690,11 @@ describe("AdminLibraryPage", () => {
       }
     };
     mockedIngestEpub.mockResolvedValue({
-      content: { readingUnits: [], workEntryId: epubWork.work.entryId },
-      work: epubWork.work
+      result: {
+        content: { readingUnits: [], workEntryId: epubWork.work.entryId },
+        work: epubWork.work
+      },
+      status: "created"
     });
     mockedFetchWorks.mockResolvedValue({ works: [epubWork] });
     const user = await renderReady();
@@ -963,15 +1013,18 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Ingesting the EPUB…")).toBeDefined();
 
     resolveIngest({
-      content: { readingUnits: [], workEntryId: toEntryId("work-epub") },
-      work: {
-        authorId: toAuthorId("author-9"),
-        entryId: toEntryId("work-epub"),
-        language: "en",
-        origin: "imported",
-        title: "Book",
-        workType: "book"
-      }
+      result: {
+        content: { readingUnits: [], workEntryId: toEntryId("work-epub") },
+        work: {
+          authorId: toAuthorId("author-9"),
+          entryId: toEntryId("work-epub"),
+          language: "en",
+          origin: "imported",
+          title: "Book",
+          workType: "book"
+        }
+      },
+      status: "created"
     });
     await waitFor(() => {
       expect(screen.queryByText("Ingesting the EPUB…")).toBeNull();

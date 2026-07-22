@@ -347,7 +347,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    // EPUB metadata (OPF) is authoritative, so ingest straight to a new Work with no confirm form.
+    // EPUB metadata (OPF) is authoritative, so ingest straight to a new Work with no confirm form. A
+    // re-upload of identical bytes reopens the owning Work (#706): the learner is told it is already in
+    // the library and dropped into Manage content, mirroring the Markdown front door.
     const kind = detectUploadKind(file);
 
     if (kind === "epub") {
@@ -355,9 +357,15 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       setUploadKind("epub");
 
       try {
-        const result = await ingestEpub(file);
+        const outcome = await ingestEpub(file);
         await reload();
-        toast.success(`Imported “${result.work.title}”.`);
+
+        if (outcome.status === "exact_existing") {
+          toast.success(`“${outcome.result.work.title}” is already in your library — opened it.`);
+          onManageContent(outcome.result.work.entryId);
+        } else {
+          toast.success(`Imported “${outcome.result.work.title}”.`);
+        }
       } catch {
         toast.error("Could not ingest the EPUB. Please try again.");
       } finally {

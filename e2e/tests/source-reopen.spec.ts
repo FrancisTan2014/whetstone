@@ -31,11 +31,12 @@ const markdownBytes = Buffer.from(
   "utf8"
 );
 
-async function uploadEpub(page: Page): Promise<void> {
+async function uploadEpub(page: Page, title: string): Promise<void> {
   await page.getByLabel("Upload").setInputFiles(epubFixture);
-  // EPUB ingests straight to its Work (no confirm form) and toasts on completion for both the first
-  // mint and every subsequent reopen.
-  await expect(page.getByText(/^Imported /)).toBeVisible();
+  // The seeded EPUB already owns these exact bytes, so every browser upload reopens that Work (#706):
+  // EPUB ingests straight through (no confirm form), the shelf toasts "already in your library", and
+  // drops the learner into the reopened Work — never minting a duplicate.
+  await expect(page.getByText(`“${title}” is already in your library — opened it.`)).toBeVisible();
 }
 
 async function uploadMarkdown(page: Page, expectReopen: boolean): Promise<void> {
@@ -74,9 +75,13 @@ test("re-uploading identical EPUB and Markdown bytes reopens one Work each (#706
   const epubHeading = page.getByRole("heading", { name: setup.epub.title });
   await expect(epubHeading).toHaveCount(1);
 
-  // Two more uploads of the identical EPUB bytes must reopen it — the count stays one.
-  await uploadEpub(page);
-  await uploadEpub(page);
+  // Two more uploads of the identical EPUB bytes must reopen it — the count stays one. Each reopen
+  // drops into Manage content, so return to the shelf between uploads before re-triggering Upload.
+  await uploadEpub(page, setup.epub.title);
+  await page.goto(`${setup.baseURL}#/library`);
+  await expect(page.getByRole("heading", { name: setup.epub.title })).toHaveCount(1);
+
+  await uploadEpub(page, setup.epub.title);
   await page.goto(`${setup.baseURL}#/library`);
   await expect(page.getByRole("heading", { name: setup.epub.title })).toHaveCount(1);
 
