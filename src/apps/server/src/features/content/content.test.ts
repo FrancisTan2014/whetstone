@@ -743,10 +743,13 @@ describe("EPUB ingestion routes", () => {
   });
 
   it("persists an unknown-only chapter's PM node in doc_blocks while keeping it out of the mdast reader", async () => {
+    // Each chapter carries its spine href (`ParsedEpubChapter.sourceFile`), as a real EPUB always does,
+    // so the unknown-only chapter is excluded by the per-unit `source_file` gate — an EPUB spine item is
+    // an mdast chapter and never falls back to `doc_blocks`, unlike a null-`source_file` PDF unit.
     epubResponder = async () => ({
       chapters: [
-        { html: "<canvas></canvas>", images: [] },
-        { html: "<h1>Real</h1><p>Body.</p>", images: [] }
+        { html: "<canvas></canvas>", images: [], sourceFile: "chapter-1.xhtml" },
+        { html: "<h1>Real</h1><p>Body.</p>", images: [], sourceFile: "chapter-2.xhtml" }
       ],
       metadata: { author: "Anon", language: "en", title: "Mixed" }
     });
@@ -785,10 +788,12 @@ describe("EPUB ingestion routes", () => {
   });
 
   it("persists every chapter's unknown PM node when all chapters lack supported blocks (no 500)", async () => {
+    // Both chapters carry their spine href, as a real EPUB always does, so each unknown-only chapter is
+    // excluded by the per-unit `source_file` gate while its `unknown` PM node is still persisted (#311).
     epubResponder = async () => ({
       chapters: [
-        { html: "<canvas></canvas>", images: [] },
-        { html: "<canvas></canvas>", images: [] }
+        { html: "<canvas></canvas>", images: [], sourceFile: "chapter-1.xhtml" },
+        { html: "<canvas></canvas>", images: [], sourceFile: "chapter-2.xhtml" }
       ],
       metadata: { author: "Anon", language: "en", title: "All empty" }
     });
@@ -934,6 +939,52 @@ describe("EPUB ingestion routes", () => {
     const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
 
     expect(structure.readingUnits.map((unit) => unit.entryId)).toEqual([readableUnit]);
+  });
+
+  it("surfaces a null-source_file unit built only of unknown doc blocks through the reader (#702)", async () => {
+    // A canonical PDF import (null `source_file`, content only in `doc_blocks`) whose page maps entirely
+    // to `unknown` nodes must still surface — the reader renders those `unknown` nodes inertly so an
+    // unmapped construct fails visibly rather than being dropped. Contrast the EPUB test above: an
+    // unknown-only spine item (non-null `source_file`) stays excluded.
+    const workEntryId = "pdf-unknown-only-work";
+    const unitEntryId = "pdf-unknown-only-unit";
+    const blockEntryId = "pdf-unknown-only-block";
+    const unknownNode = {
+      attrs: { html: "<chart/>", id: blockEntryId, tag: "chart" },
+      type: "unknown"
+    };
+
+    await context.db.insert(entries).values([
+      { id: workEntryId, type: "work" },
+      { id: unitEntryId, type: "reading_unit" },
+      { id: blockEntryId, type: "block" }
+    ]);
+    await context.db
+      .insert(readingUnits)
+      .values({ entryId: unitEntryId, orderIndex: 0, sourceFile: null, title: null, workEntryId });
+    await context.db.insert(docBlocks).values({
+      id: blockEntryId,
+      nodeJson: unknownNode,
+      orderIndex: 0,
+      plaintext: "",
+      readingUnitEntryId: unitEntryId,
+      type: "unknown",
+      workEntryId
+    });
+
+    // Content: the unit surfaces with its single unknown doc block intact (id preserved, markup verbatim).
+    const content = await loadWorkContent(context.db, toEntryId(workEntryId));
+    expect(content.readingUnits.map((unit) => unit.entryId)).toEqual([unitEntryId]);
+    const served = content.readingUnits[0]?.docBlocks ?? [];
+    expect(served.map((block) => block.type)).toEqual(["unknown"]);
+    expect(served[0]?.entryId).toBe(blockEntryId);
+    expect(String((served[0]?.node as PmNode).attrs?.["html"])).toContain("<chart");
+
+    // Structure: the unknown-only unit is counted and listed, not filtered out.
+    const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+    expect(structure.readingUnits.map((unit) => unit.entryId)).toEqual([unitEntryId]);
+    expect(structure.readingUnits[0]?.blockCount).toBe(1);
+    expect(structure.readingUnits[0]?.hasSubstantiveText).toBe(false);
   });
 
   it("round-trips a figure block's image, alt, and caption through the content query", async () => {

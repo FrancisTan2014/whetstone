@@ -15,7 +15,7 @@ import type {
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { and, asc, count, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -147,17 +147,18 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
   const readingUnitDtos = unitRows.flatMap((unit) => {
     const unitBlocks = blockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
     const unitDocBlocks = docBlockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
-    const hasRenderableDocBlock = unitDocBlocks.some((block) => block.type !== "unknown");
-
     // A reading unit surfaces when it has renderable content in the substrate that owns it: non-deleted
     // mdast blocks for a Markdown/EPUB chapter, or — for a unit whose content lives only in PM
-    // `doc_blocks` (an authored/manual Work #576, or a canonical PDF import #702) — at least one
-    // non-`unknown` `doc_blocks` row. The gate is the unit's own `source_file`: a per-unit source file
-    // (an EPUB spine item) is an mdast chapter and never falls back to `doc_blocks`, so an EPUB chapter
-    // with no mdast blocks (an unknown-only chapter kept only for its `unknown` PM nodes, #311, or an
-    // unstorable-figure-only chapter) stays excluded exactly as before, while a null-`source_file` unit
-    // (Markdown, authored, PDF) may surface its PM content. A unit with neither has nothing to render.
-    const surfaces = unitBlocks.length > 0 || (unit.sourceFile === null && hasRenderableDocBlock);
+    // `doc_blocks` (an authored/manual Work #576, or a canonical PDF import #702) — any `doc_blocks` row.
+    // The gate is the unit's own `source_file`: a per-unit source file (an EPUB spine item) is an mdast
+    // chapter and never falls back to `doc_blocks`, so an EPUB chapter with no mdast blocks (an
+    // unknown-only chapter kept only for its `unknown` PM nodes, #311, or an unstorable-figure-only
+    // chapter) stays excluded exactly as before. A null-`source_file` unit (Markdown, authored, PDF)
+    // surfaces its PM content — including a unit built only of `unknown` nodes, which the reader renders
+    // through the inert unknown fallback, so an unmapped PDF construct fails visibly rather than being
+    // dropped (#702). A unit with neither substrate has nothing to render.
+    const surfaces =
+      unitBlocks.length > 0 || (unit.sourceFile === null && unitDocBlocks.length > 0);
     return surfaces
       ? [
           toReadingUnitDto(
@@ -311,10 +312,11 @@ export async function loadWorkStructure(
     )
     .orderBy(asc(readingUnits.orderIndex));
 
-  // Renderable PM `doc_blocks` per unit (#576/#702): a unit whose canonical content lives only in
-  // `doc_blocks` (an authored/manual Work, or a canonical PDF import) surfaces when it has non-`unknown`
-  // PM content. `ne(type, 'unknown')` drops the `unknown` PM nodes an unknown-only EPUB chapter (#311)
-  // persists.
+  // PM `doc_blocks` per unit (#576/#702): a unit whose canonical content lives only in `doc_blocks` (an
+  // authored/manual Work, or a canonical PDF import) surfaces when it has any PM content — including a
+  // unit built only of `unknown` nodes, which the reader renders inertly (#702, "fail visibly, never
+  // dropped"). An unknown-only EPUB chapter (#311) is excluded not here but by the null-`source_file`
+  // gate in the projection below, so its `unknown` rows never surface it regardless.
   const docRows = await db
     .select({
       docCount: count(docBlocks.id),
@@ -322,7 +324,7 @@ export async function loadWorkStructure(
       readingUnitEntryId: docBlocks.readingUnitEntryId
     })
     .from(docBlocks)
-    .where(and(eq(docBlocks.workEntryId, workEntryId), ne(docBlocks.type, "unknown")))
+    .where(eq(docBlocks.workEntryId, workEntryId))
     .groupBy(docBlocks.readingUnitEntryId);
   // The `doc_blocks` fallback is gated per unit by its own `source_file` (applied in the projection
   // below): a null-`source_file` unit (Markdown/authored/PDF) may use it, while an EPUB spine item

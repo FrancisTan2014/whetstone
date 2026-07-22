@@ -254,6 +254,36 @@ describe("publishConvertedPdfImport", () => {
     expect(cleanupFailures).toEqual([]);
   });
 
+  it("publishes and surfaces an unknown-only born-digital PDF whose page maps entirely to unknown nodes (#702)", async () => {
+    // Every construct on the page is unmappable, so the body becomes one null-title Start unit of only
+    // `unknown` nodes. Publication must still commit the Work and its post-commit content assertion must
+    // pass — the reader shows the inert `unknown` fallback so nothing is silently dropped. Before the
+    // surfacing fix, `loadWorkContent` hid the unknown-only unit, so `assertContentPersisted` threw after
+    // the Work/source/claim were already committed, orphaning a Work the reader could never show.
+    await driveToConverted(db, {
+      id: "att-unknown",
+      sourceHash: "e".repeat(64),
+      payload: rangePayload([item({ label: "chart", text: "An unmapped chart." })], [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-unknown",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "chart.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-unknown"));
+
+    const content = await loadWorkContent(db, result.work.entryId);
+    const served = content.readingUnits.flatMap((unit) => unit.docBlocks ?? []);
+    expect(served.map((block) => block.type)).toEqual(["unknown"]);
+    expect(
+      String((served[0]?.node as { attrs?: Record<string, unknown> }).attrs?.["html"])
+    ).toContain("An unmapped chart.");
+  });
+
   it("prefers entered metadata over the filename fallback", async () => {
     await driveToConverted(db, {
       id: "att-2",
