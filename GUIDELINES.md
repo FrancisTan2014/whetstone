@@ -386,36 +386,45 @@ Recommended levels:
 
 ## Content and file storage
 
-Addressable content is represented by discrete `Block` rows in PostgreSQL. Reflowable blocks carry
-canonical ProseMirror content; for fixed-layout PDF, the retained source page is visual truth and its
-page block carries the deterministic plaintext/selection projection used by search and notes.
-Markdown is an import/export format, not the stored form. Original uploads are retained for
-provenance.
+Addressable content is represented by discrete `Block` rows in PostgreSQL. Every readable source
+format is normalized at ingestion into canonical ProseMirror content; Markdown, converter output, and
+original uploads are import/export/provenance artifacts, not stored readable alternatives.
 
 Block storage rules:
 
-- Each reflowable `Block` is a row: stable id, owning `ReadingUnit`, order, block type, plaintext (for
+- Each canonical `Block` is a row: stable id, owning `ReadingUnit`, order, block type, plaintext (for
   search), and the block's **ProseMirror node** (JSON) for rendering/export (mdast superseded — see
   `docs/DECISIONS.md` D1).
-- A fixed-layout PDF page has one stable ReadingUnit and one page block. A PDF-page facet owns page
-  number/geometry plus canonical plaintext and its projection version/hash; the shared PDF.js
-  projection recreates text-item offsets from immutable source bytes, which own pixels. PDF rendering
-  never creates a second editable content copy or routes through Markdown.
-- Stream PDF uploads to a bounded staged file. Run server projection one import at a time in a
-  disposable, memory-limited worker and terminate it on every outcome; serve retained sources through
-  bounded byte ranges so the API does not buffer uploads and the browser never mounts every page.
+- Format adapters may parse different source structures but must return the one canonical
+  ReadingUnit/ProseMirror-block write shape. The Reader, search, notes, and editor never branch on
+  source format.
+- PDF ingestion consumes validated, versioned structured-document output directly; it never exports
+  Markdown and reparses it. Preserve source page/bounding-box/character-span/confidence data as
+  evidence attached to canonical blocks, and preserve unknown or low-confidence structures
+  explicitly rather than dropping or guessing silently.
+- Stream large uploads to a bounded staged file. Run expensive conversion in a feature-owned,
+  memory-limited, single-admission worker over bounded page ranges; terminate or fence every attempt,
+  checkpoint only validated structured results, and publish no Work until source plus canonical
+  hierarchy can commit consistently.
 - Block ids are stable (UUIDv7/cuid2) and preserved across re-ingestion via a content-similarity diff;
   removed blocks are soft-deleted so note anchors stay valid.
+- Administrative correction edits the canonical imported blocks through the shared rich editor.
+  Retain immutable source provenance and correction evidence, but never a second current content copy;
+  re-ingestion cannot overwrite corrected blocks without an explicit future reconciliation flow.
+- Existing legacy PDF blocks migrate in place without changing Work, ReadingUnit, or Block identity.
+  A failed migration remains readable through the format-agnostic legacy fallback and is quarantined
+  with an actionable remedy; no new PDF ingestion may write that fallback.
 - Multi-step writes (Work + ReadingUnits + Blocks) that must stay consistent use transactions.
-- Markdown export serializes reflowable documents; PDF export returns the retained original.
+- Markdown export serializes canonical documents; original-file export returns the retained upload.
 - **Fidelity fixtures mirror real publisher markup.** Verify ingestion/rendering against real-world
   EPUBs (the DDIA / O'Reilly corpus is the reference) locally; commit **synthetic fixtures that
   reproduce their real construct shapes** — nested `<figure><div><img><h6>`, `<dl><dt><dd>`, O'Reilly
   callouts, bracketed noterefs — never idealized HTML, and never the copyrighted books themselves.
 - **PDF fixtures preserve the hard cases.** Pressure-test the local real-book corpus, but commit only
   synthetic born-digital, scanned, mixed-text, encrypted, malformed, outlined, multi-column, and
-  punctuation-sensitive fixtures. Test page/text/anchor invariants through the shared PDF.js adapter;
-  do not hand-roll a second parser around selected examples.
+  punctuation-sensitive fixtures. Measure the at-least-95% target over deduplicated, in-bound,
+  non-corrupt/password-free files using the current Reader's canonical hierarchy—not parser exit or
+  page-render success—and record every exclusion/failure class. Do not commit private corpus content.
 
 Original-file storage rules:
 
@@ -661,9 +670,9 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Web-core TypeScript direction is preserved.
 - Server-centered source of truth is preserved.
 - PostgreSQL owns content identity and every addressable target as a `Block` row. Reflowable content
-  stores canonical ProseMirror nodes; fixed-layout PDF stores canonical page/text projections while
-  the retained source owns pixels. Markdown is import/export, and other original uploads remain
-  provenance rather than a parallel content store.
+  from every imported or authored format stores canonical ProseMirror nodes. Format-native structure,
+  converter output, and original uploads remain evidence/provenance rather than a parallel content
+  store, and the Reader has no format-specific rendering branch.
 - Entry/link model is preserved; notes and blocks are entries, not ad-hoc child records that cannot participate in future links.
 - Templates are read from database seed data, not hard-coded in UI components.
 - Shared domain rules live in `src/packages/domain`; shared API contracts live in `src/packages/contracts`.
@@ -742,13 +751,15 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 
 ### Block storage and original-file quality
 
-- Reflowable block rows carry a stable id, order, type, plaintext, and ProseMirror node JSON. A PDF
-  page block instead carries the validated fixed-layout facet defined above; both remain stable
-  addressable Entries. Multi-step Work/ReadingUnit/Block writes use transactions.
+- Every block row carries a stable id, order, type, plaintext, and ProseMirror node JSON; imported PDF
+  evidence is additive provenance, never a different block substrate. Multi-step
+  Work/ReadingUnit/Block writes use transactions.
 - Stable block ids are preserved across re-ingestion (content-similarity diff); removed blocks are soft-deleted so note anchors stay valid.
+- Correcting an imported block preserves its identity where safe, records that source-derived content
+  changed, and prevents unattended re-ingestion from replacing the correction.
 - Retained original-file paths are generated or normalized by server code and cannot escape the configured data directory; user input is never used directly as a filesystem path.
-- Large uploads are streamed with explicit byte/page bounds and served with bounded range reads; no
-  route buffers an entire 128 MiB source merely to hash or persist it.
+- Large uploads are streamed with explicit byte/page bounds; no route buffers an entire 128 MiB source
+  merely to hash or persist it.
 - Writes are safe against partial files where practical: write temp file then rename, or document why the simpler write is acceptable for v0.
 - Database rows and any retained file stay consistent; if one side fails, the PR handles cleanup or returns an explicit failure.
 - File reads/writes are asynchronous.

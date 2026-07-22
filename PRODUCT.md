@@ -293,31 +293,33 @@ owning source flow:
   full-page Library editor. The metadata sheet never becomes the content workspace.
 - EPUB reads OPF metadata and authored navigation, then creates a Work and ordered ReadingUnits.
 - Markdown uses confirmed title, author, and language and enters through the same block pipeline.
-- PDF is the fixed-layout exception to reflowable ingestion. Whetstone retains the original source
-  and uses PDF.js through one shared adapter for bounded validation, page rendering, embedded outline,
-  and deterministic text projection; a born-digital PDF is never converted to Markdown and requires
-  no Docling/document-AI lane.
-- Each PDF page is one stable ReadingUnit with one addressable page block. The retained page is visual
-  truth; its text projection supports search, selection, notes, and accessible fallback without
-  pretending that inferred Markdown preserves tables, figures, columns, or typography.
-- PDF upload is streamed and bounded at 128 MiB / 3,000 pages, covering the pressure corpus while
-  avoiding a whole-file request buffer. Range serving and page-at-a-time loading minimize first-page
-  transfer and never mount the whole book; a non-linearized PDF may still require most source bytes,
-  bounded by the same upload limit.
-- The self-hosted PDF.js runtime and worker load only when a PDF page opens. They have separate bundle
-  budgets and never consume the core app's JavaScript budget.
-- A valid scanned/image-only PDF is still readable immediately. Pages without usable native text
-  may enter a learner-started, durable OCR job that adds a derived text layer; OCR progress/failure
-  never turns the retained readable Work into an invalid PDF. The original bytes remain immutable
-  visual source and provenance.
+- Every uploaded format ends as the same canonical ProseMirror
+  `Work -> ReadingUnit -> Block` hierarchy and opens in the existing Reader. Format-specific logic
+  stops at ingestion; Whetstone has no PDF-, EPUB-, or other format-specific reader.
+- PDF ingestion stages a bounded source and runs a pinned structured-document pipeline in an
+  isolated, recoverable job. It validates versioned DoclingDocument output and maps its ordered typed
+  items directly to canonical ProseMirror nodes, never through Markdown. Page number, bounding box,
+  character span, and extraction confidence remain provenance/evidence, not content identity.
+- Born-digital text is preferred. Pages without usable native text receive language-aware OCR during
+  ingestion and then enter the same structured mapping; OCR is never a Reader-time enrichment path.
+- The product target is usable automatic ingestion for at least 95% of the deduplicated supported PDF
+  pressure corpus. "Usable" means the current Reader can present materially complete body content in
+  readable order, with a workable heading/block hierarchy for search, selection, notes, and editing.
+  Corrupt, password-required, and declared size/page-bound violations are typed unsupported inputs,
+  not successes hidden outside the denominator.
+- For the remaining supported PDFs, administrators correct the canonical blocks in the shared rich
+  Work editor: edit or retype content, change block kind, split, merge, reorder, add, or remove blocks.
+  Low-confidence/unknown extraction evidence points to likely corrections. Corrected blocks remain
+  the sole readable authority; the immutable PDF stays provenance/export, and re-ingestion never
+  silently overwrites corrections.
 - A manual Work is learner-owned, editable source material whose canonical content is its
-  ProseMirror blocks. Once the manual editor lands (#720) it writes those blocks through the same
-  shared editable-Work storage boundary the authored path uses — one reading unit plus an empty block on
-  create, stable-id reconcile on save — never a second block writer. There is no legacy-manual mdast
+  ProseMirror blocks. It writes those blocks through the same shared editable-Work storage boundary
+  the authored path uses — one reading unit plus an empty block on create, stable-id reconcile on
+  save — never a second block writer. There is no legacy-manual mdast
   migration: pre-canonical local development data is deliberately reset, so manual Works are canonical
-  from their first save. Retained uploaded Markdown is provenance, never a second current copy. Uploaded
-  EPUB/PDF/Markdown remains source-managed rather than silently becoming learner-authored content.
-- The manual-Work editor uses the shared rich editor with explicit save (a visible **Save** control
+  from their first save. Retained uploads are provenance, never a second current copy. Correcting an
+  imported Work changes its canonical blocks without changing its imported origin or immutable source.
+- The shared Work editor uses explicit save (a visible **Save** control
   and `Ctrl/Cmd+S`), not autosave: the owner saves deliberately, sending the revision loaded with the
   document so the server rejects a stale revision instead of silently overwriting another session's
   save. It shows Saved/Saving/dirty/validation-error/conflict/retry state, retains the local draft on
@@ -334,9 +336,9 @@ owning source flow:
   editor document. Adding/removing headings transactionally repartitions the affected contiguous
   blocks; surviving block ids preserve notes, surviving section boundaries preserve unit ids, and a
   reading position is remapped to the unit now containing its anchor (or the nearest surviving unit).
-- Uploaded Markdown derives Reader structure from source heading levels. Manual Works derive the same
-  hierarchy from ProseMirror headings. PDF preserves authored page order and its embedded outline;
-  Whetstone does not invent a heading tree from visual guesses.
+- Uploaded Markdown, EPUB, and PDF all persist Reader structure as canonical ProseMirror headings and
+  ReadingUnits. Source adapters may infer missing structure, but they retain confidence/evidence and
+  never make the Reader interpret source-format metadata.
 - Author/source is one reusable Library identity, chosen through a searchable create-or-select field.
   An exact normalized match reuses that identity across manual creation and ingestion, so Whetstone
   never presents indistinguishable duplicate choices. Supporting distinct people with the same name
@@ -577,20 +579,18 @@ expose the app publicly.
 - Persistence: PostgreSQL semantics through Drizzle; current personal deployment uses PGlite.
 - Boundaries: Zod contracts; pure domain rules; Vitest; Playwright smoke.
 - Rich content: ProseMirror via Tiptap, stored as decomposed block rows carrying node JSON and
-  separator-free plaintext.
-- Fixed-layout PDF: retained source pages rendered through PDF.js, with stable page-block Entries and
-  a deterministic plaintext/selection projection in the shared content hierarchy.
+  separator-free plaintext for every readable source format.
 
-The ProseMirror document is canonical for reflowable ingestion and authored content. PDF is the one
-fixed-layout exception because page geometry is authored content: its retained source is visual truth,
-while its page block remains the stable addressable/searchable target used by the same notes and Entry
-contracts. This is a representation facet, not a second Work identity or an editable content copy.
+Every ingestion adapter terminates at the same canonical ProseMirror hierarchy consumed by the one
+Reader, search, notes, and editing surfaces. Format-native structure and PDF geometry may survive as
+provenance/evidence, but no retained upload or converter artifact is a second readable content model.
 
-The current Reader/Search still contain a legacy mdast fallback for imported-Markdown units not yet
-represented by `doc_blocks`. That fallback is **imported-Markdown migration debt** — not editable-Work
-history: authored Works, and manual Works once #720 adopts the shared editable-Work boundary, are
-canonical `doc_blocks` from creation. Preserve the fallback until imported Markdown also writes
-`doc_blocks`, but do not add new feature behavior to it or claim it has already disappeared.
+The current Reader/Search still contain a legacy mdast fallback for imported Markdown/PDF units not
+yet represented by `doc_blocks`. That fallback is **ingestion migration debt** — not editable-Work
+history: authored and manual Works are canonical `doc_blocks` from creation. Existing PDF Works
+migrate in place without changing content identity; a failed migration remains readable and
+quarantined for repair. Preserve the format-agnostic fallback for residual legacy data, but no new
+ingestion or feature behavior may target it.
 
 Personal overlays—notes, comments, and review provenance—stay outside shared content and render as
 decorations or linked Entries. Intrinsic source links may be ProseMirror marks; personal annotations

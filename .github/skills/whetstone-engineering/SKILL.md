@@ -21,12 +21,15 @@ review subagent needs in order to act; it never overrides those documents.
 - `src/apps/server/` — Fastify API server.
 - `src/packages/domain/` — pure Entry/link/block/template/note-anchor logic (no React, Fastify, DB, or fs).
 - `src/packages/contracts/` — shared API schemas and DTOs (Zod).
-- Content is represented by stable **Block rows** in PostgreSQL via Drizzle. Reflowable blocks carry
-  the **ProseMirror/Tiptap document node** + plaintext (legacy mdast superseded,
-  `docs/DECISIONS.md` D1). Fixed-layout PDF is the deliberate exception: its retained source owns page
-  pixels while a stable page-block facet owns geometry plus deterministic plaintext/projection
-  identity for search and notes. Markdown and EPUB remain import/export/provenance formats.
-  PostgreSQL stores works, reading units, blocks, templates, notes, links, and search indexes.
+- Content is represented by stable **Block rows** in PostgreSQL via Drizzle. Every imported or
+  authored format ends as the same **ProseMirror/Tiptap document node** + plaintext hierarchy (legacy
+  mdast superseded, `docs/DECISIONS.md` D1); the existing Reader never branches by source format.
+  PDF's structured adapter maps validated DoclingDocument items directly to canonical blocks, with
+  page geometry/confidence retained only as evidence. The product targets at least 95% usable
+  automatic PDF ingestion; administrators correct the remainder in the shared rich editor without
+  changing immutable source provenance. Markdown, EPUB, PDF, and converter artifacts remain
+  import/export/provenance formats. PostgreSQL stores works, reading units, blocks, templates, notes,
+  links, and search indexes.
 
 Organize by feature first. Do not add `src/apps/mobile/` or `src/apps/desktop/` until an issue scopes it.
 

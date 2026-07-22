@@ -10,6 +10,32 @@ it. Newest first.
 
 ---
 
+## D4 — Fixed-layout PDF reader → canonical block ingestion
+
+**Status:** Superseded 2026-07-22.
+**Replaced by:** one-reader, one-document-model ingestion (`PRODUCT.md` → "v0 content ingestion" and
+"Architecture: the document-model bedrock").
+
+**What it was.** PDF was treated as a permanent fixed-layout exception: retained pages were visual
+truth, PDF.js rendered them in a format-specific Reader branch, page blocks carried a parallel text
+projection, range serving fed the browser, and OCR enriched those retained pages later.
+
+**Why superseded.** The design optimized PDF page rendering instead of Whetstone's ingestion product.
+It split one Reader and one canonical ProseMirror hierarchy into a second content architecture, made
+source pixels authoritative over correctable blocks, and measured PDF.js parse/render success rather
+than semantic ingestion usability. It also could not reuse the shared rich editor to repair the
+inevitable minority of imperfect extractions.
+
+**What replaced it.** Every format-specific adapter ends at canonical ProseMirror
+`Work -> ReadingUnit -> Block` content. PDF conversion uses bounded, versioned structured-document
+output mapped directly to those blocks; page geometry and confidence remain evidence, the immutable
+source remains provenance/export, and administrators correct imperfect canonical blocks in the shared
+editor. The target is at least 95% usable automatic ingestion on the supported pressure corpus, with
+explicit correction for the remainder. **Do not reintroduce a PDF-specific reader or page-block
+content model.**
+
+---
+
 ## D3 — Loop dispatch: external/background coordinator → in-session self-paced foreground loop
 
 **Status:** Superseded (the first harness's coordinator role + background dispatch).
