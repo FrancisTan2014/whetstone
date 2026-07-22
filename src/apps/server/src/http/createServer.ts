@@ -28,6 +28,8 @@ import { registerSearchRoutes } from "../features/search/searchRoutes.js";
 import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
 import type { ImageDependencies } from "../features/images/imageRoutes.js";
+import { registerPdfImportRoutes } from "../features/pdfImport/pdfImportRoutes.js";
+import type { PdfImportRouteDependencies } from "../features/pdfImport/pdfImportRoutes.js";
 import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
 import type { DiaryRouteDependencies } from "../features/diary/diaryRoutes.js";
 import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWorkRoutes.js";
@@ -65,6 +67,7 @@ export type CreateServerOptions = Readonly<{
   lookup?: LookupDependencies;
   notes?: NotesDependencies;
   notesReview?: NotesReviewRouteDependencies;
+  pdfImport?: PdfImportRouteDependencies;
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
   recitation?: RecitationRouteDependencies;
@@ -107,6 +110,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.content !== undefined) {
     registerContentRoutes(server, options.content);
+  }
+
+  if (options.pdfImport !== undefined) {
+    registerPdfImportRoutes(server, options.pdfImport);
   }
 
   if (options.notes !== undefined) {

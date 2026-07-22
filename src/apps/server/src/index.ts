@@ -43,6 +43,11 @@ import {
   type PdfImportRunnerDependencies
 } from "./features/pdfImport/pdfImportRunner.js";
 import { createPdfImportStageStore } from "./features/pdfImport/pdfImportStage.js";
+import type { PdfImportCommandDependencies } from "./features/pdfImport/pdfImportCommands.js";
+import {
+  publishConvertedPdfImport,
+  type PdfImportPublishDependencies
+} from "./features/pdfImport/pdfImportPublish.js";
 import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
 import { createFakeDoclingRunner } from "./files/pdfStructuredAdapter.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
@@ -163,6 +168,26 @@ const deleteVoiceCaptureAudio = (path: string): Promise<void> => {
   return Promise.resolve();
 };
 
+// #721/#702 shared PDF import primitives, created before the server so its born-digital import routes and
+// its background conversion worker share one stage store + active-run registry. `logCleanupFailure` reads
+// `server.log` lazily (only at request time, after the server below exists).
+const pdfImportStageStore = createPdfImportStageStore(config.pdfImportStageDir);
+const pdfImportActiveRuns = createPdfImportActiveRuns();
+const logPdfImportCleanupFailure = ({
+  attemptId,
+  stagePath,
+  reason
+}: Readonly<{ attemptId: string; stagePath: string; reason: string }>): void =>
+  server.log.warn({ attemptId, stagePath, reason }, "pdf_import_stage_cleanup_failed");
+const pdfImportCommands: PdfImportCommandDependencies = {
+  activeRuns: pdfImportActiveRuns,
+  createAttemptId: () => randomUUID(),
+  db,
+  logCleanupFailure: logPdfImportCleanupFailure,
+  now: () => new Date(),
+  stageStore: pdfImportStageStore
+};
+
 const server = createServer({
   authoredWorks: {
     createEntryId: () => randomUUID(),
@@ -235,6 +260,10 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  pdfImport: {
+    commands: pdfImportCommands,
+    uploadLimitBytes: config.epubUploadLimitBytes
+  },
   readingPosition: { db },
   preferences: { db },
   recitation: {
@@ -294,25 +323,31 @@ const drainVoiceCaptureQueue = async (): Promise<void> => {
 // interrupt resumes without redoing committed work. It ships with the deterministic keyless fake runner
 // by default; a real Docling runner (memory-bounded, POSIX-only) is an opt-in later issue. Converting an
 // attempt never creates a Work, ReadingUnit, or Block — publishing a converted attempt is #702.
-const pdfImportStageStore = createPdfImportStageStore(config.pdfImportStageDir);
-const pdfImportActiveRuns = createPdfImportActiveRuns();
 const pdfImportRunner: PdfImportRunnerDependencies = {
   activeRuns: pdfImportActiveRuns,
   createRunToken: () => randomUUID(),
   db,
   // A stage that could not be removed after a terminal/cancel outcome stays VISIBLE in server logs
   // (never silently swallowed); its bytes linger until retried, per the cleanup-failure rule.
-  logCleanupFailure: ({ attemptId, stagePath, reason }) =>
-    server.log.warn({ attemptId, stagePath, reason }, "pdf_import_stage_cleanup_failed"),
+  logCleanupFailure: logPdfImportCleanupFailure,
   now: () => new Date(),
   runner: createFakeDoclingRunner(),
   stageStore: pdfImportStageStore
 };
+// #702 publishes a converted attempt into a canonical Work (doc_blocks only) once the drain loop reports
+// it converted. Idempotent: an attempt with no publication intent, or one already resolved, is a no-op.
+const pdfImportPublish: PdfImportPublishDependencies = {
+  createAuthorId: () => randomUUID(),
+  createEntryId: () => randomUUID(),
+  createSourceId: () => randomUUID(),
+  db,
+  now: () => new Date()
+};
 const PDF_IMPORT_POLL_MS = 1_000;
 let pdfImportDraining = false;
 // Convert one attempt at a time to empty on each tick (single admission is DB-enforced too); never
-// overlap ticks so a slow conversion cannot double-claim the slot. Failures are logged; the loop
-// continues on the next tick.
+// overlap ticks so a slow conversion cannot double-claim the slot. Each converted attempt is published
+// immediately (deterministic, no user wait). Failures are logged; the loop continues on the next tick.
 const drainPdfImportQueue = async (): Promise<void> => {
   if (pdfImportDraining) {
     return;
@@ -321,6 +356,10 @@ const drainPdfImportQueue = async (): Promise<void> => {
   try {
     let result = await processNextPdfImport(pdfImportRunner);
     while (result.status !== "idle") {
+      if (result.status === "converted") {
+        const outcome = await publishConvertedPdfImport(pdfImportPublish, result.attemptId);
+        server.log.info({ attemptId: result.attemptId, outcome: outcome.status }, "pdf_import_published");
+      }
       result = await processNextPdfImport(pdfImportRunner);
     }
   } catch (error) {

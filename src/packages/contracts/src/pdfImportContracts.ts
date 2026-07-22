@@ -76,3 +76,64 @@ export function parsePdfImportStatusDto(value: unknown): PdfImportStatusDto {
 export function parsePdfImportStartedDto(value: unknown): PdfImportStartedDto {
   return pdfImportStartedDtoSchema.parse(value);
 }
+
+// The learner's upload-time intent that accompanies a born-digital PDF upload (#702). All three metadata
+// fields are optional: publication resolves a missing title from the filename stem and a missing
+// author/language from neutral defaults. `fileName` is required (its stem is the title fallback and it is
+// recorded as provenance) and never a filesystem path — the client sends only the picked file's name.
+export const pdfImportStartMetadataSchema = z
+  .object({
+    enteredAuthor: z.string().nullable().default(null),
+    enteredLanguage: z.string().nullable().default(null),
+    enteredTitle: z.string().nullable().default(null),
+    fileName: z.string().min(1)
+  })
+  .strict();
+
+export type PdfImportStartMetadataDto = z.infer<typeof pdfImportStartMetadataSchema>;
+
+// The result of starting a born-digital PDF import (#702). `reopened` = identical bytes already own a
+// Work (#706 exact claim), so the caller opens it directly with no new attempt. `queued` = a fresh
+// recoverable attempt (#721) whose completion the server publishes; the caller polls `attemptId`.
+export const pdfImportBeginResultDtoSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("reopened"), workEntryId: z.string().min(1) }).strict(),
+  z
+    .object({
+      attemptId: z.string().min(1),
+      outcome: z.literal("queued"),
+      status: pdfImportStatusDtoSchema
+    })
+    .strict()
+]);
+
+export type PdfImportBeginResultDto = z.infer<typeof pdfImportBeginResultDtoSchema>;
+
+// The publication outcome of an attempt (#702), served alongside its #721 execution status. `none` = the
+// attempt carries no publication intent (a bare #721 attempt); `pending` = converted but not yet
+// published (or not yet converted); `published` = a canonical Work is ready to open; `ocr_required` = a
+// typed refusal (a page lacked native text) that publishes no Work and reports the affected page count.
+export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("none") }).strict(),
+  z.object({ status: z.literal("pending") }).strict(),
+  z.object({ status: z.literal("published"), workEntryId: z.string().min(1) }).strict(),
+  z.object({ pagesNeedingOcr: z.number().int().positive(), status: z.literal("ocr_required") }).strict()
+]);
+
+export type PdfImportPublicationOutcomeDto = z.infer<typeof pdfImportPublicationOutcomeDtoSchema>;
+
+// The full pollable view of one born-digital PDF import (#702): its #721 execution status plus its #702
+// publication outcome, so a client can drive the upload -> queued -> processing -> ready/ocr/failure
+// journey from a single endpoint.
+export const pdfImportViewDtoSchema = z
+  .object({ publication: pdfImportPublicationOutcomeDtoSchema, status: pdfImportStatusDtoSchema })
+  .strict();
+
+export type PdfImportViewDto = z.infer<typeof pdfImportViewDtoSchema>;
+
+export function parsePdfImportBeginResultDto(value: unknown): PdfImportBeginResultDto {
+  return pdfImportBeginResultDtoSchema.parse(value);
+}
+
+export function parsePdfImportViewDto(value: unknown): PdfImportViewDto {
+  return pdfImportViewDtoSchema.parse(value);
+}
