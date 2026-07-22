@@ -64,24 +64,26 @@ Pick a different model with `WHISPER_MODEL` (default `small`, multilingual): e.g
 and voice diary yields a real transcript. Details and the STT contract:
 [docs/SPEECH.md](./SPEECH.md).
 
-### PDF ingestion (optional)
+### PDF ingestion (born-digital preview)
 
-Uploading a `.pdf` converts it to Markdown with the local **Docling** worker behind an
-**OCRmyPDF/Tesseract** pre-pass for scanned pages. Unlike voice/AI utilities there is **no runtime fake**, so
-if the toolchain is absent a perfectly valid PDF fails to convert — the app now says so distinctly
-("PDF ingestion isn't set up on the server yet. Run `pnpm setup:pdf`…") instead of blaming the file,
-and a genuinely corrupt/unsupported PDF still reads as "We couldn't read this PDF." Check or enable the
-lane with:
+Uploading a `.pdf` now imports it as a **born-digital preview**: a PDF whose pages all carry usable
+native text is mapped straight into the same canonical ProseMirror `Work -> ReadingUnit -> Block`
+model (never through Markdown) and opens in the existing Reader, searchable and annotatable like any
+other Work. Identical bytes re-uploaded reopen the existing Work instead of duplicating it. The import
+runs as a background job with upload/queued/processing/failed states; navigating away does not cancel
+it, and the Library can reopen its status.
 
-```powershell
-pnpm setup:doctor   # reports the PDF lane: which of Python / Docling / OCRmyPDF / Tesseract is missing
-pnpm setup:pdf      # installs Python (consent-gated) + the Docling pip package; OCRmyPDF/Tesseract are consent-gated where a clean install exists, else instruct-only
-```
+**Sequenced limitation (OCR).** Language-aware OCR for scanned or mixed pages is not available yet
+(#704). Until it lands, a PDF with any page lacking native text returns a typed **OCR required**
+outcome and publishes **no** partial Work — the app reports **"OCR support is not available yet."**
+rather than falling back to the legacy Markdown lane or persisting incomplete content. In-editor
+correction tooling (#703) and the measured "supported PDF" claim (#705) are likewise still pending;
+this lane is a preview until they arrive.
 
-`setup:pdf` auto-installs what it safely can (Python via winget/brew after a Y, then `pip install
-docling`) and reports the exact remedy for the heavier system tools (OCRmyPDF + Tesseract) where no
-clean one-command install exists (notably Windows). Nothing installs silently; a declined or
-non-interactive run stays green and prints how to finish by hand.
+> The legacy Docling→Markdown persistence route (`POST …/content/pdf`) is **deactivated** while this
+> canonical lane is authoritative and its now-unreachable code is removed in #705, so the
+> `pnpm setup:pdf` toolchain (Python / Docling / OCRmyPDF / Tesseract) is **not** required to import a
+> born-digital PDF today. `pnpm setup:doctor` still reports that toolchain for the future OCR lane.
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine
 ([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no

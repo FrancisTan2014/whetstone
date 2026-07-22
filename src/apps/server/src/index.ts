@@ -49,6 +49,7 @@ import {
   type PdfImportPublishDependencies
 } from "./features/pdfImport/pdfImportPublish.js";
 import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
+import { bornDigitalPreviewRangePayload } from "./features/pdfImport/pdfImportSampleDocument.js";
 import { createFakeDoclingRunner } from "./files/pdfStructuredAdapter.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
@@ -331,7 +332,10 @@ const pdfImportRunner: PdfImportRunnerDependencies = {
   // (never silently swallowed); its bytes linger until retried, per the cleanup-failure rule.
   logCleanupFailure: logPdfImportCleanupFailure,
   now: () => new Date(),
-  runner: createFakeDoclingRunner(),
+  // The keyless fake cannot read the learner's real bytes yet, so it converts every attempt to the
+  // deterministic born-digital preview document (#702) — a native-text, multi-section canonical result —
+  // until the real Docling runner lands (#705). This lets an uploaded PDF publish a real Reader Work.
+  runner: createFakeDoclingRunner({ rangePayloads: [bornDigitalPreviewRangePayload] }),
   stageStore: pdfImportStageStore
 };
 // #702 publishes a converted attempt into a canonical Work (doc_blocks only) once the drain loop reports

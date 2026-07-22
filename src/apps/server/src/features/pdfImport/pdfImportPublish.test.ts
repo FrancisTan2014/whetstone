@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   RANGE_CONVERSION_SCHEMA_VERSION,
+  parseRangeConversion,
   type RangeConversion,
   type StructuredDocItem
 } from "@whetstone/contracts";
@@ -23,6 +24,7 @@ import {
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./pdfImportPublish.js";
+import { bornDigitalPreviewRangePayload } from "./pdfImportSampleDocument.js";
 import type { PdfImportCommandDependencies } from "./pdfImportCommands.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
@@ -325,6 +327,74 @@ describe("publishConvertedPdfImport", () => {
 
     const publicationB = await getPublication(db, "att-8b");
     expect(publicationB?.workEntryId).toBe(first.work.entryId);
+  });
+
+  it("publishes the keyless born-digital preview sample into a multi-section Reader Work", async () => {
+    // The composition root feeds this exact payload to the fake runner, so publishing it here proves the
+    // shipped preview maps to a real multi-section canonical Work (title + two sections) with no OCR gap.
+    const parsed = parseRangeConversion(bornDigitalPreviewRangePayload);
+    if (parsed.status !== "ok") {
+      throw new Error(`sample payload is not a valid range conversion: ${parsed.status}`);
+    }
+    await driveToConverted(db, {
+      id: "att-sample",
+      sourceHash: "9".repeat(64),
+      payload: parsed.value,
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-sample",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "preview.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-sample"));
+    const content = await loadWorkContent(db, result.work.entryId);
+    const titles = content!.readingUnits.map((unit) => unit.title);
+    // Title heading opens the first unit; each section_header starts another — three units in order.
+    expect(titles).toEqual(["Born-Digital Preview", "How Import Works", "What Remains"]);
+    const publication = await getPublication(db, "att-sample");
+    expect(publication?.ocrRequiredPages).toBeNull();
+  });
+
+  it("publishes a full-length document in one bounded transaction without exceeding the bind limit", async () => {
+    // A generated full-length body with far more paragraphs than a single INSERT's bind-parameter budget
+    // allows: publication must batch every bulk insert so the whole large ReadingUnit commits atomically
+    // (a rolled-back oversized statement would silently persist zero blocks). Headingless -> one Start unit.
+    const paragraphCount = 4000;
+    const body: StructuredDocItem[] = [];
+    for (let index = 0; index < paragraphCount; index += 1) {
+      body.push(item({ label: "text", text: `Paragraph number ${index} of the full-length import.` }));
+    }
+    await driveToConverted(db, {
+      id: "att-long",
+      sourceHash: "8".repeat(64),
+      payload: rangePayload(body, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-long",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "long.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-long"));
+    const content = await loadWorkContent(db, result.work.entryId);
+    expect(content!.readingUnits).toHaveLength(1);
+    const totalDocBlocks = content!.readingUnits.reduce(
+      (total, unit) => total + (unit.docBlocks?.length ?? 0),
+      0
+    );
+    expect(totalDocBlocks).toBe(paragraphCount);
+    const evidence = await db
+      .select()
+      .from(pdfBlockEvidence)
+      .where(eq(pdfBlockEvidence.workEntryId, result.work.entryId));
+    expect(evidence).toHaveLength(paragraphCount);
   });
 });
 

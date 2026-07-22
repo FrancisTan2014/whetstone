@@ -312,6 +312,14 @@ owning source flow:
   Low-confidence/unknown extraction evidence points to likely corrections. Corrected blocks remain
   the sole readable authority; the immutable PDF stays provenance/export, and re-ingestion never
   silently overwrites corrections.
+- **Current shipped scope (born-digital preview).** Today the PDF lane above is a born-digital
+  preview: an uploaded PDF with usable native text on every page publishes as canonical blocks and
+  opens in the Reader, but language-aware OCR for scanned/mixed pages (#704), the in-editor correction
+  tooling (#703), and the measured corpus-calibration claim (#705) are still pending. A page lacking
+  native text returns a typed **OCR required** outcome and publishes no partial Work; until #704,
+  scanned/mixed uploads report **OCR support is not available yet** rather than falling back to legacy
+  Markdown or silently persisting incomplete content. #705 alone replaces this preview copy with the
+  measured supported-PDF claim.
 - A manual Work is learner-owned, editable source material whose canonical content is its
   ProseMirror blocks. It writes those blocks through the same shared editable-Work storage boundary
   the authored path uses — one reading unit plus an empty block on create, stable-id reconcile on
