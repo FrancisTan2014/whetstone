@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
-import { buildHeadingOutline, type HeadingOutlineEntry } from "@whetstone/domain";
+import {
+  buildHeadingOutline,
+  type HeadingOutlineEntry,
+  type HeadingOutlineUnit
+} from "@whetstone/domain";
+import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { useMediaQuery } from "../../shared/ui/useMediaQuery.js";
 
@@ -24,12 +29,80 @@ const OUTLINE_SIDEBAR_QUERY = "(min-width: 48rem)";
 export function deriveWorkOutline(
   sections: ReadonlyArray<ManualWorkSectionDto>
 ): ReadonlyArray<HeadingOutlineEntry> {
-  return buildHeadingOutline(
-    sections.map((section) => ({
-      entryId: section.unitEntryId,
-      ...(section.headingLevel === undefined ? {} : { headingLevel: section.headingLevel }),
-      ...(section.title === undefined ? {} : { title: section.title })
-    }))
+  return buildHeadingOutline(sections.map(sectionToOutlineUnit));
+}
+
+function sectionToOutlineUnit(section: ManualWorkSectionDto): HeadingOutlineUnit {
+  return {
+    entryId: section.unitEntryId,
+    ...(section.headingLevel === undefined ? {} : { headingLevel: section.headingLevel }),
+    ...(section.title === undefined ? {} : { title: section.title })
+  };
+}
+
+// The plaintext of a heading node's inline content, used only to preview a draft heading's label live
+// (the server derives the canonical title on save). Empty for an untitled heading.
+function headingText(node: DocumentNodeJSON): string {
+  return (node.content ?? []).map((child) => child.text ?? "").join("");
+}
+
+// Split the active section's DRAFT document into outline units at every heading node — the same boundary
+// the server repartitions on — so a preview entry appears per heading. The first partition keeps the
+// active unit's real id (so it stays navigable and highlighted); later partitions are preview-only.
+function partitionDraftIntoUnits(
+  activeUnitEntryId: string,
+  draft: DocumentNodeJSON
+): HeadingOutlineUnit[] {
+  const units: HeadingOutlineUnit[] = [];
+  let partitionIndex = -1;
+  (draft.content ?? []).forEach((block, index) => {
+    const isHeading = block.type === "heading";
+    if (index !== 0 && !isHeading) {
+      return;
+    }
+    partitionIndex += 1;
+    const entryId =
+      partitionIndex === 0
+        ? activeUnitEntryId
+        : `${activeUnitEntryId}\u0000draft-${partitionIndex}`;
+    if (!isHeading) {
+      units.push({ entryId });
+      return;
+    }
+    const level = (block.attrs as { level?: unknown } | undefined)?.level;
+    const title = headingText(block);
+    units.push({
+      entryId,
+      ...(typeof level === "number" ? { headingLevel: level } : {}),
+      ...(title.length === 0 ? {} : { title })
+    });
+  });
+  return units;
+}
+
+// Project the active section's live DRAFT into the persisted section list so the Outline reflects heading
+// edits immediately (#698), before a save reconciles canonical units. The active section is replaced by
+// one entry per draft partition: the first keeps the active unit's id; later partitions are preview-only
+// synthetic ids whose target stays the active unit, so a click merely keeps the open section rather than
+// navigating to a not-yet-saved unit. On save the server-reconciled Outline replaces this projection.
+export function projectDraftOutline(
+  sections: ReadonlyArray<ManualWorkSectionDto>,
+  activeUnitEntryId: string,
+  draft: DocumentNodeJSON
+): ReadonlyArray<HeadingOutlineEntry> {
+  const draftUnits = partitionDraftIntoUnits(activeUnitEntryId, draft);
+  const projected: HeadingOutlineUnit[] = [];
+  for (const section of sections) {
+    if (section.unitEntryId === activeUnitEntryId) {
+      projected.push(...draftUnits);
+    } else {
+      projected.push(sectionToOutlineUnit(section));
+    }
+  }
+
+  const previewEntryIds = new Set(draftUnits.slice(1).map((unit) => unit.entryId));
+  return buildHeadingOutline(projected).map((entry) =>
+    previewEntryIds.has(entry.entryId) ? { ...entry, targetUnitEntryId: activeUnitEntryId } : entry
   );
 }
 

@@ -356,6 +356,30 @@ describe("reconcileEditableWorkContent retention arms", () => {
         .values({ fromEntryId: "annotator", toEntryId: blockEntryId, type: "annotates" });
     });
   });
+
+  it("removes a block's content but deletes nothing when the only removal is retained", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const id0 = blockId(document, 0);
+    const two = await reconcile(unitEntryId, doc(para("keep", id0), para("referenced")));
+    const referencedId = blockId(two, 1);
+    await seedNoteEntry("note-solo");
+    await db.insert(noteAnchors).values({
+      blockEntryId: referencedId,
+      contextSnapshot: "ctx",
+      endBlockEntryId: referencedId,
+      endOffset: null,
+      noteEntryId: "note-solo",
+      selectedText: "text",
+      startOffset: null
+    });
+
+    // The sole removed block is durably referenced, so there is nothing deletable — the content row is
+    // dropped but its Entry (and the note's FK) survives.
+    await reconcile(unitEntryId, doc(para("keep", id0)));
+
+    expect(await db.select().from(docBlocks).where(eq(docBlocks.id, referencedId))).toHaveLength(0);
+    expect(await entryExists(referencedId)).toBe(true);
+  });
 });
 
 describe("reconcileEditableWorkContent provenance detachment", () => {

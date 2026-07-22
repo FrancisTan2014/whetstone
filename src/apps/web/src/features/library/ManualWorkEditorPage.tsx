@@ -17,7 +17,7 @@ import {
   manualEditorSaveStatusClassNames,
   manualEditorSaveStatusLabels
 } from "./manualWorkEditor.tokens.js";
-import { deriveWorkOutline, WorkOutline } from "./WorkOutline.js";
+import { projectDraftOutline, WorkOutline } from "./WorkOutline.js";
 
 // The Library manual-Work editor (#720, live Outline #697): the responsive workspace a learner reaches
 // from a manual Work's "Edit content" action to edit its ordered sections. A live Outline — derived only
@@ -183,7 +183,13 @@ function ManualWorkEditor({
   const dirty = !editorDocumentsEqualIgnoringIds(draft, savedDocument);
   useUnsavedGuard(dirty || status === "saving" || status === "conflict" || status === "error");
 
-  const outlineEntries = useMemo(() => deriveWorkOutline(work.sections), [work.sections]);
+  // The Outline reflects the active section's live DRAFT (headings appear/rename immediately) layered over
+  // the persisted sections; a save then replaces the projection with the server-reconciled canonical
+  // Outline. While saving/conflicted/errored the projection stays visible under the page's status.
+  const outlineEntries = useMemo(
+    () => projectDraftOutline(work.sections, activeUnitEntryId, draft),
+    [work.sections, activeUnitEntryId, draft]
+  );
 
   const bumpFocus = useCallback((): void => {
     setFocusSignal((previous) => (previous === undefined ? 1 : previous + 1));
@@ -231,13 +237,16 @@ function ManualWorkEditor({
     }
 
     if (result.status === "saved") {
-      // Adopt the server's canonical document as the new local baseline AND editor content, and the
-      // recomputed section list/revision so the Outline refreshes. The server may normalize what it
-      // persists, so the saved document can differ from what was sent.
+      // Adopt the server's canonical document as the new local baseline AND editor content, the recomputed
+      // section list/revision so the Outline refreshes, and the ACTIVE unit the server reconciled to — a
+      // repartition can move the edited blocks into a different unit (e.g. a merge deletes the edited unit),
+      // so focus follows the server's active section rather than a now-stale id (#698).
       setWork(result.work);
       workRef.current = result.work;
+      activeUnitRef.current = result.work.unitEntryId;
       savedDocumentRef.current = result.work.document;
       draftRef.current = result.work.document;
+      setActiveUnitEntryId(result.work.unitEntryId);
       setSavedDocument(result.work.document);
       setDraft(result.work.document);
       setStatus("saved");

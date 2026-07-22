@@ -1,11 +1,16 @@
-import type { EntryId } from "@whetstone/domain";
+import {
+  planSectionRepartition,
+  type EntryId,
+  type RepartitionBlock,
+  type RepartitionPlan
+} from "@whetstone/domain";
 import {
   assignNodeIds,
   createTextDocument,
   documentText,
   type DocumentNodeJSON
 } from "@whetstone/document";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -65,6 +70,23 @@ export type ReconcileEditableWorkContentContext = Readonly<{
 
 export type ReconcileEditableWorkContentResult = Readonly<{
   document: DocumentNodeJSON;
+}>;
+
+// The already-authorized Work+section context a repartition runs under (#698). The caller has verified
+// ownership and origin and claimed the work's revision; this boundary substitutes the edited section's
+// draft `document` into the Work's block stream and repartitions the affected span at heading boundaries.
+// `editedUnitEntryId` names the section the learner saved; the returned `activeUnitEntryId` is the unit
+// that now holds the first draft block (the same unit when its leading heading survived, the preceding
+// unit when the section merged left), so the editor can stay on the section it was editing.
+export type RepartitionEditableWorkContentContext = Readonly<{
+  createEntryId: () => string;
+  document: DocumentNodeJSON;
+  editedUnitEntryId: string;
+  workEntryId: EntryId;
+}>;
+
+export type RepartitionEditableWorkContentResult = Readonly<{
+  activeUnitEntryId: string;
 }>;
 
 type EditableBlock = Readonly<{
@@ -233,6 +255,300 @@ export async function reconcileEditableWorkContent(
   }
 
   return { document: withIds };
+}
+
+// Repartition a manual Work's block stream after one section was saved (#698). ReadingUnits are bounded
+// groupings projected from the ordered block stream; blocks are the durable identity. This substitutes the
+// edited section's draft blocks into the Work's stream and repartitions the affected contiguous span at
+// every heading node — the same boundary rule the Outline reads — preserving a unit's identity when its
+// leading heading survives, minting a unit for each genuinely new heading, and merging a section whose
+// leading heading was removed into the preceding unit. Every surviving block keeps its id (so notes,
+// positions, and review history stay anchored), reading positions follow their anchor block (or land at
+// the top of the surviving unit when the anchor was deleted), a removed block's Entry is retained whenever
+// durable history still references it, and units emptied of identity are deleted. Only the affected span is
+// touched; units before it are untouched and units after it are shifted by the net change in unit count.
+// Pure containment arithmetic is delegated to the domain planner; this boundary reads the span, writes the
+// plan, and remaps positions, all in the caller's transaction so a save never lands half-applied. Returns
+// the unit that now holds the first draft block.
+export async function repartitionEditableWorkContent(
+  tx: Transaction,
+  context: RepartitionEditableWorkContentContext
+): Promise<RepartitionEditableWorkContentResult> {
+  const { createEntryId, editedUnitEntryId, workEntryId } = context;
+  const { blocks: draftBlocks } = documentToBlocks(context.document);
+  // The caller normalizes the document to at least one block before repartitioning, so the draft stream is
+  // never empty and its first block is a real node.
+  const firstDraft = draftBlocks[0] as EditableBlock;
+
+  const unitRows = await tx
+    .select({ entryId: readingUnits.entryId, orderIndex: readingUnits.orderIndex })
+    .from(readingUnits)
+    .where(eq(readingUnits.workEntryId, workEntryId))
+    .orderBy(asc(readingUnits.orderIndex));
+  const editedIndex = unitRows.findIndex((unit) => unit.entryId === editedUnitEntryId);
+  // The caller has verified the edited unit belongs to this Work, so it is always in the ordered set.
+  const editedOrderIndex = (unitRows[editedIndex] as { orderIndex: number }).orderIndex;
+
+  // Merge-left: a saved section whose first block is no longer a heading dissolves its own boundary and
+  // joins the preceding unit, so the span starts one unit earlier and the two repartition together. The
+  // leading section (index 0) has no predecessor, so its headless opening is the legitimate "Start" and it
+  // repartitions alone.
+  const mergeLeft = editedIndex > 0 && firstDraft.type !== "heading";
+  const spanStart = mergeLeft ? editedIndex - 1 : editedIndex;
+  const spanUnitRows = unitRows.slice(spanStart, editedIndex + 1);
+  const spanUnitIds = spanUnitRows.map((unit) => unit.entryId);
+  // The span's resulting units re-index densely from the first span unit's order, and the units after the
+  // edited section shift by the net change so the whole Work's order indices stay a monotonic sequence
+  // (robust to any pre-existing gaps — only relative order is read).
+  const spanBaseOrderIndex = (spanUnitRows[0] as { orderIndex: number }).orderIndex;
+
+  const existingBlockRows = await tx
+    .select({
+      id: docBlocks.id,
+      orderIndex: docBlocks.orderIndex,
+      readingUnitEntryId: docBlocks.readingUnitEntryId,
+      type: docBlocks.type
+    })
+    .from(docBlocks)
+    .where(inArray(docBlocks.readingUnitEntryId, spanUnitIds));
+  const orderedIdsByUnit = new Map<string, string[]>();
+  for (const unitId of spanUnitIds) {
+    orderedIdsByUnit.set(unitId, []);
+  }
+  for (const row of [...existingBlockRows].sort((a, b) => a.orderIndex - b.orderIndex)) {
+    (orderedIdsByUnit.get(row.readingUnitEntryId) as string[]).push(row.id);
+  }
+
+  // The affected stream after substitution: each preceding span unit contributes its blocks unchanged; the
+  // edited unit contributes the draft blocks in their place (the edited unit is always the span's last).
+  const draftBlockById = new Map(draftBlocks.map((block) => [block.id, block]));
+  const streamBlocks: RepartitionBlock[] = [];
+  for (const unitId of spanUnitIds) {
+    if (unitId === editedUnitEntryId) {
+      for (const block of draftBlocks) {
+        streamBlocks.push({ id: block.id, isHeading: block.type === "heading" });
+      }
+    } else {
+      for (const id of orderedIdsByUnit.get(unitId) as string[]) {
+        streamBlocks.push({ id, isHeading: false });
+      }
+    }
+  }
+
+  const plan = planSectionRepartition({
+    affectedUnits: spanUnitRows.map((unit) => ({
+      blockIds: orderedIdsByUnit.get(unit.entryId) as string[],
+      entryId: unit.entryId
+    })),
+    mintUnitId: createEntryId,
+    streamBlocks
+  });
+
+  const existingSpanBlockIdSet = new Set<string>();
+  for (const unitId of spanUnitIds) {
+    for (const id of orderedIdsByUnit.get(unitId) as string[]) {
+      existingSpanBlockIdSet.add(id);
+    }
+  }
+  const finalBlockIds = new Set<string>();
+  for (const unit of plan.units) {
+    for (const id of unit.blockIds) {
+      finalBlockIds.add(id);
+    }
+  }
+  const removedBlockIds = [...existingSpanBlockIdSet].filter((id) => !finalBlockIds.has(id));
+
+  // Insert each newly minted unit and re-index every resulting unit to its span position, so the affected
+  // span occupies order indices `spanStart .. spanStart + units - 1` densely.
+  await plan.units.reduce(async (previous, unit, offset) => {
+    await previous;
+    const orderIndex = spanBaseOrderIndex + offset;
+    if (unit.isNew) {
+      await tx.insert(entries).values({ id: unit.entryId, type: "reading_unit" });
+      await tx.insert(readingUnits).values({
+        entryId: unit.entryId,
+        orderIndex,
+        sourceFile: null,
+        title: null,
+        workEntryId
+      });
+      await tx
+        .insert(entryLinks)
+        .values({ fromEntryId: workEntryId, toEntryId: unit.entryId, type: "contains" });
+    } else {
+      await tx
+        .update(readingUnits)
+        .set({ orderIndex })
+        .where(eq(readingUnits.entryId, unit.entryId));
+    }
+  }, Promise.resolve());
+
+  // Rebuild containment for the span from scratch: drop the span units' block edges, then re-write every
+  // block to its planned unit and order and re-add its edge. A surviving edited-section block is updated in
+  // place (content refreshed, unit/order reassigned); a genuinely new block is inserted; a preceding block
+  // (present in the stream but not in the draft) only changes unit/order, never content.
+  await tx
+    .delete(entryLinks)
+    .where(and(inArray(entryLinks.fromEntryId, spanUnitIds), eq(entryLinks.type, "contains")));
+
+  await plan.units.reduce(async (previous, unit) => {
+    await previous;
+    await unit.blockIds.reduce(async (inner, blockId, orderIndex) => {
+      await inner;
+      const draft = draftBlockById.get(blockId);
+      if (draft === undefined) {
+        await tx
+          .update(docBlocks)
+          .set({ orderIndex, readingUnitEntryId: unit.entryId })
+          .where(eq(docBlocks.id, blockId));
+      } else if (existingSpanBlockIdSet.has(blockId)) {
+        await tx
+          .update(docBlocks)
+          .set({
+            anchorId: null,
+            anchors: [],
+            nodeJson: draft.node,
+            orderIndex,
+            plaintext: draft.plaintext,
+            readingUnitEntryId: unit.entryId,
+            type: draft.type
+          })
+          .where(eq(docBlocks.id, blockId));
+      } else {
+        await tx.insert(entries).values({ id: blockId, type: "block" });
+        await tx.insert(docBlocks).values({
+          anchorId: null,
+          anchors: [],
+          id: blockId,
+          nodeJson: draft.node,
+          orderIndex,
+          plaintext: draft.plaintext,
+          readingUnitEntryId: unit.entryId,
+          type: draft.type,
+          workEntryId
+        });
+      }
+      await tx
+        .insert(entryLinks)
+        .values({ fromEntryId: unit.entryId, toEntryId: blockId, type: "contains" });
+    }, Promise.resolve());
+  }, Promise.resolve());
+
+  // Delete blocks the edit dropped, retaining any Entry durable history still references (its content row
+  // is gone; the anchor simply no longer resolves) exactly as the single-unit reconcile does.
+  if (removedBlockIds.length > 0) {
+    await tx.delete(docBlocks).where(inArray(docBlocks.id, removedBlockIds));
+    const referencedIds = await stillReferencedBlockEntryIds(tx, removedBlockIds);
+    const deletableIds = removedBlockIds.filter((id) => !referencedIds.has(id));
+    if (deletableIds.length > 0) {
+      await tx
+        .delete(entryLinks)
+        .where(
+          or(
+            inArray(entryLinks.fromEntryId, deletableIds),
+            inArray(entryLinks.toEntryId, deletableIds)
+          )
+        );
+      await tx
+        .update(chunks)
+        .set({ sourceBlockEntryId: null })
+        .where(inArray(chunks.sourceBlockEntryId, deletableIds));
+      await tx.delete(entries).where(inArray(entries.id, deletableIds));
+    }
+  }
+
+  // Reading positions follow the content, then units emptied of identity are removed (positions first, so a
+  // position never dangles off a to-be-deleted unit and the removal stays FK-safe).
+  await remapReadingPositions(
+    tx,
+    workEntryId,
+    plan,
+    new Set(plan.removedUnitEntryIds),
+    new Set(removedBlockIds)
+  );
+
+  if (plan.removedUnitEntryIds.length > 0) {
+    await tx
+      .delete(entryLinks)
+      .where(
+        and(
+          eq(entryLinks.fromEntryId, workEntryId),
+          inArray(entryLinks.toEntryId, plan.removedUnitEntryIds)
+        )
+      );
+    await tx.delete(readingUnits).where(inArray(readingUnits.entryId, plan.removedUnitEntryIds));
+    await tx.delete(entries).where(inArray(entries.id, plan.removedUnitEntryIds));
+  }
+
+  // Shift the units after the edited section by the net change in the span's unit count, keeping the whole
+  // Work's order indices a dense, source-order sequence. Units before the span are untouched.
+  const delta = spanBaseOrderIndex + plan.units.length - (editedOrderIndex + 1);
+  if (delta !== 0) {
+    await unitRows.slice(editedIndex + 1).reduce(async (previous, unit) => {
+      await previous;
+      await tx
+        .update(readingUnits)
+        .set({ orderIndex: unit.orderIndex + delta })
+        .where(eq(readingUnits.entryId, unit.entryId));
+    }, Promise.resolve());
+  }
+
+  return { activeUnitEntryId: plan.blockUnitEntryId.get(firstDraft.id) as string };
+}
+
+// Remap the Work's saved reading positions onto the repartitioned units (#698). A position anchored to a
+// surviving block follows that block into whichever unit now holds it; a position whose anchor block was
+// deleted drops the anchor and lands at the top of the unit that now holds its former neighbourhood; a
+// top-of-unit position on a removed unit moves to that unit's surviving fallback. A position whose anchor
+// is outside the affected span is left untouched. Runs before removed units are deleted so no position
+// dangles.
+async function remapReadingPositions(
+  tx: Transaction,
+  workEntryId: EntryId,
+  plan: RepartitionPlan,
+  removedUnitEntryIds: ReadonlySet<string>,
+  removedBlockIds: ReadonlySet<string>
+): Promise<void> {
+  const rows = await tx
+    .select({
+      anchorBlockEntryId: readingPositions.anchorBlockEntryId,
+      unitEntryId: readingPositions.unitEntryId,
+      userId: readingPositions.userId
+    })
+    .from(readingPositions)
+    .where(eq(readingPositions.workEntryId, workEntryId));
+
+  await rows.reduce(async (previous, row) => {
+    await previous;
+    let nextUnit = row.unitEntryId;
+    let nextAnchor = row.anchorBlockEntryId;
+
+    if (row.anchorBlockEntryId === null) {
+      if (removedUnitEntryIds.has(row.unitEntryId)) {
+        nextUnit = plan.removedUnitFallback.get(row.unitEntryId) as string;
+      }
+    } else {
+      const movedUnit = plan.blockUnitEntryId.get(row.anchorBlockEntryId);
+      if (movedUnit !== undefined) {
+        nextUnit = movedUnit;
+      } else if (removedBlockIds.has(row.anchorBlockEntryId)) {
+        nextAnchor = null;
+        nextUnit = plan.removedUnitFallback.get(row.unitEntryId) ?? row.unitEntryId;
+      }
+    }
+
+    if (nextUnit !== row.unitEntryId || nextAnchor !== row.anchorBlockEntryId) {
+      await tx
+        .update(readingPositions)
+        .set({ anchorBlockEntryId: nextAnchor, unitEntryId: nextUnit })
+        .where(
+          and(
+            eq(readingPositions.userId, row.userId),
+            eq(readingPositions.workEntryId, workEntryId)
+          )
+        );
+    }
+  }, Promise.resolve());
 }
 
 async function insertBlock(

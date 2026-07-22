@@ -506,7 +506,9 @@ can navigate them from another package.
   derives the `tableOfContents` at query time from the units' heading levels via the pure
   `domain/headingOutline.ts` `buildHeadingOutline` (first-block `heading` mdast `depth` → nested
   entries, each `targetUnitEntryId` = its own unit, no anchor; a headingless preface → a root "Start"
-  entry). Nothing is persisted, so re-ingestion recomputes with no stale entry; single-unit or
+  entry). The sibling pure planner `domain/workRepartition.ts` `planSectionRepartition` partitions an
+  edited block span at the same heading boundaries, preserving unit identity where a leading heading
+  survives (the manual-save repartition, #698). Nothing is persisted, so re-ingestion recomputes with no stale entry; single-unit or
   headingless works yield no TOC (#680). `ReadingUnitDto`/`ReadingUnitStructureDto` also carry the
   derived `headingLevel?`. A block id is resolved over **both**
   substrates — legacy mdast `blocks` and PM `doc_blocks` — through the shared `db/addressableBlocks.ts`
@@ -977,8 +979,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `/library/works/:id/edit`, reached from the Library shelf's **Edit content** action on a manual Work
   (`WorkOverflowMenu` routes manual origins there; imported → Manage content, authored → Writing). A
   manual Work is now **N ordered ReadingUnits (sections)**, each section's first block a heading; the page
-  is a responsive workspace whose **live Outline** (`WorkOutline.tsx` `deriveWorkOutline` over
-  `domain/headingOutline.buildHeadingOutline`) is derived only from the persisted section headings — no
+  is a responsive workspace whose **live Outline** (`WorkOutline.tsx` `projectDraftOutline` over
+  `domain/headingOutline.buildHeadingOutline`) projects the active section's DRAFT headings into the
+  persisted sections so heading edits appear immediately (#698), replaced on save by the
+  server-reconciled canonical Outline (`deriveWorkOutline` remains the persisted-only projection) — no
   stored TOC tree. The Outline is a sticky 15rem sidebar ≥48rem and a 44px-toggle drawer <48rem
   (Escape/backdrop dismiss + focus restore). It loads the section list (`manualWorkApi.fetchManualWork`),
   edits one section at a time in the shared `RichContentEditor` (`fetchManualWorkUnit`) with a
@@ -987,7 +991,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   retention (`saveManualWorkContent(workEntryId, unitEntryId, document, revision)` → `PUT
   /api/manual-works/:id/units/:unitId/content`), and **Add section** appends a heading-seeded section
   (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is
-  work-level (`personal_entries.updatedAt`), bumped atomically by both save and add. Reader/search/notes
+  work-level (`personal_entries.updatedAt`), bumped atomically by both save and add. On save the draft's
+  ordered PM blocks are substituted into the Work's block stream and the affected span is
+  **repartitioned at every heading** (`content/editableWorkContent.repartitionEditableWorkContent` over
+  the pure `domain/workRepartition.planSectionRepartition`): a surviving leading heading keeps its
+  ReadingUnit id, a new heading mints a unit, a removed boundary merges into the preceding unit, every
+  block id is preserved, and anchored notes/positions follow their block to the new unit; the response's
+  reconciled active unit lets the editor keep focus on the edited block (#698). Reader/search/notes
   read the same blocks — no projection or dual write — and `content/contentQueries.loadWorkStructure`
   derives each unit's heading level + title from its first `doc_block` so the Reader hierarchy matches the
   editor Outline. Server: `library/manualWorkContentQueries` (`loadManualWorkForEditing` +
