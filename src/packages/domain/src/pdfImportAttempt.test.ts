@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isNonTerminalAttemptState,
   isRetryableAttemptState,
+  isTerminalAttemptState,
   mayApplyRunOutput,
   nextRangeIndex,
   pdfImportAttemptStates,
@@ -32,6 +33,20 @@ describe("isNonTerminalAttemptState", () => {
   it("is false for the terminal states", () => {
     for (const state of ["converted", "failed", "cancelled"] as const) {
       expect(isNonTerminalAttemptState(state)).toBe(false);
+    }
+  });
+});
+
+describe("isTerminalAttemptState", () => {
+  it("is true for converted, failed, and cancelled (the cleanup-eligible set)", () => {
+    for (const state of ["converted", "failed", "cancelled"] as const) {
+      expect(isTerminalAttemptState(state)).toBe(true);
+    }
+  });
+
+  it("is false for queued, running, and interrupted (stage still needed)", () => {
+    for (const state of ["queued", "running", "interrupted"] as const) {
+      expect(isTerminalAttemptState(state)).toBe(false);
     }
   });
 });

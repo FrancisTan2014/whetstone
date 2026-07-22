@@ -38,6 +38,14 @@ export function isNonTerminalAttemptState(state: PdfImportAttemptState): boolean
   return !terminalStates.has(state);
 }
 
+// The terminal outcomes (`converted`, `failed`, `cancelled`): the run is over and any stage the attempt
+// still owns is leftover cleanup, not live input. A cleanup-retry consults this so it only ever removes a
+// stage from an attempt that is truly done — never a `queued`/`running`/`interrupted` attempt whose bytes
+// are still needed to convert or resume.
+export function isTerminalAttemptState(state: PdfImportAttemptState): boolean {
+  return terminalStates.has(state);
+}
+
 // The only retryable state is `interrupted`: a running claim abandoned by a dead process, whose stage
 // and committed ranges are still intact on disk, so the run can resume after the last committed range.
 // `running` holds the live slot; terminal states have no stage to resume. Retry of any other state is

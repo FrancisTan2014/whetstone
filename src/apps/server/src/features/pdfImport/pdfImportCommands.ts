@@ -1,4 +1,5 @@
 import type { PdfImportStartedDto, PdfImportStatusDto } from "@whetstone/contracts";
+import { isTerminalAttemptState } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { hashBytes } from "../../files/sourceFileStore.js";
@@ -13,11 +14,12 @@ import {
   retryInterrupted
 } from "./pdfImportStore.js";
 
-// The owner-scoped start / cancel / retry commands for a recoverable staged PDF import (#721). These own
-// the stage lifecycle boundary: start creates and atomically binds the stage before the attempt is
-// queued; cancel terminates the owned child, fences late output (via the store), and removes the stage;
-// retry re-queues an interrupted attempt to resume. None of them create a Work, ReadingUnit, or Block —
-// publication is #702.
+// The owner-scoped start / cancel / retry / cleanup-retry commands for a recoverable staged PDF import
+// (#721). These own the stage lifecycle boundary: start creates and atomically binds the stage before the
+// attempt is queued; cancel terminates the owned child, fences late output (via the store), and removes
+// the stage; retry re-queues an interrupted attempt to resume; cleanup-retry re-removes a terminal
+// attempt's leftover stage when an earlier removal failed. None of them create a Work, ReadingUnit, or
+// Block — publication is #702.
 
 export type PdfImportCommandDependencies = Readonly<{
   db: DbClient;
@@ -110,21 +112,48 @@ async function statusFor(
   return record === null ? null : buildPdfImportStatus(deps.db, record);
 }
 
-// Remove a cancelled attempt's stage and, ONLY on a successful removal, clear its stage binding. A
-// removal failure is surfaced via the cleanup logger AND leaves `stagePath` set, so the attempt stays
-// `bound` in status and its cleanup can be retried rather than the bytes lingering with no path record.
+export type RetryPdfImportCleanupInput = Readonly<{ userId: string; attemptId: string }>;
+
+// Retry stage cleanup for a TERMINAL attempt whose earlier removal failed. A transient filesystem error
+// during a cancel / conversion-failure / conversion-success cleanup leaves the staged bytes on disk with
+// the binding still recorded (status stays `bound`) — this is the owner-scoped path that makes that
+// cleanup retryable: it removes the leftover stage and, only on a successful removal, clears the binding
+// (`applied: true`). A removal failure is surfaced via the cleanup logger and leaves the attempt bound so
+// it can be retried again. It is a no-op (`applied: false`) when the attempt is unknown, already unbound,
+// or still non-terminal — a queued / running / interrupted attempt keeps its stage on purpose (to convert
+// or resume) and must never have its bytes removed here.
+export async function retryPdfImportCleanup(
+  deps: PdfImportCommandDependencies,
+  input: RetryPdfImportCleanupInput
+): Promise<PdfImportMutationResult> {
+  const record = await getAttempt(deps.db, input.userId, input.attemptId);
+  if (record === null) {
+    return { applied: false, status: null };
+  }
+  if (record.stagePath === null || !isTerminalAttemptState(record.state)) {
+    return { applied: false, status: await buildPdfImportStatus(deps.db, record) };
+  }
+  const removed = await removeAndUnbindStage(deps, input.attemptId, record.stagePath);
+  return { applied: removed, status: await statusFor(deps, input.userId, input.attemptId) };
+}
+
+// Remove a terminal/cancelled attempt's stage and, ONLY on a successful removal, clear its stage binding.
+// Returns whether the stage was actually removed (and the binding cleared). A removal failure is surfaced
+// via the cleanup logger AND leaves `stagePath` set, so the attempt stays `bound` in status and its
+// cleanup can be retried (via `retryPdfImportCleanup`) rather than the bytes lingering with no path record.
 async function removeAndUnbindStage(
   deps: PdfImportCommandDependencies,
   attemptId: string,
   stagePath: string
-): Promise<void> {
+): Promise<boolean> {
   try {
     await deps.stageStore.removeStage(stagePath);
   } catch (cause) {
     logStageCleanupFailure(deps, attemptId, stagePath, cause);
-    return;
+    return false;
   }
   await clearStagePath(deps.db, attemptId, deps.now());
+  return true;
 }
 
 // Roll back only the stage THIS start actually created (the row insert never landed, so there is no

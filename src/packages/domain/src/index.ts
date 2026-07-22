@@ -139,6 +139,7 @@ export type { LibraryCreateOrigin, WorkOrigin } from "./workOrigin.js";
 export {
   isNonTerminalAttemptState,
   isRetryableAttemptState,
+  isTerminalAttemptState,
   mayApplyRunOutput,
   nextRangeIndex,
   pdfImportAttemptStates

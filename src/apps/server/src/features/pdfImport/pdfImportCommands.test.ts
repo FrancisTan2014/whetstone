@@ -13,6 +13,7 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
   cancelPdfImport,
   retryPdfImport,
+  retryPdfImportCleanup,
   startPdfImport,
   type PdfImportCommandDependencies
 } from "./pdfImportCommands.js";
@@ -342,6 +343,114 @@ describe("pdfImport commands", () => {
 
       expect(result.applied).toBe(false);
       expect(result.status?.state).toBe("queued");
+    });
+  });
+
+  describe("retryPdfImportCleanup", () => {
+    // A store whose removeStage always rejects, to drive a cleanup failure that leaves the stage bound.
+    function rejectingStore(reason: unknown): PdfImportStageStore {
+      return {
+        createStage: stageStore.createStage,
+        openStage: stageStore.openStage,
+        removeStage: () => Promise.reject(reason)
+      };
+    }
+
+    // Cancel with a failing store so the attempt is terminal (`cancelled`) yet still bound: its earlier
+    // cleanup failed and the staged bytes remain on disk. This is the state the reviewer flagged as stuck.
+    async function cancelLeavingStageBound(id: string): Promise<void> {
+      await seedStaged(id);
+      const result = await cancelPdfImport(
+        buildDeps({ stageStore: rejectingStore(new Error("locked")), logCleanupFailure: vi.fn() }),
+        { userId: DEFAULT_USER_ID, attemptId: id }
+      );
+      expect(result.status?.state).toBe("cancelled");
+      expect(result.status?.stage.bound).toBe(true);
+    }
+
+    it("removes the leftover stage and clears the binding on a second call after a failed cleanup", async () => {
+      await cancelLeavingStageBound("a1");
+      // The bytes are still on disk and the row is still bound after the failed cleanup.
+      await expect(stat(stageStore.openStage("a1").path)).resolves.toBeDefined();
+
+      // A retry with a working store removes the stage and clears the binding: cleanup is retryable.
+      const result = await retryPdfImportCleanup(buildDeps(), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "a1"
+      });
+
+      expect(result.applied).toBe(true);
+      expect(result.status?.state).toBe("cancelled");
+      expect(result.status?.stage.bound).toBe(false);
+      const cleared = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(cleared?.stagePath).toBeNull();
+      await expect(stat(stageStore.openStage("a1").path)).rejects.toThrow();
+    });
+
+    it("keeps the stage bound and retryable when the cleanup retry itself fails again", async () => {
+      await cancelLeavingStageBound("a1");
+      const logCleanupFailure = vi.fn();
+      const result = await retryPdfImportCleanup(
+        buildDeps({ stageStore: rejectingStore("still locked"), logCleanupFailure }),
+        { userId: DEFAULT_USER_ID, attemptId: "a1" }
+      );
+
+      expect(result.applied).toBe(false);
+      expect(result.status?.stage.bound).toBe(true);
+      expect(logCleanupFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ attemptId: "a1", reason: "still locked" })
+      );
+      await expect(stat(stageStore.openStage("a1").path)).resolves.toBeDefined();
+    });
+
+    it("does not remove the stage of a non-terminal attempt", async () => {
+      await seedStaged("a1");
+      const removeStage = vi.fn(() => Promise.resolve());
+      const spyingStore: PdfImportStageStore = {
+        createStage: stageStore.createStage,
+        openStage: stageStore.openStage,
+        removeStage
+      };
+      const result = await retryPdfImportCleanup(buildDeps({ stageStore: spyingStore }), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "a1"
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.status?.state).toBe("queued");
+      expect(result.status?.stage.bound).toBe(true);
+      expect(removeStage).not.toHaveBeenCalled();
+      await expect(stat(stageStore.openStage("a1").path)).resolves.toBeDefined();
+    });
+
+    it("is a no-op for an already-unbound terminal attempt", async () => {
+      await seedStaged("a1");
+      await cancelPdfImport(buildDeps(), { userId: DEFAULT_USER_ID, attemptId: "a1" });
+      const removeStage = vi.fn(() => Promise.resolve());
+      const spyingStore: PdfImportStageStore = {
+        createStage: stageStore.createStage,
+        openStage: stageStore.openStage,
+        removeStage
+      };
+      const result = await retryPdfImportCleanup(buildDeps({ stageStore: spyingStore }), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "a1"
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.status?.state).toBe("cancelled");
+      expect(result.status?.stage.bound).toBe(false);
+      expect(removeStage).not.toHaveBeenCalled();
+    });
+
+    it("reports no status when retrying cleanup for an unknown attempt", async () => {
+      const result = await retryPdfImportCleanup(buildDeps(), {
+        userId: DEFAULT_USER_ID,
+        attemptId: "missing"
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.status).toBeNull();
     });
   });
 });
