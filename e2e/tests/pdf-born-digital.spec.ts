@@ -80,18 +80,15 @@ test("uploads a born-digital PDF, publishes it, then reads, searches, annotates,
   const workEntryId = new URL(readerUrl.replace("#/", "")).searchParams.get("work");
   expect(workEntryId).not.toBeNull();
 
-  // The structured body mapped to canonical blocks across multiple ReadingUnits: a work title, two
-  // section headers, a bullet-list item, and a table cell — all ordinary reader blocks, no PDF branch.
+  // The structured body mapped to canonical blocks across THREE ordered ReadingUnits — the mapping
+  // starts a new unit at each heading (work title, then each section header), exactly as the acceptance
+  // criteria derive units from the heading tree. The existing Reader renders one unit at a time; unit 1 is
+  // the work title + intro paragraph.
   const reading = page.locator(READING);
   await expect(reading.getByText("Born-Digital Preview", { exact: false })).toBeVisible();
-  await expect(reading.getByText("How Import Works", { exact: false })).toBeVisible();
-  await expect(reading.getByText("What Remains", { exact: false })).toBeVisible();
   await expect(
-    reading.getByText("Structure and geometry are retained only as ingestion evidence.", {
-      exact: false
-    })
+    reading.getByText("through the canonical block pipeline", { exact: false })
   ).toBeVisible();
-  await expect(reading.getByText("Born-digital import", { exact: false })).toBeVisible();
 
   // Existing library search operates on the published canonical blocks (doc_blocks), deep-linking back
   // to this Work — proving the PDF content is indexed like any other source.
@@ -101,9 +98,9 @@ test("uploads a born-digital PDF, publishes it, then reads, searches, annotates,
   const results = page.getByRole("list", { name: "Search results" });
   await expect(results.getByText("Multi Section Sample", { exact: false })).toBeVisible();
 
-  // Existing annotation operates on the canonical blocks: seed a highlight on a mapped block through the
-  // ordinary marks API, then reload the Reader and confirm the inline underline renders (resume + notes
-  // on canonical content, no PDF-specific path).
+  // Existing annotation operates on the canonical blocks: seed a highlight on a mapped block in the
+  // opening unit through the ordinary marks API, then reload the Reader and confirm the inline underline
+  // renders (resume + notes on canonical content, no PDF-specific path).
   await reloadReader(page, readerUrl);
   const block = await blockContaining(page, "canonical block pipeline");
   const word = "canonical";
@@ -127,4 +124,20 @@ test("uploads a born-digital PDF, publishes it, then reads, searches, annotates,
 
   await reloadReader(page, readerUrl);
   await expect(page.getByRole("button", { name: `Open mark on '${word}'` })).toBeVisible();
+
+  // The remaining ReadingUnits are reachable through the Reader's ordinary chapter pager (no PDF-specific
+  // surface): each section header started its own unit, carrying its list and table blocks as canonical
+  // content — proving multiple ordered units mapped and render like any multi-chapter Work.
+  const pager = page.locator('nav[aria-label="Chapter navigation"]');
+  await pager.getByRole("button", { name: /Next/ }).click();
+  await expect(reading.getByText("How Import Works", { exact: false })).toBeVisible();
+  await expect(
+    reading.getByText("Structure and geometry are retained only as ingestion evidence.", {
+      exact: false
+    })
+  ).toBeVisible();
+
+  await pager.getByRole("button", { name: /Next/ }).click();
+  await expect(reading.getByText("What Remains", { exact: false })).toBeVisible();
+  await expect(reading.getByText("Born-digital import", { exact: false })).toBeVisible();
 });

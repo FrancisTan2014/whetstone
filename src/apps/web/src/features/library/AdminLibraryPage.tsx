@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { motion, type Variants } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
-import type { CreateWorkRequest, RecitationPlanDto, WorkListItemDto } from "@whetstone/contracts";
+import type {
+  CreateWorkRequest,
+  RecitationPlanDto,
+  WorkAuthorSelection,
+  WorkListItemDto
+} from "@whetstone/contracts";
 import {
   workLanguageLabels,
   workLanguages,
@@ -134,6 +139,19 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // .epub/.pdf/.md. The Add menu item clicks it to open the OS picker; `onSelectUpload` then routes the
   // chosen file into the existing ingest flow.
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // A stable selection handler for AuthorSelectField (#702). The field reports both the committed
+  // selection and its resolved display name — the born-digital import forwards that name — but it does so
+  // from an effect keyed on this callback, so the identity MUST be stable: an inline arrow would fire that
+  // effect every render and reset a fresh selection object, looping until React aborts. `useState` setters
+  // are stable, so no dependencies are needed.
+  const handleAuthorSelectionChange = useCallback(
+    (selection: WorkAuthorSelection | undefined, name?: string): void => {
+      setAuthorSelection(selection);
+      setAuthorName(name);
+    },
+    []
+  );
 
   async function reload(): Promise<void> {
     const [workList, withPosition, recitation] = await Promise.all([
@@ -641,12 +659,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
                 </select>
               </label>
 
-              <AuthorSelectField
-                onSelectionChange={(selection, name) => {
-                  setAuthorSelection(selection);
-                  setAuthorName(name);
-                }}
-              />
+              <AuthorSelectField onSelectionChange={handleAuthorSelectionChange} />
 
               <Button pending={submitting} type="submit">
                 Create work
