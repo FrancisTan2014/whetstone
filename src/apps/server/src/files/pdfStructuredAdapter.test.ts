@@ -123,9 +123,7 @@ describe("createPdfStructuredAdapter — success", () => {
     if (!outcome.ok) throw new Error("expected success");
 
     expect(validateStructuredDocument(outcome.document).ok).toBe(true);
-    expect(outcome.document.source.sha256).toBe(
-      createHash("sha256").update(bytes).digest("hex")
-    );
+    expect(outcome.document.source.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
     expect(outcome.document.source.byteLength).toBe(bytes.byteLength);
     expect(outcome.document.pages[0]).toEqual({ pageNumber: 1, hasNativeText: true });
     // The default payload's low-confidence unknown item survives to the assembled document.
@@ -264,7 +262,10 @@ describe("createPdfStructuredAdapter — cancellation", () => {
     const handle = await stageFile(new Uint8Array([1]));
     const probe = vi.fn(() => Promise.resolve<ProbeOutcome>({ status: "ok", pageCount: 1 }));
     const adapter = createPdfStructuredAdapter({
-      runner: { probe, convertRange: () => Promise.resolve({ status: "ok", raw: rangePayload(1) }) },
+      runner: {
+        probe,
+        convertRange: () => Promise.resolve({ status: "ok", raw: rangePayload(1) })
+      },
       tempDir: await makeTempDir("whetstone-temp-")
     });
     expectFailure(await adapter.convert(handle, { signal: AbortSignal.abort() }), "cancelled");
@@ -318,7 +319,10 @@ describe("createPdfStructuredAdapter — I/O and cleanup", () => {
     const handle = await stageFile(new Uint8Array([1]));
     const removeWorkingDir = vi.fn(() => Promise.resolve());
     const adapter = createPdfStructuredAdapter({
-      runner: { probe: () => Promise.reject(new Error("boom")), convertRange: () => Promise.reject(new Error("no")) },
+      runner: {
+        probe: () => Promise.reject(new Error("boom")),
+        convertRange: () => Promise.reject(new Error("no"))
+      },
       tempDir: await makeTempDir("whetstone-temp-"),
       removeWorkingDir
     });
@@ -329,8 +333,10 @@ describe("createPdfStructuredAdapter — I/O and cleanup", () => {
   it("describes a non-Error runner rejection as malformed (String cause arm)", async () => {
     const handle = await stageFile(new Uint8Array([1]));
     const adapter = createPdfStructuredAdapter({
-      // eslint-disable-next-line prefer-promise-reject-errors -- exercising the non-Error cause arm
-      runner: { probe: () => Promise.reject("boom-string"), convertRange: () => Promise.reject("no") },
+      runner: {
+        probe: () => Promise.reject("boom-string"),
+        convertRange: () => Promise.reject("no")
+      },
       tempDir: await makeTempDir("whetstone-temp-")
     });
     const outcome = await adapter.convert(handle);

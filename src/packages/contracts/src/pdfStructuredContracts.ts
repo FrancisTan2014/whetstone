@@ -203,7 +203,10 @@ export function parseProbePageCount(raw: string): ProbeParseResult {
   }
   const pageCount = (json as { pageCount?: unknown } | null)?.pageCount;
   if (typeof pageCount !== "number" || !Number.isInteger(pageCount) || pageCount < 0) {
-    return { status: "malformed", detail: "probe did not report a non-negative integer page count." };
+    return {
+      status: "malformed",
+      detail: "probe did not report a non-negative integer page count."
+    };
   }
   return { status: "ok", pageCount };
 }

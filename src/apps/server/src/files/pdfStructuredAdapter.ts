@@ -163,11 +163,7 @@ export function createPdfStructuredAdapter(
     try {
       byteLength = (await stat(handle.path)).size;
     } catch (cause) {
-      return fail(
-        malformedFailure(
-          `staged file could not be read: ${causeMessage(cause)}`
-        )
-      );
+      return fail(malformedFailure(`staged file could not be read: ${causeMessage(cause)}`));
     }
     if (byteLength > limits.maxStagedBytes) {
       return fail(tooLargeFailure(byteLength, limits.maxStagedBytes));
@@ -177,11 +173,7 @@ export function createPdfStructuredAdapter(
     try {
       bytes = await readFile(handle.path);
     } catch (cause) {
-      return fail(
-        malformedFailure(
-          `staged bytes could not be read: ${causeMessage(cause)}`
-        )
-      );
+      return fail(malformedFailure(`staged bytes could not be read: ${causeMessage(cause)}`));
     }
     const sha256 = createHash("sha256").update(bytes).digest("hex");
 
@@ -190,9 +182,7 @@ export function createPdfStructuredAdapter(
       dir = await mkdtemp(join(tempDir, "whetstone-pdf-structured-"));
     } catch (cause) {
       return fail(
-        malformedFailure(
-          `could not create a conversion working directory: ${causeMessage(cause)}`
-        )
+        malformedFailure(`could not create a conversion working directory: ${causeMessage(cause)}`)
       );
     }
 
@@ -204,11 +194,7 @@ export function createPdfStructuredAdapter(
     } catch (cause) {
       // The runner or working-copy write threw unexpectedly (a programming/environment fault, not an
       // expected failure mode). Keep the public contract — resolve with a named failure, not a reject.
-      outcome = fail(
-        malformedFailure(
-          `the conversion could not be run: ${causeMessage(cause)}`
-        )
-      );
+      outcome = fail(malformedFailure(`the conversion could not be run: ${causeMessage(cause)}`));
     }
     // Cleanup is best-effort but VISIBLE: if the working files cannot be removed after an otherwise
     // successful conversion, surface it as a cleanup failure (a real failure keeps priority).
@@ -372,7 +358,10 @@ export function createFakePdfStructuredAdapter(
   config?: FakeDoclingRunnerConfig,
   limits?: Partial<AdapterLimits>
 ): PdfStructuredAdapter {
-  return createPdfStructuredAdapter({ runner: createFakeDoclingRunner(config), limits });
+  return createPdfStructuredAdapter({
+    runner: createFakeDoclingRunner(config),
+    ...(limits ? { limits } : {})
+  });
 }
 
 export type DoclingRunnerDependencies = Readonly<{

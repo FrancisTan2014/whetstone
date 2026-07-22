@@ -119,7 +119,8 @@ export function cleanupFailure(detail: string): PdfStructuredFailure {
   return Object.freeze({
     kind: "cleanup",
     what: `The conversion finished but its temporary working files could not be removed: ${detail}`,
-    remedy: "Free disk/permission on the server temp directory; the staged source is left for retry."
+    remedy:
+      "Free disk/permission on the server temp directory; the staged source is left for retry."
   });
 }
 

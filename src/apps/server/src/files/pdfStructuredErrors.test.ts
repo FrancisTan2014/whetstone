@@ -60,7 +60,8 @@ describe("classifyWorkerExit", () => {
 
   it("prefers cancellation over every other signal", () => {
     expect(
-      classifyWorkerExit({ ...base, cancelled: true, timedOut: true, code: WORKER_EXIT_MEMORY }).kind
+      classifyWorkerExit({ ...base, cancelled: true, timedOut: true, code: WORKER_EXIT_MEMORY })
+        .kind
     ).toBe("cancelled");
   });
 

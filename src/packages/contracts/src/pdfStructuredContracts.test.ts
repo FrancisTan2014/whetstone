@@ -148,7 +148,10 @@ describe("validateStructuredDocument", () => {
   });
 
   it("rejects a bad sha256 with a message", () => {
-    const result = validateStructuredDocument({ ...document, source: { ...document.source, sha256: "xyz" } });
+    const result = validateStructuredDocument({
+      ...document,
+      source: { ...document.source, sha256: "xyz" }
+    });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.detail.length).toBeGreaterThan(0);

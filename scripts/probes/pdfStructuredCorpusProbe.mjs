@@ -140,7 +140,7 @@ async function probeOne(python, pdfPath, rangeSize) {
   if (probe.code !== 0) {
     return finish(start, peakBytes, EXIT_NAMES[probe.code] ?? "unknown", null, null);
   }
-  let pageCount = 0;
+  let pageCount;
   try {
     pageCount = JSON.parse(probe.stdout).pageCount;
   } catch {

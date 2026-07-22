@@ -61,10 +61,9 @@ describe("structured PDF fixtures — contract validation", () => {
     const parsed = parseRangeConversion(fixture(name));
     expect(parsed.status).toBe("ok");
     if (parsed.status !== "ok") throw new Error("expected ok");
-    const document = concatenateRanges(
-      { sha256: "a".repeat(64), byteLength: 1234, pageCount: 1 },
-      [parsed.value]
-    );
+    const document = concatenateRanges({ sha256: "a".repeat(64), byteLength: 1234, pageCount: 1 }, [
+      parsed.value
+    ]);
     expect(validateStructuredDocument(document).ok).toBe(true);
   });
 
