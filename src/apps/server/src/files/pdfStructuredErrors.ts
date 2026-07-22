@@ -23,6 +23,7 @@ export type PdfStructuredFailureKind =
   | "malformed"
   | "unsupported_schema"
   | "tool_missing"
+  | "forbidden_handle"
   | "timeout"
   | "memory"
   | "child_crash"
@@ -80,6 +81,17 @@ export function toolMissingFailure(): PdfStructuredFailure {
     kind: "tool_missing",
     what: "The PDF converter (Python + pinned Docling/docling-core + models) is not available.",
     remedy: SETUP_REMEDY
+  });
+}
+
+// A staged-file handle that did not come from `issueStagedFileHandle` is refused before any read, so
+// the adapter can never be steered to open an arbitrary server path via a hand-constructed handle.
+export function forbiddenHandleFailure(): PdfStructuredFailure {
+  return Object.freeze({
+    kind: "forbidden_handle",
+    what: "The staged-file handle was not issued by the server; it was refused before any read.",
+    remedy:
+      "Obtain the staged file through `issueStagedFileHandle`; never construct a handle by hand."
   });
 }
 

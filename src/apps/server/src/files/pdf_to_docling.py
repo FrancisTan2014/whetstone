@@ -103,9 +103,10 @@ def _load_resource_module() -> Any:
 def build_converter() -> Any:  # pragma: no cover - real models; covered by the skip-guarded lane.
     """Build a Docling converter with every OCR engine disabled via its pipeline options.
 
-    Imported lazily so a missing doc-AI lane surfaces as ImportError (handled in ``main``) rather than
-    a module-load crash. OCR is OFF because this is the born-digital slice (#701): scanned pages are
-    reported, not OCR'd (that is #704's language-aware job).
+    Imported lazily so a missing doc-AI lane surfaces as ImportError (classified as a missing
+    dependency in ``run_range``) rather than a module-load crash. OCR is OFF because this is the
+    born-digital slice (#701): scanned pages are reported, not OCR'd (that is #704's language-aware
+    job).
     """
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -133,12 +134,14 @@ def open_backend(pdf_path: str) -> Any:  # pragma: no cover - real pypdfium2; sk
 def count_pages(pdf_path: str, opener: Callable[[str], Any]) -> int:
     """Count pages via the injected opener; translate an open/permission failure into a named error.
 
-    A ``PasswordRequired`` bubbles up unchanged; any other open failure is a ``ConversionFailed`` so a
-    corrupt file is a distinct exit from an encrypted one.
+    A ``PasswordRequired`` bubbles up unchanged, and a missing PDF backend (``ImportError`` from the
+    lazy ``pypdfium2``/docling import) bubbles up so the caller can classify it as a missing dependency
+    rather than a corrupt file; any other open failure is a ``ConversionFailed`` so a corrupt file is a
+    distinct exit from an encrypted one.
     """
     try:
         document = opener(pdf_path)
-    except PasswordRequired:
+    except (PasswordRequired, ImportError):
         raise
     except Exception as error:  # noqa: BLE001 - classify any open failure, never crash raw.
         raise ConversionFailed(f"could not open PDF: {error}") from error
@@ -348,6 +351,12 @@ def run_probe(
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
         return EXIT_PASSWORD_REQUIRED
+    except ImportError as error:
+        _write(
+            stderr,
+            f"pdf tooling is not installed ({error}); run `pnpm setup:pdf` to enable PDF ingestion.\n",
+        )
+        return EXIT_MISSING_DEPENDENCY
     except ConversionFailed as error:
         _write(stderr, f"pdf probe failed for {pdf_path}: {error}\n")
         return EXIT_CONVERSION_FAILED
@@ -374,6 +383,12 @@ def run_range(
     except UnsupportedSchema as error:
         _write(stderr, f"unsupported DoclingDocument schema version: {error.version}\n")
         return EXIT_UNSUPPORTED_SCHEMA
+    except ImportError as error:
+        _write(
+            stderr,
+            f"pdf tooling is not installed ({error}); run `pnpm setup:pdf` to enable PDF ingestion.\n",
+        )
+        return EXIT_MISSING_DEPENDENCY
     except Exception as error:  # noqa: BLE001 - classify any conversion failure, never crash raw.
         _write(stderr, f"pdf conversion failed for {pdf_path}: {error}\n")
         return EXIT_CONVERSION_FAILED

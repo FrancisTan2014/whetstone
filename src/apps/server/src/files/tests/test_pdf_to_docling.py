@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pdf_to_docling import (  # noqa: E402  (path set above)
     DOCLING_SCHEMA_NAME,
     EXIT_CONVERSION_FAILED,
+    EXIT_MISSING_DEPENDENCY,
     EXIT_OK,
     EXIT_PASSWORD_REQUIRED,
     EXIT_UNSUPPORTED_SCHEMA,
@@ -258,6 +259,15 @@ class CountPagesTests(unittest.TestCase):
         with self.assertRaises(ConversionFailed):
             count_pages("/tmp/a.pdf", opener)
 
+    def test_missing_backend_import_bubbles_up(self):
+        # A missing PDF backend (pypdfium2/docling) raises ImportError from the lazy import. It must
+        # bubble up unwrapped so the caller classifies it as a missing dependency, not a corrupt file.
+        def opener(_path):
+            raise ModuleNotFoundError("No module named 'pypdfium2'")
+
+        with self.assertRaises(ImportError):
+            count_pages("/tmp/a.pdf", opener)
+
 
 # --- Memory ceiling ----------------------------------------------------------------------------
 
@@ -366,6 +376,17 @@ class RunProbeTests(unittest.TestCase):
         self.assertEqual(code, EXIT_CONVERSION_FAILED)
         self.assertIn("probe failed", stderr.getvalue())
 
+    def test_missing_dependency_probe_exits_missing_dependency(self):
+        # A missing pypdfium2/docling install must self-classify as tool_missing (exit 3), so the Node
+        # adapter surfaces an actionable "run pnpm setup:pdf" remedy instead of a bare conversion error.
+        def opener(_path):
+            raise ModuleNotFoundError("No module named 'pypdfium2'")
+
+        stderr = io.StringIO()
+        code = run_probe("/tmp/a.pdf", opener, io.StringIO(), stderr)
+        self.assertEqual(code, EXIT_MISSING_DEPENDENCY)
+        self.assertIn("setup:pdf", stderr.getvalue())
+
 
 class RunRangeTests(unittest.TestCase):
     def _factory(self, doc):
@@ -417,6 +438,32 @@ class RunRangeTests(unittest.TestCase):
         )
         self.assertEqual(code, EXIT_CONVERSION_FAILED)
         self.assertIn("conversion failed", stderr.getvalue())
+
+    def test_missing_converter_import_exits_missing_dependency(self):
+        # A missing docling install surfaces as ImportError from build_converter's lazy import; the
+        # range worker must classify it as tool_missing (exit 3), not a generic conversion failure.
+        def raising_factory():
+            raise ModuleNotFoundError("No module named 'docling'")
+
+        stderr = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf", 1, 1, raising_factory, lambda _p: (lambda page: True), io.StringIO(), stderr
+        )
+        self.assertEqual(code, EXIT_MISSING_DEPENDENCY)
+        self.assertIn("setup:pdf", stderr.getvalue())
+
+    def test_missing_prober_import_exits_missing_dependency(self):
+        # The native-text prober opens the PDF via the same lazy pypdfium2 import; a missing backend
+        # there must also classify as tool_missing (exit 3) rather than a conversion failure.
+        def prober(_path):
+            raise ModuleNotFoundError("No module named 'pypdfium2'")
+
+        stderr = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf", 1, 1, self._factory(FakeDoc()), prober, io.StringIO(), stderr
+        )
+        self.assertEqual(code, EXIT_MISSING_DEPENDENCY)
+        self.assertIn("setup:pdf", stderr.getvalue())
 
 
 # --- main() argument parsing / dispatch --------------------------------------------------------

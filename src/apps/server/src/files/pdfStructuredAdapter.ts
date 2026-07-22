@@ -17,6 +17,7 @@ import {
   cancelledFailure,
   classifyWorkerExit,
   cleanupFailure,
+  forbiddenHandleFailure,
   malformedFailure,
   passwordRequiredFailure,
   toolMissingFailure,
@@ -36,7 +37,24 @@ import { resolveWithinDirectory } from "./sourceFileStore.js";
 // A server-issued reference to staged bytes. Only the server constructs it (via issueStagedFileHandle
 // from a name it generated), so the adapter never accepts a user-supplied path and cannot be steered
 // outside the stage directory. #721 owns the stage's creation and removal; #701 only reads through it.
-export type StagedFileHandle = Readonly<{ path: string; stageRoot: string }>;
+//
+// The handle is UNFORGEABLE at the module boundary: it carries a module-private witness symbol that
+// only `issueStagedFileHandle` can stamp. A caller cannot name the symbol, so it cannot build a
+// conforming literal (compile time); and `convert` re-checks the witness at runtime, so a handle cast
+// past the type (e.g. `{ path, stageRoot } as StagedFileHandle`) is refused before any filesystem read.
+const stagedFileHandleWitness: unique symbol = Symbol("whetstone.pdf.stagedFileHandle");
+
+export type StagedFileHandle = Readonly<{
+  path: string;
+  stageRoot: string;
+  readonly [stagedFileHandleWitness]: true;
+}>;
+
+// True only for a handle stamped by `issueStagedFileHandle`. Read defensively (a forged value has no
+// such property at runtime, so the declared `true` type must not short-circuit the check).
+function isServerIssued(handle: StagedFileHandle): boolean {
+  return (handle as unknown as Record<symbol, unknown>)[stagedFileHandleWitness] === true;
+}
 
 // A simple server-issued name only (letters, digits, dot, hyphen, underscore); never `.`/`..` and
 // never a path with separators. Resolved within the stage root so a crafted name cannot escape it.
@@ -47,7 +65,11 @@ export function issueStagedFileHandle(stageRoot: string, stagedName: string): St
     throw new Error("Staged file name must be a simple, server-issued name without path segments.");
   }
   const path = resolveWithinDirectory(stageRoot, stagedName);
-  return Object.freeze({ path, stageRoot: resolve(stageRoot) });
+  return Object.freeze({
+    path,
+    stageRoot: resolve(stageRoot),
+    [stagedFileHandleWitness]: true as const
+  });
 }
 
 export type ProbeOutcome =
@@ -153,6 +175,12 @@ export function createPdfStructuredAdapter(
     handle: StagedFileHandle,
     signal: AbortSignal | undefined
   ): Promise<StructuredConversionOutcome> {
+    // Refuse any handle that was not issued by the server BEFORE touching the filesystem, so a forged
+    // or cast handle can never steer a read to an arbitrary path (path/data-integrity first).
+    if (!isServerIssued(handle)) {
+      return fail(forbiddenHandleFailure());
+    }
+
     if (signal?.aborted === true) {
       return fail(cancelledFailure());
     }

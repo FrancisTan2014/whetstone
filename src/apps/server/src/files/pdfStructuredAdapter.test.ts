@@ -90,6 +90,31 @@ describe("issueStagedFileHandle", () => {
   });
 });
 
+describe("createPdfStructuredAdapter — forged handle", () => {
+  it("refuses a fabricated/out-of-root handle before any filesystem read", async () => {
+    // A handle NOT produced by issueStagedFileHandle carries no server witness, so even one pointing
+    // at an arbitrary absolute path outside any stage root must be refused before stat/readFile runs.
+    const forged = {
+      path: "/etc/passwd",
+      stageRoot: "/etc"
+    } as unknown as StagedFileHandle;
+
+    const probe = vi.fn(() => Promise.resolve<ProbeOutcome>({ status: "ok", pageCount: 1 }));
+    const adapter = createPdfStructuredAdapter({
+      runner: {
+        probe,
+        convertRange: () => Promise.resolve({ status: "ok", raw: rangePayload(1) })
+      },
+      tempDir: await makeTempDir("whetstone-temp-")
+    });
+
+    const outcome = await adapter.convert(forged);
+    expectFailure(outcome, "forbidden_handle");
+    // The read never started: the runner was never consulted for a forged handle.
+    expect(probe).not.toHaveBeenCalled();
+  });
+});
+
 describe("pageRangesFor", () => {
   it("splits into contiguous source-ordered ranges of at most `size` pages", () => {
     expect(pageRangesFor(5, 2)).toEqual([
