@@ -69,7 +69,7 @@ export function registerContentRoutes(
         "work_epub_ingested"
       );
 
-      return reply.code(result.status === "duplicate" ? 200 : 201).send(result.result);
+      return reply.code(result.status === "exact_existing" ? 200 : 201).send(result.result);
     }
   );
 

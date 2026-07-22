@@ -1,6 +1,5 @@
-import { toAuthorId, toEntryId, type AuthorId } from "@whetstone/domain";
-import type { IngestEpubResultDto, WorkDto } from "@whetstone/contracts";
-import { eq } from "drizzle-orm";
+import { toEntryId, type AuthorId } from "@whetstone/domain";
+import type { IngestEpubResultDto } from "@whetstone/contracts";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, workMeta, workSources } from "../../db/schema.js";
@@ -10,28 +9,30 @@ import { writeReadingUnits } from "./blockWriter.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import { applyContentFilters, defaultContentFilters } from "./contentFilters.js";
 import { resolveChapters } from "./figureImageResolver.js";
-import { assertContentPersisted } from "./insertBatching.js";
-import { loadWorkContent } from "./contentQueries.js";
+import { claimUploadedSource, findClaimedWork } from "./sourceClaims.js";
 import { writeTocEntries } from "./tocWriter.js";
 
 export type IngestEpubResult =
-  | Readonly<{ result: IngestEpubResultDto; status: "duplicate" }>
-  | Readonly<{ result: IngestEpubResultDto; status: "ingested" }>
+  | Readonly<{ result: IngestEpubResultDto; status: "exact_existing" }>
+  | Readonly<{ result: IngestEpubResultDto; status: "created" }>
   | Readonly<{ status: "invalid_epub" }>;
 
 // EPUB uploads create a Work in one step: the OPF supplies title/author/language and
 // the spine supplies ordered chapters, each decomposed into a reading unit of blocks.
-// Re-uploading identical bytes (same sha256) is a no-op that returns the existing work.
+// Re-uploading identical bytes (same sha256) reopens the existing Work through the shared
+// uploaded-source claim boundary (#706) instead of creating a duplicate.
 export async function ingestEpub(
   dependencies: ContentDependencies,
   bytes: Uint8Array
 ): Promise<IngestEpubResult> {
   const sha256 = dependencies.sourceFileStore.hashBytes(bytes);
 
-  const existing = await findWorkBySha256(dependencies.db, sha256);
+  // Reopen an already-claimed upload before doing any parse/image work: identical bytes resolve to
+  // the one owning Work regardless of the format.
+  const claimed = await findClaimedWork(dependencies.db, sha256);
 
-  if (existing !== undefined) {
-    return { result: existing, status: "duplicate" };
+  if (claimed !== undefined) {
+    return { result: { content: claimed.content, work: claimed.work }, status: "exact_existing" };
   }
 
   let parsed;
@@ -51,7 +52,6 @@ export async function ingestEpub(
   }
 
   const sourceId = dependencies.createSourceId();
-  const written = await dependencies.sourceFileStore.writeEpubSource({ bytes, id: sourceId });
   // Figure images are stored (content-addressed) up front so each figure block can be
   // stamped with its resolved imageResourceId before the content is written. The clean-plugin
   // pipeline (#275) then trims publisher boilerplate units before they reach block-write.
@@ -63,68 +63,68 @@ export async function ingestEpub(
   // silently. Called unconditionally (an empty batch is a no-op) so the path runs in the real flow.
   dependencies.ingestionLogger(units.flatMap((unit) => unit.evidence));
 
-  const workEntryId = toEntryId(dependencies.createEntryId());
-  const authorId = await dependencies.db.transaction(async (tx) => {
-    const resolvedAuthorId = await resolveAuthorByName(tx, dependencies, parsed.metadata.author);
-    await tx.insert(entries).values({ id: workEntryId, type: "work" });
-    await tx.insert(workMeta).values({
-      authorId: resolvedAuthorId,
-      entryId: workEntryId,
-      language: parsed.metadata.language,
-      origin: "imported",
-      title: parsed.metadata.title,
-      workType: "book"
-    });
-    await tx.insert(workSources).values({
-      fileName: null,
-      filePath: written.path,
-      id: sourceId,
-      kind: "upload",
-      sha256: written.sha256,
-      sourceText: null,
-      workEntryId
-    });
-    await writeReadingUnits(tx, {
-      createEntryId: dependencies.createEntryId,
-      startOrder: 0,
-      units,
-      workEntryId
-    });
+  const expectedBlockCount = units.reduce((total, unit) => total + unit.blocks.length, 0);
 
-    // Persist the EPUB's authored nav tree (#379), after units exist so its entries can later be
-    // matched to reading units by `source_file` at serve time. Fail-soft: no nav — or an
-    // unparseable/empty one — persists no toc_entries and never fails the ingest.
-    if (parsed.nav !== undefined) {
-      await writeTocEntries(tx, {
-        createEntryId: dependencies.createEntryId,
-        navEntries: parseNavDocument(parsed.nav.source, parsed.nav.kind),
-        navPath: parsed.nav.path,
+  const outcome = await claimUploadedSource(dependencies.db, {
+    sha256,
+    stage: () => dependencies.sourceFileStore.writeEpubSource({ bytes, id: sourceId }),
+    releaseStage: (written) => dependencies.sourceFileStore.deleteSourceFile(written.path),
+    commit: async (tx, written) => {
+      const workEntryId = toEntryId(dependencies.createEntryId());
+      const authorId = await resolveAuthorByName(tx, dependencies, parsed.metadata.author);
+      await tx.insert(entries).values({ id: workEntryId, type: "work" });
+      await tx.insert(workMeta).values({
+        authorId,
+        entryId: workEntryId,
+        language: parsed.metadata.language,
+        origin: "imported",
+        title: parsed.metadata.title,
+        workType: "book"
+      });
+      await tx.insert(workSources).values({
+        fileName: null,
+        filePath: written.path,
+        id: sourceId,
+        kind: "upload",
+        sha256: written.sha256,
+        sourceText: null,
         workEntryId
       });
-    }
+      await writeReadingUnits(tx, {
+        createEntryId: dependencies.createEntryId,
+        startOrder: 0,
+        units,
+        workEntryId
+      });
 
-    return resolvedAuthorId;
+      // Persist the EPUB's authored nav tree (#379), after units exist so its entries can later be
+      // matched to reading units by `source_file` at serve time. Fail-soft: no nav — or an
+      // unparseable/empty one — persists no toc_entries and never fails the ingest.
+      if (parsed.nav !== undefined) {
+        await writeTocEntries(tx, {
+          createEntryId: dependencies.createEntryId,
+          navEntries: parseNavDocument(parsed.nav.source, parsed.nav.kind),
+          navPath: parsed.nav.path,
+          workEntryId
+        });
+      }
+
+      return {
+        expectedBlockCount,
+        work: {
+          authorId,
+          entryId: workEntryId,
+          language: parsed.metadata.language,
+          origin: "imported",
+          title: parsed.metadata.title,
+          workType: "book"
+        },
+        workEntryId
+      };
+    }
   });
 
-  const work: WorkDto = {
-    authorId,
-    entryId: workEntryId,
-    language: parsed.metadata.language,
-    origin: "imported",
-    title: parsed.metadata.title,
-    workType: "book"
-  };
-
-  const expectedBlockCount = units.reduce((total, unit) => total + unit.blocks.length, 0);
-  const content = assertContentPersisted(
-    expectedBlockCount,
-    await loadWorkContent(dependencies.db, workEntryId)
-  );
-
-  return {
-    result: { content, work },
-    status: "ingested"
-  };
+  return { result: { content: outcome.content, work: outcome.work }, status: outcome.status };
 }
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -137,40 +137,4 @@ async function resolveAuthorByName(
   const resolved = await resolveNamedAuthor(tx, dependencies.createAuthorId, name);
 
   return resolved.author.id;
-}
-
-async function findWorkBySha256(
-  db: DbClient,
-  sha256: string
-): Promise<IngestEpubResultDto | undefined> {
-  const rows = await db
-    .select({
-      authorId: workMeta.authorId,
-      entryId: workMeta.entryId,
-      language: workMeta.language,
-      origin: workMeta.origin,
-      title: workMeta.title,
-      workType: workMeta.workType
-    })
-    .from(workSources)
-    .innerJoin(workMeta, eq(workMeta.entryId, workSources.workEntryId))
-    .where(eq(workSources.sha256, sha256))
-    .limit(1);
-  const row = rows[0];
-
-  if (row === undefined) {
-    return undefined;
-  }
-
-  const workEntryId = toEntryId(row.entryId);
-  const work: WorkDto = {
-    authorId: toAuthorId(row.authorId),
-    entryId: workEntryId,
-    language: row.language,
-    origin: row.origin,
-    title: row.title,
-    workType: row.workType
-  };
-
-  return { content: await loadWorkContent(db, workEntryId), work };
 }

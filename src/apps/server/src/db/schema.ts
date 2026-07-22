@@ -256,6 +256,20 @@ export const workSources = pgTable(
   (table) => [index("work_sources_work_idx").on(table.workEntryId)]
 );
 
+// The single-owner claim on a set of uploaded bytes (#706). SHA-256 proves source identity: identical
+// uploaded bytes are one claim, so re-uploading the same EPUB/Markdown/PDF reopens the owning Work
+// instead of creating a duplicate. Only `origin = 'imported'`, `kind = 'upload'` bytes are claimed;
+// manual source text never participates. The `sha256` primary key makes the claim race-safe — the
+// transaction that creates a Work + its source inserts the claim atomically, so a concurrent loser
+// fails the insert, rolls back, and reopens the winner. `work_entry_id` is not unique: one Work can
+// own several claims as its uploaded source is revised over time.
+export const uploadedSourceClaims = pgTable("uploaded_source_claims", {
+  sha256: text("sha256").primaryKey(),
+  workEntryId: text("work_entry_id")
+    .notNull()
+    .references(() => entries.id)
+});
+
 // A note is an Entry annotating a source block (#619). `kind` discriminates the two shapes a note row
 // can take: a `note` carries a canonical rich ProseMirror/Tiptap document (`body_doc`) plus its
 // server-derived readable projection (`body_text`); a `mark` is a one-tap bodyless highlight (a "Gem",
