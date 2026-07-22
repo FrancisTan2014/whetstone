@@ -1,0 +1,3 @@
+# The structured-PDF real-lane test reads sample.pdf byte-for-byte (its sha256 is asserted and its
+# xref offsets must stay exact), so it must never be EOL-normalized. Keep every PDF here binary.
+*.pdf binary

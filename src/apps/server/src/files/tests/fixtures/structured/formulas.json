@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "1.10.0" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "formula",
+      "pageNumber": 1,
+      "boundingBox": { "left": 200, "top": 300, "right": 400, "bottom": 340 },
+      "charSpan": [0, 8],
+      "confidence": 0.71,
+      "text": "E = mc^2",
+      "children": []
+    }
+  ],
+  "furniture": []
+}

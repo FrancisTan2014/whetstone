@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "1.10.0" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "table",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 120, "right": 560, "bottom": 300 },
+      "charSpan": [0, 0],
+      "confidence": 0.88,
+      "text": "",
+      "children": [
+        {
+          "label": "table_row",
+          "pageNumber": 1,
+          "boundingBox": { "left": 40, "top": 120, "right": 560, "bottom": 160 },
+          "charSpan": [0, 0],
+          "confidence": 0.88,
+          "text": "",
+          "children": [
+            {
+              "label": "table_cell",
+              "pageNumber": 1,
+              "boundingBox": { "left": 40, "top": 120, "right": 300, "bottom": 160 },
+              "charSpan": [0, 4],
+              "confidence": 0.9,
+              "text": "Term",
+              "children": []
+            },
+            {
+              "label": "table_cell",
+              "pageNumber": 1,
+              "boundingBox": { "left": 300, "top": 120, "right": 560, "bottom": 160 },
+              "charSpan": [5, 15],
+              "confidence": 0.9,
+              "text": "Definition",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "furniture": []
+}

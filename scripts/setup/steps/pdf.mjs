@@ -19,6 +19,38 @@ const PYTHON_REMEDY =
   "`brew install python`), then re-run `pnpm setup:pdf`.";
 
 const DOCLING_DOCS = "https://github.com/docling-project/docling";
+
+// Pinned Docling runtime + model artifacts for the structured adapter (#701). In LOCKSTEP with the
+// PINNED_* constants in src/packages/contracts/src/pdfStructuredContracts.ts — this .mjs cannot import
+// the .ts, so update both together. Setup reports the PDF lane ready only when these EXACT versions
+// and the pinned model snapshot are present locally, so a drifting Docling can never silently change
+// structured output or leave a first conversion to a surprise network download.
+const PINNED_DOCLING_VERSION = "2.114.0";
+const PINNED_DOCLING_CORE_VERSION = "2.87.1";
+const PINNED_MODEL_REPO = "docling-project/docling-models";
+// Pin the IMMUTABLE commit SHA, not the mutable `v2.3.0` tag: a moved tag can otherwise resolve to
+// different artifacts and still pass readiness. `PINNED_MODEL_TAG` is a human-readable label only —
+// setup downloads and verifies the exact commit below. Keep both in lockstep with the contract.
+const PINNED_MODEL_TAG = "v2.3.0";
+const PINNED_MODEL_COMMIT = "fc0f2d45e2218ea24bce5045f58a389aed16dc23";
+
+// One-line Python probes (stable so the setup tests can match them). The version probe exits non-zero
+// unless BOTH pinned versions are installed; the model probe loads the pinned snapshot from cache only
+// (`local_files_only=True`) at the exact pinned commit, exiting non-zero when it is not already
+// downloaded at that fingerprint.
+const VERSION_PROBE =
+  `import importlib.metadata as m,sys;` +
+  `sys.exit(0 if m.version('docling')=='${PINNED_DOCLING_VERSION}' ` +
+  `and m.version('docling-core')=='${PINNED_DOCLING_CORE_VERSION}' else 1)`;
+const MODEL_PROBE =
+  `from huggingface_hub import snapshot_download;` +
+  `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_COMMIT}',local_files_only=True)`;
+const MODEL_DOWNLOAD =
+  `from huggingface_hub import snapshot_download;` +
+  `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_COMMIT}')`;
+
+const DOCLING_PIN_REMEDY = "Run `pnpm setup:pdf` to install the exact pinned versions.";
+const MODEL_REMEDY = "Run `pnpm setup:pdf` to download the exact pinned model snapshot.";
 const OCRMYPDF_DOCS = "https://ocrmypdf.readthedocs.io/en/latest/installation.html";
 const OCRMYPDF_REMEDY =
   "Install OCRmyPDF (`brew install ocrmypdf` / `sudo apt install ocrmypdf`, or on Windows see " +
@@ -119,8 +151,25 @@ export function probePdfLane(ctx) {
   }
   if (ctx.exec(python, ["-c", "import docling"]).code !== 0) {
     return missing(
-      "The Docling Python package is not installed (required to convert PDFs to Markdown).",
+      "The Docling Python package is not installed (required to convert PDFs to structured JSON).",
       "Run `pnpm setup:pdf` to install it.",
+      DOCLING_DOCS
+    );
+  }
+  if (ctx.exec(python, ["-c", VERSION_PROBE]).code !== 0) {
+    return missing(
+      `Docling is installed but not the pinned versions the structured adapter requires ` +
+        `(docling==${PINNED_DOCLING_VERSION}, docling-core==${PINNED_DOCLING_CORE_VERSION}).`,
+      DOCLING_PIN_REMEDY,
+      DOCLING_DOCS
+    );
+  }
+  if (ctx.exec(python, ["-c", MODEL_PROBE]).code !== 0) {
+    return missing(
+      `The pinned Docling model artifacts ` +
+        `(${PINNED_MODEL_REPO}@${PINNED_MODEL_COMMIT}, tag ${PINNED_MODEL_TAG}) are not ` +
+        `available locally (required for a reproducible, offline-ready conversion).`,
+      MODEL_REMEDY,
       DOCLING_DOCS
     );
   }
@@ -159,14 +208,38 @@ export const pdfStep = {
     }
     // pythonCheck (installSystemTool's source of truth) just passed, so an interpreter resolves here.
     const python = resolvePython(ctx);
-    if (ctx.exec(python, ["-c", "import docling"]).code !== 0) {
-      const pip = ctx.exec(python, ["-m", "pip", "install", "docling"]);
+    // Install the EXACT pinned runtime when it is not already present — the structured adapter's output
+    // is only reproducible against these versions, so "some docling" is not enough.
+    if (ctx.exec(python, ["-c", VERSION_PROBE]).code !== 0) {
+      const pip = ctx.exec(python, [
+        "-m",
+        "pip",
+        "install",
+        `docling==${PINNED_DOCLING_VERSION}`,
+        `docling-core==${PINNED_DOCLING_CORE_VERSION}`
+      ]);
       if (pip.code !== 0) {
         return error(
-          "`pip install docling` failed.",
+          "`pip install docling` (pinned) failed.",
           withOutputTail(
             "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup:pdf`.",
             pip
+          ),
+          DOCLING_DOCS
+        );
+      }
+    }
+    // Pre-fetch the pinned model snapshot so readiness means "offline-ready", not "will download on the
+    // first conversion". Skipped when the snapshot is already cached.
+    if (ctx.exec(python, ["-c", MODEL_PROBE]).code !== 0) {
+      const download = ctx.exec(python, ["-c", MODEL_DOWNLOAD]);
+      if (download.code !== 0) {
+        return error(
+          `Downloading the pinned Docling models ` +
+            `(${PINNED_MODEL_REPO}@${PINNED_MODEL_COMMIT}, tag ${PINNED_MODEL_TAG}) failed.`,
+          withOutputTail(
+            "Check your network/proxy and Hugging Face access, then re-run `pnpm setup:pdf`.",
+            download
           ),
           DOCLING_DOCS
         );

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "1.10.0" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "some_unknown_label",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 100, "right": 560, "bottom": 160 },
+      "charSpan": [0, 19],
+      "confidence": 0.18,
+      "text": "Uncertain fragment.",
+      "children": []
+    }
+  ],
+  "furniture": []
+}

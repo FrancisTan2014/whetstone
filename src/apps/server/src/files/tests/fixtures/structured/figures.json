@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "1.10.0" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "picture",
+      "pageNumber": 1,
+      "boundingBox": { "left": 80, "top": 120, "right": 520, "bottom": 420 },
+      "charSpan": [0, 0],
+      "confidence": 0.82,
+      "text": "",
+      "children": [
+        {
+          "label": "caption",
+          "pageNumber": 1,
+          "boundingBox": { "left": 80, "top": 425, "right": 520, "bottom": 450 },
+          "charSpan": [0, 20],
+          "confidence": 0.94,
+          "text": "Figure 1: A diagram.",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "furniture": []
+}

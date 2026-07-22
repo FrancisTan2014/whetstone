@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "1.10.0" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "text",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 100, "right": 560, "bottom": 160 },
+      "charSpan": [0, 39],
+      "confidence": 0.95,
+      "text": "「引用」，测试 α β — em-dash… and ‘smart quotes’.",
+      "children": []
+    }
+  ],
+  "furniture": []
+}
