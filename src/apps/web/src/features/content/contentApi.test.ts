@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchWorkContent, fetchWorks, ingestMarkdown, ingestPdf } from "./contentApi";
+import { fetchWorkContent, fetchWorks, ingestMarkdown } from "./contentApi";
 
 function stubFetch(response: {
   ok: boolean;
@@ -124,62 +124,5 @@ describe("contentApi", () => {
     stubFetch({ ok: false, status: 404 });
 
     await expect(fetchWorkContent("missing")).rejects.toThrow("failed with status 404");
-  });
-
-  // jsdom's File lacks arrayBuffer() in this environment; supply the bytes the api will POST.
-  function pdfFile(bytes: Uint8Array): File {
-    return {
-      arrayBuffer: async () => bytes.buffer,
-      name: "doc.pdf",
-      type: "application/pdf"
-    } as unknown as File;
-  }
-
-  it("posts a PDF's bytes to the pdf route and returns the ingested content", async () => {
-    const content = { readingUnits: [], workEntryId: "work-1" };
-    const fetchMock = stubFetch({ body: content, ok: true, status: 201 });
-    const bytes = new Uint8Array([1, 2, 3]);
-
-    await expect(ingestPdf("work 1", pdfFile(bytes))).resolves.toEqual({
-      content,
-      status: "ingested"
-    });
-    expect(fetchMock).toHaveBeenCalledWith("/api/works/work%201/content/pdf", {
-      body: bytes.buffer,
-      headers: { "content-type": "application/pdf" },
-      method: "POST"
-    });
-  });
-
-  it("reports invalid_pdf when the worker cannot read the PDF (422)", async () => {
-    stubFetch({ body: { error: "invalid_pdf" }, ok: false, status: 422 });
-
-    await expect(ingestPdf("work-1", pdfFile(new Uint8Array([1])))).resolves.toEqual({
-      status: "invalid_pdf"
-    });
-  });
-
-  it("reports empty_content when the PDF yields no readable blocks (422)", async () => {
-    stubFetch({ body: { error: "empty_content" }, ok: false, status: 422 });
-
-    await expect(ingestPdf("work-1", pdfFile(new Uint8Array([1])))).resolves.toEqual({
-      status: "empty_content"
-    });
-  });
-
-  it("reports pdf_toolchain_missing when the server's PDF lane is not provisioned (503) (#510)", async () => {
-    stubFetch({ body: { error: "pdf_toolchain_missing" }, ok: false, status: 503 });
-
-    await expect(ingestPdf("work-1", pdfFile(new Uint8Array([1])))).resolves.toEqual({
-      status: "pdf_toolchain_missing"
-    });
-  });
-
-  it("throws when ingesting a PDF fails with another status", async () => {
-    stubFetch({ ok: false, status: 500 });
-
-    await expect(ingestPdf("work-1", pdfFile(new Uint8Array([1])))).rejects.toThrow(
-      "failed with status 500"
-    );
   });
 });

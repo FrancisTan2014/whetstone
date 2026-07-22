@@ -76,8 +76,9 @@ describe("AuthorSelectField", () => {
     const { onSelectionChange } = renderField();
 
     expect(screen.getByText("Searching authors and sources.")).toBeDefined();
-    // With nothing committed, the field reports no selection so the form blocks an implicit create.
-    expect(onSelectionChange).toHaveBeenLastCalledWith(undefined);
+    // With nothing committed, the field reports no selection (and no name) so the form blocks an
+    // implicit create.
+    expect(onSelectionChange).toHaveBeenLastCalledWith(undefined, undefined);
   });
 
   it("lists the full canonical set for a blank query and reports the result count", async () => {
@@ -149,6 +150,9 @@ describe("AuthorSelectField", () => {
     await user.click(addOption);
 
     expect(lastSelection(onSelectionChange)).toEqual({ mode: "new", name: "Grace Hopper" });
+    // The resolved display name is reported alongside the selection so a name-addressed lane (#702)
+    // can forward the entered author without a second lookup.
+    expect(onSelectionChange).toHaveBeenLastCalledWith({ mode: "new", name: "Grace Hopper" }, "Grace Hopper");
   });
 
   it("shows a first-run hint when the library has no authors yet", async () => {
@@ -170,6 +174,11 @@ describe("AuthorSelectField", () => {
     await user.type(input, "Kleppmann");
     await user.click(await screen.findByText("Martin Kleppmann"));
     expect(lastSelection(onSelectionChange)).toEqual({ authorId: kleppmann.id, mode: "existing" });
+    // An existing pick reports the author's display name for the name-addressed lane (#702).
+    expect(onSelectionChange).toHaveBeenLastCalledWith(
+      { authorId: kleppmann.id, mode: "existing" },
+      "Martin Kleppmann"
+    );
 
     // Editing the committed text returns to pure search; with no exact match nothing is committed.
     await user.type(input, " extra");
@@ -209,6 +218,11 @@ describe("AuthorSelectField", () => {
     await waitFor(() => {
       expect(lastSelection(onSelectionChange)).toEqual({ authorId: fowler.id, mode: "existing" });
     });
+    // An exact-match commit reports the matched query as the display name for the name-addressed lane.
+    expect(onSelectionChange).toHaveBeenLastCalledWith(
+      { authorId: fowler.id, mode: "existing" },
+      "Martin Fowler"
+    );
 
     // Edit to a new non-exact name; the next search is enqueued but left in flight.
     await user.type(input, "x");

@@ -5,7 +5,6 @@ import type {
   WorkListDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { pdfContentType } from "@whetstone/contracts";
 
 import { apiUrl } from "../../shared/runtime";
 
@@ -70,44 +69,6 @@ export async function ingestMarkdown(
 
   if (response.status === 422) {
     return { status: "empty_content" };
-  }
-
-  if (!response.ok) {
-    throw new Error(`Request to ${path} failed with status ${response.status}.`);
-  }
-
-  return { content: (await response.json()) as WorkContentDto, status: "ingested" };
-}
-
-// Ingesting a PDF hands its raw bytes to the server's doc-AI worker, which converts it into the same
-// block pipeline as a .md upload. It can fail three distinct ways the panel messages differently: the
-// worker could not read the PDF (422 `invalid_pdf`), it produced no readable blocks (422
-// `empty_content`), or the host's PDF toolchain is not installed (503 `pdf_toolchain_missing`, a
-// provisioning gap — not a bad file). The 422s are distinguished by the response body's `error`.
-export type IngestPdfOutcome =
-  | Readonly<{ content: WorkContentDto; status: "ingested" }>
-  | Readonly<{ status: "invalid_pdf" }>
-  | Readonly<{ status: "pdf_toolchain_missing" }>
-  | Readonly<{ status: "empty_content" }>;
-
-export async function ingestPdf(workEntryId: string, file: File): Promise<IngestPdfOutcome> {
-  const path = apiUrl(`/works/${encodeURIComponent(workEntryId)}/content/pdf`);
-  const response = await fetch(path, {
-    body: await file.arrayBuffer(),
-    headers: { "content-type": pdfContentType },
-    method: "POST"
-  });
-
-  // The PDF lane is not provisioned on the server (Python/Docling/OCRmyPDF missing): surfaced as 503
-  // so it reads as "enable the capability", not "your file is broken" (#510).
-  if (response.status === 503) {
-    return { status: "pdf_toolchain_missing" };
-  }
-
-  if (response.status === 422) {
-    const body = (await response.json()) as { error?: string };
-
-    return body.error === "invalid_pdf" ? { status: "invalid_pdf" } : { status: "empty_content" };
   }
 
   if (!response.ok) {
