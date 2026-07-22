@@ -37,6 +37,14 @@ import {
   requeueStalledVoiceCaptures,
   type VoiceCaptureWorkerDependencies
 } from "./features/diary/voiceCaptureWorker.js";
+import {
+  createPdfImportActiveRuns,
+  processNextPdfImport,
+  type PdfImportRunnerDependencies
+} from "./features/pdfImport/pdfImportRunner.js";
+import { createPdfImportStageStore } from "./features/pdfImport/pdfImportStage.js";
+import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
+import { createFakeDoclingRunner } from "./files/pdfStructuredAdapter.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -281,6 +289,47 @@ const drainVoiceCaptureQueue = async (): Promise<void> => {
   }
 };
 
+// The recoverable staged PDF import engine (#721): the in-process worker that drives a claimed attempt
+// through #701's structured conversion, checkpointing each validated range so a crash, cancel, or
+// interrupt resumes without redoing committed work. It ships with the deterministic keyless fake runner
+// by default; a real Docling runner (memory-bounded, POSIX-only) is an opt-in later issue. Converting an
+// attempt never creates a Work, ReadingUnit, or Block — publishing a converted attempt is #702.
+const pdfImportStageStore = createPdfImportStageStore(config.pdfImportStageDir);
+const pdfImportActiveRuns = createPdfImportActiveRuns();
+const pdfImportRunner: PdfImportRunnerDependencies = {
+  activeRuns: pdfImportActiveRuns,
+  createRunToken: () => randomUUID(),
+  db,
+  // A stage that could not be removed after a terminal/cancel outcome stays VISIBLE in server logs
+  // (never silently swallowed); its bytes linger until retried, per the cleanup-failure rule.
+  logCleanupFailure: ({ attemptId, stagePath, reason }) =>
+    server.log.warn({ attemptId, stagePath, reason }, "pdf_import_stage_cleanup_failed"),
+  now: () => new Date(),
+  runner: createFakeDoclingRunner(),
+  stageStore: pdfImportStageStore
+};
+const PDF_IMPORT_POLL_MS = 1_000;
+let pdfImportDraining = false;
+// Convert one attempt at a time to empty on each tick (single admission is DB-enforced too); never
+// overlap ticks so a slow conversion cannot double-claim the slot. Failures are logged; the loop
+// continues on the next tick.
+const drainPdfImportQueue = async (): Promise<void> => {
+  if (pdfImportDraining) {
+    return;
+  }
+  pdfImportDraining = true;
+  try {
+    let result = await processNextPdfImport(pdfImportRunner);
+    while (result.status !== "idle") {
+      result = await processNextPdfImport(pdfImportRunner);
+    }
+  } catch (error) {
+    server.log.error({ err: error }, "pdf_import_worker_failed");
+  } finally {
+    pdfImportDraining = false;
+  }
+};
+
 try {
   await server.listen({ host: config.host, port: config.port });
   server.log.info({ host: config.host, port: config.port }, "server_started");
@@ -294,6 +343,17 @@ try {
   setInterval(() => {
     void drainVoiceCaptureQueue();
   }, VOICE_CAPTURE_POLL_MS).unref();
+
+  // Recover any PDF import a previous process left mid-conversion: mark abandoned `running` attempts
+  // `interrupted` (retryable, never left running, never silently resumed), then start the single-active
+  // drain loop so queued/retried attempts convert without the user waiting.
+  const interruptedImports = await recoverInterruptedAttempts(db, new Date());
+  if (interruptedImports > 0) {
+    server.log.info({ interrupted: interruptedImports }, "pdf_import_recovered_interrupted");
+  }
+  setInterval(() => {
+    void drainPdfImportQueue();
+  }, PDF_IMPORT_POLL_MS).unref();
 
   // Report the optional AI utilities' model wiring (#602): diary "tidy" and the Reader "AI 解释" gloss.
   // A clean "run pnpm setup:ai" hint when a utility is off or its Ollama model is not serving, instead
