@@ -49,8 +49,7 @@ import {
   type PdfImportPublishDependencies
 } from "./features/pdfImport/pdfImportPublish.js";
 import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
-import { bornDigitalPreviewRangePayload } from "./features/pdfImport/pdfImportSampleDocument.js";
-import { createFakeDoclingRunner } from "./files/pdfStructuredAdapter.js";
+import { resolveStructuredPdfRunner } from "./files/pdfStructuredRunnerResolution.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -321,9 +320,12 @@ const drainVoiceCaptureQueue = async (): Promise<void> => {
 
 // The recoverable staged PDF import engine (#721): the in-process worker that drives a claimed attempt
 // through #701's structured conversion, checkpointing each validated range so a crash, cancel, or
-// interrupt resumes without redoing committed work. It ships with the deterministic keyless fake runner
-// by default; a real Docling runner (memory-bounded, POSIX-only) is an opt-in later issue. Converting an
-// attempt never creates a Work, ReadingUnit, or Block — publishing a converted attempt is #702.
+// interrupt resumes without redoing committed work. The conversion backend is resolved honestly (see
+// `resolveStructuredPdfRunner`): the real memory-bounded Docling worker on a supported platform, a
+// visible `tool_missing` failure where it is unavailable, or — only under `PDF_IMPORT_FIXTURE_CONVERSION`
+// (dev/E2E) — a deterministic runner that converts an embedded fixture from the uploaded bytes. It never
+// publishes canned content from a user upload. Converting an attempt never creates a Work, ReadingUnit,
+// or Block — publishing a converted attempt is #702.
 const pdfImportRunner: PdfImportRunnerDependencies = {
   activeRuns: pdfImportActiveRuns,
   createRunToken: () => randomUUID(),
@@ -332,10 +334,16 @@ const pdfImportRunner: PdfImportRunnerDependencies = {
   // (never silently swallowed); its bytes linger until retried, per the cleanup-failure rule.
   logCleanupFailure: logPdfImportCleanupFailure,
   now: () => new Date(),
-  // The keyless fake cannot read the learner's real bytes yet, so it converts every attempt to the
-  // deterministic born-digital preview document (#702) — a native-text, multi-section canonical result —
-  // until the real Docling runner lands (#705). This lets an uploaded PDF publish a real Reader Work.
-  runner: createFakeDoclingRunner({ rangePayloads: [bornDigitalPreviewRangePayload] }),
+  // The real converter reads the learner's actual bytes; where it is unavailable the attempt fails
+  // visibly rather than publishing fabricated content. `pnpm setup:pdf` provisions the real Docling
+  // worker.
+  runner: resolveStructuredPdfRunner({
+    fixtureConversion: config.pdfImportFixtureConversion,
+    pythonBinary: config.pdfPythonBinary,
+    scriptPath: fileURLToPath(new URL("./files/pdf_to_docling.py", import.meta.url)),
+    perRangeTimeoutMs: config.pdfTimeoutMs,
+    memoryMib: config.pdfStructuredMemoryMib
+  }),
   stageStore: pdfImportStageStore
 };
 // #702 publishes a converted attempt into a canonical Work (doc_blocks only) once the drain loop reports

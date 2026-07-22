@@ -81,9 +81,12 @@ correction tooling (#703) and the measured "supported PDF" claim (#705) are like
 this lane is a preview until they arrive.
 
 > The legacy Docling→Markdown persistence route (`POST …/content/pdf`) is **deactivated** while this
-> canonical lane is authoritative and its now-unreachable code is removed in #705, so the
-> `pnpm setup:pdf` toolchain (Python / Docling / OCRmyPDF / Tesseract) is **not** required to import a
-> born-digital PDF today. `pnpm setup:doctor` still reports that toolchain for the future OCR lane.
+> canonical lane is authoritative and its now-unreachable code is removed in #705. Born-digital import
+> converts the uploaded bytes with the **real Docling runner**, so the `pnpm setup:pdf` toolchain (Python
+> / Docling) **is** required to import a PDF on a supported host; without it — or on a platform that cannot
+> enforce the converter's memory ceiling — an upload **fails visibly** (`tool_missing`) rather than
+> publishing any canned content. `pnpm setup:doctor` reports that toolchain (and the future OCR lane's
+> OCRmyPDF / Tesseract).
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine
 ([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no

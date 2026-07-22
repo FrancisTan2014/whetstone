@@ -12,6 +12,12 @@ export type ServerConfig = Readonly<{
   pdfImportStageDir: string;
   pdfPythonBinary: string;
   pdfTimeoutMs: number;
+  // Per-child address-space ceiling (MiB) the structured PDF worker (#701) self-applies. Env-overridable.
+  pdfStructuredMemoryMib: number;
+  // Dev/E2E only: convert born-digital PDF imports from an embedded fixture in the uploaded bytes instead
+  // of the real Docling worker, so the journey runs without a Python/Docling install. Never set in
+  // production — a real upload there is converted by the real runner or fails visibly.
+  pdfImportFixtureConversion: boolean;
   port: number;
   sourceFilesDir: string;
   webDir: string | undefined;
@@ -33,6 +39,11 @@ const defaultServerConfig: ServerConfig = {
   // minutes. Bound the spawn so a slow PDF is killed and rejected (422) instead of hanging the
   // ingest request. v0 targets born-digital, reasonably-sized PDFs (#403). Env-overridable.
   pdfTimeoutMs: 180_000,
+  // Docling's layout/table models are memory-hungry; 2 GiB per child comfortably fits a born-digital
+  // page range while still bounding a runaway conversion. Env-overridable (PDF_STRUCTURED_MEMORY_MIB).
+  pdfStructuredMemoryMib: 2048,
+  // Off by default: production converts with the real Docling worker (or fails visibly), never a fixture.
+  pdfImportFixtureConversion: false,
   port: 3000,
   sourceFilesDir: "./.data/sources",
   webDir: undefined
@@ -53,6 +64,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   const logLevel = parseLogLevel(env.LOG_LEVEL);
   const epubUploadLimitBytes = parseEpubUploadLimit(env.EPUB_UPLOAD_LIMIT_BYTES);
   const pdfTimeoutMs = parsePdfTimeout(env.PDF_TIMEOUT_MS);
+  const pdfStructuredMemoryMib = parsePdfStructuredMemory(env.PDF_STRUCTURED_MEMORY_MIB);
 
   return {
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
@@ -64,6 +76,10 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     pdfImportStageDir: env.PDF_IMPORT_STAGE_DIR ?? defaultServerConfig.pdfImportStageDir,
     pdfPythonBinary: env.PDF_PYTHON_BINARY ?? defaultServerConfig.pdfPythonBinary,
     pdfTimeoutMs,
+    pdfStructuredMemoryMib,
+    pdfImportFixtureConversion:
+      parseBooleanFlag(env.PDF_IMPORT_FIXTURE_CONVERSION) ??
+      defaultServerConfig.pdfImportFixtureConversion,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
     webDir: env.WEB_DIR ?? defaultServerConfig.webDir
@@ -131,4 +147,28 @@ function parsePdfTimeout(rawTimeout: string | undefined): number {
   }
 
   return timeout;
+}
+
+function parsePdfStructuredMemory(rawMemory: string | undefined): number {
+  if (rawMemory === undefined) {
+    return defaultServerConfig.pdfStructuredMemoryMib;
+  }
+
+  const memory = Number.parseInt(rawMemory, 10);
+
+  if (!Number.isInteger(memory) || memory < 1) {
+    throw new Error("PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB.");
+  }
+
+  return memory;
+}
+
+// A permissive boolean env flag: `1`/`true`/`yes`/`on` (case-insensitive) enable it, anything else
+// disables it, and an absent value returns undefined so the caller applies its default.
+function parseBooleanFlag(rawFlag: string | undefined): boolean | undefined {
+  if (rawFlag === undefined) {
+    return undefined;
+  }
+
+  return ["1", "true", "yes", "on"].includes(rawFlag.trim().toLowerCase());
 }

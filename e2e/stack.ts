@@ -90,6 +90,11 @@ async function startServer(port: number, sourceFilesDir: string): Promise<ChildP
     HOST: "127.0.0.1",
     LOG_LEVEL: "warn",
     PORT: String(port),
+    // Convert the actual uploaded bytes via the deterministic staged-fixture backend: CI ships no
+    // Python/Docling worker, so this env-gated dev/E2E runner reads the embedded RangeConversion from the
+    // uploaded file itself (see e2e/pdfFixture.ts). It is input-derived — never canned — so the born-digital
+    // journey is exercised honestly. Off in production, where the real #701 runner or a visible failure applies.
+    PDF_IMPORT_FIXTURE_CONVERSION: "1",
     SOURCE_FILES_DIR: sourceFilesDir
   };
   // Ephemeral in-memory PGlite: DATABASE_DIR must be unset so each run starts clean.

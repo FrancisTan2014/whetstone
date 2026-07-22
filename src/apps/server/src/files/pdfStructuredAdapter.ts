@@ -298,9 +298,10 @@ export function createPdfStructuredAdapter(
   });
 }
 
-// Deterministic in-memory runner: canned probe + range payloads, no Python or models. Backs the
-// keyless lane (and #721's default) and the shared contract suite. A configured `failRangeWith` or
-// probe override exercises the adapter's failure branches without a real child process.
+// Deterministic in-memory runner: canned probe + range payloads, no Python or models. Backs the shared
+// contract suite and the adapter/runner unit tests only — it ignores the staged bytes, so it is NEVER
+// the production conversion backend (that would publish canned content from any upload). A configured
+// `failRangeWith` or probe override exercises the adapter's failure branches without a real child process.
 export type FakeDoclingRunnerConfig = Readonly<{
   probe?: ProbeOutcome;
   // Raw JSON string(s) the runner returns per range, in order. When shorter than the range list, the
@@ -389,6 +390,81 @@ export function createFakePdfStructuredAdapter(
   return createPdfStructuredAdapter({
     runner: createFakeDoclingRunner(config),
     ...(limits ? { limits } : {})
+  });
+}
+
+// The production fallback when no structured PDF converter is available on this host — an unsupported
+// platform where the per-child memory ceiling cannot be enforced (see `createDoclingRunner`), or a
+// toolchain that is simply not selected. Every attempt FAILS VISIBLY with `tool_missing`, the same
+// honest signal the real runner reports when Python/Docling is absent, so a user upload is never
+// silently turned into fabricated content. `pnpm setup:pdf` provisions the real converter.
+export function createUnavailableDoclingRunner(): DoclingRunner {
+  return Object.freeze({
+    probe(): Promise<ProbeOutcome> {
+      return Promise.resolve({ status: "tool_missing" });
+    },
+    convertRange(): Promise<RangeRunOutcome> {
+      return Promise.resolve({ status: "failure", failure: toolMissingFailure() });
+    }
+  });
+}
+
+// The marker separating a deterministic conversion fixture from any leading PDF header bytes in a
+// staged upload the fixture runner reads.
+export const STRUCTURED_PDF_FIXTURE_MARKER = "%%WHETSTONE-PDF-FIXTURE%%";
+
+// The dev/test structured conversion backend (NOT a production default). Unlike the in-memory fake, it
+// reads the ACTUAL staged bytes and converts them: a caller embeds a valid RangeConversion after the
+// `%%WHETSTONE-PDF-FIXTURE%%` marker in the uploaded file, and the runner projects exactly those bytes.
+// This keeps the born-digital E2E honest — a different upload yields a different Work, and a fixture page
+// with `hasNativeText: false` flows through to the OCR-required outcome — while never fabricating canned
+// content: bytes with no embedded fixture (a real PDF on a host without the Docling worker) report
+// `tool_missing`, exactly like the unavailable runner. Gated on `PDF_IMPORT_FIXTURE_CONVERSION`; never
+// enabled in production.
+export function createStagedFixtureDoclingRunner(): DoclingRunner {
+  async function loadFixture(pdfPath: string): Promise<RangeConversion | null> {
+    let text: string;
+    try {
+      text = await readFile(pdfPath, "utf8");
+    } catch {
+      return null;
+    }
+    const markerAt = text.indexOf(STRUCTURED_PDF_FIXTURE_MARKER);
+    if (markerAt < 0) {
+      return null;
+    }
+    const parsed = parseRangeConversion(
+      text.slice(markerAt + STRUCTURED_PDF_FIXTURE_MARKER.length).trim()
+    );
+    return parsed.status === "ok" ? parsed.value : null;
+  }
+
+  return Object.freeze({
+    async probe(pdfPath: string): Promise<ProbeOutcome> {
+      const fixture = await loadFixture(pdfPath);
+      return fixture === null
+        ? { status: "tool_missing" }
+        : { status: "ok", pageCount: fixture.pages.length };
+    },
+    async convertRange(
+      pdfPath: string,
+      startPage: number,
+      endPage: number
+    ): Promise<RangeRunOutcome> {
+      const fixture = await loadFixture(pdfPath);
+      if (fixture === null) {
+        return { status: "failure", failure: toolMissingFailure() };
+      }
+      // Project only the requested page window, so a multi-range fixture never re-emits earlier pages.
+      const inWindow = (pageNumber: number): boolean =>
+        pageNumber >= startPage && pageNumber <= endPage;
+      const windowed: RangeConversion = {
+        ...fixture,
+        pages: fixture.pages.filter((page) => inWindow(page.pageNumber)),
+        body: fixture.body.filter((item) => inWindow(item.pageNumber))
+      };
+      return { status: "ok", raw: JSON.stringify(windowed) };
+    }
   });
 }
 

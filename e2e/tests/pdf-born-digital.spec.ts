@@ -2,23 +2,19 @@ import { type Page } from "@playwright/test";
 
 import { type SetupData } from "../stack";
 import { expect, test } from "../fixtures";
+import { pdfFixture } from "../pdfFixture";
 
 // #702: a born-digital PDF upload flows through #721's staged attempt and publishes ONE canonical
 // Author -> Work -> ReadingUnit -> Block Work (doc_blocks only) that opens in the existing Reader — no
-// Markdown, no page viewer, no empty shell. The keyless conversion lane converts every upload to the
-// deterministic multi-section born-digital preview document (pdfImportSampleDocument.ts), so this drives
-// the real Library front door in a browser: upload -> confirm -> progress -> Reader, then proves the
+// Markdown, no page viewer, no empty shell. The env-gated staged-fixture conversion backend
+// (PDF_IMPORT_FIXTURE_CONVERSION=1) reads the ACTUAL uploaded bytes — the structured document embedded in
+// `pdfFixture` — so the published Work is derived from this upload, not a canned server-side sample. This
+// drives the real Library front door in a browser: upload -> confirm -> progress -> Reader, then proves the
 // published canonical blocks are read, searched, annotated, and resurvive a reload through the ordinary
 // product surfaces (which never branch on PDF).
 
 const DESKTOP = { height: 900, width: 1280 } as const;
 const READING = 'article[aria-label="Reading"]';
-
-const pdfFixture = {
-  buffer: Buffer.from("%PDF-1.7\nborn-digital sample bytes for the #702 e2e\n%%EOF\n", "utf8"),
-  mimeType: "application/pdf",
-  name: "Multi Section Sample.pdf"
-} as const;
 
 // The block id and rendered plaintext of the reader block whose prose contains `needle`.
 async function blockContaining(

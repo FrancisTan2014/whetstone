@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   RANGE_CONVERSION_SCHEMA_VERSION,
-  parseRangeConversion,
   type RangeConversion,
   type StructuredDocItem
 } from "@whetstone/contracts";
@@ -42,7 +41,6 @@ import {
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./pdfImportPublish.js";
-import { bornDigitalPreviewRangePayload } from "./pdfImportSampleDocument.js";
 import type { PdfImportCommandDependencies } from "./pdfImportCommands.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
@@ -618,17 +616,25 @@ describe("publishConvertedPdfImport", () => {
     });
   }
 
-  it("publishes the keyless born-digital preview sample into a multi-section Reader Work", async () => {
-    // The composition root feeds this exact payload to the fake runner, so publishing it here proves the
-    // shipped preview maps to a real multi-section canonical Work (title + two sections) with no OCR gap.
-    const parsed = parseRangeConversion(bornDigitalPreviewRangePayload);
-    if (parsed.status !== "ok") {
-      throw new Error(`sample payload is not a valid range conversion: ${parsed.status}`);
-    }
+  it("publishes a multi-section native-text document into an ordered multi-unit Reader Work", async () => {
+    // A multi-section born-digital payload (a title plus two section headers) maps to three ordered
+    // ReadingUnits, proving publication reconstructs the canonical Work directly from the converted
+    // structured bytes rather than any fixed sample.
+    const payload = rangePayload(
+      [
+        item({ label: "title", text: "Born-Digital Preview" }),
+        item({ label: "text", text: "An intro through the canonical block pipeline." }),
+        item({ label: "section_header", text: "How Import Works" }),
+        item({ label: "text", text: "Every format terminates at the same hierarchy." }),
+        item({ label: "section_header", text: "What Remains" }),
+        item({ label: "text", text: "OCR and correction are still pending." })
+      ],
+      [true]
+    );
     await driveToConverted(db, {
       id: "att-sample",
       sourceHash: "9".repeat(64),
-      payload: parsed.value,
+      payload,
       totalPages: 1
     });
     await insertPublicationIntent(db, {

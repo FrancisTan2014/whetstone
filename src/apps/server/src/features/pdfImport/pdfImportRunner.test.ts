@@ -19,6 +19,7 @@ import { pdfImportAttempts } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
   createFakeDoclingRunner,
+  createUnavailableDoclingRunner,
   type DoclingRunner,
   type ProbeOutcome
 } from "../../files/pdfStructuredAdapter.js";
@@ -208,6 +209,22 @@ describe("processNextPdfImport", () => {
         await expect(stat(handlePath)).rejects.toThrow();
       });
     }
+  });
+
+  it("fails visibly with no publication when the production runner is unavailable", async () => {
+    // The composition root wires this exact runner where the structured PDF toolchain is absent or the
+    // platform cannot enforce the memory ceiling. A user upload must fail visibly (tool_missing) and free
+    // its stage — never be silently turned into fabricated content.
+    await seedStaged("a1");
+    const handlePath = stageStore.openStage("a1").path;
+    const result = await processNextPdfImport(
+      buildDeps({ runner: createUnavailableDoclingRunner() })
+    );
+    expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+    const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+    expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+    expect(attempt?.failure?.kind).toBe("tool_missing");
+    await expect(stat(handlePath)).rejects.toThrow();
   });
 
   it("fails on a malformed range payload", async () => {
