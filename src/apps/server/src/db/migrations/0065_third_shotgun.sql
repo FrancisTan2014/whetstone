@@ -20,10 +20,13 @@ CREATE TABLE "pdf_import_publications" (
 	"file_name" text NOT NULL,
 	"work_entry_id" text,
 	"ocr_required_pages" integer,
+	"no_content" boolean,
+	"unpreservable_images" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"published_at" timestamp with time zone,
-	CONSTRAINT "pdf_import_publications_result_ck" CHECK (not ("pdf_import_publications"."work_entry_id" is not null and "pdf_import_publications"."ocr_required_pages" is not null)),
-	CONSTRAINT "pdf_import_publications_ocr_pages_ck" CHECK ("pdf_import_publications"."ocr_required_pages" is null or "pdf_import_publications"."ocr_required_pages" > 0)
+	CONSTRAINT "pdf_import_publications_result_ck" CHECK (("pdf_import_publications"."work_entry_id" is not null)::int + ("pdf_import_publications"."ocr_required_pages" is not null)::int + ("pdf_import_publications"."no_content" is not null)::int + ("pdf_import_publications"."unpreservable_images" is not null)::int <= 1),
+	CONSTRAINT "pdf_import_publications_ocr_pages_ck" CHECK ("pdf_import_publications"."ocr_required_pages" is null or "pdf_import_publications"."ocr_required_pages" > 0),
+	CONSTRAINT "pdf_import_publications_images_ck" CHECK ("pdf_import_publications"."unpreservable_images" is null or "pdf_import_publications"."unpreservable_images" > 0)
 );
 --> statement-breakpoint
 ALTER TABLE "pdf_block_evidence" ADD CONSTRAINT "pdf_block_evidence_block_id_doc_blocks_id_fk" FOREIGN KEY ("block_id") REFERENCES "public"."doc_blocks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

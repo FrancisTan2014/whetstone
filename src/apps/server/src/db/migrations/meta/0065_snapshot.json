@@ -1,5 +1,5 @@
 {
-  "id": "cf38a93b-3ade-4d24-9e58-677ccdf27bb7",
+  "id": "752d1d57-4e91-463a-824a-bd03e3fc51cf",
   "prevId": "78d99141-b21b-46e3-b11a-ebe137031dd2",
   "version": "7",
   "dialect": "postgresql",
@@ -1446,6 +1446,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "no_content": {
+          "name": "no_content",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unpreservable_images": {
+          "name": "unpreservable_images",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1495,11 +1507,15 @@
       "checkConstraints": {
         "pdf_import_publications_result_ck": {
           "name": "pdf_import_publications_result_ck",
-          "value": "not (\"pdf_import_publications\".\"work_entry_id\" is not null and \"pdf_import_publications\".\"ocr_required_pages\" is not null)"
+          "value": "(\"pdf_import_publications\".\"work_entry_id\" is not null)::int + (\"pdf_import_publications\".\"ocr_required_pages\" is not null)::int + (\"pdf_import_publications\".\"no_content\" is not null)::int + (\"pdf_import_publications\".\"unpreservable_images\" is not null)::int <= 1"
         },
         "pdf_import_publications_ocr_pages_ck": {
           "name": "pdf_import_publications_ocr_pages_ck",
           "value": "\"pdf_import_publications\".\"ocr_required_pages\" is null or \"pdf_import_publications\".\"ocr_required_pages\" > 0"
+        },
+        "pdf_import_publications_images_ck": {
+          "name": "pdf_import_publications_images_ck",
+          "value": "\"pdf_import_publications\".\"unpreservable_images\" is null or \"pdf_import_publications\".\"unpreservable_images\" > 0"
         }
       },
       "isRLSEnabled": false

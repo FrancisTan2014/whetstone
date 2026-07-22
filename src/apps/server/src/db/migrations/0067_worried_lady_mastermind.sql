@@ -1,4 +1,0 @@
-ALTER TABLE "pdf_import_publications" DROP CONSTRAINT "pdf_import_publications_result_ck";--> statement-breakpoint
-ALTER TABLE "pdf_import_publications" ADD COLUMN "unpreservable_images" integer;--> statement-breakpoint
-ALTER TABLE "pdf_import_publications" ADD CONSTRAINT "pdf_import_publications_images_ck" CHECK ("pdf_import_publications"."unpreservable_images" is null or "pdf_import_publications"."unpreservable_images" > 0);--> statement-breakpoint
-ALTER TABLE "pdf_import_publications" ADD CONSTRAINT "pdf_import_publications_result_ck" CHECK (("pdf_import_publications"."work_entry_id" is not null)::int + ("pdf_import_publications"."ocr_required_pages" is not null)::int + ("pdf_import_publications"."no_content" is not null)::int + ("pdf_import_publications"."unpreservable_images" is not null)::int <= 1);
