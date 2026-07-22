@@ -365,7 +365,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   }
 
   // Apply a terminal poll outcome (#702): open the Reader on a published Work, or surface the
-  // sequenced-limitation (OCR) or named-failure copy. `gone` means the remembered attempt no longer exists
+  // sequenced-limitation (OCR), empty-document (no_content), or named-failure copy. `gone` means the
+  // remembered attempt no longer exists
   // for this user (a stale reopened id), so we simply drop it.
   async function applyPdfImportTerminal(result: PdfImportPollResult): Promise<void> {
     if (result.kind !== "terminal") {
@@ -384,13 +385,17 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    /* v8 ignore next 3 -- a terminal poll result is published, ocr_required, or failed; `in_progress`
-       (the only remaining kind) is never terminal, so this early return is unreachable. */
-    if (progress.kind !== "ocr_required" && progress.kind !== "failed") {
+    /* v8 ignore next 3 -- a terminal poll result is published, ocr_required, no_content, or failed;
+       `in_progress` (the only remaining kind) is never terminal, so this early return is unreachable. */
+    if (
+      progress.kind !== "ocr_required" &&
+      progress.kind !== "no_content" &&
+      progress.kind !== "failed"
+    ) {
       return;
     }
 
-    // ocr_required and failed both surface their message and create no Work.
+    // ocr_required, no_content, and failed all surface their message and create no Work.
     toast.error(progress.message);
   }
 

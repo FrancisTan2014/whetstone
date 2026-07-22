@@ -5,7 +5,11 @@ import type {
 } from "@whetstone/contracts";
 import { describe, expect, it } from "vitest";
 
-import { describePdfImport, ocrSupportUnavailableMessage } from "./pdfImportProgress";
+import {
+  describePdfImport,
+  noReadableContentMessage,
+  ocrSupportUnavailableMessage
+} from "./pdfImportProgress";
 
 const sha = "a".repeat(64);
 
@@ -62,6 +66,16 @@ describe("describePdfImport", () => {
     } else {
       expect.unreachable("expected ocr_required");
     }
+  });
+
+  it("refuses a no-content PDF with the empty-document copy", () => {
+    const progress = describePdfImport(view({ status: "no_content" }));
+
+    expect(progress).toEqual({
+      kind: "no_content",
+      message: noReadableContentMessage,
+      terminal: true
+    });
   });
 
   it("surfaces the adapter's named failure message", () => {

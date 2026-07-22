@@ -942,6 +942,26 @@ describe("AdminLibraryPage", () => {
     expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
 
+  it("refuses a no-readable-content PDF with the empty-document message and publishes no Work (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(pdfView({ status: "no_content" }));
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "blank.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText(/no readable text content to import/)).toBeDefined();
+    // No Work is published, so the Reader is never opened.
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
   it("surfaces the adapter's named failure when the conversion fails (#702)", async () => {
     mockedBeginPdfImport.mockResolvedValue({
       attemptId: "attempt-1",

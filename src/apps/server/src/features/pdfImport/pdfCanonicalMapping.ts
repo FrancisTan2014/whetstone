@@ -33,10 +33,13 @@ export type PdfBlockEvidence = Readonly<{
 }>;
 
 // A born-digital PDF with any non-native-text page cannot be canonicalized without OCR (#704), so the
-// whole publication is refused with a typed outcome and NO partial Work is created. The affected page
-// count is reported so the caller can explain exactly how much of the document needs OCR.
+// whole publication is refused with a typed `ocr_required` outcome and NO partial Work is created. A PDF
+// whose pages carry native text but map to ZERO canonical blocks (an empty body) is refused with a typed
+// `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell"). The
+// affected page count is reported for OCR so the caller can explain exactly how much needs OCR.
 export type PdfCanonicalMappingResult =
   | Readonly<{ status: "ocr_required"; pagesNeedingOcr: number }>
+  | Readonly<{ status: "no_content" }>
   | Readonly<{
       status: "mapped";
       units: readonly PersistableReadingUnit[];
@@ -285,6 +288,14 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     const built = buildUnit(draft);
     units.push(built.persistable);
     evidence.push(...built.evidence);
+  }
+
+  // The pages had native text but yielded no canonical blocks (an empty body): refuse rather than
+  // publishing an empty-shell Work with no readable units (#702's "no empty shell"). Every walked item
+  // produces at least one block, so zero blocks means the body was empty.
+  const blockCount = units.reduce((total, unit) => total + unit.docBlocks.length, 0);
+  if (blockCount === 0) {
+    return { status: "no_content" };
   }
 
   return { evidence, status: "mapped", unmappedLabels: [...unmapped], units };

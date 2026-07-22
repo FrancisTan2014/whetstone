@@ -154,6 +154,9 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({ pagesNeedingOcr: 3, status: "ocr_required" })
     ).toEqual({ pagesNeedingOcr: 3, status: "ocr_required" });
+    expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "no_content" })).toEqual({
+      status: "no_content"
+    });
   });
 
   it("rejects a non-positive OCR page count", () => {

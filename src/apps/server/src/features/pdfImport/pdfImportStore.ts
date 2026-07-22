@@ -346,8 +346,9 @@ export async function getCommittedRanges(
 }
 
 // The #702 publication record for an attempt: the learner's capture-time intent plus, once published,
-// exactly one resolved outcome (`workEntryId` for a published Work, or `ocrRequiredPages` for the typed
-// OCR-required refusal). Both null means the publication is still pending.
+// exactly one resolved outcome (`workEntryId` for a published Work, `ocrRequiredPages` for the typed
+// OCR-required refusal, or `noContent` for the typed empty-document refusal). All null means the
+// publication is still pending.
 export type PdfImportPublicationRecord = Readonly<{
   attemptId: string;
   enteredTitle: string | null;
@@ -356,6 +357,7 @@ export type PdfImportPublicationRecord = Readonly<{
   fileName: string;
   workEntryId: string | null;
   ocrRequiredPages: number | null;
+  noContent: boolean | null;
   publishedAt: Date | null;
 }>;
 
@@ -370,6 +372,7 @@ function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
     fileName: row.fileName,
     workEntryId: row.workEntryId,
     ocrRequiredPages: row.ocrRequiredPages,
+    noContent: row.noContent,
     publishedAt: row.publishedAt
   });
 }
@@ -425,7 +428,8 @@ export async function linkPublishedWork(
       and(
         eq(pdfImportPublications.attemptId, attemptId),
         sql`${pdfImportPublications.workEntryId} is null`,
-        sql`${pdfImportPublications.ocrRequiredPages} is null`
+        sql`${pdfImportPublications.ocrRequiredPages} is null`,
+        sql`${pdfImportPublications.noContent} is null`
       )
     );
 }
@@ -444,7 +448,28 @@ export async function markPublicationOcrRequired(
       and(
         eq(pdfImportPublications.attemptId, attemptId),
         sql`${pdfImportPublications.workEntryId} is null`,
-        sql`${pdfImportPublications.ocrRequiredPages} is null`
+        sql`${pdfImportPublications.ocrRequiredPages} is null`,
+        sql`${pdfImportPublications.noContent} is null`
+      )
+    );
+}
+
+// Record the typed no-content refusal (no Work) for a pending publication: the pages carried native text
+// but mapped to zero canonical blocks, so publishing would create an empty-shell Work.
+export async function markPublicationNoContent(
+  db: DbClient,
+  attemptId: string,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ noContent: true, publishedAt: now })
+    .where(
+      and(
+        eq(pdfImportPublications.attemptId, attemptId),
+        sql`${pdfImportPublications.workEntryId} is null`,
+        sql`${pdfImportPublications.ocrRequiredPages} is null`,
+        sql`${pdfImportPublications.noContent} is null`
       )
     );
 }

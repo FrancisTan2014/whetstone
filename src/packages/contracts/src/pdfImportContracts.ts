@@ -111,14 +111,17 @@ export type PdfImportBeginResultDto = z.infer<typeof pdfImportBeginResultDtoSche
 // The publication outcome of an attempt (#702), served alongside its #721 execution status. `none` = the
 // attempt carries no publication intent (a bare #721 attempt); `pending` = converted but not yet
 // published (or not yet converted); `published` = a canonical Work is ready to open; `ocr_required` = a
-// typed refusal (a page lacked native text) that publishes no Work and reports the affected page count.
+// typed refusal (a page lacked native text) that publishes no Work and reports the affected page count;
+// `no_content` = a typed refusal (the pages had native text but mapped to zero canonical blocks) that
+// publishes no Work.
 export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("none") }).strict(),
   z.object({ status: z.literal("pending") }).strict(),
   z.object({ status: z.literal("published"), workEntryId: z.string().min(1) }).strict(),
   z
     .object({ pagesNeedingOcr: z.number().int().positive(), status: z.literal("ocr_required") })
-    .strict()
+    .strict(),
+  z.object({ status: z.literal("no_content") }).strict()
 ]);
 
 export type PdfImportPublicationOutcomeDto = z.infer<typeof pdfImportPublicationOutcomeDtoSchema>;

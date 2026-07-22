@@ -327,10 +327,8 @@ describe("mapStructuredDocument", () => {
     expect(block.content ?? []).toEqual([]);
   });
 
-  it("returns no units for an empty body", () => {
-    const result = mapped(mapStructuredDocument(doc([])));
-    expect(result.units).toHaveLength(0);
-    expect(result.evidence).toHaveLength(0);
+  it("refuses an empty body as no_content, creating no units", () => {
+    expect(mapStructuredDocument(doc([]))).toEqual({ status: "no_content" });
   });
 
   it("keys additive evidence to each block's stable id with page geometry and confidence", () => {

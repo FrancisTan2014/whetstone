@@ -364,6 +364,43 @@ describe("publishConvertedPdfImport", () => {
     expect((await getAttemptById(db, "att-4"))?.stagePath).toBeNull();
   });
 
+  it("refuses a converted PDF whose native-text pages map to zero blocks as no_content, creating no Work", async () => {
+    // Native text on every page, but an empty body (no items map to any canonical block): publishing must
+    // refuse rather than claim/publish an empty-shell Work (#702's "no empty shell").
+    await driveToConverted(db, {
+      id: "att-empty",
+      sourceHash: "9".repeat(64),
+      payload: rangePayload([], [true, true]),
+      totalPages: 2
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-empty",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "blank.pdf"
+    });
+
+    const result = await publishConvertedPdfImport(publishDeps(db), "att-empty");
+    expect(result).toEqual({ status: "no_content" });
+    const publication = await getPublication(db, "att-empty");
+    expect(publication?.noContent).toBe(true);
+    expect(publication?.workEntryId).toBeNull();
+    expect(publication?.ocrRequiredPages).toBeNull();
+    // No Work, no source, no claim: nothing was committed before the refusal.
+    expect(await db.select().from(workSources)).toHaveLength(0);
+    expect(await db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    expect(await db.select().from(workMeta)).toHaveLength(0);
+    // The redundant stage is freed cleanly and its binding cleared, exactly like the OCR-required path.
+    await expect(stat(stageStore.openStage("att-empty").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
+    expect((await getAttemptById(db, "att-empty"))?.stagePath).toBeNull();
+    // The refusal is terminal: a second publish is an idempotent no-op, not a retry.
+    expect(await publishConvertedPdfImport(publishDeps(db), "att-empty")).toEqual({
+      status: "already_published"
+    });
+  });
+
   it("is idempotent: a second publish of a resolved attempt is a no-op", async () => {
     await driveToConverted(db, {
       id: "att-5",

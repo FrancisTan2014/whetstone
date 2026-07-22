@@ -5,25 +5,32 @@ import type { PdfImportViewDto } from "@whetstone/contracts";
 // so the Library flow and its tests share one source of truth.
 export const ocrSupportUnavailableMessage = "OCR support is not available yet.";
 
+// The learner-facing phrase for a PDF that converted but carried no readable content (#702): the import
+// refuses rather than creating an empty-shell Work. A named export so the flow and its tests agree.
+export const noReadableContentMessage =
+  "This PDF has no readable text content to import, so no book was created.";
+
 function ocrRequiredMessage(pagesNeedingOcr: number): string {
   const pages = pagesNeedingOcr === 1 ? "1 page needs" : `${pagesNeedingOcr} pages need`;
   return `${ocrSupportUnavailableMessage} ${pages} text recognition, which a later update will add.`;
 }
 
 // The learner-facing progress model derived from one poll of an import's view. `in_progress` carries the
-// label to show while polling continues; the three terminal kinds end the poll loop and drive navigation
+// label to show while polling continues; the terminal kinds end the poll loop and drive navigation
 // or a message. Keeping this a pure projection means the Library flow only wires timers and navigation,
 // and every phrase/branch is unit-tested without a component or the network.
 export type PdfImportProgress =
   | Readonly<{ kind: "in_progress"; label: string; terminal: false }>
   | Readonly<{ kind: "published"; workEntryId: string; terminal: true }>
   | Readonly<{ kind: "ocr_required"; message: string; terminal: true }>
+  | Readonly<{ kind: "no_content"; message: string; terminal: true }>
   | Readonly<{ kind: "failed"; message: string; terminal: true }>;
 
 // Project an import view into its progress model. Terminal outcomes win over in-flight labels: a published
-// Work (open the Reader), an OCR-required refusal (no Work; sequenced-limitation copy), or a failed
-// conversion (the adapter's named failure). Otherwise the label reflects the #721 execution phase — reading
-// the source, converting a known page range, resuming after an interruption, or finishing publication.
+// Work (open the Reader), an OCR-required refusal (no Work; sequenced-limitation copy), a no-content
+// refusal (no Work; empty-document copy), or a failed conversion (the adapter's named failure). Otherwise
+// the label reflects the #721 execution phase — reading the source, converting a known page range,
+// resuming after an interruption, or finishing publication.
 export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
   if (view.publication.status === "published") {
     return { kind: "published", terminal: true, workEntryId: view.publication.workEntryId };
@@ -35,6 +42,10 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
       message: ocrRequiredMessage(view.publication.pagesNeedingOcr),
       terminal: true
     };
+  }
+
+  if (view.publication.status === "no_content") {
+    return { kind: "no_content", message: noReadableContentMessage, terminal: true };
   }
 
   if (view.status.state === "failed") {

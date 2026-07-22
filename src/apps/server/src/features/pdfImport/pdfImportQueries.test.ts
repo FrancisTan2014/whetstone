@@ -15,6 +15,7 @@ import {
   insertPublicationIntent,
   insertQueuedAttempt,
   markFailed,
+  markPublicationNoContent,
   markPublicationOcrRequired,
   setProbeResult
 } from "./pdfImportStore.js";
@@ -194,6 +195,20 @@ describe("buildPdfImportPublicationOutcome", () => {
       pagesNeedingOcr: 3,
       status: "ocr_required"
     });
+  });
+
+  it("reports `no_content` once an empty-document refusal is recorded", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "blank.pdf"
+    });
+    await markPublicationNoContent(db, "a1", new Date());
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "no_content" });
   });
 
   it("reports `pending` once an intent exists but neither a Work nor an OCR refusal is resolved", async () => {

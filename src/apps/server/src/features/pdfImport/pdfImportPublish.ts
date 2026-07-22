@@ -25,6 +25,7 @@ import {
   getPublication,
   insertPublicationIntent,
   linkPublishedWork,
+  markPublicationNoContent,
   markPublicationOcrRequired,
   PDF_IMPORT_ADAPTER_FINGERPRINT
 } from "./pdfImportStore.js";
@@ -143,12 +144,15 @@ export type PdfImportPublishDependencies = Readonly<{
 // The result of attempting to publish a converted attempt. `skipped` = the attempt was not started
 // through `beginPdfImport` (no publication intent); `already_published` = its outcome was resolved by a
 // prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_required` = a typed refusal
-// with no Work; `published` = a canonical Work (freshly created, or reopened for identical bytes).
+// with no Work (a page lacked native text); `no_content` = a typed refusal with no Work (the pages had
+// native text but mapped to zero canonical blocks); `published` = a canonical Work (freshly created, or
+// reopened for identical bytes).
 export type PublishConvertedResult =
   | Readonly<{ status: "skipped" }>
   | Readonly<{ status: "already_published" }>
   | Readonly<{ status: "not_ready" }>
   | Readonly<{ status: "ocr_required"; pagesNeedingOcr: number }>
+  | Readonly<{ status: "no_content" }>
   | Readonly<{ status: "published"; work: WorkDto; reopened: boolean }>;
 
 // The document metadata resolution ladder (#702): entered value first, then — a born-digital PDF exposes
@@ -236,7 +240,11 @@ export async function publishConvertedPdfImport(
   if (publication === null) {
     return { status: "skipped" };
   }
-  if (publication.workEntryId !== null || publication.ocrRequiredPages !== null) {
+  if (
+    publication.workEntryId !== null ||
+    publication.ocrRequiredPages !== null ||
+    publication.noContent !== null
+  ) {
     return { status: "already_published" };
   }
 
@@ -271,6 +279,14 @@ export async function publishConvertedPdfImport(
     // No Work is published, so the retained bytes are no longer needed: free the stage.
     await removeRetainedStage(deps, attemptId, stagePath);
     return { status: "ocr_required", pagesNeedingOcr: mapping.pagesNeedingOcr };
+  }
+  if (mapping.status === "no_content") {
+    // The pages had native text but mapped to zero canonical blocks: refuse before claiming/publishing so
+    // no empty-shell Work is created (#702's "no empty shell"). Record the typed terminal refusal and free
+    // the retained bytes, exactly as the OCR-required path does.
+    await markPublicationNoContent(deps.db, attemptId, deps.now());
+    await removeRetainedStage(deps, attemptId, stagePath);
+    return { status: "no_content" };
   }
 
   const title = resolveTitle(publication.enteredTitle, publication.fileName);

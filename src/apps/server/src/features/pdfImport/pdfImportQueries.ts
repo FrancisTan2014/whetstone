@@ -53,7 +53,8 @@ export async function getPdfImportStatus(
 }
 
 // Project the #702 publication record into its outcome DTO: no intent -> `none`; a resolved Work ->
-// `published`; a resolved OCR refusal -> `ocr_required`; otherwise still `pending`.
+// `published`; a resolved OCR refusal -> `ocr_required`; a resolved no-content refusal -> `no_content`;
+// otherwise still `pending`.
 export async function buildPdfImportPublicationOutcome(
   db: DbClient,
   attemptId: string
@@ -67,6 +68,9 @@ export async function buildPdfImportPublicationOutcome(
   }
   if (publication.ocrRequiredPages !== null) {
     return { pagesNeedingOcr: publication.ocrRequiredPages, status: "ocr_required" };
+  }
+  if (publication.noContent !== null) {
+    return { status: "no_content" };
   }
   return { status: "pending" };
 }
