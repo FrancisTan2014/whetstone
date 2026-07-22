@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "0.0.9" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "text",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 100, "right": 560, "bottom": 160 },
+      "charSpan": [0, 14],
+      "confidence": 0.9,
+      "text": "Newer schema.",
+      "children": []
+    }
+  ],
+  "furniture": []
+}

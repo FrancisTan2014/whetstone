@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "whetstone-pdf-structured-range/1",
+  "doclingSchema": { "name": "DoclingDocument", "version": "1.10.0" },
+  "pages": [{ "pageNumber": 1, "hasNativeText": true }],
+  "body": [
+    {
+      "label": "section_header",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 60, "right": 560, "bottom": 90 },
+      "charSpan": [0, 11],
+      "confidence": 0.99,
+      "text": "Chapter One",
+      "children": []
+    },
+    {
+      "label": "text",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 110, "right": 560, "bottom": 200 },
+      "charSpan": [12, 27],
+      "confidence": 0.96,
+      "text": "Body paragraph.",
+      "children": []
+    }
+  ],
+  "furniture": [
+    {
+      "label": "page_header",
+      "pageNumber": 1,
+      "boundingBox": { "left": 40, "top": 20, "right": 560, "bottom": 40 },
+      "charSpan": [0, 12],
+      "confidence": 0.9,
+      "text": "Running head",
+      "children": []
+    }
+  ]
+}
