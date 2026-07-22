@@ -1,18 +1,25 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseRangeConversion,
+  PINNED_MODEL_REPO,
+  PINNED_MODEL_REVISION,
   RANGE_CONVERSION_SCHEMA_VERSION,
+  STRUCTURED_DOCUMENT_SCHEMA_VERSION,
   SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS,
   validateStructuredDocument
 } from "@whetstone/contracts";
 
 import {
+  canEnforceStructuredPdfMemoryCeiling,
   createDoclingRunner,
   createFakePdfStructuredAdapter,
   createPdfStructuredAdapter,
@@ -434,15 +441,134 @@ describe("createPdfStructuredAdapter — single-flight", () => {
   });
 });
 
+// The one validated-JSON contract both the deterministic fake and the real Docling-backed adapter must
+// satisfy. Asserted structurally (schema, provenance, page invariants) so it holds regardless of a
+// specific PDF's content — this is the SAME oracle for both lanes (#701 review, item 2).
+function assertStructuredDocumentContract(
+  outcome: StructuredConversionOutcome,
+  bytes: Uint8Array
+): void {
+  expect(outcome.ok).toBe(true);
+  if (!outcome.ok) throw new Error("expected a successful conversion");
+  const { document } = outcome;
+  expect(validateStructuredDocument(document).ok).toBe(true);
+  expect(document.schemaVersion).toBe(STRUCTURED_DOCUMENT_SCHEMA_VERSION);
+  expect(document.doclingSchema.name).toBe("DoclingDocument");
+  expect(SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS).toContain(document.doclingSchema.version);
+  expect(document.source.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+  expect(document.source.byteLength).toBe(bytes.byteLength);
+  expect(document.source.pageCount).toBe(document.pages.length);
+  expect(document.pages.length).toBeGreaterThan(0);
+  const pageNumbers = document.pages.map((page) => page.pageNumber);
+  expect([...pageNumbers].sort((a, b) => a - b)).toEqual(pageNumbers);
+  for (const page of document.pages) {
+    expect(page.pageNumber).toBeGreaterThanOrEqual(1);
+    expect(typeof page.hasNativeText).toBe("boolean");
+  }
+}
+
+// The real lane runs the actual spawn/worker wiring, so it needs a POSIX platform (the memory-ceiling
+// fence), a Python with Docling importable, and the pinned model snapshot cached locally. When any is
+// missing it skips cleanly — CI does not provision the heavy toolchain. Probed synchronously so
+// `it`/`it.skip` is chosen at collection time.
+function detectRealLane(): { python: string } | null {
+  if (!canEnforceStructuredPdfMemoryCeiling(process.platform)) {
+    return null;
+  }
+  const probe =
+    `import docling;from huggingface_hub import snapshot_download;` +
+    `snapshot_download('${PINNED_MODEL_REPO}',revision='${PINNED_MODEL_REVISION}',local_files_only=True)`;
+  for (const python of ["python", "python3"]) {
+    try {
+      execFileSync(python, ["-c", probe], { stdio: "ignore" });
+      return { python };
+    } catch {
+      // interpreter missing, or Docling/models not provisioned — try the next candidate, else skip.
+    }
+  }
+  return null;
+}
+
+const realLane = detectRealLane();
+const workerScriptPath = fileURLToPath(new URL("./pdf_to_docling.py", import.meta.url));
+const samplePdfPath = fileURLToPath(
+  new URL("./tests/fixtures/structured/sample.pdf", import.meta.url)
+);
+
+describe("structured PDF adapter — shared validated-JSON contract", () => {
+  it("the deterministic fake adapter satisfies the contract", async () => {
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 1, 2, 3]);
+    const handle = await stageFile(bytes);
+    assertStructuredDocumentContract(await createFakePdfStructuredAdapter().convert(handle), bytes);
+  });
+
+  const realLaneIt = realLane ? it : it.skip;
+  realLaneIt(
+    "the real Docling-backed adapter satisfies the same contract (skip-guarded)",
+    async () => {
+      const bytes = new Uint8Array(readFileSync(samplePdfPath));
+      const stageRoot = await makeTempDir("whetstone-real-stage-");
+      await writeFile(join(stageRoot, "sample.pdf"), bytes);
+      const handle = issueStagedFileHandle(stageRoot, "sample.pdf");
+      const adapter = createPdfStructuredAdapter({
+        runner: createDoclingRunner({
+          pythonBinary: realLane!.python,
+          scriptPath: workerScriptPath,
+          perRangeTimeoutMs: 120_000,
+          memoryMib: 2048
+        }),
+        tempDir: await makeTempDir("whetstone-real-temp-")
+      });
+      assertStructuredDocumentContract(await adapter.convert(handle), bytes);
+    },
+    130_000
+  );
+});
+
 describe("createDoclingRunner", () => {
-  it("exposes the runner contract for the real spawn boundary", () => {
+  it("exposes the runner contract on a platform that can enforce the memory ceiling", () => {
     const runner = createDoclingRunner({
       pythonBinary: "python",
       scriptPath: "pdf_to_docling.py",
       perRangeTimeoutMs: 1000,
-      memoryMib: 512
+      memoryMib: 512,
+      platform: "linux"
     });
     expect(typeof runner.probe).toBe("function");
     expect(typeof runner.convertRange).toBe("function");
+  });
+
+  it("refuses to construct where a per-child memory ceiling cannot be enforced (win32)", () => {
+    expect(() =>
+      createDoclingRunner({
+        pythonBinary: "python",
+        scriptPath: "pdf_to_docling.py",
+        perRangeTimeoutMs: 1000,
+        memoryMib: 512,
+        platform: "win32"
+      })
+    ).toThrow(/memory ceiling/i);
+  });
+
+  it("exposes the platform fence as a pure predicate", () => {
+    expect(canEnforceStructuredPdfMemoryCeiling("linux")).toBe(true);
+    expect(canEnforceStructuredPdfMemoryCeiling("darwin")).toBe(true);
+    expect(canEnforceStructuredPdfMemoryCeiling("win32")).toBe(false);
+  });
+
+  it("defaults to the host platform when none is injected", () => {
+    // Exercises the `?? process.platform` fallback: construct on a POSIX host, refuse on Windows.
+    const make = (): DoclingRunner =>
+      createDoclingRunner({
+        pythonBinary: "python",
+        scriptPath: "pdf_to_docling.py",
+        perRangeTimeoutMs: 1000,
+        memoryMib: 512
+      });
+    if (canEnforceStructuredPdfMemoryCeiling(process.platform)) {
+      expect(typeof make().probe).toBe("function");
+    } else {
+      expect(make).toThrow(/memory ceiling/i);
+    }
   });
 });

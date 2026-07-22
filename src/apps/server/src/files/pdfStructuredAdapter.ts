@@ -397,9 +397,20 @@ export type DoclingRunnerDependencies = Readonly<{
   scriptPath: string;
   perRangeTimeoutMs: number;
   memoryMib: number;
+  // Injected so the platform fence is testable; defaults to the host platform.
+  platform?: NodeJS.Platform;
 }>;
 
 const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
+
+// The worker enforces the per-child memory ceiling with POSIX `resource.setrlimit(RLIMIT_AS)`. Windows
+// has no equivalent the child can self-apply, so the #701 memory-bounded invariant cannot be met
+// there. Rather than run the real adapter memory-unbounded, the real runner is fenced off: it refuses
+// to construct on a platform where the ceiling cannot be enforced. The deterministic fake adapter is
+// pure in-memory and stays available on every platform for tests and #721's keyless default.
+export function canEnforceStructuredPdfMemoryCeiling(platform: NodeJS.Platform): boolean {
+  return platform !== "win32";
+}
 
 // The real runner: spawn the isolated Python worker, one child per operation, bounded by the
 // per-range time ceiling (execFile kills on timeout) and a memory ceiling the worker self-applies.
@@ -408,6 +419,17 @@ const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
 // lane; every decision it delegates to (classifyWorkerExit, parseProbePageCount, parseRangeConversion)
 // is unit-tested.
 export function createDoclingRunner(dependencies: DoclingRunnerDependencies): DoclingRunner {
+  // Fence the real adapter off where the memory ceiling cannot be enforced (see the predicate above),
+  // BEFORE any spawning, so an unsupported platform gets an honest "unavailable" instead of a
+  // memory-unbounded conversion. Checked outside the coverage-ignored region so the fence is tested.
+  const platform = dependencies.platform ?? process.platform;
+  if (!canEnforceStructuredPdfMemoryCeiling(platform)) {
+    throw new Error(
+      `The structured PDF adapter requires a per-child memory ceiling, which cannot be enforced on ` +
+        `platform "${platform}". Run it on a POSIX platform (Linux/macOS) where the worker can apply ` +
+        `an address-space rlimit.`
+    );
+  }
   /* v8 ignore start -- real subprocess boundary; covered only by the skip-guarded real lane */
   function spawn(
     args: readonly string[],

@@ -7,6 +7,7 @@ import {
   cleanupFailure,
   forbiddenHandleFailure,
   malformedFailure,
+  memoryCeilingUnsupportedFailure,
   memoryFailure,
   passwordRequiredFailure,
   timeoutFailure,
@@ -16,6 +17,7 @@ import {
   unsupportedSchemaFailure,
   WORKER_EXIT_CONVERSION_FAILED,
   WORKER_EXIT_MEMORY,
+  WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED,
   WORKER_EXIT_MISSING_DEPENDENCY,
   WORKER_EXIT_PASSWORD_REQUIRED,
   WORKER_EXIT_UNSUPPORTED_SCHEMA,
@@ -34,6 +36,7 @@ describe("named failure constructors", () => {
       forbiddenHandleFailure(),
       timeoutFailure(1000),
       memoryFailure(),
+      memoryCeilingUnsupportedFailure(),
       childCrashFailure("segfault"),
       cancelledFailure(),
       cleanupFailure("EACCES")
@@ -82,6 +85,9 @@ describe("classifyWorkerExit", () => {
       "unsupported_schema"
     );
     expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_MEMORY }).kind).toBe("memory");
+    expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED }).kind).toBe(
+      "memory_ceiling_unsupported"
+    );
     expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_CONVERSION_FAILED }).kind).toBe(
       "malformed"
     );

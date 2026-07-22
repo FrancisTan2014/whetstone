@@ -20,7 +20,11 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
 - Output is UTF-8 regardless of host locale, so CJK/Greek text never raises ``UnicodeEncodeError`` on
   a cp1252 Windows console.
 - Failures self-classify via exit code (missing dependency, conversion failed, password required,
-  unsupported schema, memory) — never a bare traceback as the only signal.
+  unsupported schema, memory, memory-ceiling-unsupported) — never a bare traceback as the only signal.
+- The per-child memory ceiling is ENFORCED, not best-effort: if a ceiling is requested but the
+  platform cannot apply one (POSIX ``resource`` is unavailable, e.g. Windows) the worker refuses with
+  ``EXIT_MEMORY_CEILING_UNSUPPORTED`` instead of running unbounded. The Node runner additionally
+  fences the whole real adapter off on such a platform, so this is defense in depth.
 
 Docling objects and real I/O are built behind ``build_converter`` / ``open_backend`` seams (mirroring
 the whisper wrapper's ``model_loader``) so the mapping, payload, dispatch, and bounds logic is
@@ -43,6 +47,7 @@ EXIT_CONVERSION_FAILED = 4
 EXIT_PASSWORD_REQUIRED = 5
 EXIT_UNSUPPORTED_SCHEMA = 6
 EXIT_MEMORY = 7
+EXIT_MEMORY_CEILING_UNSUPPORTED = 8
 
 RANGE_SCHEMA_VERSION = "whetstone-pdf-structured-range/1"
 DOCLING_SCHEMA_NAME = "DoclingDocument"
@@ -69,14 +74,32 @@ class ConversionFailed(Exception):
     """Raised for a genuine, file-level conversion failure (malformed/unreadable structure)."""
 
 
+class MemoryCeilingUnsupported(Exception):
+    """Raised when a memory ceiling is requested but the platform cannot enforce one (e.g. Windows).
+
+    The bounded adapter (#701) promises a memory-bounded conversion, so an unenforceable ceiling is a
+    hard refusal — never a silent unbounded run.
+    """
+
+    def __init__(self, mib: int) -> None:
+        super().__init__(
+            f"a {mib} MiB per-child memory ceiling was requested but cannot be enforced on this "
+            "platform (POSIX `resource` is unavailable)"
+        )
+        self.mib = mib
+
+
 def apply_memory_limit(mib: Optional[str], resource_module: Any) -> None:
     """Self-apply an address-space ceiling so an oversized conversion is killed, not left to swap.
 
-    ``resource`` is POSIX-only; on Windows (``resource_module is None``) the parent's kill-on-timeout
-    is the only bound and this is a no-op. A non-numeric/absent env is ignored. Injected so the tests
-    drive both branches without a real rlimit.
+    The ceiling is ENFORCED, not best-effort. ``resource`` is POSIX-only; when a positive ceiling is
+    requested (a numeric, positive ``mib``) but the platform cannot apply one (``resource_module is
+    None``, e.g. Windows), this raises ``MemoryCeilingUnsupported`` rather than silently running
+    unbounded — the #701 memory-bounded invariant must hold or the conversion must refuse. A
+    non-numeric/absent/non-positive env requests no ceiling and is a no-op. Injected so the tests drive
+    both branches without a real rlimit.
     """
-    if resource_module is None or mib is None:
+    if mib is None:
         return
     try:
         limit_mib = int(mib)
@@ -84,6 +107,8 @@ def apply_memory_limit(mib: Optional[str], resource_module: Any) -> None:
         return
     if limit_mib <= 0:
         return
+    if resource_module is None:
+        raise MemoryCeilingUnsupported(limit_mib)
     limit_bytes = limit_mib * 1024 * 1024
     resource_module.setrlimit(
         resource_module.RLIMIT_AS, (limit_bytes, limit_bytes)
@@ -423,7 +448,15 @@ def main(
     if prober_factory is None:
         prober_factory = lambda path: native_text_prober(path, opener)
 
-    apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), resource_module)
+    try:
+        apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), resource_module)
+    except MemoryCeilingUnsupported as error:
+        _write(
+            stderr,
+            f"{error}; run the structured PDF adapter on a POSIX platform (Linux/macOS) where a "
+            "per-child memory ceiling can be enforced.\n",
+        )
+        return EXIT_MEMORY_CEILING_UNSUPPORTED
 
     try:
         if len(argv) == 2 and argv[0] == "--probe":

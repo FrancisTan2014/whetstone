@@ -18,14 +18,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pdf_to_docling import (  # noqa: E402  (path set above)
     DOCLING_SCHEMA_NAME,
     EXIT_CONVERSION_FAILED,
+    EXIT_MEMORY_CEILING_UNSUPPORTED,
     EXIT_MISSING_DEPENDENCY,
     EXIT_OK,
     EXIT_PASSWORD_REQUIRED,
     EXIT_UNSUPPORTED_SCHEMA,
     EXIT_USAGE,
+    MEMORY_LIMIT_ENV,
     RANGE_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
     ConversionFailed,
+    MemoryCeilingUnsupported,
     PasswordRequired,
     UnsupportedSchema,
     apply_memory_limit,
@@ -273,8 +276,16 @@ class CountPagesTests(unittest.TestCase):
 
 
 class MemoryLimitTests(unittest.TestCase):
-    def test_no_resource_module_is_a_noop(self):
-        apply_memory_limit("512", None)  # must not raise
+    def test_no_ceiling_requested_is_a_noop_without_a_resource_module(self):
+        # No env (mib None) requests no ceiling, so a platform without `resource` is fine.
+        apply_memory_limit(None, None)  # must not raise
+
+    def test_requested_ceiling_without_resource_module_is_refused(self):
+        # A positive ceiling requested but unenforceable (POSIX `resource` absent, e.g. Windows) must
+        # fail closed rather than run unbounded — the #701 memory-bounded invariant.
+        with self.assertRaises(MemoryCeilingUnsupported) as caught:
+            apply_memory_limit("512", None)
+        self.assertEqual(caught.exception.mib, 512)
 
     def test_absent_or_non_numeric_env_is_ignored(self):
         recorder = types.SimpleNamespace(calls=[], RLIMIT_AS=object())
@@ -284,6 +295,12 @@ class MemoryLimitTests(unittest.TestCase):
         apply_memory_limit("0", recorder)
         apply_memory_limit("-5", recorder)
         self.assertEqual(recorder.calls, [])
+
+    def test_non_positive_env_is_ignored_even_without_a_resource_module(self):
+        # A zero/negative/non-numeric request is "no ceiling", so it never raises on Windows either.
+        apply_memory_limit("0", None)
+        apply_memory_limit("-5", None)
+        apply_memory_limit("not-a-number", None)
 
     def test_valid_limit_sets_the_address_space_rlimit(self):
         recorder = types.SimpleNamespace(calls=[], RLIMIT_AS="AS")
@@ -524,6 +541,28 @@ class MainTests(unittest.TestCase):
         code = main(["--nope"], resource_module=None, stdout=io.StringIO(), stderr=stderr)
         self.assertEqual(code, EXIT_USAGE)
         self.assertIn("usage:", stderr.getvalue())
+
+    def test_unenforceable_memory_ceiling_refuses_before_dispatch(self):
+        # A ceiling requested via env but no `resource` module (Windows) must refuse with a distinct
+        # exit and an actionable remedy, before any probe/conversion runs.
+        stderr = io.StringIO()
+        previous = os.environ.get(MEMORY_LIMIT_ENV)
+        os.environ[MEMORY_LIMIT_ENV] = "512"
+        try:
+            code = main(
+                ["--probe", "/tmp/a.pdf"],
+                opener=lambda _p: FakeBackendDoc(3),
+                resource_module=None,
+                stdout=io.StringIO(),
+                stderr=stderr,
+            )
+        finally:
+            if previous is None:
+                os.environ.pop(MEMORY_LIMIT_ENV, None)
+            else:
+                os.environ[MEMORY_LIMIT_ENV] = previous
+        self.assertEqual(code, EXIT_MEMORY_CEILING_UNSUPPORTED)
+        self.assertIn("memory ceiling", stderr.getvalue())
 
     def test_default_prober_factory_is_wired_when_not_injected(self):
         # Exercise the branch that builds the default prober from the opener. The opener is only

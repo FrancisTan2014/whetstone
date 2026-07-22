@@ -13,6 +13,7 @@ export const WORKER_EXIT_CONVERSION_FAILED = 4;
 export const WORKER_EXIT_PASSWORD_REQUIRED = 5;
 export const WORKER_EXIT_UNSUPPORTED_SCHEMA = 6;
 export const WORKER_EXIT_MEMORY = 7;
+export const WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED = 8;
 
 const SETUP_REMEDY = "Run `pnpm setup:pdf` to provision the pinned Docling runtime and models.";
 
@@ -26,6 +27,7 @@ export type PdfStructuredFailureKind =
   | "forbidden_handle"
   | "timeout"
   | "memory"
+  | "memory_ceiling_unsupported"
   | "child_crash"
   | "cancelled"
   | "cleanup";
@@ -111,6 +113,18 @@ export function memoryFailure(): PdfStructuredFailure {
   });
 }
 
+// The child could not apply the per-child memory ceiling this platform requires (POSIX `resource` is
+// unavailable, e.g. Windows). The bounded adapter refuses rather than run a memory-unbounded
+// conversion; the real runner also fences itself off up front on such a platform.
+export function memoryCeilingUnsupportedFailure(): PdfStructuredFailure {
+  return Object.freeze({
+    kind: "memory_ceiling_unsupported",
+    what: "A per-child memory ceiling could not be enforced on this platform, so the bounded conversion was refused.",
+    remedy:
+      "Run the structured PDF adapter on a POSIX platform (Linux/macOS) where an address-space memory ceiling can be applied."
+  });
+}
+
 export function childCrashFailure(detail: string): PdfStructuredFailure {
   return Object.freeze({
     kind: "child_crash",
@@ -162,6 +176,8 @@ export function classifyWorkerExit(outcome: {
       return unsupportedSchemaFailure("unreported");
     case WORKER_EXIT_MEMORY:
       return memoryFailure();
+    case WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED:
+      return memoryCeilingUnsupportedFailure();
     case WORKER_EXIT_CONVERSION_FAILED:
     case WORKER_EXIT_USAGE:
       return malformedFailure(`worker exited with code ${outcome.code}`);
