@@ -77,15 +77,25 @@ export async function insertSourceClaim(
   await tx.insert(uploadedSourceClaims).values({ sha256, workEntryId });
 }
 
-// A PostgreSQL unique-violation (SQLSTATE 23505) surfaced from PGlite carries the code on the error;
-// it is how the claim boundary recognizes the concurrent loser without matching brittle message text.
+// A PostgreSQL unique-violation (SQLSTATE 23505) is how the claim boundary recognizes the concurrent
+// loser without matching brittle message text. Drizzle wraps the driver error, so the pg `code` may sit
+// on a wrapped `cause` rather than the top-level error — walk the cause chain to find it.
 export function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "23505"
-  );
+  let current: unknown = error;
+
+  while (typeof current === "object" && current !== null) {
+    if ("code" in current && (current as { code?: unknown }).code === "23505") {
+      return true;
+    }
+
+    if (!("cause" in current)) {
+      return false;
+    }
+
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  return false;
 }
 
 // The shared create-or-reopen boundary for uploaded bytes (#706). Identical bytes resolve idempotently

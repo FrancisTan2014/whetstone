@@ -1,3 +1,4 @@
+import { toAuthorId } from "@whetstone/domain";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +7,7 @@ import {
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
+  importMarkdownWork,
   ingestEpub,
   searchAuthors
 } from "./libraryApi";
@@ -160,6 +162,89 @@ describe("libraryApi", () => {
     expect(call[1].method).toBe("POST");
     expect(call[1].headers).toEqual({ "content-type": "application/epub+zip" });
     expect(new Uint8Array(call[1].body as Uint8Array)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("mints a Work from an uploaded .md and reports it created on 201", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-1" },
+      work: {
+        authorId: "author-1",
+        entryId: "work-1",
+        language: "en",
+        origin: "imported",
+        title: "Politics and the English Language",
+        workType: "book"
+      }
+    };
+    const fetchMock = stubFetch({ ok: true, status: 201, body: result });
+
+    await expect(
+      importMarkdownWork({
+        author: { mode: "new", name: "George Orwell" },
+        fileName: "politics.md",
+        language: "en",
+        markdown: "# Politics",
+        title: "Politics and the English Language",
+        workType: "book"
+      })
+    ).resolves.toEqual({ result, status: "created" });
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe("/api/works/markdown");
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body as string)).toMatchObject({
+      fileName: "politics.md",
+      markdown: "# Politics"
+    });
+  });
+
+  it("reports exact_existing when identical bytes reopen the owning Work (200)", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-1" },
+      work: { entryId: "work-1" }
+    };
+    stubFetch({ ok: true, status: 200, body: result });
+
+    await expect(
+      importMarkdownWork({
+        author: { mode: "new", name: "George Orwell" },
+        fileName: "politics.md",
+        language: "en",
+        markdown: "# Politics",
+        title: "Politics and the English Language",
+        workType: "book"
+      })
+    ).resolves.toEqual({ result, status: "exact_existing" });
+  });
+
+  it("reports empty_content without throwing when the server returns 422", async () => {
+    stubFetch({ ok: false, status: 422, body: { error: "empty_content" } });
+
+    await expect(
+      importMarkdownWork({
+        author: { mode: "new", name: "George Orwell" },
+        fileName: "images.md",
+        language: "en",
+        markdown: "![only image](x.png)",
+        title: "Images",
+        workType: "book"
+      })
+    ).resolves.toEqual({ status: "empty_content" });
+  });
+
+  it("throws on any other non-ok status", async () => {
+    stubFetch({ ok: false, status: 400, body: { error: "author_not_found" } });
+
+    await expect(
+      importMarkdownWork({
+        author: { authorId: toAuthorId("author-x"), mode: "existing" },
+        fileName: "politics.md",
+        language: "en",
+        markdown: "# Politics",
+        title: "Politics",
+        workType: "book"
+      })
+    ).rejects.toThrow("failed with status 400");
   });
 
   it("sends a DELETE to the work endpoint and resolves on success", async () => {

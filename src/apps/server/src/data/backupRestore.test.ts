@@ -39,6 +39,7 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
       VALUES ('a1', 'w1', 'en', 'imported', 'My Work', 'book');
     INSERT INTO work_sources (id, file_name, file_path, kind, sha256, source_text, work_entry_id)
       VALUES ('src1', 'my.pdf', 'w1source.pdf', 'upload', '${sourceSha}', NULL, 'w1');
+    INSERT INTO uploaded_source_claims (sha256, work_entry_id) VALUES ('${sourceSha}', 'w1');
     INSERT INTO entries (id, type) VALUES ('n1', 'note');
     INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind)
       VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a note body"}]}]}', 'a note body', 'reader', 'n1', 'note');
@@ -167,6 +168,9 @@ describe("backup/restore round-trip", () => {
     }>(
       "select submission_id, note_entry_id, payload_fingerprint from card_creation_receipts order by submission_id"
     );
+    const claims = await verifyPglite.query<{ sha256: string; work_entry_id: string }>(
+      "select sha256, work_entry_id from uploaded_source_claims"
+    );
     await verifyPglite.close();
 
     expect(authors.rows).toEqual([{ name: "Author One" }]);
@@ -179,6 +183,9 @@ describe("backup/restore round-trip", () => {
       { reveal_kind: "legacy_custom", answer_text: "legacy answer" }
     ]);
     expect(cards.rows).toEqual([{ target_entry_id: "p-er", state: "new" }]);
+    // The uploaded-source claim (#706) round-trips with the whole-database dump, so re-uploading the
+    // same bytes still reopens the owning Work after a restore.
+    expect(claims.rows).toEqual([{ sha256: sha256Hex(sourceFileBytes), work_entry_id: "w1" }]);
     expect(events.rows).toEqual([{ type: "rating" }, { type: "reset" }]);
     // Both a live receipt and a tombstoned one (whose note/prompt ids no longer exist — the receipt has
     // no foreign key into the note cascade) round-trip intact, so replay-idempotency survives a restore.

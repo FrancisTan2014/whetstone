@@ -151,8 +151,8 @@ const EXPECTED_FIGURES = 3;
 
 async function ingestCorpus(): Promise<WorkContentDto> {
   const result = await ingestEpub(context.dependencies, new Uint8Array([1, 2, 3]));
-  if (result.status !== "ingested") {
-    throw new Error(`expected ingested, got ${result.status}`);
+  if (result.status !== "created") {
+    throw new Error(`expected created, got ${result.status}`);
   }
   return loadWorkContent(context.db, toEntryId(result.result.work.entryId));
 }
@@ -193,8 +193,8 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
 
   it("resolves every authored nav target to a reading unit and, when anchored, to a block", async () => {
     const result = await ingestEpub(context.dependencies, new Uint8Array([1, 2, 3]));
-    if (result.status !== "ingested") {
-      throw new Error(`expected ingested, got ${result.status}`);
+    if (result.status !== "created") {
+      throw new Error(`expected created, got ${result.status}`);
     }
     const workEntryId = toEntryId(result.result.work.entryId);
     const structure = await loadWorkStructure(context.db, workEntryId);
@@ -214,8 +214,8 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
 
   it("supports a whole-block selection on every text block — no out_of_range anchor", async () => {
     const result = await ingestEpub(context.dependencies, new Uint8Array([1, 2, 3]));
-    if (result.status !== "ingested") {
-      throw new Error(`expected ingested, got ${result.status}`);
+    if (result.status !== "created") {
+      throw new Error(`expected created, got ${result.status}`);
     }
     const workEntryId = toEntryId(result.result.work.entryId);
     const content = await loadWorkContent(context.db, workEntryId);
@@ -268,8 +268,8 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
 
     try {
       const result = await ingestEpub(lossy.dependencies, new Uint8Array([1, 2, 3]));
-      if (result.status !== "ingested") {
-        throw new Error(`expected ingested, got ${result.status}`);
+      if (result.status !== "created") {
+        throw new Error(`expected created, got ${result.status}`);
       }
       return lossy.evidence;
     } finally {

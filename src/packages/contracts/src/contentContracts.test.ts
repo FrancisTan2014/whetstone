@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   epubContentType,
   ingestMarkdownRequestSchema,
+  importMarkdownWorkRequestSchema,
+  parseImportMarkdownWorkRequest,
   parseIngestMarkdownRequest,
   parseWorkAnchorIndex
 } from "./contentContracts.js";
@@ -54,6 +56,60 @@ describe("parseIngestMarkdownRequest", () => {
     expect(() =>
       parseIngestMarkdownRequest({ extra: true, kind: "manual", markdown: "x" })
     ).toThrow();
+  });
+});
+
+describe("parseImportMarkdownWorkRequest", () => {
+  const valid = {
+    author: { mode: "new", name: "George Orwell" },
+    fileName: "politics.md",
+    language: "en",
+    markdown: "# Politics",
+    title: "Politics and the English Language",
+    workType: "book"
+  } as const;
+
+  it("accepts a new-author imported Markdown upload", () => {
+    expect(parseImportMarkdownWorkRequest(valid)).toEqual(valid);
+  });
+
+  it("accepts an existing-author selection", () => {
+    const request = { ...valid, author: { authorId: "author-1", mode: "existing" } };
+    expect(parseImportMarkdownWorkRequest(request)).toMatchObject({
+      author: { authorId: "author-1", mode: "existing" }
+    });
+  });
+
+  it("rejects a non-Markdown file name", () => {
+    expect(
+      importMarkdownWorkRequestSchema.safeParse({ ...valid, fileName: "notes.txt" }).success
+    ).toBe(false);
+  });
+
+  it("rejects a blank file name", () => {
+    expect(importMarkdownWorkRequestSchema.safeParse({ ...valid, fileName: "  " }).success).toBe(
+      false
+    );
+  });
+
+  it("rejects blank Markdown", () => {
+    expect(importMarkdownWorkRequestSchema.safeParse({ ...valid, markdown: "   " }).success).toBe(
+      false
+    );
+  });
+
+  it("rejects a blank title", () => {
+    expect(importMarkdownWorkRequestSchema.safeParse({ ...valid, title: " " }).success).toBe(false);
+  });
+
+  it("rejects an unsupported language", () => {
+    expect(importMarkdownWorkRequestSchema.safeParse({ ...valid, language: "xx" }).success).toBe(
+      false
+    );
+  });
+
+  it("rejects unexpected keys", () => {
+    expect(() => parseImportMarkdownWorkRequest({ ...valid, extra: true })).toThrow();
   });
 });
 

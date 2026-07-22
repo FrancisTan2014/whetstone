@@ -874,6 +874,20 @@ describe("AdminLibraryPage", () => {
     expect(onManageContent).not.toHaveBeenCalled();
   });
 
+  it("shows a generic error toast when the Markdown import request throws", async () => {
+    const onManageContent = vi.fn();
+    mockedImportMarkdownWork.mockRejectedValue(new Error("network down"));
+    const user = await renderReady(onManageContent);
+
+    const file = new File(["# Politics"], "politics.md", { type: "text/markdown" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("Could not ingest the file. Please try again.")).toBeDefined();
+    expect(onManageContent).not.toHaveBeenCalled();
+  });
+
   it("shows a generic error toast but still opens the new Work when the ingest throws", async () => {
     const onManageContent = vi.fn();
     mockedCreateWork.mockResolvedValue(essayWorkItem);
