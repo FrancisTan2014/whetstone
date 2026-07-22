@@ -14,7 +14,7 @@ import {
 import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { pdfImportAttempts, pdfImportRanges } from "../../db/schema.js";
+import { pdfImportAttempts, pdfImportPublications, pdfImportRanges } from "../../db/schema.js";
 
 // Durable persistence for recoverable staged PDF import attempts (#721). Every write that a live
 // conversion makes is FENCED by the run token: a checkpoint, probe, heartbeat, or terminal transition is
@@ -325,6 +325,127 @@ export async function countCommittedRanges(db: DbClient, attemptId: string): Pro
     .from(pdfImportRanges)
     .where(eq(pdfImportRanges.attemptId, attemptId));
   return rows.reduce((total, row) => total + row.value, 0);
+}
+
+// The committed range payloads for the current build, ordered by range index, so #702's publication can
+// reconstruct the full structured document from the checkpoints #721 persisted. Trusts already-validated
+// payloads (each was validated by `parseRangeConversion` before it was committed).
+export async function getCommittedRanges(
+  db: DbClient,
+  attemptId: string,
+  fingerprint: string
+): Promise<readonly RangeConversion[]> {
+  const rows = await db
+    .select({ payload: pdfImportRanges.payload })
+    .from(pdfImportRanges)
+    .where(
+      and(eq(pdfImportRanges.attemptId, attemptId), eq(pdfImportRanges.fingerprint, fingerprint))
+    )
+    .orderBy(asc(pdfImportRanges.rangeIndex));
+  return rows.map((row) => row.payload as RangeConversion);
+}
+
+// The #702 publication record for an attempt: the learner's capture-time intent plus, once published,
+// exactly one resolved outcome (`workEntryId` for a published Work, or `ocrRequiredPages` for the typed
+// OCR-required refusal). Both null means the publication is still pending.
+export type PdfImportPublicationRecord = Readonly<{
+  attemptId: string;
+  enteredTitle: string | null;
+  enteredAuthor: string | null;
+  enteredLanguage: string | null;
+  fileName: string;
+  workEntryId: string | null;
+  ocrRequiredPages: number | null;
+  publishedAt: Date | null;
+}>;
+
+type PublicationRow = typeof pdfImportPublications.$inferSelect;
+
+function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
+  return Object.freeze({
+    attemptId: row.attemptId,
+    enteredTitle: row.enteredTitle,
+    enteredAuthor: row.enteredAuthor,
+    enteredLanguage: row.enteredLanguage,
+    fileName: row.fileName,
+    workEntryId: row.workEntryId,
+    ocrRequiredPages: row.ocrRequiredPages,
+    publishedAt: row.publishedAt
+  });
+}
+
+export type InsertPublicationIntentInput = Readonly<{
+  attemptId: string;
+  enteredTitle: string | null;
+  enteredAuthor: string | null;
+  enteredLanguage: string | null;
+  fileName: string;
+}>;
+
+// Record the learner's upload-time intent for a freshly queued attempt, before any conversion. The
+// outcome columns stay null until publication resolves them.
+export async function insertPublicationIntent(
+  db: DbClient,
+  input: InsertPublicationIntentInput
+): Promise<void> {
+  await db.insert(pdfImportPublications).values({
+    attemptId: input.attemptId,
+    enteredTitle: input.enteredTitle,
+    enteredAuthor: input.enteredAuthor,
+    enteredLanguage: input.enteredLanguage,
+    fileName: input.fileName
+  });
+}
+
+export async function getPublication(
+  db: DbClient,
+  attemptId: string
+): Promise<PdfImportPublicationRecord | null> {
+  const [row] = await db
+    .select()
+    .from(pdfImportPublications)
+    .where(eq(pdfImportPublications.attemptId, attemptId));
+  return row === undefined ? null : toPublicationRecord(row);
+}
+
+// Link a published Work to its publication as the terminal job state, inside the caller's claim
+// transaction so the outcome commits atomically with the Work. Only applies while the publication is
+// still pending (no result yet), so a re-run cannot relink an already-resolved publication.
+export async function linkPublishedWork(
+  tx: Executor,
+  attemptId: string,
+  workEntryId: string,
+  now: Date
+): Promise<void> {
+  await tx
+    .update(pdfImportPublications)
+    .set({ workEntryId, publishedAt: now })
+    .where(
+      and(
+        eq(pdfImportPublications.attemptId, attemptId),
+        sql`${pdfImportPublications.workEntryId} is null`,
+        sql`${pdfImportPublications.ocrRequiredPages} is null`
+      )
+    );
+}
+
+// Record the typed OCR-required outcome (no Work) for a pending publication.
+export async function markPublicationOcrRequired(
+  db: DbClient,
+  attemptId: string,
+  pagesNeedingOcr: number,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ ocrRequiredPages: pagesNeedingOcr, publishedAt: now })
+    .where(
+      and(
+        eq(pdfImportPublications.attemptId, attemptId),
+        sql`${pdfImportPublications.workEntryId} is null`,
+        sql`${pdfImportPublications.ocrRequiredPages} is null`
+      )
+    );
 }
 
 export async function markConverted(
