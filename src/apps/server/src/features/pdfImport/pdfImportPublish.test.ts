@@ -38,6 +38,7 @@ import {
 import type { PdfImportActiveRuns } from "./pdfImportRunner.js";
 import {
   beginPdfImport,
+  drainPendingPdfPublications,
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./pdfImportPublish.js";
@@ -46,6 +47,7 @@ import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
   commitRange,
+  findConvertedPendingPublications,
   getAttemptById,
   getPublication,
   insertPublicationIntent,
@@ -965,5 +967,129 @@ describe("beginPdfImport", () => {
       throw new Error(`expected reopened, got ${second.outcome}`);
     }
     expect(second.work.entryId).toBe(work.work.entryId);
+  });
+});
+
+describe("drainPendingPdfPublications (durable publication recovery)", () => {
+  // Stage a queued attempt with real bytes, drive it to `converted`, and record its capture-time intent —
+  // but do NOT publish. This models an attempt stranded after `markConverted` committed but before
+  // publication ran (a crash between the two, or a publication throw on a prior tick): a converted attempt
+  // with a still-pending publication that the queue runner and interrupt-recovery both ignore.
+  async function stageConvertedPending(
+    id: string,
+    input: Readonly<{ sourceHash: string; fileName: string; stageBytes?: Uint8Array }>
+  ): Promise<void> {
+    await driveToConverted(db, {
+      id,
+      sourceHash: input.sourceHash,
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1,
+      stageBytes: input.stageBytes
+    });
+    await insertPublicationIntent(db, {
+      attemptId: id,
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: input.fileName
+    });
+  }
+
+  it("republishes a converted attempt whose publication was left pending, creating its Work", async () => {
+    // Fail-before/pass-after regression: before this recovery path existed, a converted attempt whose
+    // publication never ran (crash/throw after `markConverted`) stayed `converted` with a pending
+    // publication forever — no Work, no retry. The recovery sweep must publish it idempotently.
+    await stageConvertedPending("att-strand", {
+      sourceHash: "a".repeat(64),
+      fileName: "stranded.pdf"
+    });
+
+    const results = await drainPendingPdfPublications(publishDeps(db));
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ attemptId: "att-strand", status: "published" });
+    const publication = await getPublication(db, "att-strand");
+    expect(publication?.workEntryId).not.toBeNull();
+    const content = await loadWorkContent(db, publication!.workEntryId!);
+    expect(content).not.toBeNull();
+    // The now-durable stage was freed after recovery published the Work.
+    expect((await getAttemptById(db, "att-strand"))?.stagePath).toBeNull();
+  });
+
+  it("does not republish an attempt a prior tick already resolved (idempotent, no duplicate Work)", async () => {
+    await stageConvertedPending("att-once", {
+      sourceHash: "b".repeat(64),
+      fileName: "once.pdf"
+    });
+    const first = await drainPendingPdfPublications(publishDeps(db));
+    expect(first[0]).toMatchObject({ status: "published" });
+
+    // A second sweep finds nothing pending, so it publishes nothing and creates no duplicate Work.
+    expect(await findConvertedPendingPublications(db)).toEqual([]);
+    const second = await drainPendingPdfPublications(publishDeps(db));
+    expect(second).toEqual([]);
+    expect(await db.select().from(workMeta)).toHaveLength(1);
+  });
+
+  it("isolates a throwing attempt so the others still publish", async () => {
+    // Two stranded attempts. The first loses its staged bytes, so publication throws when it tries to read
+    // them back for provenance; the second is intact. The sweep must capture the throw as an `error` and
+    // still publish the healthy attempt — one poisoned attempt cannot starve the rest (or the queue drain).
+    await stageConvertedPending("att-broken", {
+      sourceHash: "c".repeat(64),
+      fileName: "broken.pdf"
+    });
+    await stageConvertedPending("att-ok", {
+      sourceHash: "d".repeat(64),
+      fileName: "ok.pdf"
+    });
+    const brokenStage = (await getAttemptById(db, "att-broken"))!.stagePath!;
+    await stageStore.removeStage(brokenStage);
+
+    const results = await drainPendingPdfPublications(publishDeps(db));
+
+    const broken = results.find((result) => result.attemptId === "att-broken");
+    const ok = results.find((result) => result.attemptId === "att-ok");
+    expect(broken?.status).toBe("error");
+    expect(ok?.status).toBe("published");
+    // The healthy attempt produced its Work; the broken one is still pending and will retry next tick.
+    expect(await getPublication(db, "att-ok").then((row) => row?.workEntryId)).not.toBeNull();
+    expect(await getPublication(db, "att-broken").then((row) => row?.workEntryId)).toBeNull();
+  });
+
+  it("only reports converted attempts with a pending publication", async () => {
+    // A queued (not converted) attempt with an intent is not recoverable yet.
+    const { stagePath } = await stageStore.createStage(
+      "att-queued",
+      new Uint8Array([0x25, 0x50, 0x44, 0x46])
+    );
+    await insertQueuedAttempt(db, {
+      id: "att-queued",
+      userId: DEFAULT_USER_ID,
+      sourceHash: "e".repeat(64),
+      stagePath,
+      now: NOW
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-queued",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "queued.pdf"
+    });
+    // A converted attempt with NO publication intent (never started through beginPdfImport) is not ours.
+    await driveToConverted(db, {
+      id: "att-no-intent",
+      sourceHash: "f".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    // A genuinely pending converted attempt IS returned.
+    await stageConvertedPending("att-pending", {
+      sourceHash: "1".repeat(64),
+      fileName: "pending.pdf"
+    });
+
+    expect(await findConvertedPendingPublications(db)).toEqual(["att-pending"]);
   });
 });

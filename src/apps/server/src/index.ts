@@ -45,6 +45,7 @@ import {
 import { createPdfImportStageStore } from "./features/pdfImport/pdfImportStage.js";
 import type { PdfImportCommandDependencies } from "./features/pdfImport/pdfImportCommands.js";
 import {
+  drainPendingPdfPublications,
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./features/pdfImport/pdfImportPublish.js";
@@ -371,6 +372,23 @@ const drainPdfImportQueue = async (): Promise<void> => {
   }
   pdfImportDraining = true;
   try {
+    // Durable publication recovery first: republish any `converted` attempt whose publication is still
+    // pending — stranded by a process crash after `markConverted` committed but before publication
+    // finished, or by a transient publication throw on a prior tick. Idempotent, and isolated per
+    // attempt so one poisoned attempt cannot block the queue drain that follows.
+    for (const recovered of await drainPendingPdfPublications(pdfImportPublish)) {
+      if (recovered.status === "error") {
+        server.log.error(
+          { attemptId: recovered.attemptId, reason: recovered.reason },
+          "pdf_import_publish_recovery_failed"
+        );
+      } else {
+        server.log.info(
+          { attemptId: recovered.attemptId, outcome: recovered.status },
+          "pdf_import_published_recovered"
+        );
+      }
+    }
     let result = await processNextPdfImport(pdfImportRunner);
     while (result.status !== "idle") {
       if (result.status === "converted") {

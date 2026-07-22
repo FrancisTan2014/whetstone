@@ -20,6 +20,7 @@ import type { PdfImportCleanupLogger } from "./pdfImportRunner.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   clearStagePath,
+  findConvertedPendingPublications,
   getAttemptById,
   getCommittedRanges,
   getPublication,
@@ -396,4 +397,36 @@ export async function publishConvertedPdfImport(
   // reopen), so the retained stage is redundant: free it.
   await removeRetainedStage(deps, attemptId, stagePath);
   return { status: "published", work: outcome.work, reopened: outcome.status === "exact_existing" };
+}
+
+// The outcome of trying to republish one stranded attempt during recovery: either a
+// `PublishConvertedResult` status, or an isolated `error` (the publication threw for this attempt).
+export type PendingPublicationRecoveryResult =
+  | Readonly<{ attemptId: string; status: PublishConvertedResult["status"] }>
+  | Readonly<{ attemptId: string; status: "error"; reason: string }>;
+
+// Durable publication recovery (#702). Republish every `converted` attempt whose publication is still
+// pending, idempotently. This is the drain path that recovers work stranded outside the normal flow:
+// an attempt whose process died after `markConverted` committed but before publication finished, or one
+// whose publication threw once on a prior drain tick. Neither the queue runner (it only claims `queued`
+// attempts) nor startup interrupt-recovery (it only moves abandoned `running` attempts) would ever pick
+// these up, so without this scan a converted attempt reports "Finishing up..." forever with no Work and
+// no retry path. Each attempt is isolated: a throw on one is captured as an `error` result rather than
+// aborting the sweep, so a single poisoned attempt cannot starve the others (or the queue drain that
+// follows), and the next tick retries it. `publishConvertedPdfImport` is a no-op (`already_published`)
+// for an attempt a prior tick already resolved, so re-running the sweep never double-publishes.
+export async function drainPendingPdfPublications(
+  deps: PdfImportPublishDependencies
+): Promise<readonly PendingPublicationRecoveryResult[]> {
+  const pending = await findConvertedPendingPublications(deps.db);
+  const results: PendingPublicationRecoveryResult[] = [];
+  for (const attemptId of pending) {
+    try {
+      const outcome = await publishConvertedPdfImport(deps, attemptId);
+      results.push({ attemptId, status: outcome.status });
+    } catch (cause) {
+      results.push({ attemptId, status: "error", reason: describeError(cause) });
+    }
+  }
+  return results;
 }

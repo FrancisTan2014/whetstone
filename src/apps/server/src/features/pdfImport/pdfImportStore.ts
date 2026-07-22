@@ -417,17 +417,21 @@ export async function getPublication(
 // Link a published Work to its publication as the terminal job state, inside the caller's claim
 // transaction so the outcome commits atomically with the Work. Only applies while the publication is
 // still pending (no result yet), so a re-run cannot relink an already-resolved publication.
-// A publication is still pending only while no outcome column is set. Every terminal marker updates under
-// this guard so a re-run can never overwrite an already-resolved outcome (published Work, OCR-required,
-// no-content, or unsupported-image refusal).
-function pendingPublicationGuard(attemptId: string): ReturnType<typeof and> {
+// A publication is still pending only while no outcome column is set: no linked Work and none of the
+// typed terminal refusals (OCR-required, no-content, unsupported-image) recorded.
+function pendingPublicationCondition(): ReturnType<typeof and> {
   return and(
-    eq(pdfImportPublications.attemptId, attemptId),
     sql`${pdfImportPublications.workEntryId} is null`,
     sql`${pdfImportPublications.ocrRequiredPages} is null`,
     sql`${pdfImportPublications.noContent} is null`,
     sql`${pdfImportPublications.unpreservableImages} is null`
   );
+}
+
+// Every terminal marker updates under this guard so a re-run can never overwrite an already-resolved
+// outcome (published Work, OCR-required, no-content, or unsupported-image refusal).
+function pendingPublicationGuard(attemptId: string): ReturnType<typeof and> {
+  return and(eq(pdfImportPublications.attemptId, attemptId), pendingPublicationCondition());
 }
 
 export async function linkPublishedWork(
@@ -580,6 +584,23 @@ export async function recoverInterruptedAttempts(db: DbClient, now: Date): Promi
     .where(eq(pdfImportAttempts.state, "running"))
     .returning({ id: pdfImportAttempts.id });
   return recovered.length;
+}
+
+// Durable publication recovery (#702): the attempt ids of every `converted` attempt whose publication
+// intent is still pending (no terminal outcome recorded yet), oldest first. These are stranded work the
+// queue runner can never pick up (it only claims `queued` attempts) and startup recovery never touches
+// (it only moves abandoned `running` attempts): an attempt whose process died after `markConverted`
+// committed but before publication finished, or whose publication threw once on a prior drain tick. The
+// drain loop republishes each idempotently, so a converted attempt is never left reporting
+// "Finishing up..." forever with no Work created and no retry path.
+export async function findConvertedPendingPublications(db: DbClient): Promise<readonly string[]> {
+  const rows = await db
+    .select({ attemptId: pdfImportAttempts.id })
+    .from(pdfImportAttempts)
+    .innerJoin(pdfImportPublications, eq(pdfImportPublications.attemptId, pdfImportAttempts.id))
+    .where(and(eq(pdfImportAttempts.state, "converted"), pendingPublicationCondition()))
+    .orderBy(asc(pdfImportAttempts.createdAt));
+  return rows.map((row) => row.attemptId);
 }
 
 // Retry: promote an attempt back to `queued` so the runner resumes it after the last committed range.
