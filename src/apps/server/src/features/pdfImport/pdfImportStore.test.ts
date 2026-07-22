@@ -133,6 +133,55 @@ describe("pdfImportStore", () => {
       expect(second.claimed).toBeNull();
     });
 
+    it("does not overwrite the winner's run token or start a second attempt while one runs", async () => {
+      await seedQueued(db, "a1");
+      await seedQueued(db, "a2");
+      const first = await claim(db);
+      expect(first.claimed?.id).toBe("a1");
+      expect(first.claimed?.state).toBe("running");
+
+      // A second caller must not re-claim the running attempt (token overwrite) nor start a2.
+      const second = await claim(db);
+      expect(second.claimed).toBeNull();
+
+      const a1 = await getAttemptById(db, "a1");
+      expect(a1?.state).toBe("running");
+      expect(a1?.runToken).toBe(first.runToken);
+      const a2 = await getAttemptById(db, "a2");
+      expect(a2?.state).toBe("queued");
+      expect(a2?.runToken).toBeNull();
+    });
+
+    it("admits exactly one winner under concurrent claims and keeps its run token", async () => {
+      await seedQueued(db, "a1");
+      await seedQueued(db, "a2");
+
+      const results = await Promise.all([
+        claimNextQueued(db, {
+          runToken: "token-A",
+          fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+          now: new Date()
+        }),
+        claimNextQueued(db, {
+          runToken: "token-B",
+          fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+          now: new Date()
+        })
+      ]);
+
+      const winners = results.filter((r): r is NonNullable<typeof r> => r !== null);
+      expect(winners).toHaveLength(1);
+
+      const running = await db
+        .select()
+        .from(pdfImportAttempts)
+        .where(eq(pdfImportAttempts.state, "running"));
+      expect(running).toHaveLength(1);
+      // The single running row carries exactly the winner's token — no rival overwrote it.
+      expect(running[0]?.id).toBe(winners[0]!.id);
+      expect(running[0]?.runToken).toBe(winners[0]!.runToken);
+    });
+
     it("drops stale-fingerprint ranges and recomputes progress on re-claim", async () => {
       await seedQueued(db, "a1");
       const first = await claim(db, "old-fingerprint@1");

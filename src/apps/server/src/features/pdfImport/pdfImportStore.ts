@@ -136,7 +136,11 @@ export async function getAttemptById(
 export type ClaimInput = Readonly<{ runToken: string; fingerprint: string; now: Date }>;
 
 // Atomically claim the single conversion slot for the oldest queued attempt. Returns null when the
-// queue is empty OR another attempt already holds the slot (single admission). Stale committed ranges
+// queue is empty OR another attempt already holds the slot (single admission). The claim is atomic by
+// construction: SKIP LOCKED means two concurrent claimers can never lock the SAME queued row, and the
+// row is transitioned with a compare-and-set on the still-`queued` state, so a stale claimer can never
+// overwrite the winner's run token or spawn a duplicate child; the DB partial-unique index on running
+// rows is the final backstop against two distinct attempts running at once. Stale committed ranges
 // (from a different adapter build) are dropped and progress recomputed, so a resume never trusts an
 // incompatible checkpoint.
 export async function claimNextQueued(
@@ -144,6 +148,9 @@ export async function claimNextQueued(
   input: ClaimInput
 ): Promise<PdfImportAttemptRecord | null> {
   return db.transaction(async (tx) => {
+    // Single admission: yield while any attempt is already running. The partial-unique index on
+    // `state = 'running'` is the hard database backstop; this early check keeps the common
+    // already-busy path from locking a queued row it could never claim.
     const [running] = await tx
       .select({ id: pdfImportAttempts.id })
       .from(pdfImportAttempts)
@@ -153,12 +160,17 @@ export async function claimNextQueued(
       return null;
     }
 
+    // Lock the oldest queued row with SKIP LOCKED so two concurrent claimers can never select the
+    // SAME attempt: a competitor skips the row this transaction already holds instead of racing to
+    // re-claim it. This is what stops a second caller from overwriting the winner's run token or
+    // spawning a duplicate converter child for one attempt.
     const [queued] = await tx
       .select()
       .from(pdfImportAttempts)
       .where(eq(pdfImportAttempts.state, "queued"))
       .orderBy(asc(pdfImportAttempts.createdAt), asc(pdfImportAttempts.id))
-      .limit(1);
+      .limit(1)
+      .for("update", { skipLocked: true });
     if (queued === undefined) {
       return null;
     }
@@ -173,6 +185,8 @@ export async function claimNextQueued(
       );
     const completedPages = await sumCommittedPages(tx, queued.id, input.fingerprint);
 
+    // Compare-and-set on the still-`queued` state: the claim applies only while the row is still
+    // claimable, so it can never resurrect an attempt another claimer already moved out of `queued`.
     const [claimed] = await tx
       .update(pdfImportAttempts)
       .set({
@@ -183,9 +197,15 @@ export async function claimNextQueued(
         heartbeatAt: input.now,
         updatedAt: input.now
       })
-      .where(eq(pdfImportAttempts.id, queued.id))
+      .where(and(eq(pdfImportAttempts.id, queued.id), eq(pdfImportAttempts.state, "queued")))
       .returning();
-    return toRecord(claimed!);
+    /* v8 ignore next 3 -- concurrency-only: the SKIP-LOCKED row lock already prevents a rival from
+       transitioning this locked row, so the compare-and-set can only miss under a true race that no
+       single-threaded test can drive; the guard stays as defense-in-depth rather than a fake seam. */
+    if (claimed === undefined) {
+      return null;
+    }
+    return toRecord(claimed);
   });
 }
 
