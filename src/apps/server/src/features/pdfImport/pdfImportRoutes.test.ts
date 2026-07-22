@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -207,20 +208,145 @@ describe("pdf import routes", () => {
     expect(reopened.outcome).toBe("reopened");
   });
 
-  it("reuses a pdf content-type parser a sibling feature already registered", async () => {
-    // Content routes register the same buffer parser first (createServer wires content before pdf import),
-    // so registration must detect the existing parser and not throw a duplicate-registration error.
+  it("refuses a buffered request body with 400 (regression: the front door must never buffer the whole file)", async () => {
+    // Wire the front door behind a BUFFERING parser (parseAs: "buffer") — exactly the misconfiguration
+    // the reviewer flagged. The route's streamable-body guard must reject it rather than silently
+    // materializing the whole PDF, so this returns 400 and the 128 MiB-buffering regression stays dead.
     const app = Fastify({ logger: false });
     app.addContentTypeParser(pdfContentType, { parseAs: "buffer" }, (_request, body, done) =>
       done(null, body)
     );
-    expect(() =>
-      registerPdfImportRoutes(app, {
-        commands: commandDeps(context.db, context.stageStore),
+    app.decorate("currentUser", { getCurrentUserId: () => "user-1" });
+    registerPdfImportRoutes(app, {
+      commands: commandDeps(context.db, context.stageStore),
+      uploadLimitBytes: 10_000_000
+    });
+    try {
+      const response = await app.inject({
+        headers: {
+          "content-type": pdfContentType,
+          "x-pdf-import-metadata": metadataHeader({ fileName: "buffered.pdf" })
+        },
+        method: "POST",
+        payload: Buffer.from("%PDF buffered whole"),
+        url: "/api/pdf-imports"
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ error: "invalid_request" });
+
+      // With the same buffering parser, invalid metadata rejects even earlier: the pre-streaming drain is
+      // a no-op on a non-stream (already-buffered) body, and the route still answers 400.
+      const badMetadata = await app.inject({
+        headers: {
+          "content-type": pdfContentType,
+          "x-pdf-import-metadata": Buffer.from("not-json").toString("base64")
+        },
+        method: "POST",
+        payload: Buffer.from("%PDF buffered whole"),
+        url: "/api/pdf-imports"
+      });
+      expect(badMetadata.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects an empty streamed upload with 400 (nothing to import)", async () => {
+    // A genuine request stream that yields no bytes: the parser hands a readable body (so the streamable
+    // guard passes), beginPdfImport stages zero bytes and reports the upload empty, which the route maps
+    // to 400.
+    const response = await context.server.inject({
+      headers: {
+        "content-type": pdfContentType,
+        "x-pdf-import-metadata": metadataHeader({ fileName: "empty-stream.pdf" })
+      },
+      method: "POST",
+      payload: Readable.from([]),
+      url: "/api/pdf-imports"
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("surfaces an unexpected staging error as a 500 (rethrown, not swallowed as too-large)", async () => {
+    // A staging failure that is NOT PdfUploadTooLargeError must propagate (becoming a 500), never be
+    // mistaken for a 413 — the catch rethrows anything that is not the byte-bound error.
+    const failingStage: PdfImportStageStore = {
+      ...context.stageStore,
+      createStageFromStream: () => Promise.reject(new Error("disk exploded"))
+    };
+    const server = createServer({
+      logger: false,
+      pdfImport: {
+        commands: commandDeps(context.db, failingStage),
         uploadLimitBytes: 10_000_000
-      })
-    ).not.toThrow();
-    await app.close();
+      }
+    });
+    try {
+      const response = await server.inject({
+        headers: {
+          "content-type": pdfContentType,
+          "x-pdf-import-metadata": metadataHeader({ fileName: "boom.pdf" })
+        },
+        method: "POST",
+        payload: Readable.from([Buffer.from("%PDF")]),
+        url: "/api/pdf-imports"
+      });
+      expect(response.statusCode).toBe(500);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("streams a chunked upload body straight into the stage, assembling it without buffering the whole file", async () => {
+    const chunks = [
+      Buffer.from("%PDF-1.7 "),
+      Buffer.from("chunk-two "),
+      Buffer.from("chunk-three")
+    ];
+    const whole = Buffer.concat(chunks);
+    const response = await context.server.inject({
+      headers: {
+        "content-type": pdfContentType,
+        "x-pdf-import-metadata": metadataHeader({ fileName: "streamed.pdf" })
+      },
+      method: "POST",
+      // A genuine multi-chunk request stream: the front door must consume it as a stream. If the shared
+      // parser is reverted to buffering the whole body, `isReadableBody` fails and this returns 400.
+      payload: Readable.from(chunks),
+      url: "/api/pdf-imports"
+    });
+
+    expect(response.statusCode).toBe(201);
+    const result = parsePdfImportBeginResultDto(response.json());
+    if (result.outcome !== "queued") {
+      throw new Error(`expected queued, got ${result.outcome}`);
+    }
+    // The streamed chunks were assembled on disk exactly as sent (hashed incrementally, never buffered).
+    const staged = await context.stageStore.readStage(result.attemptId);
+    expect(Buffer.from(staged)).toEqual(whole);
+  });
+
+  it("rejects an upload that exceeds the configured byte limit with 413", async () => {
+    const smallServer = createServer({
+      logger: false,
+      pdfImport: { commands: commandDeps(context.db, context.stageStore), uploadLimitBytes: 4 }
+    });
+    try {
+      const response = await smallServer.inject({
+        headers: {
+          "content-type": pdfContentType,
+          "x-pdf-import-metadata": metadataHeader({ fileName: "big.pdf" })
+        },
+        method: "POST",
+        payload: Buffer.from("%PDF far past the four-byte bound"),
+        url: "/api/pdf-imports"
+      });
+      expect(response.statusCode).toBe(413);
+      expect(response.json()).toEqual({ error: "upload_too_large" });
+    } finally {
+      await smallServer.close();
+    }
   });
 
   it("rejects a missing metadata header, invalid base64 JSON, and an empty body with 400", async () => {
@@ -232,6 +358,32 @@ describe("pdf import routes", () => {
     expect(
       (await beginUpload(Buffer.alloc(0), metadataHeader({ fileName: "empty.pdf" }))).statusCode
     ).toBe(400);
+  });
+
+  it("drains a streamed request body before rejecting on invalid metadata", async () => {
+    // Invalid metadata rejects early, but a genuine multi-chunk body must still be drained (consumed and
+    // discarded) so the connection is not left with a dangling stream.
+    const response = await context.server.inject({
+      headers: {
+        "content-type": pdfContentType,
+        "x-pdf-import-metadata": Buffer.from("not-json").toString("base64")
+      },
+      method: "POST",
+      payload: Readable.from([Buffer.from("%PDF-1.7 "), Buffer.from("more body bytes")]),
+      url: "/api/pdf-imports"
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects a missing metadata header even when the request carries no body at all", async () => {
+    // No payload means no request body to drain: the metadata check still 400s and drainBody is a no-op.
+    const response = await context.server.inject({
+      headers: { "content-type": pdfContentType },
+      method: "POST",
+      url: "/api/pdf-imports"
+    });
+    expect(response.statusCode).toBe(400);
   });
 
   it("rejects metadata that fails validation with 400", async () => {

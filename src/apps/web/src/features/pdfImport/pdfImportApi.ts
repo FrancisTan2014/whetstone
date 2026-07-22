@@ -27,16 +27,18 @@ function encodeMetadata(metadata: PdfImportMetadata): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(json)));
 }
 
-// Start a born-digital PDF import: stream the bytes into #721's staged attempt (or, when identical bytes
-// already own a Work via #706, reopen that Work with no new attempt). The caller polls `attemptId` for a
-// queued result, or opens `workEntryId` directly for a reopened one.
+// Start a born-digital PDF import: stream the file's bytes into #721's staged attempt (or, when identical
+// bytes already own a Work via #706, reopen that Work with no new attempt). Passing the `File` (a `Blob`)
+// straight as the request body lets the browser stream it from disk — the whole PDF is never read into a
+// JS `ArrayBuffer` first. The caller polls `attemptId` for a queued result, or opens `workEntryId`
+// directly for a reopened one.
 export async function beginPdfImport(
   file: File,
   metadata: PdfImportMetadata
 ): Promise<PdfImportBeginResultDto> {
   const path = apiUrl("/pdf-imports");
   const response = await fetch(path, {
-    body: await file.arrayBuffer(),
+    body: file,
     headers: { "content-type": pdfContentType, [metadataHeader]: encodeMetadata(metadata) },
     method: "POST"
   });

@@ -391,6 +391,7 @@ describe("processNextPdfImport", () => {
     const logCleanupFailure = vi.fn();
     const failingStore: PdfImportStageStore = {
       createStage: stageStore.createStage,
+      createStageFromStream: stageStore.createStageFromStream,
       openStage: stageStore.openStage,
       readStage: stageStore.readStage,
       // A non-Error rejection also exercises the String(cause) fallback in the cleanup log.

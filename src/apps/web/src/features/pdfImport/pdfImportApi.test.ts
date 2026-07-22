@@ -25,10 +25,10 @@ function stubFetch(response: {
   return fetchMock;
 }
 
-// jsdom's File lacks arrayBuffer() here; supply the bytes the api will POST plus a name for provenance.
-function pdfFile(bytes: Uint8Array, name = "doc.pdf"): File {
+// The api streams the File (a Blob) straight as the request body, so this stub only needs a name (for
+// provenance) and a type — it never reads the bytes into an ArrayBuffer first.
+function pdfFile(name = "doc.pdf"): File {
   return {
-    arrayBuffer: async () => bytes.buffer,
     name,
     type: "application/pdf"
   } as unknown as File;
@@ -61,15 +61,15 @@ afterEach(() => {
 });
 
 describe("beginPdfImport", () => {
-  it("streams the bytes with base64-encoded metadata and returns a queued attempt", async () => {
+  it("streams the file straight as the request body with base64-encoded metadata and returns a queued attempt", async () => {
     const fetchMock = stubFetch({
       body: { attemptId: "attempt-1", outcome: "queued", status: statusDto() },
       ok: true,
       status: 201
     });
-    const bytes = new Uint8Array([1, 2, 3]);
+    const file = pdfFile("My Book.pdf");
 
-    const result = await beginPdfImport(pdfFile(bytes, "My Book.pdf"), {
+    const result = await beginPdfImport(file, {
       enteredAuthor: "Ada Lovelace",
       enteredLanguage: "en",
       enteredTitle: "My Book",
@@ -83,7 +83,9 @@ describe("beginPdfImport", () => {
     ];
     expect(path).toBe("/api/pdf-imports");
     expect(init.method).toBe("POST");
-    expect(init.body).toBe(bytes.buffer);
+    // The File is passed straight through (the browser streams it from disk); it is never materialized
+    // into an ArrayBuffer by the client.
+    expect(init.body).toBe(file);
     expect(init.headers["content-type"]).toBe("application/pdf");
     // The metadata header is base64 of the UTF-8 JSON, so it decodes back to the sent intent.
     const decoded = JSON.parse(
@@ -102,7 +104,7 @@ describe("beginPdfImport", () => {
   it("returns a reopened Work when identical bytes already own one", async () => {
     stubFetch({ body: { outcome: "reopened", workEntryId: "work-9" }, ok: true, status: 200 });
 
-    const result = await beginPdfImport(pdfFile(new Uint8Array([1])), { fileName: "doc.pdf" });
+    const result = await beginPdfImport(pdfFile(), { fileName: "doc.pdf" });
 
     expect(result).toEqual({ outcome: "reopened", workEntryId: "work-9" });
   });
@@ -110,9 +112,9 @@ describe("beginPdfImport", () => {
   it("throws when the server rejects the upload", async () => {
     stubFetch({ ok: false, status: 400 });
 
-    await expect(
-      beginPdfImport(pdfFile(new Uint8Array([1])), { fileName: "doc.pdf" })
-    ).rejects.toThrow("failed with status 400");
+    await expect(beginPdfImport(pdfFile(), { fileName: "doc.pdf" })).rejects.toThrow(
+      "failed with status 400"
+    );
   });
 });
 

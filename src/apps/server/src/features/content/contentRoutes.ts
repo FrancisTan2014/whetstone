@@ -1,8 +1,7 @@
 import {
   epubContentType,
   importMarkdownWorkRequestSchema,
-  ingestMarkdownRequestSchema,
-  pdfContentType
+  ingestMarkdownRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
@@ -46,10 +45,6 @@ export function registerContentRoutes(
   dependencies: ContentDependencies
 ): void {
   server.addContentTypeParser(epubContentType, { parseAs: "buffer" }, (_request, body, done) =>
-    done(null, body)
-  );
-
-  server.addContentTypeParser(pdfContentType, { parseAs: "buffer" }, (_request, body, done) =>
     done(null, body)
   );
 

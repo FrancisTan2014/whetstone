@@ -9,16 +9,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { pdfImportAttempts } from "../../db/schema.js";
+import { hashBytes } from "../../files/sourceFileStore.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
+  bindStagedPdfAttempt,
   cancelPdfImport,
+  discardStagedPdfUpload,
   retryPdfImport,
   retryPdfImportCleanup,
-  startPdfImport,
+  stagePdfUpload,
   type PdfImportCommandDependencies
 } from "./pdfImportCommands.js";
 import type { PdfImportActiveRuns } from "./pdfImportRunner.js";
-import { createPdfImportStageStore, type PdfImportStageStore } from "./pdfImportStage.js";
+import {
+  createPdfImportStageStore,
+  PdfUploadTooLargeError,
+  type PdfImportStageStore
+} from "./pdfImportStage.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
@@ -35,6 +42,12 @@ async function buildDb(): Promise<DbClient> {
 
 function spyActiveRuns(): PdfImportActiveRuns {
   return { register: vi.fn(), abort: vi.fn(), clear: vi.fn() };
+}
+
+async function* streamOf(...chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
+  for (const chunk of chunks) {
+    yield chunk;
+  }
 }
 
 describe("pdfImport commands", () => {
@@ -77,15 +90,30 @@ describe("pdfImport commands", () => {
     });
   }
 
-  describe("startPdfImport", () => {
-    it("stages the bytes and queues a new attempt", async () => {
+  describe("stagePdfUpload / bindStagedPdfAttempt", () => {
+    it("streams the upload into a fresh stage, hashing without buffering, and binds a queued attempt", async () => {
       const deps = buildDeps({ createAttemptId: () => "att-1" });
-      const started = await startPdfImport(deps, {
-        userId: DEFAULT_USER_ID,
-        bytes: new Uint8Array([9, 9])
+      const chunks = [new Uint8Array([9, 9]), new Uint8Array([8]), new Uint8Array([7, 7, 7])];
+      const whole = new Uint8Array([9, 9, 8, 7, 7, 7]);
+
+      const staged = await stagePdfUpload(deps, {
+        source: streamOf(...chunks),
+        maxBytes: 1_000
       });
 
-      expect(started.attemptId).toBe("att-1");
+      // The stage was assembled from the streamed chunks and hashed incrementally, so it matches the
+      // single-shot hash over the same bytes (proving the whole file was never buffered to hash it).
+      expect(staged.attemptId).toBe("att-1");
+      expect(staged.byteLength).toBe(whole.byteLength);
+      expect(staged.sha256).toBe(hashBytes(whole));
+      expect(new Uint8Array(await readFile(stageStore.openStage("att-1").path))).toEqual(whole);
+
+      const started = await bindStagedPdfAttempt(deps, {
+        attemptId: staged.attemptId,
+        stagePath: staged.stagePath,
+        sha256: staged.sha256,
+        userId: DEFAULT_USER_ID
+      });
       expect(started.status).toMatchObject({
         attemptId: "att-1",
         state: "queued",
@@ -93,30 +121,72 @@ describe("pdfImport commands", () => {
       });
       const attempt = await getAttempt(db, DEFAULT_USER_ID, "att-1");
       expect(attempt?.state).toBe("queued");
-      await expect(stat(stageStore.openStage("att-1").path)).resolves.toBeDefined();
+      expect(attempt?.sourceHash).toBe(hashBytes(whole));
     });
 
-    it("preserves an existing attempt's stage on an id collision", async () => {
+    it("rejects an upload that exceeds the byte bound and leaves no stage behind", async () => {
+      const deps = buildDeps({ createAttemptId: () => "att-big" });
+
+      await expect(
+        stagePdfUpload(deps, {
+          // Three bytes stream in but the bound is two: the limit trips mid-stream (never buffering the
+          // whole file to discover it is too large).
+          source: streamOf(new Uint8Array([1]), new Uint8Array([2, 3])),
+          maxBytes: 2
+        })
+      ).rejects.toBeInstanceOf(PdfUploadTooLargeError);
+      // The failed stream removed only the directory it created — no partial bytes linger.
+      await expect(stat(stageStore.openStage("att-big").path)).rejects.toThrow();
+    });
+
+    it("fails an id collision on exclusive stage creation without disturbing the existing attempt", async () => {
       // seedStaged writes bytes [1,2,3] under id "dup" and inserts its queued row.
       await seedStaged("dup");
       const existingStagePath = stageStore.openStage("dup").path;
-      const logCleanupFailure = vi.fn();
-      const deps = buildDeps({ createAttemptId: () => "dup", logCleanupFailure });
+      const deps = buildDeps({ createAttemptId: () => "dup" });
 
-      // A start that reuses the live id must fail on exclusive stage creation WITHOUT overwriting the
+      // A stream that reuses the live id must fail on exclusive stage creation WITHOUT overwriting the
       // existing attempt's staged bytes or disturbing its row.
       await expect(
-        startPdfImport(deps, { userId: DEFAULT_USER_ID, bytes: new Uint8Array([9, 9, 9]) })
+        stagePdfUpload(deps, { source: streamOf(new Uint8Array([9, 9, 9])), maxBytes: 1_000 })
       ).rejects.toThrow();
       expect(new Uint8Array(await readFile(existingStagePath))).toEqual(new Uint8Array([1, 2, 3]));
       const existing = await getAttempt(db, DEFAULT_USER_ID, "dup");
       expect(existing).toMatchObject({ state: "queued", stagePath: "dup" });
-      expect(logCleanupFailure).not.toHaveBeenCalled();
+    });
+
+    it("rolls back only the stage this upload created when the bind insert fails", async () => {
+      // A pre-existing row owns id "dup" but has NO stage directory on disk, so this upload's exclusive
+      // stage creation succeeds (fresh) and the bind insert then fails on the primary key.
+      await insertQueuedAttempt(db, {
+        id: "dup",
+        userId: DEFAULT_USER_ID,
+        sourceHash: "a".repeat(64),
+        stagePath: "dup",
+        now: new Date()
+      });
+      const deps = buildDeps({ createAttemptId: () => "dup" });
+      const staged = await stagePdfUpload(deps, {
+        source: streamOf(new Uint8Array([1])),
+        maxBytes: 1_000
+      });
+
+      await expect(
+        bindStagedPdfAttempt(deps, {
+          attemptId: staged.attemptId,
+          stagePath: staged.stagePath,
+          sha256: staged.sha256,
+          userId: DEFAULT_USER_ID
+        })
+      ).rejects.toThrow();
+      // The stage this upload created was rolled back, and the pre-existing row is untouched.
+      await expect(stat(stageStore.openStage("dup").path)).rejects.toThrow();
+      expect(await getAttempt(db, DEFAULT_USER_ID, "dup")).toMatchObject({ state: "queued" });
     });
 
     it("surfaces a cleanup failure when rolling back a created stage fails", async () => {
-      // Pre-existing row owns id "dup" with no stage dir, so createStage succeeds and the insert fails;
-      // a removeStage that rejects during rollback must be surfaced, not swallowed.
+      // Pre-existing row owns id "dup", so the bind insert fails; a removeStage that rejects during
+      // rollback must be surfaced, not swallowed.
       await insertQueuedAttempt(db, {
         id: "dup",
         userId: DEFAULT_USER_ID,
@@ -127,42 +197,69 @@ describe("pdfImport commands", () => {
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage: () => Promise.reject("busy")
       };
       const deps = buildDeps({
-        createAttemptId: () => "dup",
+        createAttemptId: () => "dup2",
         logCleanupFailure,
         stageStore: failingStore
       });
+      const staged = await stagePdfUpload(deps, {
+        source: streamOf(new Uint8Array([1])),
+        maxBytes: 1_000
+      });
 
       await expect(
-        startPdfImport(deps, { userId: DEFAULT_USER_ID, bytes: new Uint8Array([1]) })
+        bindStagedPdfAttempt(deps, {
+          // Bind under the colliding id so the insert fails, driving the rollback.
+          attemptId: "dup",
+          stagePath: staged.stagePath,
+          sha256: staged.sha256,
+          userId: DEFAULT_USER_ID
+        })
       ).rejects.toThrow();
       expect(logCleanupFailure).toHaveBeenCalledWith(
         expect.objectContaining({ attemptId: "dup", reason: "busy" })
       );
     });
+  });
 
-    it("rolls back only the stage this start created when the bind insert fails", async () => {
-      // A pre-existing row owns id "dup" but has NO stage directory on disk, so this start's exclusive
-      // stage creation succeeds (fresh) and the bind insert then fails on the primary key.
-      await insertQueuedAttempt(db, {
-        id: "dup",
-        userId: DEFAULT_USER_ID,
-        sourceHash: "a".repeat(64),
-        stagePath: "dup",
-        now: new Date()
+  describe("discardStagedPdfUpload", () => {
+    it("removes a staged-but-unbound upload's bytes", async () => {
+      const deps = buildDeps({ createAttemptId: () => "att-discard" });
+      const staged = await stagePdfUpload(deps, {
+        source: streamOf(new Uint8Array([1, 2, 3])),
+        maxBytes: 1_000
       });
-      const deps = buildDeps({ createAttemptId: () => "dup" });
+      await expect(stat(stageStore.openStage("att-discard").path)).resolves.toBeDefined();
 
-      await expect(
-        startPdfImport(deps, { userId: DEFAULT_USER_ID, bytes: new Uint8Array([1]) })
-      ).rejects.toThrow();
-      // The stage this start created was rolled back, and the pre-existing row is untouched.
-      await expect(stat(stageStore.openStage("dup").path)).rejects.toThrow();
-      expect(await getAttempt(db, DEFAULT_USER_ID, "dup")).toMatchObject({ state: "queued" });
+      await discardStagedPdfUpload(deps, {
+        attemptId: staged.attemptId,
+        stagePath: staged.stagePath
+      });
+
+      await expect(stat(stageStore.openStage("att-discard").path)).rejects.toThrow();
+    });
+
+    it("surfaces a cleanup failure via the logger without throwing", async () => {
+      const logCleanupFailure = vi.fn();
+      const failingStore: PdfImportStageStore = {
+        createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
+        openStage: stageStore.openStage,
+        readStage: stageStore.readStage,
+        removeStage: () => Promise.reject(new Error("locked"))
+      };
+      const deps = buildDeps({ logCleanupFailure, stageStore: failingStore });
+
+      await discardStagedPdfUpload(deps, { attemptId: "att-x", stagePath: "att-x" });
+
+      expect(logCleanupFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ attemptId: "att-x", reason: "locked" })
+      );
     });
   });
 
@@ -217,6 +314,7 @@ describe("pdfImport commands", () => {
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage: () => Promise.reject(new Error("locked"))
@@ -246,6 +344,7 @@ describe("pdfImport commands", () => {
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage: () => Promise.reject(new Error("locked"))
@@ -269,6 +368,7 @@ describe("pdfImport commands", () => {
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage: () => Promise.reject("stage busy")
@@ -296,6 +396,7 @@ describe("pdfImport commands", () => {
       const removeStage = vi.fn(() => Promise.resolve());
       const noRemoveStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage
@@ -356,6 +457,7 @@ describe("pdfImport commands", () => {
     function rejectingStore(reason: unknown): PdfImportStageStore {
       return {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage: () => Promise.reject(reason)
@@ -414,6 +516,7 @@ describe("pdfImport commands", () => {
       const removeStage = vi.fn(() => Promise.resolve());
       const spyingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage
@@ -436,6 +539,7 @@ describe("pdfImport commands", () => {
       const removeStage = vi.fn(() => Promise.resolve());
       const spyingStore: PdfImportStageStore = {
         createStage: stageStore.createStage,
+        createStageFromStream: stageStore.createStageFromStream,
         openStage: stageStore.openStage,
         readStage: stageStore.readStage,
         removeStage

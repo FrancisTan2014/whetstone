@@ -4,13 +4,18 @@ import { toEntryId, workLanguages, type WorkLanguage } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, pdfBlockEvidence, workMeta, workSources } from "../../db/schema.js";
-import { hashBytes, type SourceFileStore } from "../../files/sourceFileStore.js";
+import { type SourceFileStore } from "../../files/sourceFileStore.js";
 import { writeReadingUnits } from "../content/blockWriter.js";
 import { insertInBatches } from "../content/insertBatching.js";
 import { claimUploadedSource, findClaimedWork } from "../content/sourceClaims.js";
 import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { mapStructuredDocument, type PdfBlockEvidence } from "./pdfCanonicalMapping.js";
-import { startPdfImport, type PdfImportCommandDependencies } from "./pdfImportCommands.js";
+import {
+  bindStagedPdfAttempt,
+  discardStagedPdfUpload,
+  stagePdfUpload,
+  type PdfImportCommandDependencies
+} from "./pdfImportCommands.js";
 import type { PdfImportCleanupLogger } from "./pdfImportRunner.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
@@ -31,10 +36,12 @@ import {
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 // What `beginPdfImport` did with an upload: it reopened the Work that already owns the bytes (identical
-// upload), or it queued a fresh recoverable attempt whose completion the drain loop will publish.
+// upload), queued a fresh recoverable attempt whose completion the drain loop will publish, or found the
+// upload empty (nothing to import).
 export type BeginPdfImportResult =
   | Readonly<{ outcome: "reopened"; work: WorkDto; content: WorkContentDto }>
-  | Readonly<{ outcome: "queued"; started: PdfImportStartedDto }>;
+  | Readonly<{ outcome: "queued"; started: PdfImportStartedDto }>
+  | Readonly<{ outcome: "empty" }>;
 
 export type BeginPdfImportDependencies = Readonly<{
   db: DbClient;
@@ -43,7 +50,10 @@ export type BeginPdfImportDependencies = Readonly<{
 
 export type BeginPdfImportInput = Readonly<{
   userId: string;
-  bytes: Uint8Array;
+  // The uploaded PDF as a byte stream (the raw request body) plus its byte bound: the upload is streamed
+  // into the staging/hash boundary and never buffered whole in memory.
+  source: AsyncIterable<Uint8Array>;
+  maxBytes: number;
   fileName: string;
   enteredTitle?: string | null;
   enteredAuthor?: string | null;
@@ -57,20 +67,47 @@ function normalizeEntered(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-// Reopen the Work that already owns these exact bytes (identical-upload dedup, #706) before staging any
-// conversion; otherwise stage a fresh recoverable attempt (#721) and record the learner's capture-time
-// intent so publication can resolve its metadata after conversion.
+// Stream the upload into a bounded staged file, hashing as the bytes arrive (the whole PDF is never
+// materialized in memory — GUIDELINES: no route buffers an entire source merely to hash or persist it).
+// Then, from the streamed sha256: reject an empty upload, reopen the Work that already owns these exact
+// bytes (identical-upload dedup, #706) discarding the redundant stage, or bind a fresh recoverable
+// attempt (#721) and record the learner's capture-time intent so publication can resolve its metadata
+// after conversion. An oversize upload rejects with `PdfUploadTooLargeError` from the stage store.
 export async function beginPdfImport(
   deps: BeginPdfImportDependencies,
   input: BeginPdfImportInput
 ): Promise<BeginPdfImportResult> {
-  const sha256 = hashBytes(input.bytes);
-  const claimed = await findClaimedWork(deps.db, sha256);
+  const staged = await stagePdfUpload(deps.start, {
+    source: input.source,
+    maxBytes: input.maxBytes
+  });
+
+  if (staged.byteLength === 0) {
+    // An empty upload has nothing to import: drop the staged bytes and report it as invalid.
+    await discardStagedPdfUpload(deps.start, {
+      attemptId: staged.attemptId,
+      stagePath: staged.stagePath
+    });
+    return { outcome: "empty" };
+  }
+
+  const claimed = await findClaimedWork(deps.db, staged.sha256);
   if (claimed !== undefined) {
+    // Identical bytes already own a Work: the freshly-staged bytes are redundant, so drop them and
+    // reopen the existing Work without queuing a new attempt.
+    await discardStagedPdfUpload(deps.start, {
+      attemptId: staged.attemptId,
+      stagePath: staged.stagePath
+    });
     return { outcome: "reopened", work: claimed.work, content: claimed.content };
   }
 
-  const started = await startPdfImport(deps.start, { userId: input.userId, bytes: input.bytes });
+  const started = await bindStagedPdfAttempt(deps.start, {
+    attemptId: staged.attemptId,
+    stagePath: staged.stagePath,
+    sha256: staged.sha256,
+    userId: input.userId
+  });
   await insertPublicationIntent(deps.db, {
     attemptId: started.attemptId,
     enteredTitle: normalizeEntered(input.enteredTitle),

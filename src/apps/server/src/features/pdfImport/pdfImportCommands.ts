@@ -2,7 +2,6 @@ import type { PdfImportStartedDto, PdfImportStatusDto } from "@whetstone/contrac
 import { isTerminalAttemptState } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { hashBytes } from "../../files/sourceFileStore.js";
 import type { PdfImportCleanupLogger, PdfImportActiveRuns } from "./pdfImportRunner.js";
 import { buildPdfImportStatus } from "./pdfImportQueries.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
@@ -15,11 +14,12 @@ import {
 } from "./pdfImportStore.js";
 
 // The owner-scoped start / cancel / retry / cleanup-retry commands for a recoverable staged PDF import
-// (#721). These own the stage lifecycle boundary: start creates and atomically binds the stage before the
-// attempt is queued; cancel terminates the owned child, fences late output (via the store), and removes
-// the stage; retry re-queues an interrupted attempt to resume; cleanup-retry re-removes a terminal
-// attempt's leftover stage when an earlier removal failed. None of them create a Work, ReadingUnit, or
-// Block — publication is #702.
+// (#721). These own the stage lifecycle boundary: an upload is STREAMED into a fresh stage
+// (`stagePdfUpload`, hashing as it arrives — never buffering the whole file), then bound to a queued
+// attempt (`bindStagedPdfAttempt`) or discarded (`discardStagedPdfUpload`) after the dedup check; cancel
+// terminates the owned child, fences late output (via the store), and removes the stage; retry re-queues
+// an interrupted attempt to resume; cleanup-retry re-removes a terminal attempt's leftover stage when an
+// earlier removal failed. None of them create a Work, ReadingUnit, or Block — publication is #702.
 
 export type PdfImportCommandDependencies = Readonly<{
   db: DbClient;
@@ -30,36 +30,81 @@ export type PdfImportCommandDependencies = Readonly<{
   logCleanupFailure: PdfImportCleanupLogger;
 }>;
 
-export type StartPdfImportInput = Readonly<{ userId: string; bytes: Uint8Array }>;
+export type StagePdfUploadInput = Readonly<{
+  source: AsyncIterable<Uint8Array>;
+  maxBytes: number;
+}>;
 
-// Stage the uploaded bytes, bind them to a fresh queued attempt, and return its id + initial status. The
-// stage is created EXCLUSIVELY before the row: an id collision fails stage creation (never overwriting a
-// live attempt's bytes), and if the bind insert fails the stage THIS start created is rolled back — so a
-// failed start never leaves orphaned staged bytes and never disturbs a colliding attempt.
-export async function startPdfImport(
+// A streamed-but-not-yet-bound upload: the attempt id plus its stage path, content sha256, and byte
+// length. The caller decides — after the identical-bytes dedup check — whether to bind a queued attempt
+// or discard the stage. Kept separate from `bindStagedPdfAttempt` because the sha256 is only known AFTER
+// streaming, so dedup must run between staging and the row insert.
+export type StagedPdfUpload = Readonly<{
+  attemptId: string;
+  stagePath: string;
+  sha256: string;
+  byteLength: number;
+}>;
+
+// Stream the uploaded PDF into a fresh attempt-owned stage (#721), hashing as the bytes arrive so the
+// whole file is never resident in memory. An oversize upload rejects with `PdfUploadTooLargeError`
+// (surfaced by the stage store) and leaves no stage. No attempt row is inserted yet.
+export async function stagePdfUpload(
   deps: PdfImportCommandDependencies,
-  input: StartPdfImportInput
-): Promise<PdfImportStartedDto> {
+  input: StagePdfUploadInput
+): Promise<StagedPdfUpload> {
   const attemptId = deps.createAttemptId();
-  const sourceHash = hashBytes(input.bytes);
-  const { stagePath } = await deps.stageStore.createStage(attemptId, input.bytes);
+  const staged = await deps.stageStore.createStageFromStream(attemptId, input.source, {
+    maxBytes: input.maxBytes
+  });
+  return Object.freeze({
+    attemptId,
+    stagePath: staged.stagePath,
+    sha256: staged.sha256,
+    byteLength: staged.byteLength
+  });
+}
 
+export type BindStagedPdfAttemptInput = Readonly<{
+  attemptId: string;
+  stagePath: string;
+  sha256: string;
+  userId: string;
+}>;
+
+// Bind an already-streamed stage to a fresh queued attempt row, and return its id + initial status. If
+// the bind insert fails, the stage THIS upload created is rolled back — so a failed start never leaves
+// orphaned staged bytes and never disturbs a colliding attempt.
+export async function bindStagedPdfAttempt(
+  deps: PdfImportCommandDependencies,
+  input: BindStagedPdfAttemptInput
+): Promise<PdfImportStartedDto> {
   let record;
   try {
     record = await insertQueuedAttempt(deps.db, {
-      id: attemptId,
+      id: input.attemptId,
       userId: input.userId,
-      sourceHash,
-      stagePath,
+      sourceHash: input.sha256,
+      stagePath: input.stagePath,
       now: deps.now()
     });
   } catch (cause) {
-    await rollbackCreatedStage(deps, attemptId, stagePath);
+    await rollbackCreatedStage(deps, input.attemptId, input.stagePath);
     throw cause;
   }
 
   const status = await buildPdfImportStatus(deps.db, record);
-  return { attemptId, status };
+  return { attemptId: input.attemptId, status };
+}
+
+// Discard a streamed stage whose attempt was never bound: an empty upload (nothing to import) or one
+// whose identical bytes already own a Work (#706 dedup), so the freshly-staged bytes are redundant. A
+// removal failure is surfaced via the cleanup logger, never swallowed.
+export async function discardStagedPdfUpload(
+  deps: PdfImportCommandDependencies,
+  input: Readonly<{ attemptId: string; stagePath: string }>
+): Promise<void> {
+  await rollbackCreatedStage(deps, input.attemptId, input.stagePath);
 }
 
 export type CancelPdfImportInput = Readonly<{ userId: string; attemptId: string }>;

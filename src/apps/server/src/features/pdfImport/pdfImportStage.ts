@@ -1,8 +1,24 @@
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { issueStagedFileHandle, type StagedFileHandle } from "../../files/pdfStructuredAdapter.js";
 import { resolveWithinDirectory } from "../../files/sourceFileStore.js";
+
+// A streamed upload that exceeded the configured byte bound. Thrown mid-stream (the whole file is never
+// buffered to discover it is too large) so the route can answer 413 instead of the process holding an
+// oversized body in memory.
+export class PdfUploadTooLargeError extends Error {
+  readonly maxBytes: number;
+
+  constructor(maxBytes: number) {
+    super(`Uploaded PDF exceeds the ${maxBytes}-byte limit.`);
+    this.name = "PdfUploadTooLargeError";
+    this.maxBytes = maxBytes;
+  }
+}
 
 // The one attempt-owned staging lifecycle (#721). A PDF import owns its staged bytes in a per-attempt
 // directory under a server-owned root, SEPARATE from immutable source provenance and from readable
@@ -25,12 +41,33 @@ function assertSafeStageId(stageId: string): void {
 
 export type CreatedStage = Readonly<{ stagePath: string; handle: StagedFileHandle }>;
 
+// A stage written by streaming the upload straight to disk: besides the path/handle it reports the
+// content sha256 (computed incrementally while streaming, so it matches `hashBytes` over the same bytes)
+// and the total byte length observed, so the caller can dedup and reject an empty upload without ever
+// re-reading the whole file.
+export type StreamedStage = Readonly<{
+  stagePath: string;
+  handle: StagedFileHandle;
+  sha256: string;
+  byteLength: number;
+}>;
+
 export type PdfImportStageStore = Readonly<{
   // Create the attempt's secure stage: write the uploaded bytes into a fresh per-attempt directory and
   // return the relative stage path (persisted on the attempt) plus a server-issued handle #701 reads.
   // Creation is EXCLUSIVE: if a directory for this attempt id already exists (an id collision), it
   // throws instead of overwriting the existing attempt's staged bytes.
   createStage: (attemptId: string, bytes: Uint8Array) => Promise<CreatedStage>;
+  // Stream the uploaded PDF into the attempt's secure stage, hashing as the bytes arrive so the whole
+  // file is never resident in memory (the large-upload boundary #721 / GUIDELINES require). Enforces
+  // `maxBytes` mid-stream — an oversize upload rejects with `PdfUploadTooLargeError` and leaves no stage.
+  // Creation is EXCLUSIVE exactly as `createStage`: an id collision throws WITHOUT disturbing the
+  // colliding attempt's bytes. A failed stream removes only the directory this call created.
+  createStageFromStream: (
+    attemptId: string,
+    source: AsyncIterable<Uint8Array>,
+    options: Readonly<{ maxBytes: number }>
+  ) => Promise<StreamedStage>;
   // Re-open the handle for an already-created stage (e.g. a resumed run after restart), from the stored
   // relative stage path. Does not touch disk; the runner's read reports a missing stage as a failure.
   openStage: (stagePath: string) => StagedFileHandle;
@@ -65,6 +102,49 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     });
   }
 
+  async function createStageFromStream(
+    attemptId: string,
+    source: AsyncIterable<Uint8Array>,
+    options: Readonly<{ maxBytes: number }>
+  ): Promise<StreamedStage> {
+    const stageDir = stageDirFor(attemptId);
+    // Create THIS attempt's directory EXCLUSIVELY before streaming — an id collision throws here (EEXIST)
+    // and must NOT trigger the cleanup below, so it can never remove a colliding attempt's staged bytes.
+    await mkdir(stageRootDir, { recursive: true });
+    await mkdir(stageDir);
+    const filePath = join(stageDir, STAGED_FILE_NAME);
+    const hash = createHash("sha256");
+    let byteLength = 0;
+    try {
+      await pipeline(
+        source,
+        async function* boundHashingChunks(chunks: AsyncIterable<Uint8Array>) {
+          for await (const chunk of chunks) {
+            byteLength += chunk.byteLength;
+            if (byteLength > options.maxBytes) {
+              throw new PdfUploadTooLargeError(options.maxBytes);
+            }
+            hash.update(chunk);
+            yield chunk;
+          }
+        },
+        // `wx` is a second exclusive guard on the staged file itself.
+        createWriteStream(filePath, { flags: "wx" })
+      );
+    } catch (cause) {
+      // A failed stream (too large, aborted, or a write error) leaves no usable stage: remove only the
+      // directory THIS call created so no partial bytes linger. The colliding-id case never reaches here.
+      await rm(stageDir, { force: true, recursive: true });
+      throw cause;
+    }
+    return Object.freeze({
+      stagePath: attemptId,
+      handle: issueStagedFileHandle(stageDir, STAGED_FILE_NAME),
+      sha256: hash.digest("hex"),
+      byteLength
+    });
+  }
+
   function openStage(stagePath: string): StagedFileHandle {
     return issueStagedFileHandle(stageDirFor(stagePath), STAGED_FILE_NAME);
   }
@@ -78,5 +158,5 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     await rm(stageDirFor(stagePath), { force: true, recursive: true });
   }
 
-  return Object.freeze({ createStage, openStage, readStage, removeStage });
+  return Object.freeze({ createStage, createStageFromStream, openStage, readStage, removeStage });
 }

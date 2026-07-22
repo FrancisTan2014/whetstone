@@ -9,6 +9,7 @@ import {
   createHealthResponse,
   healthEndpointPath,
   healthResponseJsonSchema,
+  pdfContentType,
   type HealthResponse
 } from "@whetstone/contracts";
 
@@ -91,6 +92,15 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   server.addContentTypeParser(audioContentType, { parseAs: "buffer" }, (_request, body, done) =>
     done(null, body)
   );
+
+  // Born-digital PDF uploads (#702) stream straight into the import feature's staging/hash boundary, so
+  // the whole file is never buffered in memory (GUIDELINES: no route buffers an entire source merely to
+  // hash or persist it). This passthrough parser hands the route the raw request stream instead of a
+  // Buffer. Registered here (not in a feature) because the content type is shared by the pdf-import
+  // front door and the legacy content/pdf route, and it must be streaming for both.
+  server.addContentTypeParser(pdfContentType, (_request, payload, done) => {
+    done(null, payload);
+  });
 
   server.get(
     healthEndpointPath,

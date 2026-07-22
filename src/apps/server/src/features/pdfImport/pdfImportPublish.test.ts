@@ -31,7 +31,11 @@ import {
   type SourceFileStore
 } from "../../files/sourceFileStore.js";
 import { loadWorkContent } from "../content/contentQueries.js";
-import { createPdfImportStageStore, type PdfImportStageStore } from "./pdfImportStage.js";
+import {
+  createPdfImportStageStore,
+  PdfUploadTooLargeError,
+  type PdfImportStageStore
+} from "./pdfImportStage.js";
 import type { PdfImportActiveRuns } from "./pdfImportRunner.js";
 import {
   beginPdfImport,
@@ -689,6 +693,12 @@ describe("publishConvertedPdfImport", () => {
 });
 
 describe("beginPdfImport", () => {
+  async function* streamOf(...chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
+    for (const chunk of chunks) {
+      yield chunk;
+    }
+  }
+
   function startDeps(): PdfImportCommandDependencies {
     let id = 0;
     return {
@@ -705,12 +715,15 @@ describe("beginPdfImport", () => {
     };
   }
 
-  it("queues a fresh attempt and records the learner's capture-time intent", async () => {
+  it("streams a fresh attempt and records the learner's capture-time intent", async () => {
     const result = await beginPdfImport(
       { db, start: startDeps() },
       {
         userId: DEFAULT_USER_ID,
-        bytes: new Uint8Array([1, 2, 3]),
+        // The upload arrives as separate chunks: beginPdfImport streams them into the stage without
+        // buffering the whole file to hash it.
+        source: streamOf(new Uint8Array([1, 2]), new Uint8Array([3])),
+        maxBytes: 1_000,
         fileName: "upload.pdf",
         enteredTitle: "  Trimmed Title  ",
         enteredAuthor: "   ",
@@ -727,11 +740,35 @@ describe("beginPdfImport", () => {
     expect(publication?.enteredAuthor).toBeNull();
   });
 
+  it("reports an empty upload as empty and stages nothing durable", async () => {
+    const result = await beginPdfImport(
+      { db, start: startDeps() },
+      { userId: DEFAULT_USER_ID, source: streamOf(), maxBytes: 1_000, fileName: "empty.pdf" }
+    );
+    expect(result.outcome).toBe("empty");
+    // The just-staged empty stage was discarded — no attempt row and no lingering bytes.
+    await expect(stat(stageStore.openStage("att-1").path)).rejects.toThrow();
+  });
+
+  it("propagates a too-large upload as PdfUploadTooLargeError", async () => {
+    await expect(
+      beginPdfImport(
+        { db, start: startDeps() },
+        {
+          userId: DEFAULT_USER_ID,
+          source: streamOf(new Uint8Array([1, 2]), new Uint8Array([3, 4])),
+          maxBytes: 2,
+          fileName: "big.pdf"
+        }
+      )
+    ).rejects.toBeInstanceOf(PdfUploadTooLargeError);
+  });
+
   it("reopens the owning Work when identical bytes were already published, without staging a new attempt", async () => {
     const bytes = new Uint8Array([9, 9, 9, 9]);
     const first = await beginPdfImport(
       { db, start: startDeps() },
-      { userId: DEFAULT_USER_ID, bytes, fileName: "same.pdf" }
+      { userId: DEFAULT_USER_ID, source: streamOf(bytes), maxBytes: 1_000, fileName: "same.pdf" }
     );
     if (first.outcome !== "queued") {
       throw new Error("expected first upload to queue");
@@ -747,7 +784,12 @@ describe("beginPdfImport", () => {
 
     const second = await beginPdfImport(
       { db, start: startDeps() },
-      { userId: DEFAULT_USER_ID, bytes, fileName: "same-again.pdf" }
+      {
+        userId: DEFAULT_USER_ID,
+        source: streamOf(bytes),
+        maxBytes: 1_000,
+        fileName: "same-again.pdf"
+      }
     );
     if (second.outcome !== "reopened") {
       throw new Error(`expected reopened, got ${second.outcome}`);
